@@ -39,7 +39,7 @@ def get_version(
 content_v3 = nx.get_version("/documents/report.txt", 3)
 
 # Get version with specific context
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 ctx = OperationContext(user="alice", groups=["engineering"])
 content = nx.get_version("/workspace/file.txt", 5, context=ctx)
 ```
@@ -81,7 +81,7 @@ for v in versions:
     print(f"v{v['version']}: {v['size']} bytes at {v['created_at']}")
 
 # List versions with specific context
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 ctx = OperationContext(user="alice", groups=["engineering"])
 versions = nx.list_versions("/workspace/file.txt", context=ctx)
 ```
@@ -162,7 +162,7 @@ diff = nx.diff_versions("/documents/report.txt", 5, 7, mode="content")
 print(diff)  # Unified diff output
 
 # Compare with specific context
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 ctx = OperationContext(user="alice", groups=["engineering"])
 diff = nx.diff_versions("/workspace/file.txt", 1, 3, context=ctx)
 ```

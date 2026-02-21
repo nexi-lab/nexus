@@ -103,6 +103,7 @@ def make_test_nexus(
     memory=None,
     distributed=None,
     services=None,
+    system_services=None,
     is_admin=False,
     record_store=None,
     use_raft=False,
@@ -122,6 +123,7 @@ def make_test_nexus(
         memory: MemoryConfig override.
         distributed: DistributedConfig override. Default: all disabled.
         services: KernelServices override.
+        system_services: SystemServices override.
         is_admin: Admin flag.
         record_store: Optional RecordStoreABC.
         use_raft: Use RaftMetadataStore (requires Python 3.13).
@@ -139,7 +141,7 @@ def make_test_nexus(
     from nexus.core.nexus_fs import NexusFS
 
     if permissions is None:
-        permissions = PermissionConfig(enforce=False, audit_strict_mode=False)
+        permissions = PermissionConfig(enforce=False)
     if parsing is None:
         parsing = ParseConfig(auto_parse=False)
     if distributed is None:
@@ -166,7 +168,7 @@ def make_test_nexus(
 
             metadata_store = InMemoryMetastore()
 
-    return NexusFS(
+    nx = NexusFS(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,
@@ -176,8 +178,21 @@ def make_test_nexus(
         cache=cache,
         memory=memory,
         distributed=distributed,
-        services=services,
+        kernel_services=services,
+        system_services=system_services,
     )
+
+    # Wire PermissionChecker via DI (same as factory/orchestrator.py, Issue #874)
+    from nexus.services.permissions.checker import PermissionChecker
+
+    nx._permission_checker = PermissionChecker(
+        permission_enforcer=nx._permission_enforcer,
+        metadata_store=nx.metadata,
+        default_context=nx._default_context,
+        enforce_permissions=nx._enforce_permissions,
+    )
+
+    return nx
 
 
 @pytest.fixture(autouse=True)

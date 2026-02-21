@@ -50,7 +50,7 @@ class TestParseContent:
         connector = MockSimpleConnector()
         svc = BackendIOService(connector)
 
-        with patch.dict("sys.modules", {"nexus.parsers.markitdown_parser": None}):
+        with patch.dict("sys.modules", {"nexus.bricks.parsers.markitdown_parser": None}):
             result = svc.parse_content("/test/file.pdf", b"content")
 
         # ImportError should be caught gracefully

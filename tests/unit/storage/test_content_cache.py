@@ -1,5 +1,7 @@
-"""Unit tests for ContentCache with LZ4 compression (Issue #908)."""
+"""Unit tests for ContentCache with LZ4 compression (Issue #908)
+and priority-aware eviction (Issue #2427)."""
 
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 from nexus.storage.content_cache import ContentCache
@@ -332,3 +334,158 @@ class TestContentCacheEdgeCases:
         # May or may not be compressed depending on actual ratio
         stats = cache.get_stats()
         assert stats["entries"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Priority-aware eviction tests (Issue #2427)
+# ---------------------------------------------------------------------------
+
+
+class TestContentCachePriority:
+    """Test priority-aware two-pass LRU eviction."""
+
+    def _make_cache(self, max_bytes: int = 1024) -> ContentCache:
+        """Create a small ContentCache for priority testing."""
+        cache = ContentCache(max_size_mb=0, compression_threshold=10000)
+        cache._max_size_bytes = max_bytes
+        return cache
+
+    def test_put_with_priority_default(self):
+        """put() without priority should default to 0."""
+        cache = self._make_cache()
+        cache.put("hash1", b"content")
+        # Should retrieve normally — priority is internal
+        assert cache.get("hash1") == b"content"
+
+    def test_put_with_explicit_priority(self):
+        """put() with explicit priority stores and retrieves correctly."""
+        cache = self._make_cache()
+        cache.put("hash1", b"content", priority=3)
+        assert cache.get("hash1") == b"content"
+
+    def test_eviction_skips_high_priority_first_pass(self):
+        """First-pass eviction should skip high-priority entries."""
+        cache = self._make_cache(max_bytes=800)
+
+        # Fill with mix: hash1=priority 0, hash2=priority 3
+        cache.put("hash1", b"a" * 300, priority=0)
+        cache.put("hash2", b"b" * 300, priority=3)
+
+        # Access hash1 more recently so LRU order is: hash2 (LRU), hash1 (MRU)
+        cache.get("hash1")
+
+        # Add new content that forces eviction (300 + 300 + 300 > 800)
+        cache.put("hash3", b"c" * 300, priority=0)
+
+        # hash1 (priority=0) should be evicted despite being MRU,
+        # because first pass only targets priority=0 entries.
+        # hash2 (priority=3) should survive first pass.
+        assert cache.get("hash2") is not None, "High-priority entry should survive"
+        assert cache.get("hash3") is not None, "New entry should exist"
+
+    def test_eviction_evicts_high_priority_second_pass(self):
+        """When ALL entries are high-priority, LRU still works (second pass)."""
+        cache = self._make_cache(max_bytes=600)
+
+        # Fill with all high-priority
+        cache.put("hash1", b"a" * 300, priority=3)
+        cache.put("hash2", b"b" * 300, priority=3)
+
+        # Add more — forces eviction. First pass finds no priority=0,
+        # second pass evicts LRU (hash1).
+        cache.put("hash3", b"c" * 300, priority=3)
+
+        assert cache.get("hash1") is None, "LRU high-priority entry should be evicted"
+        assert cache.get("hash2") is not None
+        assert cache.get("hash3") is not None
+
+    def test_mixed_priority_eviction_order(self):
+        """Eviction prefers priority=0 before touching higher priorities."""
+        cache = self._make_cache(max_bytes=1200)
+
+        # Fill: p0, p1, p2 (each 400 bytes, total 1200)
+        cache.put("p0", b"a" * 400, priority=0)
+        cache.put("p1", b"b" * 400, priority=1)
+        cache.put("p2", b"c" * 400, priority=2)
+
+        # Add 400 more — need to evict 400 bytes
+        cache.put("new", b"d" * 400, priority=0)
+
+        # p0 (priority=0) should be evicted first
+        assert cache.get("p0") is None, "Priority-0 should be evicted first"
+        assert cache.get("p1") is not None, "Priority-1 should survive"
+        assert cache.get("p2") is not None, "Priority-2 should survive"
+        assert cache.get("new") is not None
+
+    def test_priority_preserved_on_update(self):
+        """Updating content should accept new priority."""
+        cache = self._make_cache(max_bytes=800)
+
+        cache.put("hash1", b"a" * 300, priority=0)
+        cache.put("hash2", b"b" * 300, priority=0)
+
+        # Update hash1 with high priority
+        cache.put("hash1", b"a" * 300, priority=3)
+
+        # Force eviction — hash2 (priority=0) should go, hash1 (now priority=3) stays
+        cache.put("hash3", b"c" * 300, priority=0)
+
+        assert cache.get("hash1") is not None, "Updated high-priority should survive"
+        assert cache.get("hash2") is None, "Low-priority should be evicted"
+
+    def test_priority_in_stats(self):
+        """get_stats() should include priority distribution."""
+        cache = self._make_cache()
+
+        cache.put("h1", b"a" * 100, priority=0)
+        cache.put("h2", b"b" * 100, priority=0)
+        cache.put("h3", b"c" * 100, priority=3)
+
+        stats = cache.get_stats()
+        assert "priority_zero_count" in stats
+        assert stats["priority_zero_count"] == 2
+
+    def test_concurrent_priority_eviction(self):
+        """Thread safety under priority-mixed concurrent puts."""
+        cache = self._make_cache(max_bytes=10000)
+        errors = []
+
+        def writer_low(tid: int):
+            try:
+                for i in range(50):
+                    cache.put(f"low-{tid}-{i}", b"x" * 100, priority=0)
+            except Exception as e:
+                errors.append(e)
+
+        def writer_high(tid: int):
+            try:
+                for i in range(50):
+                    cache.put(f"high-{tid}-{i}", b"y" * 100, priority=3)
+            except Exception as e:
+                errors.append(e)
+
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            futures = []
+            for t in range(4):
+                futures.append(ex.submit(writer_low, t))
+                futures.append(ex.submit(writer_high, t))
+            for f in futures:
+                f.result()
+
+        assert len(errors) == 0, f"Errors occurred: {errors}"
+
+
+class TestContentCachePerfRegression:
+    """Performance regression tests for eviction (Issue #2427)."""
+
+    def test_eviction_latency_bounded(self):
+        """10K evictions should complete in <500ms."""
+        cache = ContentCache(max_size_mb=0, compression_threshold=100000)
+        cache._max_size_bytes = 5000  # Small cache forces frequent eviction
+
+        t0 = time.monotonic()
+        for i in range(10000):
+            cache.put(f"hash-{i}", b"x" * 100, priority=i % 4)
+        elapsed = time.monotonic() - t0
+
+        assert elapsed < 0.5, f"10K puts with eviction took {elapsed:.3f}s (>500ms)"

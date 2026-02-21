@@ -7,15 +7,13 @@ Design reference:
     - NEXUS-LEGO-ARCHITECTURE.md PART 16, Recursive Wrapping Rule #2
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, PropertyMock
 
 import pytest
 
 from nexus.backends.backend import Backend
 from nexus.backends.delegating import DelegatingBackend
-from nexus.core.response import HandlerResponse
+from nexus.lib.response import HandlerResponse
 
 # ---------------------------------------------------------------------------
 # Fixtures

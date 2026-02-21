@@ -13,12 +13,10 @@ References:
     - docs/architecture/KERNEL-ARCHITECTURE.md §3
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
 
 
 @runtime_checkable
@@ -33,5 +31,5 @@ class WatchProtocol(Protocol):
         path: str,
         timeout: float = 30.0,
         since_revision: int | None = None,
-        _context: OperationContext | None = None,
+        _context: "OperationContext | None" = None,
     ) -> dict[str, Any] | None: ...

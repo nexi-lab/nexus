@@ -6,8 +6,6 @@ latency to sandbox creation, profile resolution, or input validation.
 Requires: Docker daemon running locally.
 """
 
-from __future__ import annotations
-
 import statistics
 import time
 
@@ -45,7 +43,7 @@ N_ITERATIONS = 1000
 
 
 @pytest.fixture(scope="module")
-def docker_client() -> docker.DockerClient:
+def docker_client() -> "docker.DockerClient":
     client = docker.from_env()
     try:
         client.images.get(ALPINE_IMAGE)
@@ -325,7 +323,7 @@ class TestContainerCreationOverhead:
     """Security profiles should not add meaningful overhead to container creation."""
 
     @pytest.mark.asyncio
-    async def test_strict_vs_bare_creation_time(self, docker_client: docker.DockerClient) -> None:
+    async def test_strict_vs_bare_creation_time(self, docker_client: "docker.DockerClient") -> None:
         """Strict profile container creation should be < 2x bare container."""
         # Baseline: bare container
         bare_times = []
@@ -362,7 +360,9 @@ class TestContainerCreationOverhead:
         )
 
     @pytest.mark.asyncio
-    async def test_standard_vs_bare_creation_time(self, docker_client: docker.DockerClient) -> None:
+    async def test_standard_vs_bare_creation_time(
+        self, docker_client: "docker.DockerClient"
+    ) -> None:
         """Standard profile container creation should be < 2x bare container."""
         bare_times = []
         for _ in range(3):

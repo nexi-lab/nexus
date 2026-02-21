@@ -9,7 +9,7 @@ Optional components log and continue on failure.
 """
 
 import logging
-import threading
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -68,7 +68,6 @@ class ObservabilityRegistry:
     _components: list[tuple[str, LifecycleComponent, bool]] = field(default_factory=list)
     _started: list[str] = field(default_factory=list)
     _shutdown_called: bool = False
-    _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def register(self, name: str, component: LifecycleComponent, *, required: bool = False) -> None:
         """Register a component for lifecycle management.
@@ -98,11 +97,13 @@ class ObservabilityRegistry:
         statuses: list[ComponentStatus] = []
 
         for name, component, required in self._components:
+            t0 = time.perf_counter()
             try:
                 await component.start()
+                elapsed_ms = (time.perf_counter() - t0) * 1000
                 self._started.append(name)
                 statuses.append(ComponentStatus(name=name, started=True, healthy=True))
-                logger.info("Started observability component: %s", name)
+                logger.info("Started observability component: %s (%.1fms)", name, elapsed_ms)
             except Exception as exc:
                 error_msg = str(exc)
                 statuses.append(
@@ -124,11 +125,14 @@ class ObservabilityRegistry:
         return statuses
 
     async def shutdown_all(self, timeout_ms: int = 5000) -> None:
-        """Shut down all started components in reverse order. Idempotent."""
-        with self._lock:
-            if self._shutdown_called:
-                return
-            self._shutdown_called = True
+        """Shut down all started components in reverse order. Idempotent.
+
+        Note: No lock needed — asyncio is single-threaded so this boolean
+        check is safe against concurrent coroutines.
+        """
+        if self._shutdown_called:
+            return
+        self._shutdown_called = True
 
         # Shutdown in reverse order (LIFO)
         component_map = {name: comp for name, comp, _ in self._components}

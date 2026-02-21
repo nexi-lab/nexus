@@ -11,15 +11,13 @@ Usage::
 
     from tests.unit.services.test_protocol_compliance import assert_protocol_compliance
     from nexus.services.protocols import SkillsProtocol
-    from nexus.services.skill_service import SkillService
+    from nexus.bricks.skills.skill_service_adapter import SkillService
 
     def test_skill_service_protocol():
         assert_protocol_compliance(SkillService, SkillsProtocol)
 
 Parameterized tests for all 8 domain protocols are included below.
 """
-
-from __future__ import annotations
 
 import inspect
 
@@ -154,64 +152,64 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
     (
         "LLMServiceProtocol",
         "nexus.services.protocols.llm",
-        "nexus.services.llm_service.LLMService",
+        "nexus.bricks.llm.llm_service.LLMService",
         True,  # Fixed: llm_read_stream uses def (not async) in protocol for async generator compat
     ),
     # ── Phase 1.5: Protocol updated to unprefixed names matching service ──
     (
         "SkillsProtocol",
         "nexus.services.protocols.skills",
-        "nexus.services.skill_service.SkillService",
+        "nexus.bricks.skills.skill_service_adapter.SkillService",
         True,
     ),
     (
         "MountProtocol",
         "nexus.services.protocols.mount",
-        "nexus.services.mount_service.MountService",
+        "nexus.services.mount.mount_service.MountService",
         True,  # Fixed: added delete_connector, context param naming, full_sync param
     ),
     (
         "OAuthProtocol",
         "nexus.services.protocols.oauth",
-        "nexus.services.oauth_service.OAuthService",
+        "nexus.services.oauth.oauth_service.OAuthService",
         True,
     ),
     (
         "SearchProtocol",
         "nexus.services.protocols.search",
-        "nexus.services.search_service.SearchService",
+        "nexus.services.search.search_service.SearchService",
         True,
     ),
     (
         "PermissionProtocol",
         "nexus.services.protocols.permission",
-        "nexus.services.rebac_service.ReBACService",
+        "nexus.bricks.rebac.rebac_service.ReBACService",
         True,  # Fixed: protocol updated to match async ReBACService interface
     ),
     # ── ShareLinkService extracted (Issue #1387) ────────────────────────
     (
         "ShareLinkProtocol",
         "nexus.services.protocols.share_link",
-        "nexus.services.share_link_service.ShareLinkService",
+        "nexus.services.share_link.share_link_service.ShareLinkService",
         True,  # Method names match (async/sync checked separately)
     ),
     (
         "WatchProtocol",
         "nexus.services.protocols.watch",
-        "nexus.services.events_service.EventsService",
+        "nexus.system_services.lifecycle.events_service.EventsService",
         True,  # wait_for_changes method match
     ),
     (
         "LockProtocol",
         "nexus.services.protocols.lock",
-        "nexus.services.events_service.EventsService",
+        "nexus.system_services.lifecycle.events_service.EventsService",
         True,  # lock/extend_lock/unlock methods match
     ),
     # ── TransactionalSnapshotService (Issue #1752) ──────────────────────
     (
         "SnapshotServiceProtocol",
         "nexus.services.protocols.snapshot",
-        "nexus.services.snapshot.service.TransactionalSnapshotService",
+        "nexus.bricks.snapshot.service.TransactionalSnapshotService",
         True,
     ),
     # ── Async adapter protocols (Issue #1440) ─────────────────────────
@@ -224,7 +222,7 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
     (
         "NamespaceManagerProtocol",
         "nexus.services.protocols.namespace_manager",
-        "nexus.rebac.async_namespace_manager.AsyncNamespaceManager",
+        "nexus.bricks.rebac.async_namespace_manager.AsyncNamespaceManager",
         True,
     ),
     (
@@ -237,13 +235,13 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
     (
         "MCPProtocol",
         "nexus.services.protocols.mcp",
-        "nexus.services.mcp_service.MCPService",
+        "nexus.bricks.mcp.mcp_service.MCPService",
         True,
     ),
     (
         "DelegationProtocol",
         "nexus.services.protocols.delegation",
-        "nexus.services.delegation.service.DelegationService",
+        "nexus.bricks.delegation.service.DelegationService",
         True,
     ),
     (
@@ -259,23 +257,55 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
         "nexus.services.protocols.scheduler.InMemoryScheduler",
         True,
     ),
+    # ── Narrow dependency Protocols (Issue #2190) ────────────────────
+    (
+        "MemoryPermissionCheckerProtocol",
+        "nexus.services.protocols.memory",
+        "nexus.bricks.rebac.memory_permission_enforcer.MemoryPermissionEnforcer",
+        True,
+    ),
+    (
+        "EntityResolverProtocol",
+        "nexus.services.protocols.memory",
+        "nexus.bricks.rebac.entity_registry.EntityRegistry",
+        True,
+    ),
     # ── Brick-level protocols ─────────────────────────────────────────
     (
         "LLMProviderProtocol",
         "nexus.services.protocols.llm_provider",
-        "nexus.llm.provider.LiteLLMProvider",
+        "nexus.bricks.llm.provider.LiteLLMProvider",
         True,
     ),
     (
         "ParseProtocol",
         "nexus.services.protocols.parse",
-        "nexus.parsers.registry.ParserRegistry",
+        "nexus.bricks.parsers.registry.ParserRegistry",
         True,
     ),
     (
         "PaymentProtocol",
         "nexus.services.protocols.payment",
         "nexus.bricks.pay.protocol.X402PaymentProtocol",
+        True,
+    ),
+    # ── Former kernel protocols (Issue #2359: moved to services/protocols/) ──
+    (
+        "PermissionEnforcerProtocol",
+        "nexus.services.protocols.permission_enforcer",
+        "nexus.bricks.rebac.enforcer.PermissionEnforcer",
+        True,
+    ),
+    (
+        "EntityRegistryProtocol",
+        "nexus.services.protocols.entity_registry",
+        "nexus.bricks.rebac.entity_registry.EntityRegistry",
+        True,
+    ),
+    (
+        "WorkspaceManagerProtocol",
+        "nexus.services.protocols.workspace_manager",
+        "nexus.system_services.workspace.workspace_manager.WorkspaceManager",
         True,
     ),
 ]
@@ -321,6 +351,39 @@ def test_service_protocol_compliance(
     assert_protocol_compliance(impl_cls, protocol_cls)
 
 
+def test_rebac_manager_satisfies_manager_methods() -> None:
+    """ReBACManager satisfies the manager-API subset of ReBACBrickProtocol.
+
+    ReBACBrickProtocol includes brick lifecycle methods (initialize, shutdown,
+    verify_imports) that are only implemented by the brick wrapper, not by the
+    underlying ReBACManager. This test verifies manager-level compliance.
+    """
+    from nexus.services.protocols.rebac import ReBACBrickProtocol
+
+    impl_cls = _try_import("nexus.bricks.rebac.manager", "ReBACManager")
+    if impl_cls is None:
+        pytest.skip("Cannot import ReBACManager")
+
+    manager_methods = {
+        "rebac_check",
+        "rebac_write",
+        "rebac_delete",
+        "rebac_expand",
+        "rebac_check_bulk",
+        "rebac_list_objects",
+        "get_zone_revision",
+        "invalidate_zone_graph_cache",
+        "close",
+    }
+
+    proto_methods = _get_protocol_methods(ReBACBrickProtocol)
+    for method_name in manager_methods:
+        assert method_name in proto_methods, f"Protocol missing {method_name}"
+        impl_attr = getattr(impl_cls, method_name, None)
+        assert impl_attr is not None, f"ReBACManager missing {method_name}"
+        assert callable(impl_attr), f"ReBACManager.{method_name} not callable"
+
+
 # =========================================================================
 # Protocol file import cleanliness (Issue #1291)
 # =========================================================================
@@ -330,7 +393,7 @@ _PROTOCOL_FILES: list[tuple[str, str]] = [
     ("auth", "nexus/services/protocols/auth.py"),
     ("delegation", "nexus/services/protocols/delegation.py"),
     ("event_log", "nexus/services/event_log/protocol.py"),
-    ("governance", "nexus/services/governance/protocols.py"),
+    ("governance", "nexus/bricks/governance/protocols.py"),
     ("hook_engine", "nexus/services/protocols/hook_engine.py"),
     ("llm", "nexus/services/protocols/llm.py"),
     ("llm_provider", "nexus/services/protocols/llm_provider.py"),
@@ -359,9 +422,13 @@ _PROTOCOL_FILES: list[tuple[str, str]] = [
     ("vfs_core", "nexus/core/protocols/vfs_core.py"),
     ("caching", "nexus/core/protocols/caching.py"),
     ("connector", "nexus/core/protocols/connector.py"),
-    ("content_service", "nexus/core/protocols/content_service.py"),
-    ("describable", "nexus/core/protocols/describable.py"),
     ("revision_service", "nexus/core/protocols/revision_service.py"),
+    # Issue #2359: Moved protocols to their correct tier locations
+    ("describable", "nexus/contracts/describable.py"),
+    ("wirable_fs", "nexus/contracts/wirable_fs.py"),
+    ("permission_enforcer", "nexus/services/protocols/permission_enforcer.py"),
+    ("entity_registry", "nexus/services/protocols/entity_registry.py"),
+    ("workspace_manager", "nexus/services/protocols/workspace_manager.py"),
 ]
 
 # Leaf modules that are safe to import at module level in protocol files

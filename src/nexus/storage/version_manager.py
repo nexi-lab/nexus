@@ -7,8 +7,6 @@ Provides version tracking and history management:
 - Compare versions (diff)
 """
 
-from __future__ import annotations
-
 import builtins
 import uuid
 from datetime import UTC, datetime
@@ -17,8 +15,8 @@ from typing import Any
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from nexus.core.exceptions import MetadataError
-from nexus.core.metadata import FileMetadata
+from nexus.contracts.exceptions import MetadataError
+from nexus.contracts.metadata import FileMetadata
 from nexus.storage.models import FilePathModel, VersionHistoryModel
 
 

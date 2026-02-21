@@ -3,21 +3,19 @@
 Tests the full flow: register subscription -> event occurs -> WS receives/doesn't.
 """
 
-from __future__ import annotations
-
 from typing import cast
 
 import pytest
 from fastapi import WebSocket
 from helpers.mock_websocket import MockWebSocket
 
-from nexus.core.event_bus import FileEvent
-from nexus.core.reactive_subscriptions import (
+from nexus.server.websocket.manager import WebSocketManager
+from nexus.services.event_subsystem.subscriptions import (
     ReactiveSubscriptionManager,
     Subscription,
 )
-from nexus.core.read_set import ReadSet, ReadSetRegistry
-from nexus.server.websocket.manager import WebSocketManager
+from nexus.services.event_subsystem.types import FileEvent
+from nexus.storage.read_set import ReadSet, ReadSetRegistry
 
 
 class TestReactiveWSIntegration:

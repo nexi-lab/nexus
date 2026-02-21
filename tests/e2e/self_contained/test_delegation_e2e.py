@@ -15,13 +15,13 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from nexus.server.api.v2.routers.delegation import router
-from nexus.services.delegation.models import (
+from nexus.bricks.delegation.models import (
     DelegationMode,
     DelegationRecord,
     DelegationResult,
     DelegationStatus,
 )
+from nexus.server.api.v2.routers.delegation import router
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -245,7 +245,7 @@ class TestCreateDelegation:
 
     def test_escalation_error_returns_403(self, client, mock_delegation_service):
         """EscalationError maps to HTTP 403."""
-        from nexus.services.delegation.errors import EscalationError
+        from nexus.bricks.delegation.errors import EscalationError
 
         mock_delegation_service.delegate.side_effect = EscalationError("not allowed")
         response = client.post(
@@ -261,7 +261,7 @@ class TestCreateDelegation:
 
     def test_chain_error_returns_403(self, client, mock_delegation_service):
         """DelegationChainError maps to HTTP 403."""
-        from nexus.services.delegation.errors import DelegationChainError
+        from nexus.bricks.delegation.errors import DelegationChainError
 
         mock_delegation_service.delegate.side_effect = DelegationChainError("no chains")
         response = client.post(
@@ -276,7 +276,7 @@ class TestCreateDelegation:
 
     def test_depth_exceeded_returns_403(self, client, mock_delegation_service):
         """DepthExceededError maps to HTTP 403 (#1618)."""
-        from nexus.services.delegation.errors import DepthExceededError
+        from nexus.bricks.delegation.errors import DepthExceededError
 
         mock_delegation_service.delegate.side_effect = DepthExceededError("too deep")
         response = client.post(
@@ -291,7 +291,7 @@ class TestCreateDelegation:
 
     def test_invalid_prefix_returns_400(self, client, mock_delegation_service):
         """InvalidPrefixError maps to HTTP 400 (#1618)."""
-        from nexus.services.delegation.errors import InvalidPrefixError
+        from nexus.bricks.delegation.errors import InvalidPrefixError
 
         mock_delegation_service.delegate.side_effect = InvalidPrefixError("bad prefix")
         response = client.post(

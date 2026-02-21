@@ -6,8 +6,6 @@ FUSE filesystem, including mount mode management and lifecycle control.
 Issue #1076: Added automatic cache warmup on mount for faster first access.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import threading
@@ -18,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 from fuse import FUSE
 
 if TYPE_CHECKING:
-    from nexus.core.filesystem import NexusFilesystem
+    from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
 
 from nexus.fuse.operations import NexusFUSEOperations
 
@@ -57,7 +55,7 @@ class NexusFUSE:
 
     def __init__(
         self,
-        nexus_fs: NexusFilesystem,
+        nexus_fs: "NexusFilesystemABC",
         mount_point: str,
         mode: MountMode = MountMode.SMART,
         cache_config: dict[str, int | bool] | None = None,
@@ -152,7 +150,7 @@ class NexusFUSE:
         context = None
         namespace_manager = None
         if self._agent_id is not None:
-            from nexus.core.permissions import OperationContext
+            from nexus.contracts.types import OperationContext
 
             # A4-B: Use sentinel default — only override to "agent" when caller
             # left subject_type at its default value (None sentinel).
@@ -298,7 +296,11 @@ class NexusFUSE:
 
         def warmup_thread() -> None:
             try:
-                from nexus.server.cache_warmer import CacheWarmer, WarmupConfig
+                import importlib as _il
+
+                _cw = _il.import_module("nexus.server.cache_warmer")
+                CacheWarmer = _cw.CacheWarmer
+                WarmupConfig = _cw.WarmupConfig
 
                 logger.info(
                     f"[WARMUP] Starting automatic warmup for mount at / "
@@ -311,7 +313,7 @@ class NexusFUSE:
                     include_content=False,  # Metadata only for fast warmup
                 )
 
-                warmer = CacheWarmer(nexus_fs=self.nexus_fs, config=config)  # type: ignore[arg-type]
+                warmer = CacheWarmer(nexus_fs=self.nexus_fs, config=config)
 
                 # Run async warmup in sync context
                 async def do_warmup() -> Any:
@@ -400,7 +402,7 @@ class NexusFUSE:
         if self._mount_thread and self._mount_thread.is_alive():
             self._mount_thread.join()
 
-    def __enter__(self) -> NexusFUSE:
+    def __enter__(self) -> "NexusFUSE":
         """Context manager entry."""
         return self
 
@@ -414,7 +416,7 @@ class NexusFUSE:
 
 
 def mount_nexus(
-    nexus_fs: NexusFilesystem,
+    nexus_fs: "NexusFilesystemABC",
     mount_point: str,
     mode: str = "smart",
     foreground: bool = True,
@@ -428,7 +430,7 @@ def mount_nexus(
     owner_id: str | None = None,
     zone_id: str | None = None,
     use_rust: bool = False,
-) -> NexusFUSE:
+) -> "NexusFUSE":
     """Convenience function to mount Nexus filesystem.
 
     Args:

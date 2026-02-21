@@ -7,23 +7,18 @@ Provides REST access to the IPC subsystem:
     POST /api/v2/ipc/provision/{agent_id}   — Provision IPC directories for an agent
 """
 
-from __future__ import annotations
-
 import logging
-import re
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from nexus.bricks.ipc.conventions import validate_agent_id
+from nexus.constants import ROOT_ZONE_ID
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/ipc", tags=["ipc"])
-
-# Agent ID validation: alphanumeric, colons, hyphens, underscores, dots.
-# Rejects slashes and other path-traversal characters at the REST boundary.
-_AGENT_ID_RE = re.compile(r"^[a-zA-Z0-9:_\-\.]+$")
-
 
 # ---------------------------------------------------------------------------
 # Lazy imports (avoid circular imports with fastapi_server)
@@ -31,7 +26,7 @@ _AGENT_ID_RE = re.compile(r"^[a-zA-Z0-9:_\-\.]+$")
 
 
 def _get_require_auth() -> Any:
-    from nexus.server.fastapi_server import require_auth
+    from nexus.server.dependencies import require_auth
 
     return require_auth
 
@@ -96,9 +91,10 @@ class ProvisionResponse(BaseModel):
 
 def _validate_agent_id(agent_id: str) -> str:
     """Validate agent_id at the REST boundary — rejects path traversal."""
-    if not _AGENT_ID_RE.match(agent_id):
-        raise HTTPException(status_code=400, detail=f"Invalid agent_id: {agent_id!r}")
-    return agent_id
+    try:
+        return validate_agent_id(agent_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _check_agent_access(auth_result: dict[str, Any], agent_id: str) -> None:
@@ -135,7 +131,7 @@ def _get_ipc_provisioner(request: Request) -> Any:
 
 def _get_zone_id(request: Request) -> str:
     """Get zone_id from app state."""
-    return getattr(request.app.state, "zone_id", None) or "root"
+    return getattr(request.app.state, "zone_id", None) or ROOT_ZONE_ID
 
 
 # ---------------------------------------------------------------------------
@@ -156,8 +152,8 @@ async def send_message(
     and optionally writes an outbox copy for the sender.
     Non-admin callers can only send as themselves (sender must match auth).
     """
-    from nexus.ipc.delivery import MessageSender
-    from nexus.ipc.envelope import MessageEnvelope, MessageType
+    from nexus.bricks.ipc.delivery import MessageSender
+    from nexus.bricks.ipc.envelope import MessageEnvelope, MessageType
 
     _validate_agent_id(body.sender)
     _validate_agent_id(body.recipient)
@@ -203,7 +199,7 @@ async def list_inbox(
     zone_id: str = Depends(_get_zone_id),
 ) -> InboxListResponse:
     """List messages in an agent's inbox. Requires ownership or admin access."""
-    from nexus.ipc.conventions import inbox_path
+    from nexus.bricks.ipc.conventions import inbox_path
 
     _validate_agent_id(agent_id)
     _check_agent_access(auth_result, agent_id)
@@ -228,7 +224,7 @@ async def count_inbox(
     zone_id: str = Depends(_get_zone_id),
 ) -> InboxCountResponse:
     """Count messages in an agent's inbox. Requires ownership or admin access."""
-    from nexus.ipc.conventions import inbox_path
+    from nexus.bricks.ipc.conventions import inbox_path
 
     _validate_agent_id(agent_id)
     _check_agent_access(auth_result, agent_id)

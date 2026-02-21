@@ -11,10 +11,9 @@ For remote servers, commands call the RPC API (add_mount, remove_mount, etc.).
 For local instances, commands interact directly with the NexusFS methods.
 """
 
-from __future__ import annotations
-
 import json
 import sys
+from typing import Any, cast
 
 import click
 
@@ -25,6 +24,7 @@ from nexus.cli.utils import (
     get_filesystem,
     handle_error,
 )
+from nexus.lib.sync_bridge import run_sync
 
 
 @click.group(name="mounts")
@@ -113,22 +113,24 @@ def add_mount(
         # Get filesystem (works with both local and remote)
         nx = get_filesystem(backend_config)
 
-        # Call add_mount - works for both RemoteNexusFS (RPC) and NexusFS (local)
+        # Call add_mount via mount_service (async) with sync bridge
         console.print("[yellow]Adding mount...[/yellow]")
 
         try:
-            mount_id = nx.add_mount(
-                mount_point=mount_point,
-                backend_type=backend_type,
-                backend_config=config_dict,
-                priority=priority,
-                readonly=readonly,
-                io_profile=io_profile,
+            mount_svc = cast(Any, nx).mount_service
+            mount_id = run_sync(
+                mount_svc.add_mount(
+                    mount_point=mount_point,
+                    backend_type=backend_type,
+                    backend_config=config_dict,
+                    priority=priority,
+                    readonly=readonly,
+                    io_profile=io_profile,
+                )
             )
             console.print(f"[green]✓[/green] Mount added successfully (ID: {mount_id})")
         except AttributeError:
-            # Fallback for older NexusFS that doesn't have add_mount
-            # This shouldn't happen in normal usage
+            # Fallback for older NexusFS that doesn't have mount_service
             console.print("[red]Error:[/red] This Nexus instance doesn't support dynamic mounts")
             console.print("[yellow]Hint:[/yellow] Make sure you're using the latest Nexus version")
             sys.exit(1)
@@ -169,12 +171,13 @@ def remove_mount(mount_point: str, backend_config: BackendConfig) -> None:
         # Get filesystem (works with both local and remote)
         nx = get_filesystem(backend_config)
 
-        # Call remove_mount - works for both RemoteNexusFS (RPC) and NexusFS (local)
+        # Call remove_mount via mount_service (async) with sync bridge
         console.print(f"[yellow]Removing mount at {mount_point}...[/yellow]")
 
         try:
-            success = nx.remove_mount(mount_point)
-            if success:
+            mount_svc = cast(Any, nx).mount_service
+            result = run_sync(mount_svc.remove_mount(mount_point))
+            if result.get("removed"):
                 console.print("[green]✓[/green] Mount removed successfully")
             else:
                 console.print(f"[red]Error:[/red] Mount not found: {mount_point}")
@@ -218,9 +221,10 @@ def list_mounts(
         # Get filesystem (works with both local and remote)
         nx = get_filesystem(backend_config)
 
-        # Call list_mounts - works for both RemoteNexusFS (RPC) and NexusFS (local)
+        # Call list_mounts via mount_service (async) with sync bridge
         try:
-            mounts = nx.list_mounts()
+            mount_svc = cast(Any, nx).mount_service
+            mounts = run_sync(mount_svc.list_mounts())
         except AttributeError:
             console.print("[red]Error:[/red] This Nexus instance doesn't support listing mounts")
             console.print("[yellow]Hint:[/yellow] Make sure you're using the latest Nexus version")
@@ -275,9 +279,10 @@ def mount_info(mount_point: str, show_config: bool, backend_config: BackendConfi
         # Get filesystem (works with both local and remote)
         nx = get_filesystem(backend_config)
 
-        # Call get_mount - works for both RemoteNexusFS (RPC) and NexusFS (local)
+        # Call get_mount via mount_service (async) with sync bridge
         try:
-            mount = nx.get_mount(mount_point)
+            mount_svc = cast(Any, nx).mount_service
+            mount = run_sync(mount_svc.get_mount(mount_point))
         except AttributeError:
             console.print("[red]Error:[/red] This Nexus instance doesn't support mount info")
             console.print("[yellow]Hint:[/yellow] Make sure you're using the latest Nexus version")

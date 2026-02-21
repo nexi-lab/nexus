@@ -24,7 +24,8 @@ from _core.constants import (
 )
 
 import nexus
-from nexus.core.permissions import OperationContext
+from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.types import OperationContext
 
 
 def generate_resource_id(resource_type: str, name: str | None = None) -> str:
@@ -77,7 +78,7 @@ def provision_system_resources(nx: Any) -> None:
     context = OperationContext(
         user_id="system",
         groups=[],
-        zone_id="default",
+        zone_id=ROOT_ZONE_ID,
         is_admin=True,
         is_system=False,  # Set to False as is_system may not be fully supported
     )
@@ -95,7 +96,7 @@ def provision_system_resources(nx: Any) -> None:
             subject=("system", "admin"),
             relation="owner-of",
             object=("file", template_path),
-            zone_id="default",
+            zone_id=ROOT_ZONE_ID,
             context=context,
         )
         print(f"  ✓ Created {template_path} with ownership")
@@ -113,7 +114,7 @@ def provision_system_resources(nx: Any) -> None:
             subject=("system", "admin"),
             relation="owner-of",
             object=("file", skill_path),
-            zone_id="default",
+            zone_id=ROOT_ZONE_ID,
             context=context,
         )
         print(f"  ✓ Created {skill_path} with ownership")
@@ -508,7 +509,7 @@ def load_env_file(env_file: str = ".env") -> dict:
     return env_vars
 
 
-def ensure_admin_api_key(zone_id: str = "default", env_file: str = ".env") -> str | None:
+def ensure_admin_api_key(zone_id: str = ROOT_ZONE_ID, env_file: str = ".env") -> str | None:
     """Ensure admin API key exists, loading from .env or creating if needed.
 
     Returns:
@@ -521,8 +522,8 @@ def ensure_admin_api_key(zone_id: str = "default", env_file: str = ".env") -> st
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
-    from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
-    from nexus.rebac.entity_registry import EntityRegistry
+    from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
+    from nexus.bricks.rebac.entity_registry import EntityRegistry
 
     # Load .env
     env_vars = load_env_file(env_file)

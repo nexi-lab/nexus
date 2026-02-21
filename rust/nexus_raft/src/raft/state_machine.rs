@@ -69,6 +69,16 @@ pub enum Command {
         new_ttl_secs: u32,
     },
 
+    /// Compare-and-swap metadata: write only if current version matches.
+    CasSetMetadata {
+        /// The key (typically a file path).
+        key: String,
+        /// The value (serialized metadata).
+        value: Vec<u8>,
+        /// Expected version (0 = create-only).
+        expected_version: u32,
+    },
+
     /// No-op command (used for leader election confirmation).
     Noop,
 }
@@ -84,6 +94,14 @@ pub enum CommandResult {
 
     /// Lock acquisition result.
     LockResult(LockState),
+
+    /// Compare-and-swap result.
+    CasResult {
+        /// Whether the swap succeeded.
+        success: bool,
+        /// Current version after the operation.
+        current_version: u32,
+    },
 
     /// Command failed.
     Error(String),
@@ -504,6 +522,132 @@ impl FullStateMachine {
         Ok(CommandResult::Success)
     }
 
+    /// Apply CasSetMetadata command — atomic compare-and-swap on version.
+    ///
+    /// Reads the current value, extracts its version, and only writes
+    /// if the version matches `expected_version`. All within a single
+    /// redb transaction (via RedbTree's internal write txn).
+    fn apply_cas_set_metadata(
+        &self,
+        key: &str,
+        value: &[u8],
+        expected_version: u32,
+    ) -> Result<CommandResult> {
+        let current = self.metadata.get(key.as_bytes())?;
+        let current_version = match &current {
+            Some(bytes) => Self::extract_version(bytes),
+            None => 0,
+        };
+
+        if current_version != expected_version {
+            return Ok(CommandResult::CasResult {
+                success: false,
+                current_version,
+            });
+        }
+
+        // Version matches — write the new value
+        self.metadata.set(key.as_bytes(), value)?;
+
+        // The new version is embedded in `value` (serialized by Python).
+        // Return expected_version + 1 as a hint, but the authoritative
+        // version is in the serialized bytes.
+        Ok(CommandResult::CasResult {
+            success: true,
+            current_version: expected_version + 1,
+        })
+    }
+
+    /// Extract the version field from serialized FileMetadata.
+    ///
+    /// Supports both protobuf (field 9, varint) and JSON formats.
+    /// Returns 0 if extraction fails (treat as "never written").
+    fn extract_version(bytes: &[u8]) -> u32 {
+        // Try protobuf first: field 9 = tag (9 << 3 | 0) = 72 = 0x48
+        // Scan for tag byte 0x48 followed by a varint
+        let mut i = 0;
+        while i < bytes.len() {
+            let tag_byte = bytes[i];
+            let field_number = tag_byte >> 3;
+            let wire_type = tag_byte & 0x07;
+
+            if field_number == 9 && wire_type == 0 {
+                // Found version field — decode varint
+                i += 1;
+                if i < bytes.len() {
+                    return Self::decode_varint(&bytes[i..]) as u32;
+                }
+            }
+
+            // Skip to next field based on wire type
+            i += 1;
+            match wire_type {
+                0 => {
+                    // Varint: skip bytes with MSB set
+                    while i < bytes.len() && bytes[i] & 0x80 != 0 {
+                        i += 1;
+                    }
+                    i += 1; // skip final byte
+                }
+                1 => i += 8, // 64-bit
+                2 => {
+                    // Length-delimited
+                    let (len, consumed) = Self::decode_varint_with_len(&bytes[i..]);
+                    i += consumed + len as usize;
+                }
+                5 => i += 4, // 32-bit
+                _ => break,  // unknown wire type
+            }
+        }
+
+        // Protobuf extraction failed — try JSON fallback
+        if let Ok(text) = std::str::from_utf8(bytes) {
+            if let Some(pos) = text.find("\"version\"") {
+                // Simple JSON extraction: find "version": <number>
+                let after = &text[pos + 9..];
+                if let Some(colon) = after.find(':') {
+                    let num_str = after[colon + 1..].trim_start();
+                    let end = num_str
+                        .find(|c: char| !c.is_ascii_digit())
+                        .unwrap_or(num_str.len());
+                    if let Ok(v) = num_str[..end].parse::<u32>() {
+                        return v;
+                    }
+                }
+            }
+        }
+
+        0 // default: treat as never written
+    }
+
+    /// Decode a protobuf varint from bytes.
+    fn decode_varint(bytes: &[u8]) -> u64 {
+        let mut result: u64 = 0;
+        let mut shift = 0u32;
+        for &byte in bytes {
+            result |= ((byte & 0x7F) as u64) << shift;
+            if byte & 0x80 == 0 {
+                break;
+            }
+            shift += 7;
+        }
+        result
+    }
+
+    /// Decode a protobuf varint and return (value, bytes_consumed).
+    fn decode_varint_with_len(bytes: &[u8]) -> (u64, usize) {
+        let mut result: u64 = 0;
+        let mut shift = 0u32;
+        for (i, &byte) in bytes.iter().enumerate() {
+            result |= ((byte & 0x7F) as u64) << shift;
+            if byte & 0x80 == 0 {
+                return (result, i + 1);
+            }
+            shift += 7;
+        }
+        (result, bytes.len())
+    }
+
     /// Apply DeleteMetadata command.
     fn apply_delete_metadata(&self, key: &str) -> Result<CommandResult> {
         self.metadata.delete(key.as_bytes())?;
@@ -723,6 +867,11 @@ impl FullStateMachine {
     fn execute(&self, command: &Command) -> Result<CommandResult> {
         match command {
             Command::SetMetadata { key, value } => self.apply_set_metadata(key, value),
+            Command::CasSetMetadata {
+                key,
+                value,
+                expected_version,
+            } => self.apply_cas_set_metadata(key, value, *expected_version),
             Command::DeleteMetadata { key } => self.apply_delete_metadata(key),
             Command::AcquireLock {
                 path,
@@ -745,7 +894,9 @@ impl FullStateMachine {
 impl StateMachine for FullStateMachine {
     fn apply_local(&mut self, command: &Command) -> Result<CommandResult> {
         match command {
-            Command::SetMetadata { .. } | Command::DeleteMetadata { .. } => self.execute(command),
+            Command::SetMetadata { .. }
+            | Command::CasSetMetadata { .. }
+            | Command::DeleteMetadata { .. } => self.execute(command),
             _ => Err(super::RaftError::InvalidState(
                 "Only metadata operations (set/delete) support EC local writes".into(),
             )),
@@ -1343,5 +1494,165 @@ mod tests {
         );
         // The metadata should NOT be set (skipped due to idempotency)
         assert!(sm.get_metadata("/test/dup").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_cas_set_metadata_create_new() {
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+
+        // CAS create: expected_version=0, key does not exist → success
+        let cmd = Command::CasSetMetadata {
+            key: "/cas/new.txt".into(),
+            value: b"data-v1".to_vec(),
+            expected_version: 0,
+        };
+        let result = sm.apply(1, &cmd).unwrap();
+        if let CommandResult::CasResult {
+            success,
+            current_version,
+        } = result
+        {
+            assert!(success, "CAS create should succeed");
+            assert_eq!(current_version, 1);
+        } else {
+            panic!("Expected CasResult");
+        }
+
+        // Verify data was written
+        assert_eq!(
+            sm.get_metadata("/cas/new.txt").unwrap(),
+            Some(b"data-v1".to_vec())
+        );
+    }
+
+    #[test]
+    fn test_cas_set_metadata_version_mismatch() {
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+
+        // Write initial data
+        sm.apply(
+            1,
+            &Command::SetMetadata {
+                key: "/cas/file.txt".into(),
+                value: b"initial".to_vec(),
+            },
+        )
+        .unwrap();
+
+        // CAS with wrong expected_version → failure
+        let cmd = Command::CasSetMetadata {
+            key: "/cas/file.txt".into(),
+            value: b"updated".to_vec(),
+            expected_version: 5, // wrong version
+        };
+        let result = sm.apply(2, &cmd).unwrap();
+        if let CommandResult::CasResult {
+            success,
+            current_version,
+        } = result
+        {
+            assert!(!success, "CAS should fail on version mismatch");
+            // current_version depends on what extract_version returns for raw bytes
+            assert_eq!(current_version, 0); // raw bytes without protobuf → 0
+        } else {
+            panic!("Expected CasResult");
+        }
+
+        // Verify data was NOT overwritten
+        assert_eq!(
+            sm.get_metadata("/cas/file.txt").unwrap(),
+            Some(b"initial".to_vec())
+        );
+    }
+
+    #[test]
+    fn test_cas_set_metadata_create_exists() {
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+
+        // Write initial data with a version field (JSON format, version=1)
+        let json_data = br#"{"path":"/cas/exists.txt","version":1,"size":6}"#;
+        sm.apply(
+            1,
+            &Command::SetMetadata {
+                key: "/cas/exists.txt".into(),
+                value: json_data.to_vec(),
+            },
+        )
+        .unwrap();
+
+        // CAS create (expected_version=0) when file already exists with version=1 → failure
+        let cmd = Command::CasSetMetadata {
+            key: "/cas/exists.txt".into(),
+            value: b"new-data".to_vec(),
+            expected_version: 0,
+        };
+        let result = sm.apply(2, &cmd).unwrap();
+        if let CommandResult::CasResult {
+            success,
+            current_version,
+        } = result
+        {
+            assert!(!success, "CAS create should fail when file exists");
+            assert_eq!(current_version, 1);
+        } else {
+            panic!("Expected CasResult");
+        }
+
+        // Verify data was NOT overwritten
+        assert_eq!(
+            sm.get_metadata("/cas/exists.txt").unwrap(),
+            Some(json_data.to_vec())
+        );
+    }
+
+    #[test]
+    fn test_cas_set_metadata_json_version_extraction() {
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+
+        // Write JSON metadata with version field
+        let json_data = br#"{"path":"/test","version":3,"size":100}"#;
+        sm.apply(
+            1,
+            &Command::SetMetadata {
+                key: "/cas/json.txt".into(),
+                value: json_data.to_vec(),
+            },
+        )
+        .unwrap();
+
+        // CAS with correct version → success
+        let cmd = Command::CasSetMetadata {
+            key: "/cas/json.txt".into(),
+            value: br#"{"path":"/test","version":4,"size":200}"#.to_vec(),
+            expected_version: 3,
+        };
+        let result = sm.apply(2, &cmd).unwrap();
+        if let CommandResult::CasResult { success, .. } = result {
+            assert!(success, "CAS should succeed with correct JSON version");
+        } else {
+            panic!("Expected CasResult");
+        }
+
+        // CAS with wrong version → failure
+        let cmd2 = Command::CasSetMetadata {
+            key: "/cas/json.txt".into(),
+            value: br#"{"path":"/test","version":5,"size":300}"#.to_vec(),
+            expected_version: 3, // stale — actual is 4 now
+        };
+        let result = sm.apply(3, &cmd2).unwrap();
+        if let CommandResult::CasResult {
+            success,
+            current_version,
+        } = result
+        {
+            assert!(!success, "CAS should fail with stale version");
+            assert_eq!(current_version, 4);
+        } else {
+            panic!("Expected CasResult");
+        }
     }
 }

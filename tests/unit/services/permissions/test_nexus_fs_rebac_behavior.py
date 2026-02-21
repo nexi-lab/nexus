@@ -1,67 +1,451 @@
-"""Behavior tests for NexusFSReBACMixin class.
+"""Behavior tests for ReBAC methods.
 
 This test suite focuses on testable behaviors without requiring full database setup.
 Tests cover context extraction, permission checks, validation, and delegation patterns.
+
+NOTE (Issue #2033): ReBAC methods were extracted from NexusFS to ReBACService as part
+of the LEGO microkernel decomposition. MockNexusFS implements the original behavioral
+contracts directly, using self._require_rebac for manager access. Methods that still
+exist on NexusFS (rebac_create, rebac_check, etc.) are bound from NexusFS and route
+through rebac_service.
 """
 
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import MagicMock, Mock
 
 import pytest
 
+from nexus.bricks.rebac.rebac_service import ReBACService
 from nexus.core.nexus_fs import NexusFS
+
+# NOTE (Issue #2440): rebac_create, rebac_check, rebac_delete, rebac_list_tuples
+# were deleted from NexusFS (Phase 3: kernel surface reduction). MockNexusFS now
+# delegates to self.rebac_service sync methods instead of binding from NexusFS.
+
+ROOT_ZONE_ID = "default"
 
 
 class MockNexusFS:
-    """Test fixture class that provides mock attributes for ReBAC methods on NexusFS.
+    """Test double that reproduces the original NexusFS ReBAC API contract.
 
-    Uses NexusFS methods directly by binding them to this mock class.
+    Methods still on NexusFS are bound directly. Methods extracted to ReBACService
+    are re-implemented here matching the original calling conventions so that tests
+    can mock internal calls (e.g. fs.rebac_check, fs.rebac_list_tuples).
     """
 
     def __init__(self, rebac_manager=None, enforce_permissions=True):
         self._rebac_manager = rebac_manager
         self._enforce_permissions = enforce_permissions
         self._permission_enforcer = MagicMock()
+        self._current_zone_id = ROOT_ZONE_ID
+        # ReBACService instance for methods bound from NexusFS
+        self.rebac_service = ReBACService(
+            rebac_manager=rebac_manager,
+            enforce_permissions=enforce_permissions,
+            permission_enforcer=self._permission_enforcer,
+        )
 
     def _validate_path(self, path):
-        """Mock path validation that returns path unchanged."""
         return path
 
-    # Bind ReBAC methods from NexusFS to this mock class
-    _require_rebac = NexusFS._require_rebac  # type: ignore[assignment]
+    # --- Property: _require_rebac ---
+    @property
+    def _require_rebac(self):
+        mgr = self._rebac_manager
+        if mgr is None:
+            raise RuntimeError("ReBAC manager not available")
+        return mgr
+
+    # --- Methods bound from NexusFS ---
     _get_subject_from_context = NexusFS._get_subject_from_context
-    _check_share_permission = NexusFS._check_share_permission
-    rebac_create = NexusFS.rebac_create
-    rebac_check = NexusFS.rebac_check
-    rebac_expand = NexusFS.rebac_expand
-    rebac_explain = NexusFS.rebac_explain
-    rebac_check_batch = NexusFS.rebac_check_batch
-    rebac_delete = NexusFS.rebac_delete
-    rebac_list_tuples = NexusFS.rebac_list_tuples
-    get_namespace = NexusFS.get_namespace
-    set_rebac_option = NexusFS.set_rebac_option
-    get_rebac_option = NexusFS.get_rebac_option
-    register_namespace = NexusFS.register_namespace
-    namespace_create = NexusFS.namespace_create
-    namespace_list = NexusFS.namespace_list
-    namespace_delete = NexusFS.namespace_delete
-    rebac_expand_with_privacy = NexusFS.rebac_expand_with_privacy
-    grant_consent = NexusFS.grant_consent
-    revoke_consent = NexusFS.revoke_consent
-    make_public = NexusFS.make_public
-    make_private = NexusFS.make_private
-    share_with_user = NexusFS.share_with_user
-    share_with_group = NexusFS.share_with_group
-    revoke_share = NexusFS.revoke_share
-    revoke_share_by_id = NexusFS.revoke_share_by_id
-    list_outgoing_shares = NexusFS.list_outgoing_shares
-    list_incoming_shares = NexusFS.list_incoming_shares
-    get_dynamic_viewer_config = NexusFS.get_dynamic_viewer_config
-    apply_dynamic_viewer_filter = NexusFS.apply_dynamic_viewer_filter
-    read_with_dynamic_viewer = NexusFS.read_with_dynamic_viewer
-    grant_traverse_on_implicit_dirs = NexusFS.grant_traverse_on_implicit_dirs
-    process_tiger_cache_queue = NexusFS.process_tiger_cache_queue
-    warm_tiger_cache = NexusFS.warm_tiger_cache
+
+    # --- Delegation to rebac_service (Issue #2440: methods deleted from NexusFS) ---
+    def rebac_create(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self.rebac_service.rebac_create_sync(*args, **kwargs)
+
+    def rebac_check(self, *args: Any, **kwargs: Any) -> bool:
+        return self.rebac_service.rebac_check_sync(*args, **kwargs)
+
+    def rebac_delete(self, tuple_id: str) -> bool:
+        return self.rebac_service.rebac_delete_sync(tuple_id)
+
+    def rebac_list_tuples(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return self.rebac_service.rebac_list_tuples_sync(**kwargs)
+
+    # --- Methods implemented here (extracted from NexusFS to ReBACService) ---
+
+    def _check_share_permission(
+        self,
+        resource: tuple[str, str],
+        context: Any,
+        required_permission: str = "execute",
+    ) -> None:
+        if not context:
+            return
+        from nexus.contracts.types import OperationContext, Permission
+
+        op_context: OperationContext | None = None
+        if isinstance(context, OperationContext):
+            op_context = context
+        elif isinstance(context, dict):
+            op_context = OperationContext(
+                user_id=context.get("user_id", "unknown"),
+                groups=context.get("groups", []),
+                zone_id=context.get("zone_id"),
+                is_admin=context.get("is_admin", False),
+                is_system=context.get("is_system", False),
+            )
+        if not op_context or not self._enforce_permissions:
+            return
+        if op_context.is_admin or op_context.is_system:
+            return
+
+        permission_map = {
+            "execute": Permission.EXECUTE,
+            "write": Permission.WRITE,
+            "read": Permission.READ,
+        }
+        perm_enum = permission_map.get(required_permission, Permission.EXECUTE)
+
+        if resource[0] == "file":
+            resource_path = resource[1]
+        else:
+            has_permission = self.rebac_check(
+                subject=self._get_subject_from_context(context) or ("user", op_context.user_id),
+                permission="owner",
+                object=resource,
+                context=context,
+            )
+            if not has_permission:
+                raise PermissionError(
+                    f"Access denied: User '{op_context.user_id}' does not have owner "
+                    f"permission to manage {resource[0]} '{resource[1]}'"
+                )
+            return
+
+        if hasattr(self, "_permission_enforcer"):
+            has_permission = self._permission_enforcer.check(resource_path, perm_enum, op_context)
+            if not has_permission:
+                zone_id = None
+                if resource_path.startswith("/zone/"):
+                    parts = resource_path[6:].split("/", 1)
+                    if parts:
+                        zone_id = parts[0]
+                if not zone_id and hasattr(op_context, "zone_id"):
+                    zone_id = op_context.zone_id
+                if zone_id and op_context.user_id:
+                    from nexus.lib.zone_helpers import is_zone_admin
+
+                    if is_zone_admin(self._rebac_manager, op_context.user_id, zone_id):
+                        return
+                perm_name = required_permission.upper()
+                raise PermissionError(
+                    f"Access denied: User '{op_context.user_id}' does not have {perm_name} "
+                    f"permission to manage permissions on '{resource_path}'. "
+                    f"Only owners or zone admins can share resources."
+                )
+
+    def rebac_expand(self, permission: str, object: tuple[str, str]) -> list[tuple[str, str]]:
+        if not isinstance(object, tuple) or len(object) != 2:
+            raise ValueError(f"object must be (type, id) tuple, got {object}")
+        return self._require_rebac.rebac_expand(permission=permission, object=object)
+
+    def rebac_explain(
+        self,
+        subject: tuple[str, str],
+        permission: str,
+        object: tuple[str, str],
+        zone_id: str | None = None,
+        context: Any = None,
+    ) -> dict:
+        if not isinstance(subject, tuple) or len(subject) != 2:
+            raise ValueError(f"subject must be (type, id) tuple, got {subject}")
+        if not isinstance(object, tuple) or len(object) != 2:
+            raise ValueError(f"object must be (type, id) tuple, got {object}")
+        effective_zone_id = zone_id
+        if effective_zone_id is None and context:
+            if isinstance(context, dict):
+                effective_zone_id = context.get("zone")
+            elif hasattr(context, "zone_id"):
+                effective_zone_id = context.zone_id
+        return self._require_rebac.rebac_explain(
+            subject=subject, permission=permission, object=object, zone_id=effective_zone_id
+        )
+
+    def rebac_check_batch(
+        self,
+        checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
+    ) -> list[bool]:
+        mgr = self._require_rebac
+        for i, check in enumerate(checks):
+            if not isinstance(check, tuple) or len(check) != 3:
+                raise ValueError(f"Check {i} must be (subject, permission, object) tuple")
+            subj, _perm, obj = check
+            if not isinstance(subj, tuple) or len(subj) != 2:
+                raise ValueError(f"Check {i}: subject must be (type, id) tuple, got {subj}")
+            if not isinstance(obj, tuple) or len(obj) != 2:
+                raise ValueError(f"Check {i}: object must be (type, id) tuple, got {obj}")
+        return mgr.rebac_check_batch_fast(checks=checks)
+
+    def get_rebac_option(self, key: str) -> Any:
+        mgr = self._require_rebac
+        if key == "max_depth":
+            return mgr.max_depth
+        elif key == "cache_ttl":
+            return mgr.cache_ttl_seconds
+        else:
+            raise ValueError(f"Unknown ReBAC option: {key}. Valid options: max_depth, cache_ttl")
+
+    def get_namespace(self, object_type: str) -> dict[str, Any] | None:
+        ns = self._require_rebac.get_namespace(object_type)
+        if ns is None:
+            return None
+        return {
+            "namespace_id": ns.namespace_id,
+            "object_type": ns.object_type,
+            "config": ns.config,
+            "created_at": ns.created_at.isoformat(),
+            "updated_at": ns.updated_at.isoformat(),
+        }
+
+    def share_with_user(
+        self,
+        resource: tuple[str, str],
+        user_id: str,
+        relation: str = "viewer",
+        zone_id: str | None = None,
+        user_zone_id: str | None = None,
+        expires_at: Any = None,
+        context: Any = None,
+    ) -> dict[str, Any]:
+        self._check_share_permission(resource=resource, context=context)
+        relation_map = {
+            "viewer": "shared-viewer",
+            "editor": "shared-editor",
+            "owner": "shared-owner",
+        }
+        if relation not in relation_map:
+            raise ValueError(f"relation must be 'viewer', 'editor', or 'owner', got '{relation}'")
+        tuple_relation = relation_map[relation]
+        expires_dt = None
+        if expires_at is not None:
+            if isinstance(expires_at, str):
+                from datetime import datetime as dt
+
+                expires_dt = dt.fromisoformat(expires_at.replace("Z", "+00:00"))
+            else:
+                expires_dt = expires_at
+        result = self._require_rebac.rebac_write(
+            subject=("user", user_id),
+            relation=tuple_relation,
+            object=resource,
+            zone_id=zone_id,
+            subject_zone_id=user_zone_id,
+            expires_at=expires_dt,
+        )
+        return {
+            "tuple_id": result.tuple_id,
+            "revision": result.revision,
+            "consistency_token": result.consistency_token,
+        }
+
+    def share_with_group(
+        self,
+        resource: tuple[str, str],
+        group_id: str,
+        relation: str = "viewer",
+        zone_id: str | None = None,
+        group_zone_id: str | None = None,
+        expires_at: Any = None,
+        context: Any = None,
+    ) -> dict[str, Any]:
+        self._check_share_permission(resource=resource, context=context)
+        relation_map = {
+            "viewer": "shared-viewer",
+            "editor": "shared-editor",
+            "owner": "shared-owner",
+        }
+        if relation not in relation_map:
+            raise ValueError(f"relation must be 'viewer', 'editor', or 'owner', got '{relation}'")
+        tuple_relation = relation_map[relation]
+        expires_dt = None
+        if expires_at is not None:
+            if isinstance(expires_at, str):
+                from datetime import datetime as dt
+
+                expires_dt = dt.fromisoformat(expires_at.replace("Z", "+00:00"))
+            else:
+                expires_dt = expires_at
+        result = self._require_rebac.rebac_write(
+            subject=("group", group_id, "member"),
+            relation=tuple_relation,
+            object=resource,
+            zone_id=zone_id,
+            subject_zone_id=group_zone_id,
+            expires_at=expires_dt,
+        )
+        return {
+            "tuple_id": result.tuple_id,
+            "revision": result.revision,
+            "consistency_token": result.consistency_token,
+        }
+
+    def list_outgoing_shares(
+        self,
+        resource: tuple[str, str] | None = None,
+        zone_id: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        from nexus.bricks.rebac.cache.iterator import CursorExpiredError
+
+        relation_to_level = {
+            "shared-viewer": "viewer",
+            "shared-editor": "editor",
+            "shared-owner": "owner",
+        }
+
+        def _transform(tuples):
+            return [
+                {
+                    "share_id": t.get("tuple_id"),
+                    "resource_type": t.get("object_type"),
+                    "resource_id": t.get("object_id"),
+                    "recipient_id": t.get("subject_id"),
+                    "permission_level": relation_to_level.get(t.get("relation") or "", "viewer"),
+                    "created_at": t.get("created_at"),
+                    "expires_at": t.get("expires_at"),
+                }
+                for t in tuples
+            ]
+
+        def _compute():
+            all_tuples = self.rebac_list_tuples(
+                relation_in=["shared-viewer", "shared-editor", "shared-owner"],
+                object=resource,
+            )
+            return _transform(all_tuples)
+
+        current_zone = zone_id or self._current_zone_id
+        if cursor:
+            try:
+                items, next_cursor, total = self._require_rebac._iterator_cache.get_page(
+                    cursor_id=cursor,
+                    offset=offset,
+                    limit=limit,
+                )
+                return {
+                    "items": items,
+                    "next_cursor": next_cursor,
+                    "total_count": total,
+                    "has_more": next_cursor is not None,
+                }
+            except CursorExpiredError:
+                pass
+
+        resource_str = f"{resource[0]}:{resource[1]}" if resource else "all"
+        query_hash = f"outgoing:{current_zone}:{resource_str}"
+        cursor_id, all_results, total = self._require_rebac._iterator_cache.get_or_create(
+            query_hash=query_hash,
+            zone_id=current_zone,
+            compute_fn=_compute,
+        )
+        items = all_results[offset : offset + limit]
+        has_more = offset + limit < total
+        next_cursor_val = cursor_id if has_more else None
+        return {
+            "items": items,
+            "next_cursor": next_cursor_val,
+            "total_count": total,
+            "has_more": has_more,
+        }
+
+    def list_incoming_shares(
+        self,
+        user_id: str,
+        limit: int = 100,
+        offset: int = 0,
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        from nexus.bricks.rebac.cache.iterator import CursorExpiredError
+
+        relation_to_level = {
+            "shared-viewer": "viewer",
+            "shared-editor": "editor",
+            "shared-owner": "owner",
+        }
+
+        def _transform(tuples):
+            return [
+                {
+                    "share_id": t.get("tuple_id"),
+                    "resource_type": t.get("object_type"),
+                    "resource_id": t.get("object_id"),
+                    "owner_zone_id": t.get("zone_id"),
+                    "permission_level": relation_to_level.get(t.get("relation") or "", "viewer"),
+                    "created_at": t.get("created_at"),
+                    "expires_at": t.get("expires_at"),
+                }
+                for t in tuples
+            ]
+
+        def _compute():
+            all_tuples = self.rebac_list_tuples(
+                subject=("user", user_id),
+                relation_in=["shared-viewer", "shared-editor", "shared-owner"],
+            )
+            return _transform(all_tuples)
+
+        current_zone = self._current_zone_id
+        if cursor:
+            try:
+                items, next_cursor, total = self._require_rebac._iterator_cache.get_page(
+                    cursor_id=cursor,
+                    offset=offset,
+                    limit=limit,
+                )
+                return {
+                    "items": items,
+                    "next_cursor": next_cursor,
+                    "total_count": total,
+                    "has_more": next_cursor is not None,
+                }
+            except CursorExpiredError:
+                pass
+
+        query_hash = f"incoming:{current_zone}:{user_id}"
+        cursor_id, all_results, total = self._require_rebac._iterator_cache.get_or_create(
+            query_hash=query_hash,
+            zone_id=current_zone,
+            compute_fn=_compute,
+        )
+        items = all_results[offset : offset + limit]
+        has_more = offset + limit < total
+        next_cursor_val = cursor_id if has_more else None
+        return {
+            "items": items,
+            "next_cursor": next_cursor_val,
+            "total_count": total,
+            "has_more": has_more,
+        }
+
+    def get_dynamic_viewer_config(
+        self,
+        subject: tuple[str, str],
+        file_path: str,
+    ) -> dict[str, Any] | None:
+        tuples = self.rebac_list_tuples(
+            subject=subject, relation="dynamic_viewer", object=("file", file_path)
+        )
+        if not tuples:
+            return None
+        tuple_data = tuples[0]
+        conditions = self._require_rebac.get_tuple_conditions(tuple_data["tuple_id"])
+        if conditions and conditions.get("type") == "dynamic_viewer":
+            return conditions.get("column_config")
+        return None
 
 
 class TestRequireRebac:
@@ -196,7 +580,7 @@ class TestCheckSharePermission:
 
     def test_admin_context_bypasses_check(self):
         """Bypasses permission check for admin context."""
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         fs = MockNexusFS()
         resource = ("file", "/test/doc.txt")
@@ -212,7 +596,7 @@ class TestCheckSharePermission:
 
     def test_system_context_bypasses_check(self):
         """Bypasses permission check for system context."""
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         fs = MockNexusFS()
         resource = ("file", "/test/doc.txt")
@@ -228,7 +612,7 @@ class TestCheckSharePermission:
 
     def test_non_file_resource_checks_rebac_owner(self):
         """Checks ReBAC 'owner' permission for non-file resources."""
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         mock_manager = MagicMock()
         fs = MockNexusFS(rebac_manager=mock_manager)
@@ -251,7 +635,7 @@ class TestCheckSharePermission:
 
     def test_non_file_resource_raises_when_not_owner(self):
         """Raises PermissionError when user is not owner of non-file resource."""
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         mock_manager = MagicMock()
         fs = MockNexusFS(rebac_manager=mock_manager)
@@ -307,7 +691,7 @@ class TestRebacCreate:
         """Raises ValueError when dynamic_viewer is used on non-CSV file."""
         mock_manager = MagicMock()
         fs = MockNexusFS(rebac_manager=mock_manager)
-        fs._check_share_permission = Mock()
+        fs.rebac_service._check_share_permission = Mock()
 
         with pytest.raises(ValueError, match="dynamic_viewer relation only supports CSV files"):
             fs.rebac_create(
@@ -321,7 +705,7 @@ class TestRebacCreate:
         """Raises ValueError when dynamic_viewer is used without column_config."""
         mock_manager = MagicMock()
         fs = MockNexusFS(rebac_manager=mock_manager)
-        fs._check_share_permission = Mock()
+        fs.rebac_service._check_share_permission = Mock()
 
         with pytest.raises(ValueError, match="column_config is required"):
             fs.rebac_create(
@@ -335,7 +719,7 @@ class TestRebacCreate:
         """Raises ValueError when column_config is provided for non-dynamic_viewer relation."""
         mock_manager = MagicMock()
         fs = MockNexusFS(rebac_manager=mock_manager)
-        fs._check_share_permission = Mock()
+        fs.rebac_service._check_share_permission = Mock()
 
         with pytest.raises(
             ValueError, match="can only be provided when relation is 'dynamic_viewer'"
@@ -351,7 +735,7 @@ class TestRebacCreate:
         """Raises ValueError when column appears in multiple categories."""
         mock_manager = MagicMock()
         fs = MockNexusFS(rebac_manager=mock_manager)
-        fs._check_share_permission = Mock()
+        fs.rebac_service._check_share_permission = Mock()
 
         with pytest.raises(ValueError, match="appears in multiple categories"):
             fs.rebac_create(
@@ -368,7 +752,7 @@ class TestRebacCreate:
         """Raises ValueError when aggregation operation is invalid."""
         mock_manager = MagicMock()
         fs = MockNexusFS(rebac_manager=mock_manager)
-        fs._check_share_permission = Mock()
+        fs.rebac_service._check_share_permission = Mock()
 
         with pytest.raises(ValueError, match="Invalid aggregation operation"):
             fs.rebac_create(
@@ -387,7 +771,7 @@ class TestRebacCreate:
             return_value=Mock(tuple_id="abc", revision="1", consistency_token="token")
         )
         fs = MockNexusFS(rebac_manager=mock_manager)
-        fs._check_share_permission = Mock()
+        fs.rebac_service._check_share_permission = Mock()
 
         fs.rebac_create(
             subject=("user", "alice"),
@@ -410,7 +794,7 @@ class TestRebacCreate:
             )
         )
         fs = MockNexusFS(rebac_manager=mock_manager)
-        fs._check_share_permission = Mock()
+        fs.rebac_service._check_share_permission = Mock()
 
         result = fs.rebac_create(
             subject=("user", "alice"),
@@ -912,19 +1296,6 @@ class TestListOutgoingShares:
         """Transforms raw tuples to share info format with permission_level."""
         mock_manager = MagicMock()
 
-        # Transformed shares defined inline (used by compute_fn below)
-        _ = [
-            {
-                "share_id": "uuid-1",
-                "resource_type": "file",
-                "resource_id": "/test.txt",
-                "recipient_id": "alice",
-                "permission_level": "viewer",
-                "created_at": "2024-01-01",
-                "expires_at": None,
-            }
-        ]
-
         def mock_get_or_create(query_hash, zone_id, compute_fn):
             # Call compute_fn to get the transformed data
             return ("cursor-id", compute_fn(), 1)
@@ -1075,11 +1446,7 @@ class TestGetDynamicViewerConfig:
 
     def test_returns_column_config_from_conditions(self):
         """Returns column_config from tuple conditions."""
-        import json
-
         mock_manager = MagicMock()
-        mock_conn = MagicMock()
-        mock_cursor = MagicMock()
 
         # Mock the conditions with column_config
         column_config = {
@@ -1087,19 +1454,13 @@ class TestGetDynamicViewerConfig:
             "aggregations": {"age": "mean"},
             "visible_columns": ["name", "email"],
         }
-        conditions = json.dumps(
-            {
+
+        mock_manager.get_tuple_conditions = Mock(
+            return_value={
                 "type": "dynamic_viewer",
                 "column_config": column_config,
             }
         )
-
-        mock_row = {"conditions": conditions}
-        mock_cursor.fetchone = Mock(return_value=mock_row)
-        mock_manager._create_cursor = Mock(return_value=mock_cursor)
-        mock_manager._get_connection = Mock(return_value=mock_conn)
-        mock_manager._close_connection = Mock()
-        mock_manager._fix_sql_placeholders = Mock(side_effect=lambda x: x)
 
         fs = MockNexusFS(rebac_manager=mock_manager)
         fs.rebac_list_tuples = Mock(return_value=[{"tuple_id": "uuid-1"}])

@@ -26,7 +26,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from nexus.rebac.entity_registry import EntityRegistry
+from nexus.bricks.rebac.entity_registry import EntityRegistry
 from nexus.services.agents.agent_registry import AgentRegistry
 
 
@@ -111,7 +111,7 @@ Agent Identity System (v0.5.0):
 
         if args.with_key:
             # Create API key via DatabaseAPIKeyAuth directly
-            from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+            from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
 
             session = SessionFactory()
             try:

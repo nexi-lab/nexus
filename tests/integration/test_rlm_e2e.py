@@ -9,15 +9,13 @@ validating:
 - X-API-Version header is present on v2 responses
 """
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from nexus.rlm.types import RLMInferenceResult, RLMStatus, SSEEvent, SSEEventType
+from nexus.bricks.rlm.types import RLMInferenceResult, RLMStatus, SSEEvent, SSEEventType
 from nexus.server.api.v2.routers.rlm import router
 from nexus.server.api.v2.versioning import VersionHeaderMiddleware
 from nexus.server.dependencies import require_auth
@@ -25,7 +23,6 @@ from nexus.server.dependencies import require_auth
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
 
 _auth_result = {"authenticated": True, "is_admin": False, "subject_id": "test-user"}
 

@@ -14,8 +14,6 @@ Run:
     pytest tests/integration/test_memory_paging_postgres.py -v
 """
 
-from __future__ import annotations
-
 import shutil
 import tempfile
 from typing import Any
@@ -23,6 +21,8 @@ from typing import Any
 import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
+
+from nexus.constants import ROOT_ZONE_ID
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -72,7 +72,7 @@ def _set_env(monkeypatch):
 @pytest.fixture
 def api_keys(pg_session_factory):
     """Create admin + normal API keys via DatabaseAPIKeyAuth."""
-    from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+    from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
 
     with pg_session_factory() as session:
         admin_key_id, admin_raw = DatabaseAPIKeyAuth.create_key(
@@ -110,9 +110,9 @@ def api_keys(pg_session_factory):
 @pytest.fixture
 def app(tmp_path, pg_engine, pg_session_factory, api_keys):
     """FastAPI app with PostgreSQL, permissions enabled, database auth."""
-    from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
-    from nexus.auth.providers.discriminator import DiscriminatingAuthProvider
     from nexus.backends.local import LocalBackend
+    from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
+    from nexus.bricks.auth.providers.discriminator import DiscriminatingAuthProvider
     from nexus.core.config import MemoryConfig, PermissionConfig
     from nexus.core.nexus_fs import NexusFS
     from nexus.server.fastapi_server import create_app
@@ -123,7 +123,7 @@ def app(tmp_path, pg_engine, pg_session_factory, api_keys):
     # In-memory metadata store (same stub as in fastapi e2e test)
     from collections.abc import Sequence
 
-    from nexus.core.metadata import FileMetadata, PaginatedResult
+    from nexus.contracts.metadata import FileMetadata, PaginatedResult
     from nexus.core.metastore import MetastoreABC
 
     class InMemoryMetadataStore(MetastoreABC):
@@ -185,7 +185,11 @@ def app(tmp_path, pg_engine, pg_session_factory, api_keys):
     )
 
     # Production wiring: DiscriminatingAuthProvider wrapping DatabaseAPIKeyAuth
-    db_key_auth = DatabaseAPIKeyAuth(session_factory=pg_session_factory)
+    from types import SimpleNamespace
+
+    db_key_auth = DatabaseAPIKeyAuth(
+        record_store=SimpleNamespace(session_factory=pg_session_factory)
+    )
     auth_provider = DiscriminatingAuthProvider(
         api_key_provider=db_key_auth,
         jwt_provider=None,
@@ -207,7 +211,7 @@ def app(tmp_path, pg_engine, pg_session_factory, api_keys):
     with pg_session_factory() as session:
         session.execute(
             text(
-                "DELETE FROM memories WHERE zone_id = 'default' AND user_id IN ('pg-admin', 'pg-normal')"
+                f"DELETE FROM memories WHERE zone_id = '{ROOT_ZONE_ID}' AND user_id IN ('pg-admin', 'pg-normal')"
             )
         )
         session.commit()
@@ -372,7 +376,7 @@ class TestPostgresPermissionsPaging:
 
     def test_revoked_key_rejected(self, client, api_keys, pg_session_factory):
         """Revoked key -> 401 on PostgreSQL."""
-        from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+        from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
 
         with pg_session_factory() as session:
             DatabaseAPIKeyAuth.revoke_key(session, api_keys["normal_key_id"])

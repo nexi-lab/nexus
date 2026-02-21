@@ -9,13 +9,11 @@ Provides standard fixtures used across all subsystem test modules:
 - mock_permission_enforcer: Mock PermissionEnforcer
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 
 
 @pytest.fixture

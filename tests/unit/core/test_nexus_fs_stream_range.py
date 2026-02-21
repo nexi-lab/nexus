@@ -5,14 +5,13 @@ with validation and error handling. Tests the mixin methods directly
 via a lightweight stub to avoid the heavy NexusFS constructor.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.core.exceptions import NexusFileNotFoundError
-from nexus.core.permissions import OperationContext
+from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.exceptions import NexusFileNotFoundError
+from nexus.contracts.types import OperationContext
 
 
 class _StubFS:
@@ -23,17 +22,20 @@ class _StubFS:
         self.metadata = metadata
         self.router = router
         self._enforce_permissions = False
-        self._default_context = OperationContext(user_id="test", groups=[], zone_id="default")
+        self._default_context = OperationContext(user_id="test", groups=[], zone_id=ROOT_ZONE_ID)
 
     def _validate_path(self, path):
         if not path.startswith("/"):
-            from nexus.core.exceptions import InvalidPathError
+            from nexus.contracts.exceptions import InvalidPathError
 
             raise InvalidPathError(path)
         return path
 
-    def _check_permission(self, path, perm, context):
-        pass  # permissions disabled in stub
+    class _NoOpChecker:
+        def check(self, path, perm, context=None, file_metadata=None):
+            pass  # permissions disabled in stub
+
+    _permission_checker = _NoOpChecker()
 
     def _get_routing_params(self, context):
         return "default", None, False

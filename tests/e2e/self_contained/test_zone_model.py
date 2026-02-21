@@ -12,8 +12,6 @@ Testing approach:
 - Uses raw SQL for CHECK constraint tests (ORM may bypass CHECK)
 """
 
-from __future__ import annotations
-
 import json
 
 import pytest
@@ -161,9 +159,9 @@ class TestInvalidConsistencyModeRejected:
             # Insert a valid zone first to confirm the table works
             conn.execute(
                 text(
-                    "INSERT INTO zones (zone_id, name, is_active, consistency_mode, "
+                    "INSERT INTO zones (zone_id, name, phase, finalizers, consistency_mode, "
                     "created_at, updated_at) "
-                    "VALUES (:zid, :name, 1, 'SC', datetime('now'), datetime('now'))"
+                    "VALUES (:zid, :name, 'Active', '[]', 'SC', datetime('now'), datetime('now'))"
                 ),
                 {"zid": "valid-zone", "name": "Valid Zone"},
             )
@@ -173,9 +171,9 @@ class TestInvalidConsistencyModeRejected:
             with pytest.raises(IntegrityError):
                 conn.execute(
                     text(
-                        "INSERT INTO zones (zone_id, name, is_active, consistency_mode, "
+                        "INSERT INTO zones (zone_id, name, phase, finalizers, consistency_mode, "
                         "created_at, updated_at) "
-                        "VALUES (:zid, :name, 1, :mode, datetime('now'), datetime('now'))"
+                        "VALUES (:zid, :name, 'Active', '[]', :mode, datetime('now'), datetime('now'))"
                     ),
                     {"zid": "bad-zone", "name": "Bad Zone", "mode": "INVALID"},
                 )
@@ -186,9 +184,9 @@ class TestInvalidConsistencyModeRejected:
         with engine.connect() as conn, pytest.raises(IntegrityError):
             conn.execute(
                 text(
-                    "INSERT INTO zones (zone_id, name, is_active, consistency_mode, "
+                    "INSERT INTO zones (zone_id, name, phase, finalizers, consistency_mode, "
                     "created_at, updated_at) "
-                    "VALUES (:zid, :name, 1, :mode, datetime('now'), datetime('now'))"
+                    "VALUES (:zid, :name, 'Active', '[]', :mode, datetime('now'), datetime('now'))"
                 ),
                 {"zid": "empty-mode", "name": "Empty Mode", "mode": ""},
             )
@@ -199,9 +197,9 @@ class TestInvalidConsistencyModeRejected:
         with engine.connect() as conn, pytest.raises(IntegrityError):
             conn.execute(
                 text(
-                    "INSERT INTO zones (zone_id, name, is_active, consistency_mode, "
+                    "INSERT INTO zones (zone_id, name, phase, finalizers, consistency_mode, "
                     "created_at, updated_at) "
-                    "VALUES (:zid, :name, 1, NULL, datetime('now'), datetime('now'))"
+                    "VALUES (:zid, :name, 'Active', '[]', NULL, datetime('now'), datetime('now'))"
                 ),
                 {"zid": "null-mode", "name": "Null Mode"},
             )
@@ -227,7 +225,7 @@ class TestExistingZoneDataPreserved:
         assert fetched.name == "Preserved Zone"
         assert fetched.domain == "preserve.example.com"
         assert fetched.description == "A zone that should survive migration"
-        assert fetched.is_active == 1
+        assert fetched.is_active is True
         assert fetched.consistency_mode == "SC"
 
     def test_zone_settings_column_unchanged(self, session):

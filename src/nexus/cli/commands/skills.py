@@ -9,12 +9,9 @@ The Skills System provides vendor-neutral skill management with:
 - Usage analytics and governance
 """
 
-from __future__ import annotations
-
 import json
 import re
 import sys
-from typing import Any
 from urllib.parse import urlparse
 
 import click
@@ -27,65 +24,7 @@ from nexus.cli.utils import (
     get_filesystem,
     handle_error,
 )
-from nexus.raft.zone_manager import ROOT_ZONE_ID
-
-
-class SQLAlchemyDatabaseConnection:
-    """Wrapper for SQLAlchemy session to match DatabaseConnection protocol."""
-
-    def __init__(self, session: Any) -> None:
-        self._session = session
-
-    def execute(self, query: str, params: dict | None = None) -> Any:
-        """Execute a query."""
-        from sqlalchemy import text
-
-        return self._session.execute(text(query), params or {})
-
-    def fetchall(self, query: str, params: dict | None = None) -> list[dict]:
-        """Fetch all results from a query."""
-        from sqlalchemy import text
-
-        result = self._session.execute(text(query), params or {})
-        return [dict(row._mapping) for row in result]
-
-    def fetchone(self, query: str, params: dict | None = None) -> dict | None:
-        """Fetch one result from a query."""
-        from sqlalchemy import text
-
-        result = self._session.execute(text(query), params or {})
-        row = result.fetchone()
-        return dict(row._mapping) if row else None
-
-    def commit(self) -> None:
-        """Commit the transaction."""
-        self._session.commit()
-
-
-def _get_database_connection() -> SQLAlchemyDatabaseConnection | None:
-    """Get database connection for skill governance.
-
-    Returns wrapped SQLAlchemy session using NEXUS_DATABASE_URL environment variable.
-    Returns None if not configured (falls back to in-memory storage).
-
-    Delegates to SQLAlchemyRecordStore for engine/session creation (Issue #622).
-    """
-    import os
-
-    db_url = os.getenv("NEXUS_DATABASE_URL")
-    if not db_url:
-        return None
-
-    from nexus.storage.record_store import SQLAlchemyRecordStore
-
-    try:
-        record_store = SQLAlchemyRecordStore(db_url=db_url)
-        session = record_store.session_factory()
-        return SQLAlchemyDatabaseConnection(session)
-    except Exception as e:
-        console.print(f"[yellow]Warning:[/yellow] Could not connect to database: {e}")
-        console.print("[dim]Falling back to in-memory governance storage[/dim]")
-        return None
+from nexus.constants import ROOT_ZONE_ID
 
 
 def register_commands(cli: click.Group) -> None:
@@ -293,7 +232,8 @@ def skills_create_from_web(
     try:
         import asyncio
 
-        from nexus.skills import SkillManager, SkillRegistry
+        from nexus.bricks.skills.manager import SkillManager
+        from nexus.bricks.skills.registry import SkillRegistry
 
         # Read from stdin if piped or --stdin flag
         if stdin or not sys.stdin.isatty():
@@ -780,7 +720,8 @@ def skills_export(
     try:
         import asyncio
 
-        from nexus.skills import SkillExporter, SkillRegistry
+        from nexus.bricks.skills.exporter import SkillExporter
+        from nexus.bricks.skills.registry import SkillRegistry
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         registry = SkillRegistry(nx)
@@ -837,7 +778,8 @@ def skills_validate(
     try:
         import asyncio
 
-        from nexus.skills import SkillExporter, SkillRegistry
+        from nexus.bricks.skills.exporter import SkillExporter
+        from nexus.bricks.skills.registry import SkillRegistry
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         registry = SkillRegistry(nx)
@@ -899,7 +841,8 @@ def skills_size(
     try:
         import asyncio
 
-        from nexus.skills import SkillExporter, SkillRegistry
+        from nexus.bricks.skills.exporter import SkillExporter
+        from nexus.bricks.skills.registry import SkillRegistry
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         registry = SkillRegistry(nx)
@@ -953,7 +896,7 @@ def skills_deps(
     try:
         import asyncio
 
-        from nexus.skills import SkillRegistry
+        from nexus.bricks.skills.registry import SkillRegistry
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         registry = SkillRegistry(nx)
@@ -1292,7 +1235,7 @@ def skills_diff(
 
         from rich.syntax import Syntax
 
-        from nexus.skills import SkillRegistry
+        from nexus.bricks.skills.registry import SkillRegistry
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         registry = SkillRegistry(nx)
@@ -1305,7 +1248,7 @@ def skills_diff(
             skill_obj2 = await registry.get_skill(skill2)
 
             # Reconstruct SKILL.md content for both
-            from nexus.skills.exporter import SkillExporter
+            from nexus.bricks.skills.exporter import SkillExporter
 
             exporter = SkillExporter(registry)
 
@@ -1402,7 +1345,7 @@ def skills_mcp_export_tools(
     try:
         import asyncio
 
-        from nexus.mcp.exporter import MCPToolExporter
+        from nexus.bricks.mcp.exporter import MCPToolExporter
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         exporter = MCPToolExporter(nx)
@@ -1446,7 +1389,7 @@ def skills_mcp_list_tools(
         nexus skills mcp list-tools --category search
     """
     try:
-        from nexus.mcp.exporter import NEXUS_TOOLS
+        from nexus.bricks.mcp.exporter import NEXUS_TOOLS
 
         # Filter by category if specified
         tools = NEXUS_TOOLS
@@ -1567,8 +1510,8 @@ def skills_mcp_mount(
     try:
         import asyncio
 
-        from nexus.mcp.models import MCPMount
-        from nexus.mcp.mount import MCPMountManager
+        from nexus.bricks.mcp.models import MCPMount
+        from nexus.bricks.mcp.mount import MCPMountManager
 
         # Validate: need either command or url
         if not command and not url:
@@ -1638,10 +1581,12 @@ def skills_mcp_mount(
             try:
                 import os
 
-                from nexus.server.auth import TokenManager
+                from nexus.bricks.auth.oauth.token_manager import TokenManager
 
                 # Get TokenManager (same logic as oauth CLI)
-                db_url = os.getenv("NEXUS_DATABASE_URL")
+                from nexus.lib.env import get_database_url
+
+                db_url = get_database_url()
                 if db_url:
                     token_manager = TokenManager(db_url=db_url)
                 else:
@@ -1651,8 +1596,10 @@ def skills_mcp_mount(
 
                 # Register OAuth provider for automatic token refresh
                 if oauth_provider == "google":
-                    from nexus.auth.oauth.base_provider import BaseOAuthProvider as OAuthProvider
-                    from nexus.auth.oauth.providers.google import GoogleOAuthProvider
+                    from nexus.bricks.auth.oauth.base_provider import (
+                        BaseOAuthProvider as OAuthProvider,
+                    )
+                    from nexus.bricks.auth.oauth.providers.google import GoogleOAuthProvider
 
                     client_id = os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_ID")
                     client_secret = os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_SECRET")
@@ -1667,7 +1614,7 @@ def skills_mcp_mount(
                             ],
                             provider_name="google",
                         )
-                        token_manager.register_provider("google", provider_instance)  # type: ignore[arg-type]
+                        token_manager.register_provider("google", provider_instance)
 
                 # First check if credential exists
                 async def check_credential() -> bool:
@@ -1696,7 +1643,7 @@ def skills_mcp_mount(
 
                     # Get OAuth provider credentials from environment
                     if oauth_provider == "google":
-                        from nexus.auth.oauth.providers.google import GoogleOAuthProvider
+                        from nexus.bricks.auth.oauth.providers.google import GoogleOAuthProvider
 
                         client_id = os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_ID")
                         client_secret = os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_SECRET")
@@ -1721,7 +1668,7 @@ def skills_mcp_mount(
                             provider_name="google",
                         )
                     elif oauth_provider in ("twitter", "x"):
-                        from nexus.auth.oauth.providers.x import XOAuthProvider
+                        from nexus.bricks.auth.oauth.providers.x import XOAuthProvider
 
                         client_id = os.getenv("NEXUS_OAUTH_X_CLIENT_ID")
                         client_secret = os.getenv("NEXUS_OAUTH_X_CLIENT_SECRET")
@@ -1781,7 +1728,7 @@ def skills_mcp_mount(
                         await token_manager.store_credential(
                             provider=oauth_provider if oauth_provider != "x" else "twitter",
                             user_email=oauth_user,
-                            credential=credential,  # type: ignore[arg-type]
+                            credential=credential,
                             zone_id=ROOT_ZONE_ID,
                             created_by=oauth_user,
                         )
@@ -1898,7 +1845,7 @@ def skills_mcp_unmount(
     try:
         import asyncio
 
-        from nexus.mcp.mount import MCPMountManager
+        from nexus.bricks.mcp.mount import MCPMountManager
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         manager = MCPMountManager(nx)
@@ -1930,7 +1877,7 @@ def skills_mcp_list_mounts(
         nexus skills mcp list-mounts --all
     """
     try:
-        from nexus.mcp.mount import MCPMountManager
+        from nexus.bricks.mcp.mount import MCPMountManager
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         manager = MCPMountManager(nx)
@@ -1988,7 +1935,7 @@ def skills_mcp_tools(
         nexus skills mcp tools github --json
     """
     try:
-        from nexus.mcp.mount import MCPMountManager
+        from nexus.bricks.mcp.mount import MCPMountManager
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         manager = MCPMountManager(nx)
@@ -2111,7 +2058,7 @@ def skills_mcp_remove(
     try:
         import asyncio
 
-        from nexus.mcp.mount import MCPMountManager
+        from nexus.bricks.mcp.mount import MCPMountManager
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         manager = MCPMountManager(nx)
@@ -2183,7 +2130,7 @@ def skills_mcp_connect(
     try:
         import asyncio
 
-        from nexus.mcp import MCPConnectionManager
+        from nexus.bricks.mcp import MCPConnectionManager
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         manager = MCPConnectionManager(filesystem=nx)
@@ -2235,7 +2182,7 @@ def skills_mcp_disconnect(
     try:
         import asyncio
 
-        from nexus.mcp import MCPConnectionManager
+        from nexus.bricks.mcp import MCPConnectionManager
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         manager = MCPConnectionManager(filesystem=nx)
@@ -2273,7 +2220,7 @@ def skills_mcp_connections(
     try:
         import json as json_module
 
-        from nexus.mcp import MCPConnectionManager
+        from nexus.bricks.mcp import MCPConnectionManager
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         manager = MCPConnectionManager(filesystem=nx)
@@ -2333,7 +2280,7 @@ def skills_mcp_providers(
     try:
         import json as json_module
 
-        from nexus.mcp import MCPProviderRegistry
+        from nexus.bricks.mcp import MCPProviderRegistry
 
         registry = MCPProviderRegistry.load_default()
 

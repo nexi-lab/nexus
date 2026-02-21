@@ -1,15 +1,19 @@
-"""Tests for SchedulerProtocol, AgentRequest, and InMemoryScheduler (Issue #1383)."""
-
-from __future__ import annotations
+"""Tests for SchedulerProtocol, AgentRequest, InMemoryScheduler,
+CreditsReservationProtocol, and classify_agent_request (Issues #1383, #2360)."""
 
 import dataclasses
+from decimal import Decimal
 
 import pytest
 
 from nexus.services.protocols.scheduler import (
+    _MAX_COMPLETED,
     AgentRequest,
+    CreditsReservationProtocol,
     InMemoryScheduler,
+    NullCreditsReservation,
     SchedulerProtocol,
+    classify_agent_request,
 )
 
 # ---------------------------------------------------------------------------
@@ -94,6 +98,8 @@ class TestSchedulerProtocol:
             "complete",
             "classify",
             "metrics",
+            "initialize",
+            "shutdown",
         }
         actual = {
             name
@@ -229,3 +235,224 @@ class TestInMemorySchedulerFunctional:
         m = await scheduler.metrics()
         assert isinstance(m, dict)
         assert "pending_count" in m
+
+    async def test_metrics_shape_matches_production(self) -> None:
+        """InMemoryScheduler.metrics() should return keys compatible with SchedulerService."""
+        scheduler = InMemoryScheduler()
+        m = await scheduler.metrics()
+        assert "queue_by_class" in m
+        assert "fair_share" in m
+        assert "use_hrrn" in m
+        assert m["use_hrrn"] is False
+
+    async def test_lifecycle_methods_exist(self) -> None:
+        """InMemoryScheduler has no-op lifecycle methods for production fallback."""
+        scheduler = InMemoryScheduler()
+        await scheduler.initialize()
+        await scheduler.sync_fair_share()
+        assert await scheduler.run_aging_sweep() == 0
+        assert await scheduler.run_starvation_promotion() == 0
+        await scheduler.shutdown()
+
+    async def test_shutdown_clears_state(self) -> None:
+        scheduler = InMemoryScheduler()
+        await scheduler.submit(AgentRequest(agent_id="a1", zone_id="z1"))
+        assert await scheduler.pending_count() == 1
+        await scheduler.shutdown()
+        assert await scheduler.pending_count() == 0
+
+
+# ---------------------------------------------------------------------------
+# CreditsReservationProtocol tests (Issue #2360)
+# ---------------------------------------------------------------------------
+
+
+class TestCreditsReservationProtocol:
+    """Verify CreditsReservationProtocol structural contract."""
+
+    def test_expected_methods(self) -> None:
+        expected = {"reserve", "release_reservation"}
+        actual = {
+            name
+            for name in dir(CreditsReservationProtocol)
+            if not name.startswith("_") and callable(getattr(CreditsReservationProtocol, name))
+        }
+        assert expected <= actual
+
+    def test_null_credits_satisfies_protocol(self) -> None:
+        null = NullCreditsReservation()
+        assert isinstance(null, CreditsReservationProtocol)
+
+
+@pytest.mark.asyncio
+class TestNullCreditsReservation:
+    """Verify NullCreditsReservation is a functional no-op."""
+
+    async def test_reserve_returns_string(self) -> None:
+        null = NullCreditsReservation()
+        result = await null.reserve("agent-1", Decimal("10"))
+        assert isinstance(result, str)
+        assert result == "null-reservation"
+
+    async def test_release_reservation_is_noop(self) -> None:
+        null = NullCreditsReservation()
+        await null.release_reservation("any-id")  # Should not raise
+
+
+# ---------------------------------------------------------------------------
+# classify_agent_request tests (Issue #2360 — DRY fix)
+# ---------------------------------------------------------------------------
+
+
+class TestClassifyAgentRequest:
+    """Verify classify_agent_request shared helper."""
+
+    def test_normal_priority_maps_to_batch(self) -> None:
+        """PriorityTier.NORMAL (2) → 'batch'."""
+        req = AgentRequest(agent_id="a1", zone_id=None, priority=2)
+        assert classify_agent_request(req) == "batch"
+
+    def test_critical_priority_maps_to_interactive(self) -> None:
+        """PriorityTier.CRITICAL (0) → 'interactive'."""
+        req = AgentRequest(agent_id="a1", zone_id=None, priority=0)
+        assert classify_agent_request(req) == "interactive"
+
+    def test_high_priority_maps_to_interactive(self) -> None:
+        """PriorityTier.HIGH (1) → 'interactive'."""
+        req = AgentRequest(agent_id="a1", zone_id=None, priority=1)
+        assert classify_agent_request(req) == "interactive"
+
+    def test_low_priority_maps_to_background(self) -> None:
+        """PriorityTier.LOW (3) → 'background'."""
+        req = AgentRequest(agent_id="a1", zone_id=None, priority=3)
+        assert classify_agent_request(req) == "background"
+
+    def test_best_effort_maps_to_background(self) -> None:
+        """PriorityTier.BEST_EFFORT (4) → 'background'."""
+        req = AgentRequest(agent_id="a1", zone_id=None, priority=4)
+        assert classify_agent_request(req) == "background"
+
+    def test_io_wait_promotes_background_to_batch(self) -> None:
+        """BACKGROUND + IO_WAIT → 'batch' (IO promotion)."""
+        req = AgentRequest(agent_id="a1", zone_id=None, priority=3, request_state="io_wait")
+        assert classify_agent_request(req) == "batch"
+
+    def test_invalid_priority_defaults_to_normal(self) -> None:
+        """Unknown priority value → NORMAL → 'batch'."""
+        req = AgentRequest(agent_id="a1", zone_id=None, priority=999)
+        assert classify_agent_request(req) == "batch"
+
+    def test_invalid_request_state_defaults_to_pending(self) -> None:
+        """Unknown request_state → PENDING (no promotion)."""
+        req = AgentRequest(agent_id="a1", zone_id=None, priority=3, request_state="unknown_state")
+        assert classify_agent_request(req) == "background"
+
+
+@pytest.mark.asyncio
+class TestClassifyParity:
+    """InMemoryScheduler.classify() must agree with classify_agent_request."""
+
+    @pytest.mark.parametrize(
+        "priority,request_state",
+        [
+            (0, "pending"),  # CRITICAL
+            (1, "pending"),  # HIGH
+            (2, "pending"),  # NORMAL
+            (3, "pending"),  # LOW
+            (4, "pending"),  # BEST_EFFORT
+            (3, "io_wait"),  # IO promotion
+            (0, "io_wait"),  # No promotion (already interactive)
+            (999, "pending"),  # Invalid priority
+            (2, "unknown"),  # Invalid state
+        ],
+    )
+    async def test_classify_matches_shared_function(
+        self, priority: int, request_state: str
+    ) -> None:
+        req = AgentRequest(
+            agent_id="a1", zone_id=None, priority=priority, request_state=request_state
+        )
+        scheduler = InMemoryScheduler()
+        scheduler_result = await scheduler.classify(req)
+        shared_result = classify_agent_request(req)
+        assert scheduler_result == shared_result, (
+            f"Divergence for priority={priority}, state={request_state}: "
+            f"scheduler={scheduler_result!r}, shared={shared_result!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Bounded completed dict tests (Issue #2360 — performance)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestInMemorySchedulerCompletedBound:
+    """Verify _completed dict is bounded to _MAX_COMPLETED entries."""
+
+    async def test_completed_eviction(self) -> None:
+        scheduler = InMemoryScheduler()
+        # Submit and complete _MAX_COMPLETED + 50 tasks
+        task_ids = []
+        for _ in range(_MAX_COMPLETED + 50):
+            tid = await scheduler.submit(AgentRequest(agent_id="a1", zone_id="z1"))
+            task_ids.append(tid)
+            await scheduler.next()  # Dequeue to allow completion
+            await scheduler.complete(tid)
+
+        # Dict should be bounded
+        assert len(scheduler._completed) <= _MAX_COMPLETED
+        # Most recent tasks should still be present
+        assert await scheduler.get_status(task_ids[-1]) is not None
+
+    async def test_no_eviction_at_boundary(self) -> None:
+        """Exactly _MAX_COMPLETED entries → no eviction yet."""
+        scheduler = InMemoryScheduler()
+        task_ids = []
+        for _ in range(_MAX_COMPLETED):
+            tid = await scheduler.submit(AgentRequest(agent_id="a1", zone_id="z1"))
+            task_ids.append(tid)
+            await scheduler.next()
+            await scheduler.complete(tid)
+
+        assert len(scheduler._completed) == _MAX_COMPLETED
+        # First and last tasks should both be present
+        assert await scheduler.get_status(task_ids[0]) is not None
+        assert await scheduler.get_status(task_ids[-1]) is not None
+
+    async def test_evicted_task_returns_none(self) -> None:
+        """Tasks evicted from _completed return None from get_status."""
+        scheduler = InMemoryScheduler()
+        # Fill to boundary
+        first_ids = []
+        for _ in range(_MAX_COMPLETED):
+            tid = await scheduler.submit(AgentRequest(agent_id="a1", zone_id="z1"))
+            first_ids.append(tid)
+            await scheduler.next()
+            await scheduler.complete(tid)
+
+        # Add one more to trigger eviction of the oldest
+        tid = await scheduler.submit(AgentRequest(agent_id="a1", zone_id="z1"))
+        await scheduler.next()
+        await scheduler.complete(tid)
+
+        # Oldest task should have been evicted
+        assert await scheduler.get_status(first_ids[0]) is None
+        # Newest task should still be accessible
+        assert await scheduler.get_status(tid) is not None
+
+    async def test_eviction_preserves_fifo_order(self) -> None:
+        """Eviction removes the oldest entry (FIFO order)."""
+        scheduler = InMemoryScheduler()
+        task_ids = []
+        for _ in range(_MAX_COMPLETED + 3):
+            tid = await scheduler.submit(AgentRequest(agent_id="a1", zone_id="z1"))
+            task_ids.append(tid)
+            await scheduler.next()
+            await scheduler.complete(tid)
+
+        # First 3 should be evicted
+        for i in range(3):
+            assert await scheduler.get_status(task_ids[i]) is None
+        # Fourth should still exist
+        assert await scheduler.get_status(task_ids[3]) is not None

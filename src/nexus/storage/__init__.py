@@ -1,7 +1,7 @@
 """Storage layer for Nexus - metadata store and SQLAlchemy models."""
 
 from nexus.storage import views
-from nexus.storage.file_cache import FileContentCache, get_file_cache
+from nexus.storage.file_cache import FileContentCache
 from nexus.storage.models import (
     ContentChunkModel,
     ExternalUserServiceModel,
@@ -21,6 +21,5 @@ __all__ = [
     "ZoneModel",
     "ExternalUserServiceModel",
     "FileContentCache",
-    "get_file_cache",
     "views",
 ]

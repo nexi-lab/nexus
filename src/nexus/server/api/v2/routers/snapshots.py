@@ -11,8 +11,6 @@ Provides endpoints for managing transactional filesystem snapshots:
 All endpoints require authentication and are scoped to the user's zone_id.
 """
 
-from __future__ import annotations
-
 import logging
 from datetime import datetime
 from typing import Any
@@ -20,10 +18,11 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from pydantic import BaseModel, Field
 
+from nexus.constants import ROOT_ZONE_ID
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/snapshots", tags=["snapshots"])
-
 
 # ---------------------------------------------------------------------------
 # Pydantic models
@@ -110,7 +109,7 @@ async def get_snapshot_context(request: Request) -> tuple[Any, str, str | None]:
     if require_auth:
         auth_result = require_auth()
         if auth_result:
-            zone_id = auth_result.get("zone_id", "root")
+            zone_id = auth_result.get("zone_id", ROOT_ZONE_ID)
             agent_id = auth_result.get("agent_id")
 
     return snapshot_service, zone_id, agent_id
@@ -237,7 +236,7 @@ async def commit_transaction(
     ctx: tuple[Any, str, str | None] = Depends(get_snapshot_context),
 ) -> TransactionResponse:
     """Commit a transaction (with conflict detection)."""
-    from nexus.services.snapshot.service import (
+    from nexus.bricks.snapshot.errors import (
         TransactionConflictError,
         TransactionNotActiveError,
         TransactionNotFoundError,
@@ -279,7 +278,7 @@ async def rollback_transaction(
     ctx: tuple[Any, str, str | None] = Depends(get_snapshot_context),
 ) -> TransactionResponse:
     """Rollback a transaction to pre-transaction state."""
-    from nexus.services.snapshot.service import (
+    from nexus.bricks.snapshot.errors import (
         TransactionNotActiveError,
         TransactionNotFoundError,
     )

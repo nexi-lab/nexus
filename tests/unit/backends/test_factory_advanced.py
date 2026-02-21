@@ -4,8 +4,6 @@ Tests for the introspection helper and the extra-kwargs filtering logic
 that ensures only constructor-compatible kwargs are forwarded.
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 from nexus.backends.factory import BackendFactory

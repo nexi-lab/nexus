@@ -11,8 +11,6 @@ Tests the conflict management endpoints end-to-end:
 3. Conflict log store is wired and accessible via REST
 """
 
-from __future__ import annotations
-
 import os
 import shutil
 import signal
@@ -71,7 +69,7 @@ def _build_startup_script(port: int, data_dir: str) -> str:
         logging.basicConfig(level=logging.INFO)
         sys.path.insert(0, os.getenv("PYTHONPATH", ""))
 
-        from nexus.auth.providers.static_key import StaticAPIKeyAuth
+        from nexus.bricks.auth.providers.static_key import StaticAPIKeyAuth
         from nexus.cli import main as cli_main
 
         auth_config = {{
@@ -99,7 +97,7 @@ def _build_startup_script(port: int, data_dir: str) -> str:
             return _orig(auth_type, auth_config_arg, **kwargs)
         factory.create_auth_provider = _patched
 
-        import nexus.rebac.namespace_manager as ns_mod
+        import nexus.bricks.rebac.namespace_manager as ns_mod
         _OrigNS = ns_mod.NamespaceManager
         class _NoCacheNS(_OrigNS):
             def __init__(self, **kwargs):

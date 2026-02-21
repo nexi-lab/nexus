@@ -22,16 +22,14 @@ Example:
     ```
 """
 
-from __future__ import annotations
-
 import builtins
 import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.core.metadata import FileMetadata
+    from nexus.contracts.metadata import FileMetadata
+    from nexus.contracts.types import OperationContext, Permission
     from nexus.core.nexus_fs import NexusFS
-    from nexus.core.permissions import OperationContext, Permission
     from nexus.core.router import PathRouter
 
 logger = logging.getLogger(__name__)
@@ -54,7 +52,7 @@ class NexusFSGateway:
     - Session: session_factory property
     """
 
-    def __init__(self, fs: NexusFS):
+    def __init__(self, fs: "NexusFS"):
         """Initialize gateway with NexusFS instance.
 
         Args:
@@ -72,7 +70,7 @@ class NexusFSGateway:
         *,
         parents: bool = False,
         exist_ok: bool = False,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> None:
         """Create directory at path.
 
@@ -89,7 +87,7 @@ class NexusFSGateway:
         path: str,
         content: bytes | str,
         *,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> None:
         """Write content to file.
 
@@ -106,7 +104,7 @@ class NexusFSGateway:
         self,
         path: str,
         *,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> bytes | str:
         """Read content from file.
 
@@ -119,7 +117,7 @@ class NexusFSGateway:
         """
         result = self._fs.read(path, context=context)
         # Normalize to bytes or str
-        if isinstance(result, (bytes, str)):
+        if isinstance(result, bytes | str):
             return result
         # Handle dict results (parsed content) by returning empty bytes
         return b""
@@ -128,7 +126,7 @@ class NexusFSGateway:
         self,
         path: str,
         *,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> builtins.list[str]:
         """List directory contents.
 
@@ -149,7 +147,7 @@ class NexusFSGateway:
         self,
         path: str,
         *,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> bool:
         """Check if path exists.
 
@@ -166,7 +164,7 @@ class NexusFSGateway:
     # Metadata Operations
     # =========================================================================
 
-    def metadata_get(self, path: str) -> FileMetadata | None:
+    def metadata_get(self, path: str) -> "FileMetadata | None":
         """Get metadata for path.
 
         Args:
@@ -179,7 +177,7 @@ class NexusFSGateway:
             return self._fs.metadata.get(path)
         return None
 
-    def metadata_put(self, meta: FileMetadata) -> None:
+    def metadata_put(self, meta: "FileMetadata") -> None:
         """Store metadata.
 
         Args:
@@ -188,7 +186,7 @@ class NexusFSGateway:
         if hasattr(self._fs.metadata, "put"):
             self._fs.metadata.put(meta)
 
-    def metadata_list(self, prefix: str, recursive: bool = False) -> builtins.list[FileMetadata]:
+    def metadata_list(self, prefix: str, recursive: bool = False) -> "builtins.list[FileMetadata]":
         """List metadata entries under prefix.
 
         Args:
@@ -238,8 +236,13 @@ class NexusFSGateway:
         return 0
 
     # =========================================================================
-    # Permission Operations (ReBAC)
+    # Permission Operations (ReBAC) — delegates to ReBACService (Issue #2033)
     # =========================================================================
+
+    @property
+    def _rebac_service(self) -> Any:
+        """Get the ReBACService instance from NexusFS."""
+        return self._fs.rebac_service
 
     def rebac_create(
         self,
@@ -247,7 +250,7 @@ class NexusFSGateway:
         relation: str,
         object: tuple[str, str],
         zone_id: str | None = None,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any] | None:
         """Create ReBAC permission tuple.
 
@@ -256,20 +259,18 @@ class NexusFSGateway:
             relation: Relation name (e.g., "direct_owner", "direct_viewer")
             object: (object_type, object_id) tuple
             zone_id: Zone ID for multi-tenancy
-            context: Operation context (passed through to NexusFS)
+            context: Operation context
 
         Returns:
             Dict with tuple_id/revision/consistency_token if created, None otherwise
         """
-        kwargs: dict[str, Any] = {
-            "subject": subject,
-            "relation": relation,
-            "object": object,
-            "zone_id": zone_id,
-        }
-        if context is not None:
-            kwargs["context"] = context
-        return self._fs.rebac_create(**kwargs)
+        return self._rebac_service.rebac_create_sync(
+            subject=subject,
+            relation=relation,
+            object=object,
+            zone_id=zone_id,
+            context=context,
+        )
 
     def rebac_check(
         self,
@@ -289,7 +290,7 @@ class NexusFSGateway:
         Returns:
             True if permission granted, False otherwise
         """
-        return self._fs.rebac_check(
+        return self._rebac_service.rebac_check_sync(
             subject=subject,
             permission=permission,
             object=object,
@@ -299,7 +300,7 @@ class NexusFSGateway:
     def rebac_delete_object_tuples(
         self,
         object: tuple[str, str],
-        zone_id: str | None = None,
+        zone_id: str | None = None,  # noqa: ARG002
     ) -> int:
         """Delete all permission tuples for an object.
 
@@ -310,11 +311,13 @@ class NexusFSGateway:
         Returns:
             Number of tuples deleted
         """
-        result: int = self._fs.rebac_delete_object_tuples(
-            object=object,
-            zone_id=zone_id,
-        )
-        return result
+        tuples = self._rebac_service.rebac_list_tuples_sync(object=object)
+        deleted = 0
+        for t in tuples:
+            tid = t.get("tuple_id")
+            if tid and self._rebac_service.rebac_delete_sync(tid):
+                deleted += 1
+        return deleted
 
     def rebac_list_tuples(
         self,
@@ -334,7 +337,7 @@ class NexusFSGateway:
         Returns:
             List of tuple dictionaries
         """
-        return self._fs.rebac_list_tuples(
+        return self._rebac_service.rebac_list_tuples_sync(
             subject=subject,
             relation=relation,
             object=object,
@@ -350,17 +353,14 @@ class NexusFSGateway:
         Returns:
             True if deleted, False otherwise
         """
-        if self._fs._rebac_manager is not None:
-            self._fs._rebac_manager.rebac_delete(tuple_id)
-            return True
-        return False
+        return self._rebac_service.rebac_delete_sync(tuple_id)
 
     @property
     def rebac_manager(self) -> Any:
         """Get the ReBAC manager instance.
 
         Returns:
-            EnhancedReBACManager if available, None otherwise
+            ReBACManager if available, None otherwise
         """
         return self._fs._rebac_manager
 
@@ -435,7 +435,7 @@ class NexusFSGateway:
     # =========================================================================
 
     @property
-    def router(self) -> PathRouter:
+    def router(self) -> "PathRouter":
         """Get the path router.
 
         Returns:
@@ -458,9 +458,27 @@ class NexusFSGateway:
             return self._fs.SessionLocal
         return None
 
+    @property
+    def record_store(self) -> Any:
+        """Get RecordStoreABC instance.
+
+        Returns:
+            RecordStoreABC if available, None otherwise
+        """
+        return getattr(self._fs, "_record_store", None)
+
     # =========================================================================
     # Database URL
     # =========================================================================
+
+    @property
+    def is_postgresql(self) -> bool:
+        """Check if the database is PostgreSQL (config-time detection)."""
+        try:
+            url = self.get_database_url()
+            return url.startswith(("postgres", "postgresql"))
+        except Exception:
+            return False
 
     def get_database_url(self) -> str:
         """Get database URL for OAuth backends.
@@ -471,7 +489,7 @@ class NexusFSGateway:
         Raises:
             RuntimeError: If database URL cannot be determined
         """
-        from nexus.core.context_utils import get_database_url
+        from nexus.lib.context_utils import get_database_url
 
         return get_database_url(self._fs)
 
@@ -534,7 +552,7 @@ class NexusFSGateway:
         self,
         path: str,
         *,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
         return_metadata: bool = False,
     ) -> bytes | str | dict[str, Any]:
         """Read file content with optional metadata return.
@@ -556,7 +574,7 @@ class NexusFSGateway:
         self,
         paths: builtins.list[str],
         *,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
         return_metadata: bool = False,
         skip_errors: bool = True,
     ) -> dict[str, bytes | dict[str, Any] | None]:
@@ -580,7 +598,7 @@ class NexusFSGateway:
 
     def get_routing_params(
         self,
-        context: OperationContext | None,
+        context: "OperationContext | None",
     ) -> tuple[str | None, str | None, bool]:
         """Extract zone_id, agent_id, is_admin from operation context.
 
@@ -595,8 +613,8 @@ class NexusFSGateway:
     def has_descendant_access(
         self,
         path: str,
-        permission: Permission,
-        context: OperationContext | None,
+        permission: "Permission",
+        context: "OperationContext | None",
     ) -> bool:
         """Check if user has access to any descendant of path.
 
@@ -611,8 +629,8 @@ class NexusFSGateway:
         Returns:
             True if access exists to any descendant
         """
-        assert context is not None, "context required for _has_descendant_access"
-        return self._fs._has_descendant_access(path, permission, context)
+        assert context is not None, "context required for has_descendant_access"
+        return self._fs._descendant_checker.has_access(path, permission, context)
 
     def get_backend_directory_entries(self, path: str) -> set[str]:
         """Get directory entries directly from backend storage.
@@ -630,7 +648,7 @@ class NexusFSGateway:
 
     def record_read_if_tracking(
         self,
-        context: OperationContext | None,
+        context: "OperationContext | None",
         resource_type: str,
         resource_id: str,
         access_type: str = "content",

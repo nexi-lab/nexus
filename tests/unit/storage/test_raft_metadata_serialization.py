@@ -4,15 +4,13 @@ Tests the pure Python logic of _serialize_metadata, _deserialize_metadata,
 and list_paginated without requiring the Rust PyO3 library.
 """
 
-from __future__ import annotations
-
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.core.metadata import DT_DIR, FileMetadata, PaginatedResult
+from nexus.contracts.metadata import DT_DIR, FileMetadata, PaginatedResult
 
 if TYPE_CHECKING:
     from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -159,7 +157,7 @@ class TestListPaginated:
 
     def _make_store_with_entries(
         self, entries: list[tuple[str, FileMetadata]]
-    ) -> RaftMetadataStore:
+    ) -> "RaftMetadataStore":
         """Create a mock RaftMetadataStore with pre-loaded entries."""
         from nexus.storage.raft_metadata_store import (
             RaftMetadataStore,

@@ -4,8 +4,8 @@ from datetime import datetime
 
 import pytest
 
-from nexus.skills.exceptions import SkillValidationError
-from nexus.skills.models import Skill, SkillMetadata
+from nexus.bricks.skills.exceptions import SkillValidationError
+from nexus.bricks.skills.models import Skill, SkillMetadata
 
 
 def test_skill_metadata_initialization() -> None:

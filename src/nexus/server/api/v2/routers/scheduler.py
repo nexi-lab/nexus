@@ -10,8 +10,6 @@ Provides endpoints for task scheduling with hybrid priority:
 Related: Issue #1212, #1274
 """
 
-from __future__ import annotations
-
 import logging
 from datetime import datetime
 from typing import Any
@@ -19,7 +17,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
-from nexus.bricks.scheduler.constants import TIER_ALIASES, RequestState
+from nexus.services.scheduler.constants import TIER_ALIASES, RequestState
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +25,6 @@ router = APIRouter(prefix="/api/v2/scheduler", tags=["scheduler"])
 
 VALID_PRIORITIES = frozenset(TIER_ALIASES.keys())
 VALID_REQUEST_STATES = frozenset(s.value for s in RequestState)
-
 
 # =============================================================================
 # Pydantic Models
@@ -136,7 +133,7 @@ class MetricsResponse(BaseModel):
 
 def _get_require_auth() -> Any:
     """Lazy import to avoid circular imports."""
-    from nexus.server.fastapi_server import require_auth
+    from nexus.server.dependencies import require_auth
 
     return require_auth
 

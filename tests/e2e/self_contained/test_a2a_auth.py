@@ -7,15 +7,13 @@ LangSmith, etc.) which require auth for all operational endpoints.
 Reference: https://a2a-protocol.org/latest/topics/enterprise-ready/
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
-from nexus.bricks.a2a.router import build_router
+from nexus.server.api.v2.routers.a2a import build_router
 
 # ======================================================================
 # Fixtures
@@ -222,7 +220,7 @@ class TestAuthCallback:
         assert data["result"]["id"]
 
     def test_auth_fn_none_defaults_to_default_zone(self) -> None:
-        """Without auth_fn, zone_id defaults to 'default'."""
+        """Without auth_fn, zone_id defaults to ROOT_ZONE_ID ('root')."""
         app = FastAPI()
         router = build_router(
             base_url="http://testserver",

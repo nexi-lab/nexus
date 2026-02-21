@@ -3,8 +3,6 @@
 Issue #1603: Decompose remote/client.py into domain clients.
 """
 
-from __future__ import annotations
-
 import builtins
 from typing import Any
 
@@ -12,7 +10,7 @@ from typing import Any
 class MemoryClient:
     """Memory management domain client (sync).
 
-    Provides the same interface as core.memory_api.Memory but makes RPC calls
+    Provides the same interface as services.memory.memory_api.Memory but makes RPC calls
     to a remote Nexus server instead of direct database access.
     """
 

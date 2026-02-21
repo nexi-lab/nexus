@@ -10,8 +10,6 @@ Issue #1138: Event Stream Export
 Issue #1139: Event Replay
 """
 
-from __future__ import annotations
-
 import base64
 import time
 from typing import Any

@@ -228,7 +228,7 @@ def test_in_process_thread_exhaustion(
 ) -> TestResults:
     """Test thread pool exhaustion with in-process NexusFS."""
     from nexus.backends.local import LocalBackend
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
 
     results = TestResults()
 
@@ -346,7 +346,7 @@ async def test_async_thread_exhaustion(
 ) -> TestResults:
     """Test that simulates exact FastAPI server behavior with asyncio.to_thread."""
     from nexus.backends.local import LocalBackend
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
 
     results = TestResults()
 
@@ -392,7 +392,7 @@ async def test_async_thread_exhaustion(
         print("Created 100 test files")
 
         # FORCE WORST CASE: Disable Rust acceleration to simulate slow Python path
-        import nexus.rebac.utils.fast as rebac_fast
+        import nexus.bricks.rebac.utils.fast as rebac_fast
 
         _original_rust_available = rebac_fast.RUST_AVAILABLE  # noqa: F841
         rebac_fast.RUST_AVAILABLE = False

@@ -10,13 +10,11 @@ References:
     - Issue #1287: Extract NexusFS domain services from god object
 """
 
-from __future__ import annotations
-
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
 
 # Type alias matching the mixin's ProgressCallback
 ProgressCallback = Callable[[int, str], None]
@@ -43,13 +41,13 @@ class MountProtocol(Protocol):
         priority: int = 0,
         readonly: bool = False,
         io_profile: str = "balanced",
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> str: ...
 
     async def remove_mount(
         self,
         mount_point: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]: ...
 
     async def delete_connector(
@@ -58,7 +56,7 @@ class MountProtocol(Protocol):
         revoke_oauth: bool = False,
         provider: str | None = None,
         user_email: str | None = None,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]: ...
 
     async def list_connectors(
@@ -68,13 +66,13 @@ class MountProtocol(Protocol):
 
     async def list_mounts(
         self,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> list[dict[str, Any]]: ...
 
     async def get_mount(
         self,
         mount_point: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any] | None: ...
 
     async def has_mount(self, mount_point: str) -> bool: ...
@@ -91,7 +89,7 @@ class MountProtocol(Protocol):
         include_patterns: list[str] | None = None,
         exclude_patterns: list[str] | None = None,
         generate_embeddings: bool = False,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
         progress_callback: ProgressCallback | None = None,
         full_sync: bool = False,
     ) -> dict[str, Any]: ...
@@ -106,7 +104,7 @@ class MountProtocol(Protocol):
         include_patterns: list[str] | None = None,
         exclude_patterns: list[str] | None = None,
         generate_embeddings: bool = False,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]: ...
 
     async def get_sync_job(self, job_id: str) -> dict[str, Any] | None: ...
@@ -133,14 +131,14 @@ class MountProtocol(Protocol):
         owner_user_id: str | None = None,
         zone_id: str | None = None,
         description: str | None = None,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> str: ...
 
     async def list_saved_mounts(
         self,
         owner_user_id: str | None = None,
         zone_id: str | None = None,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> list[dict[str, Any]]: ...
 
     async def load_mount(self, mount_point: str) -> str: ...

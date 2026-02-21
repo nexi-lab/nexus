@@ -5,17 +5,17 @@ domain-specific initializers during startup and shuts them down in reverse
 order during shutdown.
 
 Each initializer function:
-- Accepts ``app: FastAPI`` (reads/writes ``app.state``)
+- Accepts ``app: FastAPI`` and ``svc: LifespanServices``
 - Returns a list of ``asyncio.Task`` references that must be cancelled on shutdown
 """
-
-from __future__ import annotations
 
 import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
+
+from nexus.server.lifespan.services_container import LifespanServices
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -23,27 +23,27 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _compute_features_info(app: FastAPI) -> None:
+def _compute_features_info(app: "FastAPI", svc: LifespanServices) -> None:
     """Compute and store features_info on app.state (Issue #1389).
 
     Called once at startup. The result is immutable and served by
     GET /api/v2/features with O(1) cost.
     """
-    from nexus.core.deployment_profile import ALL_BRICK_NAMES, DeploymentProfile
+    from nexus.contracts.deployment_profile import ALL_BRICK_NAMES, DeploymentProfile
     from nexus.server.api.core.features import FeaturesResponse, PerformanceTuningInfo
 
-    # Read profile from app state (set during server init)
-    profile_str: str = getattr(app.state, "deployment_profile", "full")
+    # Read profile from svc (set during server init).
+    profile_str: str = svc.deployment_profile
     try:
         profile = DeploymentProfile(profile_str)
     except ValueError:
         logger.warning("Unknown deployment profile '%s', defaulting to 'full'", profile_str)
         profile = DeploymentProfile.FULL
 
-    # Read enabled_bricks from app state (set during factory wiring)
-    enabled: frozenset[str] = getattr(app.state, "enabled_bricks", profile.default_bricks())
+    # Read enabled_bricks from svc (set during factory wiring)
+    enabled: frozenset[str] = svc.enabled_bricks or profile.default_bricks()
 
-    mode: str = getattr(app.state, "deployment_mode", "standalone")
+    mode: str = svc.deployment_mode
 
     # Get version
     version: str | None = None
@@ -57,7 +57,7 @@ def _compute_features_info(app: FastAPI) -> None:
     disabled = sorted(ALL_BRICK_NAMES - enabled)
 
     # Issue #2071: include performance tuning summary
-    _pt = getattr(app.state, "profile_tuning", None)
+    _pt = svc.profile_tuning
     _perf_info = None
     if _pt is not None:
         _perf_info = PerformanceTuningInfo(
@@ -67,6 +67,10 @@ def _compute_features_info(app: FastAPI) -> None:
             default_http_timeout=_pt.network.default_http_timeout,
             db_pool_size=_pt.storage.db_pool_size,
             search_max_concurrency=_pt.search.search_max_concurrency,
+            heartbeat_flush_interval=_pt.background_task.heartbeat_flush_interval,
+            default_max_retries=_pt.resiliency.default_max_retries,
+            blob_operation_timeout=_pt.connector.blob_operation_timeout,
+            asyncpg_max_size=_pt.pool.asyncpg_max_size,
         )
 
     features_info = FeaturesResponse(
@@ -88,17 +92,16 @@ def _compute_features_info(app: FastAPI) -> None:
     )
 
 
-def _wire_query_observer(app: FastAPI) -> None:
+def _wire_query_observer(_app: "FastAPI", svc: LifespanServices) -> None:
     """Register QueryObserverComponent into the observability registry.
 
-    Called after startup_services so NexusFS._service_extras is available.
+    Called after startup_services so observability_subsystem is available.
     """
-    registry = getattr(app.state, "observability_registry", None)
-    nexus_fs = getattr(app.state, "nexus_fs", None)
-    if registry is None or nexus_fs is None:
+    registry = svc.observability_registry
+    if registry is None:
         return
 
-    obs_subsystem = getattr(nexus_fs, "_service_extras", {}).get("observability_subsystem")
+    obs_subsystem = svc.observability_subsystem
     if obs_subsystem is None:
         return
 
@@ -112,13 +115,14 @@ def _wire_query_observer(app: FastAPI) -> None:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
     """Application lifespan manager.
 
     Calls domain-specific initializers during startup and tears them
     down in reverse order during shutdown.
     """
     from nexus.server.lifespan.a2a_grpc import shutdown_a2a_grpc, startup_a2a_grpc
+    from nexus.server.lifespan.bricks import shutdown_bricks, startup_bricks
     from nexus.server.lifespan.ipc import shutdown_ipc, startup_ipc
     from nexus.server.lifespan.observability import (
         shutdown_observability,
@@ -133,20 +137,62 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Collect all background tasks for clean shutdown
     bg_tasks: list[asyncio.Task] = []
 
+    # Extract typed service container once
+    svc = LifespanServices.from_app(app)
+
+    # Issue #2168: startup tracker for health probes
+    from nexus.server.health.startup_tracker import StartupPhase
+
+    tracker = getattr(app.state, "startup_tracker", None)
+
+    def _done(phase: StartupPhase) -> None:
+        if tracker is not None:
+            tracker.complete(phase)
+
     # --- Startup (order matters: observability first, then core, then services) ---
 
-    await startup_observability(app)
-    _compute_features_info(app)
-    bg_tasks.extend(await startup_permissions(app))
-    bg_tasks.extend(await startup_realtime(app))
-    bg_tasks.extend(await startup_search(app))
-    bg_tasks.extend(await startup_services(app))
-    bg_tasks.extend(await startup_uploads(app))
-    bg_tasks.extend(await startup_ipc(app))
-    bg_tasks.extend(await startup_a2a_grpc(app))
+    await startup_observability(app, svc)
+    # Re-extract observability_registry after startup_observability writes it
+    svc.observability_registry = getattr(app.state, "observability_registry", None)
+
+    # Configure thread pool size (Issue #932) — server infra, not observability
+    from anyio import to_thread
+
+    limiter = to_thread.current_default_thread_limiter()
+    limiter.total_tokens = svc.thread_pool_size
+    logger.info("Thread pool size set to %d", limiter.total_tokens)
+
+    _done(StartupPhase.OBSERVABILITY)
+
+    _compute_features_info(app, svc)
+    _done(StartupPhase.FEATURES)
+
+    bg_tasks.extend(await startup_permissions(app, svc))
+    _done(StartupPhase.PERMISSIONS)
+
+    bg_tasks.extend(await startup_realtime(app, svc))
+    _done(StartupPhase.REALTIME)
+
+    bg_tasks.extend(await startup_search(app, svc))
+    _done(StartupPhase.SEARCH)
+
+    bg_tasks.extend(await startup_services(app, svc))
+    _done(StartupPhase.SERVICES)
+
+    bg_tasks.extend(await startup_bricks(app, svc))
+    _done(StartupPhase.BRICKS)
+
+    bg_tasks.extend(await startup_uploads(app, svc))
+    _done(StartupPhase.UPLOADS)
+
+    bg_tasks.extend(await startup_ipc(app, svc))
+    _done(StartupPhase.IPC)
+
+    bg_tasks.extend(await startup_a2a_grpc(app, svc))
+    _done(StartupPhase.A2A_GRPC)
 
     # Wire QueryObserverComponent into registry after services start (Issue #2072)
-    _wire_query_observer(app)
+    _wire_query_observer(app, svc)
 
     yield
 
@@ -160,33 +206,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if bg_tasks:
         with suppress(asyncio.CancelledError):
             await asyncio.gather(*[t for t in bg_tasks if t], return_exceptions=True)
-        logger.debug(f"Cancelled {len(bg_tasks)} background tasks")
+        logger.debug("Cancelled %d background tasks", len(bg_tasks))
 
-    await shutdown_a2a_grpc(app)
-    await shutdown_ipc(app)
-    await shutdown_services(app)
-    await shutdown_realtime(app)
+    await shutdown_a2a_grpc(app, svc)
+    await shutdown_ipc(app, svc)
+    await shutdown_bricks(app, svc)
+    await shutdown_services(app, svc)
+    await shutdown_realtime(app, svc)
 
     # Close NexusFS kernel
-    if app.state.nexus_fs:
-        # Stop WriteBuffer to drain pending events before closing kernel (Issue #1370)
-        _wo = getattr(app.state.nexus_fs, "_write_observer", None)
-        if _wo is not None and hasattr(_wo, "stop"):
-            try:
-                _wo.stop()
-                logger.info("WriteBuffer stopped")
-            except Exception as e:
-                logger.warning(f"Error stopping WriteBuffer: {e}")
+    # (WriteBuffer shutdown is now handled by ObservabilityRegistry via WriteBufferComponent)
+    if app.state.nexus_fs and hasattr(app.state.nexus_fs, "close"):
+        app.state.nexus_fs.close()
 
-        if hasattr(app.state.nexus_fs, "close"):
-            app.state.nexus_fs.close()
-
-    # Shutdown cache factory (Issue #1075)
-    if hasattr(app.state, "cache_factory") and app.state.cache_factory:
+    # Shutdown CacheBrick (Issue #1524)
+    if app.state.cache_brick:
         try:
-            await app.state.cache_factory.shutdown()
-            logger.info("Cache factory stopped")
+            await app.state.cache_brick.stop()
+            logger.info("CacheBrick stopped")
         except Exception as e:
-            logger.warning(f"Error shutting down cache factory: {e}")
+            logger.warning("Error shutting down CacheBrick: %s", e, exc_info=True)
 
-    await shutdown_observability()
+    await shutdown_observability(app, svc)

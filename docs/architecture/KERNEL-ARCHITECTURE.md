@@ -53,8 +53,11 @@ system (like systemd): creates selected services and injects them via
 `KernelServices` dataclass. Different distros select different service sets at
 startup — `nexus-server` loads all 22+, `nexus-embedded` loads zero.
 
-> *Gap:* `factory.py` hardcodes all service creation; `_wire_services()` loads
-> everything unconditionally. No selective loading per distro yet.
+> *Resolved (Issue #643):* `factory.py` gates all services via `DeploymentProfile` +
+> `enabled_bricks` frozenset (see §5.1). `_wire_services()` migrated to
+> `factory._boot_wired_services()` — NexusFS constructor no longer imports or creates
+> services. Two-phase init: `NexusFS(...)` → `_boot_wired_services(nx, ...)` →
+> `nx._bind_wired_services(dict)`.
 
 **Phase 2 — Runtime hot-swap (Linux LKM model).** A `ServiceRegistry` manages
 in-process service modules following the Loadable Kernel Module pattern:
@@ -87,7 +90,7 @@ not by domain or implementation.
 | **Metastore** | `MetastoreABC` | Ordered KV, CAS, prefix scan, optional Raft SC | **Required** — sole kernel init param |
 | **ObjectStore** | `ObjectStoreABC` (= `Backend`) | Streaming I/O, immutable blobs, petabyte scale | **Interface only** — instances mounted dynamically |
 | **RecordStore** | `RecordStoreABC` | Relational ACID, JOINs, FK, vector search | **Services only** — optional, injected for ReBAC/Auth/etc. |
-| **CacheStore** | `CacheStoreABC` | Ephemeral KV, Pub/Sub, TTL | **Optional** — kernel defines ABC, services consume; defaults to `NullCacheStore` |
+| **CacheStore** | `CacheStoreABC` | Ephemeral KV, Pub/Sub, TTL | **Optional** — ABC in `contracts/` (like `include/linux/fscache.h`), kernel accepts via DI, services consume; defaults to `NullCacheStore` |
 
 **Orthogonality:** Between pillars = different query patterns. Within pillars = interchangeable
 drivers (deployment-time config). See `data-storage-matrix.md` for full proof.
@@ -139,7 +142,9 @@ See `ops-scenario-matrix.md` for full Ops-Scenario affinity proof.
 | `MetastoreABC` | `struct inode_operations` | Typed FileMetadata CRUD (the inode layer) |
 | `VFSRouterProtocol` | VFS `lookup_slow()` | Path resolution only — mount CRUD lives in Service `MountProtocol` |
 | `ObjectStoreABC` (= `Backend`) | `struct file_operations` | Blob I/O interface (read/write/delete/list) |
-| `CacheStoreABC` | (no direct analogue) | Ephemeral KV + Pub/Sub primitives |
+| `CacheStoreABC` | `include/linux/fscache.h` | Ephemeral KV + Pub/Sub primitives — ABC in `contracts/`, kernel accepts optionally, services/bricks consume |
+| `VFSLockManagerProtocol` | per-inode `i_rwsem` | Path-level RW locking with hierarchy awareness |
+| `PipeManagerProtocol` | `pipe(2)` + `fs/pipe.c` | Named pipe lifecycle + MPMC data path (see §6 Kernel Tier) |
 
 `MetastoreABC` is kernel because it IS the inode layer — the typed contract
 between VFS and storage. Without it, the kernel cannot describe files.
@@ -158,8 +163,8 @@ constructor and never auto-creates services.
 
 > *Resolved:* Event mixins fully extracted — `NexusFSEventsMixin` removed (#573),
 > `FileWatcher` moved to `services/watch/` (#706), orphaned kernel attrs cleaned (#656).
-> Remaining: ~40 lazy service imports in `_wire_services()` (#194), replace
-> `KernelServices` dataclass with `ServiceRegistry`.
+> `_wire_services()` deleted — all service creation moved to `factory._boot_wired_services()` (#643).
+> Remaining: replace `KernelServices` dataclass with `ServiceRegistry`.
 
 ### Service Protocols (`nexus.services.protocols`)
 
@@ -177,6 +182,53 @@ constructor and never auto-creates services.
 
 All use `typing.Protocol` with `@runtime_checkable`.
 See `ops-scenario-matrix.md` §2–§3 for full enumeration and affinity matching.
+
+---
+
+## 3.1. Tier-Neutral Layers (`contracts/`, `lib/`)
+
+Two packages sit **outside** the Kernel → Services → Drivers stack.
+Any layer may import from them; they must **not** import from `nexus.core`,
+`nexus.services`, `nexus.fuse`, `nexus.bricks`, or any other tier-specific package.
+
+| Package | Contains | Linux Analogue | Rule |
+|---------|----------|----------------|------|
+| **`contracts/`** | Types, enums, exceptions, constants | `include/linux/` (header files) | Declarations only — no implementation logic, no I/O |
+| **`lib/`** | Reusable helper functions, pure utilities | `lib/` (libc, libm) | Implementation allowed, but zero kernel deps |
+
+**Core distinction:** `contracts/` = **what** (shapes of data). `lib/` = **how** (behavior).
+When you see `from nexus.contracts import X` you know X is a lightweight type/exception
+with near-zero deps. `from nexus.lib import Y` means Y is a function that *does* something.
+
+### Placement Decision Tree
+
+```
+Is it used by a SINGLE layer?
+  → Yes: stays in that layer (e.g. fuse/filters.py)
+  → No (multi-layer):
+       Is it a type / ABC / exception / enum / constant?
+         → Yes: contracts/
+         → No (function / helper / I/O logic): lib/
+```
+
+### Import Rules
+
+`contracts/` and `lib/` may import from: each other, stdlib, third-party packages.
+They must **never** import from: `nexus.core`, `nexus.services`, `nexus.server`,
+`nexus.cli`, `nexus.fuse`, `nexus.bricks`, `nexus.rebac`.
+
+### What Goes Where — Examples
+
+| Module | Destination | Reason |
+|--------|-------------|--------|
+| `OperationContext`, `Permission` (type defs) | `contracts/types.py` | Type declarations |
+| `NexusError`, `BackendError` (exceptions) | `contracts/exceptions.py` | Exception hierarchy |
+| `Base`, `TimestampMixin` (ORM base/mixins) | `lib/db_base.py` | Schema helpers with implementation (uuid gen, server_default) |
+| `EmailList`, `ISODateTimeStr` (Pydantic Annotated) | `lib/validators.py` | Annotated types with validation logic |
+| `get_database_url()` (env var resolution) | `lib/env.py` | Implementation helper |
+| `path_matches_pattern()` (glob matching) | `lib/path_utils.py` | Pure utility function |
+| `PathInterner`, `SegmentedPathInterner` (string interning) | `lib/path_interner.py` | Generic utility (like `lib/string.c` in Linux) |
+| `is_os_metadata_file()` (OS file filter) | `fuse/filters.py` | Single-layer (FUSE only) |
 
 ---
 
@@ -206,12 +258,42 @@ See `federation-memo.md` §5–§6 for implementation details.
 
 ## 5. Deployment Modes
 
+### 5.1 Deployment Profiles (Distro)
+
+Like Linux distros (Ubuntu, Alpine, BusyBox) select which packages to include from
+the same kernel, Nexus **deployment profiles** select which bricks to enable from
+the same codebase. Two orthogonal axes:
+
+- **Mode** = network topology (standalone, client-server, federation)
+- **Profile** = feature set (which bricks are enabled)
+
+| Profile | Target | Bricks | Linux Analogue |
+|---------|--------|--------|----------------|
+| **embedded** | MCU, WASM (<1 MB) | 2 (storage + eventlog) | BusyBox |
+| **lite** | Pi, Jetson, mobile (512 MB-4 GB) | 8 (+namespace, agent, permissions, cache, ipc, scheduler) | Alpine |
+| **full** | Desktop, laptop (4-32 GB) | 21 (all except federation) | Ubuntu Desktop |
+| **cloud** | k8s, serverless (unlimited) | 22 (all) | Ubuntu Server |
+
+Profile hierarchy: `embedded ⊂ lite ⊂ full ⊆ cloud`
+
+**Mechanism:** `factory.py` (the init system) resolves the active profile via
+`NEXUS_PROFILE` env var -> `DeploymentProfile` enum -> `resolve_enabled_bricks()`
+-> `frozenset[str]`. Each service in the 3-tier boot (`_boot_kernel_services`,
+`_boot_system_services`, `_boot_brick_services`) checks brick membership before
+construction. Individual brick overrides via `FeaturesConfig` YAML always win over
+profile defaults.
+
+**Source of truth:** `src/nexus/core/deployment_profile.py` (22 canonical brick names,
+4 profile-to-brick mappings, `resolve_enabled_bricks()` merge function).
+
+### 5.2 Network Modes
+
 | Mode | Description | Metastore | Services |
 |------|-------------|-----------|----------|
 | **Standalone** | Single process, local storage | redb (local) | Optional |
 | **Client-Server** | RemoteNexusFS connects to a NexusFS server | redb (local) on server | On server |
 | **Federation** | Multiple nodes sharing zones via Raft | redb (Raft) | Per-node |
-| **Embedded** | Minimal kernel on constrained devices | redb (local) | None (planned) |
+| **Embedded** | Minimal kernel on constrained devices | redb (local) | None (profile: embedded) |
 
 Driver selection is config-time: same binary, different `NEXUS_METASTORE`, `NEXUS_RECORD_STORE`, etc.
 

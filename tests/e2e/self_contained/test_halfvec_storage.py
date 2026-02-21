@@ -47,7 +47,7 @@ def session(session_factory):
 @pytest.fixture(scope="module", autouse=True)
 def setup_database(engine):
     """Set up test database with pgvector extension."""
-    from nexus.search.vector_db import VectorDatabase
+    from nexus.bricks.search.vector_db import VectorDatabase
     from nexus.storage.models import Base
 
     with engine.connect() as conn:
@@ -108,7 +108,7 @@ class TestHalfvecStorage:
         """Test storing an embedding as halfvec."""
         import uuid
 
-        from nexus.search.vector_db import VectorDatabase
+        from nexus.bricks.search.vector_db import VectorDatabase
         from nexus.storage.models import DocumentChunkModel, FilePathModel
 
         vector_db = VectorDatabase(engine)
@@ -175,7 +175,7 @@ class TestHalfvecStorage:
         """Test that similarity search works with halfvec."""
         import uuid
 
-        from nexus.search.vector_db import VectorDatabase
+        from nexus.bricks.search.vector_db import VectorDatabase
         from nexus.storage.models import DocumentChunkModel, FilePathModel
 
         vector_db = VectorDatabase(engine)
@@ -239,7 +239,7 @@ class TestHalfvecStorageSize:
         """Verify that halfvec uses approximately 50% less storage than vector."""
         import uuid
 
-        from nexus.search.vector_db import VectorDatabase
+        from nexus.bricks.search.vector_db import VectorDatabase
         from nexus.storage.models import DocumentChunkModel, FilePathModel
 
         vector_db = VectorDatabase(engine)

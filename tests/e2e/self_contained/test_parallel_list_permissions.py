@@ -6,13 +6,11 @@ to verify that parallel directory traversal works correctly with ReBAC permissio
 Uses mock backends and rebac_manager to isolate the parallel listing + permission pipeline.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
-from nexus.core.permissions import OperationContext
-from nexus.rebac.enforcer import PermissionEnforcer
-from nexus.services.search_service import SearchService
+from nexus.bricks.rebac.enforcer import PermissionEnforcer
+from nexus.contracts.types import OperationContext
+from nexus.services.search.search_service import SearchService
 
 # ---------------------------------------------------------------------------
 # Helpers

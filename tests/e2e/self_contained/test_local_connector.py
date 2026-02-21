@@ -12,16 +12,14 @@ Unlike unit tests which mock dependencies, these tests use real
 file operations and the actual NexusFS stack.
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 
 import pytest
 
 from nexus.backends.local_connector import LocalConnectorBackend
 from nexus.backends.registry import create_connector
-from nexus.core.exceptions import BackendError
-from nexus.core.permissions import OperationContext
+from nexus.contracts.exceptions import BackendError
+from nexus.contracts.types import OperationContext
 
 # ============================================================================
 # FIXTURES

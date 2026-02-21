@@ -4,15 +4,13 @@ Covers filter modes, metadata loading, error paths, and edge cases
 that will be touched by the Phase 3 pipeline refactor (Issue #1400).
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest
 import yaml
 
-from nexus.core.permissions import OperationContext
-from nexus.services.skill_service import SkillService
+from nexus.bricks.skills.skill_service_adapter import SkillService
+from nexus.contracts.types import OperationContext
 
 # =============================================================================
 # Fixtures
@@ -62,7 +60,6 @@ SKILL_MD = (
     b"---\nname: Test Skill\ndescription: A test\nversion: '1.0'\ntags:\n  - test\n---\n# Test"
 )
 
-
 # =============================================================================
 # Filter: "subscribed"
 # =============================================================================
@@ -103,7 +100,16 @@ class TestDiscoverSubscribed:
             return SKILL_MD
 
         mock_gateway.read.side_effect = read_side
-        mock_gateway.rebac_manager.rebac_check.return_value = True  # is_public
+        # Batch public-set lookup: _find_public_skills uses rebac_list_tuples
+        mock_gateway.rebac_list_tuples.return_value = [
+            {
+                "object_type": "file",
+                "object_id": "/zone/other/user/bob/skill/shared",
+                "subject_type": "role",
+                "subject_id": "public",
+                "relation": "direct_viewer",
+            }
+        ]
 
         result = svc.discover(ctx, filter="subscribed")
 
@@ -191,20 +197,26 @@ class TestDiscoverShared:
 
     def test_returns_shared_skills(self, svc, mock_gateway, ctx):
         """Shared filter queries ReBAC for direct_viewer tuples for user."""
-        mock_gateway.rebac_list_tuples.return_value = [
-            {
-                "object_type": "file",
-                "object_id": "/zone/acme/user/bob/skill/testing",
-                "subject_type": "user",
-                "subject_id": "alice",
-                "relation": "direct_viewer",
-            }
-        ]
+        shared_tuple = {
+            "object_type": "file",
+            "object_id": "/zone/acme/user/bob/skill/testing",
+            "subject_type": "user",
+            "subject_id": "alice",
+            "relation": "direct_viewer",
+        }
+
+        def rebac_list_side(*, subject=None, relation=None, object=None):
+            # Public query returns empty; shared query returns the tuple
+            if subject == ("role", "public"):
+                return []
+            if subject == ("user", "alice"):
+                return [shared_tuple]
+            return []
+
+        mock_gateway.rebac_list_tuples.side_effect = rebac_list_side
         mock_gateway.read.side_effect = lambda p, **kw: (
             yaml.dump({"subscribed_skills": []}).encode() if ".subscribed" in p else SKILL_MD
         )
-        # Not public
-        mock_gateway.rebac_manager.rebac_check.return_value = False
 
         result = svc.discover(ctx, filter="shared")
 
@@ -213,20 +225,33 @@ class TestDiscoverShared:
 
     def test_shared_skips_public(self, svc, mock_gateway, ctx):
         """Shared filter skips skills that are also public."""
-        mock_gateway.rebac_list_tuples.return_value = [
-            {
-                "object_type": "file",
-                "object_id": "/zone/acme/user/bob/skill/testing",
-                "subject_type": "user",
-                "subject_id": "alice",
-                "relation": "direct_viewer",
-            }
-        ]
+        skill_tuple = {
+            "object_type": "file",
+            "object_id": "/zone/acme/user/bob/skill/testing",
+            "subject_type": "user",
+            "subject_id": "alice",
+            "relation": "direct_viewer",
+        }
+        public_tuple = {
+            "object_type": "file",
+            "object_id": "/zone/acme/user/bob/skill/testing",
+            "subject_type": "role",
+            "subject_id": "public",
+            "relation": "direct_viewer",
+        }
+
+        def rebac_list_side(*, subject=None, relation=None, object=None):
+            # Both public and shared return the skill
+            if subject == ("role", "public"):
+                return [public_tuple]
+            if subject == ("user", "alice"):
+                return [skill_tuple]
+            return []
+
+        mock_gateway.rebac_list_tuples.side_effect = rebac_list_side
         mock_gateway.read.side_effect = lambda p, **kw: (
             yaml.dump({"subscribed_skills": []}).encode() if ".subscribed" in p else SKILL_MD
         )
-        # Skill is public
-        mock_gateway.rebac_manager.rebac_check.return_value = True
 
         result = svc.discover(ctx, filter="shared")
         assert result == []

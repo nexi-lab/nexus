@@ -3,15 +3,13 @@
 Tests the full HTTP request/response cycle using FastAPI's TestClient.
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from nexus.bricks.a2a.router import build_router
+from nexus.server.api.v2.routers.a2a import build_router
 
 # ======================================================================
 # Fixtures
@@ -317,7 +315,9 @@ class TestNarrowedExceptionHandlers:
             {"message": {"role": "user", "parts": [{"type": "text", "text": "hi"}]}},
         )
         # Mock dispatch to raise an unexpected exception
-        with patch("nexus.bricks.a2a.router.dispatch", new_callable=AsyncMock) as mock_dispatch:
+        with patch(
+            "nexus.server.api.v2.routers.a2a.dispatch", new_callable=AsyncMock
+        ) as mock_dispatch:
             mock_dispatch.side_effect = RuntimeError("unexpected crash")
             resp = client.post("/a2a", json=body)
 

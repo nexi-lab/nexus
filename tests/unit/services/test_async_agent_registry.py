@@ -1,14 +1,12 @@
 """Tests for AsyncAgentRegistry wrapper (Issue #1440)."""
 
-from __future__ import annotations
-
 import types
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.services.agents.agent_record import AgentRecord, AgentState
+from nexus.contracts.agent_types import AgentRecord, AgentState
 from nexus.services.agents.async_agent_registry import AsyncAgentRegistry, _to_agent_info
 from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
 from tests.unit.core.protocols.test_conformance import assert_protocol_conformance
@@ -202,3 +200,73 @@ class TestUnregister:
     async def test_returns_false(self, wrapper: AsyncAgentRegistry, mock_inner: MagicMock) -> None:
         mock_inner.unregister.return_value = False
         assert await wrapper.unregister("missing") is False
+
+
+# ---------------------------------------------------------------------------
+# AgentStateEmitter DI integration (Issue #2360, #12B)
+# ---------------------------------------------------------------------------
+
+
+class TestStateEmitterDI:
+    """Verify events fire correctly through the DI path."""
+
+    @pytest.mark.asyncio()
+    async def test_transition_emits_state_event(self, mock_inner: MagicMock) -> None:
+        """When state_emitter is injected, transition() emits AgentStateEvent."""
+        from nexus.services.scheduler.events import AgentStateEmitter, AgentStateEvent
+
+        emitter = AgentStateEmitter()
+        received_events: list[AgentStateEvent] = []
+
+        async def handler(event: AgentStateEvent) -> None:
+            received_events.append(event)
+
+        emitter.add_handler(handler)
+
+        wrapper = AsyncAgentRegistry(mock_inner, state_emitter=emitter)
+
+        # Set up mock: get() returns CONNECTED, transition() returns IDLE
+        mock_inner.get.return_value = _make_record(state=AgentState.CONNECTED, generation=1)
+        mock_inner.transition.return_value = _make_record(state=AgentState.IDLE, generation=2)
+
+        await wrapper.transition("agent-1", "IDLE")
+
+        assert len(received_events) == 1
+        event = received_events[0]
+        assert event.agent_id == "agent-1"
+        assert event.previous_state == "CONNECTED"
+        assert event.new_state == "IDLE"
+        assert event.generation == 2
+
+    @pytest.mark.asyncio()
+    async def test_no_event_without_emitter(self, mock_inner: MagicMock) -> None:
+        """When state_emitter is None, transition() does not attempt to emit."""
+        wrapper = AsyncAgentRegistry(mock_inner, state_emitter=None)
+
+        mock_inner.transition.return_value = _make_record(state=AgentState.IDLE, generation=2)
+
+        # Should not call get() for previous state lookup
+        info = await wrapper.transition("agent-1", "IDLE")
+        assert info.state == "IDLE"
+        mock_inner.get.assert_not_called()
+
+    @pytest.mark.asyncio()
+    async def test_emitter_handler_failure_isolated(self, mock_inner: MagicMock) -> None:
+        """A failing handler does not prevent transition from completing."""
+        from nexus.services.scheduler.events import AgentStateEmitter, AgentStateEvent
+
+        emitter = AgentStateEmitter()
+
+        async def bad_handler(event: AgentStateEvent) -> None:  # noqa: ARG001
+            raise RuntimeError("handler crashed")
+
+        emitter.add_handler(bad_handler)
+
+        wrapper = AsyncAgentRegistry(mock_inner, state_emitter=emitter)
+
+        mock_inner.get.return_value = _make_record(state=AgentState.CONNECTED)
+        mock_inner.transition.return_value = _make_record(state=AgentState.IDLE, generation=2)
+
+        # Should not raise — emitter isolates handler exceptions
+        info = await wrapper.transition("agent-1", "IDLE")
+        assert info.state == "IDLE"

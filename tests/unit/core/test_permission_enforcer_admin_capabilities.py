@@ -17,8 +17,8 @@ Admin bypass flow:
 5. Grant or deny based on above checks
 """
 
-from nexus.core.permissions import OperationContext, Permission
-from nexus.rebac.enforcer import PermissionEnforcer
+from nexus.bricks.rebac.enforcer import PermissionEnforcer
+from nexus.contracts.types import OperationContext, Permission
 
 
 class MockReBACManager:

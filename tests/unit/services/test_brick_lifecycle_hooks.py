@@ -3,19 +3,18 @@
 Phase 3 TDD: hook firing, veto support, event barrier concurrency tests.
 """
 
-from __future__ import annotations
-
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.services.brick_lifecycle import BrickLifecycleManager
 from nexus.services.protocols.brick_lifecycle import (
     POST_MOUNT,
     POST_UNMOUNT,
+    POST_UNREGISTER,
     PRE_MOUNT,
     PRE_UNMOUNT,
+    PRE_UNREGISTER,
     BrickLifecycleProtocol,
     BrickState,
 )
@@ -24,6 +23,7 @@ from nexus.services.protocols.hook_engine import (
     HookEngineProtocol,
     HookResult,
 )
+from nexus.system_services.lifecycle.brick_lifecycle import BrickLifecycleManager
 
 # ---------------------------------------------------------------------------
 # Test helpers
@@ -162,7 +162,9 @@ class TestMountHookFiring:
 
         await manager.mount("search")
 
-        assert manager.get_status("search").state == BrickState.ACTIVE  # type: ignore[union-attr]
+        _s = manager.get_status("search")
+        assert _s is not None
+        assert _s.state == BrickState.ACTIVE
 
     @pytest.mark.asyncio
     async def test_mount_stateless_brick_fires_hooks(self) -> None:
@@ -290,8 +292,12 @@ class TestConcurrency:
         await manager.mount_all()
 
         # Both bricks should be ACTIVE
-        assert manager.get_status("a").state == BrickState.ACTIVE  # type: ignore[union-attr]
-        assert manager.get_status("b").state == BrickState.ACTIVE  # type: ignore[union-attr]
+        _s = manager.get_status("a")
+        assert _s is not None
+        assert _s.state == BrickState.ACTIVE
+        _s = manager.get_status("b")
+        assert _s is not None
+        assert _s.state == BrickState.ACTIVE
         # Both entered start() before either completed (proves concurrency)
         assert both_entered.is_set()
 
@@ -334,7 +340,9 @@ class TestConcurrency:
 
         # Try concurrent unmount — should work since lock is per-brick
         await manager.unmount("search")
-        assert manager.get_status("search").state == BrickState.UNREGISTERED  # type: ignore[union-attr]
+        _s = manager.get_status("search")
+        assert _s is not None
+        assert _s.state == BrickState.UNMOUNTED
 
     @pytest.mark.asyncio
     async def test_mount_all_with_hooks_fires_per_brick(self) -> None:
@@ -352,3 +360,78 @@ class TestConcurrency:
         brick_names = [c.args[1].payload["brick_name"] for c in fire_calls]
         assert brick_names.count("a") == 2  # PRE_MOUNT + POST_MOUNT
         assert brick_names.count("b") == 2  # PRE_MOUNT + POST_MOUNT
+
+
+# ---------------------------------------------------------------------------
+# Unregister hook firing (Issue #2363)
+# ---------------------------------------------------------------------------
+
+
+class TestUnregisterHookFiring:
+    """Verify hooks fire correctly during unregister lifecycle."""
+
+    @pytest.mark.asyncio
+    async def test_unregister_fires_pre_and_post_hooks(self) -> None:
+        """Unregister should fire PRE_UNREGISTER and POST_UNREGISTER."""
+        hook_engine = _make_hook_engine()
+        manager = BrickLifecycleManager(hook_engine=hook_engine)
+        brick = _make_lifecycle_brick("search")
+        manager.register("search", brick, protocol_name="SP")
+        await manager.mount("search")
+        await manager.unmount("search")
+
+        hook_engine.fire.reset_mock()
+        await manager.unregister("search")
+
+        phases = [c.args[0] for c in hook_engine.fire.call_args_list]
+        assert PRE_UNREGISTER in phases
+        assert POST_UNREGISTER in phases
+
+    @pytest.mark.asyncio
+    async def test_pre_unregister_is_non_vetable(self) -> None:
+        """PRE_UNREGISTER veto should NOT block unregister (it's informational)."""
+        hook_engine = _make_veto_hook_engine(PRE_UNREGISTER, "Cannot veto unregister")
+        manager = BrickLifecycleManager(hook_engine=hook_engine)
+        brick = _make_lifecycle_brick("search")
+        manager.register("search", brick, protocol_name="SP")
+        await manager.mount("search")
+        await manager.unmount("search")
+
+        # Unregister should still proceed despite veto
+        await manager.unregister("search")
+        assert manager.get_status("search") is None
+
+    @pytest.mark.asyncio
+    async def test_unregister_hook_error_doesnt_block(self) -> None:
+        """Hook engine errors during unregister should not block the operation."""
+        hook_engine = AsyncMock(spec=HookEngineProtocol)
+        hook_engine.fire = AsyncMock(side_effect=RuntimeError("hook engine down"))
+        manager = BrickLifecycleManager(hook_engine=hook_engine)
+        brick = _make_lifecycle_brick("search")
+        manager.register("search", brick, protocol_name="SP")
+        await manager.mount("search")
+        await manager.unmount("search")
+
+        # Should succeed despite hook errors
+        await manager.unregister("search")
+        assert manager.get_status("search") is None
+
+    @pytest.mark.asyncio
+    async def test_unregister_hook_context(self) -> None:
+        """Hook context should include brick metadata."""
+        hook_engine = _make_hook_engine()
+        manager = BrickLifecycleManager(hook_engine=hook_engine)
+        brick = _make_lifecycle_brick("search")
+        manager.register("search", brick, protocol_name="SearchProtocol")
+        await manager.mount("search")
+        await manager.unmount("search")
+
+        hook_engine.fire.reset_mock()
+        await manager.unregister("search")
+
+        # Check the PRE_UNREGISTER hook context
+        pre_call = hook_engine.fire.call_args_list[0]
+        ctx = pre_call.args[1]
+        assert isinstance(ctx, HookContext)
+        assert ctx.payload["brick_name"] == "search"
+        assert ctx.payload["protocol_name"] == "SearchProtocol"

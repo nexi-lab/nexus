@@ -12,18 +12,12 @@ This module covers critical security properties:
 - Consistency level validation
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.core.permissions import (
-    OperationContext,
-    Permission,
-    PermissionEnforcer,
-)
-from nexus.rebac.manager import (
+from nexus.bricks.rebac.enforcer import PermissionEnforcer
+from nexus.bricks.rebac.manager import (
     CheckResult,
     ConsistencyLevel,
     ConsistencyRequirement,
@@ -32,7 +26,11 @@ from nexus.rebac.manager import (
     TraversalStats,
     WriteResult,
 )
-from nexus.rebac.types import ConsistencyMode
+from nexus.bricks.rebac.types import ConsistencyMode
+from nexus.contracts.types import (
+    OperationContext,
+    Permission,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -195,7 +193,7 @@ class TestZoneIsolation:
             enforcer.check("/zone/zone_b/secret.txt", Permission.READ, ctx)
 
     def test_zone_none_defaults_to_default_zone(self):
-        """When zone_id is None, 'default' is used."""
+        """When zone_id is None, ROOT_ZONE_ID ('root') is used."""
         rebac = MagicMock()
         rebac.rebac_check.return_value = True
         enforcer = PermissionEnforcer(rebac_manager=rebac)

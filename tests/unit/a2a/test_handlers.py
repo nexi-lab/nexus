@@ -4,8 +4,6 @@ TDD-first tests for the extracted handler module.  Tests verify
 pure async handler functions in isolation (no HTTP layer).
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 import pytest
@@ -19,13 +17,14 @@ from nexus.bricks.a2a.exceptions import (
 )
 from nexus.bricks.a2a.handlers import dispatch, handle_cancel, handle_get, handle_send
 from nexus.bricks.a2a.models import Message, TaskState, TextPart
-from nexus.bricks.a2a.stores.in_memory import InMemoryTaskStore
+from nexus.bricks.a2a.stores.in_memory import CacheBackedTaskStore
 from nexus.bricks.a2a.task_manager import TaskManager
+from nexus.bricks.cache.inmemory import InMemoryCacheStore
 
 
 @pytest.fixture
 def tm() -> TaskManager:
-    return TaskManager(store=InMemoryTaskStore())
+    return TaskManager(store=CacheBackedTaskStore(InMemoryCacheStore()))
 
 
 def _user_msg(text: str = "hello") -> dict[str, Any]:

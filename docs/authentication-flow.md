@@ -126,7 +126,7 @@ uuid3         | google   | alice@example.com | encrypted_token_abc    | encrypte
 
 ```python
 from nexus.remote import RemoteNexusFS
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 
 # Alice connects with her API key
 nx = RemoteNexusFS(

@@ -9,8 +9,6 @@ Verifies:
 - Cross-module wiring (search → context_builder, ace → protocol)
 """
 
-from __future__ import annotations
-
 import importlib
 
 import pytest
@@ -25,17 +23,17 @@ class TestImportPaths:
 
     def test_new_service_imports(self) -> None:
         """New canonical import paths from services/ work."""
-        from nexus.services.llm_citation import (
+        from nexus.bricks.llm.llm_citation import (
             Citation,
             CitationExtractor,
             DocumentReadResult,
         )
-        from nexus.services.llm_context_builder import (
+        from nexus.bricks.llm.llm_context_builder import (
             AdaptiveRetrievalConfig,
             ChunkLike,
             ContextBuilder,
         )
-        from nexus.services.llm_document_reader import (
+        from nexus.bricks.llm.llm_document_reader import (
             LLMDocumentReader,
             ReadChunk,
         )
@@ -51,7 +49,7 @@ class TestImportPaths:
 
     def test_brick_level_exports(self) -> None:
         """LLM brick __init__ exports core types (not orchestration)."""
-        from nexus.llm import (
+        from nexus.bricks.llm import (
             LiteLLMProvider,
             LLMBrickManifest,
             LLMConfig,
@@ -86,15 +84,15 @@ class TestProtocolCompliance:
 
     def test_litellm_provider_satisfies_protocol(self) -> None:
         """LiteLLMProvider satisfies LLMProviderProtocol at runtime."""
-        from nexus.llm.provider import LiteLLMProvider
+        from nexus.bricks.llm.provider import LiteLLMProvider
         from nexus.services.protocols.llm_provider import LLMProviderProtocol
 
         assert issubclass(LiteLLMProvider, LLMProviderProtocol)
 
     def test_read_chunk_satisfies_chunk_like(self) -> None:
         """ReadChunk dataclass satisfies ChunkLike protocol."""
-        from nexus.services.llm_context_builder import ChunkLike
-        from nexus.services.llm_document_reader import ReadChunk
+        from nexus.bricks.llm.llm_context_builder import ChunkLike
+        from nexus.bricks.llm.llm_document_reader import ReadChunk
 
         chunk = ReadChunk(path="/test.txt", chunk_text="hello", chunk_index=0)
         assert isinstance(chunk, ChunkLike)
@@ -120,7 +118,7 @@ class TestBrickManifest:
 
     def test_manifest_metadata(self) -> None:
         """LLMBrickManifest has correct metadata."""
-        from nexus.llm.manifest import LLMBrickManifest
+        from nexus.bricks.llm.manifest import LLMBrickManifest
 
         manifest = LLMBrickManifest()
         assert manifest.name == "llm"
@@ -134,7 +132,7 @@ class TestBrickManifest:
 
     def test_manifest_is_frozen(self) -> None:
         """LLMBrickManifest is immutable."""
-        from nexus.llm.manifest import LLMBrickManifest
+        from nexus.bricks.llm.manifest import LLMBrickManifest
 
         manifest = LLMBrickManifest()
         with pytest.raises(AttributeError):
@@ -142,7 +140,7 @@ class TestBrickManifest:
 
     def test_verify_imports_all_pass(self) -> None:
         """verify_imports() succeeds for all required modules."""
-        from nexus.llm.manifest import verify_imports
+        from nexus.bricks.llm.manifest import verify_imports
 
         status = verify_imports()
         for mod, ok in status.items():
@@ -150,7 +148,7 @@ class TestBrickManifest:
 
     def test_verify_imports_returns_expected_modules(self) -> None:
         """verify_imports() checks the correct set of modules."""
-        from nexus.llm.manifest import verify_imports
+        from nexus.bricks.llm.manifest import verify_imports
 
         status = verify_imports()
         # Required external dependencies
@@ -158,12 +156,12 @@ class TestBrickManifest:
         assert "pydantic" in status
         assert "tenacity" in status
         # Internal modules
-        assert "nexus.llm.config" in status
-        assert "nexus.llm.provider" in status
-        assert "nexus.llm.message" in status
-        assert "nexus.llm.metrics" in status
-        assert "nexus.llm.exceptions" in status
-        assert "nexus.llm.cancellation" in status
+        assert "nexus.bricks.llm.config" in status
+        assert "nexus.bricks.llm.provider" in status
+        assert "nexus.bricks.llm.message" in status
+        assert "nexus.bricks.llm.metrics" in status
+        assert "nexus.bricks.llm.exceptions" in status
+        assert "nexus.bricks.llm.cancellation" in status
 
 
 # ---------------------------------------------------------------------------
@@ -177,7 +175,7 @@ class TestCrossModuleWiring:
     def test_search_imports_context_builder_from_services(self) -> None:
         """Search modules can import ContextBuilder from services."""
         # Reimport to ensure clean resolution
-        mod = importlib.import_module("nexus.search.semantic")
+        mod = importlib.import_module("nexus.bricks.search.semantic")
         assert mod is not None
 
     def test_ace_imports_protocol(self) -> None:
@@ -187,7 +185,7 @@ class TestCrossModuleWiring:
 
     def test_document_reader_uses_chunk_like(self) -> None:
         """LLMDocumentReader resolves imports from services."""
-        mod = importlib.import_module("nexus.services.llm_document_reader")
+        mod = importlib.import_module("nexus.bricks.llm.llm_document_reader")
         assert hasattr(mod, "LLMDocumentReader")
         assert hasattr(mod, "ReadChunk")
 
@@ -199,11 +197,11 @@ class TestCrossModuleWiring:
         import sys
 
         # Remove cached modules to force fresh resolution
-        to_remove = [k for k in sys.modules if "nexus.services.llm_document_reader" in k]
+        to_remove = [k for k in sys.modules if "nexus.bricks.llm.llm_document_reader" in k]
         saved = {k: sys.modules.pop(k) for k in to_remove}
 
         try:
-            importlib.import_module("nexus.services.llm_document_reader")
+            importlib.import_module("nexus.bricks.llm.llm_document_reader")
         finally:
             sys.modules.update(saved)
 
@@ -218,7 +216,7 @@ class TestProviderCaching:
 
     def test_llm_service_has_provider_cache(self) -> None:
         """LLMService initializes with empty provider cache."""
-        from nexus.services.llm_service import LLMService
+        from nexus.bricks.llm.llm_service import LLMService
 
         service = LLMService(nexus_fs=None)
         assert hasattr(service, "_provider_cache")
@@ -236,8 +234,8 @@ class TestContextBuilderIntegration:
 
     def test_build_context_with_read_chunks(self) -> None:
         """ContextBuilder works with ReadChunk objects."""
-        from nexus.services.llm_context_builder import ContextBuilder
-        from nexus.services.llm_document_reader import ReadChunk
+        from nexus.bricks.llm.llm_context_builder import ContextBuilder
+        from nexus.bricks.llm.llm_document_reader import ReadChunk
 
         chunks = [
             ReadChunk(path="/doc1.txt", chunk_text="Hello world", chunk_index=0),
@@ -254,8 +252,8 @@ class TestContextBuilderIntegration:
 
     def test_citation_extractor_with_chunk_like_objects(self) -> None:
         """CitationExtractor works with ChunkLike objects (not just dicts)."""
-        from nexus.services.llm_citation import CitationExtractor
-        from nexus.services.llm_document_reader import ReadChunk
+        from nexus.bricks.llm.llm_citation import CitationExtractor
+        from nexus.bricks.llm.llm_document_reader import ReadChunk
 
         chunks = [
             ReadChunk(
@@ -278,7 +276,7 @@ class TestContextBuilderIntegration:
 
     def test_citation_extractor_with_dict_chunks(self) -> None:
         """CitationExtractor still works with legacy dict chunks."""
-        from nexus.services.llm_citation import CitationExtractor
+        from nexus.bricks.llm.llm_citation import CitationExtractor
 
         chunks = [
             {
@@ -312,7 +310,7 @@ class TestPerformanceValidation:
         import time
 
         start = time.perf_counter()
-        importlib.import_module("nexus.llm")
+        importlib.import_module("nexus.bricks.llm")
         elapsed = time.perf_counter() - start
 
         # Should be fast since litellm is already cached
@@ -322,7 +320,7 @@ class TestPerformanceValidation:
         """verify_imports() completes quickly (<1s)."""
         import time
 
-        from nexus.llm.manifest import verify_imports
+        from nexus.bricks.llm.manifest import verify_imports
 
         start = time.perf_counter()
         verify_imports()

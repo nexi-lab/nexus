@@ -8,8 +8,8 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # Import OAuthConfig - required for OAuth configuration
-# Moved to nexus.auth_config to fix config.py → server/ architecture violation (#1389)
-from nexus.auth_config import OAuthConfig
+# Canonical path: nexus.bricks.auth.oauth.config (#2281)
+from nexus.bricks.auth.oauth.config import OAuthConfig
 
 
 class DockerImageTemplate(BaseModel):
@@ -115,8 +115,8 @@ class NexusConfig(BaseModel):
         default="full",
         description=(
             "Deployment profile controlling which bricks are enabled: "
-            "embedded (storage+eventlog only), lite (core services), "
-            "full (all bricks), cloud (all + federation)"
+            "kernel (bare VFS, storage only), embedded (storage+eventlog), "
+            "lite (core services), full (all bricks), cloud (all + federation)"
         ),
     )
 
@@ -348,9 +348,9 @@ class NexusConfig(BaseModel):
     def validate_profile(cls, v: str) -> str:
         """Validate deployment profile.
 
-        Valid profiles: embedded, lite, full, cloud
+        Valid profiles: kernel, embedded, lite, full, cloud, auto
         """
-        allowed = ["embedded", "lite", "full", "cloud"]
+        allowed = ["kernel", "embedded", "lite", "full", "cloud", "auto"]
         if v not in allowed:
             raise ValueError(f"profile must be one of {allowed}, got '{v}'")
         return v
@@ -450,7 +450,7 @@ def _load_from_dict(config_dict: dict[str, Any]) -> NexusConfig:
 
     # Convert oauth dict to OAuthConfig if present
     if "oauth" in merged_dict and isinstance(merged_dict["oauth"], dict):
-        from nexus.auth_config import OAuthConfig as OAuthConfigType
+        from nexus.bricks.auth.oauth.config import OAuthConfig as OAuthConfigType
 
         merged_dict["oauth"] = OAuthConfigType(**merged_dict["oauth"])
 

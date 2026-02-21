@@ -4,13 +4,11 @@ These tests verify that the mobile search configuration integrates correctly
 with the actual search infrastructure using different device tiers.
 """
 
-from __future__ import annotations
-
 import tempfile
 
 import pytest
 
-from nexus.search.mobile_config import (
+from nexus.bricks.search.mobile_config import (
     EMBEDDING_MODELS,
     TIER_PRESETS,
     DeviceTier,
@@ -285,7 +283,7 @@ class TestProviderE2E:
 
     def test_gguf_models_have_quantization(self):
         """Test GGUF models specify quantization."""
-        from nexus.search.mobile_config import ModelProvider
+        from nexus.bricks.search.mobile_config import ModelProvider
 
         for name, model in EMBEDDING_MODELS.items():
             if model.provider == ModelProvider.GGUF:
@@ -294,7 +292,7 @@ class TestProviderE2E:
 
     def test_model2vec_models_are_fast(self):
         """Test Model2Vec models are configured for speed."""
-        from nexus.search.mobile_config import ModelProvider
+        from nexus.bricks.search.mobile_config import ModelProvider
 
         for name, model in EMBEDDING_MODELS.items():
             if model.provider == ModelProvider.MODEL2VEC:
@@ -310,7 +308,7 @@ class TestIntegrationWithBM25:
 
     def test_bm25_available_for_keyword_mode(self):
         """Test BM25S is available for keyword-only search."""
-        from nexus.search import is_bm25s_available
+        from nexus.bricks.search import is_bm25s_available
 
         config = get_config_for_tier(DeviceTier.MINIMAL)
         assert config.mode == SearchMode.KEYWORD_ONLY
@@ -324,7 +322,7 @@ class TestIntegrationWithBM25:
     @pytest.mark.asyncio
     async def test_bm25_index_creation(self):
         """Test BM25S index can be created for keyword search."""
-        from nexus.search import BM25SIndex, is_bm25s_available
+        from nexus.bricks.search import BM25SIndex, is_bm25s_available
 
         if not is_bm25s_available():
             pytest.skip("BM25S not available")

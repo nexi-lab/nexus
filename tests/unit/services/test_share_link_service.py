@@ -6,16 +6,14 @@ permission enforcement, and access logging.
 All async service methods are tested via asyncio.run().
 """
 
-from __future__ import annotations
-
 import asyncio
 from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.core.permissions import OperationContext
-from nexus.core.response import HandlerResponse
-from nexus.services.share_link_service import ShareLinkService
+from nexus.contracts.types import OperationContext
+from nexus.lib.response import HandlerResponse
+from nexus.services.share_link.share_link_service import ShareLinkService
 
 # =============================================================================
 # Fixtures

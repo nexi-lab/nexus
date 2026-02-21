@@ -9,8 +9,6 @@ Run with:
     pytest tests/e2e/test_graph_api_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import pytest
 
 
@@ -21,7 +19,7 @@ class TestGraphAPI:
     async def test_graph_entity_crud(self, test_app):
         """Test basic graph entity endpoints."""
         # Test that graph endpoints are accessible
-        response = test_app.get("/api/graph/entity/nonexistent-id")
+        response = test_app.get("/api/v2/graph/entity/nonexistent-id")
         # Should return 200 with null entity (not 500)
         assert response.status_code == 200
         data = response.json()
@@ -31,7 +29,7 @@ class TestGraphAPI:
     async def test_graph_search_endpoint(self, test_app):
         """Test graph search endpoint."""
         # Search for non-existent entity
-        response = test_app.get("/api/graph/search", params={"name": "TestEntity"})
+        response = test_app.get("/api/v2/graph/search", params={"name": "TestEntity"})
         assert response.status_code == 200
         data = response.json()
         assert data.get("entity") is None
@@ -41,7 +39,7 @@ class TestGraphAPI:
         """Test graph neighbors endpoint."""
         # Query neighbors for non-existent entity
         response = test_app.get(
-            "/api/graph/entity/nonexistent-id/neighbors",
+            "/api/v2/graph/entity/nonexistent-id/neighbors",
             params={"hops": 2, "direction": "both"},
         )
         assert response.status_code == 200
@@ -53,7 +51,7 @@ class TestGraphAPI:
         """Test graph subgraph endpoint."""
         # Request subgraph for non-existent entities
         response = test_app.post(
-            "/api/graph/subgraph",
+            "/api/v2/graph/subgraph",
             json={"entity_ids": ["id1", "id2"], "max_hops": 2},
         )
         assert response.status_code == 200
@@ -68,7 +66,7 @@ class TestGraphAPI:
         """Test memory store endpoint accepts store_to_graph parameter."""
         # Store a memory (without LLM extraction - will skip graph storage)
         response = test_app.post(
-            "/api/memory/store",
+            "/api/v2/memories",
             json={
                 "content": "Alice works at TechCorp with Bob.",
                 "scope": "user",
@@ -88,10 +86,10 @@ class TestGraphAPI:
     async def test_graph_api_health_check(self, test_app):
         """Verify all graph endpoints respond without server errors."""
         endpoints = [
-            ("GET", "/api/graph/entity/test-id", None),
-            ("GET", "/api/graph/entity/test-id/neighbors", {"hops": 1}),
-            ("GET", "/api/graph/search", {"name": "test"}),
-            ("POST", "/api/graph/subgraph", {"entity_ids": [], "max_hops": 1}),
+            ("GET", "/api/v2/graph/entity/test-id", None),
+            ("GET", "/api/v2/graph/entity/test-id/neighbors", {"hops": 1}),
+            ("GET", "/api/v2/graph/search", {"name": "test"}),
+            ("POST", "/api/v2/graph/subgraph", {"entity_ids": [], "max_hops": 1}),
         ]
 
         for method, endpoint, params in endpoints:

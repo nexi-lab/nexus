@@ -1,14 +1,12 @@
 """File I/O operations: open, read, write, release."""
 
-from __future__ import annotations
-
 import errno
 import logging
 from typing import cast
 
 from fuse import FuseOSError
 
-from nexus.core.filters import is_os_metadata_file
+from nexus.fuse.filters import is_os_metadata_file
 from nexus.fuse.ops._shared import (
     FUSESharedContext,
     check_namespace_visible,
@@ -20,7 +18,7 @@ from nexus.fuse.ops._shared import (
 
 # Import event types
 try:
-    from nexus.core.event_bus import FileEventType
+    from nexus.core.file_events import FileEventType
 
     HAS_EVENT_BUS = True
 except ImportError:
@@ -86,7 +84,7 @@ class IOHandler:
 
                 io_profile_arg = None
                 try:
-                    from nexus.core.io_profile import IOProfile
+                    from nexus.contracts.io_profile import IOProfile
 
                     io_profile_arg = IOProfile(io_profile_str)
                 except (ImportError, ValueError):
@@ -100,7 +98,7 @@ class IOHandler:
 
         return fd
 
-    def read(self, path: str, size: int, offset: int, fh: int) -> bytes:  # noqa: ARG002
+    def read(self, _path: str, size: int, offset: int, fh: int) -> bytes:
         """Read file content."""
         ctx = self._ctx
 
@@ -132,7 +130,7 @@ class IOHandler:
         cache_priority = 0
         io_profile_str = file_info.get("io_profile", "balanced")
         try:
-            from nexus.core.io_profile import IOProfile
+            from nexus.contracts.io_profile import IOProfile
 
             cache_priority = IOProfile(io_profile_str).config().cache_priority
         except (ImportError, ValueError):
@@ -205,7 +203,7 @@ class IOHandler:
 
         return len(data)
 
-    def release(self, path: str, fh: int) -> None:  # noqa: ARG002
+    def release(self, _path: str, fh: int) -> None:
         """Release (close) a file."""
         ctx = self._ctx
 

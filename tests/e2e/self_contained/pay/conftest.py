@@ -9,8 +9,6 @@ Or use the full test profile:
     docker compose --profile test up -d
 """
 
-from __future__ import annotations
-
 import os
 
 import pytest

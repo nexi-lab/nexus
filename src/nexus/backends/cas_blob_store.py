@@ -23,8 +23,6 @@ Architecture:
     └── cleanup_empty_dirs() — remove empty parent dirs up to cas_root
 """
 
-from __future__ import annotations
-
 import contextlib
 import json
 import logging
@@ -38,7 +36,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeVar
 
-from nexus.core.exceptions import BackendError
+from nexus.contracts.exceptions import BackendError
 
 _T = TypeVar("_T")
 
@@ -87,18 +85,18 @@ class CASMeta:
         return d
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> CASMeta:
+    def from_dict(cls, data: dict[str, Any]) -> "CASMeta":
         """Deserialize from a dict, capturing unknown keys in *extra*."""
         ref_count = int(data.get("ref_count", 0))
         size = int(data.get("size", 0))
         extra = tuple((k, v) for k, v in data.items() if k not in ("ref_count", "size"))
         return cls(ref_count=ref_count, size=size, extra=extra)
 
-    def inc_ref(self) -> CASMeta:
+    def inc_ref(self) -> "CASMeta":
         """Return a new CASMeta with ref_count incremented by 1."""
         return CASMeta(ref_count=self.ref_count + 1, size=self.size, extra=self.extra)
 
-    def dec_ref(self) -> CASMeta:
+    def dec_ref(self) -> "CASMeta":
         """Return a new CASMeta with ref_count decremented by 1 (min 0)."""
         return CASMeta(ref_count=max(0, self.ref_count - 1), size=self.size, extra=self.extra)
 
@@ -162,7 +160,7 @@ class _StripeLock:
         self._locks = [threading.Lock() for _ in range(num_stripes)]
         self._contention_count = 0
 
-    def acquire_for(self, content_hash: str) -> threading.Lock:
+    def acquire_for(self, content_hash: str) -> "threading.Lock":
         """Return the stripe lock for a given content hash (not acquired)."""
         # Use last 4 hex chars for even distribution
         idx = int(content_hash[-4:], 16) % len(self._locks)
@@ -173,7 +171,7 @@ class _StripeLock:
         """Number of times a stripe lock was already held on acquire attempt."""
         return self._contention_count
 
-    def acquire_with_contention_tracking(self, content_hash: str) -> threading.Lock:
+    def acquire_with_contention_tracking(self, content_hash: str) -> "threading.Lock":
         """Acquire stripe lock and track contention (Issue #1752)."""
         lock = self.acquire_for(content_hash)
         if not lock.acquire(blocking=False):
@@ -236,7 +234,7 @@ class CASBlobStore:
 
     # -- Metadata I/O -------------------------------------------------------
 
-    def read_meta(self, content_hash: str) -> CASMeta:
+    def read_meta(self, content_hash: str) -> "CASMeta":
         """Read metadata with retry for transient I/O errors.
 
         Returns a default ``CASMeta(ref_count=0, size=0)`` when the
@@ -244,7 +242,7 @@ class CASBlobStore:
         """
         mp = self.meta_path(content_hash)
 
-        def _read() -> CASMeta:
+        def _read() -> "CASMeta":
             if not mp.exists():
                 return CASMeta()
             text = mp.read_text(encoding="utf-8")
@@ -259,7 +257,7 @@ class CASBlobStore:
                 path=content_hash,
             ) from exc
 
-    def write_meta(self, content_hash: str, meta: CASMeta) -> None:
+    def write_meta(self, content_hash: str, meta: "CASMeta") -> None:
         """Atomically write metadata via temp file + os.replace.
 
         No fsync for .meta — these files are reconstructible from the

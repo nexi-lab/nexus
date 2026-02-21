@@ -13,8 +13,6 @@ Scenarios:
 5. Non-admin gets correct zone-scoped context
 """
 
-from __future__ import annotations
-
 import os
 import signal
 import socket
@@ -29,14 +27,13 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
 from nexus.storage.models import Base
 
 # Path to project src
 _SRC_PATH = Path(__file__).resolve().parents[2] / "src"
 
 SERVER_STARTUP_TIMEOUT = 30.0
-
 
 # =============================================================================
 # Helpers

@@ -5,8 +5,6 @@ goes through a pluggable ``TaskStoreProtocol``; active SSE streams are
 managed by a ``StreamRegistry`` (injected via DI).
 """
 
-from __future__ import annotations
-
 import logging
 import uuid
 from datetime import UTC, datetime
@@ -28,12 +26,14 @@ from nexus.bricks.a2a.models import (
     TaskStatusUpdateEvent,
     is_valid_transition,
 )
+from nexus.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     import asyncio
 
     from nexus.bricks.a2a.stream_registry import StreamRegistry
     from nexus.bricks.a2a.task_store import TaskStoreProtocol
+    from nexus.services.protocols.hook_engine import HookEngineProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -44,9 +44,9 @@ class TaskManager:
     Parameters
     ----------
     store:
-        A ``TaskStoreProtocol`` implementation.  When *None* an
-        ``InMemoryTaskStore`` is used (useful for testing and embedded
-        mode).
+        A ``TaskStoreProtocol`` implementation.  When *None* a
+        ``CacheBackedTaskStore(InMemoryCacheStore())`` is used (useful
+        for testing and embedded mode).
     stream_registry:
         A ``StreamRegistry`` for managing active SSE streams.  When
         *None* a default instance is created.
@@ -54,15 +54,17 @@ class TaskManager:
 
     def __init__(
         self,
-        store: TaskStoreProtocol | None = None,
-        stream_registry: StreamRegistry | None = None,
+        store: "TaskStoreProtocol | None" = None,
+        stream_registry: "StreamRegistry | None" = None,
+        hook_engine: "HookEngineProtocol | None" = None,
     ) -> None:
         if store is not None:
             self._store: TaskStoreProtocol = store
         else:
-            from nexus.bricks.a2a.stores.in_memory import InMemoryTaskStore
+            from nexus.bricks.a2a.stores.in_memory import CacheBackedTaskStore
+            from nexus.contracts.cache_store import InMemoryCacheStore
 
-            self._store = InMemoryTaskStore()
+            self._store = CacheBackedTaskStore(InMemoryCacheStore())
 
         if stream_registry is not None:
             self._stream_registry = stream_registry
@@ -71,13 +73,15 @@ class TaskManager:
 
             self._stream_registry = _SR()
 
+        self._hook_engine = hook_engine
+
     @property
-    def stream_registry(self) -> StreamRegistry:
+    def stream_registry(self) -> "StreamRegistry":
         """Public access to the stream registry."""
         return self._stream_registry
 
     @property
-    def store(self) -> TaskStoreProtocol:
+    def store(self) -> "TaskStoreProtocol":
         """Public access to the underlying task store."""
         return self._store
 
@@ -89,7 +93,7 @@ class TaskManager:
         self,
         message: Message,
         *,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         agent_id: str | None = None,
         context_id: str | None = None,
         metadata: dict[str, Any] | None = None,
@@ -116,7 +120,7 @@ class TaskManager:
         self,
         task_id: str,
         *,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         history_length: int | None = None,
     ) -> Task:
         """Retrieve a task by ID.
@@ -138,7 +142,7 @@ class TaskManager:
     async def list_tasks(
         self,
         *,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         agent_id: str | None = None,
         state: TaskState | None = None,
         limit: int = 50,
@@ -157,7 +161,7 @@ class TaskManager:
         self,
         task_id: str,
         *,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
     ) -> Task:
         """Cancel a task.
 
@@ -183,7 +187,7 @@ class TaskManager:
         task_id: str,
         new_state: TaskState,
         *,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         message: Message | None = None,
     ) -> Task:
         """Transition a task to a new state.
@@ -236,12 +240,14 @@ class TaskManager:
         task_id: str,
         artifact: Artifact,
         *,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         append: bool = True,
     ) -> Task:
         """Add an artifact to a task.
 
-        Pushes an artifact update event to any active SSE streams.
+        Pushes an artifact update event to any active SSE streams,
+        then fires ``post_artifact_create`` / ``post_artifact_update``
+        hooks for downstream indexing (Issue #1861).
         """
         task = await self._store.get(task_id, zone_id=zone_id)
         if task is None:
@@ -258,16 +264,40 @@ class TaskManager:
         )
         self._stream_registry.push_event(task_id, {"artifactUpdate": event.model_dump(mode="json")})
 
+        # Fire artifact indexing hooks (Issue #1861)
+        if self._hook_engine is not None:
+            from nexus.services.protocols.hook_engine import (
+                POST_ARTIFACT_CREATE,
+                POST_ARTIFACT_UPDATE,
+                HookContext,
+            )
+
+            phase = POST_ARTIFACT_CREATE if append else POST_ARTIFACT_UPDATE
+            hook_ctx = HookContext(
+                phase=phase,
+                path=None,
+                zone_id=zone_id,
+                agent_id=None,
+                payload={
+                    "artifact": artifact,
+                    "task_id": task_id,
+                    "zone_id": zone_id,
+                },
+            )
+            await self._hook_engine.fire(phase, hook_ctx)
+
         return task
 
     # ------------------------------------------------------------------
     # Stream management (delegates to StreamRegistry)
     # ------------------------------------------------------------------
 
-    def register_stream(self, task_id: str) -> asyncio.Queue[dict[str, Any] | None]:
+    def register_stream(self, task_id: str) -> "asyncio.Queue[dict[str, Any] | None]":
         """Register a new SSE stream for a task."""
         return self._stream_registry.register(task_id)
 
-    def unregister_stream(self, task_id: str, queue: asyncio.Queue[dict[str, Any] | None]) -> None:
+    def unregister_stream(
+        self, task_id: str, queue: "asyncio.Queue[dict[str, Any] | None]"
+    ) -> None:
         """Remove an SSE stream registration."""
         self._stream_registry.unregister(task_id, queue)

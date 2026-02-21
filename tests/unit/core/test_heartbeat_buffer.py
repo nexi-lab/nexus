@@ -15,8 +15,6 @@ Tests cover:
 All tests use a mock flush_callback — no DB needed.
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 import time

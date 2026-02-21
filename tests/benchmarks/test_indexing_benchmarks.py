@@ -6,15 +6,13 @@ Measures:
 - Bulk insert throughput
 """
 
-from __future__ import annotations
-
 import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.search.chunking import DocumentChunk, DocumentChunker
-from nexus.search.indexing import IndexingPipeline
+from nexus.bricks.search.chunking import DocumentChunk, DocumentChunker
+from nexus.bricks.search.indexing import IndexingPipeline
 
 # ---------------------------------------------------------------------------
 # Helpers

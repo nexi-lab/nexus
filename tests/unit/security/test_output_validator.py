@@ -7,11 +7,9 @@ Tests cover:
 - Performance: <1ms for 10KB output
 """
 
-from __future__ import annotations
-
 import time
 
-from nexus.security.output_validator import validate_llm_output
+from nexus.lib.security.output_validator import validate_llm_output
 
 
 class TestSystemPromptEcho:

@@ -5,14 +5,11 @@ permission checks into TigerBitmap -> LeopardIndex -> HierarchyPreFilter ->
 ZonePreFilter -> BulkReBAC stages.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.core.permissions import OperationContext
-from nexus.services.permissions.permission_filter_chain import (
+from nexus.bricks.rebac.filter_chain import (
     BulkReBACStrategy,
     FilterContext,
     FilterResult,
@@ -22,6 +19,7 @@ from nexus.services.permissions.permission_filter_chain import (
     ZonePreFilterStrategy,
     run_filter_chain,
 )
+from nexus.contracts.types import OperationContext
 
 # ---------------------------------------------------------------------------
 # Fixtures

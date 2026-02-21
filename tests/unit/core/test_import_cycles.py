@@ -5,8 +5,6 @@ Parses all ``src/nexus/**/*.py`` files, extracts top-level import statements
 directed graph, and asserts the graph is acyclic (topological sort succeeds).
 """
 
-from __future__ import annotations
-
 import ast
 import os
 from collections import defaultdict
@@ -39,7 +37,7 @@ def _is_inside_type_checking(node: ast.AST, tree: ast.Module) -> bool:
 def _is_inside_function(node: ast.AST, tree: ast.Module) -> bool:
     """Check if an import node is inside a function or method body."""
     for top_node in ast.walk(tree):
-        if not isinstance(top_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        if not isinstance(top_node, ast.FunctionDef | ast.AsyncFunctionDef):
             continue
         for child in ast.walk(top_node):
             if child is node:
@@ -162,6 +160,7 @@ def _find_cycles(graph: dict[str, set[str]]) -> list[list[str]]:
     return cycles
 
 
+@pytest.mark.slow
 class TestImportCycles:
     """Verify no runtime import cycles exist in the nexus package."""
 

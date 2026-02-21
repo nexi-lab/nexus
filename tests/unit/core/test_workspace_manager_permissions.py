@@ -8,10 +8,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.core.exceptions import NexusPermissionError
-from nexus.core.response import HandlerResponse
-from nexus.services.workspace_manager import WorkspaceManager
+from nexus.contracts.exceptions import NexusPermissionError
+from nexus.lib.response import HandlerResponse
 from nexus.storage.models import WorkspaceSnapshotModel
+from nexus.system_services.workspace.workspace_manager import WorkspaceManager
 
 
 @pytest.fixture
@@ -43,7 +43,7 @@ def workspace_manager(mock_metadata, mock_backend, mock_rebac_manager):
         rebac_manager=mock_rebac_manager,
         zone_id="zone1",
         agent_id="agent1",
-        session_factory=mock_metadata.SessionLocal,
+        record_store=MagicMock(session_factory=mock_metadata.SessionLocal),
     )
 
 
@@ -103,7 +103,7 @@ class TestWorkspaceManagerPermissions:
             rebac_manager=mock_rebac_manager,
             zone_id="zone1",
             agent_id=None,  # No agent ID
-            session_factory=mock_metadata.SessionLocal,
+            record_store=MagicMock(session_factory=mock_metadata.SessionLocal),
         )
 
         # Execute & Verify
@@ -350,7 +350,7 @@ class TestWorkspaceManagerPermissions:
             rebac_manager=None,  # No ReBAC manager
             zone_id="zone1",
             agent_id="agent1",
-            session_factory=mock_metadata.SessionLocal,
+            record_store=MagicMock(session_factory=mock_metadata.SessionLocal),
         )
 
         mock_backend.write_content.return_value = HandlerResponse.ok("manifest_hash_123")
@@ -377,7 +377,7 @@ class TestWorkspaceManagerPermissions:
             rebac_manager=mock_rebac_manager,
             zone_id="zone1",
             agent_id="agent1",
-            session_factory=mock_metadata.SessionLocal,
+            record_store=MagicMock(session_factory=mock_metadata.SessionLocal),
         )
 
         # Deny cross-zone access

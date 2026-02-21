@@ -1,7 +1,5 @@
 """Tests for HookEngineProtocol and hook data models (Issue #1383, #1257)."""
 
-from __future__ import annotations
-
 import dataclasses
 
 import pytest
@@ -64,7 +62,14 @@ class TestHookSpec:
 
     def test_fields(self) -> None:
         fields = {f.name for f in dataclasses.fields(HookSpec)}
-        assert fields == {"phase", "handler_name", "priority", "agent_scope", "capabilities"}
+        assert fields == {
+            "phase",
+            "handler_name",
+            "priority",
+            "agent_scope",
+            "capabilities",
+            "phase_type",
+        }
 
     def test_default_agent_scope_is_none(self) -> None:
         spec = HookSpec(phase=PRE_READ, handler_name="h")
@@ -145,7 +150,7 @@ class TestHookResult:
 
     def test_fields(self) -> None:
         fields = {f.name for f in dataclasses.fields(HookResult)}
-        assert fields == {"proceed", "modified_context", "error"}
+        assert fields == {"proceed", "modified_context", "error", "failure_mode"}
 
 
 # ---------------------------------------------------------------------------
@@ -249,7 +254,7 @@ class TestHookCapabilities:
 
     def test_fields(self) -> None:
         fields = {f.name for f in dataclasses.fields(HookCapabilities)}
-        assert fields == {"can_veto", "can_modify_context", "max_timeout_ms"}
+        assert fields == {"can_veto", "can_modify_context", "max_timeout_ms", "failure_policy"}
 
     def test_negative_timeout_raises(self) -> None:
         with pytest.raises(ValueError, match="max_timeout_ms must be positive"):

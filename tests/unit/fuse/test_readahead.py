@@ -4,13 +4,11 @@ Tests that ReadaheadConfig.from_io_profile() produces correct values
 and that on_open() with io_profile creates sessions with profile-derived params.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.core.io_profile import IOProfile
+from nexus.contracts.io_profile import IOProfile
 from nexus.fuse.readahead import ReadaheadConfig, ReadaheadManager, ReadSession
 
 

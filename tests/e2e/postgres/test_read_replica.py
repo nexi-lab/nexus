@@ -9,8 +9,6 @@ Setup:
     pytest tests/e2e/postgres/test_read_replica.py -v
 """
 
-from __future__ import annotations
-
 import os
 
 import pytest
@@ -78,7 +76,7 @@ class TestReadReplicaE2E:
 
     def test_rebac_check_uses_replica(self, record_store):
         """ReBAC TupleRepository read methods should use the read engine."""
-        from nexus.rebac.tuples.repository import TupleRepository
+        from nexus.bricks.rebac.tuples.repository import TupleRepository
 
         repo = TupleRepository(
             engine=record_store.engine,

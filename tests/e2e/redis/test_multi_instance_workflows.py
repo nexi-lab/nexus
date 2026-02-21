@@ -23,8 +23,6 @@ Architecture Notes (Raft Zone Migration):
 Related: Issue #1106 Block 2, Issue #1159 (Raft Consensus Zones)
 """
 
-from __future__ import annotations
-
 import asyncio
 import os
 import sys
@@ -48,7 +46,6 @@ pytestmark = [
         reason="File watching only supported on Linux and Windows",
     ),
 ]
-
 
 # =============================================================================
 # Fixtures
@@ -78,7 +75,7 @@ def db_path_agent2(temp_nexus_dir):
 @pytest.fixture
 async def shared_event_bus(redis_client):
     """Create a shared event bus for all NexusFS instances in a test."""
-    from nexus.services.event_bus.redis import RedisEventBus
+    from nexus.services.event_subsystem.bus.redis import RedisEventBus
 
     bus = RedisEventBus(redis_client)
     await bus.start()
@@ -89,7 +86,7 @@ async def shared_event_bus(redis_client):
 @pytest.fixture
 async def redis_client():
     """Create a DragonflyClient for testing."""
-    from nexus.cache.dragonfly import DragonflyClient
+    from nexus.bricks.cache.dragonfly import DragonflyClient
 
     redis_url = os.environ.get("NEXUS_REDIS_URL", "redis://localhost:6379")
     client = DragonflyClient(url=redis_url)
@@ -515,7 +512,7 @@ class TestErrorHandling:
     @pytest.mark.asyncio
     async def test_read_nonexistent_file_after_wait(self, nexus_fs):
         """Wait returns event but file doesn't exist -> graceful error."""
-        from nexus.core.exceptions import NexusFileNotFoundError
+        from nexus.contracts.exceptions import NexusFileNotFoundError
 
         with pytest.raises(NexusFileNotFoundError):
             nexus_fs.read("/nonexistent/file.txt")

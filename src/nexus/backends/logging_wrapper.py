@@ -22,22 +22,24 @@ Usage:
 Design reference:
     - NEXUS-LEGO-ARCHITECTURE.md PART 16 — Recursive Wrapping (Mechanism 2)
     - Issue #1449: Recursive Protocol wrapping + describe() for composition chains
+    - Issue #2077: Deduplicate backend wrapper boilerplate
 """
-
-from __future__ import annotations
 
 import logging
 import time
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from typing import TYPE_CHECKING, TypeVar
 
 from nexus.backends.delegating import DelegatingBackend
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend, HandlerStatusResponse
-    from nexus.core.permissions import OperationContext
-    from nexus.core.response import HandlerResponse
+    from nexus.contracts.types import OperationContext
+    from nexus.lib.response import HandlerResponse
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 
 class LoggingBackendWrapper(DelegatingBackend):
@@ -47,12 +49,14 @@ class LoggingBackendWrapper(DelegatingBackend):
     Overrides content, directory, and connection operations to add structured
     debug logging with latency measurement.
 
+    Uses ``_timed()`` helper to eliminate timing boilerplate across all methods.
+
     Log levels:
         - DEBUG: per-operation logs (read, write, delete, mkdir, etc.)
         - INFO: lifecycle events (connect, disconnect)
     """
 
-    def __init__(self, inner: Backend) -> None:
+    def __init__(self, inner: "Backend") -> None:
         super().__init__(inner)
 
     # === Chain Introspection ===
@@ -61,14 +65,35 @@ class LoggingBackendWrapper(DelegatingBackend):
         """Return chain description: ``"logging → {inner.describe()}"``."""
         return f"logging → {self._inner.describe()}"
 
+    # === Timing Helper ===
+
+    def _timed(
+        self, op_name: str, fn: Callable[[], T], level: int = logging.DEBUG
+    ) -> tuple[T, float]:
+        """Execute ``fn``, returning ``(result, elapsed_ms)``.
+
+        On exception, logs the error with latency at the given level
+        before re-raising.
+        """
+        start = time.perf_counter()
+        try:
+            result = fn()
+        except Exception as e:
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            logger.log(level, "%s error=%s latency_ms=%.2f", op_name, e, elapsed_ms)
+            raise
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        return result, elapsed_ms
+
     # === Content Operations (with logging) ===
 
     def read_content(
-        self, content_hash: str, context: OperationContext | None = None
-    ) -> HandlerResponse[bytes]:
-        start = time.perf_counter()
-        response = self._inner.read_content(content_hash, context=context)
-        elapsed_ms = (time.perf_counter() - start) * 1000
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> "HandlerResponse[bytes]":
+        response, elapsed_ms = self._timed(
+            "read_content",
+            lambda: self._inner.read_content(content_hash, context=context),
+        )
         logger.debug(
             "read_content hash=%s success=%s latency_ms=%.2f",
             content_hash[:12],
@@ -78,11 +103,12 @@ class LoggingBackendWrapper(DelegatingBackend):
         return response
 
     def write_content(
-        self, content: bytes, context: OperationContext | None = None
-    ) -> HandlerResponse[str]:
-        start = time.perf_counter()
-        response = self._inner.write_content(content, context=context)
-        elapsed_ms = (time.perf_counter() - start) * 1000
+        self, content: bytes, context: "OperationContext | None" = None
+    ) -> "HandlerResponse[str]":
+        response, elapsed_ms = self._timed(
+            "write_content",
+            lambda: self._inner.write_content(content, context=context),
+        )
         logger.debug(
             "write_content size=%d success=%s hash=%s latency_ms=%.2f",
             len(content),
@@ -93,11 +119,12 @@ class LoggingBackendWrapper(DelegatingBackend):
         return response
 
     def delete_content(
-        self, content_hash: str, context: OperationContext | None = None
-    ) -> HandlerResponse[None]:
-        start = time.perf_counter()
-        response = self._inner.delete_content(content_hash, context=context)
-        elapsed_ms = (time.perf_counter() - start) * 1000
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> "HandlerResponse[None]":
+        response, elapsed_ms = self._timed(
+            "delete_content",
+            lambda: self._inner.delete_content(content_hash, context=context),
+        )
         logger.debug(
             "delete_content hash=%s success=%s latency_ms=%.2f",
             content_hash[:12],
@@ -107,11 +134,12 @@ class LoggingBackendWrapper(DelegatingBackend):
         return response
 
     def content_exists(
-        self, content_hash: str, context: OperationContext | None = None
-    ) -> HandlerResponse[bool]:
-        start = time.perf_counter()
-        response = self._inner.content_exists(content_hash, context=context)
-        elapsed_ms = (time.perf_counter() - start) * 1000
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> "HandlerResponse[bool]":
+        response, elapsed_ms = self._timed(
+            "content_exists",
+            lambda: self._inner.content_exists(content_hash, context=context),
+        )
         logger.debug(
             "content_exists hash=%s exists=%s latency_ms=%.2f",
             content_hash[:12],
@@ -120,6 +148,28 @@ class LoggingBackendWrapper(DelegatingBackend):
         )
         return response
 
+    def batch_read_content(
+        self,
+        content_hashes: list[str],
+        context: "OperationContext | None" = None,
+        *,
+        contexts: "dict[str, OperationContext] | None" = None,
+    ) -> dict[str, bytes | None]:
+        results, elapsed_ms = self._timed(
+            "batch_read_content",
+            lambda: self._inner.batch_read_content(
+                content_hashes, context=context, contexts=contexts
+            ),
+        )
+        hit_count = sum(1 for v in results.values() if v is not None)
+        logger.debug(
+            "batch_read_content count=%d hits=%d latency_ms=%.2f",
+            len(content_hashes),
+            hit_count,
+            elapsed_ms,
+        )
+        return results
+
     # === Directory Operations (with logging) ===
 
     def mkdir(
@@ -127,11 +177,12 @@ class LoggingBackendWrapper(DelegatingBackend):
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: OperationContext | None = None,
-    ) -> HandlerResponse[None]:
-        start = time.perf_counter()
-        response = self._inner.mkdir(path, parents=parents, exist_ok=exist_ok, context=context)
-        elapsed_ms = (time.perf_counter() - start) * 1000
+        context: "OperationContext | None" = None,
+    ) -> "HandlerResponse[None]":
+        response, elapsed_ms = self._timed(
+            "mkdir",
+            lambda: self._inner.mkdir(path, parents=parents, exist_ok=exist_ok, context=context),
+        )
         logger.debug(
             "mkdir path=%s success=%s latency_ms=%.2f",
             path,
@@ -144,11 +195,12 @@ class LoggingBackendWrapper(DelegatingBackend):
         self,
         path: str,
         recursive: bool = False,
-        context: OperationContext | None = None,
-    ) -> HandlerResponse[None]:
-        start = time.perf_counter()
-        response = self._inner.rmdir(path, recursive=recursive, context=context)
-        elapsed_ms = (time.perf_counter() - start) * 1000
+        context: "OperationContext | None" = None,
+    ) -> "HandlerResponse[None]":
+        response, elapsed_ms = self._timed(
+            "rmdir",
+            lambda: self._inner.rmdir(path, recursive=recursive, context=context),
+        )
         logger.debug(
             "rmdir path=%s recursive=%s success=%s latency_ms=%.2f",
             path,
@@ -160,10 +212,10 @@ class LoggingBackendWrapper(DelegatingBackend):
 
     # === Connection Lifecycle (INFO level) ===
 
-    def connect(self, context: OperationContext | None = None) -> HandlerStatusResponse:
-        start = time.perf_counter()
-        response = self._inner.connect(context=context)
-        elapsed_ms = (time.perf_counter() - start) * 1000
+    def connect(self, context: "OperationContext | None" = None) -> "HandlerStatusResponse":
+        response, elapsed_ms = self._timed(
+            "connect", lambda: self._inner.connect(context=context), logging.INFO
+        )
         logger.info(
             "connect backend=%s success=%s latency_ms=%.2f",
             self._inner.name,
@@ -172,12 +224,27 @@ class LoggingBackendWrapper(DelegatingBackend):
         )
         return response
 
-    def disconnect(self, context: OperationContext | None = None) -> None:
-        start = time.perf_counter()
-        self._inner.disconnect(context=context)
-        elapsed_ms = (time.perf_counter() - start) * 1000
+    def disconnect(self, context: "OperationContext | None" = None) -> None:
+        _, elapsed_ms = self._timed(
+            "disconnect", lambda: self._inner.disconnect(context=context), logging.INFO
+        )
         logger.info(
             "disconnect backend=%s latency_ms=%.2f",
             self._inner.name,
             elapsed_ms,
         )
+
+    def check_connection(
+        self, context: "OperationContext | None" = None
+    ) -> "HandlerStatusResponse":
+        response, elapsed_ms = self._timed(
+            "check_connection",
+            lambda: self._inner.check_connection(context=context),
+        )
+        logger.debug(
+            "check_connection backend=%s success=%s latency_ms=%.2f",
+            self._inner.name,
+            response.success,
+            elapsed_ms,
+        )
+        return response

@@ -4,15 +4,13 @@ Centralizes permission check logic used by MountCoreService and SyncService
 to prevent code duplication and ensure consistent error handling.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING
 
-from nexus.core.context_utils import get_user_identity, get_zone_id
+from nexus.lib.context_utils import get_user_identity, get_zone_id
 
 if TYPE_CHECKING:
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
     from nexus.services.gateway import NexusFSGateway
 
 logger = logging.getLogger(__name__)
@@ -27,10 +25,10 @@ class PermissionCheckError(Exception):
 
 
 def check_permission(
-    gw: NexusFSGateway,
+    gw: "NexusFSGateway",
     path: str,
     permission: str,
-    context: OperationContext | None,
+    context: "OperationContext | None",
 ) -> bool:
     """Check if user has permission on path.
 

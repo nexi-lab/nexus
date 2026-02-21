@@ -1,12 +1,10 @@
 """Tests for NamespaceManagerProtocol and NamespaceMount (Issue #1383)."""
 
-from __future__ import annotations
-
 import dataclasses
 
 import pytest
 
-from nexus.rebac.namespace_manager import NamespaceMount
+from nexus.bricks.rebac.namespace_manager import NamespaceMount
 from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
 
 # ---------------------------------------------------------------------------
@@ -81,7 +79,7 @@ class TestNamespaceManagerConformance:
     """Verify existing NamespaceManager has the methods the protocol expects."""
 
     def test_has_required_methods(self) -> None:
-        from nexus.rebac.namespace_manager import NamespaceManager
+        from nexus.bricks.rebac.namespace_manager import NamespaceManager
 
         for method_name in ("is_visible", "get_mount_table", "invalidate"):
             assert hasattr(NamespaceManager, method_name), (
@@ -89,7 +87,7 @@ class TestNamespaceManagerConformance:
             )
 
     def test_parameter_names_compatible(self) -> None:
-        from nexus.rebac.namespace_manager import NamespaceManager
+        from nexus.bricks.rebac.namespace_manager import NamespaceManager
         from tests.unit.core.protocols.test_conformance import assert_protocol_conformance
 
         assert_protocol_conformance(NamespaceManager, NamespaceManagerProtocol)

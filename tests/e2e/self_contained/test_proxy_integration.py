@@ -4,8 +4,6 @@ Uses real aiosqlite queue + httpx MockTransport to test the full
 ProxyBrick stack without a real server.
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 from typing import Any

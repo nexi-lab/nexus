@@ -10,8 +10,6 @@ Measures ops/sec and p50/p95/p99 latency for:
     - IsolatedBackend with InterpreterPoolExecutor (Python 3.14+ only)
 """
 
-from __future__ import annotations
-
 import hashlib
 import sys
 import time
@@ -54,7 +52,7 @@ class BenchMockBackend:
         return HandlerStatusResponse(success=True)
 
     def write_content(self, content: bytes, context: Any = None) -> Any:  # noqa: ARG002
-        from nexus.core.response import HandlerResponse
+        from nexus.lib.response import HandlerResponse
 
         h = hashlib.sha256(content).hexdigest()
         self._store[h] = content
@@ -62,32 +60,32 @@ class BenchMockBackend:
         return HandlerResponse.ok(data=h, backend_name=self.name)
 
     def read_content(self, content_hash: str, context: Any = None) -> Any:  # noqa: ARG002
-        from nexus.core.response import HandlerResponse
+        from nexus.lib.response import HandlerResponse
 
         if content_hash not in self._store:
             return HandlerResponse.not_found(path=content_hash, backend_name=self.name)
         return HandlerResponse.ok(data=self._store[content_hash], backend_name=self.name)
 
     def delete_content(self, content_hash: str, context: Any = None) -> Any:  # noqa: ARG002
-        from nexus.core.response import HandlerResponse
+        from nexus.lib.response import HandlerResponse
 
         self._store.pop(content_hash, None)
         self._refs.pop(content_hash, None)
         return HandlerResponse.ok(data=None, backend_name=self.name)
 
     def content_exists(self, content_hash: str, context: Any = None) -> Any:  # noqa: ARG002
-        from nexus.core.response import HandlerResponse
+        from nexus.lib.response import HandlerResponse
 
         return HandlerResponse.ok(data=content_hash in self._store, backend_name=self.name)
 
     def get_content_size(self, content_hash: str, context: Any = None) -> Any:  # noqa: ARG002
-        from nexus.core.response import HandlerResponse
+        from nexus.lib.response import HandlerResponse
 
         size = len(self._store.get(content_hash, b""))
         return HandlerResponse.ok(data=size, backend_name=self.name)
 
     def get_ref_count(self, content_hash: str, context: Any = None) -> Any:  # noqa: ARG002
-        from nexus.core.response import HandlerResponse
+        from nexus.lib.response import HandlerResponse
 
         return HandlerResponse.ok(data=self._refs.get(content_hash, 0), backend_name=self.name)
 
@@ -98,19 +96,19 @@ class BenchMockBackend:
         exist_ok: bool = False,  # noqa: ARG002
         context: Any = None,  # noqa: ARG002
     ) -> Any:
-        from nexus.core.response import HandlerResponse
+        from nexus.lib.response import HandlerResponse
 
         self._dirs.add(path)
         return HandlerResponse.ok(data=None, backend_name=self.name)
 
     def rmdir(self, path: str, recursive: bool = False, context: Any = None) -> Any:  # noqa: ARG002
-        from nexus.core.response import HandlerResponse
+        from nexus.lib.response import HandlerResponse
 
         self._dirs.discard(path)
         return HandlerResponse.ok(data=None, backend_name=self.name)
 
     def is_directory(self, path: str, context: Any = None) -> Any:  # noqa: ARG002
-        from nexus.core.response import HandlerResponse
+        from nexus.lib.response import HandlerResponse
 
         return HandlerResponse.ok(data=path in self._dirs, backend_name=self.name)
 
@@ -151,7 +149,7 @@ def bench(label: str, func: Any, n: int = 1000) -> dict[str, float]:
 
 
 def main() -> None:
-    from nexus.isolation import IsolatedBackend, IsolationConfig
+    from nexus.bricks.sandbox.isolation import IsolatedBackend, IsolationConfig
 
     print(f"Python {sys.version}")
     print()

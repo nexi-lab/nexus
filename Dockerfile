@@ -162,7 +162,7 @@ ENV PYTHONUNBUFFERED=1 \
 EXPOSE 2026 2126 6070
 
 # Healthcheck
-HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-    CMD curl -f http://localhost:${NEXUS_PORT}/health || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:${NEXUS_PORT}/healthz/ready || exit 1
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

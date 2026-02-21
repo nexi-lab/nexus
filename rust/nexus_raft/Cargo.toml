@@ -56,7 +56,7 @@ dashmap = { version = "6", optional = true }
 time = { version = "0.3", features = ["parsing"], optional = true }
 
 # Python bindings (PyO3 FFI)
-pyo3 = { version = "0.22", features = ["extension-module"], optional = true }
+pyo3 = { version = "0.27.2", features = ["extension-module"], optional = true }
 
 [build-dependencies]
 tonic-build = { version = "0.12", optional = true }

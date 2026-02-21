@@ -12,23 +12,21 @@ use real OAuth tokens in CI. For full E2E testing with real
 Google API, use the manual test script in scripts/test_gcalendar.py.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, patch
 
 import pytest
 from pydantic import ValidationError as PydanticValidationError
 
-from nexus.backends.local import LocalBackend
-from nexus.connectors.base import ValidationError
-from nexus.connectors.calendar.schemas import (
+from nexus.backends.connectors.base import ValidationError
+from nexus.backends.connectors.calendar.schemas import (
     CreateEventSchema,
     DeleteEventSchema,
     TimeSlot,
     UpdateEventSchema,
 )
+from nexus.backends.local import LocalBackend
+from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
-from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore

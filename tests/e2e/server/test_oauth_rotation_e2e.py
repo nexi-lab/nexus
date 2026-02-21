@@ -6,8 +6,6 @@ Issue #997: Exercises the full lifecycle through FastAPI endpoints:
 Uses FastAPI TestClient with mock OAuth provider and real SQLite DB.
 """
 
-from __future__ import annotations
-
 import gc
 import logging
 import tempfile
@@ -21,12 +19,13 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
-from nexus.cache.inmemory import InMemoryCacheStore
-from nexus.core.exceptions import AuthenticationError
+from nexus.bricks.cache.inmemory import InMemoryCacheStore
+from nexus.contracts.exceptions import AuthenticationError
 from nexus.server.auth.oauth_provider import OAuthCredential
 from nexus.server.auth.token_manager import TokenManager, _hash_token
 from nexus.storage.models._base import Base
 from nexus.storage.models.refresh_token_history import RefreshTokenHistoryModel
+from nexus.storage.record_store import RecordStoreABC
 from nexus.storage.secrets_audit_logger import SecretsAuditLogger
 
 if TYPE_CHECKING:
@@ -46,7 +45,9 @@ def e2e_setup():
     Base.metadata.create_all(engine)
     session_factory = sessionmaker(bind=engine)
 
-    audit_logger = SecretsAuditLogger(session_factory=session_factory)
+    mock_record_store = MagicMock(spec=RecordStoreABC)
+    mock_record_store.session_factory = session_factory
+    audit_logger = SecretsAuditLogger(record_store=mock_record_store)
     cache_store = InMemoryCacheStore()
     manager = TokenManager(db_url=db_url, audit_logger=audit_logger, cache_store=cache_store)
 
@@ -356,7 +357,9 @@ def fastapi_e2e(monkeypatch):
     sf = sessionmaker(bind=engine)
 
     # Seed some audit events
-    audit_logger = SecretsAuditLogger(session_factory=sf)
+    mock_rs = MagicMock(spec=RecordStoreABC)
+    mock_rs.session_factory = sf
+    audit_logger = SecretsAuditLogger(record_store=mock_rs)
     record_id = audit_logger.log_event(
         event_type="credential_created",
         actor_id="alice@test.com",

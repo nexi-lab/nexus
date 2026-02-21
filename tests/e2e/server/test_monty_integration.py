@@ -8,10 +8,9 @@ Tests cover:
 - Performance benchmarks for Monty vs baseline
 """
 
-from __future__ import annotations
-
 import statistics
 import time
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import create_engine
@@ -55,14 +54,19 @@ def session_factory(engine):
 
 
 @pytest.fixture
+def record_store(session_factory):
+    return SimpleNamespace(session_factory=session_factory)
+
+
+@pytest.fixture
 def monty_provider() -> MontySandboxProvider:
     return MontySandboxProvider(resource_profile="standard", enable_type_checking=False)
 
 
 @pytest.fixture
-def manager(session_factory, monty_provider) -> SandboxManager:
+def manager(record_store, monty_provider) -> SandboxManager:
     """SandboxManager with only Monty provider."""
-    mgr = SandboxManager(session_factory=session_factory)
+    mgr = SandboxManager(record_store=record_store)
     mgr.providers["monty"] = monty_provider
     return mgr
 

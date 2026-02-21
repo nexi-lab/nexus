@@ -6,25 +6,24 @@ These tests verify:
 2. modified_at only updates on real changes (writes), NOT on reads
 """
 
-from __future__ import annotations
-
 import time
 import uuid
 from datetime import UTC, datetime
 
 import pytest
 
-from nexus import LocalBackend, NexusFS
+from nexus import LocalBackend
 from nexus.core.config import PermissionConfig
+from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 
 @pytest.fixture
 def nexus_fs(isolated_db, tmp_path):
-    """Create a NexusFS instance for testing."""
+    """Create a NexusFS instance for testing via factory."""
     backend = LocalBackend(str(tmp_path / "data"))
     metadata_store = RaftMetadataStore.embedded(str(isolated_db).replace(".db", ""))
-    nx = NexusFS(
+    nx = create_nexus_fs(
         backend=backend, metadata_store=metadata_store, permissions=PermissionConfig(enforce=False)
     )
     yield nx

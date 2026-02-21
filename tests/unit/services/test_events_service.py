@@ -6,16 +6,14 @@ and cache invalidation.
 All async service methods are tested via asyncio.run().
 """
 
-from __future__ import annotations
-
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, create_autospec
 
 import pytest
 
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 from nexus.core.protocols.connector import PassthroughProtocol
-from nexus.services.events_service import EventsService
+from nexus.system_services.lifecycle.events_service import EventsService
 
 # =============================================================================
 # Fixtures
@@ -423,7 +421,7 @@ class TestLockedContextManager:
 
     def test_locked_raises_on_timeout(self, mock_backend_remote, mock_lock_manager):
         """locked() raises LockTimeout when lock acquisition fails."""
-        from nexus.core.exceptions import LockTimeout
+        from nexus.contracts.exceptions import LockTimeout
 
         mock_lock_manager.acquire = AsyncMock(return_value=None)
         svc = EventsService(backend=mock_backend_remote, lock_manager=mock_lock_manager)

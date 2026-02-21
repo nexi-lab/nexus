@@ -4,8 +4,6 @@ Implements SandboxProvider interface using Docker containers for local code exec
 Designed for development and testing environments.
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import logging
@@ -15,6 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from nexus.bricks.sandbox.docker_mount_service import DockerMountService
 from nexus.bricks.sandbox.sandbox_provider import (
     CodeExecutionResult,
     ExecutionTimeoutError,
@@ -23,10 +22,7 @@ from nexus.bricks.sandbox.sandbox_provider import (
     SandboxNotFoundError,
     SandboxProvider,
     UnsupportedLanguageError,
-    validate_agent_id,
     validate_language,
-    validate_mount_path,
-    validate_nexus_url,
 )
 
 logger = logging.getLogger(__name__)
@@ -153,6 +149,13 @@ class DockerSandboxProvider(SandboxProvider):
 
         # Docker host alias for localhost URL rewriting inside containers
         self.docker_host_alias = docker_host_alias
+
+        # Mount service for FUSE mount pipeline (Issue #2051)
+        self._mount_service = DockerMountService(
+            docker_host_alias=docker_host_alias,
+            dev_mode=self._dev_mode,
+            nexus_src_path=getattr(self, "_nexus_src_path", None),
+        )
 
         # Egress proxy manager (lazily initialized when a profile needs egress)
         self._egress_proxy_enabled = egress_proxy_enabled
@@ -501,15 +504,16 @@ class DockerSandboxProvider(SandboxProvider):
     ) -> dict[str, Any]:
         """Mount Nexus filesystem inside Docker sandbox via FUSE.
 
+        Delegates to DockerMountService for the full mount pipeline
+        (Issue #2051: extracted from 373-line inline implementation).
+
         Args:
             sandbox_id: Sandbox ID
             mount_path: Path where to mount (e.g., /mnt/nexus)
             nexus_url: Nexus server URL
             api_key: Nexus API key
             agent_id: Optional agent ID for version attribution (issue #418).
-                When set, file modifications will be attributed to this agent.
             skip_dependency_checks: Ignored for Docker (always checks/installs deps).
-                Provided for interface compatibility with E2B provider.
 
         Returns:
             Mount status dict
@@ -519,350 +523,36 @@ class DockerSandboxProvider(SandboxProvider):
             RuntimeError: If mount fails
         """
         container_info = self._get_container_info(sandbox_id)
-        container = container_info.container
-
-        # Validate all inputs before shell interpolation (CWE-78 prevention)
-        mount_path = validate_mount_path(mount_path)
-        nexus_url = validate_nexus_url(nexus_url)
-        if agent_id is not None:
-            agent_id = validate_agent_id(agent_id)
-
-        logger.info(f"[MOUNT-STEP-1] Starting mount process for sandbox {sandbox_id}")
-        logger.info(f"[MOUNT-STEP-1] Mount path: {mount_path}, Nexus URL: {nexus_url}")
-
-        # Transform localhost URLs so containers can reach the host
-        if self.docker_host_alias and ("localhost" in nexus_url or "127.0.0.1" in nexus_url):
-            original_url = nexus_url
-            nexus_url = nexus_url.replace("localhost", self.docker_host_alias)
-            nexus_url = nexus_url.replace("127.0.0.1", self.docker_host_alias)
-            logger.info(f"[MOUNT-STEP-1] Transformed URL: {original_url} -> {nexus_url}")
-
-        # Create mount directory
-        logger.info(f"[MOUNT-STEP-2] Creating mount directory: {mount_path}")
-        start_time = time.time()
-        mkdir_result = await asyncio.to_thread(
-            container.exec_run,
-            f"mkdir -p {mount_path}",
-        )
-        logger.info(
-            f"[MOUNT-STEP-2] mkdir completed in {time.time() - start_time:.2f}s, exit_code={mkdir_result.exit_code}"
-        )
-        if mkdir_result.exit_code != 0:
-            error_msg = f"Failed to create mount directory: {mkdir_result.output.decode()}"
-            logger.error(f"[MOUNT-STEP-2] {error_msg}")
-            return {
-                "success": False,
-                "mount_path": mount_path,
-                "message": error_msg,
-                "files_visible": 0,
-            }
-
-        # Enable user_allow_other in /etc/fuse.conf for --allow-other to work
-        # Note: Use ^user_allow_other to only match uncommented lines
-        logger.info("[MOUNT-STEP-2b] Configuring FUSE to allow other users...")
-        fuse_conf_cmd = (
-            "grep -q '^user_allow_other' /etc/fuse.conf 2>/dev/null || "
-            "echo 'user_allow_other' | sudo tee -a /etc/fuse.conf > /dev/null"
-        )
-        fuse_conf_result = await asyncio.to_thread(
-            container.exec_run,
-            ["sh", "-c", fuse_conf_cmd],
-        )
-        if fuse_conf_result.exit_code != 0:
-            logger.warning(
-                f"[MOUNT-STEP-2b] Failed to configure FUSE (continuing anyway): "
-                f"{fuse_conf_result.output.decode() if fuse_conf_result.output else ''}"
-            )
-        else:
-            logger.info("[MOUNT-STEP-2b] FUSE configured for user_allow_other")
-
-        # Check if nexus CLI is available
-        logger.info("[MOUNT-STEP-3] Checking for nexus CLI...")
-        start_time = time.time()
-        check_result = await asyncio.to_thread(
-            container.exec_run,
-            "which nexus",
-        )
-        logger.info(
-            f"[MOUNT-STEP-3] which nexus completed in {time.time() - start_time:.2f}s, exit_code={check_result.exit_code}"
+        return await self._mount_service.mount_nexus(
+            container=container_info.container,
+            mount_path=mount_path,
+            nexus_url=nexus_url,
+            api_key=api_key,
+            agent_id=agent_id,
         )
 
-        # In dev mode, always reinstall from source even if nexus is already installed
-        needs_install = check_result.exit_code != 0 or self._dev_mode
+    async def unmount_nexus(
+        self,
+        sandbox_id: str,
+        mount_path: str = "/mnt/nexus",
+    ) -> dict[str, Any]:
+        """Unmount Nexus FUSE from a Docker sandbox.
 
-        if needs_install:
-            # nexus not found, try to install with FUSE support
-            if self._dev_mode:
-                # Dev mode: install from PyPI, then copy modified Python files from source
-                # This preserves pre-built Rust extensions while using local Python changes
-                logger.info(
-                    "[MOUNT-STEP-3] Installing from PyPI, then copying local Python source (dev mode)..."
-                )
-                # Install from PyPI first, then copy ALL Python source files
-                # This ensures all optimizations (readahead, local_disk_cache, etc.) are used
-                # Use sudo for the cp since site-packages is owned by root
-                install_cmd = (
-                    "pip install -q 'nexus-ai-fs[fuse]' && "
-                    "SITE_PACKAGES=$(python -c 'import site; print(site.getsitepackages()[0])') && "
-                    "cd /nexus-src/src && "
-                    "find nexus -name '*.py' -exec sudo cp --parents {} \"$SITE_PACKAGES/\" \\;"
-                )
-            else:
-                # Production: install from PyPI
-                logger.info("[MOUNT-STEP-3] nexus CLI not found, installing nexus-ai-fs[fuse]...")
-                install_cmd = "pip install -q 'nexus-ai-fs[fuse]'"
+        Args:
+            sandbox_id: Sandbox ID.
+            mount_path: Path where Nexus is mounted.
 
-            start_time = time.time()
-            install_result = await asyncio.to_thread(
-                container.exec_run,
-                ["bash", "-c", install_cmd],
-            )
-            elapsed = time.time() - start_time
-            logger.info(
-                f"[MOUNT-STEP-3] pip install completed in {elapsed:.2f}s, exit_code={install_result.exit_code}"
-            )
+        Returns:
+            Unmount status dict with success, mount_path, message.
 
-            if install_result.exit_code != 0:
-                error_msg = f"Failed to install nexus-ai-fs: {install_result.output.decode()}"
-                logger.error(f"[MOUNT-STEP-3] {error_msg}")
-                return {
-                    "success": False,
-                    "mount_path": mount_path,
-                    "message": error_msg,
-                    "files_visible": 0,
-                }
-            logger.info("[MOUNT-STEP-3] Successfully installed nexus-ai-fs")
-        else:
-            logger.info("[MOUNT-STEP-3] nexus CLI already available, skipping installation")
-
-        # Build mount command
-        logger.info("[MOUNT-STEP-4] Building mount command...")
-        logger.info(
-            f"[MOUNT-STEP-4] nexus_url={nexus_url}, "
-            f"api_key={'***' + api_key[-10:] if api_key else 'None'}"
-            + (f", agent_id={agent_id}" if agent_id else "")
+        Raises:
+            SandboxNotFoundError: If sandbox doesn't exist.
+        """
+        container_info = self._get_container_info(sandbox_id)
+        return await self._mount_service.unmount_nexus(
+            container=container_info.container,
+            mount_path=mount_path,
         )
-        # Write API key to a temp file with restrictive permissions to avoid
-        # leaking it in process args, /proc/PID/environ, or ps output (CWE-214)
-        api_key_file = "/tmp/.nexus_api_key"
-        write_key_cmd = f"printf '%s' '{api_key}' > {api_key_file} && chmod 600 {api_key_file}"
-        key_result = await asyncio.to_thread(
-            container.exec_run,
-            ["sh", "-c", write_key_cmd],
-        )
-        if key_result.exit_code != 0:
-            logger.warning("[MOUNT-STEP-4] Failed to write API key file, falling back to env var")
-            api_key_source = f"NEXUS_API_KEY={api_key} "
-        else:
-            api_key_source = f"NEXUS_API_KEY=$(cat {api_key_file}) "
-
-        base_mount = (
-            f"sudo {api_key_source}"
-            f"nexus mount {mount_path} "
-            f"--remote-url {nexus_url} "
-            f"--allow-other "
-            f"--daemon"  # Run in daemon mode so it doesn't block
-        )
-        # Add agent-id for version attribution (issue #418)
-        if agent_id:
-            base_mount += f" --agent-id {agent_id}"
-        # Note: --daemon flag handles proper daemonization with double-fork
-        # The daemon writes its own log file, so we just capture any startup output
-        mount_cmd = f"{base_mount} 2>&1"
-        logger.info(f"[MOUNT-STEP-4] Mount command: {mount_cmd}")
-
-        # Run mount in background (wrap in shell)
-        logger.info("[MOUNT-STEP-4] Executing mount command in background...")
-        start_time = time.time()
-        mount_result = await asyncio.to_thread(
-            container.exec_run,
-            ["sh", "-c", mount_cmd],
-        )
-        logger.info(
-            f"[MOUNT-STEP-4] Mount command completed in {time.time() - start_time:.2f}s, exit_code={mount_result.exit_code}"
-        )
-
-        if mount_result.exit_code != 0:
-            error_msg = f"Failed to start mount: {mount_result.output.decode()}"
-            logger.error(f"[MOUNT-STEP-4] {error_msg}")
-            return {
-                "success": False,
-                "mount_path": mount_path,
-                "message": error_msg,
-                "files_visible": 0,
-            }
-
-        # Wait for mount to initialize
-        logger.info("[MOUNT-STEP-5] Waiting for mount process to start (3 seconds)...")
-        await asyncio.sleep(3)
-
-        # Pre-warm the FUSE mount by triggering a simple operation from inside container
-        # This establishes the connection and warms up caches BEFORE we do the verification ls
-        logger.info("[MOUNT-STEP-5] Pre-warming FUSE mount with test access...")
-        prewarm_start = time.time()
-        prewarm_result = await asyncio.to_thread(
-            container.exec_run,
-            f"test -d {mount_path}",  # Simple directory test, doesn't list contents
-        )
-        prewarm_elapsed = time.time() - prewarm_start
-        logger.info(
-            f"[MOUNT-STEP-5] Pre-warm test took {prewarm_elapsed:.2f}s, exit_code={prewarm_result.exit_code}"
-        )
-
-        prewarm_success = prewarm_result.exit_code == 0
-        if prewarm_success:
-            logger.info("[MOUNT-STEP-5] Pre-warm successful, FUSE connection established")
-        else:
-            logger.warning(
-                f"[MOUNT-STEP-5] Pre-warm failed but continuing: {prewarm_result.output.decode() if prewarm_result.output else 'no output'}"
-            )
-
-        # Verify mount by listing directory (use simple ls, not ls -la)
-        # After pre-warming, this should be fast
-        logger.info(f"[MOUNT-STEP-6] Verifying mount by listing {mount_path}...")
-        start_time = time.time()
-        try:
-            ls_result = await asyncio.wait_for(
-                asyncio.to_thread(
-                    container.exec_run,
-                    f"timeout 10 ls {mount_path}",  # 10 second timeout (should be fast after prewarm)
-                ),
-                timeout=15.0,  # 15 second timeout for the whole operation
-            )
-            elapsed = time.time() - start_time
-            logger.info(
-                f"[MOUNT-STEP-6] ls completed in {elapsed:.2f}s, exit_code={ls_result.exit_code}"
-            )
-            if elapsed > 5.0:
-                logger.warning(
-                    f"[MOUNT-STEP-6] ls took {elapsed:.2f}s - this is the known 'first ls slow' issue"
-                )
-                logger.info(
-                    "[MOUNT-STEP-6] Subsequent ls commands will be fast once cache is populated"
-                )
-        except TimeoutError:
-            elapsed = time.time() - start_time
-            logger.error(f"[MOUNT-STEP-6] ls command timed out after {elapsed:.2f}s")
-            logger.error(
-                "[MOUNT-STEP-6] This may indicate FUSE mount issues beyond normal first-access slowness"
-            )
-            # Continue anyway - mount might be working but slow
-            ls_result = None
-
-        # Check mount log for success message
-        # Note: --daemon mode creates timestamped log files like /tmp/nexus-mount-*.log
-        logger.info("[MOUNT-STEP-6] Checking mount log for success message...")
-        log_check = await asyncio.to_thread(
-            container.exec_run,
-            "cat /tmp/nexus-mount-*.log 2>/dev/null | tail -50 || echo 'log not found'",
-        )
-        mount_log_shows_success = False
-        if log_check.exit_code == 0 and log_check.output:
-            log_output = log_check.output.decode()
-            if log_output and "log not found" not in log_output:
-                logger.info(
-                    f"[MOUNT-STEP-6] Mount log content (length={len(log_output)}):\n{log_output}"
-                )
-                if "Mounted Nexus to" in log_output:
-                    mount_log_shows_success = True
-                    logger.info(
-                        "[MOUNT-STEP-6] Found 'Mounted Nexus to' in mount log - mount is successful"
-                    )
-            else:
-                logger.warning("[MOUNT-STEP-6] Mount log not found or empty")
-        else:
-            logger.warning(
-                f"[MOUNT-STEP-6] Mount log check command failed: exit_code={log_check.exit_code}"
-            )
-
-        # Handle successful ls
-        if ls_result and ls_result.exit_code == 0:
-            output = ls_result.output.decode() if ls_result.output else ""
-            logger.info(f"[MOUNT-STEP-6] ls output: '{output}' (length={len(output)})")
-
-            if output:
-                # Count files (one per line in simple ls output)
-                lines = [line for line in output.strip().split("\n") if line.strip()]
-                file_count = len(lines)
-                logger.info(
-                    f"[MOUNT-STEP-6] Successfully mounted Nexus at {mount_path} "
-                    f"with {file_count} items visible: {lines}"
-                )
-                return {
-                    "success": True,
-                    "mount_path": mount_path,
-                    "message": f"Nexus mounted successfully at {mount_path}",
-                    "files_visible": file_count,
-                }
-            elif mount_log_shows_success or prewarm_success:
-                # ls returned empty but either mount log shows success OR pre-warm was successful
-                # This can happen with timeout command or when mount log hasn't flushed yet
-                reason = (
-                    "mount log confirms success"
-                    if mount_log_shows_success
-                    else "pre-warm test succeeded"
-                )
-                logger.info(f"[MOUNT-STEP-6] ls returned empty output but {reason}")
-                return {
-                    "success": True,
-                    "mount_path": mount_path,
-                    "message": f"Nexus mounted successfully at {mount_path}",
-                    "files_visible": -1,  # Unknown count but mount is working
-                }
-            else:
-                logger.warning(
-                    "[MOUNT-STEP-6] ls succeeded but returned empty output, no mount log success, and pre-warm failed"
-                )
-
-        # Handle timeout or error - still consider mount successful if log shows success
-        if ls_result is None:
-            logger.warning(
-                "[MOUNT-STEP-6] Mount verification timed out, but mount process may be working"
-            )
-
-            # Check mount log for success message
-            if log_check.exit_code == 0 and log_check.output:
-                log_text = log_check.output.decode()
-                if "Mounted Nexus to" in log_text:
-                    logger.info(
-                        "[MOUNT-STEP-6] Mount log shows successful mount, considering mount successful despite slow ls"
-                    )
-                    return {
-                        "success": True,
-                        "mount_path": mount_path,
-                        "message": f"Nexus mounted at {mount_path} (note: ls is slow due to issue #391)",
-                        "files_visible": -1,  # -1 indicates unknown due to timeout
-                    }
-
-            # Fallback: check if mount process is running
-            logger.info("[MOUNT-STEP-6] Checking if mount process is running...")
-            ps_result = await asyncio.to_thread(
-                container.exec_run,
-                "pgrep -f 'nexus mount' || ps aux | grep -v grep | grep nexus",
-            )
-            if ps_result.exit_code == 0 and ps_result.output:
-                logger.info(
-                    f"[MOUNT-STEP-6] Found mount-related process: {ps_result.output.decode()[:200]}"
-                )
-                return {
-                    "success": True,
-                    "mount_path": mount_path,
-                    "message": f"Nexus mounted at {mount_path} (note: ls is slow due to issue #391)",
-                    "files_visible": -1,  # -1 indicates unknown due to timeout
-                }
-
-        # Mount verification failed
-        error_msg = f"Mount verification failed: {ls_result.output.decode() if ls_result and ls_result.output else 'No output or timeout'}"
-        logger.error(f"[MOUNT-STEP-6] {error_msg}")
-        if ls_result:
-            logger.error(f"[MOUNT-STEP-6] Exit code: {ls_result.exit_code}")
-
-        return {
-            "success": False,
-            "mount_path": mount_path,
-            "message": error_msg,
-            "files_visible": 0,
-        }
 
     # Internal methods
 

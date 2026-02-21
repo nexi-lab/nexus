@@ -29,11 +29,8 @@ Usage:
     file_cache.delete("zone1", "/mnt/gcs/file.txt")
 """
 
-from __future__ import annotations
-
 import json as _json
 import logging
-import os
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -67,7 +64,7 @@ class FileContentCache:
     - No false negatives (never skips existing files)
     """
 
-    _bloom: BloomFilter | None
+    _bloom: "BloomFilter | None"
 
     def __init__(
         self,
@@ -608,26 +605,3 @@ class FileContentCache:
             Path to the cache directory for Zoekt indexing
         """
         return self.cache_dir
-
-
-# Global instance (initialized lazily)
-_file_cache: FileContentCache | None = None
-
-
-def get_file_cache(base_dir: str | Path | None = None) -> FileContentCache:
-    """Get the global file cache instance.
-
-    Args:
-        base_dir: Base directory (only used for first initialization)
-
-    Returns:
-        FileContentCache instance
-    """
-    global _file_cache
-
-    if _file_cache is None:
-        if base_dir is None:
-            base_dir = os.getenv("NEXUS_DATA_DIR", "./nexus-data")
-        _file_cache = FileContentCache(base_dir)
-
-    return _file_cache

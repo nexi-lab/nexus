@@ -7,8 +7,6 @@ Each row stores only the SHA-256 hash of the retired refresh token,
 never the plaintext.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, Index, Integer, String

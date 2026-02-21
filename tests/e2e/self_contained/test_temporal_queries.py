@@ -14,20 +14,17 @@ Example:
     pytest tests/integration/test_temporal_queries.py
 """
 
-from __future__ import annotations
-
 import logging
 import os
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
 from nexus.backends.local import LocalBackend
-from nexus.rebac.entity_registry import EntityRegistry
-from nexus.services.memory.memory_api import Memory
+from nexus.bricks.memory.service import Memory
+from nexus.bricks.rebac.entity_registry import EntityRegistry
 from nexus.storage.models import Base, MemoryModel
+from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -38,22 +35,33 @@ DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "sqlite:///:memory:")
 
 
 @pytest.fixture
-def engine():
-    """Create database for testing (PostgreSQL or SQLite)."""
-    engine = create_engine(DATABASE_URL)
-    Base.metadata.drop_all(engine)  # Clean slate for PostgreSQL
-    Base.metadata.create_all(engine)
-    yield engine
+def record_store():
+    """Shared in-memory RecordStore for all components."""
     if DATABASE_URL.startswith("postgresql"):
-        Base.metadata.drop_all(engine)  # Cleanup for PostgreSQL
-    engine.dispose()
+        from nexus.storage.record_store import SQLAlchemyRecordStore
+
+        store = SQLAlchemyRecordStore(db_url=DATABASE_URL)
+        Base.metadata.drop_all(store.engine)
+        Base.metadata.create_all(store.engine)
+        yield store
+        Base.metadata.drop_all(store.engine)
+        store.close()
+    else:
+        store = InMemoryRecordStore()
+        yield store
+        store.close()
 
 
 @pytest.fixture
-def session(engine):
+def engine(record_store):
+    """Database engine from RecordStore."""
+    return record_store.engine
+
+
+@pytest.fixture
+def session(record_store):
     """Create database session."""
-    SessionLocal = sessionmaker(bind=engine)
-    session = SessionLocal()
+    session = record_store.session_factory()
     yield session
     session.close()
 
@@ -65,9 +73,9 @@ def backend(tmp_path):
 
 
 @pytest.fixture
-def entity_registry(session):
+def entity_registry(record_store):
     """Create and populate entity registry."""
-    registry = EntityRegistry(session)
+    registry = EntityRegistry(record_store)
     registry.register_entity("zone", "acme")
     registry.register_entity("user", "alice", parent_type="zone", parent_id="acme")
     registry.register_entity("agent", "agent1", parent_type="user", parent_id="alice")
@@ -362,7 +370,7 @@ class TestPostgreSQLTimestampPrecision:
     )
     def test_microsecond_precision(self, session):
         """Test that PostgreSQL handles microsecond precision correctly."""
-        from nexus.services.memory.memory_router import MemoryViewRouter
+        from nexus.bricks.memory.router import MemoryViewRouter
 
         now = datetime.now(UTC)
 

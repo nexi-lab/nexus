@@ -71,7 +71,7 @@ If a pre-built wheel is not available for your platform, Nexus will automaticall
 #### Verify Installation
 
 ```python
-from nexus.core import grep_fast
+from nexus.bricks.search.primitives import grep_fast
 
 print(grep_fast.is_available())  # Should print True if Rust extension is available
 ```
@@ -305,7 +305,7 @@ The permission checker implements a recursive graph traversal algorithm with:
 To integrate with the Nexus Python codebase:
 
 ```python
-from nexus.core.rebac import check_permissions_python  # existing
+from nexus.bricks.rebac.domain import check_permissions_python  # existing
 import nexus_fast
 
 def check_permissions_optimized(checks, tuples, namespace_configs):

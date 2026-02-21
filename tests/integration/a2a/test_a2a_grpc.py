@@ -4,8 +4,6 @@ Tests the full gRPC transport path with a real in-process server
 and the TaskManager shared between transports.
 """
 
-from __future__ import annotations
-
 import asyncio
 import time
 

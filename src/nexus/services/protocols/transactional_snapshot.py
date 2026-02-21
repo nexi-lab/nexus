@@ -18,15 +18,15 @@ References:
     - Issue #1752: Transactional filesystem snapshots for agent rollback
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-if TYPE_CHECKING:
-    from nexus.core.permissions import OperationContext
+from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.types import SnapshotId
 
+if TYPE_CHECKING:
+    from nexus.contracts.types import OperationContext
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -40,18 +40,6 @@ class TransactionState(StrEnum):
     COMMITTED = "COMMITTED"
     ROLLED_BACK = "ROLLED_BACK"
     EXPIRED = "EXPIRED"
-
-
-# ---------------------------------------------------------------------------
-# Data models
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True, slots=True)
-class SnapshotId:
-    """Opaque identifier for a transactional snapshot."""
-
-    id: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -208,8 +196,8 @@ class TransactionalSnapshotProtocol(Protocol):
         agent_id: str,
         paths: list[str],
         *,
-        zone_id: str = "root",
-        context: OperationContext | None = None,
+        zone_id: str = ROOT_ZONE_ID,
+        context: "OperationContext | None" = None,
     ) -> SnapshotId:
         """Create a COW snapshot of specified paths.
 
@@ -236,7 +224,7 @@ class TransactionalSnapshotProtocol(Protocol):
         self,
         snapshot_id: SnapshotId,
         *,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> None:
         """Release snapshot — changes are permanent.
 
@@ -256,7 +244,7 @@ class TransactionalSnapshotProtocol(Protocol):
         self,
         snapshot_id: SnapshotId,
         *,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> TransactionResult:
         """Restore all paths to pre-snapshot state.
 
@@ -297,7 +285,7 @@ class TransactionalSnapshotProtocol(Protocol):
         self,
         agent_id: str,
         *,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
     ) -> list[TransactionInfo]:
         """List all ACTIVE transactions for an agent.
 

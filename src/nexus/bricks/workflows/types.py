@@ -6,7 +6,7 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
-from nexus.raft.zone_manager import ROOT_ZONE_ID
+from nexus.constants import ROOT_ZONE_ID
 
 
 class WorkflowStatus(StrEnum):

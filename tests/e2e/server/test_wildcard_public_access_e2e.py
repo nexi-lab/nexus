@@ -10,10 +10,9 @@ Usage:
     uv run pytest tests/e2e/test_wildcard_public_access_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import json
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -73,9 +72,9 @@ def write_rebac_tuple(
             text("""
                 INSERT INTO rebac_tuples
                 (tuple_id, subject_type, subject_id, relation, object_type, object_id,
-                 zone_id, subject_zone_id, object_zone_id)
+                 zone_id, subject_zone_id, object_zone_id, created_at)
                 VALUES (:tuple_id, :subject_type, :subject_id, :relation, :object_type, :object_id,
-                        :zone_id, :subject_zone_id, :object_zone_id)
+                        :zone_id, :subject_zone_id, :object_zone_id, :created_at)
             """),
             {
                 "tuple_id": tuple_id,
@@ -87,6 +86,7 @@ def write_rebac_tuple(
                 "zone_id": zone_id,
                 "subject_zone_id": effective_subject_zone,
                 "object_zone_id": effective_object_zone,
+                "created_at": datetime.now(UTC).isoformat(),
             },
         )
         conn.commit()
@@ -163,72 +163,30 @@ class TestWildcardDirectDB:
 
     @pytest.fixture
     def db_engine(self, isolated_db):
-        """Create database with ReBAC tables."""
-        engine = create_engine(f"sqlite:///{isolated_db}")
+        """Create database with ReBAC tables using ORM models."""
+        from nexus.storage.models import Base
 
-        # Create tables
+        engine = create_engine(f"sqlite:///{isolated_db}")
+        Base.metadata.create_all(engine)
+
+        # Insert file namespace with reader -> read permission
+        config = json.dumps(
+            {
+                "relations": {"reader": {}, "writer": {}, "owner": {}},
+                "permissions": {
+                    "read": {"union": ["reader", "writer", "owner"]},
+                    "write": {"union": ["writer", "owner"]},
+                },
+            }
+        )
+        now = datetime.now(UTC).isoformat()
         with engine.connect() as conn:
             conn.execute(
-                text("""
-                CREATE TABLE IF NOT EXISTS rebac_tuples (
-                    tuple_id TEXT PRIMARY KEY,
-                    subject_type TEXT NOT NULL,
-                    subject_id TEXT NOT NULL,
-                    subject_relation TEXT,
-                    relation TEXT NOT NULL,
-                    object_type TEXT NOT NULL,
-                    object_id TEXT NOT NULL,
-                    zone_id TEXT NOT NULL DEFAULT 'default',
-                    conditions TEXT,
-                    expires_at TEXT,
-                    created_at TIMESTAMP,
-                    updated_at TIMESTAMP
-                )
-            """)
-            )
-
-            # Create namespace config
-            conn.execute(
-                text("""
-                CREATE TABLE IF NOT EXISTS rebac_namespaces (
-                    namespace_id TEXT PRIMARY KEY,
-                    object_type TEXT NOT NULL,
-                    config TEXT NOT NULL
-                )
-            """)
-            )
-
-            # Insert file namespace with reader -> read permission
-            config = json.dumps(
-                {
-                    "relations": {"reader": {}, "writer": {}, "owner": {}},
-                    "permissions": {
-                        "read": {"union": ["reader", "writer", "owner"]},
-                        "write": {"union": ["writer", "owner"]},
-                    },
-                }
-            )
-            conn.execute(
                 text(
-                    "INSERT INTO rebac_namespaces (namespace_id, object_type, config) VALUES (:id, :type, :config)"
+                    "INSERT OR IGNORE INTO rebac_namespaces (namespace_id, object_type, config, created_at, updated_at) "
+                    "VALUES (:id, :type, :config, :now, :now)"
                 ),
-                {"id": "file_ns", "type": "file", "config": config},
-            )
-
-            # Create group closure table
-            conn.execute(
-                text("""
-                CREATE TABLE IF NOT EXISTS rebac_group_closure (
-                    member_type TEXT NOT NULL,
-                    member_id TEXT NOT NULL,
-                    group_type TEXT NOT NULL,
-                    group_id TEXT NOT NULL,
-                    zone_id TEXT NOT NULL DEFAULT 'default',
-                    depth INTEGER NOT NULL DEFAULT 1,
-                    updated_at TIMESTAMP,
-                    PRIMARY KEY (member_type, member_id, group_type, group_id, zone_id)
-                )
-            """)
+                {"id": "file_ns", "type": "file", "config": config, "now": now},
             )
             conn.commit()
 
@@ -238,26 +196,31 @@ class TestWildcardDirectDB:
     @pytest.fixture
     def async_manager(self, db_engine, isolated_db):
         """Create AsyncReBACManager for testing."""
-        from sqlalchemy.ext.asyncio import create_async_engine
+        from nexus.bricks.rebac.async_manager import AsyncReBACManager
+        from nexus.bricks.rebac.manager import ReBACManager
 
-        from nexus.rebac.async_manager import AsyncReBACManager
-
-        async_engine = create_async_engine(f"sqlite+aiosqlite:///{isolated_db}")
-        manager = AsyncReBACManager(async_engine, enable_l1_cache=False)
+        # Use the existing sync db_engine directly — avoids MissingGreenlet
+        # errors that arise from using async_engine.sync_engine with
+        # asyncio.to_thread() in AsyncReBACManager.
+        sync_manager = ReBACManager(db_engine, enable_tiger_cache=False)
+        manager = AsyncReBACManager(sync_manager)
         yield manager
 
     @pytest.mark.asyncio
     async def test_wildcard_grants_access_cross_zone(self, async_manager, db_engine):
         """Test wildcard grants access to users from any zone."""
+        now = datetime.now(UTC).isoformat()
         # Write wildcard tuple directly to DB
         with db_engine.connect() as conn:
             conn.execute(
                 text("""
                     INSERT INTO rebac_tuples
-                    (tuple_id, subject_type, subject_id, relation, object_type, object_id, zone_id)
-                    VALUES (:tuple_id, '*', '*', 'reader', 'file', '/public/doc.txt', 'owner-zone')
+                    (tuple_id, subject_type, subject_id, relation, object_type, object_id,
+                     zone_id, subject_zone_id, object_zone_id, created_at)
+                    VALUES (:tuple_id, '*', '*', 'reader', 'file', '/public/doc.txt',
+                            'owner-zone', 'owner-zone', 'owner-zone', :now)
                 """),
-                {"tuple_id": str(uuid.uuid4())},
+                {"tuple_id": str(uuid.uuid4()), "now": now},
             )
             conn.commit()
 
@@ -273,15 +236,18 @@ class TestWildcardDirectDB:
     @pytest.mark.asyncio
     async def test_no_wildcard_no_cross_zone_access(self, async_manager, db_engine):
         """Test that without wildcard, cross-zone access is denied."""
+        now = datetime.now(UTC).isoformat()
         # Write specific user tuple (not wildcard)
         with db_engine.connect() as conn:
             conn.execute(
                 text("""
                     INSERT INTO rebac_tuples
-                    (tuple_id, subject_type, subject_id, relation, object_type, object_id, zone_id)
-                    VALUES (:tuple_id, 'user', 'specific-user', 'reader', 'file', '/private/doc.txt', 'owner-zone')
+                    (tuple_id, subject_type, subject_id, relation, object_type, object_id,
+                     zone_id, subject_zone_id, object_zone_id, created_at)
+                    VALUES (:tuple_id, 'user', 'specific-user', 'reader', 'file', '/private/doc.txt',
+                            'owner-zone', 'owner-zone', 'owner-zone', :now)
                 """),
-                {"tuple_id": str(uuid.uuid4())},
+                {"tuple_id": str(uuid.uuid4()), "now": now},
             )
             conn.commit()
 
@@ -306,15 +272,18 @@ class TestWildcardDirectDB:
     @pytest.mark.asyncio
     async def test_wildcard_respects_permission_level(self, async_manager, db_engine):
         """Test that wildcard reader doesn't grant write permission."""
+        now = datetime.now(UTC).isoformat()
         # Write wildcard reader tuple
         with db_engine.connect() as conn:
             conn.execute(
                 text("""
                     INSERT INTO rebac_tuples
-                    (tuple_id, subject_type, subject_id, relation, object_type, object_id, zone_id)
-                    VALUES (:tuple_id, '*', '*', 'reader', 'file', '/public/readonly.txt', 'default')
+                    (tuple_id, subject_type, subject_id, relation, object_type, object_id,
+                     zone_id, subject_zone_id, object_zone_id, created_at)
+                    VALUES (:tuple_id, '*', '*', 'reader', 'file', '/public/readonly.txt',
+                            'default', 'default', 'default', :now)
                 """),
-                {"tuple_id": str(uuid.uuid4())},
+                {"tuple_id": str(uuid.uuid4()), "now": now},
             )
             conn.commit()
 
@@ -342,67 +311,26 @@ class TestWildcardPerformance:
 
     @pytest.fixture
     def db_engine(self, isolated_db):
-        """Create database with ReBAC tables and many tuples."""
-        engine = create_engine(f"sqlite:///{isolated_db}")
+        """Create database with ReBAC tables using ORM models."""
+        from nexus.storage.models import Base
 
+        engine = create_engine(f"sqlite:///{isolated_db}")
+        Base.metadata.create_all(engine)
+
+        config = json.dumps(
+            {
+                "relations": {"reader": {}, "writer": {}},
+                "permissions": {"read": ["reader", "writer"], "write": ["writer"]},
+            }
+        )
+        now = datetime.now(UTC).isoformat()
         with engine.connect() as conn:
             conn.execute(
-                text("""
-                CREATE TABLE IF NOT EXISTS rebac_tuples (
-                    tuple_id TEXT PRIMARY KEY,
-                    subject_type TEXT NOT NULL,
-                    subject_id TEXT NOT NULL,
-                    subject_relation TEXT,
-                    relation TEXT NOT NULL,
-                    object_type TEXT NOT NULL,
-                    object_id TEXT NOT NULL,
-                    zone_id TEXT NOT NULL DEFAULT 'default',
-                    conditions TEXT,
-                    expires_at TEXT
-                )
-            """)
-            )
-            conn.execute(
-                text("""
-                CREATE TABLE IF NOT EXISTS rebac_namespaces (
-                    namespace_id TEXT PRIMARY KEY,
-                    object_type TEXT NOT NULL,
-                    config TEXT NOT NULL
-                )
-            """)
-            )
-            config = json.dumps(
-                {
-                    "relations": {"reader": {}, "writer": {}},
-                    "permissions": {"read": ["reader", "writer"], "write": ["writer"]},
-                }
-            )
-            conn.execute(
                 text(
-                    "INSERT INTO rebac_namespaces (namespace_id, object_type, config) VALUES (:id, :type, :config)"
+                    "INSERT OR IGNORE INTO rebac_namespaces (namespace_id, object_type, config, created_at, updated_at) "
+                    "VALUES (:id, :type, :config, :now, :now)"
                 ),
-                {"id": "file_ns", "type": "file", "config": config},
-            )
-            conn.execute(
-                text("""
-                CREATE TABLE IF NOT EXISTS rebac_group_closure (
-                    member_type TEXT NOT NULL,
-                    member_id TEXT NOT NULL,
-                    group_type TEXT NOT NULL,
-                    group_id TEXT NOT NULL,
-                    zone_id TEXT NOT NULL DEFAULT 'default',
-                    depth INTEGER NOT NULL DEFAULT 1,
-                    PRIMARY KEY (member_type, member_id, group_type, group_id, zone_id)
-                )
-            """)
-            )
-
-            # Create index for performance
-            conn.execute(
-                text("""
-                CREATE INDEX IF NOT EXISTS idx_rebac_subject
-                ON rebac_tuples (subject_type, subject_id, relation, object_type, object_id)
-            """)
+                {"id": "file_ns", "type": "file", "config": config, "now": now},
             )
             conn.commit()
 
@@ -414,26 +342,30 @@ class TestWildcardPerformance:
         """Benchmark wildcard check to ensure no performance regression."""
         import time
 
-        from sqlalchemy.ext.asyncio import create_async_engine
+        from nexus.bricks.rebac.async_manager import AsyncReBACManager
+        from nexus.bricks.rebac.manager import ReBACManager
 
-        from nexus.rebac.async_manager import AsyncReBACManager
-
-        async_engine = create_async_engine(f"sqlite+aiosqlite:///{isolated_db}")
-        manager = AsyncReBACManager(async_engine, enable_l1_cache=False)
+        # Use the existing sync db_engine directly — avoids MissingGreenlet.
+        sync_manager = ReBACManager(db_engine, enable_tiger_cache=False)
+        manager = AsyncReBACManager(sync_manager)
 
         # Insert many tuples to simulate real workload
+        now = datetime.now(UTC).isoformat()
         with db_engine.connect() as conn:
             for i in range(1000):
                 conn.execute(
                     text("""
                         INSERT INTO rebac_tuples
-                        (tuple_id, subject_type, subject_id, relation, object_type, object_id, zone_id)
-                        VALUES (:tuple_id, 'user', :user_id, 'reader', 'file', :file_path, 'default')
+                        (tuple_id, subject_type, subject_id, relation, object_type, object_id,
+                         zone_id, subject_zone_id, object_zone_id, created_at)
+                        VALUES (:tuple_id, 'user', :user_id, 'reader', 'file', :file_path,
+                                'default', 'default', 'default', :now)
                     """),
                     {
                         "tuple_id": str(uuid.uuid4()),
                         "user_id": f"user-{i}",
                         "file_path": f"/files/doc-{i}.txt",
+                        "now": now,
                     },
                 )
             conn.commit()

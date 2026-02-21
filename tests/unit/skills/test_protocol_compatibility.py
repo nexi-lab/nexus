@@ -13,8 +13,8 @@ import inspect
 
 import pytest
 
-from nexus.core.filesystem import NexusFilesystem as NexusFilesystemABC
-from nexus.skills.protocols import NexusFilesystem as NexusFilesystemProtocol
+from nexus.bricks.skills.protocols import NexusFilesystem as NexusFilesystemProtocol
+from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
 
 try:
     from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -81,7 +81,7 @@ def test_nexus_fs_satisfies_narrow_protocol() -> None:
         nx = NexusFS(
             backend=LocalBackend(tmpdir),
             metadata_store=metadata_store,
-            permissions=PermissionConfig(audit_strict_mode=False),
+            permissions=PermissionConfig(),
         )
 
         # Verify all required methods exist and are callable

@@ -15,19 +15,14 @@ Design decisions:
     - #4A / #16C: Events emitted synchronously from this service
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from nexus.contracts.agent_types import AgentRecord, AgentState
-
 if TYPE_CHECKING:
-    from nexus.bricks.sandbox.events import AgentEventLog
+    from nexus.bricks.sandbox.protocols import AgentEventLogProtocol
     from nexus.bricks.sandbox.sandbox_manager import SandboxManager
-    from nexus.rebac.namespace_manager import NamespaceManager
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +32,7 @@ class SandboxAuthResult:
     """Immutable result of authenticated sandbox creation."""
 
     sandbox: dict[str, Any]
-    agent_record: AgentRecord
+    agent_record: Any
     mount_table: list[Any] = field(default_factory=list)  # list[MountEntry]
     budget_checked: bool = False
 
@@ -61,10 +56,10 @@ class SandboxAuthService:
     def __init__(
         self,
         agent_registry: Any,  # AgentRegistry injected via DI
-        sandbox_manager: SandboxManager,
-        namespace_manager: NamespaceManager | None = None,
+        sandbox_manager: "SandboxManager",
+        namespace_manager: Any = None,
         nexus_pay: Any = None,
-        event_log: AgentEventLog | None = None,
+        event_log: "AgentEventLogProtocol | None" = None,
         budget_enforcement: bool = False,
     ) -> None:
         self._registry = agent_registry
@@ -159,9 +154,7 @@ class SandboxAuthService:
             )
 
         # Step 3: Transition agent to CONNECTED (new session)
-        connected_record = await asyncio.to_thread(
-            self._registry.transition, agent_id, AgentState.CONNECTED
-        )
+        connected_record = await asyncio.to_thread(self._registry.transition, agent_id, "CONNECTED")
 
         # Step 4: Construct namespace (best-effort — failure doesn't block sandbox)
         mount_table: list[Any] = []
@@ -241,7 +234,7 @@ class SandboxAuthService:
 
         # Transition agent to IDLE (best-effort — don't fail the stop)
         try:
-            await asyncio.to_thread(self._registry.transition, agent_id, AgentState.IDLE)
+            await asyncio.to_thread(self._registry.transition, agent_id, "IDLE")
         except Exception:
             logger.warning(
                 "[SANDBOX-AUTH] Failed to transition agent %s to IDLE after stop",

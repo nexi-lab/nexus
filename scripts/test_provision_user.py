@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from datetime import UTC, datetime
 
 import nexus
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 
@@ -175,7 +175,7 @@ def test_provision_user() -> bool:
             if zone:
                 print(f"   - Zone exists: {zone.zone_id} ✓")
                 print(f"     Name: {zone.name}")
-                print(f"     Active: {zone.is_active}")
+                print(f"     Phase: {zone.phase}")
             else:
                 print("   - Zone not found ✗")
 

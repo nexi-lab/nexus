@@ -15,8 +15,6 @@ This package contains all CLI commands organized by functionality:
 - workflows: Workflow automation system
 """
 
-from __future__ import annotations
-
 import click
 
 # Import all command registration functions

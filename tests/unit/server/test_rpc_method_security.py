@@ -6,8 +6,6 @@ Ensures that:
 - Valid method names still dispatch correctly
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest
@@ -117,16 +115,16 @@ class TestRPCMethodNameValidation:
 
 
 # =============================================================================
-# _discover_exposed_methods() — rpc_name bypass prevention
+# discover_exposed_methods() — rpc_name bypass prevention
 # =============================================================================
 
 
 class TestDiscoveryFilterRpcName:
-    """Verify _discover_exposed_methods() filters out private rpc_name aliases."""
+    """Verify discover_exposed_methods() filters out private rpc_name aliases."""
 
     def test_rpc_name_underscore_filtered(self) -> None:
         """Methods with rpc_name starting with '_' must be excluded from discovery."""
-        from nexus.server.fastapi_server import _discover_exposed_methods
+        from nexus.server.rpc.discovery import discover_exposed_methods
 
         def private_method():
             pass
@@ -144,13 +142,13 @@ class TestDiscoveryFilterRpcName:
             good_method = staticmethod(normal_method)
             bad_method = staticmethod(private_method)
 
-        exposed = _discover_exposed_methods(FakeFS())  # type: ignore[arg-type]
+        exposed = discover_exposed_methods(FakeFS())  # type: ignore[arg-type]
         assert "visible" in exposed
         assert "_hidden" not in exposed
 
     def test_rpc_name_normal_passes(self) -> None:
         """Methods with normal rpc_name are included in discovery."""
-        from nexus.server.fastapi_server import _discover_exposed_methods
+        from nexus.server.rpc.discovery import discover_exposed_methods
 
         def method():
             pass
@@ -161,5 +159,5 @@ class TestDiscoveryFilterRpcName:
         class FakeFS:
             my_method = staticmethod(method)
 
-        exposed = _discover_exposed_methods(FakeFS())  # type: ignore[arg-type]
+        exposed = discover_exposed_methods(FakeFS())  # type: ignore[arg-type]
         assert "safe_method" in exposed

@@ -13,9 +13,9 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import create_engine
 
-from nexus.rebac.consistency.zone_manager import ZoneIsolationError
-from nexus.rebac.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
-from nexus.rebac.manager import ReBACManager
+from nexus.bricks.rebac.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
+from nexus.bricks.rebac.manager import ReBACManager
+from nexus.services.permissions.consistency.zone_manager import ZoneIsolationError
 from nexus.storage.models import Base
 
 
@@ -358,7 +358,7 @@ class TestCrossZoneRustPathFix:
     @pytest.fixture
     def enhanced_manager(self, engine):
         """Create an enhanced ReBAC manager that has _fetch_tuples_for_rust."""
-        from nexus.rebac.manager import EnhancedReBACManager
+        from nexus.bricks.rebac.manager import EnhancedReBACManager
 
         manager = EnhancedReBACManager(
             engine=engine,
@@ -371,7 +371,7 @@ class TestCrossZoneRustPathFix:
 
     def test_fetch_tuples_for_rust_includes_cross_zone(self, enhanced_manager):
         """Test that _fetch_tuples_for_rust includes cross-zone tuples."""
-        from nexus.core.rebac import Entity
+        from nexus.bricks.rebac.domain import Entity
 
         # Create cross-zone share: partner-zone user gets access to acme-zone file
         enhanced_manager.rebac_write(
@@ -433,7 +433,7 @@ class TestCrossZonePermissionExpansion:
     @pytest.fixture
     def manager_with_namespace(self, engine):
         """Create manager with file namespace for permission expansion."""
-        from nexus.rebac.default_namespaces import DEFAULT_FILE_NAMESPACE
+        from nexus.bricks.rebac.default_namespaces import DEFAULT_FILE_NAMESPACE
 
         manager = ReBACManager(
             engine=engine,

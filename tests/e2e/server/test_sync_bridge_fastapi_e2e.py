@@ -11,8 +11,6 @@ realistic FastAPI server context:
 Uses httpx ASGITransport to call the FastAPI app in-process (no subprocess).
 """
 
-from __future__ import annotations
-
 import asyncio
 import os
 import uuid
@@ -22,7 +20,7 @@ import httpx
 import pytest
 
 from nexus.backends.local import LocalBackend
-from nexus.core.sync_bridge import shutdown_sync_bridge
+from nexus.lib.sync_bridge import shutdown_sync_bridge
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
 

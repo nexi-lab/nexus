@@ -21,8 +21,6 @@ References:
     - Issue #1383: Define 6 kernel protocol interfaces
 """
 
-from __future__ import annotations
-
 import asyncio
 import uuid
 from collections.abc import Awaitable, Callable
@@ -38,7 +36,6 @@ from nexus.services.protocols.hook_engine import (
 
 if TYPE_CHECKING:
     from nexus.plugins.hooks import PluginHooks
-
 
 # ---------------------------------------------------------------------------
 # Phase name translation: Protocol ↔ PluginHooks
@@ -88,7 +85,7 @@ class AsyncHookEngine:
     registry.
     """
 
-    def __init__(self, inner: PluginHooks) -> None:
+    def __init__(self, inner: "PluginHooks") -> None:
         self._inner = inner
         # HookId.id → (HookType, adapted_handler)
         self._registered: dict[str, tuple[HookType, Callable[..., Any]]] = {}

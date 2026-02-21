@@ -3,14 +3,12 @@
 Tests: Init, Lifecycle, Sweep, Errors.
 """
 
-from __future__ import annotations
-
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.services.snapshot.cleanup import SnapshotCleanupWorker
+from nexus.bricks.snapshot.cleanup import SnapshotCleanupWorker
 
 
 @pytest.fixture

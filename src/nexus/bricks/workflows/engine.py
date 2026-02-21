@@ -21,7 +21,7 @@ from nexus.bricks.workflows.types import (
     WorkflowExecution,
     WorkflowStatus,
 )
-from nexus.raft.zone_manager import ROOT_ZONE_ID
+from nexus.constants import ROOT_ZONE_ID
 
 logger = logging.getLogger(__name__)
 
@@ -60,12 +60,16 @@ class WorkflowEngine:
             if hasattr(plugin, "workflow_actions"):
                 plugin_actions = plugin.workflow_actions()
                 self.action_registry.update(plugin_actions)
-                logger.info(f"Registered {len(plugin_actions)} actions from plugin {plugin.name}")
+                logger.info(
+                    "Registered %d actions from plugin %s", len(plugin_actions), plugin.name
+                )
 
             if hasattr(plugin, "workflow_triggers"):
                 plugin_triggers = plugin.workflow_triggers()
                 self.trigger_registry.update(plugin_triggers)
-                logger.info(f"Registered {len(plugin_triggers)} triggers from plugin {plugin.name}")
+                logger.info(
+                    "Registered %d triggers from plugin %s", len(plugin_triggers), plugin.name
+                )
 
     async def startup(self) -> None:
         """Load workflows from storage (must be called post-construction in async context)."""
@@ -75,7 +79,9 @@ class WorkflowEngine:
         try:
             workflows_list = await self.workflow_store.list_workflows()
             for workflow_info in workflows_list:
-                definition = await self.workflow_store.load_workflow(workflow_info["workflow_id"])
+                definition = await self.workflow_store.load_workflow(
+                    workflow_id=workflow_info["workflow_id"]
+                )
                 if definition:
                     self.workflows[definition.name] = definition
                     self.enabled_workflows[definition.name] = workflow_info["enabled"]
@@ -83,9 +89,9 @@ class WorkflowEngine:
 
                     self._register_triggers_for(definition)
 
-            logger.info(f"Loaded {len(workflows_list)} workflow(s) from storage")
+            logger.info("Loaded %d workflow(s) from storage", len(workflows_list))
         except Exception as e:
-            logger.error(f"Failed to load workflows from storage: {e}")
+            logger.error("Failed to load workflows from storage: %s", e)
 
     def _register_triggers_for(self, definition: WorkflowDefinition) -> None:
         """Register triggers for a workflow definition."""
@@ -93,7 +99,7 @@ class WorkflowEngine:
         for trigger_def in definition.triggers:
             trigger_class = self.trigger_registry.get(trigger_def.type)
             if not trigger_class:
-                logger.warning(f"Unknown trigger type: {trigger_def.type}, skipping")
+                logger.warning("Unknown trigger type: %s, skipping", trigger_def.type)
                 continue
 
             trigger = trigger_class(trigger_def.config, glob_match=glob_match)
@@ -136,11 +142,11 @@ class WorkflowEngine:
             logger.debug("Registering triggers for workflow: %s", definition.name)
             self._register_triggers_for(definition)
 
-            logger.info(f"Loaded workflow: {definition.name} (enabled={enabled})")
+            logger.info("Loaded workflow: %s (enabled=%s)", definition.name, enabled)
             return True
 
         except Exception as e:
-            logger.error(f"Failed to load workflow {definition.name}: {e}")
+            logger.error("Failed to load workflow %s: %s", definition.name, e)
             return False
 
     async def _save_workflow_async(self, definition: WorkflowDefinition, enabled: bool) -> None:
@@ -148,9 +154,9 @@ class WorkflowEngine:
         try:
             workflow_id = await self.workflow_store.save_workflow(definition, enabled)  # type: ignore[union-attr]
             self.workflow_ids[definition.name] = workflow_id
-            logger.info(f"Saved workflow to storage: {definition.name} (id={workflow_id})")
+            logger.info("Saved workflow to storage: %s (id=%s)", definition.name, workflow_id)
         except Exception as e:
-            logger.error(f"Failed to save workflow to storage: {e}")
+            logger.error("Failed to save workflow to storage: %s", e)
 
     def unload_workflow(self, name: str) -> bool:
         """Unload a workflow."""
@@ -163,17 +169,17 @@ class WorkflowEngine:
             try:
                 try:
                     loop = asyncio.get_running_loop()
-                    loop.create_task(self.workflow_store.delete_workflow_by_name(name))
+                    loop.create_task(self.workflow_store.delete_workflow(name=name))
                 except RuntimeError:
-                    asyncio.run(self.workflow_store.delete_workflow_by_name(name))
+                    asyncio.run(self.workflow_store.delete_workflow(name=name))
             except Exception as e:
-                logger.error(f"Failed to delete workflow from storage: {e}")
+                logger.error("Failed to delete workflow from storage: %s", e)
 
         del self.workflows[name]
         self.enabled_workflows.pop(name, None)
         self.workflow_ids.pop(name, None)
 
-        logger.info(f"Unloaded workflow: {name}")
+        logger.info("Unloaded workflow: %s", name)
         return True
 
     def enable_workflow(self, name: str) -> None:
@@ -187,13 +193,13 @@ class WorkflowEngine:
                 try:
                     try:
                         loop = asyncio.get_running_loop()
-                        loop.create_task(self.workflow_store.set_enabled_by_name(name, True))
+                        loop.create_task(self.workflow_store.set_enabled(True, name=name))
                     except RuntimeError:
-                        asyncio.run(self.workflow_store.set_enabled_by_name(name, True))
+                        asyncio.run(self.workflow_store.set_enabled(True, name=name))
                 except Exception as e:
-                    logger.error(f"Failed to persist workflow enable state: {e}")
+                    logger.error("Failed to persist workflow enable state: %s", e)
 
-            logger.info(f"Enabled workflow: {name}")
+            logger.info("Enabled workflow: %s", name)
 
     def disable_workflow(self, name: str) -> None:
         """Disable a workflow."""
@@ -206,13 +212,13 @@ class WorkflowEngine:
                 try:
                     try:
                         loop = asyncio.get_running_loop()
-                        loop.create_task(self.workflow_store.set_enabled_by_name(name, False))
+                        loop.create_task(self.workflow_store.set_enabled(False, name=name))
                     except RuntimeError:
-                        asyncio.run(self.workflow_store.set_enabled_by_name(name, False))
+                        asyncio.run(self.workflow_store.set_enabled(False, name=name))
                 except Exception as e:
-                    logger.error(f"Failed to persist workflow disable state: {e}")
+                    logger.error("Failed to persist workflow disable state: %s", e)
 
-            logger.info(f"Disabled workflow: {name}")
+            logger.info("Disabled workflow: %s", name)
 
     def list_workflows(self) -> list[dict[str, Any]]:
         """List all loaded workflows."""
@@ -235,11 +241,11 @@ class WorkflowEngine:
     ) -> WorkflowExecution | None:
         """Trigger a workflow execution."""
         if workflow_name not in self.workflows:
-            logger.warning(f"Workflow not found: {workflow_name}")
+            logger.warning("Workflow not found: %s", workflow_name)
             return None
 
         if not self.enabled_workflows.get(workflow_name, False):
-            logger.info(f"Workflow disabled: {workflow_name}")
+            logger.info("Workflow disabled: %s", workflow_name)
             return None
 
         definition = self.workflows[workflow_name]
@@ -249,7 +255,7 @@ class WorkflowEngine:
         workflow_id_str = self.workflow_ids.get(workflow_name)
         workflow_id = uuid.UUID(workflow_id_str) if workflow_id_str else uuid.uuid4()
         if not workflow_id_str:
-            logger.warning(f"No workflow_id found for {workflow_name}, using generated UUID")
+            logger.warning("No workflow_id found for %s, using generated UUID", workflow_name)
 
         zone_id = str(event_context.get("zone_id", ROOT_ZONE_ID))
 
@@ -284,7 +290,9 @@ class WorkflowEngine:
             context={"variables": context.variables},
         )
 
-        logger.info(f"Executing workflow: {definition.name} (execution_id={context.execution_id})")
+        logger.info(
+            "Executing workflow: %s (execution_id=%s)", definition.name, context.execution_id
+        )
         logger.debug("Number of actions: %d", len(definition.actions))
 
         try:
@@ -316,8 +324,9 @@ class WorkflowEngine:
                 if result.success:
                     execution.actions_completed += 1
                     logger.info(
-                        f"Action '{action_def.name}' completed successfully "
-                        f"in {result.duration_ms:.2f}ms"
+                        "Action '%s' completed successfully in %.2fms",
+                        action_def.name,
+                        result.duration_ms,
                     )
 
                     if result.output:
@@ -334,12 +343,12 @@ class WorkflowEngine:
         except Exception as e:
             execution.status = WorkflowStatus.FAILED
             execution.error_message = str(e)
-            logger.error(f"Workflow execution failed: {e}", exc_info=True)
+            logger.error("Workflow execution failed: %s", e, exc_info=True)
 
         finally:
             execution.completed_at = datetime.now(UTC)
 
-        logger.info(f"Workflow '{definition.name}' finished with status: {execution.status}")
+        logger.info("Workflow '%s' finished with status: %s", definition.name, execution.status)
 
         # Store execution record
         await self._store_execution(execution)
@@ -353,9 +362,9 @@ class WorkflowEngine:
 
         try:
             await self.workflow_store.save_execution(execution)
-            logger.info(f"Saved execution record: {execution.execution_id}")
+            logger.info("Saved execution record: %s", execution.execution_id)
         except Exception as e:
-            logger.error(f"Failed to save execution record: {e}")
+            logger.error("Failed to save execution record: %s", e)
 
     async def fire_event(
         self, trigger_type: TriggerType | str, event_context: dict[str, Any]

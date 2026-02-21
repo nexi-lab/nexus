@@ -11,8 +11,6 @@ Provides fixtures for:
 Merged from tests/integration/conftest.py and tests/e2e/conftest.py.
 """
 
-from __future__ import annotations
-
 import gc
 import os
 import signal
@@ -54,7 +52,7 @@ def find_free_port() -> int:
         return s.getsockname()[1]
 
 
-def _drain_pipe(pipe, lines: list[str], ready: threading.Event | None = None):
+def _drain_pipe(pipe, lines: list[str], ready: "threading.Event | None" = None):
     """Read lines from a subprocess pipe (runs in daemon thread).
 
     If *ready* is provided and a line contains "Application startup complete",
@@ -144,6 +142,11 @@ def nexus_server(isolated_db, tmp_path):
 
     # Issue #788: Lower min chunk size for e2e tests (default 5MB too large for test payloads)
     env["NEXUS_UPLOAD_MIN_CHUNK_SIZE"] = "1"
+
+    # Issue #2035: Enable RecordStore + ReBAC so skills subscribe/share/unshare
+    # and share-link operations have a working EnhancedReBACManager.
+    # Without this, the server starts in "bare kernel" mode (no ReBAC).
+    env["NEXUS_RECORD_STORE_PATH"] = str(tmp_path / "record_store.db")
 
     # Issue #1186: Enable lock manager if Dragonfly/Redis is available
     dragonfly_url = env.get("NEXUS_DRAGONFLY_URL") or env.get("REDIS_URL")

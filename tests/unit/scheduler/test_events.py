@@ -3,11 +3,10 @@
 Tests emitter handler calls, exception isolation, and handler management.
 """
 
-from __future__ import annotations
-
 import pytest
 
-from nexus.bricks.scheduler.events import AgentStateEmitter, AgentStateEvent
+from nexus.constants import ROOT_ZONE_ID
+from nexus.services.scheduler.events import AgentStateEmitter, AgentStateEvent
 
 
 def _make_event(**kwargs) -> AgentStateEvent:
@@ -16,7 +15,7 @@ def _make_event(**kwargs) -> AgentStateEvent:
         "previous_state": "IDLE",
         "new_state": "CONNECTED",
         "generation": 1,
-        "zone_id": "default",
+        "zone_id": ROOT_ZONE_ID,
     }
     defaults.update(kwargs)
     return AgentStateEvent(**defaults)

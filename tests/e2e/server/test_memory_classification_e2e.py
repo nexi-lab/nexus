@@ -9,8 +9,6 @@ following the pattern from test_memory_paging_fastapi_e2e.py.
 Run with: python -m pytest tests/e2e/test_memory_classification_e2e.py -v
 """
 
-from __future__ import annotations
-
 import shutil
 import tempfile
 from collections.abc import Sequence
@@ -21,10 +19,10 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
-from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
-from nexus.auth.providers.discriminator import DiscriminatingAuthProvider
+from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
+from nexus.bricks.auth.providers.discriminator import DiscriminatingAuthProvider
+from nexus.contracts.metadata import FileMetadata, PaginatedResult
 from nexus.core.config import PermissionConfig
-from nexus.core.metadata import FileMetadata, PaginatedResult
 from nexus.core.metastore import MetastoreABC
 from nexus.storage.models import Base
 
@@ -160,7 +158,11 @@ def app_with_auth(tmp_path, db_session_factory, api_keys):
         permissions=PermissionConfig(enforce=False),
     )
 
-    db_key_provider = DatabaseAPIKeyAuth(session_factory=db_session_factory)
+    from types import SimpleNamespace
+
+    db_key_provider = DatabaseAPIKeyAuth(
+        record_store=SimpleNamespace(session_factory=db_session_factory)
+    )
     auth_provider = DiscriminatingAuthProvider(
         api_key_provider=db_key_provider,
         jwt_provider=None,

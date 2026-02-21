@@ -20,8 +20,6 @@ References:
 Related: Issue #1206 (x402 protocol integration)
 """
 
-from __future__ import annotations
-
 import base64
 import hashlib
 import hmac
@@ -35,6 +33,8 @@ from typing import TYPE_CHECKING, Any
 
 from cachetools import TTLCache
 from starlette.responses import Response
+
+from nexus.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     import httpx
@@ -71,7 +71,8 @@ _WALLET_REGEX = re.compile(r"^0x[0-9a-fA-F]{40}$")
 
 # Default cache TTL for payment verifications
 DEFAULT_CACHE_TTL_SECONDS = 60.0
-
+X402_REQUEST_TIMEOUT = 30.0  # HTTP client timeout for payment requests
+X402_OUTGOING_TIMEOUT = 60.0  # HTTP timeout for outgoing payment requests
 
 # =============================================================================
 # Exceptions
@@ -236,7 +237,7 @@ class X402Client:
         """Get CAIP-2 formatted network identifier."""
         return NETWORK_CAIP2_MAP.get(self.network, f"eip155:{self.network}")
 
-    async def _get_http_client(self) -> httpx.AsyncClient:
+    async def _get_http_client(self) -> "httpx.AsyncClient":
         """Get or create persistent HTTP client with connection pooling.
 
         Connection pooling reduces TCP/TLS handshake overhead for
@@ -246,7 +247,7 @@ class X402Client:
             import httpx
 
             self._http_client = httpx.AsyncClient(
-                timeout=30.0,
+                timeout=X402_REQUEST_TIMEOUT,
                 limits=httpx.Limits(
                     max_keepalive_connections=20,
                     max_connections=100,
@@ -450,7 +451,7 @@ class X402Client:
                     "currency": currency,
                     "network": self.caip2_network,
                 },
-                timeout=60.0,
+                timeout=X402_OUTGOING_TIMEOUT,
             )
 
             result = response.json()
@@ -510,7 +511,7 @@ class X402Client:
             url=url,
             headers=headers,
             content=body,
-            timeout=30.0,
+            timeout=X402_REQUEST_TIMEOUT,
         )
 
         # If not 402, return directly
@@ -546,7 +547,7 @@ class X402Client:
                 ).decode(),
             },
             content=body,
-            timeout=30.0,
+            timeout=X402_REQUEST_TIMEOUT,
         )
 
         return retry_response, receipt
@@ -558,7 +559,7 @@ class X402Client:
     async def process_topup_webhook(
         self,
         webhook_payload: dict[str, Any],
-        credits_service: CreditsService,
+        credits_service: "CreditsService",
     ) -> str:
         """Process x402 payment webhook and credit agent in TigerBeetle.
 
@@ -579,7 +580,7 @@ class X402Client:
         # 2. Extract payment details
         metadata = webhook_payload.get("metadata", {})
         agent_id = metadata.get("agent_id")
-        zone_id = metadata.get("zone_id", "root")
+        zone_id = metadata.get("zone_id", ROOT_ZONE_ID)
 
         if not agent_id:
             raise X402Error("Missing agent_id in webhook metadata")

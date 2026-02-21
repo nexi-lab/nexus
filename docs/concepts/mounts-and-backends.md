@@ -194,7 +194,7 @@ Implement the `Backend` interface:
 
 ```python
 from nexus.backends import Backend
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 
 class S3Backend(Backend):
     @property

@@ -7,8 +7,6 @@ Tests the complete export workflow including:
 - Reading bundle contents
 """
 
-from __future__ import annotations
-
 import tarfile
 import tempfile
 from pathlib import Path
@@ -16,9 +14,7 @@ from pathlib import Path
 import pytest
 
 from nexus.backends.local import LocalBackend
-from nexus.core.config import ParseConfig, PermissionConfig
-from nexus.factory import create_nexus_fs
-from nexus.portability import (
+from nexus.bricks.portability import (
     BundleReader,
     ZoneExportOptions,
     ZoneExportService,
@@ -26,6 +22,8 @@ from nexus.portability import (
     inspect_bundle,
     validate_bundle,
 )
+from nexus.core.config import ParseConfig, PermissionConfig
+from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 

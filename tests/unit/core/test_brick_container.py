@@ -1,12 +1,10 @@
 """Tests for BrickContainer DI container (Issue #1393)."""
 
-from __future__ import annotations
-
 from typing import Protocol, runtime_checkable
 
 import pytest
 
-from nexus.core.brick_container import BrickContainer
+from nexus.lib.brick_container import BrickContainer
 
 
 @runtime_checkable

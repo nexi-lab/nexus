@@ -41,13 +41,13 @@ from nexus.backends.base_blob_connector import BaseBlobStorageConnector
 from nexus.backends.cache_mixin import CacheConnectorMixin
 from nexus.backends.multipart_upload_mixin import MultipartUploadMixin
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
-from nexus.core.exceptions import BackendError, NexusFileNotFoundError
-from nexus.core.response import HandlerResponse, timed_response
+from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
+from nexus.core.protocols.capabilities import BLOB_CONNECTOR_CAPABILITIES, ConnectorCapability
+from nexus.lib.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:
-    from sqlalchemy.orm import Session
-
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
+    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +83,15 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
     - No deduplication (same content stored multiple times)
     - Requires backend_path in OperationContext
     """
+
+    _CAPABILITIES = BLOB_CONNECTOR_CAPABILITIES | frozenset(
+        {
+            ConnectorCapability.CACHE_BULK_READ,
+            ConnectorCapability.CACHE_SYNC,
+            ConnectorCapability.SIGNED_URL,
+            ConnectorCapability.MULTIPART_UPLOAD,
+        }
+    )
 
     CONNECTION_ARGS: dict[str, ConnectionArg] = {
         "bucket_name": ConnectionArg(
@@ -141,8 +150,10 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
         access_key_id: str | None = None,
         secret_access_key: str | None = None,
         session_token: str | None = None,
-        # Session factory for caching support
-        session_factory: "type[Session] | None" = None,
+        # RecordStore for caching support
+        record_store: "RecordStoreABC | None" = None,
+        # DI: ProfileTuning.connector (Issue #2071)
+        connector_max_workers: int = 20,
     ):
         """
         Initialize S3 connector backend.
@@ -155,8 +166,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
             access_key_id: AWS access key (alternative to credentials_path)
             secret_access_key: AWS secret key (alternative to credentials_path)
             session_token: AWS session token (for temporary credentials)
-            session_factory: Optional session factory (e.g., metadata_store.session_factory)
-                           for caching support.
+            record_store: Optional RecordStoreABC instance for caching support.
         """
         try:
             # Configure retry behavior and connection pool for concurrent operations.
@@ -244,7 +254,9 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
             )
 
             # Store session info for caching support (CacheConnectorMixin)
-            self.session_factory = session_factory
+            self.session_factory = record_store.session_factory if record_store else None
+            # Issue #2071: DI for connector max workers
+            self._connector_max_workers = connector_max_workers
 
         except Exception as e:
             if isinstance(e, BackendError):
@@ -726,7 +738,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
                 return (backend_path, None)
 
         # Parallel head_object calls
-        with ThreadPoolExecutor(max_workers=20) as executor:
+        with ThreadPoolExecutor(max_workers=self._connector_max_workers) as executor:
             futures = {executor.submit(get_one_version, path): path for path in backend_paths}
 
             for future in as_completed(futures):
@@ -742,7 +754,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
         self,
         blob_paths: list[str],
         version_ids: dict[str, str] | None = None,
-        max_workers: int = 20,
+        max_workers: int | None = None,
     ) -> dict[str, bytes]:
         """
         Download multiple blobs in parallel with S3-optimized settings.
@@ -772,6 +784,9 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
 
         if not blob_paths:
             return {}
+
+        if max_workers is None:
+            max_workers = self._connector_max_workers
 
         results: dict[str, bytes] = {}
 
@@ -1076,10 +1091,10 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
             path=blob_path,
         )
 
-    # Default: 20 concurrent workers for S3 batch reads.
-    # S3 tolerates higher concurrency than GCS (HTTP/1.1, high per-prefix throughput).
-    # max_pool_connections in boto3 Config is set to 25 to match.
-    batch_read_workers: int = 20
+    @property
+    def batch_read_workers(self) -> int:
+        """Concurrent workers for S3 batch reads (Issue #2071: DI from ProfileTuning)."""
+        return self._connector_max_workers
 
     def batch_read_content(
         self,

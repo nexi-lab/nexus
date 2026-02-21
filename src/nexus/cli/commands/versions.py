@@ -4,10 +4,8 @@ CAS-backed version tracking for files and skills with full history.
 Every file write creates a new version, preserving all previous versions.
 """
 
-from __future__ import annotations
-
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import click
 from rich.table import Table
@@ -71,7 +69,8 @@ def version_history(path: str, limit: int | None, backend_config: BackendConfig)
 
     try:
         nx = get_filesystem(backend_config)
-        versions = nx.list_versions(path)
+        _nx: Any = nx
+        versions = _nx.version_service.list_versions(path)
 
         if not versions:
             console.print(f"[yellow]No version history found for: {path}[/yellow]")
@@ -128,7 +127,8 @@ def version_get(path: str, version: int, output: str | None, backend_config: Bac
     """
     try:
         nx = get_filesystem(backend_config)
-        content = nx.get_version(path, version)
+        _nx: Any = nx
+        content = _nx.version_service.get_version(path, version)
 
         if output:
             # Write to file
@@ -177,7 +177,8 @@ def version_diff(path: str, v1: int, v2: int, mode: str, backend_config: Backend
 
     try:
         nx = get_filesystem(backend_config)
-        diff = nx.diff_versions(path, v1, v2, mode=mode)
+        _nx: Any = nx
+        diff = _nx.version_service.diff_versions(path, v1, v2, mode=mode)
 
         if mode == "metadata":
             # diff is a dict in metadata mode
@@ -248,6 +249,7 @@ def version_rollback(path: str, version: int, yes: bool, backend_config: Backend
     """
     try:
         nx = get_filesystem(backend_config)
+        _nx: Any = nx
 
         # Get current version for confirmation
         # Check if file exists
@@ -257,7 +259,7 @@ def version_rollback(path: str, version: int, yes: bool, backend_config: Backend
             return
 
         # Get version history to determine current version
-        versions = nx.list_versions(path)
+        versions = _nx.version_service.list_versions(path)
         if not versions:
             console.print(f"[yellow]No version history found for: {path}[/yellow]")
             nx.close()
@@ -273,7 +275,7 @@ def version_rollback(path: str, version: int, yes: bool, backend_config: Backend
                 return
 
         # Perform rollback
-        nx.rollback(path, version)
+        _nx.version_service.rollback(path, version)
 
         console.print(f"[green]✓[/green] Rolled back {path} to version {version}")
         console.print(f"[dim]New version: {current_version + 1}[/dim]")

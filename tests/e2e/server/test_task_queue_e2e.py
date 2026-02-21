@@ -4,8 +4,6 @@ Tests the full task queue lifecycle through the actual HTTP API
 with --auth-type database enabled.
 """
 
-from __future__ import annotations
-
 import os
 import signal
 import socket
@@ -137,7 +135,7 @@ def auth_server(tmp_path):
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
-    from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+    from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
     from nexus.storage.models import Base
 
     engine = create_engine(f"sqlite:///{db_path}")

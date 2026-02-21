@@ -3,8 +3,6 @@
 Commands for viewing file information, exporting/importing metadata, and calculating sizes.
 """
 
-from __future__ import annotations
-
 import sys
 from typing import Any, cast
 
@@ -132,8 +130,8 @@ def export_metadata(
         nexus export zone.jsonl --zone-id acme-corp
     """
     try:
-        from nexus.core.export_import import ExportFilter
         from nexus.core.nexus_fs import NexusFS
+        from nexus.lib.export_import import ExportFilter
 
         nx = get_filesystem(backend_config)
 
@@ -177,7 +175,7 @@ def export_metadata(
             console.print("  [yellow]Including deleted files[/yellow]")
 
         with console.status("[yellow]Exporting metadata...[/yellow]", spinner="dots"):
-            count = nx.export_metadata(output, filter=export_filter)
+            count = cast(Any, nx).export_metadata(output, filter=export_filter)
 
         nx.close()
 
@@ -230,8 +228,8 @@ def import_metadata(
         nexus import metadata-backup.jsonl --conflict-mode=remap
     """
     try:
-        from nexus.core.export_import import ImportOptions
         from nexus.core.nexus_fs import NexusFS
+        from nexus.lib.export_import import ImportOptions
 
         nx = get_filesystem(backend_config)
 
@@ -257,7 +255,7 @@ def import_metadata(
             console.print("  [yellow]Not preserving original IDs[/yellow]")
 
         with console.status("[yellow]Importing metadata...[/yellow]", spinner="dots"):
-            result = nx.import_metadata(input_file, options=import_options)
+            result = cast(Any, nx).import_metadata(input_file, options=import_options)
 
         nx.close()
 

@@ -1,13 +1,11 @@
 """Tests for @fuse_operation error mapping decorator."""
 
-from __future__ import annotations
-
 import errno
 
 import pytest
 from fuse import FuseOSError
 
-from nexus.core.exceptions import (
+from nexus.contracts.exceptions import (
     NexusFileNotFoundError,
     NexusPermissionError,
     RemoteConnectionError,

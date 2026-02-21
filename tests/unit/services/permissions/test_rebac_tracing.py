@@ -15,15 +15,13 @@ Tests cover:
 - Consistency level attribute
 """
 
-from __future__ import annotations
-
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nexus.rebac import rebac_tracing
-from nexus.rebac.rebac_tracing import (
+from nexus.bricks.rebac import rebac_tracing
+from nexus.bricks.rebac.rebac_tracing import (
     ATTR_BATCH_ALLOWED,
     ATTR_BATCH_DENIED,
     ATTR_BATCH_DURATION_MS,
@@ -416,19 +414,13 @@ class TestContextPropagation:
         mock_context_module.get_current.return_value = mock_ctx
         mock_context_module.attach.return_value = "token"
 
-        with (
-            patch.dict("sys.modules", {"opentelemetry": MagicMock(context=mock_context_module)}),
-            patch(
-                "nexus.rebac.rebac_tracing.otel_context",
-                mock_context_module,
-                create=True,
-            ),
+        # propagate_otel_context does an inline `from opentelemetry import context`,
+        # so we only need to mock opentelemetry in sys.modules.
+        mock_otel = MagicMock(context=mock_context_module)
+        with patch.dict(
+            "sys.modules",
+            {"opentelemetry": mock_otel, "opentelemetry.context": mock_context_module},
         ):
-            # Re-import to pick up the mock
-            import importlib
-
-            importlib.reload(rebac_tracing)
-            rebac_tracing.reset_tracer()
 
             def original(x, y):
                 return x + y
@@ -440,19 +432,12 @@ class TestContextPropagation:
 
     def test_propagate_returns_original_when_otel_missing(self):
         """When OTel is not installed, return the original function unchanged."""
+        # Setting opentelemetry to None in sys.modules makes `from opentelemetry import ...` raise ImportError.
         with patch.dict("sys.modules", {"opentelemetry": None}):
-            import importlib
-
-            try:
-                importlib.reload(rebac_tracing)
-            except (ImportError, TypeError):
-                pass
-            rebac_tracing.reset_tracer()
 
             def original():
                 return 42
 
-            # When import fails, should return original
             wrapped = propagate_otel_context(original)
             assert wrapped() == 42
 
@@ -465,7 +450,7 @@ class TestContextPropagation:
         mock_context_module.attach.return_value = mock_token
 
         with patch(
-            "nexus.rebac.rebac_tracing.otel_context",
+            "nexus.bricks.rebac.rebac_tracing.otel_context",
             mock_context_module,
             create=True,
         ):

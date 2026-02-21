@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from nexus.auth.oauth.factory import OAuthProviderFactory
+from nexus.bricks.auth.oauth.factory import OAuthProviderFactory
 from nexus.server.auth.token_manager import TokenManager
 
 

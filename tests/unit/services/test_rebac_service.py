@@ -9,15 +9,13 @@ Covers the security-critical Relationship-Based Access Control service:
 - Permission enforcement (share permission checks)
 """
 
-from __future__ import annotations
-
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.core.permissions import OperationContext
-from nexus.services.rebac_service import ReBACService
+from nexus.bricks.rebac.rebac_service import ReBACService
+from nexus.contracts.types import OperationContext
 
 # =========================================================================
 # Fixtures

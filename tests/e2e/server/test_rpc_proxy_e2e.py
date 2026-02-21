@@ -12,8 +12,6 @@ Validates the __getattr__-based proxy dispatch works end-to-end:
 Issue #1289: Protocol + RPC Proxy pattern.
 """
 
-from __future__ import annotations
-
 import os
 import signal
 import socket
@@ -25,7 +23,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from nexus.core.exceptions import RemoteFilesystemError
+from nexus.contracts.exceptions import RemoteFilesystemError
 from nexus.remote.client import RemoteNexusFS
 
 # Clear proxy env vars so localhost connections work
@@ -468,9 +466,9 @@ class TestVirtualSubclass:
     """Test that isinstance works with virtual subclass registration."""
 
     def test_isinstance_nexus_filesystem(self, admin_client: RemoteNexusFS) -> None:
-        from nexus.core.filesystem import NexusFilesystem
+        from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
 
-        assert isinstance(admin_client, NexusFilesystem)
+        assert isinstance(admin_client, NexusFilesystemABC)
 
     def test_isinstance_remote_nexusfs(self, admin_client: RemoteNexusFS) -> None:
         assert isinstance(admin_client, RemoteNexusFS)
@@ -494,21 +492,21 @@ class TestPermissionEnforcement:
 
     def test_non_admin_denied_write(self, non_admin_client: RemoteNexusFS) -> None:
         """Non-admin user without permissions should be denied write."""
-        from nexus.core.exceptions import NexusError
+        from nexus.contracts.exceptions import NexusError
 
         with pytest.raises((NexusError, RemoteFilesystemError)):
             non_admin_client.write("/workspace/unauthorized.txt", b"should fail")
 
     def test_non_admin_denied_read(self, non_admin_client: RemoteNexusFS) -> None:
         """Non-admin user without permissions should be denied read."""
-        from nexus.core.exceptions import NexusError
+        from nexus.contracts.exceptions import NexusError
 
         with pytest.raises((NexusError, RemoteFilesystemError)):
             non_admin_client.read("/workspace/proxy-test.txt")
 
     def test_non_admin_list_filtered(self, non_admin_client: RemoteNexusFS) -> None:
         """Non-admin list is filtered by permissions (empty or error)."""
-        from nexus.core.exceptions import NexusError
+        from nexus.contracts.exceptions import NexusError
 
         try:
             files = non_admin_client.list("/workspace")
@@ -520,7 +518,7 @@ class TestPermissionEnforcement:
 
     def test_non_admin_denied_delete(self, non_admin_client: RemoteNexusFS) -> None:
         """Non-admin user without permissions should be denied delete."""
-        from nexus.core.exceptions import NexusError
+        from nexus.contracts.exceptions import NexusError
 
         with pytest.raises((NexusError, RemoteFilesystemError)):
             non_admin_client.delete("/workspace/proxy-test.txt")

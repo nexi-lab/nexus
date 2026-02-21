@@ -4,8 +4,6 @@ Validates that SearchBrickProtocol indirection adds <1ms overhead
 for 1000 mock calls through the protocol layer.
 """
 
-from __future__ import annotations
-
 import time
 from typing import Any
 
@@ -61,7 +59,7 @@ class FastMockSearchBrick:
         pass
 
     def verify_imports(self) -> dict[str, bool]:
-        return {"nexus.search.semantic": True}
+        return {"nexus.bricks.search.semantic": True}
 
 
 # =============================================================================

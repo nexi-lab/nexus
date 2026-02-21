@@ -6,12 +6,11 @@ This module contains server-related CLI commands for:
 - Starting the Nexus RPC server
 """
 
-from __future__ import annotations
-
 import logging
 import sys
 import time
 from pathlib import Path
+from typing import Any, cast
 
 import click
 
@@ -23,6 +22,8 @@ from nexus.cli.utils import (
     get_filesystem,
     handle_error,
 )
+from nexus.lib.env import get_database_url
+from nexus.lib.sync_bridge import run_sync
 
 logger = logging.getLogger(__name__)
 
@@ -48,11 +49,14 @@ def start_background_mount_sync(nx: NexusFilesystem) -> None:
         """Background thread worker that performs the actual sync."""
         import time
 
+        from nexus.lib.sync_bridge import run_sync
+
         time.sleep(2)  # Wait for server to be fully ready
         console.print("[cyan]🔄 Starting background sync for connector mounts...[/cyan]")
 
         try:
-            all_mounts = nx.list_mounts()
+            mount_svc = cast(Any, nx).mount_service
+            all_mounts = run_sync(mount_svc.list_mounts())
             synced_count = 0
 
             for mount in all_mounts:
@@ -63,7 +67,7 @@ def start_background_mount_sync(nx: NexusFilesystem) -> None:
                 if "connector" in backend_type.lower() or backend_type.lower() in ["gcs", "s3"]:
                     try:
                         console.print(f"  Syncing {mount_point} ({backend_type})...")
-                        result = nx.sync_mount(mount_point, recursive=True)  # type: ignore[attr-defined]
+                        result = run_sync(mount_svc.sync_mount(mount_point, recursive=True))
                         console.print(
                             f"  [green]✓[/green] {mount_point}: {result['files_scanned']} scanned, "
                             f"{result['files_created']} created, "
@@ -491,6 +495,13 @@ def unmount(mount_point: str) -> None:
 @click.option("--host", default="0.0.0.0", help="Server host (default: 0.0.0.0)")
 @click.option("--port", default=2026, type=int, help="Server port (default: 2026)")
 @click.option(
+    "--profile",
+    type=click.Choice(["kernel", "embedded", "lite", "full", "cloud"]),
+    default=None,
+    envvar="NEXUS_PROFILE",
+    help="Deployment profile (kernel=bare VFS, embedded, lite, full, cloud)",
+)
+@click.option(
     "--api-key",
     default=None,
     help="API key for authentication (optional, for simple static key auth)",
@@ -538,6 +549,7 @@ def unmount(mount_point: str) -> None:
 def serve(
     host: str,
     port: int,
+    profile: str | None,
     api_key: str | None,
     auth_type: str | None,
     init: bool,
@@ -587,6 +599,11 @@ def serve(
     import subprocess
 
     from nexus.server.logging_config import configure_logging
+
+    # Issue #2194: Propagate --profile to environment so factory picks it up
+    if profile is not None:
+        os.environ["NEXUS_PROFILE"] = profile
+        logger.info("Deployment profile set via CLI: %s", profile)
 
     # Set up structured logging with secret redaction (Issue #86 + #1002)
     # configure_logging() reads NEXUS_LOG_REDACTION_ENABLED env var internally
@@ -782,6 +799,8 @@ def serve(
             sys.exit(1)
 
         console.print(f"  Mode: [cyan]{raw_server_mode}[/cyan]")
+        _active_profile = os.getenv("NEXUS_PROFILE", "full")
+        console.print(f"  Profile: [cyan]{_active_profile}[/cyan]")
 
         nx = get_filesystem(
             backend_config,
@@ -850,16 +869,17 @@ def serve(
 
                                 # No database override - use config version
                                 # Check if mount already exists in router (shouldn't happen, but be safe)
-                                existing_mounts = nx.list_mounts()
+                                _mount_svc = cast(Any, nx).mount_service
+                                existing_mounts = run_sync(_mount_svc.list_mounts())
                                 mount_already_loaded = any(
                                     m["mount_point"] == mount_point for m in existing_mounts
                                 )
 
-                                # Create backend instance with session factory for caching
+                                # Create backend instance with record store for caching
                                 backend = create_backend_from_config(
                                     backend_type,
                                     backend_cfg,
-                                    session_factory=nx.SessionLocal,
+                                    record_store=nx._record_store,
                                 )
 
                                 # Add mount to router
@@ -908,7 +928,9 @@ def serve(
                                             console.print(
                                                 f"    [dim]→ Syncing metadata from {backend_type}...[/dim]"
                                             )
-                                            sync_result = nx.sync_mount(mount_point, recursive=True)
+                                            sync_result = run_sync(
+                                                _mount_svc.sync_mount(mount_point, recursive=True)
+                                            )
                                             if sync_result["files_created"] > 0:
                                                 console.print(
                                                     f"    [dim]→ Discovered {sync_result['files_created']} files[/dim]"
@@ -946,19 +968,19 @@ def serve(
             sys.exit(1)
 
         # Create authentication provider
-        from nexus.auth.providers.base import AuthProvider
+        from nexus.bricks.auth.providers.base import AuthProvider
 
         auth_provider: AuthProvider | None = None
         if auth_type == "database":
             # Database authentication with both API keys (sk-*) and JWT tokens
             import os
 
-            from nexus.server.auth.database_key import DatabaseAPIKeyAuth
-            from nexus.server.auth.database_local import DatabaseLocalAuth
+            from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
+            from nexus.bricks.auth.providers.database_local import DatabaseLocalAuth
+            from nexus.factory._record_store import create_record_store
             from nexus.server.auth.factory import DiscriminatingAuthProvider
-            from nexus.storage.record_store import SQLAlchemyRecordStore
 
-            db_url = os.getenv("NEXUS_DATABASE_URL")
+            db_url = get_database_url()
             if not db_url:
                 console.print(
                     "[red]Error:[/red] Database authentication requires NEXUS_DATABASE_URL"
@@ -977,12 +999,12 @@ def serve(
                     "[yellow]   For production, set: export NEXUS_JWT_SECRET='your-secret-key'[/yellow]"
                 )
 
-            _record_store = SQLAlchemyRecordStore(db_url=db_url)
+            _record_store = create_record_store(db_url=db_url)
             session_factory = _record_store.session_factory
 
             # Create composite provider that routes tokens to appropriate handler
             auth_provider = DiscriminatingAuthProvider(
-                api_key_provider=DatabaseAPIKeyAuth(session_factory=session_factory),
+                api_key_provider=DatabaseAPIKeyAuth(record_store=_record_store),
                 jwt_provider=DatabaseLocalAuth(
                     session_factory=session_factory,
                     jwt_secret=jwt_secret,
@@ -997,10 +1019,10 @@ def serve(
             # Local username/password authentication with JWT tokens (database-backed)
             import os
 
-            from nexus.server.auth.database_local import DatabaseLocalAuth
-            from nexus.storage.record_store import SQLAlchemyRecordStore
+            from nexus.bricks.auth.providers.database_local import DatabaseLocalAuth
+            from nexus.factory._record_store import create_record_store
 
-            db_url = os.getenv("NEXUS_DATABASE_URL")
+            db_url = get_database_url()
             if not db_url:
                 console.print("[red]Error:[/red] Local authentication requires NEXUS_DATABASE_URL")
                 sys.exit(1)
@@ -1017,7 +1039,7 @@ def serve(
 
                 jwt_secret = secrets.token_urlsafe(32)
 
-            _record_store = SQLAlchemyRecordStore(db_url=db_url)
+            _record_store = create_record_store(db_url=db_url)
             session_factory = _record_store.session_factory
             # Use DatabaseLocalAuth directly (not LocalAuth) for user registration/login endpoints
             auth_provider = DatabaseLocalAuth(
@@ -1106,7 +1128,7 @@ def serve(
         # Database Reset (if requested)
         # ============================================
         if reset:
-            db_url = os.getenv("NEXUS_DATABASE_URL")
+            db_url = get_database_url()
             if not db_url:
                 console.print("[red]Error:[/red] NEXUS_DATABASE_URL environment variable not set")
                 sys.exit(1)
@@ -1118,14 +1140,15 @@ def serve(
             console.print("  • All permissions and relationships")
             console.print()
 
-            from sqlalchemy import text
+            from sqlalchemy import table
 
-            from nexus.storage.record_store import SQLAlchemyRecordStore
+            from nexus.factory._record_store import create_record_store
 
-            _record_store = SQLAlchemyRecordStore(db_url=db_url)
+            _record_store = create_record_store(db_url=db_url)
             engine = _record_store.engine
 
-            # List of tables to clear (in dependency order)
+            # List of tables to clear (in dependency order).
+            # Uses SQLAlchemy table() construct — never f-string SQL.
             tables_to_clear = [
                 # Auth tables
                 "oauth_credentials",  # OAuth tokens (v0.7.0)
@@ -1159,19 +1182,18 @@ def serve(
             deleted_counts = {}
             console.print("[yellow]Clearing database tables...[/yellow]")
 
-            for table_name in tables_to_clear:
+            for name in tables_to_clear:
                 try:
+                    tbl = table(name)
                     with engine.connect() as conn:
                         trans = conn.begin()
                         try:
-                            cursor_result = conn.execute(text(f"DELETE FROM {table_name}"))
+                            cursor_result = conn.execute(tbl.delete())
                             count = cursor_result.rowcount
                             trans.commit()
-                            deleted_counts[table_name] = count
+                            deleted_counts[name] = count
                             if count > 0:
-                                console.print(
-                                    f"  [dim]Deleted {count} rows from {table_name}[/dim]"
-                                )
+                                console.print(f"  [dim]Deleted {count} rows from {name}[/dim]")
                         except Exception:
                             trans.rollback()
                             # Ignore table doesn't exist errors
@@ -1210,7 +1232,7 @@ def serve(
             console.print()
 
             # Get database URL
-            db_url = os.getenv("NEXUS_DATABASE_URL")
+            db_url = get_database_url()
             if not db_url:
                 console.print("[red]Error:[/red] NEXUS_DATABASE_URL environment variable not set")
                 sys.exit(1)
@@ -1220,16 +1242,17 @@ def serve(
 
             from datetime import UTC, datetime, timedelta
 
-            from nexus.rebac.entity_registry import EntityRegistry
-            from nexus.server.auth.database_key import DatabaseAPIKeyAuth
-            from nexus.storage.record_store import SQLAlchemyRecordStore
+            from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
+            from nexus.bricks.rebac.entity_registry import EntityRegistry
+            from nexus.constants import ROOT_ZONE_ID
+            from nexus.factory._record_store import create_record_store
 
-            _record_store = SQLAlchemyRecordStore(db_url=db_url)
+            _record_store = create_record_store(db_url=db_url)
             Session = _record_store.session_factory
 
             # Register user in entity registry (for agent permission inheritance)
-            entity_registry = EntityRegistry(Session)
-            zone_id = "default"
+            entity_registry = EntityRegistry(_record_store)
+            zone_id = ROOT_ZONE_ID
 
             # User might already exist, ignore errors
             try:
@@ -1286,16 +1309,16 @@ def serve(
                             raise
 
                     # Grant admin user ownership
-                    from nexus.rebac.manager import (
-                        EnhancedReBACManager,
+                    from nexus.bricks.rebac.manager import (
+                        ReBACManager,
                     )
 
-                    rebac = EnhancedReBACManager(engine)
+                    rebac = ReBACManager(engine)
                     rebac.rebac_write(
                         subject=("user", admin_user),
                         relation="direct_owner",
                         object=("file", "/workspace"),
-                        zone_id="default",
+                        zone_id=ROOT_ZONE_ID,
                     )
                     console.print(
                         f"[green]✓[/green] Granted '{admin_user}' ownership of /workspace"
@@ -1448,7 +1471,7 @@ def serve(
         console.print("  [dim]10-50x throughput improvement under concurrent load[/dim]")
 
         # Get database URL for async operations
-        database_url = os.getenv("NEXUS_DATABASE_URL")
+        database_url = get_database_url()
 
         app = create_app(
             nexus_fs=nx,  # type: ignore[arg-type]

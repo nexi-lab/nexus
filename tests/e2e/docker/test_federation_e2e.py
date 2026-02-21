@@ -16,8 +16,6 @@ Run (from inside Docker network — production-consistent):
     docker compose -f dockerfiles/docker-compose.cross-platform-test.yml logs -f test
 """
 
-from __future__ import annotations
-
 import base64
 import re
 import subprocess
@@ -27,9 +25,9 @@ import uuid
 import httpx
 import pytest
 
-from nexus.core.metadata import FileMetadata
+from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.metadata import FileMetadata
 from nexus.raft.client import RaftClient
-from nexus.raft.zone_manager import ROOT_ZONE_ID
 
 # All tests share one Docker cluster — run sequentially in a single xdist worker.
 pytestmark = [pytest.mark.xdist_group("federation-e2e")]
@@ -549,7 +547,7 @@ class TestLockAPICrossZone:
         try:
             # Step 1: Acquire lock
             resp = httpx.post(
-                f"{node}/api/locks",
+                f"{node}/api/v2/locks",
                 json={"path": path},
                 headers=headers,
                 timeout=10,
@@ -566,7 +564,7 @@ class TestLockAPICrossZone:
             # Step 2: Check lock
             lock_path = path.lstrip("/")
             resp2 = httpx.get(
-                f"{node}/api/locks/{lock_path}",
+                f"{node}/api/v2/locks/{lock_path}",
                 headers=headers,
                 timeout=10,
                 trust_env=False,
@@ -575,7 +573,7 @@ class TestLockAPICrossZone:
 
             # Step 3: Release lock
             resp3 = httpx.delete(
-                f"{node}/api/locks/{lock_path}",
+                f"{node}/api/v2/locks/{lock_path}",
                 headers=headers,
                 timeout=10,
                 trust_env=False,
@@ -584,7 +582,7 @@ class TestLockAPICrossZone:
 
             # Step 4: Verify released
             resp4 = httpx.get(
-                f"{node}/api/locks/{lock_path}",
+                f"{node}/api/v2/locks/{lock_path}",
                 headers=headers,
                 timeout=10,
                 trust_env=False,

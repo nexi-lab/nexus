@@ -23,10 +23,10 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import StaticPool
 
-from nexus.rebac.manager import (
+from nexus.bricks.rebac.manager import (
     EnhancedReBACManager,
 )
-from nexus.rebac.types import (
+from nexus.bricks.rebac.types import (
     ConsistencyLevel,
     ConsistencyMode,
     ConsistencyRequirement,
@@ -790,7 +790,7 @@ class TestConsistencyModuleIntegration:
             assert isinstance(result, WriteResult)
 
             # Cross-zone write with non-shared relation should fail
-            from nexus.rebac.consistency.zone_manager import ZoneIsolationError
+            from nexus.services.permissions.consistency.zone_manager import ZoneIsolationError
 
             with pytest.raises(ZoneIsolationError):
                 mgr.rebac_write(

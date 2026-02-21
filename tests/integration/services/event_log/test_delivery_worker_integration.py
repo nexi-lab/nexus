@@ -6,8 +6,6 @@ in-memory event bus mock, and ExporterRegistry.
 Issue #1241, #1138.
 """
 
-from __future__ import annotations
-
 import tempfile
 import time
 import uuid
@@ -18,8 +16,9 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock
 
 import pytest
 
-from nexus.services.event_log.delivery_worker import EventDeliveryWorker
-from nexus.services.event_log.exporter_registry import ExporterRegistry
+from nexus.constants import ROOT_ZONE_ID
+from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
+from nexus.services.event_subsystem.log.exporter_registry import ExporterRegistry
 from nexus.storage.models import DeadLetterModel, OperationLogModel
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
@@ -41,7 +40,7 @@ def _insert_undelivered(
     session_factory,
     path: str = "/test.txt",
     operation_type: str = "write",
-    zone_id: str = "default",
+    zone_id: str = ROOT_ZONE_ID,
     sequence_number: int | None = None,
 ) -> str:
     op_id = str(uuid.uuid4())
@@ -70,7 +69,7 @@ class TestFullPollDispatchMarkCycle:
         mock_bus = MagicMock()
         mock_bus.publish = AsyncMock()
 
-        worker = EventDeliveryWorker(record_store.session_factory, event_bus=mock_bus)
+        worker = EventDeliveryWorker(record_store, event_bus=mock_bus)
         count = worker._poll_and_dispatch()
 
         assert count == 1
@@ -94,7 +93,7 @@ class TestFullPollDispatchMarkCycle:
         registry.register(mock_exporter)
 
         worker = EventDeliveryWorker(
-            record_store.session_factory,
+            record_store,
             exporter_registry=registry,
         )
         count = worker._poll_and_dispatch()
@@ -114,12 +113,8 @@ class TestFullPollDispatchMarkCycle:
         mock_bus = MagicMock()
         mock_bus.publish = AsyncMock()
 
-        worker1 = EventDeliveryWorker(
-            record_store.session_factory, event_bus=mock_bus, batch_size=5
-        )
-        worker2 = EventDeliveryWorker(
-            record_store.session_factory, event_bus=mock_bus, batch_size=5
-        )
+        worker1 = EventDeliveryWorker(record_store, event_bus=mock_bus, batch_size=5)
+        worker2 = EventDeliveryWorker(record_store, event_bus=mock_bus, batch_size=5)
 
         # Worker 1 takes first 5
         count1 = worker1._poll_and_dispatch()
@@ -139,7 +134,7 @@ class TestDLQIntegration:
         mock_bus.publish = AsyncMock(side_effect=ConnectionError("down"))
 
         worker = EventDeliveryWorker(
-            record_store.session_factory,
+            record_store,
             event_bus=mock_bus,
             max_retries=1,
         )
@@ -168,7 +163,7 @@ class TestWorkerLifecycleIntegration:
         mock_bus.publish = AsyncMock()
 
         worker = EventDeliveryWorker(
-            record_store.session_factory,
+            record_store,
             event_bus=mock_bus,
             poll_interval_ms=50,
         )

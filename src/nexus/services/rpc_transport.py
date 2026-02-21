@@ -5,8 +5,6 @@ This is a low-level utility, not a user-facing API. Used internally by:
 - NexusFilesystem (P2P federation forwarding)
 """
 
-from __future__ import annotations
-
 import logging
 import uuid
 from typing import TYPE_CHECKING, Any
@@ -121,9 +119,9 @@ class NexusRPCTransport:
             TransportError: Connection or timeout error
             RPCError: Server returned an error response
         """
-        # Import codec and protocol types from core/ (Issue #1519, 1A)
-        from nexus.contracts.rpc_codec import decode_rpc_message, encode_rpc_message
-        from nexus.core.rpc_types import RPCErrorCode, RPCRequest, RPCResponse
+        # Import codec and protocol types from contracts/ (Issue #1519, 1A)
+        from nexus.contracts.rpc_types import RPCErrorCode, RPCRequest, RPCResponse
+        from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
 
         request = RPCRequest(
             method=method,
@@ -201,7 +199,7 @@ class NexusRPCTransport:
         """Close the HTTP client and release resources."""
         self._client.close()
 
-    def __enter__(self) -> NexusRPCTransport:
+    def __enter__(self) -> "NexusRPCTransport":
         return self
 
     def __exit__(self, *args: Any) -> None:

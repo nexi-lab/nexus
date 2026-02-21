@@ -4,8 +4,6 @@ Tests the full HTTP layer using httpx.AsyncClient against the
 tus uploads router with a real service and in-memory SQLite backend.
 """
 
-from __future__ import annotations
-
 import base64
 import hashlib
 from pathlib import Path
@@ -17,7 +15,7 @@ from httpx import ASGITransport, AsyncClient
 from nexus.backends.local import LocalBackend
 from nexus.server.api.v2.routers.tus_uploads import create_tus_uploads_router
 from nexus.server.dependencies import require_auth
-from nexus.services.chunked_upload_service import (
+from nexus.services.upload.chunked_upload_service import (
     ChunkedUploadConfig,
     ChunkedUploadService,
 )
@@ -31,24 +29,11 @@ def tmp_backend(tmp_path: Path) -> LocalBackend:
 
 
 @pytest.fixture
-def upload_service(tmp_path: Path, tmp_backend: LocalBackend) -> ChunkedUploadService:
+def upload_service(tmp_backend: LocalBackend) -> ChunkedUploadService:
     """Create a service with an in-memory SQLite session store."""
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import sessionmaker
-    from sqlalchemy.pool import StaticPool
+    from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
-    from nexus.storage.models import Base
-
-    # StaticPool + check_same_thread=False: share one connection across threads.
-    # Without this, asyncio.to_thread in _persist_session gets a separate
-    # in-memory DB that has no tables.
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine)
-    SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
+    record_store = InMemoryRecordStore()
 
     config = ChunkedUploadConfig(
         max_concurrent_uploads=5,
@@ -58,7 +43,7 @@ def upload_service(tmp_path: Path, tmp_backend: LocalBackend) -> ChunkedUploadSe
         max_upload_size=100 * 1024 * 1024,
     )
     return ChunkedUploadService(
-        session_factory=SessionLocal,
+        record_store=record_store,
         backend=tmp_backend,
         config=config,
     )
@@ -87,7 +72,6 @@ async def client(app: FastAPI) -> AsyncClient:
 
 
 TUS_HEADERS = {"Tus-Resumable": "1.0.0"}
-
 
 # --- Tests ---
 

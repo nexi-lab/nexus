@@ -35,6 +35,7 @@ Example:
 """
 
 import hashlib
+import importlib as _il
 import json
 import logging
 import os
@@ -49,12 +50,16 @@ from cachetools import LRUCache
 from nexus.backends.backend import Backend
 from nexus.backends.oauth_mixin import OAuthConnectorMixin
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
-from nexus.core import glob_fast
-from nexus.core.exceptions import BackendError
-from nexus.core.response import HandlerResponse, timed_response
+from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.exceptions import BackendError
+from nexus.core.protocols.capabilities import OAUTH_CONNECTOR_CAPABILITIES
+from nexus.lib.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
+
+# Brick import via importlib to avoid non-layer→bricks tier violation
+glob_fast = _il.import_module("nexus.bricks.search.primitives").glob_fast
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +113,8 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
     - Read-only for most paths
     - Fixed virtual directory structure
     """
+
+    _CAPABILITIES = OAUTH_CONNECTOR_CAPABILITIES
 
     user_scoped = True
 
@@ -218,8 +225,8 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
 
         # Get OAuth token
         zone_id: str = (
-            context.zone_id if context and hasattr(context, "zone_id") else "root"
-        ) or "root"
+            context.zone_id if context and hasattr(context, "zone_id") else ROOT_ZONE_ID
+        ) or ROOT_ZONE_ID
 
         try:
             access_token = await self.token_manager.get_valid_token(
@@ -250,7 +257,7 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
         Raises:
             BackendError: If authentication fails
         """
-        from nexus.core.sync_bridge import run_sync
+        from nexus.lib.sync_bridge import run_sync
 
         return run_sync(self._get_api_client_async(context))
 
@@ -679,7 +686,7 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
             )
 
         # Fetch from API
-        from nexus.core.sync_bridge import run_sync
+        from nexus.lib.sync_bridge import run_sync
 
         content = run_sync(self._read_content_async(context, endpoint_type, params))
         return HandlerResponse.ok(
@@ -770,7 +777,7 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
             finally:
                 await client.close()
 
-        from nexus.core.sync_bridge import run_sync
+        from nexus.lib.sync_bridge import run_sync
 
         tweet_id = run_sync(_post_tweet())
         return HandlerResponse.ok(
@@ -849,7 +856,7 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
                     await client.close()
 
             try:
-                from nexus.core.sync_bridge import run_sync
+                from nexus.lib.sync_bridge import run_sync
 
                 run_sync(_delete_tweet())
             except BackendError as e:
@@ -1169,7 +1176,8 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
                         available.append(f"/x/timeline/{file.name}")
 
             # Filter by pattern using Rust-accelerated glob matching
-            return glob_fast.glob_filter(available, include_patterns=[pattern])
+            filtered: list[str] = glob_fast.glob_filter(available, include_patterns=[pattern])
+            return filtered
 
         # Handle posts glob (requires API call)
         if pattern.startswith("/x/posts/") and "*.json" in pattern:
@@ -1349,7 +1357,7 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
             return results
 
         try:
-            from nexus.core.sync_bridge import run_sync
+            from nexus.lib.sync_bridge import run_sync
 
             return run_sync(_search_user_tweets())
         except Exception as e:
@@ -1399,7 +1407,7 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
             return results
 
         try:
-            from nexus.core.sync_bridge import run_sync
+            from nexus.lib.sync_bridge import run_sync
 
             return run_sync(_search_global())
         except Exception as e:

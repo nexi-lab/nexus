@@ -19,8 +19,6 @@ Example:
 Related: Issue #1207
 """
 
-from __future__ import annotations
-
 import re
 import uuid
 from collections.abc import Callable
@@ -40,6 +38,7 @@ from nexus.bricks.pay.protocol import (
     get_protocol_method_name,
 )
 from nexus.bricks.pay.x402 import validate_wallet_address
+from nexus.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -115,7 +114,7 @@ class Quote:
     service: str
     price: Decimal
     params: dict[str, Any] = field(default_factory=dict)
-    nexuspay: NexusPay | None = field(default=None, repr=False)
+    nexuspay: "NexusPay | None" = field(default=None, repr=False)
 
     async def execute(self) -> Receipt:
         """Execute the quoted operation by paying via x402."""
@@ -151,7 +150,7 @@ class BudgetContext:
     Tracks spending and enforces per-transaction and daily limits.
     """
 
-    def __init__(self, nexuspay: NexusPay, daily: Decimal, per_tx: Decimal) -> None:
+    def __init__(self, nexuspay: "NexusPay", daily: Decimal, per_tx: Decimal) -> None:
         self._nexuspay = nexuspay
         self._daily = daily
         self._per_tx = per_tx
@@ -197,11 +196,11 @@ class NexusPay:
         self,
         api_key: str,
         *,
-        credits_service: CreditsService | None = None,
-        x402_client: X402Client | None = None,
+        credits_service: "CreditsService | None" = None,
+        x402_client: "X402Client | None" = None,
         x402_enabled: bool = True,
         scheduler_service: Any | None = None,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
     ) -> None:
         match = _API_KEY_PATTERN.match(api_key)
         if not match:
@@ -249,7 +248,7 @@ class NexusPay:
         if amount <= 0:
             raise NexusPayError("Amount must be positive")
 
-    def _require_credits(self) -> CreditsService:
+    def _require_credits(self) -> "CreditsService":
         """Return credits service or raise if not configured."""
         if self._credits is None:
             raise NexusPayError("CreditsService not configured")
@@ -529,7 +528,7 @@ class NexusPay:
         self,
         daily: float | Decimal = Decimal("Infinity"),
         per_tx: float | Decimal = Decimal("Infinity"),
-    ) -> AsyncIterator[BudgetContext]:
+    ) -> "AsyncIterator[BudgetContext]":
         """Context manager for budget-limited operations."""
         ctx = BudgetContext(
             nexuspay=self,

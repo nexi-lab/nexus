@@ -1,12 +1,13 @@
-"""Unit tests for SQLAlchemyRecordStore (Issue #1299).
+"""Unit tests for SQLAlchemyRecordStore and RecordStoreABC (Issue #1299, #2200).
 
 Tests cover: URL resolution, pool config via env vars, create_tables flag,
-creator/async_creator pass-through, async URL conversion, and lifecycle.
+creator/async_creator pass-through, async URL conversion, lifecycle,
+and RecordStoreABC.session()/read_session() context managers.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 
 class TestRecordStoreURLResolution:
@@ -622,3 +623,109 @@ class TestReadReplicaConfiguration:
             primary_kwargs = create_calls[0][1]
             assert primary_kwargs["pool_size"] == 10
             assert primary_kwargs["max_overflow"] == 10
+
+
+class TestRecordStoreSessionContextManager:
+    """Tests for RecordStoreABC.session() and read_session() (Issue #2200)."""
+
+    def test_session_commits_on_success(self, record_store):
+        """session() auto-commits when block exits normally."""
+        from nexus.storage.models import Base  # noqa: F401
+
+        with record_store.session() as sess:
+            # Execute a simple query to verify session works
+            result = sess.execute(__import__("sqlalchemy").text("SELECT 1"))
+            assert result.scalar() == 1
+        # If we got here, commit succeeded (no exception)
+
+    def test_session_rollback_on_exception(self, record_store):
+        """session() rolls back when block raises."""
+        from sqlalchemy import text
+
+        with pytest.raises(ValueError, match="test error"), record_store.session() as sess:
+            sess.execute(text("SELECT 1"))
+            raise ValueError("test error")
+
+    def test_session_closes_always(self, record_store):
+        """session() closes the session even on exception."""
+        from sqlalchemy import text
+
+        sessions_created = []
+
+        original_factory = record_store.session_factory
+
+        def tracking_factory():
+            sess = original_factory()
+            sessions_created.append(sess)
+            return sess
+
+        # Temporarily replace session_factory to track sessions
+        record_store._session_factory = tracking_factory
+        try:
+            with pytest.raises(RuntimeError), record_store.session() as sess:
+                sess.execute(text("SELECT 1"))
+                raise RuntimeError("force close")
+
+            # Session should have been closed by session_scope
+            assert len(sessions_created) == 1
+            # Session is closed (accessing after close would error in real usage)
+        finally:
+            record_store._session_factory = original_factory
+
+    def test_session_translates_integrity_error(self, record_store):
+        """session() translates SQLAlchemy IntegrityError to DatabaseIntegrityError."""
+        from sqlalchemy import text
+
+        from nexus.contracts.exceptions import DatabaseIntegrityError
+
+        # Create a table with a unique constraint
+        with record_store.session() as sess:
+            sess.execute(
+                text(
+                    "CREATE TABLE IF NOT EXISTS _test_unique (id INTEGER PRIMARY KEY, name TEXT UNIQUE)"
+                )
+            )
+
+        # Insert first row
+        with record_store.session() as sess:
+            sess.execute(text("INSERT INTO _test_unique (id, name) VALUES (1, 'dup')"))
+
+        # Insert duplicate should raise DatabaseIntegrityError
+        with pytest.raises(DatabaseIntegrityError), record_store.session() as sess:
+            sess.execute(text("INSERT INTO _test_unique (id, name) VALUES (2, 'dup')"))
+
+    def test_session_translates_operational_error(self, record_store):
+        """session() translates OperationalError to DatabaseConnectionError."""
+        from sqlalchemy.exc import OperationalError as SAOperationalError
+
+        from nexus.contracts.exceptions import DatabaseConnectionError
+
+        with pytest.raises(DatabaseConnectionError), record_store.session() as _sess:
+            raise SAOperationalError("test", {}, Exception("connection failed"))
+
+    def test_read_session_uses_read_factory(self):
+        """read_session() uses read_session_factory (which defaults to primary)."""
+        from tests.helpers.in_memory_record_store import InMemoryRecordStore
+
+        store = InMemoryRecordStore()
+        try:
+            # read_session_factory defaults to session_factory (no replica)
+            with store.read_session() as sess:
+                result = sess.execute(__import__("sqlalchemy").text("SELECT 1"))
+                assert result.scalar() == 1
+        finally:
+            store.close()
+
+    def test_read_session_falls_back_to_primary(self):
+        """read_session() falls back to primary when no replica configured."""
+        from tests.helpers.in_memory_record_store import InMemoryRecordStore
+
+        store = InMemoryRecordStore()
+        try:
+            assert store.has_read_replica is False
+            assert store.read_session_factory is store.session_factory
+            with store.read_session() as sess:
+                result = sess.execute(__import__("sqlalchemy").text("SELECT 1"))
+                assert result.scalar() == 1
+        finally:
+            store.close()

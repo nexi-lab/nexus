@@ -2,7 +2,7 @@
 
 import inspect
 
-from nexus.core.exceptions import (
+from nexus.contracts.exceptions import (
     AccessDeniedError,
     AuditLogError,
     AuthenticationError,
@@ -266,7 +266,7 @@ def test_all_nexus_error_subclasses_have_is_expected() -> None:
     Uses introspection to auto-discover all subclasses so new exceptions
     added in the future are automatically covered.
     """
-    import nexus.core.exceptions as exc_module
+    import nexus.contracts.exceptions as exc_module
 
     for name, cls in inspect.getmembers(exc_module, inspect.isclass):
         if issubclass(cls, NexusError) and cls is not NexusError:
@@ -331,7 +331,7 @@ def test_path_not_mounted_error() -> None:
 
 def test_not_found_error_alias_removed() -> None:
     """NotFoundError alias must be removed from exceptions module (Issue #1460)."""
-    import nexus.core.exceptions as exc_module
+    import nexus.contracts.exceptions as exc_module
 
     assert not hasattr(exc_module, "NotFoundError"), (
         "NotFoundError alias should be removed; use NexusFileNotFoundError directly"
@@ -405,7 +405,7 @@ def test_all_nexus_error_subclasses_have_status_code() -> None:
     Uses introspection to auto-discover all subclasses so new exceptions
     added in the future are automatically covered (Issue #1519, option 7A).
     """
-    import nexus.core.exceptions as exc_module
+    import nexus.contracts.exceptions as exc_module
 
     for name, cls in inspect.getmembers(exc_module, inspect.isclass):
         if issubclass(cls, NexusError) and cls is not NexusError:
@@ -424,7 +424,7 @@ def test_all_nexus_error_subclasses_have_status_code() -> None:
 
 def test_status_code_class_values() -> None:
     """Verify specific status_code mappings match HTTP semantics."""
-    from nexus.core.exceptions import (
+    from nexus.contracts.exceptions import (
         LockTimeout,
         ServiceUnavailableError,
         StaleSessionError,
@@ -466,7 +466,7 @@ def test_error_handler_uses_class_status_code() -> None:
     """Error handler reads status_code from exception class, not isinstance chain."""
     from unittest.mock import MagicMock
 
-    from nexus.core.exceptions import (
+    from nexus.contracts.exceptions import (
         LockTimeout,
         ServiceUnavailableError,
         StaleSessionError,
@@ -617,7 +617,7 @@ def test_connector_error_caught_by_backend_error() -> None:
 
 def test_connector_validation_error_caught_by_core() -> None:
     """Test that connectors.base.ValidationError is caught by core ValidationError."""
-    from nexus.connectors.base import ValidationError as ConnectorValidationError
+    from nexus.backends.connectors.base import ValidationError as ConnectorValidationError
 
     assert issubclass(ConnectorValidationError, ValidationError)
 

@@ -1,18 +1,8 @@
 """StrEnum definitions for exchange transaction audit logging.
 
 Issue #1360 Phase 1: Transaction Audit Log types.
-Stored as String columns (not PG ENUM) for forward-compatible schema evolution.
+Issue #2129: Canonical definition moved to ``nexus.contracts.types``.
+             Re-exported here for backward compatibility.
 """
 
-from __future__ import annotations
-
-from enum import StrEnum
-
-
-class TransactionProtocol(StrEnum):
-    """Payment protocol used for the transaction."""
-
-    X402 = "x402"
-    ACP = "acp"
-    AP2 = "ap2"
-    INTERNAL = "internal"
+from nexus.contracts.types import TransactionProtocol as TransactionProtocol

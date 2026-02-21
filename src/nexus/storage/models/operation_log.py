@@ -3,8 +3,6 @@
 Issue #1246 Phase 4: Extracted from monolithic models.py.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 from sqlalchemy import BigInteger, Boolean, DateTime, Index, String, Text, text
@@ -116,8 +114,8 @@ class OperationLogModel(Base):
 
     def validate(self) -> None:
         """Validate operation log model before database operations."""
-        from nexus.core.exceptions import ValidationError
-        from nexus.core.operation_types import OperationType
+        from nexus.contracts.exceptions import ValidationError
+        from nexus.contracts.operation_types import OperationType
 
         valid_types = [t.value for t in OperationType]
         if self.operation_type not in valid_types:

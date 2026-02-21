@@ -33,9 +33,8 @@ Usage:
 Design reference:
     - NEXUS-LEGO-ARCHITECTURE.md PART 16 — Recursive Wrapping (Mechanism 2)
     - Issue #1705: EncryptedStorage + CompressedStorage recursive wrappers
+    - Issue #2077: Deduplicate backend wrapper boilerplate
 """
-
-from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
@@ -44,20 +43,15 @@ from typing import TYPE_CHECKING
 from cryptography.hazmat.primitives.ciphers.aead import AESGCMSIV
 
 from nexus.backends.delegating import DelegatingBackend
+from nexus.backends.wrapper_headers import ENCRYPTED_HEADER as _ENCRYPTED_HEADER
 from nexus.backends.wrapper_metrics import WrapperMetrics
-from nexus.core.response import HandlerResponse
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
-    from nexus.core.permissions import OperationContext
 
 logger = logging.getLogger(__name__)
 
-# Magic header to identify encrypted content (for passthrough detection).
-# "NEXE" + version byte (1).
-_ENCRYPTED_HEADER = b"NEXE\x01"
 _HEADER_LEN = len(_ENCRYPTED_HEADER)
-
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -101,16 +95,25 @@ class EncryptedStorage(DelegatingBackend):
     Encrypted content format:
         NEXE\\x01 (5 bytes header) || ciphertext+tag (no nonce — fixed zero)
 
-    Inherits property delegation and ``__getattr__`` from DelegatingBackend.
-    Overrides content read/write operations to add encryption/decryption.
+    Inherits property delegation, ``__getattr__``, and hook-based
+    ``read_content`` / ``write_content`` / ``batch_read_content`` from
+    DelegatingBackend. Overrides ``_transform_on_write`` and
+    ``_transform_on_read`` to add encryption/decryption.
 
     CAS dedup guarantee: same key + same plaintext → identical ciphertext
     → same hash. Key rotation breaks dedup for previously-written content.
 
-    Decryption errors return HandlerResponse.error() (fail loudly).
+    Encryption/decryption errors raise exceptions (DelegatingBackend
+    catches and returns HandlerResponse.error).
     """
 
-    def __init__(self, inner: Backend, config: EncryptedStorageConfig) -> None:
+    # Fixed zero nonce for GCM-SIV deterministic encryption.
+    # GCM-SIV (RFC 8452) derives the real IV internally from key + plaintext,
+    # making nonce reuse safe. A fixed zero nonce ensures same plaintext +
+    # same key → identical ciphertext, preserving CAS dedup.
+    _ZERO_NONCE = b"\x00" * 12
+
+    def __init__(self, inner: "Backend", config: EncryptedStorageConfig) -> None:
         super().__init__(inner)
         self._config = config
         self._cipher = AESGCMSIV(config.key)
@@ -135,68 +138,9 @@ class EncryptedStorage(DelegatingBackend):
     def name(self) -> str:
         return f"encrypted({self._inner.name})"
 
-    # === Encrypted Content Operations ===
+    # === Transform Hooks ===
 
-    def write_content(
-        self, content: bytes, context: OperationContext | None = None
-    ) -> HandlerResponse[str]:
-        """Encrypt content and write to inner backend.
-
-        AES-256-GCM-SIV is deterministic: same key + same plaintext =
-        same ciphertext, preserving CAS deduplication.
-        """
-        try:
-            ciphertext = self._encrypt(content)
-            self._metrics.increment("encrypt_ops")
-        except Exception as e:
-            self._metrics.increment("errors")
-            logger.error("Encryption failed: %s", e)
-            return HandlerResponse.error(message=f"Encryption failed: {e}")
-
-        return self._inner.write_content(ciphertext, context=context)
-
-    def read_content(
-        self, content_hash: str, context: OperationContext | None = None
-    ) -> HandlerResponse[bytes]:
-        """Read from inner backend and decrypt content."""
-        response = self._inner.read_content(content_hash, context=context)
-        if not response.success or response.data is None:
-            return response
-
-        return self._decrypt_response(response.data)
-
-    def batch_read_content(
-        self,
-        content_hashes: list[str],
-        context: OperationContext | None = None,
-        *,
-        contexts: dict[str, OperationContext] | None = None,
-    ) -> dict[str, bytes | None]:
-        """Read batch from inner backend and decrypt each item."""
-        raw_results = self._inner.batch_read_content(
-            content_hashes, context=context, contexts=contexts
-        )
-
-        decrypted: dict[str, bytes | None] = {}
-        for content_hash, data in raw_results.items():
-            if data is None:
-                decrypted[content_hash] = None
-                continue
-
-            resp = self._decrypt_response(data)
-            decrypted[content_hash] = resp.data if resp.success else None
-
-        return decrypted
-
-    # === Encryption / Decryption Internals ===
-
-    # Fixed zero nonce for GCM-SIV deterministic encryption.
-    # GCM-SIV (RFC 8452) derives the real IV internally from key + plaintext,
-    # making nonce reuse safe. A fixed zero nonce ensures same plaintext +
-    # same key → identical ciphertext, preserving CAS dedup.
-    _ZERO_NONCE = b"\x00" * 12
-
-    def _encrypt(self, plaintext: bytes) -> bytes:
+    def _transform_on_write(self, content: bytes) -> bytes:
         """Encrypt plaintext with magic header.
 
         AES-256-GCM-SIV is nonce-misuse resistant (RFC 8452). The actual
@@ -204,11 +148,15 @@ class EncryptedStorage(DelegatingBackend):
         a fixed zero nonce produces deterministic encryption for CAS dedup.
 
         Format: NEXE\\x01 || ciphertext+tag (no nonce stored — always zero)
+
+        Raises on encryption failure (hard error — DelegatingBackend catches
+        and returns error response).
         """
-        ct = self._cipher.encrypt(self._ZERO_NONCE, plaintext, None)
+        ct = self._cipher.encrypt(self._ZERO_NONCE, content, None)
+        self._metrics.increment("encrypt_ops")
         return _ENCRYPTED_HEADER + ct
 
-    def _decrypt(self, data: bytes) -> bytes:
+    def _transform_on_read(self, data: bytes) -> bytes:
         """Decrypt data with magic header validation.
 
         Returns:
@@ -228,18 +176,13 @@ class EncryptedStorage(DelegatingBackend):
             )
 
         ct = data[_HEADER_LEN:]
-        return bytes(self._cipher.decrypt(self._ZERO_NONCE, ct, None))
-
-    def _decrypt_response(self, data: bytes) -> HandlerResponse[bytes]:
-        """Decrypt and return as HandlerResponse."""
         try:
-            plaintext = self._decrypt(data)
+            result = bytes(self._cipher.decrypt(self._ZERO_NONCE, ct, None))
             self._metrics.increment("decrypt_ops")
-            return HandlerResponse.ok(data=plaintext, backend_name=self.name)
+            return result
         except Exception as e:
             self._metrics.increment("errors")
-            logger.warning("Decryption failed: %s", e)
-            return HandlerResponse.error(message=f"Decryption failed: {e}")
+            raise ValueError(f"Decryption failed: {e}") from e
 
     # === Stats ===
 

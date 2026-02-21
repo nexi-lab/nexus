@@ -10,8 +10,6 @@ These tests start `nexus serve` with --api-key to verify:
 Separate from test_a2a_e2e.py which tests in open-access mode.
 """
 
-from __future__ import annotations
-
 import json
 import os
 import signal
@@ -32,7 +30,7 @@ _src_path = str(Path(__file__).resolve().parent.parent.parent / "src")
 API_KEY = "test-a2a-auth-e2e-key-42"
 
 
-def _drain_pipe(pipe, lines: list[str], ready: threading.Event | None = None):
+def _drain_pipe(pipe, lines: list[str], ready: "threading.Event | None" = None):
     """Read lines from a subprocess pipe (daemon thread)."""
     try:
         for raw in iter(pipe.readline, b""):
@@ -216,13 +214,15 @@ class TestA2APersistenceE2E:
             assert resp.status_code == 200
             task_id = resp.json()["result"]["id"]
 
-        # Check disk — tasks now live under /agents/{agent_id}/tasks/
+        # Check disk — tasks live under /root/agents/{agent_id}/tasks/
+        # (zone-scoped: LocalStorageDriver stores under <root>/<zone_id>/)
         data_dir = auth_server["data_dir"]
-        agents_dir = data_dir / "agents"
+        zone_dir = data_dir / "root"
+        agents_dir = zone_dir / "agents"
         assert agents_dir.exists(), f"Agents directory not found: {agents_dir}"
 
         # Find the task JSON file under any agent's tasks/ directory
-        all_json = list(agents_dir.rglob(f"*_{task_id}.json"))
+        all_json = [f for f in agents_dir.rglob(f"*_{task_id}.json") if "tasks" in f.parts]
         assert len(all_json) == 1, f"Expected 1 file for task {task_id}, found {len(all_json)}"
 
         # Verify the file is inside a tasks/ directory
@@ -280,8 +280,10 @@ class TestA2APersistenceE2E:
             assert cancel_resp.json()["result"]["status"]["state"] == "canceled"
 
         # Verify canceled state is persisted on disk under agent-scoped path
+        # (zone-scoped: LocalStorageDriver stores under <root>/<zone_id>/)
         data_dir = auth_server["data_dir"]
-        agents_dir = data_dir / "agents"
+        zone_dir = data_dir / "root"
+        agents_dir = zone_dir / "agents"
         task_files = list(agents_dir.rglob(f"*_{task_id}.json"))
         assert len(task_files) == 1
         content = json.loads(task_files[0].read_bytes())

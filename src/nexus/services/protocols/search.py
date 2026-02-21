@@ -16,13 +16,11 @@ References:
     - Issue #1520: Extract search module into search brick
 """
 
-from __future__ import annotations
-
 import builtins
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from nexus.core.types import OperationContext
+    from nexus.contracts.types import OperationContext
 
 # =============================================================================
 # Issue #1520: Search Brick Protocol
@@ -89,7 +87,7 @@ class SearchProtocol(Protocol):
         recursive: bool = True,
         details: bool = False,
         show_parsed: bool = True,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
         limit: int | None = None,
         cursor: str | None = None,
     ) -> builtins.list[str] | builtins.list[dict[str, Any]] | Any: ...
@@ -98,14 +96,14 @@ class SearchProtocol(Protocol):
         self,
         pattern: str,
         path: str = "/",
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> builtins.list[str]: ...
 
     def glob_batch(
         self,
         patterns: builtins.list[str],
         path: str = "/",
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, builtins.list[str]]: ...
 
     def grep(
@@ -116,7 +114,7 @@ class SearchProtocol(Protocol):
         ignore_case: bool = False,
         max_results: int = 100,
         search_mode: str = "auto",
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> builtins.list[dict[str, Any]]: ...
 
     # ── Async operations (semantic search requires I/O) ─────────────────

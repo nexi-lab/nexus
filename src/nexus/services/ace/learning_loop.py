@@ -1,7 +1,5 @@
 """Learning loop - main ACE integration."""
 
-from __future__ import annotations
-
 import asyncio
 import traceback
 from collections.abc import Callable
@@ -215,7 +213,7 @@ class LearningLoop:
         Returns:
             Execution results
         """
-        from nexus.core.sync_bridge import run_sync
+        from nexus.lib.sync_bridge import run_sync
 
         return run_sync(
             self.execute_with_learning_async(
@@ -287,7 +285,7 @@ class LearningLoop:
         Returns:
             List of re-learning results
         """
-        from nexus.core.sync_bridge import run_sync
+        from nexus.lib.sync_bridge import run_sync
 
         return run_sync(self.process_relearning_queue_async(limit))
 

@@ -8,12 +8,13 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol, runtime_checkable
 
-from nexus.core.response import HandlerResponse
+from nexus.lib.response import HandlerResponse
 
 if TYPE_CHECKING:
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
+    from nexus.core.protocols.capabilities import ConnectorCapability
 
 
 @dataclass
@@ -276,6 +277,24 @@ class Backend(ABC):
             Default: False
         """
         return False
+
+    # === Capability Discovery (Issue #2069) ===
+
+    _CAPABILITIES: ClassVar["frozenset[ConnectorCapability]"] = frozenset()
+    """Capabilities declared by this backend class.
+
+    Subclasses override to declare their supported capabilities.
+    Consumers query via ``has_capability()`` or ``cap in backend.capabilities``.
+    """
+
+    @property
+    def capabilities(self) -> "frozenset[ConnectorCapability]":
+        """All capabilities supported by this backend."""
+        return self._CAPABILITIES
+
+    def has_capability(self, cap: "ConnectorCapability") -> bool:
+        """Check whether this backend supports a specific capability."""
+        return cap in self._CAPABILITIES
 
     # === Chain Introspection (Issue #1449) ===
 
@@ -770,7 +789,7 @@ class Backend(ABC):
         """
         Map backend path to ReBAC object type.
 
-        Override in subclasses (e.g. IPCVFSDriver) for custom object type mapping.
+        Override in subclasses for custom object type mapping.
         Called by ObjectTypeMapper as the virtual dispatch target.
 
         Used by the permission enforcer to determine what type of object

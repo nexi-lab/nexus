@@ -4,15 +4,13 @@ Tests the full pipeline: MemoryModel → EvolutionDetector → apply_evolution_r
 using in-memory SQLite for isolation.
 """
 
-from __future__ import annotations
-
 import json
 
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from nexus.services.memory.evolution_detector import (
+from nexus.bricks.memory.evolution_detector import (
     EvolutionDetectionResult,
     EvolutionResult,
     MemoryEvolutionDetector,

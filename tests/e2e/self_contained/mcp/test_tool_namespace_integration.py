@@ -11,8 +11,6 @@ These tests verify:
     5. Performance: filtering 30 tools under 10ms
 """
 
-from __future__ import annotations
-
 import json
 import time
 from unittest.mock import Mock
@@ -20,15 +18,15 @@ from unittest.mock import Mock
 import pytest
 from sqlalchemy import create_engine
 
-from nexus.mcp.middleware import ToolNamespaceMiddleware
-from nexus.mcp.profiles import (
+from nexus.bricks.mcp.middleware import ToolNamespaceMiddleware
+from nexus.bricks.mcp.profiles import (
     TOOL_PATH_PREFIX,
     grant_tools_for_profile,
     load_profiles_from_dict,
     revoke_tools_by_tuple_ids,
 )
-from nexus.mcp.server import create_mcp_server
-from nexus.rebac.manager import EnhancedReBACManager
+from nexus.bricks.mcp.server import create_mcp_server
+from nexus.bricks.rebac.manager import EnhancedReBACManager
 from nexus.storage.models import Base
 
 # ---------------------------------------------------------------------------

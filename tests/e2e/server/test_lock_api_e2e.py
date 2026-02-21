@@ -4,8 +4,6 @@ These tests run against an actual nexus serve process with authentication enable
 Includes tests for both Raft-backed and Redis-backed lock managers.
 """
 
-from __future__ import annotations
-
 import os
 import time
 
@@ -55,9 +53,9 @@ class TestLockApiWithoutRedis:
     """
 
     def test_acquire_lock_returns_503_without_redis(self, test_app: httpx.Client, auth_headers):
-        """Test that POST /api/locks returns 503 when lock manager unavailable."""
+        """Test that POST /api/v2/locks returns 503 when lock manager unavailable."""
         response = test_app.post(
-            "/api/locks",
+            "/api/v2/locks",
             json={"path": "/test/file.txt", "timeout": 1, "ttl": 30},
             headers=auth_headers,
         )
@@ -66,24 +64,26 @@ class TestLockApiWithoutRedis:
         assert "lock manager" in response.json().get("detail", "").lower()
 
     def test_list_locks_returns_503_without_redis(self, test_app: httpx.Client, auth_headers):
-        """Test that GET /api/locks returns 503 when lock manager unavailable."""
-        response = test_app.get("/api/locks", headers=auth_headers)
+        """Test that GET /api/v2/locks returns 503 when lock manager unavailable."""
+        response = test_app.get("/api/v2/locks", headers=auth_headers)
         assert response.status_code == 503
 
     def test_get_lock_status_returns_503_without_redis(self, test_app: httpx.Client, auth_headers):
-        """Test that GET /api/locks/{path} returns 503 when lock manager unavailable."""
-        response = test_app.get("/api/locks/test/file.txt", headers=auth_headers)
+        """Test that GET /api/v2/locks/{path} returns 503 when lock manager unavailable."""
+        response = test_app.get("/api/v2/locks/test/file.txt", headers=auth_headers)
         assert response.status_code == 503
 
     def test_release_lock_returns_503_without_redis(self, test_app: httpx.Client, auth_headers):
-        """Test that DELETE /api/locks/{path} returns 503 when lock manager unavailable."""
-        response = test_app.delete("/api/locks/test/file.txt?lock_id=fake-id", headers=auth_headers)
+        """Test that DELETE /api/v2/locks/{path} returns 503 when lock manager unavailable."""
+        response = test_app.delete(
+            "/api/v2/locks/test/file.txt?lock_id=fake-id", headers=auth_headers
+        )
         assert response.status_code == 503
 
     def test_extend_lock_returns_503_without_redis(self, test_app: httpx.Client, auth_headers):
-        """Test that PATCH /api/locks/{path} returns 503 when lock manager unavailable."""
+        """Test that PATCH /api/v2/locks/{path} returns 503 when lock manager unavailable."""
         response = test_app.patch(
-            "/api/locks/test/file.txt",
+            "/api/v2/locks/test/file.txt",
             json={"lock_id": "fake-id", "ttl": 60},
             headers=auth_headers,
         )
@@ -119,7 +119,7 @@ class TestLockApiWithRedis:
 
         # 1. Acquire lock
         response = test_app.post(
-            "/api/locks",
+            "/api/v2/locks",
             json={"path": path, "timeout": 5, "ttl": 30},
             headers=auth_headers,
         )
@@ -132,7 +132,7 @@ class TestLockApiWithRedis:
         lock_id = data["lock_id"]
 
         # 2. Check status - should be locked
-        response = test_app.get(f"/api/locks{path}", headers=auth_headers)
+        response = test_app.get(f"/api/v2/locks{path}", headers=auth_headers)
         assert response.status_code == 200
         data = response.json()
         assert data["locked"] is True
@@ -140,7 +140,7 @@ class TestLockApiWithRedis:
 
         # 3. Extend TTL
         response = test_app.patch(
-            f"/api/locks{path}",
+            f"/api/v2/locks{path}",
             json={"lock_id": lock_id, "ttl": 60},
             headers=auth_headers,
         )
@@ -149,12 +149,12 @@ class TestLockApiWithRedis:
         assert data["ttl"] == 60
 
         # 4. Release lock
-        response = test_app.delete(f"/api/locks{path}?lock_id={lock_id}", headers=auth_headers)
+        response = test_app.delete(f"/api/v2/locks{path}?lock_id={lock_id}", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["released"] is True
 
         # 5. Verify unlocked
-        response = test_app.get(f"/api/locks{path}", headers=auth_headers)
+        response = test_app.get(f"/api/v2/locks{path}", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["locked"] is False
 
@@ -164,7 +164,7 @@ class TestLockApiWithRedis:
 
         # Acquire first lock
         response = test_app.post(
-            "/api/locks",
+            "/api/v2/locks",
             json={"path": path, "timeout": 1, "ttl": 2},
             headers=auth_headers,
         )
@@ -173,14 +173,14 @@ class TestLockApiWithRedis:
 
         # Try to acquire second lock with short timeout - should fail
         response = test_app.post(
-            "/api/locks",
+            "/api/v2/locks",
             json={"path": path, "timeout": 0.5, "ttl": 30},
             headers=auth_headers,
         )
         assert response.status_code == 409  # Conflict - timeout
 
         # Release first lock
-        test_app.delete(f"/api/locks{path}?lock_id={lock_id}", headers=auth_headers)
+        test_app.delete(f"/api/v2/locks{path}?lock_id={lock_id}", headers=auth_headers)
 
     def test_non_blocking_lock_acquisition(self, test_app: httpx.Client, auth_headers):
         """Test non-blocking lock acquisition returns immediately."""
@@ -188,7 +188,7 @@ class TestLockApiWithRedis:
 
         # Acquire first lock
         response = test_app.post(
-            "/api/locks",
+            "/api/v2/locks",
             json={"path": path, "timeout": 5, "ttl": 30},
             headers=auth_headers,
         )
@@ -198,7 +198,7 @@ class TestLockApiWithRedis:
         # Try non-blocking acquisition - should return immediately with 409
         start = time.time()
         response = test_app.post(
-            "/api/locks",
+            "/api/v2/locks",
             json={"path": path, "timeout": 10, "ttl": 30, "blocking": False},
             headers=auth_headers,
         )
@@ -209,7 +209,7 @@ class TestLockApiWithRedis:
         assert "non-blocking" in response.json().get("detail", "").lower()
 
         # Cleanup
-        test_app.delete(f"/api/locks{path}?lock_id={lock_id}", headers=auth_headers)
+        test_app.delete(f"/api/v2/locks{path}?lock_id={lock_id}", headers=auth_headers)
 
     def test_release_wrong_lock_id_fails(self, test_app: httpx.Client, auth_headers):
         """Test that releasing with wrong lock_id fails with 403."""
@@ -217,7 +217,7 @@ class TestLockApiWithRedis:
 
         # Acquire lock
         response = test_app.post(
-            "/api/locks",
+            "/api/v2/locks",
             json={"path": path, "timeout": 5, "ttl": 30},
             headers=auth_headers,
         )
@@ -225,11 +225,13 @@ class TestLockApiWithRedis:
         real_lock_id = response.json()["lock_id"]
 
         # Try to release with wrong ID
-        response = test_app.delete(f"/api/locks{path}?lock_id=wrong-id-12345", headers=auth_headers)
+        response = test_app.delete(
+            f"/api/v2/locks{path}?lock_id=wrong-id-12345", headers=auth_headers
+        )
         assert response.status_code == 403
 
         # Cleanup with real ID
-        test_app.delete(f"/api/locks{path}?lock_id={real_lock_id}", headers=auth_headers)
+        test_app.delete(f"/api/v2/locks{path}?lock_id={real_lock_id}", headers=auth_headers)
 
     def test_semaphore_multiple_holders(self, test_app: httpx.Client, auth_headers):
         """Test semaphore mode allows multiple holders."""
@@ -241,7 +243,7 @@ class TestLockApiWithRedis:
         # Acquire 3 semaphore slots
         for i in range(max_holders):
             response = test_app.post(
-                "/api/locks",
+                "/api/v2/locks",
                 json={"path": path, "timeout": 5, "ttl": 30, "max_holders": max_holders},
                 headers=auth_headers,
             )
@@ -252,7 +254,7 @@ class TestLockApiWithRedis:
 
         # Fourth request should fail (semaphore full)
         response = test_app.post(
-            "/api/locks",
+            "/api/v2/locks",
             json={"path": path, "timeout": 0.5, "ttl": 30, "max_holders": max_holders},
             headers=auth_headers,
         )
@@ -260,7 +262,7 @@ class TestLockApiWithRedis:
 
         # Cleanup
         for lock_id in lock_ids:
-            test_app.delete(f"/api/locks{path}?lock_id={lock_id}", headers=auth_headers)
+            test_app.delete(f"/api/v2/locks{path}?lock_id={lock_id}", headers=auth_headers)
 
     def test_list_locks(self, test_app: httpx.Client, auth_headers):
         """Test listing active locks."""
@@ -270,7 +272,7 @@ class TestLockApiWithRedis:
         # Acquire multiple locks
         for path in paths:
             response = test_app.post(
-                "/api/locks",
+                "/api/v2/locks",
                 json={"path": path, "timeout": 5, "ttl": 60},
                 headers=auth_headers,
             )
@@ -278,14 +280,14 @@ class TestLockApiWithRedis:
             lock_ids.append((path, response.json()["lock_id"]))
 
         # List locks
-        response = test_app.get("/api/locks?limit=100")
+        response = test_app.get("/api/v2/locks?limit=100")
         assert response.status_code == 200
         data = response.json()
         assert data["count"] >= 3
 
         # Cleanup
         for path, lock_id in lock_ids:
-            test_app.delete(f"/api/locks{path}?lock_id={lock_id}", headers=auth_headers)
+            test_app.delete(f"/api/v2/locks{path}?lock_id={lock_id}", headers=auth_headers)
 
     def test_force_release_requires_admin(self, test_app: httpx.Client, auth_headers):
         """Test that force=true requires admin privileges."""
@@ -293,7 +295,7 @@ class TestLockApiWithRedis:
 
         # Acquire lock
         response = test_app.post(
-            "/api/locks",
+            "/api/v2/locks",
             json={"path": path, "timeout": 5, "ttl": 30},
             headers=auth_headers,
         )
@@ -301,12 +303,12 @@ class TestLockApiWithRedis:
         lock_id = response.json()["lock_id"]
 
         # Try force release without admin - should fail
-        response = test_app.delete(f"/api/locks{path}?lock_id={lock_id}&force=true")
+        response = test_app.delete(f"/api/v2/locks{path}?lock_id={lock_id}&force=true")
         assert response.status_code == 403
         assert "admin" in response.json().get("detail", "").lower()
 
         # Normal release should work
-        response = test_app.delete(f"/api/locks{path}?lock_id={lock_id}", headers=auth_headers)
+        response = test_app.delete(f"/api/v2/locks{path}?lock_id={lock_id}", headers=auth_headers)
         assert response.status_code == 200
 
 
@@ -325,7 +327,7 @@ class TestLockApiEdgeCases:
     def test_ttl_too_high_returns_422(self, test_app: httpx.Client, auth_headers):
         """Test that TTL > max returns 422 Unprocessable Entity."""
         response = test_app.post(
-            "/api/locks",
+            "/api/v2/locks",
             json={"path": "/test/file.txt", "ttl": 999999999},
             headers=auth_headers,
         )
@@ -334,7 +336,7 @@ class TestLockApiEdgeCases:
     def test_ttl_zero_returns_422(self, test_app: httpx.Client, auth_headers):
         """Test that TTL = 0 returns 422."""
         response = test_app.post(
-            "/api/locks",
+            "/api/v2/locks",
             json={"path": "/test/file.txt", "ttl": 0},
             headers=auth_headers,
         )
@@ -343,7 +345,7 @@ class TestLockApiEdgeCases:
     def test_ttl_negative_returns_422(self, test_app: httpx.Client, auth_headers):
         """Test that TTL < 0 returns 422."""
         response = test_app.post(
-            "/api/locks",
+            "/api/v2/locks",
             json={"path": "/test/file.txt", "ttl": -1},
             headers=auth_headers,
         )
@@ -352,7 +354,7 @@ class TestLockApiEdgeCases:
     def test_max_holders_zero_returns_422(self, test_app: httpx.Client, auth_headers):
         """Test that max_holders = 0 returns 422."""
         response = test_app.post(
-            "/api/locks",
+            "/api/v2/locks",
             json={"path": "/test/file.txt", "max_holders": 0},
             headers=auth_headers,
         )
@@ -361,7 +363,7 @@ class TestLockApiEdgeCases:
     def test_max_holders_negative_returns_422(self, test_app: httpx.Client, auth_headers):
         """Test that max_holders < 0 returns 422."""
         response = test_app.post(
-            "/api/locks",
+            "/api/v2/locks",
             json={"path": "/test/file.txt", "max_holders": -5},
             headers=auth_headers,
         )
@@ -370,7 +372,7 @@ class TestLockApiEdgeCases:
     def test_timeout_negative_returns_422(self, test_app: httpx.Client, auth_headers):
         """Test that timeout < 0 returns 422."""
         response = test_app.post(
-            "/api/locks",
+            "/api/v2/locks",
             json={"path": "/test/file.txt", "timeout": -1},
             headers=auth_headers,
         )
@@ -379,7 +381,7 @@ class TestLockApiEdgeCases:
     def test_extend_ttl_zero_returns_422(self, test_app: httpx.Client, auth_headers):
         """Test that extend with TTL = 0 returns 422."""
         response = test_app.patch(
-            "/api/locks/test/file.txt",
+            "/api/v2/locks/test/file.txt",
             json={"lock_id": "some-id", "ttl": 0},
             headers=auth_headers,
         )
@@ -392,21 +394,21 @@ class TestLockApiEdgeCases:
         Path normalization ensures leading slash consistency.
         """
         # These should not cause errors (paths are just string keys)
-        response = test_app.get("/api/locks/../../../etc/passwd")
+        response = test_app.get("/api/v2/locks/../../../etc/passwd")
         # Should get 401 (no auth) or 200/503 (depending on lock manager state)
         # but NOT a 500 internal server error
         assert response.status_code != 500
 
     def test_empty_path_in_url(self, test_app: httpx.Client, auth_headers):
         """Test that empty path segments in URL are handled."""
-        response = test_app.get("/api/locks/")
-        # FastAPI may route this to list_locks (GET /api/locks) or return 404
+        response = test_app.get("/api/v2/locks/")
+        # FastAPI may route this to list_locks (GET /api/v2/locks) or return 404
         assert response.status_code != 500
 
     def test_unicode_path(self, test_app: httpx.Client, auth_headers):
         """Test that Unicode paths are handled."""
         response = test_app.post(
-            "/api/locks",
+            "/api/v2/locks",
             json={"path": "/test/文件.txt", "ttl": 30},
             headers=auth_headers,
         )
@@ -417,7 +419,7 @@ class TestLockApiEdgeCases:
         """Test that very long paths don't crash the server."""
         long_path = "/test/" + "a" * 10000 + ".txt"
         response = test_app.post(
-            "/api/locks",
+            "/api/v2/locks",
             json={"path": long_path, "ttl": 30},
             headers=auth_headers,
         )
@@ -425,13 +427,13 @@ class TestLockApiEdgeCases:
 
     def test_missing_lock_id_in_release(self, test_app: httpx.Client, auth_headers):
         """Test that DELETE without lock_id returns 422."""
-        response = test_app.delete("/api/locks/test/file.txt")
+        response = test_app.delete("/api/v2/locks/test/file.txt")
         assert response.status_code == 422
 
     def test_missing_lock_id_in_extend(self, test_app: httpx.Client, auth_headers):
         """Test that PATCH without lock_id in body returns 422."""
         response = test_app.patch(
-            "/api/locks/test/file.txt",
+            "/api/v2/locks/test/file.txt",
             json={"ttl": 60},
             headers=auth_headers,
         )

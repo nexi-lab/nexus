@@ -11,20 +11,15 @@ Tests cover:
 - Sequential heartbeat reliability test (Decision #11A, updated post-cache-removal)
 """
 
-from __future__ import annotations
-
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from nexus.services.agents.agent_record import AgentState
+from nexus.contracts.agent_types import AgentState
 from nexus.services.agents.agent_registry import (
     AgentRegistry,
     InvalidTransitionError,
     StaleAgentError,
 )
-from nexus.storage.models import Base
+from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -32,27 +27,17 @@ from nexus.storage.models import Base
 
 
 @pytest.fixture
-def engine():
-    """Create in-memory SQLite database for testing (thread-safe)."""
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine)
-    return engine
+def record_store():
+    """Create in-memory RecordStore for testing."""
+    store = InMemoryRecordStore()
+    yield store
+    store.close()
 
 
 @pytest.fixture
-def session_factory(engine):
-    """Create a session factory."""
-    return sessionmaker(bind=engine, expire_on_commit=False)
-
-
-@pytest.fixture
-def registry(session_factory):
+def registry(record_store):
     """Create an AgentRegistry for testing."""
-    return AgentRegistry(session_factory=session_factory, flush_interval=60)
+    return AgentRegistry(record_store=record_store, flush_interval=60)
 
 
 # ---------------------------------------------------------------------------
@@ -290,28 +275,33 @@ class TestHeartbeat:
         assert record is not None
         assert record.last_heartbeat is not None
 
-    def test_flush_interval_respected(self, session_factory):
+    def test_flush_interval_respected(self, record_store):
         """Heartbeats don't auto-flush before flush_interval."""
-        reg = AgentRegistry(session_factory=session_factory, flush_interval=9999)
+        reg = AgentRegistry(record_store=record_store, flush_interval=9999)
         reg.register("agent-1", "alice")
         reg.transition("agent-1", AgentState.CONNECTED, expected_generation=0)
         reg.heartbeat("agent-1")
         # Buffer should NOT have been auto-flushed
         assert "agent-1" in reg._heartbeat_buffer._buffer
 
-    def test_auto_flush_on_interval(self, session_factory):
+    def test_auto_flush_on_interval(self, record_store):
         """Heartbeats auto-flush when flush_interval elapses."""
-        reg = AgentRegistry(session_factory=session_factory, flush_interval=0)
+        reg = AgentRegistry(record_store=record_store, flush_interval=0)
         reg.register("agent-1", "alice")
         reg.transition("agent-1", AgentState.CONNECTED, expected_generation=0)
         reg.heartbeat("agent-1")
         # With flush_interval=0, should auto-flush immediately
         assert reg._heartbeat_buffer.stats()["buffer_size"] == 0
 
-    def test_heartbeat_nonexistent_agent(self, registry):
-        """Heartbeat for nonexistent agent raises ValueError."""
-        with pytest.raises(ValueError, match="not found"):
-            registry.heartbeat("no-such-agent")
+    def test_heartbeat_nonexistent_agent_buffered(self, registry):
+        """Heartbeat for nonexistent agent is buffered without error (Issue #2170).
+
+        No existence check — the buffer is flushed via UPDATE which silently
+        skips non-existent agents (0 rows affected).
+        """
+        registry.heartbeat("no-such-agent")
+        # Should not raise — just buffered
+        assert "no-such-agent" in registry._heartbeat_buffer._buffer
 
 
 # ---------------------------------------------------------------------------
@@ -436,6 +426,30 @@ class TestQueries:
         assert len(stale) >= 1
         assert stale[0].agent_id == "a1"
 
+    def test_detect_stale_excludes_buffered_heartbeats(self, registry):
+        """Agent stale in DB but with recent buffer heartbeat is NOT stale (Issue 10A)."""
+        import time
+
+        registry.register("a1", "alice")
+        registry.transition("a1", AgentState.CONNECTED, expected_generation=0)
+
+        # First heartbeat + flush to DB (so DB has an old timestamp)
+        registry.heartbeat("a1")
+        registry.flush_heartbeats()
+
+        # Small sleep so buffer heartbeat is clearly after the flush
+        time.sleep(0.01)
+
+        # Second heartbeat — only in buffer, not flushed
+        registry.heartbeat("a1")
+
+        # With 1-second threshold: cutoff = now - 1s. The buffer heartbeat
+        # was just recorded (< 1s ago), so ts >= cutoff → agent excluded.
+        # DB timestamp was flushed before the sleep, so DB says "stale".
+        stale = registry.detect_stale(threshold_seconds=1)
+        stale_ids = [a.agent_id for a in stale]
+        assert "a1" not in stale_ids
+
 
 # ---------------------------------------------------------------------------
 # Unregistration tests
@@ -526,27 +540,27 @@ class TestToDict:
 class TestBridgeReliability:
     """Tests for entity_registry bridge error handling."""
 
-    def test_bridge_success(self, session_factory):
+    def test_bridge_success(self, record_store):
         """Bridge registers in entity_registry on successful register()."""
-        from nexus.rebac.entity_registry import EntityRegistry
+        from nexus.bricks.rebac.entity_registry import EntityRegistry
 
-        entity_reg = EntityRegistry(session_factory)
+        entity_reg = EntityRegistry(record_store)
         entity_reg.register_entity("user", "alice")
-        reg = AgentRegistry(session_factory=session_factory, entity_registry=entity_reg)
+        reg = AgentRegistry(record_store=record_store, entity_registry=entity_reg)
 
         reg.register("agent-1", "alice", name="Test")
         entity = entity_reg.get_entity("agent", "agent-1")
         assert entity is not None
         assert entity.parent_id == "alice"
 
-    def test_bridge_failure_raises(self, session_factory):
+    def test_bridge_failure_raises(self, record_store):
         """Bridge failure raises exception instead of swallowing."""
 
         class FailingRegistry:
             def register_entity(self, **kwargs):
                 raise RuntimeError("DB connection lost")
 
-        reg = AgentRegistry(session_factory=session_factory, entity_registry=FailingRegistry())
+        reg = AgentRegistry(record_store=record_store, entity_registry=FailingRegistry())
         with pytest.raises(RuntimeError, match="DB connection lost"):
             reg.register("agent-1", "alice")
 
@@ -556,13 +570,13 @@ class TestBridgeReliability:
         record = registry.register("agent-1", "alice")
         assert record.agent_id == "agent-1"
 
-    def test_unregister_bridge_failure_raises(self, session_factory):
+    def test_unregister_bridge_failure_raises(self, record_store):
         """Unregister bridge failure raises exception."""
-        from nexus.rebac.entity_registry import EntityRegistry
+        from nexus.bricks.rebac.entity_registry import EntityRegistry
 
-        entity_reg = EntityRegistry(session_factory)
+        entity_reg = EntityRegistry(record_store)
         entity_reg.register_entity("user", "alice")
-        reg = AgentRegistry(session_factory=session_factory, entity_registry=entity_reg)
+        reg = AgentRegistry(record_store=record_store, entity_registry=entity_reg)
         reg.register("agent-1", "alice")
 
         # Now make entity_registry fail on delete
@@ -583,14 +597,12 @@ class TestBridgeReliability:
 class TestHeartbeatCapacityWarning:
     """Tests for heartbeat buffer 80% capacity warning."""
 
-    def test_warns_at_80_percent(self, session_factory, caplog):
+    def test_warns_at_80_percent(self, record_store, caplog):
         """Warning is emitted when heartbeat buffer reaches 80% capacity."""
         import logging
 
         # Small buffer (max 10) so 80% = 8
-        reg = AgentRegistry(
-            session_factory=session_factory, flush_interval=9999, max_buffer_size=10
-        )
+        reg = AgentRegistry(record_store=record_store, flush_interval=9999, max_buffer_size=10)
         # Register 9 agents
         for i in range(9):
             reg.register(f"agent-{i}", "alice")
@@ -619,13 +631,13 @@ class TestHeartbeatCapacityWarning:
 class TestRegistrationWithBridge:
     """Tests for registration with EntityRegistry bridge (migrated from test_agents.py)."""
 
-    def test_entity_registry_creation(self, session_factory):
+    def test_entity_registry_creation(self, record_store):
         """Registration creates entity in EntityRegistry via bridge."""
-        from nexus.rebac.entity_registry import EntityRegistry
+        from nexus.bricks.rebac.entity_registry import EntityRegistry
 
-        entity_reg = EntityRegistry(session_factory)
+        entity_reg = EntityRegistry(record_store)
         entity_reg.register_entity("user", "alice")
-        reg = AgentRegistry(session_factory=session_factory, entity_registry=entity_reg)
+        reg = AgentRegistry(record_store=record_store, entity_registry=entity_reg)
 
         reg.register("agent_test", "alice", name="Test Agent")
 
@@ -636,13 +648,13 @@ class TestRegistrationWithBridge:
         assert entity.parent_type == "user"
         assert entity.parent_id == "alice"
 
-    def test_multi_agent_same_user(self, session_factory):
+    def test_multi_agent_same_user(self, record_store):
         """Multiple agents for same user are all tracked."""
-        from nexus.rebac.entity_registry import EntityRegistry
+        from nexus.bricks.rebac.entity_registry import EntityRegistry
 
-        entity_reg = EntityRegistry(session_factory)
+        entity_reg = EntityRegistry(record_store)
         entity_reg.register_entity("user", "alice")
-        reg = AgentRegistry(session_factory=session_factory, entity_registry=entity_reg)
+        reg = AgentRegistry(record_store=record_store, entity_registry=entity_reg)
 
         reg.register("agent1", "alice", name="Agent 1")
         reg.register("agent2", "alice", name="Agent 2")
@@ -652,13 +664,13 @@ class TestRegistrationWithBridge:
         agent_ids = {c.entity_id for c in children}
         assert agent_ids == {"agent1", "agent2"}
 
-    def test_unregister_preserves_others(self, session_factory):
+    def test_unregister_preserves_others(self, record_store):
         """Unregistering one agent doesn't affect others."""
-        from nexus.rebac.entity_registry import EntityRegistry
+        from nexus.bricks.rebac.entity_registry import EntityRegistry
 
-        entity_reg = EntityRegistry(session_factory)
+        entity_reg = EntityRegistry(record_store)
         entity_reg.register_entity("user", "alice")
-        reg = AgentRegistry(session_factory=session_factory, entity_registry=entity_reg)
+        reg = AgentRegistry(record_store=record_store, entity_registry=entity_reg)
 
         reg.register("agent1", "alice")
         reg.register("agent2", "alice")
@@ -721,3 +733,146 @@ class TestAgentLifecycleIntegration:
         registry.unregister("agent_lifecycle")
         assert registry.validate_ownership("agent_lifecycle", "alice") is False
         assert registry.get("agent_lifecycle") is None
+
+
+# ---------------------------------------------------------------------------
+# Checkpoint tests (Issue #2170, 3A)
+# ---------------------------------------------------------------------------
+
+
+class TestCheckpoint:
+    """Tests for checkpoint/restore_checkpoint/batch_checkpoint."""
+
+    def test_checkpoint_saves_data(self, registry):
+        """checkpoint() stores data in agent_metadata under _nexus_checkpoint key."""
+        registry.register("agent-1", "alice")
+        registry.checkpoint("agent-1", {"key": "value", "count": 42})
+
+        record = registry.get("agent-1")
+        assert record is not None
+        assert record.metadata.get("_nexus_checkpoint") == {"key": "value", "count": 42}
+
+    def test_restore_checkpoint_returns_data(self, registry):
+        """restore_checkpoint() returns the saved checkpoint data."""
+        registry.register("agent-1", "alice")
+        registry.checkpoint("agent-1", {"key": "value"})
+
+        data = registry.restore_checkpoint("agent-1")
+        assert data == {"key": "value"}
+
+    def test_restore_checkpoint_clears_data(self, registry):
+        """Checkpoint data is cleared after restore."""
+        registry.register("agent-1", "alice")
+        registry.checkpoint("agent-1", {"key": "value"})
+
+        registry.restore_checkpoint("agent-1")
+
+        # Second restore should return None
+        data = registry.restore_checkpoint("agent-1")
+        assert data is None
+
+        # Metadata should not have _nexus_checkpoint key
+        record = registry.get("agent-1")
+        assert "_nexus_checkpoint" not in record.metadata
+
+    def test_restore_checkpoint_no_data(self, registry):
+        """restore_checkpoint() returns None when no checkpoint exists."""
+        registry.register("agent-1", "alice")
+
+        data = registry.restore_checkpoint("agent-1")
+        assert data is None
+
+    def test_restore_checkpoint_nonexistent_agent(self, registry):
+        """restore_checkpoint() raises ValueError for nonexistent agent."""
+        with pytest.raises(ValueError, match="not found"):
+            registry.restore_checkpoint("no-such-agent")
+
+    def test_checkpoint_nonexistent_agent(self, registry):
+        """checkpoint() raises ValueError for nonexistent agent."""
+        with pytest.raises(ValueError, match="not found"):
+            registry.checkpoint("no-such-agent", {"key": "value"})
+
+    def test_batch_checkpoint(self, registry):
+        """batch_checkpoint() writes checkpoints for multiple agents."""
+        registry.register("a1", "alice")
+        registry.register("a2", "bob")
+
+        written = registry.batch_checkpoint(
+            {
+                "a1": {"state": "connected"},
+                "a2": {"state": "idle"},
+            }
+        )
+
+        assert written == 2
+
+        r1 = registry.get("a1")
+        assert r1.metadata.get("_nexus_checkpoint") == {"state": "connected"}
+
+        r2 = registry.get("a2")
+        assert r2.metadata.get("_nexus_checkpoint") == {"state": "idle"}
+
+    def test_batch_checkpoint_skips_nonexistent(self, registry):
+        """batch_checkpoint() skips nonexistent agents and still writes others."""
+        registry.register("a1", "alice")
+
+        written = registry.batch_checkpoint(
+            {
+                "a1": {"state": "connected"},
+                "no-such": {"state": "idle"},
+            }
+        )
+
+        assert written == 1
+
+    def test_batch_checkpoint_empty(self, registry):
+        """batch_checkpoint() with empty dict returns 0."""
+        assert registry.batch_checkpoint({}) == 0
+
+
+# ---------------------------------------------------------------------------
+# Eviction candidates tests (Issue #2170, 8A)
+# ---------------------------------------------------------------------------
+
+
+class TestEvictionCandidates:
+    """Tests for list_eviction_candidates."""
+
+    def test_returns_connected_agents(self, registry):
+        """list_eviction_candidates returns CONNECTED agents."""
+        registry.register("a1", "alice")
+        registry.transition("a1", AgentState.CONNECTED, expected_generation=0)
+
+        candidates = registry.list_eviction_candidates(batch_size=10)
+        assert len(candidates) == 1
+        assert candidates[0].agent_id == "a1"
+
+    def test_excludes_non_connected(self, registry):
+        """Only CONNECTED agents are candidates."""
+        registry.register("a1", "alice")  # UNKNOWN
+        registry.register("a2", "bob")
+        registry.transition("a2", AgentState.CONNECTED, expected_generation=0)
+        registry.transition("a2", AgentState.IDLE, expected_generation=1)
+
+        candidates = registry.list_eviction_candidates(batch_size=10)
+        assert len(candidates) == 0
+
+    def test_respects_batch_size(self, registry):
+        """Returns at most batch_size candidates."""
+        for i in range(5):
+            registry.register(f"a{i}", "alice")
+            registry.transition(f"a{i}", AgentState.CONNECTED, expected_generation=0)
+
+        candidates = registry.list_eviction_candidates(batch_size=2)
+        assert len(candidates) == 2
+
+    def test_excludes_buffered_heartbeats(self, registry):
+        """Agents with buffered heartbeats are excluded."""
+        registry.register("a1", "alice")
+        registry.transition("a1", AgentState.CONNECTED, expected_generation=0)
+
+        # Heartbeat only in buffer (not flushed)
+        registry.heartbeat("a1")
+
+        candidates = registry.list_eviction_candidates(batch_size=10)
+        assert len(candidates) == 0

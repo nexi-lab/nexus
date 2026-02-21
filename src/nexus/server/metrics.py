@@ -15,8 +15,6 @@ Usage:
         app.add_route("/metrics", metrics_endpoint, methods=["GET"])
 """
 
-from __future__ import annotations
-
 import logging
 import time
 from typing import TYPE_CHECKING, Any
@@ -74,7 +72,7 @@ def _status_group(status_code: int) -> str:
     return f"{status_code // 100}xx"
 
 
-def _resolve_route_template(scope: Scope) -> str:
+def _resolve_route_template(scope: "Scope") -> str:
     """Resolve the route template from the ASGI scope.
 
     Falls back to the raw path when no matching route is found.
@@ -103,10 +101,10 @@ def _resolve_route_template(scope: Scope) -> str:
 class PrometheusMiddleware:
     """ASGI middleware that records Prometheus request metrics."""
 
-    def __init__(self, app: ASGIApp) -> None:
+    def __init__(self, app: "ASGIApp") -> None:
         self.app = app
 
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+    async def __call__(self, scope: "Scope", receive: "Receive", send: "Send") -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
@@ -166,8 +164,22 @@ async def metrics_endpoint(request: Request) -> Response:  # noqa: ARG001
 
 
 def setup_prometheus() -> None:
-    """Populate the nexus info metric with the current version."""
+    """Populate the nexus info metric with the current version.
+
+    Also re-registers module-level metrics that may have been
+    unregistered by a previous ``shutdown_prometheus()`` call
+    (needed for test isolation with repeated lifespan cycles).
+    """
+    import contextlib
+
+    from prometheus_client import REGISTRY
+
     from nexus.server._version import get_nexus_version
+
+    # Re-register metrics (they may have been unregistered during shutdown)
+    for collector in (REQUEST_DURATION, REQUEST_COUNT, REQUESTS_IN_PROGRESS, NEXUS_INFO):
+        with contextlib.suppress(Exception):
+            REGISTRY.register(collector)
 
     version = get_nexus_version()
     NEXUS_INFO.info({"version": version})

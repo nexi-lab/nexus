@@ -8,8 +8,6 @@ unknown fields in requests are silently ignored, enabling forward
 compatibility when clients send fields added in newer versions.
 """
 
-from __future__ import annotations
-
 from pydantic import BaseModel, ConfigDict
 
 

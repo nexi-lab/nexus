@@ -7,8 +7,6 @@ registry use default pass-through behavior (call _call_rpc, return result).
 Issue #1289: Protocol + RPC Proxy pattern.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 
 

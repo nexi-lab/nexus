@@ -38,14 +38,15 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.backends.backend import Backend, HandlerStatusResponse
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
-from nexus.core.exceptions import BackendError
+from nexus.contracts.exceptions import BackendError
 from nexus.core.hash_fast import hash_content
-from nexus.core.response import HandlerResponse, timed_response
+from nexus.core.protocols.capabilities import OAUTH_CONNECTOR_CAPABILITIES, ConnectorCapability
+from nexus.lib.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:
     from googleapiclient.discovery import Resource
 
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +114,12 @@ class GoogleDriveConnectorBackend(Backend):
     - Requires OAuth tokens for each user
     - Rate limited by Google Drive API quotas
     """
+
+    _CAPABILITIES = OAUTH_CONNECTOR_CAPABILITIES | frozenset(
+        {
+            ConnectorCapability.VIRTUAL_FILESYSTEM,
+        }
+    )
 
     user_scoped = True
 
@@ -183,8 +190,11 @@ class GoogleDriveConnectorBackend(Backend):
         # Import TokenManager here to avoid circular imports
         # Support both file paths and database URLs
         # Resolve database URL (checks TOKEN_MANAGER_DB env var)
+        import importlib as _il
+
         from nexus.backends.connector_utils import resolve_database_url
-        from nexus.server.auth.token_manager import TokenManager
+
+        TokenManager = _il.import_module("nexus.bricks.auth.oauth.token_manager").TokenManager
 
         resolved_db = resolve_database_url(token_manager_db)
 
@@ -215,7 +225,11 @@ class GoogleDriveConnectorBackend(Backend):
         logger = logging.getLogger(__name__)
 
         try:
-            from nexus.auth.oauth.factory import OAuthProviderFactory
+            import importlib as _il_oauth
+
+            OAuthProviderFactory = _il_oauth.import_module(
+                "nexus.bricks.auth.oauth.factory"
+            ).OAuthProviderFactory
 
             # Create factory (loads from oauth.yaml config)
             factory = OAuthProviderFactory()
@@ -226,7 +240,7 @@ class GoogleDriveConnectorBackend(Backend):
                     name=self.provider,
                 )
                 # Register with TokenManager using the provider name from config
-                self.token_manager.register_provider(self.provider, provider_instance)  # type: ignore[arg-type]
+                self.token_manager.register_provider(self.provider, provider_instance)
                 logger.info(
                     f"✓ Registered OAuth provider '{self.provider}' for Google Drive backend"
                 )
@@ -275,7 +289,7 @@ class GoogleDriveConnectorBackend(Backend):
 
         try:
             # Check if we have a valid token
-            from nexus.core.sync_bridge import run_sync
+            from nexus.lib.sync_bridge import run_sync
 
             zone_id = (
                 context.zone_id
@@ -396,7 +410,7 @@ class GoogleDriveConnectorBackend(Backend):
             )
 
         # Get valid access token from TokenManager (auto-refreshes if expired)
-        from nexus.core.sync_bridge import run_sync
+        from nexus.lib.sync_bridge import run_sync
 
         try:
             # Default to 'root' zone if not specified to match mount configurations

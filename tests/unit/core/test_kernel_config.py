@@ -8,13 +8,12 @@ Validates:
 - Cross-contamination: tier fields do not leak across containers
 """
 
-from __future__ import annotations
-
 import dataclasses
 
 import pytest
 
 from nexus.core.config import (
+    AuditConfig,
     BrickServices,
     CacheConfig,
     DistributedConfig,
@@ -80,7 +79,6 @@ class TestPermissionConfig:
         assert cfg.inherit is True
         assert cfg.allow_admin_bypass is False
         assert cfg.enforce_zone_isolation is True
-        assert cfg.audit_strict_mode is True
         assert cfg.enable_tiger_cache is True
         assert cfg.enable_deferred is True
         assert cfg.deferred_flush_interval == 0.05
@@ -101,7 +99,36 @@ class TestPermissionConfig:
         """PermissionConfig(enforce=False) is the standard test setup."""
         cfg = PermissionConfig(enforce=False)
         assert cfg.enforce is False
-        assert cfg.audit_strict_mode is True  # other defaults unchanged
+        assert cfg.enable_tiger_cache is True  # other defaults unchanged
+
+
+# ---------------------------------------------------------------------------
+# AuditConfig (Issue #2152)
+# ---------------------------------------------------------------------------
+
+
+class TestAuditConfig:
+    """Tests for AuditConfig frozen dataclass (Issue #2152)."""
+
+    def test_defaults(self) -> None:
+        cfg = AuditConfig()
+        assert cfg.strict_mode is True
+
+    def test_frozen(self) -> None:
+        cfg = AuditConfig()
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            cfg.strict_mode = False
+
+    def test_replace(self) -> None:
+        cfg = AuditConfig(strict_mode=True)
+        new = dataclasses.replace(cfg, strict_mode=False)
+        assert new.strict_mode is False
+        assert cfg.strict_mode is True  # original unchanged
+
+    def test_non_strict_for_ha(self) -> None:
+        """AuditConfig(strict_mode=False) for high-availability scenarios."""
+        cfg = AuditConfig(strict_mode=False)
+        assert cfg.strict_mode is False
 
 
 # ---------------------------------------------------------------------------
@@ -201,22 +228,9 @@ class TestKernelServices:
     """Tests for KernelServices frozen dataclass (Tier 0 — kernel only)."""
 
     def test_defaults_all_none(self) -> None:
+        """Issue #2193: KernelServices has only router field."""
         ks = KernelServices()
         assert ks.router is None
-        assert ks.rebac_manager is None
-        assert ks.dir_visibility_cache is None
-        assert ks.audit_store is None
-        assert ks.entity_registry is None
-        assert ks.permission_enforcer is None
-        assert ks.hierarchy_manager is None
-        assert ks.deferred_permission_buffer is None
-        assert ks.workspace_registry is None
-        assert ks.mount_manager is None
-        assert ks.workspace_manager is None
-        assert ks.write_observer is None
-        assert ks.version_service is None
-        assert ks.overlay_resolver is None
-        assert ks.cache_observer is None
 
     def test_frozen(self) -> None:
         """KernelServices is frozen — attributes cannot be set after init."""
@@ -226,10 +240,8 @@ class TestKernelServices:
 
     def test_construct_with_values(self) -> None:
         sentinel = object()
-        ks = KernelServices(version_service=sentinel, write_observer=sentinel)
-        assert ks.version_service is sentinel
-        assert ks.write_observer is sentinel
-        assert ks.rebac_manager is None  # others still None
+        ks = KernelServices(router=sentinel)
+        assert ks.router is sentinel
 
     def test_replace(self) -> None:
         """Use dataclasses.replace() to create modified copies."""
@@ -244,40 +256,24 @@ class TestKernelServices:
         assert dataclasses.is_dataclass(ks)
 
     def test_all_kernel_fields_present(self) -> None:
-        """Verify KernelServices has exactly the Tier 0 kernel fields."""
+        """Verify KernelServices has exactly the Tier 0 kernel fields.
+
+        Issue #2193: Only router remains. All other fields moved to SystemServices.
+        """
         field_names = {f.name for f in dataclasses.fields(KernelServices)}
-        expected_fields = {
-            "router",
-            "rebac_manager",
-            "dir_visibility_cache",
-            "audit_store",
-            "entity_registry",
-            "permission_enforcer",
-            "hierarchy_manager",
-            "deferred_permission_buffer",
-            "workspace_registry",
-            "mount_manager",
-            "workspace_manager",
-            "write_observer",
-            "version_service",
-            "overlay_resolver",
-            "cache_observer",
-        }
+        expected_fields = {"router"}
         assert field_names == expected_fields, (
             f"Extra: {field_names - expected_fields}, Missing: {expected_fields - field_names}"
         )
 
-    def test_protocol_type_annotations(self) -> None:
-        """Verify Protocol-typed fields have correct annotation strings."""
+    def test_router_annotation(self) -> None:
+        """Issue #2193: KernelServices.router is typed Any."""
         annotations = KernelServices.__annotations__
-        # cache_observer should reference CacheInvalidationObserver | None
-        co_ann = str(annotations.get("cache_observer", ""))
-        assert "CacheInvalidationObserver" in co_ann
-        assert "None" in co_ann
+        assert "router" in annotations
 
 
 # ---------------------------------------------------------------------------
-# SystemServices (Issue #2034 — Tier 1)
+# SystemServices (Issue #2034, #2193 — Tier 1)
 # ---------------------------------------------------------------------------
 
 
@@ -286,11 +282,26 @@ class TestSystemServices:
 
     def test_defaults_all_none(self) -> None:
         ss = SystemServices()
+        # Former-kernel critical
+        assert ss.rebac_manager is None
+        assert ss.audit_store is None
+        assert ss.entity_registry is None
+        assert ss.permission_enforcer is None
+        assert ss.write_observer is None
+        # Former-kernel degradable
+        assert ss.dir_visibility_cache is None
+        assert ss.hierarchy_manager is None
+        assert ss.deferred_permission_buffer is None
+        assert ss.workspace_registry is None
+        assert ss.mount_manager is None
+        assert ss.workspace_manager is None
+        # Original system services
         assert ss.agent_registry is None
         assert ss.async_agent_registry is None
         assert ss.namespace_manager is None
         assert ss.async_namespace_manager is None
         assert ss.context_branch_service is None
+        assert ss.namespace_fork_service is None
         assert ss.scoped_hook_engine is None
         assert ss.brick_lifecycle_manager is None
         assert ss.delivery_worker is None
@@ -316,19 +327,45 @@ class TestSystemServices:
         assert ss.observability_subsystem is None
 
     def test_all_system_fields_present(self) -> None:
-        """Verify SystemServices has exactly the Tier 1 system fields."""
+        """Verify SystemServices has exactly the Tier 1 system fields.
+
+        Issue #2193: Absorbed 11 former-kernel fields.
+        """
         field_names = {f.name for f in dataclasses.fields(SystemServices)}
         expected_fields = {
+            # Former-kernel critical
+            "rebac_manager",
+            "audit_store",
+            "entity_registry",
+            "permission_enforcer",
+            "write_observer",
+            # Former-kernel degradable
+            "dir_visibility_cache",
+            "hierarchy_manager",
+            "deferred_permission_buffer",
+            "workspace_registry",
+            "mount_manager",
+            "workspace_manager",
+            "hook_pipeline",
+            # Original system services
             "agent_registry",
             "async_agent_registry",
+            "eviction_manager",
             "namespace_manager",
             "async_namespace_manager",
             "context_branch_service",
+            "namespace_fork_service",
             "scoped_hook_engine",
             "brick_lifecycle_manager",
+            "brick_reconciler",
             "delivery_worker",
             "observability_subsystem",
             "resiliency_manager",
+            "tiger_cache_manager",
+            "zone_lifecycle",
+            "event_log",
+            "scheduler_service",
+            "scheduler_state_emitter",
         }
         assert field_names == expected_fields, (
             f"Extra: {field_names - expected_fields}, Missing: {expected_fields - field_names}"
@@ -339,6 +376,10 @@ class TestSystemServices:
         ns_ann = str(annotations.get("namespace_manager", ""))
         assert "NamespaceManagerProtocol" in ns_ann
         assert "None" in ns_ann
+        # Issue #2193: write_observer moved from KernelServices
+        wo_ann = str(annotations.get("write_observer", ""))
+        assert "WriteObserverProtocol" in wo_ann
+        assert "None" in wo_ann
 
 
 # ---------------------------------------------------------------------------
@@ -382,7 +423,10 @@ class TestBrickServices:
         assert bs.workflow_engine is None
 
     def test_all_brick_fields_present(self) -> None:
-        """Verify BrickServices has exactly the Tier 2 brick fields."""
+        """Verify BrickServices has exactly the Tier 2 brick fields.
+
+        Issue #2034: version_service moved here from KernelServices.
+        """
         field_names = {f.name for f in dataclasses.fields(BrickServices)}
         expected_fields = {
             "event_bus",
@@ -396,9 +440,29 @@ class TestBrickServices:
             "api_key_creator",
             "snapshot_service",
             "task_queue_service",
+            "cache_brick",
             "ipc_storage_driver",
             "ipc_vfs_driver",
             "ipc_provisioner",
+            "agent_event_log",
+            "skill_service",
+            "skill_package_service",
+            "delegation_service",
+            "reputation_service",
+            "version_service",
+            "memory_router",
+            "memory_permission",
+            # Factory-created bricks (Issue #2134)
+            "parse_fn",
+            "content_cache",
+            "parser_registry",
+            "provider_registry",
+            "vfs_lock_manager",
+            # Governance Brick (Issue #2129)
+            "governance_anomaly_service",
+            "governance_collusion_service",
+            "governance_graph_service",
+            "governance_response_service",
         }
         assert field_names == expected_fields, (
             f"Extra: {field_names - expected_fields}, Missing: {expected_fields - field_names}"

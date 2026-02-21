@@ -4,8 +4,6 @@ This module provides caching layers for file attributes, content, and parsed
 content to optimize FUSE filesystem operations and reduce latency.
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 from typing import Any
@@ -184,6 +182,26 @@ class FUSECacheManager:
                         self._metrics["parsed_misses"] += 1
 
             return result
+
+    def get_parsed_size(self, path: str, view_type: str) -> int | None:
+        """Get the size of cached parsed content without returning the bytes.
+
+        Lightweight alternative to get_parsed() when only the size is needed
+        (e.g., for getattr st_size resolution). Avoids copying large byte arrays.
+
+        Args:
+            path: File path
+            view_type: View type (e.g., "txt", "md")
+
+        Returns:
+            Size in bytes of cached parsed content, or None if not cached
+        """
+        cache_key = f"{path}:{view_type}"
+        with self._parsed_lock:
+            result = self._parsed_cache.get(cache_key)
+            if result is not None:
+                return len(result)
+            return None
 
     def cache_parsed(self, path: str, view_type: str, content: bytes) -> None:
         """Cache parsed content.

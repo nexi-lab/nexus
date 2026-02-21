@@ -4,8 +4,6 @@ Tests: Init, IsTracked, Begin, TrackWrite, TrackDelete, Commit, Rollback,
        Get, List, Cleanup, Performance, FailureInjection.
 """
 
-from __future__ import annotations
-
 import json
 import time
 from datetime import UTC, datetime, timedelta
@@ -13,7 +11,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.services.snapshot.service import (
+from nexus.bricks.snapshot.service import (
     TransactionalSnapshotService,
     TransactionConflictError,
     TransactionNotActiveError,
@@ -26,12 +24,13 @@ class TestInit:
 
     def test_init_stores_dependencies(
         self,
-        mock_session_factory: MagicMock,
+        mock_record_store: MagicMock,
         mock_cas_store: MagicMock,
         mock_metadata_store: MagicMock,
+        mock_session_factory: MagicMock,
     ) -> None:
         svc = TransactionalSnapshotService(
-            session_factory=mock_session_factory,
+            record_store=mock_record_store,
             cas_store=mock_cas_store,
             metadata_store=mock_metadata_store,
         )
@@ -576,7 +575,7 @@ class TestFailureInjection:
         factory.return_value = session
 
         svc = TransactionalSnapshotService(
-            session_factory=factory,
+            record_store=MagicMock(session_factory=factory),
             cas_store=mock_cas_store,
             metadata_store=mock_metadata_store,
         )

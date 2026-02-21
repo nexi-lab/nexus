@@ -21,7 +21,7 @@ Add to server startup code:
 ```python
 # src/nexus/core/nexus_fs.py or wherever NexusFilesystem initializes Memory
 
-from nexus.core.memory_with_paging import MemoryWithPaging
+from nexus.services.memory.memory_with_paging import MemoryWithPaging
 
 class NexusFilesystem:
     def __init__(self, ..., enable_memory_paging: bool = False):
@@ -68,9 +68,9 @@ Simply replace Memory with MemoryWithPaging everywhere:
 
 ```python
 # Replace all occurrences
-from nexus.core.memory_api import Memory
+from nexus.services.memory.memory_api import Memory
 # With:
-from nexus.core.memory_with_paging import MemoryWithPaging as Memory
+from nexus.services.memory.memory_with_paging import MemoryWithPaging as Memory
 ```
 
 **Risk:** Changes default behavior (but backward compatible API)
@@ -125,7 +125,7 @@ async def get_memory_stats(
 For now, paging works at Python API level:
 
 ```python
-from nexus.core.memory_with_paging import MemoryWithPaging
+from nexus.services.memory.memory_with_paging import MemoryWithPaging
 from nexus.backends.local import LocalBackend
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker

@@ -1,6 +1,7 @@
 """RecordStore: The "Truth" pillar of the Nexus Quartet.
 
 Provides relational data storage for entities, relationships, logs, and vectors.
+Provides relational data storage for entities, relationships, logs, and vectors.
 This is one of the Four Pillars (Metastore, RecordStore, ObjectStore, CacheStore).
 
 OS Analogy: Windows Registry / Systemd state DB (but more structured).
@@ -30,17 +31,18 @@ Usage:
     nx = NexusFS(metastore=metastore, record_store=record_store)
 """
 
-from __future__ import annotations
-
 import logging
 import os
 import threading
 from abc import ABC, abstractmethod
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from sqlalchemy.engine.interfaces import DBAPIConnection
+    from sqlalchemy.orm import Session, sessionmaker
     from sqlalchemy.pool import ConnectionPoolEntry
 
 logger = logging.getLogger(__name__)
@@ -75,7 +77,7 @@ class RecordStoreABC(ABC):
 
     @property
     @abstractmethod
-    def session_factory(self) -> Any:
+    def session_factory(self) -> "sessionmaker[Session]":
         """Session factory (sessionmaker) for creating database sessions (primary/write)."""
         ...
 
@@ -91,6 +93,16 @@ class RecordStoreABC(ABC):
             f"{type(self).__name__} does not support async_session_factory. "
             "Override this property to enable async database access."
         )
+
+    @property
+    def async_engine(self) -> Any:
+        """Async SQLAlchemy engine, or None if async is not supported.
+
+        Concrete drivers that lazily create an async engine (e.g.
+        SQLAlchemyRecordStore) should override this property.
+        Used by cache brick and other consumers that need non-blocking I/O.
+        """
+        return None
 
     # -- Read replica properties (Issue #725) --
 
@@ -113,6 +125,28 @@ class RecordStoreABC(ABC):
     def has_read_replica(self) -> bool:
         """Whether a separate read replica is configured."""
         return False
+
+    @contextmanager
+    def session(self) -> "Generator[Session, None, None]":
+        """Transactional session scope with Nexus error translation.
+
+        Delegates to session_scope() for commit/rollback/close + error mapping.
+        """
+        from nexus.storage.session_scope import session_scope
+
+        with session_scope(self.session_factory) as sess:
+            yield sess
+
+    @contextmanager
+    def read_session(self) -> "Generator[Session, None, None]":
+        """Read-only session using read replica (falls back to primary).
+
+        Uses read_session_factory when a read replica is configured.
+        """
+        from nexus.storage.session_scope import session_scope
+
+        with session_scope(self.read_session_factory) as sess:
+            yield sess
 
     @abstractmethod
     def close(self) -> None:
@@ -145,6 +179,8 @@ class SQLAlchemyRecordStore(RecordStoreABC):
         read_replica_url: str | None = None,
         read_replica_creator: Any | None = None,
         async_read_replica_creator: Any | None = None,
+        pool_size: int | None = None,
+        max_overflow: int | None = None,
     ):
         """Initialize SQLAlchemy record store.
 
@@ -166,6 +202,10 @@ class SQLAlchemyRecordStore(RecordStoreABC):
                                 creation (e.g. Cloud SQL read instance).
             async_read_replica_creator: Optional callable for custom async read replica
                                       connection creation.
+            pool_size: Override default pool size from ProfileTuning.storage.db_pool_size.
+                      When None, uses _build_pool_kwargs defaults (20 primary, 10 with replica).
+            max_overflow: Override default max overflow from ProfileTuning.storage.db_max_overflow.
+                         When None, uses _build_pool_kwargs defaults (30 primary, 10 with replica).
         """
         from sqlalchemy import create_engine, event
         from sqlalchemy.orm import sessionmaker
@@ -189,12 +229,18 @@ class SQLAlchemyRecordStore(RecordStoreABC):
         if not self._is_postgresql:
             engine_kwargs["connect_args"] = {"check_same_thread": False}
         else:
+            _default_pool = (
+                pool_size if pool_size is not None else (10 if self._has_read_replica else 20)
+            )
+            _default_overflow = (
+                max_overflow if max_overflow is not None else (10 if self._has_read_replica else 30)
+            )
             engine_kwargs.update(
                 self._build_pool_kwargs(
                     prefix="NEXUS_DB",
                     is_async=False,
-                    default_pool_size=10 if self._has_read_replica else 20,
-                    default_max_overflow=10 if self._has_read_replica else 30,
+                    default_pool_size=_default_pool,
+                    default_max_overflow=_default_overflow,
                 )
             )
 
@@ -213,7 +259,7 @@ class SQLAlchemyRecordStore(RecordStoreABC):
 
             @event.listens_for(self._engine, "connect")
             def set_sqlite_pragma(
-                dbapi_connection: DBAPIConnection, _connection_record: ConnectionPoolEntry
+                dbapi_connection: "DBAPIConnection", _connection_record: "ConnectionPoolEntry"
             ) -> None:
                 cursor = dbapi_connection.cursor()
                 cursor.execute("PRAGMA journal_mode=WAL")
@@ -333,7 +379,9 @@ class SQLAlchemyRecordStore(RecordStoreABC):
             return db_url
 
         # Check environment variables
-        env_url = os.getenv("NEXUS_DATABASE_URL") or os.getenv("POSTGRES_URL")
+        from nexus.lib.env import get_database_url
+
+        env_url = get_database_url()
         if env_url:
             return env_url
 
@@ -413,6 +461,15 @@ class SQLAlchemyRecordStore(RecordStoreABC):
                     )
 
         return self._async_session_factory_instance
+
+    @property
+    def async_engine(self) -> Any:
+        """Async SQLAlchemy engine (lazily created on first async_session_factory access).
+
+        Returns None if async_session_factory has not been accessed yet.
+        Accessing async_session_factory triggers lazy creation of this engine.
+        """
+        return self._async_engine
 
     # -- Read replica properties (Issue #725) --
 

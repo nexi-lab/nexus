@@ -20,8 +20,6 @@ Permission enforcement:
 The server runs in open-access mode with X-Nexus-Subject identity.
 """
 
-from __future__ import annotations
-
 import base64
 
 HEADERS = {
@@ -166,12 +164,12 @@ class TestOAuthServiceE2E:
     def test_list_providers(self, test_app):
         """List OAuth providers (empty on fresh server)."""
         result = rpc_result(test_app, "oauth_list_providers")
-        assert isinstance(result, (list, dict))
+        assert isinstance(result, list | dict)
 
     def test_list_credentials(self, test_app):
         """List OAuth credentials (empty on fresh server)."""
         result = rpc_result(test_app, "oauth_list_credentials")
-        assert isinstance(result, (list, dict))
+        assert isinstance(result, list | dict)
 
 
 # ─── MCPService ───────────────────────────────────────────────────────
@@ -183,11 +181,10 @@ class TestMCPServiceE2E:
     def test_list_mcp_mounts(self, test_app):
         """List MCP mounts (empty on fresh server)."""
         result = rpc_result(test_app, "mcp_list_mounts")
-        assert isinstance(result, (list, dict))
+        assert isinstance(result, list | dict)
 
 
 # ─── ShareLinkService ────────────────────────────────────────────────
-
 
 ALICE_HEADERS = {
     "X-Nexus-Subject": "user:alice",
@@ -248,7 +245,7 @@ class TestShareLinkServiceE2E:
         """List share links for current user."""
         raw = rpc_result(test_app, "list_share_links")
         result = self._extract_data(raw)
-        assert isinstance(result, (list, dict))
+        assert isinstance(result, list | dict)
         if isinstance(result, dict):
             assert "links" in result
 
@@ -320,7 +317,7 @@ class TestShareLinkServiceE2E:
 
 
 class TestEventsServiceE2E:
-    """Lock/unlock operations through FastAPI REST API (/api/locks).
+    """Lock/unlock operations through FastAPI REST API (/api/v2/locks).
 
     Lock operations use REST endpoints, not JSON-RPC auto-dispatch.
     The lock manager uses Raft consensus via RaftMetadataStore (no Redis needed).
@@ -333,7 +330,7 @@ class TestEventsServiceE2E:
 
         # Acquire lock via REST
         resp = test_app.post(
-            "/api/locks",
+            "/api/v2/locks",
             json={
                 "path": path,
                 "timeout": 5.0,
@@ -348,7 +345,7 @@ class TestEventsServiceE2E:
 
         # Unlock via REST (lock_id is a query parameter)
         resp2 = test_app.delete(
-            f"/api/locks/{path.lstrip('/')}",
+            f"/api/v2/locks/{path.lstrip('/')}",
             params={"lock_id": lock_id},
             headers=HEADERS,
         )
@@ -361,7 +358,7 @@ class TestEventsServiceE2E:
 
         # Acquire lock
         resp = test_app.post(
-            "/api/locks",
+            "/api/v2/locks",
             json={
                 "path": path,
                 "timeout": 5.0,
@@ -374,7 +371,7 @@ class TestEventsServiceE2E:
 
         # Extend lock TTL via PATCH
         resp2 = test_app.patch(
-            f"/api/locks/{path.lstrip('/')}",
+            f"/api/v2/locks/{path.lstrip('/')}",
             json={
                 "lock_id": lock_id,
                 "ttl": 60.0,
@@ -385,7 +382,7 @@ class TestEventsServiceE2E:
 
         # Cleanup: release lock
         test_app.delete(
-            f"/api/locks/{path.lstrip('/')}",
+            f"/api/v2/locks/{path.lstrip('/')}",
             params={"lock_id": lock_id},
             headers=HEADERS,
         )

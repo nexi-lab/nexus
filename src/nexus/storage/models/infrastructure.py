@@ -3,8 +3,6 @@
 Issue #1286: Extracted from monolithic __init__.py.
 """
 
-from __future__ import annotations
-
 import json
 from datetime import UTC, datetime
 from typing import Any
@@ -12,7 +10,7 @@ from typing import Any
 from sqlalchemy import DateTime, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from nexus.core.exceptions import ValidationError
+from nexus.contracts.exceptions import ValidationError
 from nexus.storage.models._base import Base, ResourceConfigMixin, TimestampMixin, uuid_pk
 
 

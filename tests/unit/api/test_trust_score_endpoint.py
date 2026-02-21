@@ -7,13 +7,12 @@ Tests the GET /api/v2/agents/{agent_id}/trust-score endpoint:
 4. Returns 400 for invalid dimension
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from datetime import datetime
 
 import pytest
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.server.api.v2.routers.reputation import (
     _VALID_DIMENSIONS,
     TrustScoreResponse,
@@ -44,7 +43,7 @@ class FakeReputationScore:
     disputed_interactions: int = 0
     global_trust_score: float | None = None
     updated_at: datetime = datetime(2025, 1, 1)
-    zone_id: str = "default"
+    zone_id: str = ROOT_ZONE_ID
 
 
 class FakeReputationService:

@@ -3,12 +3,6 @@ name: Code Quality Standards
 on:
   pull_request:
     branches: [main, develop]
-    paths:
-      - 'src/**/*.py'
-      - 'tests/**/*.py'
-      - '.pre-commit-hooks/**'
-      - '.pre-commit-config.yaml'
-      - 'pyproject.toml'
   push:
     branches: [main, develop, refactor/**]
     paths:
@@ -26,8 +20,41 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Detect whether Python files were changed so required checks can skip
+  # gracefully on non-Python PRs (e.g. Rust-only changes).
+  detect-changes:
+    name: Detect Python Changes
+    runs-on: ubuntu-latest
+    outputs:
+      python_changed: ${{ steps.filter.outputs.python_changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for Python file changes
+        id: filter
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE=${{ github.event.pull_request.base.sha }}
+            HEAD=${{ github.event.pull_request.head.sha }}
+            CHANGED=$(git diff --name-only "$BASE"..."$HEAD" | grep -E '\.(py|yaml)$' | grep -E '^(src/|tests/|\.pre-commit)' || true)
+          else
+            CHANGED=$(git diff --name-only HEAD^...HEAD | grep -E '\.py$' | grep -E '^(src/|tests/)' || true)
+          fi
+          if [ -n "$CHANGED" ]; then
+            echo "python_changed=true" >> $GITHUB_OUTPUT
+            echo "Python files changed:"
+            echo "$CHANGED"
+          else
+            echo "python_changed=false" >> $GITHUB_OUTPUT
+            echo "No Python files changed — required checks will pass cleanly"
+          fi
+
   file-size-check:
     name: Check File Size Limits
+    needs: detect-changes
+    if: needs.detect-changes.outputs.python_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -48,8 +75,19 @@ jobs:
         run: |
           echo "::error::Files exceed 2000 line limit. See job logs for details."
 
+  # Skip-pass job for branch protection when no Python files changed
+  file-size-check-skip:
+    name: Check File Size Limits
+    needs: detect-changes
+    if: needs.detect-changes.outputs.python_changed != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No Python files changed — skipping file size check"
+
   type-ignore-check:
     name: Block New Type Ignores
+    needs: detect-changes
+    if: needs.detect-changes.outputs.python_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -81,6 +119,15 @@ jobs:
         if: failure()
         run: |
           echo "::error::New type: ignore comments detected. Fix type errors properly instead."
+
+  # Skip-pass job for branch protection when no Python files changed
+  type-ignore-check-skip:
+    name: Block New Type Ignores
+    needs: detect-changes
+    if: needs.detect-changes.outputs.python_changed != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No Python files changed — skipping type ignore check"
 
   code-metrics:
     name: Code Quality Metrics
@@ -122,7 +169,7 @@ jobs:
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
   brick-imports-check:
-    name: Brick Zero-Core-Imports Check
+    name: Brick Import Boundary Check (regex)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -139,7 +186,42 @@ jobs:
       - name: Report violations
         if: failure()
         run: |
-          echo "::error::Bricks must not import from nexus.core or nexus.services internals. See NEXUS-LEGO-ARCHITECTURE.md §1.2."
+          echo "::error::Brick import boundary violations detected. See NEXUS-LEGO-ARCHITECTURE.md §1.2."
+
+  import-linter:
+    name: Architecture Boundary Check (import-linter)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install import-linter
+          pip install -e .
+
+      - name: Cache import graph
+        uses: actions/cache@v4
+        with:
+          path: .import-linter-cache
+          key: import-linter-${{ runner.os }}-${{ hashFiles('src/**/*.py') }}
+          restore-keys: |
+            import-linter-${{ runner.os }}-
+
+      - name: Run import-linter
+        run: |
+          lint-imports --cache-dir .import-linter-cache
+        env:
+          PYTHONPATH: src
+
+      - name: Report violations
+        if: failure()
+        run: |
+          echo "::error::Architecture boundary violations detected. See NEXUS-LEGO-ARCHITECTURE.md."
 
   type-ignore-baseline:
     name: Track Type Ignore Baseline

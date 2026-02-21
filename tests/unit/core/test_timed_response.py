@@ -8,14 +8,12 @@ Validates that the decorator correctly:
 - Handles None data in responses
 """
 
-from __future__ import annotations
-
 import time
 
 import pytest
 
-from nexus.core.exceptions import BackendError, NexusFileNotFoundError
-from nexus.core.response import HandlerResponse, ResponseType, timed_response
+from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
+from nexus.lib.response import HandlerResponse, ResponseType, timed_response
 
 # === Fixtures ===
 

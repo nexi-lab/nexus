@@ -10,15 +10,13 @@ Measures the cost of NexusFS → service delegation patterns:
 Run with: pytest tests/benchmarks/test_service_delegation.py -v --benchmark-only
 """
 
-from __future__ import annotations
-
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from nexus.contracts.types import OperationContext
 from nexus.core.nexus_fs import NexusFS
-from nexus.core.permissions import OperationContext
 from nexus.services.gateway import NexusFSGateway
 
 # =============================================================================
@@ -120,10 +118,10 @@ class TestAsyncDelegationOverhead:
     """
 
     def test_version_get_delegation(self, benchmark, mock_nexus_fs, context):
-        """Benchmark aget_version delegation overhead."""
+        """Benchmark version_service.get_version (direct brick-source call)."""
 
         def run():
-            asyncio.run(mock_nexus_fs.aget_version("/file.txt", 1, context))
+            asyncio.run(mock_nexus_fs.version_service.get_version("/file.txt", 1, context))
 
         benchmark(run)
 
@@ -158,18 +156,18 @@ class TestAsyncDelegationOverhead:
         benchmark(run)
 
     def test_mcp_list_mounts_delegation(self, benchmark, mock_nexus_fs, context):
-        """Benchmark mcp_list_mounts with _context→context renaming."""
+        """Benchmark mcp_list_mounts via mcp_service direct call."""
 
         def run():
-            asyncio.run(mock_nexus_fs.mcp_list_mounts(_context=context))
+            asyncio.run(mock_nexus_fs.mcp_service.mcp_list_mounts(_context=context))
 
         benchmark(run)
 
     def test_oauth_list_providers_delegation(self, benchmark, mock_nexus_fs, context):
-        """Benchmark oauth_list_providers delegation."""
+        """Benchmark oauth_list_providers via oauth_service direct call."""
 
         def run():
-            asyncio.run(mock_nexus_fs.oauth_list_providers(_context=context))
+            asyncio.run(mock_nexus_fs.oauth_service.oauth_list_providers(_context=context))
 
         benchmark(run)
 
@@ -186,22 +184,31 @@ class TestSyncDelegationOverhead:
     Measures pure Python call overhead for sync delegation.
     """
 
-    def test_skills_share_with_result_wrapping(self, benchmark, mock_nexus_fs, context):
-        """Benchmark skills_share: delegate + dict construction."""
+    def test_skills_share_via_brick_service(self, benchmark, mock_nexus_fs, context):
+        """Benchmark skills_share: brick service RPC method."""
+        mock_nexus_fs.skill_service.rpc_share = MagicMock(
+            return_value={"success": True, "tuple_id": "t-1"}
+        )
         benchmark(
-            mock_nexus_fs.skills_share,
+            mock_nexus_fs.skill_service.rpc_share,
             "/skills/test.py",
             "user:bob",
             context,
         )
 
-    def test_skills_discover_with_list_wrapping(self, benchmark, mock_nexus_fs, context):
-        """Benchmark skills_discover: delegate + list comprehension."""
-        benchmark(mock_nexus_fs.skills_discover, "all", context)
+    def test_skills_discover_via_brick_service(self, benchmark, mock_nexus_fs, context):
+        """Benchmark skills_discover: brick service RPC method."""
+        mock_nexus_fs.skill_service.rpc_discover = MagicMock(
+            return_value={"skills": [], "count": 0}
+        )
+        benchmark(mock_nexus_fs.skill_service.rpc_discover, "all", context)
 
-    def test_skills_get_prompt_context(self, benchmark, mock_nexus_fs, context):
-        """Benchmark skills_get_prompt_context: delegate + to_dict."""
-        benchmark(mock_nexus_fs.skills_get_prompt_context, 50, context)
+    def test_skills_get_prompt_context_via_brick_service(self, benchmark, mock_nexus_fs, context):
+        """Benchmark skills_get_prompt_context: brick service RPC method."""
+        mock_nexus_fs.skill_service.rpc_get_prompt_context = MagicMock(
+            return_value={"skills": [], "count": 0}
+        )
+        benchmark(mock_nexus_fs.skill_service.rpc_get_prompt_context, 50, context)
 
     def test_search_list_delegation(self, benchmark, mock_nexus_fs, context):
         """Benchmark list() delegation to SearchService."""
@@ -233,8 +240,8 @@ class TestSyncDelegationOverhead:
         )
 
     def test_create_llm_reader_delegation(self, benchmark, mock_nexus_fs):
-        """Benchmark create_llm_reader sync delegation."""
-        benchmark(mock_nexus_fs.create_llm_reader)
+        """Benchmark create_llm_reader sync delegation via llm_service."""
+        benchmark(mock_nexus_fs.llm_service.create_llm_reader)
 
 
 # =============================================================================
@@ -300,14 +307,14 @@ class TestServiceInstantiation:
 
     def test_share_link_service_construction(self, benchmark):
         """Benchmark ShareLinkService construction."""
-        from nexus.services.share_link_service import ShareLinkService
+        from nexus.services.share_link.share_link_service import ShareLinkService
 
         mock_gw = MagicMock()
         benchmark(ShareLinkService, gateway=mock_gw, enforce_permissions=True)
 
     def test_events_service_construction(self, benchmark):
         """Benchmark EventsService construction."""
-        from nexus.services.events_service import EventsService
+        from nexus.system_services.lifecycle.events_service import EventsService
 
         mock_backend = MagicMock()
         mock_backend.is_passthrough = False
@@ -315,7 +322,7 @@ class TestServiceInstantiation:
 
     def test_version_service_construction(self, benchmark):
         """Benchmark VersionService construction."""
-        from nexus.services.version_service import VersionService
+        from nexus.services.versioning.version_service import VersionService
 
         mock_metadata = MagicMock()
         mock_cas = MagicMock()
@@ -337,13 +344,13 @@ class TestContextExtractionOverhead:
 
     def test_extract_context_info(self, benchmark, context):
         """Benchmark ShareLinkService._extract_context_info."""
-        from nexus.services.share_link_service import ShareLinkService
+        from nexus.services.share_link.share_link_service import ShareLinkService
 
         benchmark(ShareLinkService._extract_context_info, context)
 
     def test_extract_context_info_none(self, benchmark):
         """Benchmark _extract_context_info with None context."""
-        from nexus.services.share_link_service import ShareLinkService
+        from nexus.services.share_link.share_link_service import ShareLinkService
 
         benchmark(ShareLinkService._extract_context_info, None)
 

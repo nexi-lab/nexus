@@ -13,8 +13,6 @@ Tests:
 Parametrized across LocalBackend and MockBackend.
 """
 
-from __future__ import annotations
-
 import hashlib
 import time
 from unittest.mock import MagicMock
@@ -23,9 +21,9 @@ import pytest
 
 from nexus.backends.backend import Backend
 from nexus.backends.local import LocalBackend
-from nexus.core.exceptions import BackendError, NexusFileNotFoundError
+from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.object_store import BackendObjectStore, ObjectStoreABC, _validate_hash
-from nexus.core.response import HandlerResponse
+from nexus.lib.response import HandlerResponse
 
 
 class MockBackend(Backend):

@@ -3,11 +3,9 @@
 Issue #1287: Extract NexusFS Domain Services from God Object (Phase A).
 """
 
-from __future__ import annotations
-
 import pytest
 
-from nexus.core.types import ContextIdentity, extract_context_identity
+from nexus.contracts.types import ContextIdentity, extract_context_identity
 
 
 class TestContextIdentity:
@@ -39,7 +37,7 @@ class TestExtractContextIdentity:
         assert identity.is_admin is False
 
     def test_extracts_from_operation_context(self) -> None:
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         ctx = OperationContext(
             user_id="alice",
@@ -53,7 +51,7 @@ class TestExtractContextIdentity:
         assert identity.is_admin is True
 
     def test_none_zone_id_defaults_to_root(self) -> None:
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         ctx = OperationContext(user_id="bob", groups=[], zone_id=None)
         identity = extract_context_identity(ctx)
@@ -61,7 +59,7 @@ class TestExtractContextIdentity:
 
     def test_subject_id_used_when_available(self) -> None:
         """subject_id is accessible on OperationContext."""
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         ctx = OperationContext(
             user_id="alice",

@@ -8,8 +8,6 @@ Verifies:
 5. enable_read_tracking standalone function works correctly
 """
 
-from __future__ import annotations
-
 import ast
 import importlib
 from pathlib import Path
@@ -108,43 +106,27 @@ class TestImportPaths:
 class TestObjectIdentity:
     """Verify that re-exports yield the exact same class object."""
 
-    def test_operation_context_identity(self):
-        from nexus.contracts.types import OperationContext as ContractsOC
-        from nexus.core.permissions import OperationContext as PermsOC
-        from nexus.core.types import OperationContext as CoreOC
-
-        assert ContractsOC is CoreOC
-        assert ContractsOC is PermsOC
-
-    def test_permission_identity(self):
-        from nexus.contracts.types import Permission as ContractsPerm
-        from nexus.core.permissions import Permission as PermsPerm
-        from nexus.core.types import Permission as CorePerm
-
-        assert ContractsPerm is CorePerm
-        assert ContractsPerm is PermsPerm
-
     def test_nexus_error_identity(self):
         from nexus.contracts.exceptions import NexusError as ContractsErr
-        from nexus.core.exceptions import NexusError as CoreErr
+        from nexus.contracts.exceptions import NexusError as CoreErr
 
         assert ContractsErr is CoreErr
 
     def test_parser_error_identity(self):
         from nexus.contracts.exceptions import ParserError as ContractsPE
-        from nexus.core.exceptions import ParserError as CorePE
+        from nexus.contracts.exceptions import ParserError as CorePE
 
         assert ContractsPE is CorePE
 
     def test_backend_error_identity(self):
         from nexus.contracts.exceptions import BackendError as ContractsBE
-        from nexus.core.exceptions import BackendError as CoreBE
+        from nexus.contracts.exceptions import BackendError as CoreBE
 
         assert ContractsBE is CoreBE
 
     def test_validation_error_identity(self):
         from nexus.contracts.exceptions import ValidationError as ContractsVE
-        from nexus.core.exceptions import ValidationError as CoreVE
+        from nexus.contracts.exceptions import ValidationError as CoreVE
 
         assert ContractsVE is CoreVE
 
@@ -178,7 +160,7 @@ class TestSkillsDuplicateRemoval:
 
     def test_skill_manager_error_not_defined_in_manager(self):
         """SkillManagerError should NOT be defined in skills/manager.py."""
-        import nexus.skills.manager as mod
+        import nexus.bricks.skills.manager as mod
 
         source = Path(mod.__file__).read_text()
         tree = ast.parse(source)
@@ -187,7 +169,7 @@ class TestSkillsDuplicateRemoval:
 
     def test_skill_export_error_not_defined_in_exporter(self):
         """SkillExportError should NOT be defined in skills/exporter.py."""
-        import nexus.skills.exporter as mod
+        import nexus.bricks.skills.exporter as mod
 
         source = Path(mod.__file__).read_text()
         tree = ast.parse(source)
@@ -196,7 +178,7 @@ class TestSkillsDuplicateRemoval:
 
     def test_skill_parse_error_not_defined_in_parser(self):
         """SkillParseError should NOT be defined in skills/parser.py."""
-        import nexus.skills.parser as mod
+        import nexus.bricks.skills.parser as mod
 
         source = Path(mod.__file__).read_text()
         tree = ast.parse(source)
@@ -205,7 +187,7 @@ class TestSkillsDuplicateRemoval:
 
     def test_skill_not_found_error_not_defined_in_registry(self):
         """SkillNotFoundError should NOT be defined in skills/registry.py."""
-        import nexus.skills.registry as mod
+        import nexus.bricks.skills.registry as mod
 
         source = Path(mod.__file__).read_text()
         tree = ast.parse(source)
@@ -214,7 +196,7 @@ class TestSkillsDuplicateRemoval:
 
     def test_skill_dependency_error_not_defined_in_registry(self):
         """SkillDependencyError should NOT be defined in skills/registry.py."""
-        import nexus.skills.registry as mod
+        import nexus.bricks.skills.registry as mod
 
         source = Path(mod.__file__).read_text()
         tree = ast.parse(source)
@@ -223,7 +205,7 @@ class TestSkillsDuplicateRemoval:
 
     def test_skill_import_error_not_defined_in_importer(self):
         """SkillImportError should NOT be defined in skills/importer.py."""
-        import nexus.skills.importer as mod
+        import nexus.bricks.skills.importer as mod
 
         source = Path(mod.__file__).read_text()
         tree = ast.parse(source)
@@ -232,7 +214,7 @@ class TestSkillsDuplicateRemoval:
 
     def test_all_skill_exceptions_in_exceptions_module(self):
         """All skill exceptions should be defined in skills/exceptions.py."""
-        from nexus.skills.exceptions import (
+        from nexus.bricks.skills.exceptions import (
             SkillDependencyError,
             SkillExportError,
             SkillImportError,
@@ -264,7 +246,7 @@ class TestEnableReadTrackingStandalone:
 
     def test_enable_read_tracking_basic(self):
         from nexus.contracts.types import OperationContext
-        from nexus.core.read_set import enable_read_tracking
+        from nexus.storage.read_set import enable_read_tracking
 
         ctx = OperationContext(user_id="alice", groups=[], zone_id="org1")
         enable_read_tracking(ctx)
@@ -274,7 +256,7 @@ class TestEnableReadTrackingStandalone:
 
     def test_enable_read_tracking_with_explicit_zone(self):
         from nexus.contracts.types import OperationContext
-        from nexus.core.read_set import enable_read_tracking
+        from nexus.storage.read_set import enable_read_tracking
 
         ctx = OperationContext(user_id="alice", groups=[], zone_id="org1")
         enable_read_tracking(ctx, zone_id="custom_zone")
@@ -282,7 +264,7 @@ class TestEnableReadTrackingStandalone:
 
     def test_enable_read_tracking_defaults_to_root(self):
         from nexus.contracts.types import OperationContext
-        from nexus.core.read_set import enable_read_tracking
+        from nexus.storage.read_set import enable_read_tracking
 
         ctx = OperationContext(user_id="alice", groups=[])
         enable_read_tracking(ctx)

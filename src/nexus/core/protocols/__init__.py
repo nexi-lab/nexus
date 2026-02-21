@@ -1,45 +1,64 @@
 """Kernel protocol interfaces for the Nexus architecture.
 
-VFSRouterProtocol lives here — it is a kernel concern (mount table + path routing).
-Service-layer protocols (EventLogProtocol, PermissionProtocol, etc.) live in
-nexus.services.protocols/ per the Four Pillars architecture.
+VFSRouterProtocol and VFSCoreProtocol live here — they are kernel concerns
+(mount table + path routing, core VFS operations).
+
+ConnectorProtocol family also lives here — these are kernel boundary contracts
+for storage backend abstraction.
+
+Non-kernel protocols have been moved to their correct tier locations:
+- Service protocols (EntityRegistry, PermissionEnforcer, ReBACManager,
+  WorkspaceManager) → nexus.services.protocols/
+- Cross-tier contracts (Describable, WirableFS) → nexus.contracts/
+- ContentServiceProtocol → deleted (zero consumers)
+- ReBACManagerProtocol → merged into ReBACBrickProtocol (DRY)
 
 References:
     - docs/architecture/data-storage-matrix.md
+    - NEXUS-LEGO-ARCHITECTURE.md §2.2
     - Issue #1383: Define 6 kernel protocol interfaces
+    - Issue #2359: Move non-kernel protocols out of core/protocols/
 """
 
-from nexus.core.protocols.caching import CachingConnectorContract
+from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
+from nexus.core.protocols.caching import CacheConfigContract, CachingConnectorContract
+from nexus.core.protocols.capabilities import ConnectorCapability
 from nexus.core.protocols.connector import (
     BatchContentProtocol,
+    CapabilityAwareProtocol,
     ConnectorProtocol,
     ContentStoreProtocol,
     DirectoryListingProtocol,
     DirectoryOpsProtocol,
     OAuthCapableProtocol,
     PassthroughProtocol,
+    PathDeleteProtocol,
+    SearchableConnector,
+    SignedUrlProtocol,
     StreamingProtocol,
 )
-from nexus.core.protocols.content_service import ContentServiceProtocol
-from nexus.core.protocols.describable import Describable
-from nexus.core.protocols.revision_service import RevisionServiceProtocol
 from nexus.core.protocols.vfs_core import VFSCoreProtocol
 from nexus.core.protocols.vfs_router import MountInfo, ResolvedPath, VFSRouterProtocol
 
 __all__ = [
     "BatchContentProtocol",
+    "CacheConfigContract",
+    "CacheStoreABC",
     "CachingConnectorContract",
+    "CapabilityAwareProtocol",
+    "ConnectorCapability",
     "ConnectorProtocol",
-    "ContentServiceProtocol",
     "ContentStoreProtocol",
-    "Describable",
     "DirectoryListingProtocol",
     "DirectoryOpsProtocol",
     "MountInfo",
+    "NullCacheStore",
     "OAuthCapableProtocol",
     "PassthroughProtocol",
+    "PathDeleteProtocol",
     "ResolvedPath",
-    "RevisionServiceProtocol",
+    "SearchableConnector",
+    "SignedUrlProtocol",
     "StreamingProtocol",
     "VFSCoreProtocol",
     "VFSRouterProtocol",

@@ -5,8 +5,6 @@ When the remote is unreachable, operations are queued to a WAL-backed
 offline queue and replayed automatically when connectivity resumes.
 """
 
-from __future__ import annotations
-
 import asyncio
 import base64
 import contextlib
@@ -27,6 +25,7 @@ from nexus.proxy.replay_engine import ReplayEngine
 from nexus.proxy.transport import HttpTransport
 
 if TYPE_CHECKING:
+    from nexus.proxy.edge_sync import EdgeSyncManager
     from nexus.proxy.queue_protocol import OfflineQueueProtocol
 
 logger = logging.getLogger(__name__)
@@ -58,7 +57,7 @@ class ProxyBrick:
         config: ProxyBrickConfig,
         *,
         transport: HttpTransport | None = None,
-        queue: OfflineQueueProtocol | None = None,
+        queue: "OfflineQueueProtocol | None" = None,
     ) -> None:
         self._config = config
         self._transport = transport or HttpTransport(config)
@@ -72,13 +71,14 @@ class ProxyBrick:
         )
         self._replay_engine: ReplayEngine | None = None
         self._replay_task: asyncio.Task[None] | None = None
+        self._edge_sync: EdgeSyncManager | None = None
         self._stopped = False
 
     # ------------------------------------------------------------------
     # Async context manager
     # ------------------------------------------------------------------
 
-    async def __aenter__(self) -> ProxyBrick:
+    async def __aenter__(self) -> "ProxyBrick":
         await self.start()
         return self
 
@@ -106,11 +106,25 @@ class ProxyBrick:
             poll_interval=self._config.replay_poll_interval,
         )
         self._replay_task = asyncio.create_task(self._replay_engine.run())
+
+        # Edge sync manager (Issue #1707)
+        from nexus.proxy.edge_sync import EdgeSyncManager as _ESM
+
+        self._edge_sync = _ESM(
+            queue=self._queue,
+            transport=self._transport,
+            circuit=self._circuit,
+            health_check_url=self._config.reconnect_health_check_url,
+            replay_wake=self._wake_replay,
+        )
+        await self._edge_sync.start()
         logger.info("ProxyBrick started for %s", self._config.remote_url)
 
     async def stop(self) -> None:
         """Gracefully shut down — cancel replay and close resources."""
         self._stopped = True
+        if self._edge_sync is not None:
+            await self._edge_sync.stop()
         if self._replay_engine is not None:
             await self._replay_engine.stop()
         if self._replay_task is not None:
@@ -130,7 +144,10 @@ class ProxyBrick:
         """Unified forward — handles both regular and streaming calls (#6-A)."""
         allowed = await self._circuit.allow_request()
         if not allowed:
+            if self._edge_sync is not None:
+                self._edge_sync.notify_disconnected()
             queue_id = await self._queue.enqueue(method, kwargs=kwargs)
+            self._wake_replay()
             logger.warning("Circuit open — operation '%s' queued (id=%d)", method, queue_id)
             raise CircuitOpenError(
                 self._config.remote_url,
@@ -143,11 +160,16 @@ class ProxyBrick:
             else:
                 result = await self._transport.call(method, params=kwargs)
             await self._circuit.record_success()
+            if self._edge_sync is not None:
+                self._edge_sync.notify_connected()
             return result
         except RemoteCallError as exc:
             if is_connection_error(exc):
                 await self._circuit.record_failure()
+                if self._edge_sync is not None:
+                    self._edge_sync.notify_disconnected()
                 queue_id = await self._queue.enqueue(method, kwargs=kwargs)
+                self._wake_replay()
                 logger.warning("Operation '%s' queued for offline replay (id=%d)", method, queue_id)
                 raise OfflineQueuedError(method, queue_id) from exc
             raise
@@ -160,6 +182,11 @@ class ProxyBrick:
         """Forward a large-payload call via streaming upload."""
         return await self._do_forward(method, data=data, **kwargs)
 
+    def _wake_replay(self) -> None:
+        """Signal the replay engine to process the queue immediately."""
+        if self._replay_engine is not None:
+            self._replay_engine.wake()
+
     # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------
@@ -168,6 +195,11 @@ class ProxyBrick:
     def circuit_state(self) -> CircuitState:
         """Current circuit breaker state (may be slightly stale)."""
         return self._circuit.state
+
+    @property
+    def edge_sync_manager(self) -> "EdgeSyncManager | None":
+        """The edge sync manager, if initialized."""
+        return self._edge_sync
 
     async def pending_count(self) -> int:
         """Return the number of pending operations in the offline queue."""

@@ -132,7 +132,7 @@ nx.close()
 
 ```python
 import nexus
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 
 def setup_user_workspace(user_id: str):
     """Set up isolated workspace for a user"""
@@ -332,7 +332,7 @@ See [Getting Started Guide](../getting-started/quickstart.md) for detailed serve
 import nexus
 import json
 from datetime import datetime
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 
 def main():
     # Initialize with configuration (embedded mode - no server)

@@ -11,8 +11,6 @@ permissions enabled. Specifically tests:
 5. Memory behavior: server doesn't OOM on moderately-sized files
 """
 
-from __future__ import annotations
-
 import base64
 import hashlib
 import os
@@ -64,7 +62,7 @@ def _build_startup_script(port: int, data_dir: str) -> str:
         logging.basicConfig(level=logging.INFO)
         sys.path.insert(0, os.getenv("PYTHONPATH", ""))
 
-        from nexus.auth.providers.static_key import StaticAPIKeyAuth
+        from nexus.bricks.auth.providers.static_key import StaticAPIKeyAuth
         from nexus.cli import main as cli_main
 
         auth_config = {{

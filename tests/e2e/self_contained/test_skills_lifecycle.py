@@ -4,8 +4,6 @@ These tests use real NexusFS instances with LocalBackend to test
 end-to-end skill management workflows.
 """
 
-from __future__ import annotations
-
 import base64
 import io
 import zipfile
@@ -13,8 +11,8 @@ import zipfile
 import pytest
 
 from nexus.backends.local import LocalBackend
+from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
-from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
@@ -157,7 +155,7 @@ class TestSkillLifecycleIntegration:
         zip_base64 = base64.b64encode(zip_data).decode("utf-8")
 
         # Validate the ZIP
-        result = nexus_fs.skills_validate_zip(
+        result = nexus_fs.skill_package_service.validate_zip(
             zip_data=zip_base64,
             context=user_context,
         )
@@ -174,7 +172,7 @@ class TestSkillLifecycleIntegration:
         zip_base64 = base64.b64encode(zip_data).decode("utf-8")
 
         # Import the skill
-        result = nexus_fs.skills_import(
+        result = nexus_fs.skill_package_service.import_skill(
             zip_data=zip_base64,
             tier="user",
             allow_overwrite=False,
@@ -205,7 +203,7 @@ class TestSkillLifecycleIntegration:
         zip_base64 = base64.b64encode(zip_data).decode("utf-8")
 
         # Import the skill as admin
-        result = nexus_fs.skills_import(
+        result = nexus_fs.skill_package_service.import_skill(
             zip_data=zip_base64,
             tier="system",
             allow_overwrite=False,
@@ -245,7 +243,7 @@ Content for skill {i}.
         zip_base64 = base64.b64encode(zip_data).decode("utf-8")
 
         # Import skills (current implementation imports first skill found)
-        result = nexus_fs.skills_import(
+        result = nexus_fs.skill_package_service.import_skill(
             zip_data=zip_base64,
             tier="user",
             allow_overwrite=False,
@@ -262,7 +260,7 @@ Content for skill {i}.
         zip_data_v1 = create_test_skill_zip("overwrite-skill", "Version 1")
         zip_base64_v1 = base64.b64encode(zip_data_v1).decode("utf-8")
 
-        result_v1 = nexus_fs.skills_import(
+        result_v1 = nexus_fs.skill_package_service.import_skill(
             zip_data=zip_base64_v1,
             tier="user",
             allow_overwrite=False,
@@ -272,10 +270,10 @@ Content for skill {i}.
         skill_path = result_v1["skill_paths"][0]
 
         # Try to import again without overwrite (should fail)
-        from nexus.core.exceptions import ValidationError
+        from nexus.bricks.skills.exceptions import SkillValidationError
 
-        with pytest.raises(ValidationError, match="already exists"):
-            nexus_fs.skills_import(
+        with pytest.raises(SkillValidationError, match="already exists"):
+            nexus_fs.skill_package_service.import_skill(
                 zip_data=zip_base64_v1,
                 tier="user",
                 allow_overwrite=False,
@@ -286,7 +284,7 @@ Content for skill {i}.
         zip_data_v2 = create_test_skill_zip("overwrite-skill", "Version 2")
         zip_base64_v2 = base64.b64encode(zip_data_v2).decode("utf-8")
 
-        result_v2 = nexus_fs.skills_import(
+        result_v2 = nexus_fs.skill_package_service.import_skill(
             zip_data=zip_base64_v2,
             tier="user",
             allow_overwrite=True,
@@ -308,7 +306,7 @@ Content for skill {i}.
         zip_data_import = create_test_skill_zip(skill_name, "Lifecycle test")
         zip_base64_import = base64.b64encode(zip_data_import).decode("utf-8")
 
-        import_result = nexus_fs.skills_import(
+        import_result = nexus_fs.skill_package_service.import_skill(
             zip_data=zip_base64_import,
             tier="user",
             allow_overwrite=False,
@@ -328,7 +326,7 @@ Content for skill {i}.
         # Note: Export may fail if skills_export is not fully implemented or
         # if the registry hasn't discovered the skill yet. This test is exploratory.
         try:
-            export_result = nexus_fs.skills_export(
+            export_result = nexus_fs.skill_package_service.export(
                 skill_name=skill_name,
                 format="generic",
                 include_dependencies=False,
@@ -373,7 +371,7 @@ class TestSkillValidationIntegration:
         invalid_zip = b"This is not a valid ZIP file"
         zip_base64 = base64.b64encode(invalid_zip).decode("utf-8")
 
-        result = nexus_fs.skills_validate_zip(
+        result = nexus_fs.skill_package_service.validate_zip(
             zip_data=zip_base64,
             context=user_context,
         )
@@ -393,7 +391,7 @@ class TestSkillValidationIntegration:
         zip_data = zip_buffer.getvalue()
         zip_base64 = base64.b64encode(zip_data).decode("utf-8")
 
-        result = nexus_fs.skills_validate_zip(
+        result = nexus_fs.skill_package_service.validate_zip(
             zip_data=zip_base64,
             context=user_context,
         )
@@ -426,7 +424,7 @@ Missing description field.
         zip_data = zip_buffer.getvalue()
         zip_base64 = base64.b64encode(zip_data).decode("utf-8")
 
-        result = nexus_fs.skills_validate_zip(
+        result = nexus_fs.skill_package_service.validate_zip(
             zip_data=zip_base64,
             context=user_context,
         )
@@ -449,7 +447,7 @@ class TestSkillPermissionsIntegration:
         zip_base64 = base64.b64encode(zip_data).decode("utf-8")
 
         # tier="system" is ignored, skill is imported to user's directory
-        result = nexus_fs.skills_import(
+        result = nexus_fs.skill_package_service.import_skill(
             zip_data=zip_base64,
             tier="system",  # This is ignored
             allow_overwrite=False,
@@ -467,7 +465,7 @@ class TestSkillPermissionsIntegration:
         zip_base64 = base64.b64encode(zip_data).decode("utf-8")
 
         # tier="system" is ignored for admins too
-        result = nexus_fs.skills_import(
+        result = nexus_fs.skill_package_service.import_skill(
             zip_data=zip_base64,
             tier="system",  # This is ignored
             allow_overwrite=False,

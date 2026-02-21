@@ -13,8 +13,6 @@ Provides 8 endpoints for workflow management:
 Related: Issue #1522
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 
@@ -24,7 +22,6 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/workflows", tags=["workflows"])
-
 
 # =============================================================================
 # Pydantic Request/Response Models
@@ -125,7 +122,7 @@ class ExecutionResult(BaseModel):
 
 def _get_require_auth() -> Any:
     """Lazy import to avoid circular imports."""
-    from nexus.server.fastapi_server import require_auth
+    from nexus.server.dependencies import require_auth
 
     return require_auth
 
@@ -312,7 +309,7 @@ async def get_executions(
     if not engine.workflow_store:
         return []
 
-    executions = await engine.workflow_store.get_executions_by_name(name, limit=limit)
+    executions = await engine.workflow_store.get_executions(name=name, limit=limit)
     return [
         ExecutionSummary(
             execution_id=e["execution_id"],

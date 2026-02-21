@@ -12,8 +12,6 @@ Issue #1197: Add Event Replay API for Agent Mesh support.
 Issue #1198: Add Agent Activity Summary endpoint.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from datetime import UTC, datetime, timedelta

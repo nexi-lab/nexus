@@ -29,11 +29,11 @@ from .dedup_work_queue import DedupWorkQueue, ShutdownError
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from nexus.bricks.watch.file_watcher import FileWatcher
     from nexus.contracts.types import OperationContext
     from nexus.core.protocols.connector import ConnectorProtocol
     from nexus.lib.distributed_lock import LockManagerBase
     from nexus.services.event_bus.base import EventBusBase
-    from nexus.services.watch.file_watcher import FileWatcher
 
 
 class EventsService:
@@ -103,7 +103,7 @@ class EventsService:
             )
 
         if self._file_watcher is None:
-            from nexus.services.watch.file_watcher import FileWatcher
+            from nexus.bricks.watch.file_watcher import FileWatcher
 
             self._file_watcher = FileWatcher()
 

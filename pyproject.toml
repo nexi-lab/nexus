@@ -485,7 +485,7 @@ module = "nexus.backends.passthrough"
 disable_error_code = ["return-value"]
 
 [[tool.mypy.overrides]]
-module = "nexus.services.watch.file_watcher"
+module = "nexus.bricks.watch.file_watcher"
 # watchfiles returns Change enum values that mypy resolves as int
 disable_error_code = ["no-any-return"]
 

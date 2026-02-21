@@ -135,12 +135,6 @@ class TestKernelTopLevelImports:
 class TestServicesDoNotImportServer:
     """Verify services/ modules don't import from server/ (except via protocols)."""
 
-    # Known exceptions: lazy imports for backward compat that are being cleaned up
-    KNOWN_EXCEPTIONS = {
-        # These are in the process of being migrated (Issue #1519)
-        "services/oauth_service.py",
-    }
-
     def test_no_top_level_server_imports_in_services(self):
         """Services should not have top-level imports from server/."""
         services_dir = NEXUS_ROOT / "services"
@@ -148,9 +142,6 @@ class TestServicesDoNotImportServer:
 
         for py_file in _get_python_files_recursive(services_dir):
             rel = str(py_file.relative_to(NEXUS_ROOT))
-            if rel in self.KNOWN_EXCEPTIONS:
-                continue
-
             for module, lineno, _kind in _collect_top_level_imports(py_file):
                 if module.startswith("nexus.server"):
                     violations.append(f"{rel}:{lineno} top-level imports {module}")

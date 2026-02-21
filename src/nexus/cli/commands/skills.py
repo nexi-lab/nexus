@@ -1347,7 +1347,7 @@ def skills_mcp_export_tools(
     try:
         import asyncio
 
-        from nexus.mcp.exporter import MCPToolExporter
+        from nexus.bricks.mcp.exporter import MCPToolExporter
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         exporter = MCPToolExporter(nx)
@@ -1391,7 +1391,7 @@ def skills_mcp_list_tools(
         nexus skills mcp list-tools --category search
     """
     try:
-        from nexus.mcp.exporter import NEXUS_TOOLS
+        from nexus.bricks.mcp.exporter import NEXUS_TOOLS
 
         # Filter by category if specified
         tools = NEXUS_TOOLS
@@ -1512,8 +1512,8 @@ def skills_mcp_mount(
     try:
         import asyncio
 
-        from nexus.mcp.models import MCPMount
-        from nexus.mcp.mount import MCPMountManager
+        from nexus.bricks.mcp.models import MCPMount
+        from nexus.bricks.mcp.mount import MCPMountManager
 
         # Validate: need either command or url
         if not command and not url:
@@ -1845,7 +1845,7 @@ def skills_mcp_unmount(
     try:
         import asyncio
 
-        from nexus.mcp.mount import MCPMountManager
+        from nexus.bricks.mcp.mount import MCPMountManager
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         manager = MCPMountManager(nx)
@@ -1877,7 +1877,7 @@ def skills_mcp_list_mounts(
         nexus skills mcp list-mounts --all
     """
     try:
-        from nexus.mcp.mount import MCPMountManager
+        from nexus.bricks.mcp.mount import MCPMountManager
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         manager = MCPMountManager(nx)
@@ -1935,7 +1935,7 @@ def skills_mcp_tools(
         nexus skills mcp tools github --json
     """
     try:
-        from nexus.mcp.mount import MCPMountManager
+        from nexus.bricks.mcp.mount import MCPMountManager
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         manager = MCPMountManager(nx)
@@ -2058,7 +2058,7 @@ def skills_mcp_remove(
     try:
         import asyncio
 
-        from nexus.mcp.mount import MCPMountManager
+        from nexus.bricks.mcp.mount import MCPMountManager
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         manager = MCPMountManager(nx)
@@ -2130,7 +2130,7 @@ def skills_mcp_connect(
     try:
         import asyncio
 
-        from nexus.mcp import MCPConnectionManager
+        from nexus.bricks.mcp import MCPConnectionManager
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         manager = MCPConnectionManager(filesystem=nx)
@@ -2182,7 +2182,7 @@ def skills_mcp_disconnect(
     try:
         import asyncio
 
-        from nexus.mcp import MCPConnectionManager
+        from nexus.bricks.mcp import MCPConnectionManager
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         manager = MCPConnectionManager(filesystem=nx)
@@ -2220,7 +2220,7 @@ def skills_mcp_connections(
     try:
         import json as json_module
 
-        from nexus.mcp import MCPConnectionManager
+        from nexus.bricks.mcp import MCPConnectionManager
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         manager = MCPConnectionManager(filesystem=nx)
@@ -2280,7 +2280,7 @@ def skills_mcp_providers(
     try:
         import json as json_module
 
-        from nexus.mcp import MCPProviderRegistry
+        from nexus.bricks.mcp import MCPProviderRegistry
 
         registry = MCPProviderRegistry.load_default()
 

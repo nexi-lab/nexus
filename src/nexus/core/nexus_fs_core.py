@@ -35,10 +35,10 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
+    from nexus.bricks.parsers.registry import ParserRegistry
     from nexus.contracts.types import OperationContext
     from nexus.contracts.write_observer import WriteObserverProtocol
     from nexus.core.router import PathRouter
-    from nexus.parsers.registry import ParserRegistry
 
 
 class NexusFSCoreMixin:

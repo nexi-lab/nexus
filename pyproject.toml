@@ -547,7 +547,7 @@ disallow_untyped_defs = false
 warn_unused_ignores = false
 
 [[tool.mypy.overrides]]
-module = "nexus.llm.provider"
+module = "nexus.bricks.llm.provider"
 # litellm's completion_cost has complex overloads that mypy can't resolve with **kwargs
 # Different mypy versions handle this differently, so we disable the check
 warn_unused_ignores = false
@@ -583,10 +583,10 @@ module = [
     "nexus.bricks.workflows.loader",
     "nexus.bricks.skills.manager",
     "nexus.bricks.skills.skill_generator",
-    "nexus.mcp.provider_registry",
-    "nexus.mcp.middleware",
-    "nexus.mcp.oauth_mappings",
-    "nexus.mcp.profiles",
+    "nexus.bricks.mcp.provider_registry",
+    "nexus.bricks.mcp.middleware",
+    "nexus.bricks.mcp.oauth_mappings",
+    "nexus.bricks.mcp.profiles",
     "nexus.bricks.skills.parser",
     "nexus.server.auth.oauth_factory",
     "nexus.bricks.workflows.storage",
@@ -652,7 +652,7 @@ module = [
 disable_error_code = ["import-untyped", "no-any-return"]
 
 [[tool.mypy.overrides]]
-module = "nexus.parsers.validation.config"
+module = "nexus.bricks.parsers.validation.config"
 # PyYAML lazy import
 disable_error_code = ["import-untyped"]
 
@@ -670,7 +670,7 @@ module = [
 disable_error_code = ["attr-defined"]
 
 [[tool.mypy.overrides]]
-module = "nexus.llm.message"
+module = "nexus.bricks.llm.message"
 # pydantic BaseModel.model_dump
 disable_error_code = ["no-any-return", "misc"]
 
@@ -775,7 +775,7 @@ ignore = [
 "tests/e2e/self_contained/mcp/test_mcp_server_integration.py" = ["ARG", "S101", "B904"]  # raise from
 "alembic/*" = ["UP007", "E402"]  # Alembic: Union syntax, import order
 "src/nexus/backends/*.py" = ["ARG002"]  # Keep unused context params for API compatibility
-"src/nexus/ipc/driver.py" = ["ARG002"]  # Backend ABC override — params required by interface
+"src/nexus/bricks/ipc/driver.py" = ["ARG002"]  # Backend ABC override — params required by interface
 "src/nexus/core/ace/trajectory.py" = ["ARG002"]  # Keep unused permission param for API compatibility
 "src/nexus/core/cache_store.py" = ["ARG002"]  # Backward-compat shim (canonical home: bricks/cache/cache_store.py)
 "src/nexus/bricks/cache/cache_store.py" = ["ARG002"]  # NullCacheStore: Null Object pattern — unused args by design
@@ -821,10 +821,15 @@ modules = [
     "nexus.bricks.delegation",
     "nexus.bricks.discovery",
     "nexus.bricks.governance",
+    "nexus.bricks.ipc",
+    "nexus.bricks.llm",
+    "nexus.bricks.mcp",
     "nexus.bricks.memory",
+    "nexus.bricks.parsers",
     "nexus.bricks.pay",
     "nexus.bricks.rebac",
     "nexus.bricks.reputation",
+    "nexus.bricks.rlm",
     "nexus.bricks.sandbox",
     "nexus.bricks.search",
     "nexus.bricks.skills",
@@ -849,6 +854,19 @@ ignore_imports = [
     "nexus.services.protocols.namespace_manager -> nexus.bricks.rebac.namespace_manager",
     # skills -> search: transitive via nexus.backends (Issue #2188)
     "nexus.backends.sync_pipeline -> nexus.bricks.search.primitives.glob_fast",
+    # a2a -> ipc: messaging adapters use IPC envelope/conventions (Issue #2429)
+    "nexus.bricks.a2a.messaging_adapters -> nexus.bricks.ipc.envelope",
+    "nexus.bricks.a2a.stores.vfs -> nexus.bricks.ipc.conventions",
+    "nexus.bricks.a2a.stores.vfs -> nexus.bricks.ipc.envelope",
+    "nexus.bricks.a2a.stores.vfs -> nexus.bricks.ipc.storage.protocol",
+    # mcp -> rebac: TYPE_CHECKING imports for middleware/profiles (Issue #2429)
+    "nexus.bricks.mcp.middleware -> nexus.bricks.rebac.manager",
+    "nexus.bricks.mcp.profiles -> nexus.bricks.rebac.manager",
+    # mcp -> discovery: TYPE_CHECKING import for tool index (Issue #2429)
+    "nexus.bricks.mcp.server -> nexus.bricks.discovery.tool_index",
+    # parsers -> sandbox: TYPE_CHECKING imports for sandbox provider (Issue #2429)
+    "nexus.bricks.parsers.validation.runner -> nexus.bricks.sandbox.sandbox_provider",
+    "nexus.bricks.parsers.validation.detector -> nexus.bricks.sandbox.sandbox_provider",
 ]
 unmatched_ignore_imports_alerting = "warn"
 

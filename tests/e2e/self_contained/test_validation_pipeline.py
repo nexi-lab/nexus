@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from nexus.bricks.parsers.validation.models import ValidationPipelineConfig, ValidatorConfig
+from nexus.bricks.parsers.validation.runner import ValidationRunner
 from nexus.bricks.sandbox.sandbox_provider import CodeExecutionResult
-from nexus.parsers.validation.models import ValidationPipelineConfig, ValidatorConfig
-from nexus.parsers.validation.runner import ValidationRunner
 
 
 def _make_provider(*responses: CodeExecutionResult) -> AsyncMock:

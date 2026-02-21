@@ -18,7 +18,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from nexus.ipc.provisioning import AgentProvisioner
+from nexus.bricks.ipc.provisioning import AgentProvisioner
 from nexus.server.api.v2.routers.ipc import (
     _get_ipc_provisioner,
     _get_ipc_storage,
@@ -26,7 +26,7 @@ from nexus.server.api.v2.routers.ipc import (
     _get_zone_id,
     router,
 )
-from tests.unit.ipc.fakes import InMemoryStorageDriver
+from tests.unit.bricks.ipc.fakes import InMemoryStorageDriver
 
 ZONE = "test-zone"
 

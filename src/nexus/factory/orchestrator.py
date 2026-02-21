@@ -360,7 +360,7 @@ def create_nexus_fs(
     from dataclasses import replace as _dc_replace
 
     # Create ParsersBrick — owns both registries (Issue #1523)
-    from nexus.parsers.brick import ParsersBrick
+    from nexus.bricks.parsers.brick import ParsersBrick
 
     parsers_brick = ParsersBrick(parsing_config=parsing)
     _parse_fn = parsers_brick.create_parse_fn()

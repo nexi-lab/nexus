@@ -264,7 +264,7 @@ def _boot_independent_bricks(
     tool_namespace_middleware = None
     if _on("mcp"):
         try:
-            from nexus.mcp.middleware import ToolNamespaceMiddleware
+            from nexus.bricks.mcp.middleware import ToolNamespaceMiddleware
 
             tool_namespace_middleware = ToolNamespaceMiddleware(
                 rebac_manager=system["rebac_manager"],
@@ -423,9 +423,9 @@ def _boot_independent_bricks(
         logger.debug("[BOOT:BRICK] IPC brick disabled by profile")
     elif ctx.record_store is not None:
         try:
-            from nexus.ipc.driver import IPCVFSDriver
-            from nexus.ipc.provisioning import AgentProvisioner
-            from nexus.ipc.storage.recordstore_driver import RecordStoreStorageDriver
+            from nexus.bricks.ipc.driver import IPCVFSDriver
+            from nexus.bricks.ipc.provisioning import AgentProvisioner
+            from nexus.bricks.ipc.storage.recordstore_driver import RecordStoreStorageDriver
 
             ipc_storage_driver = RecordStoreStorageDriver(
                 record_store=ctx.record_store,

@@ -226,7 +226,7 @@ Resolved text:"""
 
         try:
             # Build message list for providers that expect structured messages
-            from nexus.llm import Message, MessageRole
+            from nexus.bricks.llm import Message, MessageRole
 
             messages = [Message(role=MessageRole.USER, content=prompt)]
 

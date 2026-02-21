@@ -119,7 +119,7 @@ async def infer(
     user_id = getattr(req.state, "agent_id", None) or "anonymous"
 
     # Build internal request
-    from nexus.rlm.types import RLMInferenceRequest
+    from nexus.bricks.rlm.types import RLMInferenceRequest
 
     rlm_request = RLMInferenceRequest(
         query=request.query,

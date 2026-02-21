@@ -8,9 +8,6 @@ Issue #1116 (original WebSocket), #2056 (SSE replacement).
 
 from __future__ import annotations
 
-from typing import Any
-
-import pytest
 from starlette.testclient import TestClient
 
 

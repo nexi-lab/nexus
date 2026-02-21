@@ -1142,14 +1142,15 @@ def serve(
             console.print("  • All permissions and relationships")
             console.print()
 
-            from sqlalchemy import text
+            from sqlalchemy import table
 
             from nexus.storage.record_store import SQLAlchemyRecordStore
 
             _record_store = SQLAlchemyRecordStore(db_url=db_url)
             engine = _record_store.engine
 
-            # List of tables to clear (in dependency order)
+            # List of tables to clear (in dependency order).
+            # Uses SQLAlchemy table() construct — never f-string SQL.
             tables_to_clear = [
                 # Auth tables
                 "oauth_credentials",  # OAuth tokens (v0.7.0)
@@ -1183,19 +1184,18 @@ def serve(
             deleted_counts = {}
             console.print("[yellow]Clearing database tables...[/yellow]")
 
-            for table_name in tables_to_clear:
+            for name in tables_to_clear:
                 try:
+                    tbl = table(name)
                     with engine.connect() as conn:
                         trans = conn.begin()
                         try:
-                            cursor_result = conn.execute(text(f"DELETE FROM {table_name}"))
+                            cursor_result = conn.execute(tbl.delete())
                             count = cursor_result.rowcount
                             trans.commit()
-                            deleted_counts[table_name] = count
+                            deleted_counts[name] = count
                             if count > 0:
-                                console.print(
-                                    f"  [dim]Deleted {count} rows from {table_name}[/dim]"
-                                )
+                                console.print(f"  [dim]Deleted {count} rows from {name}[/dim]")
                         except Exception:
                             trans.rollback()
                             # Ignore table doesn't exist errors

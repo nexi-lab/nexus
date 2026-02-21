@@ -498,3 +498,48 @@ class TestMkdirRmdirFlush:
             )
             assert len(ops) == 1
             assert ops[0].path == "/test/olddir"
+
+
+# ---------------------------------------------------------------------------
+# BufferedObserver urgency pass-through tests (Issue #2426 Phase 2)
+# ---------------------------------------------------------------------------
+
+
+class TestBufferedObserverUrgency:
+    """Tests that BufferedRecordStoreWriteObserver forwards urgency to WriteBuffer."""
+
+    def test_buffered_observer_passes_urgency_high(self, record_store) -> None:
+        """on_write(urgency="high") should enqueue with Urgency.HIGH."""
+        from nexus.storage.record_store_syncer import BufferedRecordStoreWriteObserver
+
+        obs = BufferedRecordStoreWriteObserver(record_store, flush_interval_ms=10000)
+        # Spy on enqueue_write
+        from unittest.mock import patch as _patch
+
+        with _patch.object(obs._buffer, "enqueue_write", wraps=obs._buffer.enqueue_write) as spy:
+            obs.on_write(
+                metadata=_make_metadata(),
+                is_new=True,
+                path="/test/urgent.txt",
+                urgency="high",
+            )
+            spy.assert_called_once()
+            call_kwargs = spy.call_args[1]
+            assert call_kwargs["urgency"] == Urgency.HIGH
+
+    def test_buffered_observer_default_urgency_normal(self, record_store) -> None:
+        """on_write() without urgency should enqueue with Urgency.NORMAL."""
+        from nexus.storage.record_store_syncer import BufferedRecordStoreWriteObserver
+
+        obs = BufferedRecordStoreWriteObserver(record_store, flush_interval_ms=10000)
+        from unittest.mock import patch as _patch
+
+        with _patch.object(obs._buffer, "enqueue_write", wraps=obs._buffer.enqueue_write) as spy:
+            obs.on_write(
+                metadata=_make_metadata(),
+                is_new=True,
+                path="/test/normal.txt",
+            )
+            spy.assert_called_once()
+            call_kwargs = spy.call_args[1]
+            assert call_kwargs["urgency"] == Urgency.NORMAL

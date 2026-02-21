@@ -1286,6 +1286,17 @@ class NexusFSCoreMixin:
 
         # Sync to RecordStore via write_observer (closes gap: write_stream was missing this)
         if (obs := self._write_observer) is not None:
+            # Resolve IOProfile urgency for write buffer (#2426 Phase 2)
+            _urgency: str | None = None
+            try:
+                from nexus.contracts.io_profile import IOProfile
+
+                _profile = IOProfile(route.io_profile)
+                if _profile.config().write_buffer_sync_mode:
+                    _urgency = "high"
+            except (ValueError, KeyError):
+                pass  # Unknown profile, default to normal
+
             try:
                 obs.on_write(
                     metadata=new_meta,
@@ -1293,6 +1304,7 @@ class NexusFSCoreMixin:
                     path=path,
                     zone_id=zone_id,
                     agent_id=agent_id,
+                    urgency=_urgency,
                 )
             except Exception as e:
                 self._handle_observer_error("write", path, e)
@@ -1704,6 +1716,17 @@ class NexusFSCoreMixin:
         # Observer is optional — injected by factory.py, not created by kernel.
         # Issue #1631: Direct typed dispatch (replaces getattr-based _notify_observer).
         if (obs := self._write_observer) is not None:
+            # Resolve IOProfile urgency for write buffer (#2426 Phase 2)
+            _urgency: str | None = None
+            try:
+                from nexus.contracts.io_profile import IOProfile
+
+                _profile = IOProfile(route.io_profile)
+                if _profile.config().write_buffer_sync_mode:
+                    _urgency = "high"
+            except (ValueError, KeyError):
+                pass  # Unknown profile, default to normal
+
             try:
                 obs.on_write(
                     metadata=metadata,
@@ -1713,6 +1736,7 @@ class NexusFSCoreMixin:
                     agent_id=agent_id,
                     snapshot_hash=snapshot_hash,
                     metadata_snapshot=metadata_snapshot,
+                    urgency=_urgency,
                 )
             except Exception as e:
                 self._handle_observer_error("write", path, e)

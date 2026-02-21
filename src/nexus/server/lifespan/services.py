@@ -119,14 +119,6 @@ async def shutdown_services(app: "FastAPI", svc: "LifespanServices") -> None:
             "[SANDBOX-AUTH] SandboxAuthService cleaned up (session-per-op, no persistent session)"
         )
 
-    # Shutdown AsyncNexusFS (Issue #940)
-    if app.state.async_nexus_fs:
-        try:
-            await app.state.async_nexus_fs.close()
-            logger.info("AsyncNexusFS stopped")
-        except Exception as e:
-            logger.warning("Error shutting down AsyncNexusFS: %s", e, exc_info=True)
-
     # Shutdown Search Daemon (Issue #951)
     if app.state.search_daemon:
         try:

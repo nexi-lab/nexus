@@ -594,7 +594,7 @@ def _register_routes(app: FastAPI) -> None:
     )
 
     v2_registry = build_v2_registry(
-        async_nexus_fs_getter=lambda: app.state.async_nexus_fs,
+        nexus_fs_getter=lambda: app.state.nexus_fs,
         chunked_upload_service_getter=lambda: app.state.chunked_upload_service,
     )
     register_v2_routers(app, v2_registry)

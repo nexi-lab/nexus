@@ -922,7 +922,7 @@ ignore_imports = [
     # --- kernel (core) importing bricks (rebac, Issue #2179) ---
     "nexus.core.nexus_fs -> nexus.bricks.rebac.entity_registry",
     "nexus.core.nexus_fs_core -> nexus.bricks.rebac.entity_registry",
-    # --- services importing bricks (TYPE_CHECKING or transitive via factory) ---
+    # --- services importing bricks ---
     # filesystem backward-compat re-exports from bricks/ (Issue #2424)
     "nexus.services.filesystem -> nexus.bricks.filesystem._scoped_base",
     "nexus.services.filesystem -> nexus.bricks.filesystem.async_scoped_filesystem",

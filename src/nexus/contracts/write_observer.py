@@ -40,6 +40,7 @@ class WriteObserverProtocol(Protocol):
         agent_id: str | None = ...,
         snapshot_hash: str | None = ...,
         metadata_snapshot: dict[str, Any] | None = ...,
+        urgency: str | None = ...,
     ) -> None:
         """Called after a single file write completes in Metastore."""
         ...
@@ -50,6 +51,7 @@ class WriteObserverProtocol(Protocol):
         *,
         zone_id: str | None = ...,
         agent_id: str | None = ...,
+        urgency: str | None = ...,
     ) -> None:
         """Called after a batch write completes in Metastore.
 

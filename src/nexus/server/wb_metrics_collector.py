@@ -49,8 +49,8 @@ class WriteBufferCollector:
             labels=["event_type"],
         )
         enqueued_by_type: dict[str, int] = m.get("enqueued_by_type", {})
-        # Always emit all three labels so tests can find them
-        for event_type in ("write", "delete", "rename"):
+        # Emit all five event types so tests can find them
+        for event_type in ("write", "delete", "rename", "mkdir", "rmdir"):
             enqueued_family.add_metric([event_type], float(enqueued_by_type.get(event_type, 0)))
         yield enqueued_family
 

@@ -141,7 +141,7 @@ def make_test_nexus(
     from nexus.core.nexus_fs import NexusFS
 
     if permissions is None:
-        permissions = PermissionConfig(enforce=False, audit_strict_mode=False)
+        permissions = PermissionConfig(enforce=False)
     if parsing is None:
         parsing = ParseConfig(auto_parse=False)
     if distributed is None:

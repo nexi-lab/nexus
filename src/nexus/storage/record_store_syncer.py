@@ -58,7 +58,7 @@ class RecordStoreWriteObserver:
         if self._strict_mode:
             logger.error(
                 "AUDIT LOG FAILURE: %s on '%s' ABORTED. "
-                "Error: %s. Set audit_strict_mode=False to allow writes without audit logs.",
+                "Error: %s. Set AuditConfig(strict_mode=False) to allow writes without audit logs.",
                 operation,
                 path,
                 error,

@@ -38,7 +38,7 @@ class MountZoneFinalizer:
 
         removed = 0
         for mount in zone_mounts:
-            mount_point = mount.get("path") or mount.get("mount_point", "")
+            mount_point = mount.get("mount_point", "")
             try:
                 self._mount_service.remove_mount(mount_point)
                 removed += 1

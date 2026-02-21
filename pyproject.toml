@@ -873,6 +873,8 @@ ignore_imports = [
     # parsers -> sandbox: TYPE_CHECKING imports for sandbox provider (Issue #2429)
     "nexus.bricks.parsers.validation.runner -> nexus.bricks.sandbox.sandbox_provider",
     "nexus.bricks.parsers.validation.detector -> nexus.bricks.sandbox.sandbox_provider",
+    # portability -> * : export_service imports top-level nexus package (transitive hub, Issue #2436)
+    "nexus.bricks.portability.export_service -> nexus",
 ]
 unmatched_ignore_imports_alerting = "warn"
 

@@ -193,6 +193,7 @@ def e2e_env():
             output_path=bundle_path,
             include_content=True,
             include_permissions=True,
+            rebac=getattr(source_fs, "rebac_manager", None),
         )
         assert manifest.permission_count == 3, (
             f"Expected 3 permission tuples in export, got {manifest.permission_count}"
@@ -209,6 +210,7 @@ def e2e_env():
             bundle_path=bundle_path,
             target_zone_id="target-zone",
             import_permissions=True,
+            rebac=getattr(target_fs, "rebac_manager", None),
         )
         assert result.success is True, f"Import failed: {result.errors}"
         assert result.permissions_imported == 3, (

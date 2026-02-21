@@ -30,7 +30,7 @@ from nexus.bricks.portability.models import (
 )
 
 if TYPE_CHECKING:
-    from nexus.contracts.portability_types import PortabilityFSProtocol
+    from nexus.contracts.portability_types import PortabilityFSProtocol, ReBACPortabilityProtocol
     from nexus.contracts.types import OperationContext
 
 logger = logging.getLogger(__name__)
@@ -76,6 +76,7 @@ class ZoneImportService:
         nexus_fs: PortabilityFSProtocol,
         *,
         file_metadata_class: type[Any] | None = None,
+        rebac: ReBACPortabilityProtocol | None = None,
     ):
         """Initialize the import service.
 
@@ -83,9 +84,11 @@ class ZoneImportService:
             nexus_fs: NexusFS-compatible instance with metadata store and backend access
             file_metadata_class: FileMetadata class for metadata-only imports (DI).
                                  If None, metadata-only imports are skipped.
+            rebac: Optional ReBAC manager for permission import (DI).
         """
         self.nexus_fs = nexus_fs
         self._file_metadata_class = file_metadata_class
+        self._rebac = rebac
 
     def import_zone(
         self,
@@ -531,10 +534,8 @@ class ZoneImportService:
             result: Result object to update
             progress_callback: Optional progress callback
         """
-        # Check if ReBAC is available
-        rebac_manager = getattr(self.nexus_fs, "rebac_manager", None)
-        if rebac_manager is None:
-            logger.info("No ReBAC manager available, skipping permission import")
+        if self._rebac is None:
+            logger.info("No ReBAC manager injected, skipping permission import")
             return
 
         # Collect all records for validation
@@ -570,7 +571,7 @@ class ZoneImportService:
                 target_zone = options.target_zone_id or "root"
 
                 # Write tuple to ReBAC
-                rebac_manager.rebac_write(
+                self._rebac.rebac_write(
                     subject=(perm_record.subject_type, subject_id),
                     relation=perm_record.relation,
                     object=(perm_record.object_type, object_id),
@@ -610,6 +611,7 @@ def import_zone_bundle(
     import_permissions: bool = True,
     path_prefix_remap: dict[str, str] | None = None,
     progress_callback: ProgressCallback | None = None,
+    rebac: ReBACPortabilityProtocol | None = None,
 ) -> ImportResult:
     """Convenience function to import a zone from a .nexus bundle.
 
@@ -623,6 +625,7 @@ def import_zone_bundle(
         import_permissions: Import ReBAC permissions
         path_prefix_remap: Path prefix remapping dict
         progress_callback: Optional progress callback
+        rebac: Optional ReBAC manager for permission import (DI).
 
     Returns:
         ImportResult with import statistics
@@ -637,5 +640,5 @@ def import_zone_bundle(
         path_prefix_remap=path_prefix_remap or {},
     )
 
-    service = ZoneImportService(nexus_fs)
+    service = ZoneImportService(nexus_fs, rebac=rebac)
     return service.import_zone(options, progress_callback)

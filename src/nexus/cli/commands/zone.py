@@ -512,7 +512,7 @@ def export_zone(
             def update_progress(current: int, total: int) -> None:
                 progress.update(task, description=f"Exporting... ({current}/{total} files)")
 
-            service = ZoneExportService(nx)
+            service = ZoneExportService(nx, rebac=getattr(nx, "rebac_manager", None))
             manifest = service.export_zone(zone_id, options, update_progress)
 
         nx.close()
@@ -655,7 +655,7 @@ def import_zone(
             def update_progress(current: int, total: int, phase: str) -> None:
                 progress.update(task, description=f"Importing {phase}... ({current}/{total})")
 
-            service = ZoneImportService(nx)
+            service = ZoneImportService(nx, rebac=getattr(nx, "rebac_manager", None))
             result = service.import_zone(options, update_progress)
 
         nx.close()

@@ -17,7 +17,7 @@ from sqlalchemy.pool import StaticPool
 
 from nexus.core.metadata import FileMetadata
 from nexus.storage.models import Base, FilePathModel, OperationLogModel
-from nexus.storage.write_buffer import EventType, WriteBuffer, WriteEvent
+from nexus.storage.write_buffer import EventType, Urgency, WriteBuffer, WriteEvent
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -338,7 +338,7 @@ class TestEnhancedMetrics:
         assert metrics["flush_batch_size_sum"] == 1
 
     def test_enqueued_by_type_tracking(self, record_store) -> None:
-        """Per-type counters should track write, delete, and rename separately."""
+        """Per-type counters should track all event types separately."""
         buf = WriteBuffer(record_store, flush_interval_ms=10000)
 
         buf.enqueue_write(_make_metadata(path="/a.txt"), is_new=True, path="/a.txt")
@@ -347,7 +347,9 @@ class TestEnhancedMetrics:
         buf.enqueue_rename(old_path="/d.txt", new_path="/e.txt")
 
         by_type = buf.metrics["enqueued_by_type"]
-        assert by_type == {"write": 2, "delete": 1, "rename": 1}
+        assert by_type["write"] == 2
+        assert by_type["delete"] == 1
+        assert by_type["rename"] == 1
 
     def test_retry_counter_increments(self, session_factory) -> None:
         """Total retries should increment on transient flush failure."""
@@ -368,3 +370,131 @@ class TestEnhancedMetrics:
 
         assert buf.metrics["total_retries"] >= 1
         assert buf.metrics["total_flushed"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Urgency tests (Issue #2426)
+# ---------------------------------------------------------------------------
+
+
+class TestUrgency:
+    """Tests for per-event urgency support."""
+
+    def test_urgency_default_is_normal(self) -> None:
+        """WriteEvent without urgency should default to NORMAL."""
+        event = WriteEvent(event_type=EventType.WRITE, path="/test")
+        assert event.urgency == Urgency.NORMAL
+
+    def test_high_urgency_triggers_immediate_flush(self, record_store) -> None:
+        """HIGH urgency event should trigger flush_event immediately."""
+        buf = WriteBuffer(
+            record_store,
+            flush_interval_ms=10000,  # Very long interval
+            max_buffer_size=1000,  # Very high threshold
+        )
+        buf.start()
+
+        # Enqueue a HIGH urgency write
+        buf.enqueue_write(
+            _make_metadata(),
+            is_new=True,
+            path="/test/urgent.txt",
+            urgency=Urgency.HIGH,
+        )
+
+        # Give flush thread time to process (should flush quickly due to HIGH)
+        time.sleep(0.3)
+        buf.stop(timeout=5.0)
+
+        assert buf.metrics["total_flushed"] == 1
+
+    def test_normal_urgency_respects_threshold(self, record_store) -> None:
+        """NORMAL events should only flush at threshold or interval."""
+        buf = WriteBuffer(
+            record_store,
+            flush_interval_ms=10000,  # Very long interval
+            max_buffer_size=1000,  # Very high threshold
+        )
+        # Don't start — no background thread; check buffer accumulates
+        buf.enqueue_write(
+            _make_metadata(),
+            is_new=True,
+            path="/test/normal.txt",
+            urgency=Urgency.NORMAL,
+        )
+
+        # Should NOT have triggered a flush (no threshold reached)
+        assert buf.pending_count == 1
+
+    def test_mkdir_rmdir_metrics_tracking(self, record_store) -> None:
+        """mkdir/rmdir events should appear in enqueued_by_type metrics."""
+        buf = WriteBuffer(record_store, flush_interval_ms=10000)
+
+        buf.enqueue_mkdir(path="/test/dir1", zone_id="root")
+        buf.enqueue_mkdir(path="/test/dir2", zone_id="root")
+        buf.enqueue_rmdir(path="/test/dir1", zone_id="root")
+
+        by_type = buf.metrics["enqueued_by_type"]
+        assert by_type["mkdir"] == 2
+        assert by_type["rmdir"] == 1
+
+    def test_urgency_field_in_write_event(self) -> None:
+        """Urgency enum values should be correct."""
+        assert Urgency.HIGH.value == "high"
+        assert Urgency.NORMAL.value == "normal"
+        assert Urgency.LOW.value == "low"
+
+        # Create event with explicit urgency
+        event = WriteEvent(
+            event_type=EventType.WRITE,
+            path="/test",
+            urgency=Urgency.HIGH,
+        )
+        assert event.urgency == Urgency.HIGH
+
+
+# ---------------------------------------------------------------------------
+# mkdir/rmdir flush behavior tests (Issue #2426)
+# ---------------------------------------------------------------------------
+
+
+class TestMkdirRmdirFlush:
+    """Tests for mkdir/rmdir DB records on flush."""
+
+    def test_flush_handles_mkdir_events(self, record_store, session_factory) -> None:
+        """mkdir events should create audit log."""
+        buf = WriteBuffer(record_store, flush_interval_ms=10000)
+        buf.start()
+
+        buf.enqueue_mkdir(path="/test/newdir", zone_id="root", agent_id="agent-1")
+        buf.stop(timeout=5.0)
+
+        with session_factory() as session:
+            ops = (
+                session.execute(
+                    select(OperationLogModel).where(OperationLogModel.operation_type == "mkdir")
+                )
+                .scalars()
+                .all()
+            )
+            assert len(ops) == 1
+            assert ops[0].path == "/test/newdir"
+
+    def test_flush_handles_rmdir_events(self, record_store, session_factory) -> None:
+        """rmdir events should create audit log."""
+        buf = WriteBuffer(record_store, flush_interval_ms=10000)
+        buf.start()
+
+        buf.enqueue_rmdir(path="/test/olddir", zone_id="root", agent_id="agent-1")
+        buf.stop(timeout=5.0)
+
+        with session_factory() as session:
+            ops = (
+                session.execute(
+                    select(OperationLogModel).where(OperationLogModel.operation_type == "rmdir")
+                )
+                .scalars()
+                .all()
+            )
+            assert len(ops) == 1
+            assert ops[0].path == "/test/olddir"

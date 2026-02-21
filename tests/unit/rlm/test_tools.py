@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.rlm.tools import (
     build_tools_injection_code,
     nexus_list,
@@ -35,7 +36,7 @@ class TestNexusRead:
             "/workspace/doc.md",
             api_url="http://localhost:2026",
             api_key="test-key",
-            zone_id="default",
+            zone_id=ROOT_ZONE_ID,
         )
 
         assert result == "File content here"
@@ -55,7 +56,7 @@ class TestNexusRead:
             "/workspace/doc.md",
             api_url="http://localhost:2026",
             api_key="test-key",
-            zone_id="default",
+            zone_id=ROOT_ZONE_ID,
         )
 
         call_kwargs = mock_get.call_args.kwargs
@@ -74,7 +75,7 @@ class TestNexusRead:
             "/nonexistent/file.md",
             api_url="http://localhost:2026",
             api_key="test-key",
-            zone_id="default",
+            zone_id=ROOT_ZONE_ID,
         )
 
         assert "error" in result.lower() or "Error" in result
@@ -87,7 +88,7 @@ class TestNexusRead:
             "/workspace/doc.md",
             api_url="http://localhost:2026",
             api_key="test-key",
-            zone_id="default",
+            zone_id=ROOT_ZONE_ID,
         )
 
         assert "error" in result.lower() or "Error" in result
@@ -113,7 +114,7 @@ class TestNexusSearch:
             "quantum computing",
             api_url="http://localhost:2026",
             api_key="test-key",
-            zone_id="default",
+            zone_id=ROOT_ZONE_ID,
         )
 
         assert isinstance(result, str)
@@ -131,7 +132,7 @@ class TestNexusSearch:
             "test query",
             api_url="http://localhost:2026",
             api_key="test-key",
-            zone_id="default",
+            zone_id=ROOT_ZONE_ID,
             limit=5,
         )
 
@@ -148,7 +149,7 @@ class TestNexusSearch:
             "test",
             api_url="http://localhost:2026",
             api_key="test-key",
-            zone_id="default",
+            zone_id=ROOT_ZONE_ID,
         )
 
         assert "error" in result.lower() or "Error" in result
@@ -174,7 +175,7 @@ class TestNexusList:
             "/workspace/",
             api_url="http://localhost:2026",
             api_key="test-key",
-            zone_id="default",
+            zone_id=ROOT_ZONE_ID,
         )
 
         assert isinstance(result, str)
@@ -188,7 +189,7 @@ class TestNexusList:
             "/workspace/",
             api_url="http://localhost:2026",
             api_key="test-key",
-            zone_id="default",
+            zone_id=ROOT_ZONE_ID,
         )
 
         assert "error" in result.lower() or "Error" in result
@@ -201,7 +202,7 @@ class TestBuildToolsInjectionCode:
         code = build_tools_injection_code(
             api_url="http://localhost:2026",
             api_key="test-key",
-            zone_id="default",
+            zone_id=ROOT_ZONE_ID,
         )
 
         assert isinstance(code, str)
@@ -212,7 +213,7 @@ class TestBuildToolsInjectionCode:
         code = build_tools_injection_code(
             api_url="http://localhost:2026",
             api_key="test-key",
-            zone_id="default",
+            zone_id=ROOT_ZONE_ID,
         )
         assert "def nexus_read" in code
 
@@ -220,7 +221,7 @@ class TestBuildToolsInjectionCode:
         code = build_tools_injection_code(
             api_url="http://localhost:2026",
             api_key="test-key",
-            zone_id="default",
+            zone_id=ROOT_ZONE_ID,
         )
         assert "def nexus_search" in code
 
@@ -228,7 +229,7 @@ class TestBuildToolsInjectionCode:
         code = build_tools_injection_code(
             api_url="http://localhost:2026",
             api_key="test-key",
-            zone_id="default",
+            zone_id=ROOT_ZONE_ID,
         )
         assert "FINAL" in code
 

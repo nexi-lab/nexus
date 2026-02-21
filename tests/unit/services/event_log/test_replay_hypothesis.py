@@ -19,6 +19,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.services.event_subsystem.log.replay import EventReplayService
 from nexus.storage.models import OperationLogModel
 from nexus.storage.record_store import SQLAlchemyRecordStore
@@ -47,7 +48,7 @@ def _seed_events(session_factory, count: int) -> list[str]:
                 operation_id=op_id,
                 operation_type="write",
                 path=f"/file{i}.txt",
-                zone_id="default",
+                zone_id=ROOT_ZONE_ID,
                 status="success",
                 delivered=True,
                 created_at=datetime.now(UTC),

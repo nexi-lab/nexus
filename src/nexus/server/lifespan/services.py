@@ -582,10 +582,9 @@ async def _startup_scheduler(app: FastAPI, svc: LifespanServices) -> None:
         pool = await asyncpg.create_pool(pg_dsn, min_size=_min_size, max_size=_max_size)
         app.state._scheduler_pool = pool
 
-        # At this point scheduler is SchedulerService (InMemoryScheduler
-        # returned early above), which has .initialize() outside the Protocol.
-        if hasattr(scheduler, "initialize"):
-            await scheduler.initialize(pool)
+        # Both SchedulerService and InMemoryScheduler implement initialize()
+        # as part of the SchedulerProtocol contract.
+        await scheduler.initialize(pool)
 
         # Wire hook cleanup handler into state emitter (Issue #1257)
         # Note: state_emitter is constructor-injected into AsyncAgentRegistry

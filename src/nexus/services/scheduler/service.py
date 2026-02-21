@@ -25,10 +25,13 @@ from nexus.services.scheduler.constants import (
     TASK_STATUS_FAILED,
     PriorityClass,
     PriorityTier,
-    RequestState,
 )
 from nexus.services.scheduler.models import ScheduledTask, TaskSubmission
-from nexus.services.scheduler.policies.classifier import classify_request
+from nexus.services.scheduler.policies.classifier import (
+    classify_agent_request,
+    classify_request,
+    parse_request_enums,
+)
 from nexus.services.scheduler.policies.fair_share import FairShareCounter
 from nexus.services.scheduler.priority import (
     compute_boost_tiers,
@@ -127,16 +130,8 @@ class SchedulerService:
         Returns:
             Task ID string.
         """
-        # Map AgentRequest fields to internal types
-        try:
-            tier = PriorityTier(request.priority)
-        except ValueError:
-            tier = PriorityTier.NORMAL
-
-        try:
-            req_state = RequestState(request.request_state)
-        except ValueError:
-            req_state = RequestState.PENDING
+        # Map AgentRequest fields to internal types (shared parser — DRY)
+        tier, req_state = parse_request_enums(request)
 
         # Auto-classify priority_class
         priority_class_str = request.priority_class
@@ -269,8 +264,6 @@ class SchedulerService:
 
     async def classify(self, request: AgentRequest) -> str:
         """Classify an AgentRequest into a PriorityClass."""
-        from nexus.services.protocols.scheduler import classify_agent_request
-
         return classify_agent_request(request)
 
     async def metrics(self, *, zone_id: str | None = None) -> dict[str, Any]:

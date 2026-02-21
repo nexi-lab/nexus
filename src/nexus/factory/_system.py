@@ -16,7 +16,6 @@ Two severity classes:
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import time
 from collections.abc import Callable
@@ -250,10 +249,15 @@ def _boot_system_services(
 
     # --- AgentStateEmitter (Issue #2360: created early for DI into AsyncAgentRegistry) ---
     state_emitter: Any = None
-    with contextlib.suppress(Exception):
+    try:
         from nexus.services.scheduler.events import AgentStateEmitter
-
-        state_emitter = AgentStateEmitter()
+    except ImportError:
+        pass  # Expected in lite/edge profiles without scheduler
+    else:
+        try:
+            state_emitter = AgentStateEmitter()
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] AgentStateEmitter unavailable: %s", exc)
 
     # --- Agent Registry (Issue #1502) ---
     agent_registry: Any = None

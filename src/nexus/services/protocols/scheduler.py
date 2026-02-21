@@ -8,9 +8,9 @@ Also defines ``CreditsReservationProtocol`` — the narrow interface
 the scheduler uses for credit-based priority boosting, decoupling
 the system service tier from the pay brick (LEGO §3.3).
 
-``classify_agent_request()`` is the single source of truth for
-AgentRequest → PriorityClass conversion, shared by both
-SchedulerService and InMemoryScheduler (DRY).
+``classify_agent_request()`` (in ``scheduler.policies.classifier``)
+is the single source of truth for AgentRequest → PriorityClass
+conversion, re-exported here for backward compatibility.
 
 Storage Affinity: **CacheStore** — ephemeral work queue (Dragonfly sorted set).
 
@@ -77,7 +77,9 @@ class AgentRequest:
 class SchedulerProtocol(Protocol):
     """Service contract for agent work-request scheduling.
 
-    All methods are async. 8-method interface (Issue #1274).
+    10-method interface: 8 operations + initialize/shutdown lifecycle.
+    Both SchedulerService and InMemoryScheduler implement all methods,
+    making duck-typing checks (``hasattr``) unnecessary.
     """
 
     async def submit(self, request: AgentRequest) -> str: ...
@@ -96,36 +98,19 @@ class SchedulerProtocol(Protocol):
 
     async def metrics(self, *, zone_id: str | None = None) -> dict[str, Any]: ...
 
+    async def initialize(self, *args: Any, **kwargs: Any) -> None: ...
+
+    async def shutdown(self) -> None: ...
+
 
 # ---------------------------------------------------------------------------
-# classify_agent_request — shared classification helper (DRY)
+# classify_agent_request — re-exported from implementation layer
 # ---------------------------------------------------------------------------
-
-
-def classify_agent_request(request: AgentRequest) -> str:
-    """Classify an AgentRequest into a PriorityClass string.
-
-    Single source of truth for AgentRequest → PriorityClass conversion.
-    Delegates to ``classify_request()`` from the scheduler policies module,
-    handling AgentRequest field parsing (tier, request_state) in one place.
-
-    Used by both ``InMemoryScheduler.classify()`` and
-    ``SchedulerService.classify()`` to avoid duplicated logic.
-    """
-    from nexus.services.scheduler.constants import PriorityTier, RequestState
-    from nexus.services.scheduler.policies.classifier import classify_request
-
-    try:
-        tier = PriorityTier(request.priority)
-    except ValueError:
-        tier = PriorityTier.NORMAL
-
-    try:
-        req_state = RequestState(request.request_state)
-    except ValueError:
-        req_state = RequestState.PENDING
-
-    return classify_request(tier, req_state)
+# Canonical location: nexus.services.scheduler.policies.classifier
+# Re-exported here for backward compatibility with existing imports.
+from nexus.services.scheduler.policies.classifier import (  # noqa: E402, I001
+    classify_agent_request,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -270,7 +255,7 @@ class InMemoryScheduler:
             del self._completed[oldest]
 
     async def classify(self, request: AgentRequest) -> str:
-        return classify_agent_request(request)
+        return classify_agent_request(request)  # canonical: policies.classifier
 
     async def metrics(self, *, zone_id: str | None = None) -> dict[str, Any]:
         count = await self.pending_count(zone_id=zone_id)
@@ -286,7 +271,7 @@ class InMemoryScheduler:
     # Lifecycle — no-ops for InMemoryScheduler
     # -----------------------------------------------------------------------
 
-    async def initialize(self, dsn: str = "", **kwargs: Any) -> None:  # noqa: ARG002
+    async def initialize(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
         """No-op — in-memory scheduler requires no external resources."""
 
     async def shutdown(self) -> None:

@@ -578,7 +578,7 @@ nexus rebac namespace-create document \
 **Python API:**
 
 ```python
-from nexus.rebac.domain import NamespaceConfig
+from nexus.bricks.rebac.domain import NamespaceConfig
 
 custom_namespace = NamespaceConfig(
     object_type="document",

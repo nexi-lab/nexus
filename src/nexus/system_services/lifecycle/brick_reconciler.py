@@ -34,6 +34,7 @@ from nexus.services.protocols.brick_lifecycle import (
     DriftReport,
     ReconcileResult,
 )
+from nexus.system_services.lifecycle.expectations import Expectations
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +87,8 @@ class BrickReconciler:
         self._next_retry_after: dict[str, float] = {}
         # Zone-aware filtering (Issue #2061)
         self._terminating_zone_bricks: dict[str, set[str]] = {}  # zone_id → brick_names
+        # Expectations tracker — prevents duplicate actions (Issue #2067)
+        self._expectations = Expectations()
 
     # ------------------------------------------------------------------
     # Public read-only accessors
@@ -360,6 +363,38 @@ class BrickReconciler:
         self._next_retry_after.pop(name, None)
 
     # ------------------------------------------------------------------
+    # Expectations auto-observation (Issue #2067)
+    # ------------------------------------------------------------------
+
+    def _observe_completed_operations(
+        self, brick_list: list[tuple[str, BrickSpec, BrickState, int, Any]]
+    ) -> None:
+        """Auto-observe completed operations by diffing expectations against snapshot.
+
+        O(k) scan of pending expectations only — not full brick list.
+        """
+        pending = self._expectations.pending_keys
+        if not pending:
+            return
+
+        # Build lookup for current brick states (only for pending keys)
+        state_map: dict[str, BrickState] = {}
+        for name, _spec, state, _retry, _inst in brick_list:
+            if name in pending:
+                state_map[name] = state
+
+        for key in pending:
+            brick_state = state_map.get(key)
+            if brick_state is None:
+                continue
+            if brick_state == BrickState.ACTIVE:
+                self._expectations.mount_observed(key)
+                logger.debug("[RECONCILER] Auto-observed mount for %r", key)
+            elif brick_state in (BrickState.UNREGISTERED, BrickState.STOPPING):
+                self._expectations.unmount_observed(key)
+                logger.debug("[RECONCILER] Auto-observed unmount for %r", key)
+
+    # ------------------------------------------------------------------
     # Corrective actions
     # ------------------------------------------------------------------
 
@@ -395,6 +430,7 @@ class BrickReconciler:
             if not self._should_retry(name):
                 return False
 
+            self._expectations.expect_mount(name)
             new_retry = self._manager.reset_for_retry(name)
             await self._manager.mount(name)
 
@@ -405,9 +441,13 @@ class BrickReconciler:
                 self._clear_backoff(name)
                 logger.info("[RECONCILER] Self-healed brick %r", name)
             else:
+                # Mount failed — clear expectation so next pass can retry
+                self._expectations.mount_observed(name)
                 self._set_backoff(name, new_retry)
             return True
         except Exception as exc:
+            # Clear expectation on error so brick isn't permanently gated
+            self._expectations.mount_observed(name)
             retry_count = self._manager.get_retry_count(name)
             self._set_backoff(name, retry_count)
             logger.warning(
@@ -422,20 +462,24 @@ class BrickReconciler:
     async def _action_mount(self, name: str) -> bool:
         """Mount a REGISTERED brick."""
         try:
+            self._expectations.expect_mount(name)
             await self._manager.mount(name)
             logger.info("[RECONCILER] Mounted drifted brick %r", name)
             return True
         except Exception as exc:
+            self._expectations.mount_observed(name)
             logger.warning("[RECONCILER] Failed to mount %r: %s", name, exc)
             return True
 
     async def _action_unmount(self, name: str) -> bool:
         """Unmount a disabled brick."""
         try:
+            self._expectations.expect_unmount(name)
             await self._manager.unmount(name)
             logger.info("[RECONCILER] Unmounted disabled brick %r", name)
             return True
         except Exception as exc:
+            self._expectations.unmount_observed(name)
             logger.warning("[RECONCILER] Failed to unmount %r: %s", name, exc)
             return True
 
@@ -469,6 +513,9 @@ class BrickReconciler:
         try:
             # Snapshot via public API
             brick_list = self._manager.iter_bricks()
+
+            # Auto-observe completed operations (Issue #2067)
+            self._observe_completed_operations(brick_list)
 
             # Track bricks that just failed health check — don't auto-heal same pass
             health_failed: set[str] = set()
@@ -520,6 +567,11 @@ class BrickReconciler:
             brick_list = self._manager.iter_bricks()
             for name, spec, state, retry_count, _instance in brick_list:
                 if name in health_failed:
+                    continue
+
+                # Gate: skip bricks with unsatisfied expectations (Issue #2067)
+                if not self._expectations.satisfied(name):
+                    logger.debug("[RECONCILER] Expectations pending for %r, skipping", name)
                     continue
 
                 drift = self._compute_drift(spec, state, retry_count)

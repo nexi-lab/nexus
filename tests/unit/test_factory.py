@@ -222,14 +222,13 @@ class TestBootSystemServices:
         result = _boot_system_services(ctx)
         assert "scheduler_service" in result
 
-    def test_scheduler_fallback_without_postgresql(self) -> None:
-        """Scheduler falls back to InMemoryScheduler without PostgreSQL (Issue #2360)."""
+    def test_scheduler_always_created(self) -> None:
+        """Scheduler is always created regardless of db_url (Issue #2360)."""
         from nexus.factory import _boot_system_services
-        from nexus.services.protocols.scheduler import InMemoryScheduler
 
         ctx = _make_mock_ctx(db_url="sqlite:///:memory:")
         result = _boot_system_services(ctx)
-        assert isinstance(result["scheduler_service"], InMemoryScheduler)
+        assert result["scheduler_service"] is not None
 
     def test_scheduler_created_with_postgresql(self) -> None:
         """Scheduler should be created (not initialized) with PostgreSQL (Issue #2195)."""

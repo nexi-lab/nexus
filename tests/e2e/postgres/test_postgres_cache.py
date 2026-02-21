@@ -413,7 +413,7 @@ class TestCacheFactoryPostgresFallback:
         """Without record_store or CacheStoreABC driver, factory uses NullCacheStore."""
         from nexus.bricks.cache.factory import CacheFactory
         from nexus.bricks.cache.settings import CacheSettings
-        from nexus.core.cache_store import NullCacheStore
+        from nexus.contracts.cache_store import NullCacheStore
 
         settings = CacheSettings(cache_backend="auto", dragonfly_url=None)
         factory = CacheFactory(settings)

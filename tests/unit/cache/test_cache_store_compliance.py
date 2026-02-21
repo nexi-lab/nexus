@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from nexus.bricks.cache.inmemory import InMemoryCacheStore
-from nexus.core.cache_store import CacheStoreABC, NullCacheStore
+from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
 
 # ---------------------------------------------------------------------------
 # Fixture: parametrize over both implementations

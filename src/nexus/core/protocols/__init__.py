@@ -20,6 +20,7 @@ References:
     - Issue #2359: Move non-kernel protocols out of core/protocols/
 """
 
+from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
 from nexus.core.protocols.caching import CacheConfigContract, CachingConnectorContract
 from nexus.core.protocols.capabilities import ConnectorCapability
 from nexus.core.protocols.connector import (
@@ -42,6 +43,7 @@ from nexus.core.protocols.vfs_router import MountInfo, ResolvedPath, VFSRouterPr
 __all__ = [
     "BatchContentProtocol",
     "CacheConfigContract",
+    "CacheStoreABC",
     "CachingConnectorContract",
     "CapabilityAwareProtocol",
     "ConnectorCapability",
@@ -50,6 +52,7 @@ __all__ = [
     "DirectoryListingProtocol",
     "DirectoryOpsProtocol",
     "MountInfo",
+    "NullCacheStore",
     "OAuthCapableProtocol",
     "PassthroughProtocol",
     "PathDeleteProtocol",

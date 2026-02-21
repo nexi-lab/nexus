@@ -41,11 +41,8 @@ from nexus.ipc.storage.protocol import IPCStorageDriver
 from nexus.storage.zone_settings import SigningMode
 
 if TYPE_CHECKING:
-    from nexus.core.cache_store import CacheStoreABC
+    from nexus.contracts.cache_store import CacheStoreABC
     from nexus.ipc.signing import MessageSigner, MessageVerifier
-
-if TYPE_CHECKING:
-    from nexus.core.cache_store import CacheStoreABC
 
 logger = logging.getLogger(__name__)
 

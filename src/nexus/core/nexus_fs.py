@@ -19,7 +19,7 @@ from nexus.lib.mutation_hooks import MutationOp
 if TYPE_CHECKING:
     from nexus.bricks.rebac.entity_registry import EntityRegistry
     from nexus.services.memory.memory_api import Memory
-from nexus.core.cache_store import CacheStoreABC, NullCacheStore
+from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
 from nexus.core.config import (
     BrickServices,
     CacheConfig,

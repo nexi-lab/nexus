@@ -18,8 +18,9 @@ References:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
 from enum import Enum, StrEnum
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 # ---------------------------------------------------------------------------
 # Lifecycle phase constants — open ``str`` values (same pattern as hook_engine.py)
@@ -343,4 +344,115 @@ class ZoneAwareBrickProtocol(Protocol):
 
     async def finalize(self, zone_id: str) -> None:
         """Clean up zone-specific resources. Called after drain."""
+        ...
+
+
+# ---------------------------------------------------------------------------
+# Per-brick reconciliation protocol (Issue #2059)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class ReconcileContext:
+    """Context passed to per-brick reconcile methods.
+
+    Provides the brick with enough information to decide how to self-heal
+    without requiring access to the lifecycle manager internals.
+
+    Attributes:
+        brick_name: Brick registry name.
+        current_state: Current FSM state of the brick.
+        desired_enabled: Whether the brick spec says it should be active.
+        retry_count: Number of times this brick has been retried.
+        last_error: Most recent error message (if any).
+        last_healthy_at: Monotonic timestamp of last successful health check.
+    """
+
+    brick_name: str
+    current_state: BrickState
+    desired_enabled: bool
+    retry_count: int
+    last_error: str | None
+    last_healthy_at: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class BrickReconcileOutcome:
+    """Per-brick reconcile result (Kubernetes-style).
+
+    Returned by ``ReconcilerProtocol.reconcile()`` to signal the reconciler
+    what to do next.
+
+    Attributes:
+        requeue: If True, the reconciler should retry this brick on the next pass.
+        requeue_after: Optional explicit delay before next retry.
+        error: If set, the brick transitions to FAILED with this message.
+    """
+
+    requeue: bool = False
+    requeue_after: timedelta | None = None
+    error: str | None = None
+
+
+@runtime_checkable
+class ReconcilerProtocol(Protocol):
+    """Contract for bricks with custom self-healing logic (Issue #2059).
+
+    Bricks that implement ``reconcile()`` gain per-brick recovery:
+    instead of the global reset-and-remount strategy, the brick can
+    inspect its own state and return a ``BrickReconcileOutcome`` to
+    signal requeue, explicit backoff, or error.
+
+    Example::
+
+        class SearchBrick:
+            async def reconcile(self, ctx: ReconcileContext) -> BrickReconcileOutcome:
+                if not self._index.is_connected():
+                    await self._index.reconnect()
+                    return BrickReconcileOutcome(requeue=True)
+                return BrickReconcileOutcome()  # healthy
+    """
+
+    async def reconcile(self, ctx: ReconcileContext) -> BrickReconcileOutcome:
+        """Per-brick self-healing logic. Called by the reconciler each pass."""
+        ...
+
+
+class LifecycleManagerProtocol(Protocol):
+    """Contract for the lifecycle manager as seen by the reconciler.
+
+    Type-safe replacement for ``Any`` — documents the exact 8 methods
+    the reconciler calls on the manager.
+    """
+
+    def iter_bricks(self) -> list[tuple[str, BrickSpec, BrickState, int, Any]]:
+        """Snapshot of all bricks: (name, spec, state, retry_count, instance)."""
+        ...
+
+    def get_status(self, name: str) -> BrickStatus | None:
+        """Get current status for a single brick."""
+        ...
+
+    def fail_brick(self, name: str, error: str) -> None:
+        """Transition a brick to FAILED with an error message."""
+        ...
+
+    def reset_for_retry(self, name: str) -> int:
+        """Reset a FAILED brick to REGISTERED; return new retry count."""
+        ...
+
+    async def mount(self, name: str) -> None:
+        """Mount a registered/unmounted brick."""
+        ...
+
+    async def unmount(self, name: str) -> None:
+        """Unmount an active brick."""
+        ...
+
+    def clear_retry_count(self, name: str) -> None:
+        """Reset retry counter to 0 (on successful recovery)."""
+        ...
+
+    def get_retry_count(self, name: str) -> int:
+        """Get current retry count for a brick."""
         ...

@@ -30,6 +30,8 @@ PRE_MOUNT: str = "pre_mount"
 POST_MOUNT: str = "post_mount"
 PRE_UNMOUNT: str = "pre_unmount"
 POST_UNMOUNT: str = "post_unmount"
+PRE_UNREGISTER: str = "pre_unregister"
+POST_UNREGISTER: str = "post_unregister"
 BRICK_STARTED: str = "brick_started"
 BRICK_STOPPED: str = "brick_stopped"
 RECONCILE_STARTED: str = "reconcile_started"
@@ -40,6 +42,19 @@ PRE_ZONE_DRAIN: str = "pre_zone_drain"
 POST_ZONE_DRAIN: str = "post_zone_drain"
 PRE_ZONE_FINALIZE: str = "pre_zone_finalize"
 POST_ZONE_FINALIZE: str = "post_zone_finalize"
+
+# ---------------------------------------------------------------------------
+# Event constants — string events used by the FSM transition table
+# ---------------------------------------------------------------------------
+
+EVENT_MOUNT: str = "mount"
+EVENT_STARTED: str = "started"
+EVENT_FAILED: str = "failed"
+EVENT_UNMOUNT: str = "unmount"
+EVENT_STOPPED: str = "stopped"
+EVENT_UNMOUNTED: str = "unmounted"
+EVENT_UNREGISTER: str = "unregister"
+EVENT_RESET: str = "reset"
 
 
 # ---------------------------------------------------------------------------
@@ -68,18 +83,26 @@ class BrickState(Enum):
 
     Transition diagram::
 
-        REGISTERED ──► STARTING ──► ACTIVE ──► STOPPING ──► UNREGISTERED
-              │              │                      │
-              └──► FAILED ◄──┘──────────────────────┘
+        REGISTERED ──► STARTING ──► ACTIVE ──► STOPPING ──► UNMOUNTED ──► UNREGISTERED
+              │              │                      │           │
+              └──► FAILED ◄──┘──────────────────────┘───────────┘
 
-    ``FAILED`` is reachable from ``STARTING``, ``ACTIVE``, or ``STOPPING``
-    when an unrecoverable error occurs.
+        UNMOUNTED + "mount" → STARTING  (re-mount)
+        FAILED   + "reset" → REGISTERED (retry)
+
+    ``UNMOUNTED`` is the post-stop state: brick is still in the registry
+    and can be re-mounted.  ``UNREGISTERED`` is the terminal state after
+    explicit ``unregister()`` — the brick is removed from the registry.
+
+    ``FAILED`` is reachable from ``STARTING``, ``ACTIVE``, ``STOPPING``,
+    or ``UNMOUNTED`` when an unrecoverable error occurs.
     """
 
     REGISTERED = "registered"
     STARTING = "starting"
     ACTIVE = "active"
     STOPPING = "stopping"
+    UNMOUNTED = "unmounted"
     UNREGISTERED = "unregistered"
     FAILED = "failed"
 
@@ -113,7 +136,8 @@ class BrickStatus:
         protocol_name: Protocol type name this brick implements.
         error: Error message if state is FAILED.
         started_at: Unix timestamp when brick entered ACTIVE.
-        stopped_at: Unix timestamp when brick entered UNREGISTERED/FAILED.
+        stopped_at: Unix timestamp when brick entered UNMOUNTED/FAILED.
+        unmounted_at: Unix timestamp when brick entered UNMOUNTED.
     """
 
     name: str
@@ -122,6 +146,7 @@ class BrickStatus:
     error: str | None = None
     started_at: float | None = None
     stopped_at: float | None = None
+    unmounted_at: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

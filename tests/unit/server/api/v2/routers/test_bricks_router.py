@@ -248,14 +248,14 @@ class TestUnmountBrick:
     def test_unmount_success(self) -> None:
         _mock_manager.get_status.side_effect = [
             _make_status("search", BrickState.ACTIVE, "SearchProtocol"),
-            _make_status("search", BrickState.UNREGISTERED, "SearchProtocol", stopped_at=200.0),
+            _make_status("search", BrickState.UNMOUNTED, "SearchProtocol", stopped_at=200.0),
         ]
         resp = client.post("/api/v2/bricks/search/unmount")
         assert resp.status_code == 200
         data = resp.json()
         assert data["name"] == "search"
         assert data["action"] == "unmount"
-        assert data["state"] == "unregistered"
+        assert data["state"] == "unmounted"
         _mock_manager.unmount.assert_called_once_with("search")
         _mock_manager.get_status.side_effect = None
 

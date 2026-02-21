@@ -15,7 +15,7 @@ from fastmcp import Context, FastMCP
 
 from nexus.bricks.mcp.formatters import format_response
 from nexus.bricks.mcp.tool_utils import handle_tool_errors, tool_error
-from nexus.core.filesystem import NexusFilesystem
+from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,7 @@ def reset_request_api_key(token: contextvars.Token[str | None]) -> None:
 
 
 def create_mcp_server(
-    nx: NexusFilesystem | None = None,
+    nx: NexusFilesystemABC | None = None,
     name: str = "nexus",
     remote_url: str | None = None,
     api_key: str | None = None,
@@ -83,7 +83,7 @@ def create_mcp_server(
     """Create an MCP server for Nexus operations.
 
     Args:
-        nx: NexusFilesystem instance (if None, will auto-connect)
+        nx: NexusFilesystemABC instance (if None, will auto-connect)
         name: Server name (default: "nexus")
         remote_url: Remote Nexus URL for connecting to remote server
         api_key: Optional API key for remote server authentication (default)
@@ -131,7 +131,7 @@ def create_mcp_server(
         if remote_url:
             from nexus.remote import RemoteNexusFS
 
-            nx = cast(NexusFilesystem, RemoteNexusFS(remote_url, api_key=api_key))
+            nx = cast(NexusFilesystemABC, RemoteNexusFS(remote_url, api_key=api_key))
         else:
             from nexus import connect
 
@@ -139,13 +139,13 @@ def create_mcp_server(
 
     # Store default connection and config for per-request API key support
     assert nx is not None  # guaranteed by the if-block above
-    _default_nx: NexusFilesystem = nx
+    _default_nx: NexusFilesystemABC = nx
     _remote_url = remote_url
 
     # Connection pool for per-request API keys (bounded LRU, cached by API key)
-    _connection_cache: LRUCache[str, NexusFilesystem] = LRUCache(maxsize=256)
+    _connection_cache: LRUCache[str, NexusFilesystemABC] = LRUCache(maxsize=256)
 
-    def _get_nexus_instance(ctx: Context | None = None) -> NexusFilesystem:
+    def _get_nexus_instance(ctx: Context | None = None) -> NexusFilesystemABC:
         """Get Nexus instance for current request using context API key.
 
         This function checks if infrastructure has set a per-request API key
@@ -156,7 +156,7 @@ def create_mcp_server(
             ctx: Optional FastMCP Context object (if available from tool)
 
         Returns:
-            NexusFilesystem instance (default or per-request based on context)
+            NexusFilesystemABC instance (default or per-request based on context)
 
         Note:
             Per-request API keys are only supported when remote_url is configured.
@@ -189,7 +189,7 @@ def create_mcp_server(
         # Create new remote connection with API key from context
         from nexus.remote import RemoteNexusFS
 
-        new_nx = cast(NexusFilesystem, RemoteNexusFS(_remote_url, api_key=request_api_key))
+        new_nx = cast(NexusFilesystemABC, RemoteNexusFS(_remote_url, api_key=request_api_key))
         _connection_cache[request_api_key] = new_nx
         return new_nx
 

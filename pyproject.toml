@@ -431,7 +431,7 @@ disable_error_code = ["attr-defined", "return-value"]
 
 [[tool.mypy.overrides]]
 module = [
-    "nexus.core.async_scoped_filesystem",
+    "nexus.bricks.filesystem.async_scoped_filesystem",
     "nexus.bricks.tools.langgraph.nexus_tools",
 ]
 # These modules call methods on RemoteNexusFS/AsyncRemoteNexusFS that are
@@ -595,6 +595,8 @@ module = [
     "nexus.bricks.mcp.middleware",
     "nexus.bricks.mcp.oauth_mappings",
     "nexus.bricks.mcp.profiles",
+    "nexus.fuse.operations",
+    "nexus.fuse.ops._shared",
     "nexus.bricks.skills.parser",
     "nexus.server.auth.oauth_factory",
     "nexus.bricks.workflows.storage",
@@ -602,6 +604,11 @@ module = [
 ]
 # yaml/requests/cachetools stubs handled at project level
 disable_error_code = ["import-untyped"]
+
+[[tool.mypy.overrides]]
+module = ["nexus.bricks.mcp.server"]
+# cachetools stubs may or may not be installed; suppress both directions
+disable_error_code = ["import-untyped", "no-any-return", "redundant-cast"]
 
 [[tool.mypy.overrides]]
 module = [
@@ -970,6 +977,10 @@ ignore_imports = [
     # --- services importing bricks ---
     "nexus.services.agents.agent_service -> nexus.bricks.identity.did",
     "nexus.services.agents.agent_rpc_service -> nexus.bricks.identity.did",
+    # filesystem backward-compat re-exports from bricks/ (Issue #2424)
+    "nexus.services.filesystem -> nexus.bricks.filesystem._scoped_base",
+    "nexus.services.filesystem -> nexus.bricks.filesystem.async_scoped_filesystem",
+    "nexus.services.filesystem -> nexus.bricks.filesystem.scoped_filesystem",
     "nexus.services.ace.consolidation -> nexus.bricks.search.embeddings",
     "nexus.services.delegation -> nexus.bricks.delegation.derivation",
     "nexus.services.delegation -> nexus.bricks.delegation.errors",

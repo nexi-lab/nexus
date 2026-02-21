@@ -103,8 +103,9 @@ class EventsService:
             )
 
         if self._file_watcher is None:
-            from nexus.bricks.watch.file_watcher import FileWatcher
+            import importlib as _il
 
+            FileWatcher = _il.import_module("nexus.bricks.watch.file_watcher").FileWatcher
             self._file_watcher = FileWatcher()
 
         return self._file_watcher

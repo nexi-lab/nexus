@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from nexus.core.nexus_fs import NexusFilesystem
+    from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
 
 
 @dataclass
@@ -84,7 +84,7 @@ class IntegrityValidator:
             print("Validation failed:", result.errors)
     """
 
-    def __init__(self, nx: "NexusFilesystem") -> None:
+    def __init__(self, nx: "NexusFilesystemABC") -> None:
         """Initialize validator.
 
         Args:

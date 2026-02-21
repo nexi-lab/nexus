@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
-    from nexus.core.nexus_fs import NexusFilesystem
+    from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
 
 
 @dataclass
@@ -114,7 +114,7 @@ class DataMigrator:
         )
     """
 
-    def __init__(self, nx: "NexusFilesystem") -> None:
+    def __init__(self, nx: "NexusFilesystemABC") -> None:
         """Initialize data migrator.
 
         Args:

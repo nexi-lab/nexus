@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from nexus.bricks.rebac.entity_registry import EntityRegistry
     from nexus.services.memory.memory_api import Memory
 from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
+from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
 from nexus.contracts.metadata import FileMetadata
 from nexus.core.config import (
     BrickServices,
@@ -30,7 +31,6 @@ from nexus.core.config import (
     SystemServices,
     WiredServices,
 )
-from nexus.core.filesystem import NexusFilesystem
 from nexus.core.metastore import MetastoreABC
 from nexus.core.nexus_fs_bulk import NexusFSBulkMixin
 from nexus.core.nexus_fs_core import NexusFSCoreMixin
@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 class NexusFS(  # type: ignore[misc]
     NexusFSBulkMixin,
     NexusFSCoreMixin,
-    NexusFilesystem,
+    NexusFilesystemABC,
 ):
     """
     Unified filesystem for Nexus.

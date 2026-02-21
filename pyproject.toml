@@ -1007,7 +1007,6 @@ ignore_imports = [
     "nexus.factory.wallet -> nexus.bricks.pay.constants",
     "nexus.system_services.sync.sync_service -> nexus.bricks.search.primitives.glob_fast",
     # --- non-layer imports involving rebac (Issue #2179) ---
-    "nexus.services._tracing -> nexus.server.telemetry",
     "nexus.server.telemetry -> nexus.bricks.rebac.rebac_tracing",
 ]
 unmatched_ignore_imports_alerting = "warn"

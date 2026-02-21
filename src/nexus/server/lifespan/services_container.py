@@ -56,6 +56,10 @@ class LifespanServices:
     write_observer: Any = None
     zone_lifecycle: Any = None
 
+    # --- Issue #2195: EventLog + Scheduler (from SystemServices) ----------
+    event_log: Any = None
+    scheduler_service: Any = None
+
     # --- Brick services container ----------------------------------------
     brick_services: Any = None  # The whole BrickServices dataclass
 
@@ -112,6 +116,9 @@ class LifespanServices:
             scoped_hook_engine=(getattr(_sys, "scoped_hook_engine", None) if _sys else None),
             write_observer=getattr(nx, "_write_observer", None) if nx else None,
             zone_lifecycle=(getattr(_sys, "zone_lifecycle", None) if _sys else None),
+            # Issue #2195: EventLog + Scheduler
+            event_log=(getattr(_sys, "event_log", None) if _sys else None),
+            scheduler_service=(getattr(_sys, "scheduler_service", None) if _sys else None),
             # Brick services
             brick_services=_brk,
             # NexusFS internals

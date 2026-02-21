@@ -10,12 +10,13 @@ This is an integration test because it exercises the real factory boot path
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from nexus.contracts.deployment_profile import DeploymentProfile
 from nexus.core.config import SystemServices
-from nexus.core.deployment_profile import DeploymentProfile
 from nexus.factory import _boot_kernel_services, _boot_system_services, _BootContext
 
 
@@ -35,18 +36,17 @@ def _make_boot_context(**overrides: object) -> _BootContext:
     backend.on_write_callback = None
     backend.on_sync_callback = None
 
-    from nexus.core.performance_tuning import resolve_profile_tuning
+    from nexus.lib.performance_tuning import resolve_profile_tuning
 
     profile_tuning = resolve_profile_tuning(DeploymentProfile.FULL)
 
-    defaults: dict[str, object] = {
+    defaults: dict[str, Any] = {
         "record_store": record_store,
         "metadata_store": MagicMock(),
         "backend": backend,
         "router": MagicMock(),
         "engine": record_store.engine,
         "read_engine": record_store.read_engine,
-        "session_factory": record_store.session_factory,
         "perm": MagicMock(
             enforce=False,
             enable_deferred=False,
@@ -82,12 +82,12 @@ class TestEventLogFactoryToLifespan:
 
         # Build system services with a mocked EventLog
         ctx = _make_boot_context()
-        kernel = _boot_kernel_services(ctx)
+        _boot_kernel_services(ctx)
         with patch(
-            "nexus.services.event_log.create_event_log",
+            "nexus.services.event_subsystem.log.create_event_log",
             return_value=sentinel_event_log,
         ):
-            system_dict = _boot_system_services(ctx, kernel)
+            system_dict = _boot_system_services(ctx)
 
         assert system_dict["event_log"] is sentinel_event_log
 
@@ -107,8 +107,8 @@ class TestSchedulerFactoryToLifespan:
     def test_factory_scheduler_arrives_in_system_services(self) -> None:
         """SchedulerService from factory boot lands in SystemServices."""
         ctx = _make_boot_context(db_url="postgresql://localhost/test")
-        kernel = _boot_kernel_services(ctx)
-        system_dict = _boot_system_services(ctx, kernel)
+        _boot_kernel_services(ctx)
+        system_dict = _boot_system_services(ctx)
 
         scheduler = system_dict["scheduler_service"]
         assert scheduler is not None
@@ -126,8 +126,8 @@ class TestSchedulerFactoryToLifespan:
     async def test_scheduler_two_phase_init_via_lifespan(self) -> None:
         """SchedulerService can be initialized with a mock pool (two-phase)."""
         ctx = _make_boot_context(db_url="postgresql://localhost/test")
-        kernel = _boot_kernel_services(ctx)
-        system_dict = _boot_system_services(ctx, kernel)
+        _boot_kernel_services(ctx)
+        system_dict = _boot_system_services(ctx)
         scheduler = system_dict["scheduler_service"]
 
         # Simulate lifespan: create mock pool and initialize

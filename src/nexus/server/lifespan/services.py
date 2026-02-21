@@ -517,9 +517,7 @@ async def _startup_scheduler(app: FastAPI, svc: LifespanServices) -> None:
     with ``db_pool=None`` (sync). This lifespan function completes the
     two-phase init: creates the asyncpg pool and calls ``scheduler.initialize(pool)``.
     """
-    _nx = svc.nexus_fs
-    _sys = getattr(_nx, "_system_services", None) if _nx else None
-    scheduler = getattr(_sys, "scheduler_service", None) if _sys else None
+    scheduler = svc.scheduler_service
 
     if scheduler is None or not svc.database_url:
         return
@@ -530,9 +528,17 @@ async def _startup_scheduler(app: FastAPI, svc: LifespanServices) -> None:
         from nexus.core.db_utils import sqlalchemy_url_to_asyncpg_dsn
 
         pg_dsn = sqlalchemy_url_to_asyncpg_dsn(svc.database_url)
-        _pool_tuning = svc.profile_tuning
-        _min_size = getattr(getattr(_pool_tuning, "pool", None), "asyncpg_min_size", 2)
-        _max_size = getattr(getattr(_pool_tuning, "pool", None), "asyncpg_max_size", 5)
+        try:
+            _min_size = svc.profile_tuning.pool.asyncpg_min_size
+            _max_size = svc.profile_tuning.pool.asyncpg_max_size
+        except AttributeError:
+            _min_size, _max_size = 2, 5
+            logger.warning(
+                "Pool tuning config missing asyncpg size attrs, "
+                "falling back to defaults (min=%d, max=%d)",
+                _min_size,
+                _max_size,
+            )
         pool = await asyncpg.create_pool(pg_dsn, min_size=_min_size, max_size=_max_size)
         app.state._scheduler_pool = pool
 

@@ -853,7 +853,7 @@ ignore_imports = [
 unmatched_ignore_imports_alerting = "warn"
 
 # Contract 2: Four-tier layered architecture
-# tier-neutral (lib, contracts) < kernel (core) < services < bricks
+# tier-neutral (lib, contracts, ipc, security) < kernel (core) < services < bricks
 [[tool.importlinter.contracts]]
 id = "four-tier-layers"
 name = "Four-tier architecture: tier-neutral < kernel < services < bricks"
@@ -862,12 +862,13 @@ layers = [
     "nexus.bricks",
     "nexus.services",
     "nexus.core",
-    "nexus.contracts | nexus.lib",
+    "nexus.contracts | nexus.lib | nexus.ipc",
 ]
 # Ratchet baseline — known violations. Remove entries as fixes land.
 # Run: lint-imports --contract four-tier-layers to check.
 ignore_imports = [
-    # --- tier-neutral (contracts/lib) cross-imports ---
+    # --- tier-neutral (contracts/lib/ipc) cross-imports ---
+    "nexus.ipc.hooks -> nexus.services.protocols.hook_engine",
     "nexus.contracts -> nexus.lib.validators",
     "nexus.contracts.deployment_profile -> nexus.lib.performance_tuning",
     "nexus.contracts.types -> nexus.core.read_set",

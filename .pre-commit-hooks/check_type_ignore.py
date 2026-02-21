@@ -21,11 +21,33 @@ from pathlib import Path
 TYPE_IGNORE_PATTERN = re.compile(r"#\s*type:\s*ignore(?!\s*comments)")
 
 
+def _get_rename_source(file_path: Path) -> str | None:
+    """Find the original path if this file was renamed in the staged changeset."""
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--cached", "-M", "--diff-filter=R", "--name-status"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        for line in result.stdout.strip().split("\n"):
+            if not line:
+                continue
+            parts = line.split("\t")
+            if len(parts) >= 3 and parts[2] == str(file_path):
+                return parts[1]
+    except (subprocess.CalledProcessError, Exception):
+        pass
+    return None
+
+
 def _get_head_type_ignores(file_path: Path) -> set[str]:
     """Get all type: ignore lines from the HEAD version of a file.
 
     Returns a set of stripped line contents (for content-based comparison).
+    Handles renamed files by checking the original path at HEAD.
     """
+    # Try the current path first
     try:
         result = subprocess.run(
             ["git", "show", f"HEAD:{file_path}"],
@@ -37,8 +59,28 @@ def _get_head_type_ignores(file_path: Path) -> set[str]:
             line.strip() for line in result.stdout.split("\n") if TYPE_IGNORE_PATTERN.search(line)
         }
     except (subprocess.CalledProcessError, Exception):
-        # File is new or git command failed — no pre-existing ignores
-        return set()
+        pass
+
+    # File may have been renamed — check the original path
+    old_path = _get_rename_source(file_path)
+    if old_path:
+        try:
+            result = subprocess.run(
+                ["git", "show", f"HEAD:{old_path}"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            return {
+                line.strip()
+                for line in result.stdout.split("\n")
+                if TYPE_IGNORE_PATTERN.search(line)
+            }
+        except (subprocess.CalledProcessError, Exception):
+            pass
+
+    # File is truly new — no pre-existing ignores
+    return set()
 
 
 def get_git_diff_added_lines(file_path: Path) -> list[tuple[int, str]]:

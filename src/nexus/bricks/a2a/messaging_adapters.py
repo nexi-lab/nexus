@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from nexus.bricks.a2a.models import DataPart, Message
-from nexus.ipc.envelope import MessageEnvelope, MessageType
+from nexus.bricks.ipc.envelope import MessageEnvelope, MessageType
 
 
 def a2a_message_to_envelope(

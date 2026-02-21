@@ -97,8 +97,8 @@ class TestProviderCache:
         """Creating a reader populates the provider cache."""
         with (
             patch("nexus.services.llm.llm_document_reader.LLMDocumentReader"),
-            patch("nexus.llm.provider.LiteLLMProvider"),
-            patch("nexus.llm.config.LLMConfig"),
+            patch("nexus.bricks.llm.provider.LiteLLMProvider"),
+            patch("nexus.bricks.llm.config.LLMConfig"),
         ):
             service._get_llm_reader(model="claude-sonnet-4")
             assert len(service._provider_cache) == 1
@@ -134,8 +134,8 @@ class TestGetLLMReader:
         """Successfully creates reader when nexus_fs is set."""
         with (
             patch("nexus.services.llm.llm_document_reader.LLMDocumentReader") as mock_reader_cls,
-            patch("nexus.llm.provider.LiteLLMProvider"),
-            patch("nexus.llm.config.LLMConfig"),
+            patch("nexus.bricks.llm.provider.LiteLLMProvider"),
+            patch("nexus.bricks.llm.config.LLMConfig"),
         ):
             service._get_llm_reader()
             mock_reader_cls.assert_called_once()
@@ -152,8 +152,8 @@ class TestGetLLMReader:
         """Custom system prompt is forwarded to reader."""
         with (
             patch("nexus.services.llm.llm_document_reader.LLMDocumentReader") as mock_reader_cls,
-            patch("nexus.llm.provider.LiteLLMProvider"),
-            patch("nexus.llm.config.LLMConfig"),
+            patch("nexus.bricks.llm.provider.LiteLLMProvider"),
+            patch("nexus.bricks.llm.config.LLMConfig"),
         ):
             service._get_llm_reader(system_prompt="You are a helpful expert.")
             call_kwargs = mock_reader_cls.call_args[1]
@@ -163,8 +163,8 @@ class TestGetLLMReader:
         """Custom max_context_tokens is forwarded to reader."""
         with (
             patch("nexus.services.llm.llm_document_reader.LLMDocumentReader") as mock_reader_cls,
-            patch("nexus.llm.provider.LiteLLMProvider"),
-            patch("nexus.llm.config.LLMConfig"),
+            patch("nexus.bricks.llm.provider.LiteLLMProvider"),
+            patch("nexus.bricks.llm.config.LLMConfig"),
         ):
             service._get_llm_reader(max_context_tokens=5000)
             call_kwargs = mock_reader_cls.call_args[1]
@@ -174,8 +174,8 @@ class TestGetLLMReader:
         """OpenRouter models (anthropic/*) use custom_llm_provider='openrouter'."""
         with (
             patch("nexus.services.llm.llm_document_reader.LLMDocumentReader"),
-            patch("nexus.llm.provider.LiteLLMProvider"),
-            patch("nexus.llm.config.LLMConfig") as mock_config,
+            patch("nexus.bricks.llm.provider.LiteLLMProvider"),
+            patch("nexus.bricks.llm.config.LLMConfig") as mock_config,
         ):
             service._get_llm_reader(model="anthropic/claude-3-opus")
             call_kwargs = mock_config.call_args[1]

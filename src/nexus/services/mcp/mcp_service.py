@@ -323,8 +323,8 @@ class MCPService:
             - Transport is auto-detected: stdio for command, sse for url
             - Tools are automatically synced after mounting
         """
+        from nexus.bricks.mcp.models import MCPMount
         from nexus.contracts.exceptions import ValidationError
-        from nexus.mcp.models import MCPMount
 
         # Validate: need either command or url
         if not command and not url:
@@ -493,7 +493,7 @@ class MCPService:
             Requires nexus_fs to be set. MCPMountManager needs NexusFS
             for filesystem operations when reading/writing tool definitions.
         """
-        from nexus.mcp.mount import MCPMountManager
+        from nexus.bricks.mcp.mount import MCPMountManager
 
         if self._filesystem is None:
             raise RuntimeError("Filesystem not configured for MCPService")

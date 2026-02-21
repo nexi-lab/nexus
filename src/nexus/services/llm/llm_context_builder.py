@@ -1,6 +1,6 @@
 """Backward compatibility — moved to nexus.services.llm_context_builder (Issue #1521).
 
-Moved from nexus.llm.context_builder (Issue #1521).
+Moved from nexus.bricks.llm.context_builder (Issue #1521).
 Service-layer concern: context building orchestrates search results
 for LLM prompts, not a brick primitive.
 

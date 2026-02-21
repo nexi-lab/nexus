@@ -342,8 +342,8 @@ class OAuthService:
         import httpx
 
         from nexus.backends.service_map import ServiceMap
-        from nexus.mcp.models import MCPMount, MCPToolConfig, MCPToolDefinition
-        from nexus.mcp.oauth_mappings import OAuthKlavisMappings
+        from nexus.bricks.mcp.models import MCPMount, MCPToolConfig, MCPToolDefinition
+        from nexus.bricks.mcp.oauth_mappings import OAuthKlavisMappings
         from nexus.services.protocols.skill_doc import generate_skill_md
 
         klavis_api_key = os.environ.get("KLAVIS_API_KEY")

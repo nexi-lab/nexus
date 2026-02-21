@@ -12,38 +12,38 @@ class TestLLMTypesIdentity:
     """Verify nexus.contracts.llm_types ↔ nexus.llm.message identity."""
 
     def test_message_identity(self) -> None:
+        from nexus.bricks.llm.message import Message as shim
         from nexus.contracts.llm_types import Message as canonical
-        from nexus.llm.message import Message as shim
 
         assert canonical is shim
 
     def test_message_role_identity(self) -> None:
+        from nexus.bricks.llm.message import MessageRole as shim
         from nexus.contracts.llm_types import MessageRole as canonical
-        from nexus.llm.message import MessageRole as shim
 
         assert canonical is shim
 
     def test_content_type_identity(self) -> None:
+        from nexus.bricks.llm.message import ContentType as shim
         from nexus.contracts.llm_types import ContentType as canonical
-        from nexus.llm.message import ContentType as shim
 
         assert canonical is shim
 
     def test_text_content_identity(self) -> None:
+        from nexus.bricks.llm.message import TextContent as shim
         from nexus.contracts.llm_types import TextContent as canonical
-        from nexus.llm.message import TextContent as shim
 
         assert canonical is shim
 
     def test_image_content_identity(self) -> None:
+        from nexus.bricks.llm.message import ImageContent as shim
         from nexus.contracts.llm_types import ImageContent as canonical
-        from nexus.llm.message import ImageContent as shim
 
         assert canonical is shim
 
     def test_image_detail_identity(self) -> None:
+        from nexus.bricks.llm.message import ImageDetail as shim
         from nexus.contracts.llm_types import ImageDetail as canonical
-        from nexus.llm.message import ImageDetail as shim
 
         assert canonical is shim
 

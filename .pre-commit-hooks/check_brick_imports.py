@@ -66,6 +66,37 @@ KNOWN_CROSS_BRICK_EXCEPTIONS: dict[tuple[str, str], list[str]] = {
     ("search", "cache"): [
         "nexus.bricks.search.embeddings",
     ],
+    # TODO(#2429): Fix a2a->ipc via DI refactoring.
+    ("a2a", "ipc"): [
+        "nexus.bricks.a2a.messaging_adapters",
+        "nexus.bricks.a2a.stores.vfs",
+    ],
+    # TODO(#2429): Fix mcp->rebac/discovery via DI refactoring.
+    ("mcp", "rebac"): [
+        "nexus.bricks.mcp.middleware",
+        "nexus.bricks.mcp.profiles",
+    ],
+    ("mcp", "discovery"): [
+        "nexus.bricks.mcp.server",
+    ],
+    # TODO(#2429): Fix parsers->sandbox via DI refactoring.
+    ("parsers", "sandbox"): [
+        "nexus.bricks.parsers.validation.runner",
+        "nexus.bricks.parsers.validation.detector",
+    ],
+    # TODO(#2429): Fix memory->llm via DI refactoring.
+    ("memory", "llm"): [
+        "nexus.bricks.memory.coref_resolver",
+        "nexus.bricks.memory.relationship_extractor",
+    ],
+}
+
+# Known exceptions for bricks importing from nexus.core (non-protocol) or
+# nexus.services (non-protocol). Each entry maps a module name to a list of
+# allowed forbidden-pattern descriptions. Remove entries as fixes land.
+# TODO(#2429): Fix mcp.server -> nexus.core.filesystem via protocol/DI.
+KNOWN_CORE_EXCEPTIONS: dict[str, list[str]] = {
+    "nexus.bricks.mcp.server": ["nexus.core"],
 }
 
 # Lines matching these patterns are not actual imports (comments, strings, etc.)
@@ -152,10 +183,14 @@ def check_file(file_path: Path, brick_name: str | None = None) -> list[tuple[int
 
                 # Check static forbidden patterns (core/services internals)
                 found = False
+                module_name = _module_name_from_path(file_path)
                 for pattern, desc in FORBIDDEN_PATTERNS:
                     if pattern.search(line):
-                        violations.append((line_num, line.rstrip(), desc))
-                        found = True
+                        # Check if this module has a known core exception
+                        allowed = KNOWN_CORE_EXCEPTIONS.get(module_name or "", [])
+                        if desc not in allowed:
+                            violations.append((line_num, line.rstrip(), desc))
+                            found = True
                         break  # One violation per line is enough
 
                 if found:
@@ -201,11 +236,15 @@ def main() -> int:
         python check_brick_imports.py <file1> [file2] ...
     """
     if len(sys.argv) > 1:
-        # Pre-commit mode: check specified files, filter to bricks/ only
+        # Pre-commit mode: check specified files, filter to src/bricks/ only
+        # Test files (tests/) are excluded — test code legitimately imports
+        # from core/services/other-bricks to set up fixtures and assertions.
         files = [
             Path(f)
             for f in sys.argv[1:]
-            if f.endswith(".py") and "/bricks/" in f.replace("\\", "/")
+            if f.endswith(".py")
+            and "/bricks/" in f.replace("\\", "/")
+            and not f.replace("\\", "/").startswith("tests/")
         ]
     else:
         # CI mode: scan entire bricks/ directory

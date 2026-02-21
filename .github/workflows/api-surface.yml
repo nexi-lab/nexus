@@ -50,7 +50,10 @@ jobs:
           from nexus.sdk.api_versioning import export_api_surface
           from pathlib import Path
           import importlib
-          import nexus.core.filesystem as fs_mod
+          try:
+              import nexus.contracts.filesystem as fs_mod
+          except ImportError:
+              import nexus.core.filesystem as fs_mod
           import nexus.plugins.base as plugin_mod
 
           count = 0
@@ -67,7 +70,10 @@ jobs:
           python -c "
           from nexus.sdk.api_versioning import export_api_surface
           from pathlib import Path
-          import nexus.core.filesystem as fs_mod
+          try:
+              import nexus.contracts.filesystem as fs_mod
+          except ImportError:
+              import nexus.core.filesystem as fs_mod
           import nexus.plugins.base as plugin_mod
 
           count = 0

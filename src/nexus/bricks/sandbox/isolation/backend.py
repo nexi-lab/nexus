@@ -10,20 +10,17 @@ sandboxing.  For untrusted-code security, use Docker / E2B sandbox providers.
 import logging
 import threading
 from collections.abc import Iterator
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 from nexus.backends.backend import Backend, HandlerStatusResponse
-from nexus.isolation._pool import IsolatedPool
-from nexus.isolation.config import IsolationConfig
-from nexus.isolation.errors import (
+from nexus.bricks.sandbox.isolation._pool import IsolatedPool
+from nexus.bricks.sandbox.isolation.config import IsolationConfig
+from nexus.bricks.sandbox.isolation.errors import (
     IsolationCallError,
     IsolationError,
     IsolationTimeoutError,
 )
 from nexus.lib.response import HandlerResponse
-
-if TYPE_CHECKING:
-    from nexus.contracts.types import OperationContext
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +98,7 @@ class IsolatedBackend(Backend):
     # ── Capability Discovery (Issue #2069) ─────────────────────────────
 
     @property
-    def capabilities(self) -> frozenset:
+    def capabilities(self) -> frozenset[Any]:
         """Delegate to inner backend's capabilities (cached via _cached_prop)."""
         result = self._cached_prop("capabilities")
         return result if isinstance(result, frozenset) else frozenset()
@@ -112,33 +109,31 @@ class IsolatedBackend(Backend):
 
     # ── Content operations (CAS) ────────────────────────────────────────
 
-    def write_content(
-        self, content: bytes, context: "OperationContext | None" = None
-    ) -> HandlerResponse[str]:
+    def write_content(self, content: bytes, context: "Any | None" = None) -> HandlerResponse[str]:
         return self._call("write_content", content, context=context)
 
     def read_content(
-        self, content_hash: str, context: "OperationContext | None" = None
+        self, content_hash: str, context: "Any | None" = None
     ) -> HandlerResponse[bytes]:
         return self._call("read_content", content_hash, context=context)
 
     def delete_content(
-        self, content_hash: str, context: "OperationContext | None" = None
+        self, content_hash: str, context: "Any | None" = None
     ) -> HandlerResponse[None]:
         return self._call("delete_content", content_hash, context=context)
 
     def content_exists(
-        self, content_hash: str, context: "OperationContext | None" = None
+        self, content_hash: str, context: "Any | None" = None
     ) -> HandlerResponse[bool]:
         return self._call("content_exists", content_hash, context=context)
 
     def get_content_size(
-        self, content_hash: str, context: "OperationContext | None" = None
+        self, content_hash: str, context: "Any | None" = None
     ) -> HandlerResponse[int]:
         return self._call("get_content_size", content_hash, context=context)
 
     def get_ref_count(
-        self, content_hash: str, context: "OperationContext | None" = None
+        self, content_hash: str, context: "Any | None" = None
     ) -> HandlerResponse[int]:
         return self._call("get_ref_count", content_hash, context=context)
 
@@ -149,7 +144,7 @@ class IsolatedBackend(Backend):
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: "OperationContext | None" = None,
+        context: "Any | None" = None,
     ) -> HandlerResponse[None]:
         return self._call("mkdir", path, parents=parents, exist_ok=exist_ok, context=context)
 
@@ -157,16 +152,14 @@ class IsolatedBackend(Backend):
         self,
         path: str,
         recursive: bool = False,
-        context: "OperationContext | None" = None,
+        context: "Any | None" = None,
     ) -> HandlerResponse[None]:
         return self._call("rmdir", path, recursive=recursive, context=context)
 
-    def is_directory(
-        self, path: str, context: "OperationContext | None" = None
-    ) -> HandlerResponse[bool]:
+    def is_directory(self, path: str, context: "Any | None" = None) -> HandlerResponse[bool]:
         return self._call("is_directory", path, context=context)
 
-    def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:
+    def list_dir(self, path: str, context: "Any | None" = None) -> list[str]:
         """Delegate to pool — propagates FileNotFoundError / NotImplementedError."""
         try:
             return cast(list[str], self._pool.submit("list_dir", (path,), {"context": context}))
@@ -188,7 +181,7 @@ class IsolatedBackend(Backend):
         self,
         content_hash: str,
         chunk_size: int = 8192,
-        context: "OperationContext | None" = None,
+        context: "Any | None" = None,
     ) -> Iterator[bytes]:
         """Read full content via pool, then re-chunk locally."""
         resp = self.read_content(content_hash, context=context)
@@ -199,7 +192,7 @@ class IsolatedBackend(Backend):
     def write_stream(
         self,
         chunks: Iterator[bytes],
-        context: "OperationContext | None" = None,
+        context: "Any | None" = None,
     ) -> HandlerResponse[str]:
         """Collect chunks locally, then write via pool."""
         content = b"".join(chunks)
@@ -207,7 +200,7 @@ class IsolatedBackend(Backend):
 
     # ── Connection lifecycle ────────────────────────────────────────────
 
-    def connect(self, context: "OperationContext | None" = None) -> HandlerStatusResponse:
+    def connect(self, context: "Any | None" = None) -> HandlerStatusResponse:
         """Probe the worker's backend health.
 
         The actual ``connect()`` is called lazily by ``worker_call`` on first
@@ -221,7 +214,7 @@ class IsolatedBackend(Backend):
         except IsolationError as exc:
             return HandlerStatusResponse(success=False, error_message=str(exc))
 
-    def disconnect(self, _context: "OperationContext | None" = None) -> None:
+    def disconnect(self, _context: "Any | None" = None) -> None:
         self._pool.shutdown()
 
     # ── Internal helpers ────────────────────────────────────────────────

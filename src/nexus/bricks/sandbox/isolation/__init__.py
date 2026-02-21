@@ -21,9 +21,9 @@ Errors
 
 from typing import Any
 
-from nexus.isolation.backend import IsolatedBackend
-from nexus.isolation.config import IsolationConfig
-from nexus.isolation.errors import (
+from nexus.bricks.sandbox.isolation.backend import IsolatedBackend
+from nexus.bricks.sandbox.isolation.config import IsolationConfig
+from nexus.bricks.sandbox.isolation.errors import (
     IsolationCallError,
     IsolationError,
     IsolationPoolError,

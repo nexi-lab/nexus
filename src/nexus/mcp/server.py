@@ -1346,6 +1346,16 @@ def create_mcp_server(
             return None
         return svc
 
+    def _get_namespace_fork_service(ctx: Context | None = None) -> Any:
+        """Get AgentNamespaceForkService from NexusFS services."""
+        nx_instance = _get_nexus_instance(ctx)
+        svc = getattr(
+            getattr(nx_instance, "_system_services", None), "namespace_fork_service", None
+        )
+        if not svc:
+            return None
+        return svc
+
     @mcp.tool(
         annotations={
             "readOnlyHint": False,
@@ -1563,31 +1573,61 @@ def create_mcp_server(
         }
     )
     @handle_tool_errors("starting context exploration")
-    def nexus_context_explore(workspace: str, description: str, ctx: Context | None = None) -> str:
+    def nexus_context_explore(
+        workspace: str,
+        description: str,
+        fork_namespace: bool = True,
+        ctx: Context | None = None,
+    ) -> str:
         """Start an exploration: auto-commit + create branch + checkout.
+
+        Optionally forks the agent's namespace for isolated visibility during
+        exploration (Issue #1273).
 
         Args:
             workspace: Workspace path
             description: Description of exploration (used for branch name)
+            fork_namespace: If True (default), fork namespace for isolated visibility
             ctx: FastMCP Context
 
         Returns:
-            JSON with exploration branch info
+            JSON with exploration branch info and optional namespace_fork metadata
         """
         svc = _get_branch_service(ctx)
         if not svc:
             return tool_error("unavailable", "Context branching not available.")
         result = svc.explore(workspace, description)
-        return json.dumps(
-            {
-                "branch_name": result.branch_name,
-                "branch_id": result.branch_id,
-                "fork_point_snapshot_id": result.fork_point_snapshot_id,
-                "skipped_commit": result.skipped_commit,
-                "message": result.message,
-            },
-            indent=2,
-        )
+        response: dict[str, object] = {
+            "branch_name": result.branch_name,
+            "branch_id": result.branch_id,
+            "fork_point_snapshot_id": result.fork_point_snapshot_id,
+            "skipped_commit": result.skipped_commit,
+            "message": result.message,
+        }
+
+        # Namespace fork (non-fatal — exploration works without it)
+        if fork_namespace:
+            fork_svc = _get_namespace_fork_service(ctx)
+            if fork_svc is not None:
+                try:
+                    from nexus.contracts.namespace_fork_types import ForkMode
+
+                    fork_info = fork_svc.fork(
+                        agent_id=result.branch_name,
+                        mode=ForkMode.COPY,
+                    )
+                    response["namespace_fork"] = {
+                        "fork_id": fork_info.fork_id,
+                        "mount_count": fork_info.mount_count,
+                        "mode": fork_info.mode.value,
+                    }
+                except Exception:
+                    logger.warning(
+                        "[MCP] Namespace fork failed during explore, continuing without",
+                        exc_info=True,
+                    )
+
+        return json.dumps(response, indent=2, default=str)
 
     @mcp.tool(
         annotations={
@@ -1603,25 +1643,62 @@ def create_mcp_server(
         branch: str,
         outcome: str = "merge",
         strategy: str = "source-wins",
+        fork_id: str | None = None,
         ctx: Context | None = None,
     ) -> str:
         """Finish an exploration: merge or discard the branch.
+
+        If *fork_id* is provided, the corresponding namespace fork is merged
+        (on outcome='merge') or discarded (on outcome='discard') alongside
+        the workspace branch (Issue #1273).
 
         Args:
             workspace: Workspace path
             branch: Exploration branch to finish
             outcome: 'merge' (default) or 'discard'
             strategy: Merge strategy if outcome='merge' ('source-wins' default)
+            fork_id: Namespace fork to merge/discard alongside branch
             ctx: FastMCP Context
 
         Returns:
-            JSON with outcome details
+            JSON with outcome details and optional namespace_fork result
         """
         svc = _get_branch_service(ctx)
         if not svc:
             return tool_error("unavailable", "Context branching not available.")
         result = svc.finish_explore(workspace, branch, outcome=outcome, strategy=strategy)
-        return json.dumps(result, indent=2, default=str)
+
+        # Wrap in dict if needed for namespace_fork info
+        response = dict(result) if isinstance(result, dict) else {"result": result}
+
+        # Namespace fork merge/discard (non-fatal)
+        if fork_id is not None:
+            fork_svc = _get_namespace_fork_service(ctx)
+            if fork_svc is not None:
+                try:
+                    if outcome == "merge":
+                        merge_result = fork_svc.merge(fork_id, strategy=strategy)
+                        response["namespace_fork"] = {
+                            "action": "merged",
+                            "fork_id": merge_result.fork_id,
+                            "entries_added": merge_result.entries_added,
+                            "entries_removed": merge_result.entries_removed,
+                            "entries_modified": merge_result.entries_modified,
+                        }
+                    else:
+                        fork_svc.discard(fork_id)
+                        response["namespace_fork"] = {
+                            "action": "discarded",
+                            "fork_id": fork_id,
+                        }
+                except Exception:
+                    logger.warning(
+                        "[MCP] Namespace fork %s during finish failed, continuing",
+                        outcome,
+                        exc_info=True,
+                    )
+
+        return json.dumps(response, indent=2, default=str)
 
     # =========================================================================
     # PROMPTS

@@ -729,7 +729,7 @@ class DelegationService:
                 zone_id=zone_id,
                 expires_at=expires_at,
             )
-            return raw_key
+            return str(raw_key)
 
     def _get_worker_mount_table(
         self,

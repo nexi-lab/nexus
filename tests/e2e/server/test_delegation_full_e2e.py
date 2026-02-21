@@ -18,13 +18,13 @@ Requires real EnhancedReBACManager + NamespaceManager + EntityRegistry.
 
 import pytest
 
+from nexus.bricks.delegation.errors import DelegationChainError, EscalationError
+from nexus.bricks.delegation.models import DelegationMode, DelegationStatus
+from nexus.bricks.delegation.service import DelegationService
 from nexus.bricks.rebac.entity_registry import EntityRegistry
 from nexus.bricks.rebac.manager import EnhancedReBACManager
 from nexus.constants import ROOT_ZONE_ID
 from nexus.services.agents.agent_registry import AgentRegistry
-from nexus.services.delegation.errors import DelegationChainError, EscalationError
-from nexus.services.delegation.models import DelegationMode, DelegationStatus
-from nexus.services.delegation.service import DelegationService
 from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
 # ---------------------------------------------------------------------------

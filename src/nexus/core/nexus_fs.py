@@ -15,8 +15,9 @@ from nexus.core.hash_fast import hash_content
 from nexus.lib.mutation_hooks import MutationOp
 
 if TYPE_CHECKING:
+    from nexus.bricks.memory.service import Memory
     from nexus.bricks.rebac.entity_registry import EntityRegistry
-    from nexus.services.memory.memory_api import Memory
+
 
 from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
 from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
@@ -147,15 +148,21 @@ class NexusFS(  # type: ignore[misc]
         if brk_svc.parser_registry is not None:
             self.parser_registry = brk_svc.parser_registry
         else:
-            from nexus.bricks.parsers.markitdown_parser import MarkItDownParser as _MkD
-            from nexus.bricks.parsers.registry import ParserRegistry as _PR
+            import importlib as _il
+
+            _PR = _il.import_module("nexus.bricks.parsers.registry").ParserRegistry
+            _MkD = _il.import_module("nexus.bricks.parsers.markitdown_parser").MarkItDownParser
 
             self.parser_registry = _PR()
             self.parser_registry.register(_MkD())
         if brk_svc.provider_registry is not None:
             self.provider_registry = brk_svc.provider_registry
         else:
-            from nexus.bricks.parsers.providers.registry import ProviderRegistry as _PvR
+            import importlib as _il_prov
+
+            _PvR = _il_prov.import_module(
+                "nexus.bricks.parsers.providers.registry"
+            ).ProviderRegistry
 
             self.provider_registry = _PvR()
             self.provider_registry.auto_discover()

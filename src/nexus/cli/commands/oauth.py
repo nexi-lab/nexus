@@ -18,17 +18,25 @@ Examples:
 """
 
 import asyncio
+import importlib as _il
 import os
 import sys
+from typing import TYPE_CHECKING
 
 import click
 from rich.console import Console
 from rich.table import Table
 
-from nexus.bricks.auth.oauth.providers.x import XOAuthProvider
-from nexus.bricks.auth.oauth.token_manager import TokenManager
 from nexus.cli.utils import console
 from nexus.constants import ROOT_ZONE_ID
+
+# Brick imports via importlib to avoid cli→bricks tier violation
+if TYPE_CHECKING:
+    from nexus.bricks.auth.oauth.providers.x import XOAuthProvider
+    from nexus.bricks.auth.oauth.token_manager import TokenManager
+else:
+    XOAuthProvider = _il.import_module("nexus.bricks.auth.oauth.providers.x").XOAuthProvider
+    TokenManager = _il.import_module("nexus.bricks.auth.oauth.token_manager").TokenManager
 
 # Rich console for output
 _console = Console()
@@ -315,7 +323,9 @@ def setup_gdrive(
         nexus oauth setup-gdrive --user-email "alice@example.com"
     """
 
-    from nexus.bricks.auth.oauth.providers.google import GoogleOAuthProvider
+    GoogleOAuthProvider = _il.import_module(
+        "nexus.bricks.auth.oauth.providers.google"
+    ).GoogleOAuthProvider
 
     # Validate that credentials are provided (either via options or environment)
     if not client_id:

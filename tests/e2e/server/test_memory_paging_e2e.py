@@ -11,7 +11,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from nexus.backends.local import LocalBackend
-from nexus.services.memory.memory_with_paging import MemoryWithPaging
+from nexus.bricks.memory.memory_with_paging import MemoryWithPaging
 from nexus.storage.models import Base
 
 

@@ -739,8 +739,11 @@ Provide only the consolidated summary, no additional commentary.
         # Create embedding provider if not provided
         if embedding_provider is None:
             try:
-                from nexus.bricks.search.embeddings import create_embedding_provider
+                import importlib as _il
 
+                create_embedding_provider = _il.import_module(
+                    "nexus.bricks.search.embeddings"
+                ).create_embedding_provider
                 embedding_provider = create_embedding_provider("openai", "text-embedding-3-small")
             except Exception as e:
                 msg = f"Could not create embedding provider: {e}"

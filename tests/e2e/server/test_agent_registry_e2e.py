@@ -16,12 +16,12 @@ import time
 
 import pytest
 
+from nexus.bricks.delegation.models import DelegationMode
+from nexus.bricks.delegation.service import DelegationService
 from nexus.bricks.rebac.entity_registry import EntityRegistry
 from nexus.bricks.rebac.manager import EnhancedReBACManager
 from nexus.contracts.agent_types import AgentState
 from nexus.services.agents.agent_registry import AgentRegistry
-from nexus.services.delegation.models import DelegationMode
-from nexus.services.delegation.service import DelegationService
 from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
 # ---------------------------------------------------------------------------

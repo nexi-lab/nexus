@@ -14,8 +14,8 @@ from nexus.contracts.rpc import rpc_expose
 from nexus.contracts.types import OperationContext, parse_operation_context
 
 if TYPE_CHECKING:
+    from nexus.bricks.workspace.workspace_registry import WorkspaceRegistry
     from nexus.contracts.types import VFSOperations
-    from nexus.services.workspace.workspace_registry import WorkspaceRegistry
     from nexus.system_services.workspace.workspace_manager import WorkspaceManager
 
 logger = logging.getLogger(__name__)

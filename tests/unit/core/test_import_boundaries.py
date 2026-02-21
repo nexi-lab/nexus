@@ -255,18 +255,12 @@ class TestConfigDoesNotImportServer:
             f"  - {v}" for v in violations
         )
 
-    def test_auth_config_importable_from_package_level(self):
-        """OAuthConfig should be importable from nexus.auth_config (not server/)."""
-        from nexus.auth_config import OAuthConfig, OAuthProviderConfig
+    def test_auth_config_canonical_import(self):
+        """OAuthConfig canonical path is nexus.bricks.auth.oauth.config (#2281)."""
+        from nexus.bricks.auth.oauth.config import OAuthConfig, OAuthProviderConfig
 
         assert OAuthConfig is not None
         assert OAuthProviderConfig is not None
-
-    def test_auth_config_canonical_import(self):
-        """OAuthConfig canonical path is nexus.auth_config (Issue #2281: shim removed)."""
-        from nexus.auth_config import OAuthConfig
-
-        assert OAuthConfig is not None
 
 
 class TestZoneHelpersInLib:

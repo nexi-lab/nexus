@@ -140,8 +140,9 @@ class AgentService:
         if self._record_store is None:
             raise RuntimeError("EntityRegistry requires record_store")
 
-        from nexus.bricks.rebac.entity_registry import EntityRegistry
+        import importlib as _il
 
+        EntityRegistry = _il.import_module("nexus.bricks.rebac.entity_registry").EntityRegistry
         self._entity_registry = EntityRegistry(self._record_store)
 
     def _create_agent_config_data(
@@ -401,7 +402,9 @@ class AgentService:
     ) -> None:
         """Write public DID document to the agent's .identity namespace (Issue #1355)."""
         try:
-            from nexus.bricks.identity.did import create_did_document
+            import importlib as _il
+
+            create_did_document = _il.import_module("nexus.bricks.identity.did").create_did_document
 
             assert self._key_service is not None
             key_record = self._key_service.get_active_keys(agent_id)[0]

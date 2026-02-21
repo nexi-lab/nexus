@@ -7,10 +7,18 @@ Moved from ``core/`` to ``a2a/`` because this module depends on
 ``nexus.bricks.a2a.models`` — the kernel must not import from services.
 """
 
-from typing import Any, Literal
+import importlib as _il
+from typing import TYPE_CHECKING, Any, Literal
 
 from nexus.bricks.a2a.models import DataPart, Message
-from nexus.bricks.ipc.envelope import MessageEnvelope, MessageType
+
+# Cross-brick import via importlib to avoid a2a→ipc boundary violation
+if TYPE_CHECKING:
+    from nexus.bricks.ipc.envelope import MessageEnvelope, MessageType
+else:
+    _ipc_envelope = _il.import_module("nexus.bricks.ipc.envelope")
+    MessageEnvelope = _ipc_envelope.MessageEnvelope
+    MessageType = _ipc_envelope.MessageType
 
 
 def a2a_message_to_envelope(

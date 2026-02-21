@@ -15,7 +15,7 @@ from unittest.mock import MagicMock
 import pytest
 from watchfiles import Change
 
-from nexus.services.watch.file_watcher import (
+from nexus.bricks.watch.file_watcher import (
     ChangeType,
     FileChange,
     FileWatcher,

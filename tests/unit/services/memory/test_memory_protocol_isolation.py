@@ -66,7 +66,7 @@ class TestMemoryStateManagerWithFakes:
     def _make_state_manager(
         self, *, allow_permission: bool = True
     ) -> tuple[Any, FakePermissionChecker, MagicMock]:
-        from nexus.services.memory.state import MemoryStateManager
+        from nexus.bricks.memory.state import MemoryStateManager
 
         fake_perm = FakePermissionChecker(allow=allow_permission)
         mock_router = MagicMock()

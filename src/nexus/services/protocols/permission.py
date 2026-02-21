@@ -1,7 +1,7 @@
 """Permission service protocol for Zanzibar-style authorization (Issue #1459).
 
 Defines the contract for relationship-based access control (ReBAC).
-Existing implementation: ``nexus.services.rebac_service.ReBACService``.
+Existing implementation: ``nexus.bricks.rebac.rebac_service.ReBACService``.
 
 The core Zanzibar-inspired APIs:
     - check: Does subject have permission on object?

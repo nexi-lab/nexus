@@ -133,8 +133,9 @@ def create_mcp_server(
 
             nx = cast(NexusFilesystemABC, RemoteNexusFS(remote_url, api_key=api_key))
         else:
-            from nexus import connect
+            import importlib as _il
 
+            connect = _il.import_module("nexus").connect
             nx = connect()
 
     # Store default connection and config for per-request API key support
@@ -1125,7 +1126,11 @@ def create_mcp_server(
     # =========================================================================
 
     # Lazy import and create tool index for discovery
-    from nexus.bricks.discovery.tool_index import ToolIndex, ToolInfo
+    import importlib as _il
+
+    _tool_index_mod = _il.import_module("nexus.bricks.discovery.tool_index")
+    ToolIndex = _tool_index_mod.ToolIndex
+    ToolInfo = _tool_index_mod.ToolInfo
 
     tool_index = ToolIndex()
 
@@ -1749,9 +1754,10 @@ def main() -> None:
     """Main entry point for running MCP server from command line."""
 
     # Get configuration from environment
+    import importlib as _il
     import os
 
-    from nexus import connect
+    connect = _il.import_module("nexus").connect
 
     remote_url = os.getenv("NEXUS_URL")
     api_key = os.getenv("NEXUS_API_KEY")

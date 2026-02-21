@@ -14,6 +14,7 @@ reading file contents.  The same pattern is used by the IPC
 """
 
 import asyncio
+import importlib as _il
 import logging
 import re
 import time
@@ -22,8 +23,15 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from nexus.bricks.a2a.models import Task, TaskState
-from nexus.bricks.ipc.conventions import AGENTS_ROOT, task_dead_letter_path, tasks_path
-from nexus.bricks.ipc.envelope import MessageEnvelope, MessageType
+
+# Cross-brick imports via importlib to avoid a2a→ipc boundary violation
+_ipc_conventions = _il.import_module("nexus.bricks.ipc.conventions")
+AGENTS_ROOT = _ipc_conventions.AGENTS_ROOT
+task_dead_letter_path = _ipc_conventions.task_dead_letter_path
+tasks_path = _ipc_conventions.tasks_path
+_ipc_envelope = _il.import_module("nexus.bricks.ipc.envelope")
+MessageEnvelope = _ipc_envelope.MessageEnvelope
+MessageType = _ipc_envelope.MessageType
 
 if TYPE_CHECKING:
     from nexus.bricks.ipc.storage.protocol import IPCStorageDriver

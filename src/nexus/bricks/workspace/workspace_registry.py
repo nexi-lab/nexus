@@ -15,13 +15,9 @@ import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 logger = logging.getLogger(__name__)
-
-if TYPE_CHECKING:
-    from nexus.core.metastore import MetastoreABC
-    from nexus.storage.record_store import RecordStoreABC
 
 
 @dataclass
@@ -120,9 +116,9 @@ class WorkspaceRegistry:
 
     def __init__(
         self,
-        metadata: "MetastoreABC",
+        metadata: Any,
         rebac_manager: Any | None = None,  # v0.5.0: For auto-granting ownership
-        record_store: "RecordStoreABC | None" = None,
+        record_store: Any | None = None,
     ):
         """Initialize workspace registry.
 

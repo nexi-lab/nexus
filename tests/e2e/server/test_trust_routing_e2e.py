@@ -10,18 +10,18 @@ Full integration test with real services (SQLite in-memory):
 
 import pytest
 
-from nexus.bricks.rebac.entity_registry import EntityRegistry
-from nexus.bricks.rebac.manager import EnhancedReBACManager
-from nexus.constants import ROOT_ZONE_ID
-from nexus.services.agents.agent_registry import AgentRegistry
-from nexus.services.delegation.errors import InsufficientTrustError
-from nexus.services.delegation.models import (
+from nexus.bricks.delegation.errors import InsufficientTrustError
+from nexus.bricks.delegation.models import (
     DelegationMode,
     DelegationOutcome,
     DelegationStatus,
 )
-from nexus.services.delegation.service import DelegationService
-from nexus.services.reputation.reputation_service import ReputationService
+from nexus.bricks.delegation.service import DelegationService
+from nexus.bricks.rebac.entity_registry import EntityRegistry
+from nexus.bricks.rebac.manager import EnhancedReBACManager
+from nexus.bricks.reputation.reputation_service import ReputationService
+from nexus.constants import ROOT_ZONE_ID
+from nexus.services.agents.agent_registry import AgentRegistry
 from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
 # ---------------------------------------------------------------------------

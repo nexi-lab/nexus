@@ -76,6 +76,7 @@ class NexusAppState:
 
     # === Services (initialized to None, set during lifespan) ===
     agent_registry: Any = None
+    agent_warmup_service: Any = None
     async_agent_registry: Any = None
     async_rebac_manager: Any = None
     async_nexus_fs: Any = None

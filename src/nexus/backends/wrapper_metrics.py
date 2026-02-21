@@ -106,6 +106,11 @@ class WrapperMetrics:
         initialization is performed entirely inside the lock to prevent
         another thread from seeing ``_otel_initialized = True`` before
         ``_otel_counters`` is populated.
+
+        NOTE: The unsynchronized read of ``_otel_initialized`` (line below)
+        relies on CPython's GIL making attribute reads/writes atomic at the
+        bytecode level. If targeting free-threaded Python (PEP 703), this
+        must be replaced with ``threading.Lock``-only access or atomics.
         """
         if self._otel_initialized:
             return self._otel_counters
@@ -127,8 +132,8 @@ class WrapperMetrics:
                     name: meter.create_counter(f"{self._meter_name}.{name}")
                     for name in self._counter_names
                 }
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("OTel counter init failed for %s: %s", self._meter_name, e)
             finally:
                 self._otel_initialized = True
 

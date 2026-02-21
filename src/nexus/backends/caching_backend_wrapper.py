@@ -32,7 +32,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import threading
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any
@@ -141,9 +140,9 @@ class CachingBackendWrapper(DelegatingBackend):
             enabled=self._config.metrics_enabled,
         )
 
-        # Extra stats lock for get_cache_stats() snapshot (the WrapperMetrics
-        # has its own lock, but we need atomic snapshot of L1 stats + counters)
-        self._stats_lock = threading.Lock()
+        # Note: get_cache_stats() returns a best-effort snapshot. L1 stats and
+        # WrapperMetrics counters are individually thread-safe but the combined
+        # snapshot is not atomic (acceptable for diagnostic/observability use).
 
     # === Name & Chain Introspection ===
 
@@ -278,21 +277,24 @@ class CachingBackendWrapper(DelegatingBackend):
     # === Cache management (CachingConnectorContract) ===
 
     def get_cache_stats(self) -> dict[str, Any]:
-        """Return L1 stats, L2 health, and hit/miss counters."""
+        """Return L1 stats, L2 health, and hit/miss counters.
+
+        Note: Stats are best-effort snapshots. L1 stats and counter values
+        are individually thread-safe but the combined snapshot is not atomic.
+        """
         l1_stats = self._l1_cache.get_stats()
         counters = self._metrics.get_stats()
-        with self._stats_lock:
-            return {
-                "l1": l1_stats,
-                "l1_hits": counters.get("l1_hits", 0),
-                "l1_misses": counters.get("l1_misses", 0),
-                "cache_errors": counters.get("cache_errors", 0),
-                "invalidations": counters.get("invalidations", 0),
-                "strategy": self._config.strategy.value,
-                "l2_enabled": self._config.l2_enabled,
-                "l2_connected": self._cache_store is not None,
-                "l2_mode": "write-populate-only",
-            }
+        return {
+            "l1": l1_stats,
+            "l1_hits": counters.get("l1_hits", 0),
+            "l1_misses": counters.get("l1_misses", 0),
+            "cache_errors": counters.get("cache_errors", 0),
+            "invalidations": counters.get("invalidations", 0),
+            "strategy": self._config.strategy.value,
+            "l2_enabled": self._config.l2_enabled,
+            "l2_connected": self._cache_store is not None,
+            "l2_mode": "write-populate-only",
+        }
 
     def clear_cache(self) -> None:
         """Clear L1 cache and reset all stats. L2 cleared via scheduled invalidation."""
@@ -319,7 +321,9 @@ class CachingBackendWrapper(DelegatingBackend):
             loop.create_task(self._l2_populate(content_hash, content))
         except RuntimeError:
             # No running event loop — skip L2 (pure sync context)
-            pass
+            logger.debug(
+                "L2 populate skipped: no running event loop for hash=%s", content_hash[:12]
+            )
 
     async def _l2_populate(self, content_hash: str, content: bytes) -> None:
         """Async L2 cache population. Errors logged, never raised."""

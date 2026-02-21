@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 from concurrent.futures import Executor, ProcessPoolExecutor
+from typing import cast
 
 SUPPORTS_SUBINTERPRETERS: bool = sys.version_info >= (3, 14)
 
@@ -26,7 +27,8 @@ def create_isolation_pool(pool_size: int, *, force_process: bool = False) -> Exe
         that are not sub-interpreter safe.
     """
     if SUPPORTS_SUBINTERPRETERS and not force_process:
-        from concurrent.futures import InterpreterPoolExecutor  # type: ignore[attr-defined]
+        import concurrent.futures
 
-        return InterpreterPoolExecutor(max_workers=pool_size)  # type: ignore[no-any-return]
+        cls = getattr(concurrent.futures, "InterpreterPoolExecutor")  # noqa: B009
+        return cast(Executor, cls(max_workers=pool_size))
     return ProcessPoolExecutor(max_workers=pool_size)

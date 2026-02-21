@@ -119,6 +119,8 @@ class NexusFSBulkMixin:
         def _handle_observer_error(
             self, operation: str, op_path: str, error: Exception
         ) -> None: ...
+        @staticmethod
+        def _resolve_write_urgency(io_profile: str) -> str | None: ...
         def _get_zone_id(self, context: OperationContext | None) -> str: ...
         def _has_descendant_access(
             self, path: str, permission: Permission, context: OperationContext
@@ -646,11 +648,15 @@ class NexusFSBulkMixin:
             (metadata, existing_metadata.get(metadata.path) is None) for metadata in metadata_list
         ]
         if (obs := self._write_observer) is not None:
+            # Resolve urgency from the first route's IOProfile (#2426 Phase 2).
+            # Batch writes share the same mount, so all routes have the same io_profile.
+            _urgency = self._resolve_write_urgency(routes[0].io_profile) if routes else None
             try:
                 obs.on_write_batch(
                     items=items,
                     zone_id=zone_id,
                     agent_id=agent_id,
+                    urgency=_urgency,
                 )
             except Exception as e:
                 self._handle_observer_error("write_batch", f"batch({len(metadata_list)} files)", e)

@@ -115,6 +115,7 @@ class RecordStoreWriteObserver:
         *,
         zone_id: str | None = None,
         agent_id: str | None = None,
+        urgency: str | None = None,  # noqa: ARG002 — Protocol conformance; sync path ignores urgency
     ) -> None:
         """Sync a batch write to RecordStore (single transaction).
 
@@ -331,8 +332,12 @@ class BufferedRecordStoreWriteObserver:
         *,
         zone_id: str | None = None,
         agent_id: str | None = None,
+        urgency: str | None = None,
     ) -> None:
         """Enqueue a batch of write events. Returns immediately."""
+        from nexus.storage.write_buffer import Urgency
+
+        _urgency = Urgency.HIGH if urgency == "high" else Urgency.NORMAL
         for metadata, is_new in items:
             self._buffer.enqueue_write(
                 metadata,
@@ -341,6 +346,7 @@ class BufferedRecordStoreWriteObserver:
                 zone_id=zone_id,
                 agent_id=agent_id,
                 snapshot_hash=metadata.etag,
+                urgency=_urgency,
             )
 
     def on_rename(

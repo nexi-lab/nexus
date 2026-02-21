@@ -51,6 +51,7 @@ class WriteObserverProtocol(Protocol):
         *,
         zone_id: str | None = ...,
         agent_id: str | None = ...,
+        urgency: str | None = ...,
     ) -> None:
         """Called after a batch write completes in Metastore.
 

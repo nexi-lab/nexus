@@ -195,7 +195,7 @@ class TestZoneIsolation:
             enforcer.check("/zone/zone_b/secret.txt", Permission.READ, ctx)
 
     def test_zone_none_defaults_to_default_zone(self):
-        """When zone_id is None, 'default' is used."""
+        """When zone_id is None, ROOT_ZONE_ID ('root') is used."""
         rebac = MagicMock()
         rebac.rebac_check.return_value = True
         enforcer = PermissionEnforcer(rebac_manager=rebac)

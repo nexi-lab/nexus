@@ -231,7 +231,7 @@ class TestRecordCreate:
         assert fp.backend_id == "local"
 
     def test_defaults_zone_to_default(self, session: Session) -> None:
-        """When zone_id is None, should default to 'default'."""
+        """When zone_id is None, should default to ROOT_ZONE_ID ('root')."""
         metadata = _make_metadata(zone_id=None)
         recorder = VersionRecorder(session)
         recorder.record_write(metadata, is_new=True)

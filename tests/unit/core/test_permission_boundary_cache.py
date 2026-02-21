@@ -321,7 +321,7 @@ class TestPermissionBoundaryCache:
         assert stats["total_mappings"] == 0
 
     def test_default_zone_id(self):
-        """Test that None zone_id is treated as 'default'."""
+        """Test that None zone_id is treated as ROOT_ZONE_ID ('root')."""
         cache = PermissionBoundaryCache()
 
         # Set with None zone

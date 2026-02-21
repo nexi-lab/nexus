@@ -345,14 +345,8 @@ def _boot_independent_bricks(
     elif not _on("workflows"):
         logger.debug("[BOOT:BRICK] Workflows brick disabled by profile")
 
-    # --- API key creator (Issue #1519, 3A: inject server auth into kernel) ---
-    api_key_creator: Any = None
-    try:
-        from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
-
-        api_key_creator = DatabaseAPIKeyAuth
-    except ImportError:
-        pass  # Server auth not available (e.g. embedded mode)
+    # --- API key creator is now auto-discovered via bricks/auth/brick_factory.py ---
+    api_key_creator: Any = auto_results.pop("api_key_creator", None)
 
     # --- TransactionalSnapshotService (Issue #1752) ---
     snapshot_service: Any = auto_results.pop("snapshot_service", None)

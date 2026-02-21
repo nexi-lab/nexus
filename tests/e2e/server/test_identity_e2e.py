@@ -116,7 +116,7 @@ def session_factory(db_path: Any) -> Any:
 @pytest.fixture
 def api_keys(session_factory: Any) -> dict[str, Any]:
     """Create admin + normal API keys for the test."""
-    from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+    from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
 
     with session_factory() as session:
         admin_key_id, admin_raw = DatabaseAPIKeyAuth.create_key(
@@ -150,9 +150,9 @@ def app(tmp_path: Any, db_path: Any, session_factory: Any, api_keys: Any) -> Any
     Uses RaftMetadataStore.embedded() for realistic filesystem operations
     (mkdir, write) that the identity layer needs for DID document writing.
     """
-    from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
-    from nexus.auth.providers.discriminator import DiscriminatingAuthProvider
     from nexus.backends.local import LocalBackend
+    from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
+    from nexus.bricks.auth.providers.discriminator import DiscriminatingAuthProvider
     from nexus.core.nexus_fs import NexusFS
     from nexus.server.fastapi_server import create_app
     from nexus.storage.record_store import SQLAlchemyRecordStore
@@ -599,8 +599,8 @@ class TestNormalUserIdentityFlow:
 
     def test_normal_user_did_resolves_correctly(self, client: Any, normal_headers: Any) -> None:
         """Normal user's agent DID resolves to the correct public key."""
-        from nexus.identity.crypto import IdentityCrypto
-        from nexus.identity.did import resolve_did_key
+        from nexus.bricks.identity.crypto import IdentityCrypto
+        from nexus.bricks.identity.did import resolve_did_key
 
         agent_id = f"e2e-user,didresolve-{uuid.uuid4().hex[:8]}"
 

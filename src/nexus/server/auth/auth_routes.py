@@ -9,8 +9,8 @@ from typing import Any
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, EmailStr, Field
 
-from nexus.auth.oauth.user_auth import OAuthUserAuth
-from nexus.auth.providers.database_local import DatabaseLocalAuth
+from nexus.bricks.auth.oauth.user_auth import OAuthUserAuth
+from nexus.bricks.auth.providers.database_local import DatabaseLocalAuth
 from nexus.constants import ROOT_ZONE_ID
 
 logger = logging.getLogger(__name__)
@@ -438,7 +438,7 @@ async def setup_zone(
     try:
         from datetime import UTC, datetime, timedelta
 
-        from nexus.auth.user_queries import get_user_by_id
+        from nexus.bricks.auth.user_queries import get_user_by_id
 
         # Get user from database
         with auth.session_factory() as session:
@@ -614,7 +614,7 @@ async def get_profile(
         401: Not authenticated
         404: User not found
     """
-    from nexus.auth.user_queries import get_user_by_id
+    from nexus.bricks.auth.user_queries import get_user_by_id
 
     user_id, _email = user_info
 
@@ -658,7 +658,7 @@ async def update_profile(
         401: Not authenticated
         404: User not found
     """
-    from nexus.auth.user_queries import get_user_by_id
+    from nexus.bricks.auth.user_queries import get_user_by_id
 
     user_id, _email = user_info
 
@@ -776,7 +776,7 @@ async def request_verification(
         return {"message": "If this email is registered, a verification link has been sent."}
 
     try:
-        from nexus.auth.user_queries import get_user_by_email
+        from nexus.bricks.auth.user_queries import get_user_by_email
 
         with auth.session_factory() as session:
             user = get_user_by_email(session, str(email))
@@ -891,7 +891,7 @@ async def oauth_check(
 
     try:
         # Exchange code for tokens to get user info
-        from nexus.auth.oauth.pending import get_pending_oauth_manager
+        from nexus.bricks.auth.oauth.pending import get_pending_oauth_manager
 
         google_provider = oauth_provider._get_provider("google")
         oauth_credential = await google_provider.exchange_code(
@@ -909,7 +909,7 @@ async def oauth_check(
             raise ValueError("OAuth response missing 'sub' claim (user ID)")
 
         # Check if OAuth account already exists (existing user)
-        from nexus.auth.user_queries import get_user_by_email
+        from nexus.bricks.auth.user_queries import get_user_by_email
         from nexus.storage.models import UserOAuthAccountModel
 
         with oauth_provider.session_factory() as session:
@@ -926,7 +926,7 @@ async def oauth_check(
                 # Existing OAuth account - login immediately
                 from datetime import UTC, datetime, timedelta
 
-                from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+                from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
                 from nexus.storage.models import APIKeyModel, UserModel
 
                 user = session.get(UserModel, existing_oauth.user_id)
@@ -1188,7 +1188,7 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
 
     try:
         # Validate and consume pending token (one-time use)
-        from nexus.auth.oauth.pending import get_pending_oauth_manager
+        from nexus.bricks.auth.oauth.pending import get_pending_oauth_manager
 
         pending_manager = get_pending_oauth_manager()
         registration = pending_manager.consume(request.pending_token)
@@ -1206,8 +1206,8 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
         import uuid
         from datetime import UTC, datetime, timedelta
 
-        from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
-        from nexus.auth.user_queries import get_user_by_email
+        from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
+        from nexus.bricks.auth.user_queries import get_user_by_email
         from nexus.storage.models import UserModel
 
         # Check if user with this email already exists

@@ -838,7 +838,7 @@ async def db_auth_client(
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
-    from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+    from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
     from nexus.storage.models import APIKeyModel
 
     monkeypatch.setenv("NEXUS_SEARCH_DAEMON", "false")

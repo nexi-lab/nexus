@@ -23,8 +23,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
-from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
-from nexus.auth.providers.discriminator import DiscriminatingAuthProvider
+from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
+from nexus.bricks.auth.providers.discriminator import DiscriminatingAuthProvider
 from nexus.core.config import PermissionConfig
 from nexus.core.metadata import FileMetadata, PaginatedResult
 from nexus.core.metastore import MetastoreABC

@@ -20,9 +20,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from nexus.identity.crypto import IdentityCrypto
-from nexus.identity.did import resolve_did_key
-from nexus.identity.key_service import KeyService
+from nexus.bricks.identity.crypto import IdentityCrypto
+from nexus.bricks.identity.did import resolve_did_key
+from nexus.bricks.identity.key_service import KeyService
 from nexus.storage.models import Base
 
 

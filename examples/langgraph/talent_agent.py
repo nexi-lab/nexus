@@ -46,7 +46,7 @@ from langgraph.prebuilt import create_react_agent
 from nexus_tools import get_nexus_tools
 
 # Import official system prompt from Nexus tools
-from nexus.tools import DATA_ANALYSIS_AGENT_SYSTEM_PROMPT
+from nexus.bricks.tools import DATA_ANALYSIS_AGENT_SYSTEM_PROMPT
 
 # Get configuration from environment variables
 E2B_TEMPLATE_ID = os.getenv("E2B_TEMPLATE_ID")

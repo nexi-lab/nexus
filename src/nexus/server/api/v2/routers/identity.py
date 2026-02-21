@@ -94,7 +94,7 @@ async def verify_agent_signature(
     key_service: Any = Depends(_get_key_service),
 ) -> dict:
     """Verify a signature produced by an agent's signing key."""
-    from nexus.identity.crypto import IdentityCrypto
+    from nexus.bricks.identity.crypto import IdentityCrypto
 
     try:
         message = base64.b64decode(body.message)

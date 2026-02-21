@@ -27,8 +27,8 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from nexus.auth.oauth.providers.x import XOAuthProvider
-from nexus.auth.oauth.token_manager import TokenManager
+from nexus.bricks.auth.oauth.providers.x import XOAuthProvider
+from nexus.bricks.auth.oauth.token_manager import TokenManager
 from nexus.cli.utils import console
 from nexus.constants import ROOT_ZONE_ID
 
@@ -317,7 +317,7 @@ def setup_gdrive(
         nexus oauth setup-gdrive --user-email "alice@example.com"
     """
 
-    from nexus.auth.oauth.providers.google import GoogleOAuthProvider
+    from nexus.bricks.auth.oauth.providers.google import GoogleOAuthProvider
 
     # Validate that credentials are provided (either via options or environment)
     if not client_id:

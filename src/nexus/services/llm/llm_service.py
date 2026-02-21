@@ -21,7 +21,7 @@ from nexus.lib.rpc_decorator import rpc_expose
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from nexus.llm.provider import LLMProvider
+    from nexus.bricks.llm.provider import LLMProvider
 
     from .llm_citation import DocumentReadResult
     from .llm_document_reader import LLMDocumentReader
@@ -372,8 +372,8 @@ class LLMService:
             print(result.answer)
 
             # Create reader for specific provider
-            from nexus.llm.provider import LiteLLMProvider
-            from nexus.llm.config import LLMConfig
+            from nexus.bricks.llm.provider import LiteLLMProvider
+            from nexus.bricks.llm.config import LLMConfig
 
             config = LLMConfig(
                 model="gpt-4",
@@ -445,8 +445,8 @@ class LLMService:
         """
         from pydantic import SecretStr
 
-        from nexus.llm.config import LLMConfig
-        from nexus.llm.provider import LiteLLMProvider
+        from nexus.bricks.llm.config import LLMConfig
+        from nexus.bricks.llm.provider import LiteLLMProvider
 
         from .llm_document_reader import LLMDocumentReader
 

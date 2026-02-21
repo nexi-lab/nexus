@@ -18,13 +18,13 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
-from nexus.bricks.sandbox.sandbox_provider import CodeExecutionResult
-from nexus.parsers.validation.models import ValidationPipelineConfig, ValidatorConfig
-from nexus.parsers.validation.runner import ValidationRunner
-from nexus.parsers.validation.script_builder import (
+from nexus.bricks.parsers.validation.models import ValidationPipelineConfig, ValidatorConfig
+from nexus.bricks.parsers.validation.runner import ValidationRunner
+from nexus.bricks.parsers.validation.script_builder import (
     build_simple_validation_script,
     parse_simple_script_output,
 )
+from nexus.bricks.sandbox.sandbox_provider import CodeExecutionResult
 
 
 def _create_test_app(tmp_path: Path, enforce_permissions: bool = False):
@@ -344,7 +344,7 @@ class TestPerformanceConstraints:
 
     def test_config_caching_avoids_reparse(self):
         """Config loader returns cached instance for same key."""
-        from nexus.parsers.validation.config import ValidatorConfigLoader
+        from nexus.bricks.parsers.validation.config import ValidatorConfigLoader
 
         yaml = (
             "validators:\n"
@@ -361,7 +361,7 @@ class TestPerformanceConstraints:
     @pytest.mark.asyncio
     async def test_detection_uses_single_ls_command(self):
         """Project detection is O(1) — single ls call, not per-file exists."""
-        from nexus.parsers.validation.detector import detect_project_validators
+        from nexus.bricks.parsers.validation.detector import detect_project_validators
 
         provider = AsyncMock()
         provider.run_code = AsyncMock(

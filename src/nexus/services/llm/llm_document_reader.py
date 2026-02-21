@@ -1,6 +1,6 @@
 """LLM-powered document reading for Nexus (service layer).
 
-Moved from nexus.llm.document_reader (Issue #1521).
+Moved from nexus.bricks.llm.document_reader (Issue #1521).
 Orchestrates semantic search, LLM providers, and content parsing
 to answer questions about documents.
 
@@ -25,9 +25,9 @@ from .llm_context_builder import ChunkLike, ContextBuilder
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from nexus.bricks.llm.provider import LLMProvider
     from nexus.bricks.search.protocols import SearchableProtocol as SemanticSearch
     from nexus.core.filesystem import NexusFilesystem
-    from nexus.llm.provider import LLMProvider
 
 
 @dataclass

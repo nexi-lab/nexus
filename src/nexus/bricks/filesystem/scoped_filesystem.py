@@ -6,6 +6,10 @@ modifying existing code that uses hardcoded global paths.
 
 Moved from core/ → services/filesystem/ → bricks/filesystem/ (Issue #2424).
 
+Sync-only.  Async callers should use ``asyncio.to_thread()``::
+
+    result = await asyncio.to_thread(scoped_fs.read, "/workspace/file.txt")
+
 Example:
     # For user at /zones/aquarius_team_12/users/user_12/
     scoped_fs = ScopedFilesystem(nexus_fs, root="/zones/aquarius_team_12/users/user_12")
@@ -18,7 +22,6 @@ Example:
 from __future__ import annotations
 
 import builtins
-from datetime import timedelta
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
@@ -37,6 +40,9 @@ class ScopedFilesystem(ScopedPathMixin):
 
     The wrapper implements the NexusFilesystem protocol and delegates
     all operations to the underlying filesystem after path translation.
+
+    Service-level methods (workspace, sandbox, mount, memory, agent)
+    are forwarded directly via ``__getattr__`` — no path scoping.
 
     Attributes:
         _fs: The underlying NexusFilesystemABC instance
@@ -74,7 +80,7 @@ class ScopedFilesystem(ScopedPathMixin):
         return self._fs.zone_id
 
     # ============================================================
-    # Core File Operations
+    # Core File Operations (path-scoped)
     # ============================================================
 
     def read(
@@ -167,7 +173,7 @@ class ScopedFilesystem(ScopedPathMixin):
         return self._fs.exists(self._scope_path(path))
 
     # ============================================================
-    # File Discovery Operations
+    # File Discovery Operations (path-scoped)
     # ============================================================
 
     def list(
@@ -215,7 +221,7 @@ class ScopedFilesystem(ScopedPathMixin):
         return [self._unscope_dict(r, ["file", "path"]) for r in result]
 
     # ============================================================
-    # Directory Operations
+    # Directory Operations (path-scoped)
     # ============================================================
 
     def mkdir(self, path: str, parents: bool = False, exist_ok: bool = False) -> None:
@@ -239,232 +245,16 @@ class ScopedFilesystem(ScopedPathMixin):
         return self._fs.get_available_namespaces()
 
     # ============================================================
-    # Workspace Versioning
+    # Service method forwarding
     # ============================================================
+    # Workspace, sandbox, mount, memory, agent, and all other
+    # service-level methods are forwarded directly to _fs via
+    # __getattr__.  No path scoping is needed for these — they
+    # either don't take paths or handle scoping internally.
 
-    def workspace_snapshot(
-        self,
-        workspace_path: str | None = None,
-        description: str | None = None,
-        tags: builtins.list[str] | None = None,
-    ) -> dict[str, Any]:
-        """Create a snapshot of a registered workspace."""
-        scoped_path = self._scope_path(workspace_path) if workspace_path else None
-        result = self._fs.workspace_snapshot(scoped_path, description, tags)
-        return self._unscope_dict(result, ["workspace_path", "path"])
-
-    def workspace_restore(
-        self,
-        snapshot_number: int,
-        workspace_path: str | None = None,
-    ) -> dict[str, Any]:
-        """Restore workspace to a previous snapshot."""
-        scoped_path = self._scope_path(workspace_path) if workspace_path else None
-        result = self._fs.workspace_restore(snapshot_number, scoped_path)
-        return self._unscope_dict(result, ["workspace_path", "path"])
-
-    def workspace_log(
-        self,
-        workspace_path: str | None = None,
-        limit: int = 100,
-    ) -> builtins.list[dict[str, Any]]:
-        """List snapshot history for workspace."""
-        scoped_path = self._scope_path(workspace_path) if workspace_path else None
-        result = self._fs.workspace_log(scoped_path, limit)
-        return [self._unscope_dict(r, ["workspace_path", "path"]) for r in result]
-
-    def workspace_diff(
-        self,
-        snapshot_1: int,
-        snapshot_2: int,
-        workspace_path: str | None = None,
-    ) -> dict[str, Any]:
-        """Compare two workspace snapshots."""
-        scoped_path = self._scope_path(workspace_path) if workspace_path else None
-        return self._fs.workspace_diff(snapshot_1, snapshot_2, scoped_path)
-
-    # ============================================================
-    # Workspace & Memory Registry
-    # ============================================================
-
-    def register_workspace(
-        self,
-        path: str,
-        name: str | None = None,
-        description: str | None = None,
-        created_by: str | None = None,
-        tags: builtins.list[str] | None = None,
-        metadata: dict[str, Any] | None = None,
-        session_id: str | None = None,
-        ttl: timedelta | None = None,
-    ) -> dict[str, Any]:
-        """Register a workspace path."""
-        result = self._fs.register_workspace(
-            self._scope_path(path), name, description, created_by, tags, metadata, session_id, ttl
-        )
-        return self._unscope_dict(result, ["path"])
-
-    def unregister_workspace(self, path: str) -> bool:
-        """Unregister a workspace path."""
-        return self._fs.unregister_workspace(self._scope_path(path))
-
-    def list_workspaces(self, context: Any | None = None) -> builtins.list[dict]:
-        """List all registered workspaces."""
-        result = self._fs.list_workspaces(context=context)
-        return [self._unscope_dict(r, ["path"]) for r in result]
-
-    def get_workspace_info(self, path: str) -> dict | None:
-        """Get workspace information."""
-        result = self._fs.get_workspace_info(self._scope_path(path))
-        if result:
-            return self._unscope_dict(result, ["path"])
-        return None
-
-    def register_memory(
-        self,
-        path: str,
-        name: str | None = None,
-        description: str | None = None,
-        created_by: str | None = None,
-        tags: builtins.list[str] | None = None,
-        metadata: dict[str, Any] | None = None,
-        session_id: str | None = None,
-        ttl: timedelta | None = None,
-    ) -> dict[str, Any]:
-        """Register a memory path."""
-        result = self._fs.register_memory(
-            self._scope_path(path), name, description, created_by, tags, metadata, session_id, ttl
-        )
-        return self._unscope_dict(result, ["path"])
-
-    def unregister_memory(self, path: str) -> bool:
-        """Unregister a memory path."""
-        return self._fs.unregister_memory(self._scope_path(path))
-
-    def list_memories(self) -> builtins.list[dict]:
-        """List all registered memories."""
-        result = self._fs.list_memories()
-        return [self._unscope_dict(r, ["path"]) for r in result]
-
-    def get_memory_info(self, path: str) -> dict | None:
-        """Get memory information."""
-        result = self._fs.get_memory_info(self._scope_path(path))
-        if result:
-            return self._unscope_dict(result, ["path"])
-        return None
-
-    # ============================================================
-    # Sandbox Operations
-    # ============================================================
-
-    def sandbox_create(
-        self,
-        name: str,
-        ttl_minutes: int = 10,
-        provider: str | None = "e2b",
-        template_id: str | None = None,
-        context: dict | None = None,
-    ) -> dict[Any, Any]:
-        """Create a new code execution sandbox."""
-        return self._fs.sandbox_create(name, ttl_minutes, provider, template_id, context)
-
-    def sandbox_get_or_create(
-        self,
-        name: str,
-        ttl_minutes: int = 10,
-        provider: str | None = None,
-        template_id: str | None = None,
-        verify_status: bool = True,
-        context: dict | None = None,
-    ) -> dict[Any, Any]:
-        """Get existing active sandbox or create a new one."""
-        return self._fs.sandbox_get_or_create(
-            name, ttl_minutes, provider, template_id, verify_status, context
-        )
-
-    def sandbox_run(
-        self,
-        sandbox_id: str,
-        language: str,
-        code: str,
-        timeout: int = 300,
-        nexus_url: str | None = None,
-        nexus_api_key: str | None = None,
-        context: dict | None = None,
-        as_script: bool = False,
-    ) -> dict[Any, Any]:
-        """Run code in a sandbox."""
-        return self._fs.sandbox_run(
-            sandbox_id=sandbox_id,
-            language=language,
-            code=code,
-            timeout=timeout,
-            nexus_url=nexus_url,
-            nexus_api_key=nexus_api_key,
-            context=context,
-            as_script=as_script,
-        )
-
-    def sandbox_pause(self, sandbox_id: str, context: dict | None = None) -> dict[Any, Any]:
-        """Pause a running sandbox."""
-        return self._fs.sandbox_pause(sandbox_id, context)
-
-    def sandbox_resume(self, sandbox_id: str, context: dict | None = None) -> dict[Any, Any]:
-        """Resume a paused sandbox."""
-        return self._fs.sandbox_resume(sandbox_id, context)
-
-    def sandbox_stop(self, sandbox_id: str, context: dict | None = None) -> dict[Any, Any]:
-        """Stop a sandbox."""
-        return self._fs.sandbox_stop(sandbox_id, context)
-
-    def sandbox_list(
-        self,
-        context: dict | None = None,
-        verify_status: bool = False,
-        user_id: str | None = None,
-        zone_id: str | None = None,
-        agent_id: str | None = None,
-        status: str | None = None,
-    ) -> dict[Any, Any]:
-        """List all sandboxes for the current user."""
-        return self._fs.sandbox_list(context, verify_status, user_id, zone_id, agent_id, status)
-
-    def sandbox_status(self, sandbox_id: str, context: dict | None = None) -> dict[Any, Any]:
-        """Get sandbox status."""
-        return self._fs.sandbox_status(sandbox_id, context)
-
-    def sandbox_connect(
-        self,
-        sandbox_id: str,
-        provider: str = "e2b",
-        sandbox_api_key: str | None = None,
-        mount_path: str = "/mnt/nexus",
-        nexus_url: str | None = None,
-        nexus_api_key: str | None = None,
-        agent_id: str | None = None,
-        context: dict | None = None,
-    ) -> dict[Any, Any]:
-        """Connect to user-managed sandbox."""
-        return self._fs.sandbox_connect(
-            sandbox_id,
-            provider,
-            sandbox_api_key,
-            mount_path,
-            nexus_url,
-            nexus_api_key,
-            agent_id,
-            context,
-        )
-
-    def sandbox_disconnect(
-        self,
-        sandbox_id: str,
-        provider: str = "e2b",
-        sandbox_api_key: str | None = None,
-        context: dict | None = None,
-    ) -> dict[Any, Any]:
-        """Disconnect from user-managed sandbox."""
-        return self._fs.sandbox_disconnect(sandbox_id, provider, sandbox_api_key, context)
+    def __getattr__(self, name: str) -> Any:
+        """Forward unknown attributes to the underlying filesystem."""
+        return getattr(self._fs, name)
 
     # ============================================================
     # Lifecycle Management

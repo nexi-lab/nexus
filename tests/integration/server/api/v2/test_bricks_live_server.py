@@ -29,8 +29,8 @@ from nexus.server.api.v2.versioning import (
     register_v2_routers,
 )
 from nexus.server.dependencies import require_admin
-from nexus.services.brick_lifecycle import BrickLifecycleManager
-from nexus.services.brick_reconciler import BrickReconciler
+from nexus.system_services.lifecycle.brick_lifecycle import BrickLifecycleManager
+from nexus.system_services.lifecycle.brick_reconciler import BrickReconciler
 
 # ---------------------------------------------------------------------------
 # Helpers

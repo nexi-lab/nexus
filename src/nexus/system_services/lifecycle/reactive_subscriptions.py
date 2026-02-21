@@ -11,7 +11,7 @@ All subscriptions use read-set mode with O(1+d) lookup via ReadSetRegistry
 reverse index.
 
 Example:
-    >>> from nexus.services.reactive_subscriptions import (
+    >>> from nexus.system_services.lifecycle.reactive_subscriptions import (
     ...     ReactiveSubscriptionManager, Subscription,
     ... )
     >>> from nexus.core.read_set import ReadSet, ReadSetRegistry

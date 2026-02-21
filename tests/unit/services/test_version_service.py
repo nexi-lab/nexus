@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.services.version_service import VersionService
+from nexus.services.versioning.version_service import VersionService
 
 
 class TestVersionServiceInit:

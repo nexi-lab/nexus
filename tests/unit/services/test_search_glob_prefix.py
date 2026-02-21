@@ -11,7 +11,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from nexus.services.search_service import SearchService
+from nexus.services.search.search_service import SearchService
 
 
 def _make_service(router: object | None = None) -> SearchService:

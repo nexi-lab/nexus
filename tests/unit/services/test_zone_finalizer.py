@@ -10,13 +10,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nexus.services.brick_lifecycle import BrickLifecycleManager
-from nexus.services.brick_reconciler import BrickReconciler
 from nexus.services.protocols.brick_lifecycle import (
     BrickState,
     ZoneDeprovisionReport,
     ZoneState,
 )
+from nexus.system_services.lifecycle.brick_lifecycle import BrickLifecycleManager
+from nexus.system_services.lifecycle.brick_reconciler import BrickReconciler
 from tests.unit.services.conftest import (
     make_drain_only_brick as _make_drain_only_brick,
 )

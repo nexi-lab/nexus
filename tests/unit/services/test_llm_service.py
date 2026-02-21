@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nexus.services.llm_service import LLMService
+from nexus.services.llm.llm_service import LLMService
 
 # =============================================================================
 # Fixtures

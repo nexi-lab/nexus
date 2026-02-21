@@ -12,7 +12,7 @@ import pytest
 import yaml
 
 from nexus.contracts.types import OperationContext
-from nexus.services.skill_service import SkillService
+from nexus.services.skills.skill_service import SkillService
 
 # =============================================================================
 # Fixtures

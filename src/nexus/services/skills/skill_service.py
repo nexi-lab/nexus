@@ -1,8 +1,8 @@
-"""Backward-compatible shim for SkillService (Issue #2035).
+"""Gateway→Protocol adapter for SkillService (Issue #2035).
 
-Canonical location is now ``nexus.bricks.skills.service.SkillService``.
-This module provides a gateway-accepting constructor for backward
-compatibility with code that creates ``SkillService(gateway=gw)``.
+Canonical brick location is ``nexus.bricks.skills.service.SkillService``.
+This adapter provides a gateway-accepting constructor that bridges
+the gateway API to the brick protocol interface.
 """
 
 from __future__ import annotations

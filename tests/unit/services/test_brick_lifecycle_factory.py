@@ -15,8 +15,8 @@ from nexus.factory import (
     _register_factory_bricks,
     _WorkflowLifecycleAdapter,
 )
-from nexus.services.brick_lifecycle import BrickLifecycleManager
 from nexus.services.protocols.brick_lifecycle import BrickState
+from nexus.system_services.lifecycle.brick_lifecycle import BrickLifecycleManager
 
 # ---------------------------------------------------------------------------
 # Test helpers

@@ -22,7 +22,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nexus.services.oauth_service import OAuthService, PKCEStateStore
+from nexus.services.oauth.oauth_service import OAuthService, PKCEStateStore
 
 # ---------------------------------------------------------------------------
 # Helpers

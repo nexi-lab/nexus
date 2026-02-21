@@ -15,7 +15,7 @@ import pytest
 
 from nexus.contracts.types import OperationContext
 from nexus.lib.response import HandlerResponse
-from nexus.services.share_link_service import ShareLinkService
+from nexus.services.share_link.share_link_service import ShareLinkService
 
 # =============================================================================
 # Fixtures

@@ -17,8 +17,8 @@ from nexus.bricks.ipc.envelope import MessageEnvelope, MessageType
 from nexus.bricks.ipc.hooks import register_ipc_hooks
 from nexus.bricks.ipc.provisioning import AgentProvisioner
 from nexus.bricks.ipc.registry import MessageProcessorRegistry
-from nexus.services.hook_engine import ScopedHookEngine
 from nexus.services.protocols.hook_engine import POST_WRITE, HookContext
+from nexus.system_services.lifecycle.hook_engine import ScopedHookEngine
 from tests.unit.bricks.ipc.fakes import InMemoryStorageDriver
 
 ZONE = "test-zone"

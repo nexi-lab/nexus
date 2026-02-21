@@ -123,7 +123,7 @@ def _make_search_service(rebac_manager: FakeReBACManager | None = None) -> Any:
     with tempfile.TemporaryDirectory() as tmpdir:
         metadata_store = RaftMetadataStore.embedded(str(Path(tmpdir) / "meta"), zone_id="root")
 
-        from nexus.services.search_service import SearchService
+        from nexus.services.search.search_service import SearchService
 
         svc = SearchService(
             metadata_store=metadata_store,

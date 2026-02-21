@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.services.brick_lifecycle import BrickLifecycleManager
 from nexus.services.protocols.brick_lifecycle import (
     POST_MOUNT,
     POST_UNMOUNT,
@@ -26,6 +25,7 @@ from nexus.services.protocols.hook_engine import (
     HookEngineProtocol,
     HookResult,
 )
+from nexus.system_services.lifecycle.brick_lifecycle import BrickLifecycleManager
 
 # ---------------------------------------------------------------------------
 # Test helpers

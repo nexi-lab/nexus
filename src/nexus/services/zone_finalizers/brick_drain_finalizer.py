@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from nexus.services.brick_lifecycle import BrickLifecycleManager
+    from nexus.system_services.lifecycle.brick_lifecycle import BrickLifecycleManager
 
 
 class BrickDrainFinalizer:

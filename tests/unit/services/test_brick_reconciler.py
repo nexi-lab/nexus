@@ -10,14 +10,14 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nexus.services.brick_lifecycle import BrickLifecycleManager
-from nexus.services.brick_reconciler import BrickReconciler
 from nexus.services.protocols.brick_lifecycle import (
     BrickReconcileOutcome,
     BrickState,
     DriftAction,
     ReconcileContext,
 )
+from nexus.system_services.lifecycle.brick_lifecycle import BrickLifecycleManager
+from nexus.system_services.lifecycle.brick_reconciler import BrickReconciler
 from tests.unit.services.conftest import (
     make_failing_brick as _make_failing_brick,
 )

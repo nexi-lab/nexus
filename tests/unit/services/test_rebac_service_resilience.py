@@ -18,7 +18,7 @@ from nexus.bricks.rebac.circuit_breaker import (
     CircuitState,
 )
 from nexus.contracts.exceptions import CircuitOpenError
-from nexus.services.rebac_service import ReBACService
+from nexus.services.rebac.rebac_service import ReBACService
 
 # =========================================================================
 # Fixtures

@@ -15,7 +15,7 @@ import pytest
 
 from nexus.contracts.types import OperationContext
 from nexus.core.protocols.connector import PassthroughProtocol
-from nexus.services.events_service import EventsService
+from nexus.system_services.lifecycle.events_service import EventsService
 
 # =============================================================================
 # Fixtures

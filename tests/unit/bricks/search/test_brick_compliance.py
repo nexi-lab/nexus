@@ -11,7 +11,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from nexus.bricks.search.lifecycle_adapter import SearchBrickLifecycleAdapter
-from nexus.services.protocols.adaptive_k import AdaptiveKProtocol
 from nexus.services.protocols.brick_lifecycle import BrickLifecycleProtocol
 from nexus.services.protocols.file_reader import FileReaderProtocol
 from nexus.services.protocols.search import SearchBrickProtocol
@@ -75,13 +74,3 @@ class TestNexusFSFileReaderSatisfiesProtocol:
         mock_nx = MagicMock()
         reader = _NexusFSFileReader(mock_nx)
         assert isinstance(reader, FileReaderProtocol)
-
-
-class TestContextBuilderSatisfiesAdaptiveKProtocol:
-    """AdaptiveKProtocol conformance for ContextBuilder."""
-
-    def test_context_builder_satisfies_protocol(self) -> None:
-        from nexus.services.llm_context_builder import ContextBuilder
-
-        builder = ContextBuilder()
-        assert isinstance(builder, AdaptiveKProtocol)

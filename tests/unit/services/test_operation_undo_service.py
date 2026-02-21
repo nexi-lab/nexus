@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.services.operation_undo_service import OperationUndoService, UndoResult
+from nexus.services.versioning.operation_undo_service import OperationUndoService, UndoResult
 
 # ---------------------------------------------------------------------------
 # Fixtures

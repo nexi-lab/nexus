@@ -1293,6 +1293,7 @@ class NexusFSCoreMixin:
                     path=path,
                     zone_id=zone_id,
                     agent_id=agent_id,
+                    urgency=self._resolve_write_urgency(route.io_profile),
                 )
             except Exception as e:
                 self._handle_observer_error("write", path, e)
@@ -1713,6 +1714,7 @@ class NexusFSCoreMixin:
                     agent_id=agent_id,
                     snapshot_hash=snapshot_hash,
                     metadata_snapshot=metadata_snapshot,
+                    urgency=self._resolve_write_urgency(route.io_profile),
                 )
             except Exception as e:
                 self._handle_observer_error("write", path, e)
@@ -2160,6 +2162,23 @@ class NexusFSCoreMixin:
         }
 
     # write_batch → moved to NexusFSBulkMixin (Issue #2272)
+
+    @staticmethod
+    def _resolve_write_urgency(io_profile: str) -> str | None:
+        """Map IOProfile sync_mode to urgency string for WriteBuffer (#2426 Phase 2).
+
+        Returns "high" for sync-mode profiles (e.g. EDIT), None otherwise.
+        Unknown/invalid profiles gracefully default to None (normal urgency).
+        """
+        try:
+            from nexus.contracts.io_profile import IOProfile
+
+            profile = IOProfile(io_profile)
+            if profile.config().write_buffer_sync_mode:
+                return "high"
+        except (ValueError, KeyError, AttributeError):
+            pass  # Unknown/missing profile, default to normal urgency
+        return None
 
     def _handle_observer_error(self, operation: str, op_path: str, error: Exception) -> None:
         """Defensive safety net for observer errors (see Issue #55).

@@ -78,7 +78,8 @@ from nexus.storage.models.filesystem import DocumentChunkModel as DocumentChunkM
 from nexus.storage.models.filesystem import FileMetadataModel as FileMetadataModel
 from nexus.storage.models.filesystem import WorkspaceSnapshotModel as WorkspaceSnapshotModel
 
-# Domain: Identity (Agent signing keys, Issue #1355)
+# Domain: Identity (Agent signing keys, Issue #1355; Credentials, Issue #1753)
+from nexus.storage.models.identity import AgentCredentialModel as AgentCredentialModel
 from nexus.storage.models.identity import AgentKeyModel as AgentKeyModel
 
 # Domain: Infrastructure (Sandbox, Config, Sessions, Migrations)

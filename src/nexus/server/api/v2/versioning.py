@@ -338,6 +338,14 @@ def build_v2_registry(
     except ImportError as e:
         logger.warning("Failed to import Identity routes: %s", e)
 
+    # ---- Credentials router (Issue #1753 — Verifiable Credentials) ----
+    try:
+        from nexus.server.api.v2.routers.credentials import router as credentials_router
+
+        registry.add(RouterEntry(router=credentials_router, name="credentials", endpoint_count=6))
+    except ImportError as e:
+        logger.warning("Failed to import Credentials routes: %s", e)
+
     # ---- Search router (Issue #2056 — ported from v1) ----
     try:
         from nexus.server.api.v2.routers.search import router as search_router

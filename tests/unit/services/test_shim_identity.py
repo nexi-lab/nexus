@@ -140,11 +140,7 @@ _SHIM_CASES: list[tuple[str, str, str]] = [
         "nexus.services.search.search_service",
         "SearchService",
     ),
-    (
-        "nexus.services.search_semantic",
-        "nexus.services.search.search_semantic",
-        "SemanticSearchMixin",
-    ),
+    # search_semantic shim deleted (Issue #2075)
     (
         "nexus.services.graph_search_service",
         "nexus.services.search.graph_search_service",

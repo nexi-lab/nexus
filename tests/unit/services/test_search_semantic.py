@@ -4,6 +4,7 @@ Tests the semantic search mixin methods: engine detection, search delegation,
 indexing, and statistics retrieval.
 
 Issue #2132: Previously 0% test coverage.
+Issue #2075: Updated for decomposed architecture.
 """
 
 from __future__ import annotations
@@ -33,8 +34,7 @@ class _StubSearchService(SemanticSearchMixin):
         query_service: Any = None,
         indexing_service: Any = None,
         indexing_pipeline: Any = None,
-        async_search: Any = None,
-        semantic_search: Any = None,
+        pipeline_indexer: Any = None,
         record_store: Any = None,
         gw_session_factory: Any = None,
         gw_backend: Any = None,
@@ -42,8 +42,7 @@ class _StubSearchService(SemanticSearchMixin):
         self._query_service = query_service
         self._indexing_service = indexing_service
         self._indexing_pipeline = indexing_pipeline
-        self._async_search = async_search
-        self._semantic_search = semantic_search
+        self._pipeline_indexer = pipeline_indexer
         self._record_store = record_store
         self._gw_session_factory = gw_session_factory
         self._gw_backend = gw_backend
@@ -93,6 +92,14 @@ def mock_indexing_service():
 
 
 @pytest.fixture
+def mock_pipeline_indexer():
+    """Create a mock PipelineIndexer."""
+    pi = AsyncMock()
+    pi.index_path.return_value = {"/x.txt": 2}
+    return pi
+
+
+@pytest.fixture
 def svc_with_engine(mock_query_service, mock_indexing_service):
     """Create a _StubSearchService with query and indexing services."""
     return _StubSearchService(
@@ -107,26 +114,6 @@ def svc_no_engine():
     return _StubSearchService()
 
 
-@pytest.fixture
-def svc_legacy_engine():
-    """Create a _StubSearchService with only legacy _async_search."""
-    legacy = AsyncMock()
-    legacy.search.return_value = [
-        SimpleNamespace(
-            path="/legacy.txt",
-            chunk_index=0,
-            chunk_text="legacy result",
-            score=0.80,
-            start_offset=0,
-            end_offset=13,
-            line_start=1,
-            line_end=1,
-        ),
-    ]
-    legacy.get_stats.return_value = {"total_documents": 5}
-    return _StubSearchService(async_search=legacy)
-
-
 # =============================================================================
 # _has_search_engine tests
 # =============================================================================
@@ -139,18 +126,14 @@ class TestHasSearchEngine:
         """Should return True when _query_service is set."""
         assert svc_with_engine._has_search_engine is True
 
-    def test_true_with_async_search(self, svc_legacy_engine):
-        """Should return True when _async_search is set (legacy)."""
-        assert svc_legacy_engine._has_search_engine is True
-
-    def test_true_with_semantic_search(self):
-        """Should return True when _semantic_search is set (legacy)."""
-        svc = _StubSearchService(semantic_search=MagicMock())
-        assert svc._has_search_engine is True
-
     def test_false_when_nothing_set(self, svc_no_engine):
         """Should return False when no engine is configured."""
         assert svc_no_engine._has_search_engine is False
+
+    def test_false_when_query_service_is_none(self):
+        """Should return False when _query_service is explicitly None."""
+        svc = _StubSearchService(query_service=None)
+        assert svc._has_search_engine is False
 
 
 # =============================================================================
@@ -220,26 +203,22 @@ class TestSemanticSearch:
         assert set(results[0].keys()) == expected_keys
 
     @pytest.mark.asyncio
-    async def test_fallback_to_legacy_async_search(self, svc_legacy_engine):
-        """When no QueryService, should fall back to _async_search."""
-        results = await svc_legacy_engine.semantic_search(query="legacy query")
-        assert len(results) == 1
-        assert results[0]["path"] == "/legacy.txt"
-        assert results[0]["chunk_text"] == "legacy result"
-
-    @pytest.mark.asyncio
     async def test_raises_when_no_engine(self, svc_no_engine):
         """semantic_search should raise ValueError without engine."""
         with pytest.raises(ValueError, match="not initialized"):
             await svc_no_engine.semantic_search(query="test")
 
     @pytest.mark.asyncio
-    async def test_raises_when_query_service_none_and_no_fallback(self):
-        """Should raise when QueryService is None and no legacy fallback."""
-        svc = _StubSearchService(semantic_search=MagicMock())
-        # _has_search_engine is True (semantic_search is set), but
-        # both _query_service and _async_search are None -> last raise
-        with pytest.raises(ValueError, match="not properly initialized"):
+    async def test_raises_when_query_service_none(self):
+        """Should raise when _has_search_engine is True but _query_service is None.
+
+        This can happen if the attribute exists but is None — _has_search_engine
+        checks hasattr AND is not None, so this scenario requires a subclass
+        that sets _query_service to a truthy value then resets it.
+        """
+        svc = _StubSearchService(query_service=MagicMock())
+        svc._query_service = None
+        with pytest.raises(ValueError, match="not initialized"):
             await svc.semantic_search(query="test")
 
     @pytest.mark.asyncio
@@ -251,6 +230,13 @@ class TestSemanticSearch:
         )
         call_kwargs = mock_query_service.search.call_args.kwargs
         assert call_kwargs["adaptive_k"] is True
+
+    @pytest.mark.asyncio
+    async def test_empty_results(self, svc_with_engine, mock_query_service):
+        """Should return empty list when no results found."""
+        mock_query_service.search.return_value = []
+        results = await svc_with_engine.semantic_search(query="nothing")
+        assert results == []
 
 
 # =============================================================================
@@ -300,17 +286,23 @@ class TestSemanticSearchIndex:
             await svc_no_engine.semantic_search_index(path="/doc.txt")
 
     @pytest.mark.asyncio
-    async def test_falls_back_to_pipeline_index(self):
-        """When no IndexingService, should fall back to _pipeline_index_documents."""
-        svc = _StubSearchService(query_service=MagicMock())
-        svc._indexing_service = None
-
-        # Mock _pipeline_index_documents
-        svc._pipeline_index_documents = AsyncMock(return_value={"/x.txt": 2})
+    async def test_falls_back_to_pipeline_indexer(self, mock_pipeline_indexer):
+        """When no IndexingService, should fall back to PipelineIndexer."""
+        svc = _StubSearchService(
+            query_service=MagicMock(),
+            pipeline_indexer=mock_pipeline_indexer,
+        )
 
         result = await svc.semantic_search_index(path="/x.txt")
-        svc._pipeline_index_documents.assert_awaited_once_with("/x.txt", True)
+        mock_pipeline_indexer.index_path.assert_awaited_once_with("/x.txt", True)
         assert result == {"/x.txt": 2}
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_when_no_indexer_and_no_pipeline(self):
+        """Should return empty dict when neither IndexingService nor PipelineIndexer."""
+        svc = _StubSearchService(query_service=MagicMock())
+        result = await svc.semantic_search_index(path="/orphan.txt")
+        assert result == {}
 
 
 # =============================================================================
@@ -330,21 +322,103 @@ class TestSemanticSearchStats:
         assert result["total_chunks"] == 100
 
     @pytest.mark.asyncio
-    async def test_fallback_to_legacy_stats(self, svc_legacy_engine):
-        """Should fall back to legacy _async_search.get_stats()."""
-        result = await svc_legacy_engine.semantic_search_stats()
-        assert result["total_documents"] == 5
-
-    @pytest.mark.asyncio
     async def test_raises_when_no_engine(self, svc_no_engine):
         """semantic_search_stats should raise ValueError without engine."""
         with pytest.raises(ValueError, match="not initialized"):
             await svc_no_engine.semantic_search_stats()
 
     @pytest.mark.asyncio
-    async def test_raises_when_no_indexing_and_no_legacy(self):
-        """Should raise when IndexingService is None and no legacy fallback."""
+    async def test_raises_when_no_indexing_service(self):
+        """Should raise when IndexingService is None."""
         svc = _StubSearchService(query_service=MagicMock())
-        svc._indexing_service = None
         with pytest.raises(ValueError, match="not properly initialized"):
             await svc.semantic_search_stats()
+
+
+# =============================================================================
+# ainitialize_semantic_search() tests
+# =============================================================================
+
+
+class TestAinitializeSemanticSearch:
+    """Tests for SemanticSearchMixin.ainitialize_semantic_search()."""
+
+    @pytest.mark.asyncio
+    async def test_raises_without_record_store(self):
+        """Should raise RuntimeError when record_store is None."""
+        svc = _StubSearchService()
+        with pytest.raises(RuntimeError, match="RecordStore"):
+            await svc.ainitialize_semantic_search(nx=MagicMock(), record_store_engine=None)
+
+    @pytest.mark.asyncio
+    async def test_delegates_to_factory(self, monkeypatch):
+        """Should call create_semantic_search_components and assign results."""
+        components = SimpleNamespace(
+            query_service=MagicMock(),
+            indexing_service=MagicMock(),
+            indexing_pipeline=MagicMock(),
+            pipeline_indexer=None,
+        )
+        mock_create = AsyncMock(return_value=components)
+        monkeypatch.setattr(
+            "nexus.services.search.search_semantic.create_semantic_search_components",
+            mock_create,
+            raising=False,
+        )
+
+        # Import and patch at module level
+        import nexus.factory._semantic_search as factory_mod
+
+        monkeypatch.setattr(factory_mod, "create_semantic_search_components", mock_create)
+
+        svc = _StubSearchService(record_store=MagicMock())
+        await svc.ainitialize_semantic_search(nx=MagicMock(), record_store_engine=None)
+
+        assert svc._query_service is components.query_service
+        assert svc._indexing_service is components.indexing_service
+        assert svc._indexing_pipeline is components.indexing_pipeline
+
+
+# =============================================================================
+# initialize_semantic_search() (RPC path) tests
+# =============================================================================
+
+
+class TestInitializeSemanticSearch:
+    """Tests for SemanticSearchMixin.initialize_semantic_search() (RPC path)."""
+
+    @pytest.mark.asyncio
+    async def test_raises_without_record_store(self):
+        """Should raise RuntimeError when record_store is None."""
+        svc = _StubSearchService()
+        with pytest.raises(RuntimeError, match="RecordStore"):
+            await svc.initialize_semantic_search()
+
+    @pytest.mark.asyncio
+    async def test_delegates_to_factory_with_rpc_params(self, monkeypatch):
+        """Should call factory with RPC-path extras (session_factory, metadata, etc.)."""
+        components = SimpleNamespace(
+            query_service=MagicMock(),
+            indexing_service=None,
+            indexing_pipeline=MagicMock(),
+            pipeline_indexer=MagicMock(),
+        )
+        mock_create = AsyncMock(return_value=components)
+
+        import nexus.factory._semantic_search as factory_mod
+
+        monkeypatch.setattr(factory_mod, "create_semantic_search_components", mock_create)
+
+        mock_rs = MagicMock()
+        svc = _StubSearchService(
+            record_store=mock_rs,
+            gw_session_factory=MagicMock(),
+        )
+        await svc.initialize_semantic_search(embedding_provider="openai")
+
+        assert svc._query_service is components.query_service
+        assert svc._pipeline_indexer is components.pipeline_indexer
+        # Verify factory was called with the right embedding_provider
+        call_kwargs = mock_create.call_args.kwargs
+        assert call_kwargs["embedding_provider"] == "openai"
+        assert call_kwargs["record_store"] is mock_rs

@@ -9,12 +9,9 @@ Phase 4 of Issue #2033 (Strangler Fig decomposition):
 import logging
 import threading
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from nexus.core.vfs_hooks import ReadHookContext, RenameHookContext, WriteHookContext
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 

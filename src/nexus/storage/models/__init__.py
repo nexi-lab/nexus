@@ -39,6 +39,9 @@ from nexus.storage.models._base import uuid_pk as uuid_pk
 # Domain: A2A (Task persistence)
 from nexus.storage.models.a2a import A2ATaskModel as A2ATaskModel
 
+# Domain: Access Manifests (Issue #1754)
+from nexus.storage.models.access_manifest import AccessManifestModel as AccessManifestModel
+
 # Domain: ACE (Trajectories, Feedback, Playbooks)
 from nexus.storage.models.ace import PlaybookModel as PlaybookModel
 from nexus.storage.models.ace import TrajectoryFeedbackModel as TrajectoryFeedbackModel
@@ -63,6 +66,9 @@ from nexus.storage.models.auth import ZoneModel as ZoneModel
 
 # Domain: Context Branching (Issue #1315)
 from nexus.storage.models.context_branch import ContextBranchModel as ContextBranchModel
+
+# Domain: Credentials (Issue #1753)
+from nexus.storage.models.credentials import AgentCredentialModel as AgentCredentialModel
 from nexus.storage.models.dead_letter import DeadLetterModel as DeadLetterModel
 
 # Domain: Context Branching (Issue #1315)

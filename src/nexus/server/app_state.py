@@ -81,6 +81,7 @@ class NexusAppState:
     async_rebac_manager: Any = None
     async_nexus_fs: Any = None
     key_service: Any = None
+    credential_service: Any = None
     scheduler_service: Any = None
     task_runner: Any = None
     workflow_engine: Any = None

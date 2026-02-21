@@ -87,6 +87,7 @@ class RecordStoreWriteObserver:
         agent_id: str | None = None,
         snapshot_hash: str | None = None,
         metadata_snapshot: dict[str, Any] | None = None,
+        urgency: str | None = None,  # noqa: ARG002 — Protocol conformance; sync path ignores urgency
     ) -> None:
         """Sync a write operation to RecordStore."""
         from nexus.storage.operation_logger import OperationLogger
@@ -307,8 +308,12 @@ class BufferedRecordStoreWriteObserver:
         agent_id: str | None = None,
         snapshot_hash: str | None = None,
         metadata_snapshot: dict[str, Any] | None = None,
+        urgency: str | None = None,
     ) -> None:
         """Enqueue a write event. Returns immediately."""
+        from nexus.storage.write_buffer import Urgency
+
+        _urgency = Urgency.HIGH if urgency == "high" else Urgency.NORMAL
         self._buffer.enqueue_write(
             metadata,
             is_new=is_new,
@@ -317,6 +322,7 @@ class BufferedRecordStoreWriteObserver:
             agent_id=agent_id,
             snapshot_hash=snapshot_hash,
             metadata_snapshot=metadata_snapshot,
+            urgency=_urgency,
         )
 
     def on_write_batch(

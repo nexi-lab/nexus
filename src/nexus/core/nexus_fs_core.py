@@ -20,10 +20,10 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.constants import SYSTEM_PATH_PREFIX
 from nexus.contracts.exceptions import BackendError, ConflictError, NexusFileNotFoundError
+from nexus.contracts.metadata import FileMetadata
 from nexus.contracts.types import Permission
 from nexus.core.file_events import FileEvent, FileEventType
 from nexus.core.hash_fast import hash_content
-from nexus.core.metadata import FileMetadata
 from nexus.core.protocols.capabilities import ConnectorCapability
 from nexus.lib.mutation_hooks import MutationOp
 from nexus.lib.rpc_decorator import rpc_expose

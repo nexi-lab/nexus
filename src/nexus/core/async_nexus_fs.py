@@ -23,12 +23,12 @@ from nexus.contracts.exceptions import (
     NexusFileNotFoundError,
     NexusPermissionError,
 )
-from nexus.contracts.types import OperationContext, Permission
-from nexus.core.metadata import (
+from nexus.contracts.metadata import (
     DT_DIR,
     DT_REG,
     FileMetadata,
 )
+from nexus.contracts.types import OperationContext, Permission
 from nexus.core.metastore import AsyncMetastoreWrapper
 
 if TYPE_CHECKING:

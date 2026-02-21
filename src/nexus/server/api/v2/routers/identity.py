@@ -15,7 +15,7 @@ import base64
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from nexus.server.dependencies import require_auth
@@ -44,7 +44,7 @@ class VerifySignatureRequest(BaseModel):
 # =============================================================================
 
 
-def _get_key_service(request: Any) -> Any:
+def _get_key_service(request: Request) -> Any:
     """Get KeyService from app.state, raising 503 if not available."""
     svc = getattr(request.app.state, "key_service", None)
     if svc is None:

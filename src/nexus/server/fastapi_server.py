@@ -327,6 +327,10 @@ def create_app(
         _brick_svc = getattr(nexus_fs, _attr_name, None)
         if _brick_svc is not None:
             _brick_sources.append(_brick_svc)
+    # AgentRPCService: stored as private attr _agent_rpc_service on NexusFS
+    _agent_rpc = getattr(nexus_fs, "_agent_rpc_service", None)
+    if _agent_rpc is not None:
+        _brick_sources.append(_agent_rpc)
     # Issue #12: MemoryService lives outside kernel — created by factory, not on NexusFS
     try:
         from nexus.factory import create_memory_service

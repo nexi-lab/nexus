@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from nexus.core.metadata import FileMetadata, PaginatedResult
+from nexus.contracts.metadata import FileMetadata, PaginatedResult
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 # ---------------------------------------------------------------------------

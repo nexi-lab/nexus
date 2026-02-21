@@ -20,8 +20,8 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import NexusFileNotFoundError
+from nexus.contracts.metadata import FileMetadata
 from nexus.contracts.types import Permission
-from nexus.core.metadata import FileMetadata
 from nexus.lib.mutation_hooks import MutationOp
 from nexus.lib.rpc_decorator import rpc_expose
 

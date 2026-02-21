@@ -95,7 +95,7 @@ class PipeManager:
         Raises:
             PipeError: Pipe already exists at this path.
         """
-        from nexus.core.metadata import DT_PIPE, FileMetadata
+        from nexus.contracts.metadata import DT_PIPE, FileMetadata
 
         if path in self._buffers:
             raise PipeError(f"pipe already exists: {path}")
@@ -141,7 +141,7 @@ class PipeManager:
         Raises:
             PipeNotFoundError: No pipe inode at this path.
         """
-        from nexus.core.metadata import DT_PIPE
+        from nexus.contracts.metadata import DT_PIPE
 
         # Return existing buffer if available
         if path in self._buffers and not self._buffers[path].closed:

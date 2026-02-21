@@ -31,7 +31,7 @@ from nexus.storage.cache import _CACHE_MISS, MetadataCache
 from nexus.storage.read_set import ReadSet, ReadSetRegistry
 
 if TYPE_CHECKING:
-    from nexus.core.metadata import FileMetadata
+    from nexus.contracts.metadata import FileMetadata
 
 logger = logging.getLogger(__name__)
 

@@ -47,7 +47,7 @@ Analyzed with: `grep -r "TYPE_CHECKING" src/nexus --include="*.py" -l`
 3. `src/nexus/core/rebac_manager_enhanced.py`
 4. `src/nexus/core/nexus_fs_rebac.py`
 5. `src/nexus/core/nexus_fs_mcp.py`
-6. `src/nexus/core/metadata.py`
+6. `src/nexus/contracts/metadata.py`
 7. `src/nexus/core/sessions.py`
 8. `src/nexus/core/filesystem.py`
 

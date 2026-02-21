@@ -23,7 +23,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.core.metadata import FileMetadata
+    from nexus.contracts.metadata import FileMetadata
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)

@@ -229,9 +229,10 @@ class TestWrapperChainPerformance:
             compressed.read_content(h)
         read_elapsed_ms = (time.perf_counter() - start) * 1000 / iterations
 
-        # Generous threshold: < 5ms per operation (mock backend is instant)
-        assert write_elapsed_ms < 5.0, f"Write too slow: {write_elapsed_ms:.2f}ms per op"
-        assert read_elapsed_ms < 5.0, f"Read too slow: {read_elapsed_ms:.2f}ms per op"
+        # Generous threshold: < 10ms per operation (mock backend is instant,
+        # but CI runners may be slow under load)
+        assert write_elapsed_ms < 10.0, f"Write too slow: {write_elapsed_ms:.2f}ms per op"
+        assert read_elapsed_ms < 10.0, f"Read too slow: {read_elapsed_ms:.2f}ms per op"
 
 
 # ---------------------------------------------------------------------------

@@ -8,7 +8,7 @@ base MetastoreABC ABC but are used via duck-typing.
 from collections.abc import Sequence
 from typing import Any
 
-from nexus.core.metadata import FileMetadata
+from nexus.contracts.metadata import FileMetadata
 from nexus.core.metastore import CasResult, MetastoreABC
 
 

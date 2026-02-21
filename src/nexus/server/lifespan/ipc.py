@@ -52,7 +52,7 @@ async def startup_ipc(app: FastAPI, svc: LifespanServices) -> list[asyncio.Task]
 
     # Start TTLSweeper background task
     try:
-        from nexus.ipc.sweep import TTLSweeper
+        from nexus.bricks.ipc.sweep import TTLSweeper
 
         sweeper = TTLSweeper(
             storage=ipc_storage,

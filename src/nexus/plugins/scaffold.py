@@ -239,7 +239,7 @@ class {class_name}(NexusPlugin):
 
     # Parser methods — implement these for a parser plugin:
     #
-    # from nexus.parsers.providers.base import ParseProvider
+    # from nexus.bricks.parsers.providers.base import ParseProvider
     #
     # class MyParser(ParseProvider):
     #     def supported_formats(self) -> list[str]: ...

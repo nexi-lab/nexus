@@ -13,7 +13,7 @@ from nexus.bricks.a2a.models import (
     Message,
     TextPart,
 )
-from nexus.ipc.envelope import MessageEnvelope, MessageType
+from nexus.bricks.ipc.envelope import MessageEnvelope, MessageType
 
 
 class TestA2AToEnvelope:

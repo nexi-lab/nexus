@@ -24,14 +24,14 @@ from unittest.mock import Mock
 import pytest
 from sqlalchemy import create_engine
 
-from nexus.bricks.rebac.manager import EnhancedReBACManager
-from nexus.mcp.middleware import ToolNamespaceMiddleware
-from nexus.mcp.profiles import (
+from nexus.bricks.mcp.middleware import ToolNamespaceMiddleware
+from nexus.bricks.mcp.profiles import (
     grant_tools_for_profile,
     load_profiles_from_dict,
     revoke_tools_by_tuple_ids,
 )
-from nexus.mcp.server import create_mcp_server
+from nexus.bricks.mcp.server import create_mcp_server
+from nexus.bricks.rebac.manager import EnhancedReBACManager
 from nexus.storage.models import Base
 
 logger = logging.getLogger(__name__)
@@ -272,7 +272,7 @@ class TestLogOutput:
         """grant_tools_for_profile() logs [PROFILES] message."""
         reader_profile = profiles.get_profile("reader")
 
-        with caplog.at_level(logging.INFO, logger="nexus.mcp.profiles"):
+        with caplog.at_level(logging.INFO, logger="nexus.bricks.mcp.profiles"):
             grant_tools_for_profile(
                 rebac_manager=rebac_manager,
                 subject=("agent", "log-agent"),
@@ -295,7 +295,7 @@ class TestLogOutput:
 
         tid_strings = [wr.tuple_id for wr in results]
 
-        with caplog.at_level(logging.INFO, logger="nexus.mcp.profiles"):
+        with caplog.at_level(logging.INFO, logger="nexus.bricks.mcp.profiles"):
             revoke_tools_by_tuple_ids(
                 rebac_manager=rebac_manager,
                 tuple_ids=tid_strings,
@@ -315,7 +315,7 @@ class TestLogOutput:
         )
         middleware.invalidate()
 
-        with caplog.at_level(logging.DEBUG, logger="nexus.mcp.middleware"):
+        with caplog.at_level(logging.DEBUG, logger="nexus.bricks.mcp.middleware"):
             middleware._get_visible_tools(("agent", "rebuild-log-agent"))
 
         assert "[TOOL-NS]" in caplog.text

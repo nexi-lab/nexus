@@ -16,10 +16,10 @@ import os
 
 import pytest
 
-from nexus.ipc.delivery import DeliveryMode, MessageProcessor, MessageSender
-from nexus.ipc.envelope import MessageEnvelope, MessageType
-from nexus.ipc.nats_adapter import NatsHotPathAdapter
-from nexus.ipc.provisioning import AgentProvisioner
+from nexus.bricks.ipc.delivery import DeliveryMode, MessageProcessor, MessageSender
+from nexus.bricks.ipc.envelope import MessageEnvelope, MessageType
+from nexus.bricks.ipc.nats_adapter import NatsHotPathAdapter
+from nexus.bricks.ipc.provisioning import AgentProvisioner
 
 NATS_URL = os.environ.get("NEXUS_NATS_URL", "nats://localhost:4222")
 ZONE = "e2e-hot-path-zone"

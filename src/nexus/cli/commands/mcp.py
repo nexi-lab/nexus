@@ -59,7 +59,7 @@ def _add_api_key_middleware(mcp_server: Any) -> None:
     try:
         from starlette.middleware.base import BaseHTTPMiddleware
 
-        from nexus.mcp import reset_request_api_key, set_request_api_key
+        from nexus.bricks.mcp import reset_request_api_key, set_request_api_key
 
         class APIKeyMiddleware(BaseHTTPMiddleware):
             """Middleware to extract API key from HTTP headers."""
@@ -231,7 +231,7 @@ def serve(
     try:
         # Check if fastmcp is installed
         try:
-            from nexus.mcp import create_mcp_server
+            from nexus.bricks.mcp import create_mcp_server
         except ImportError:
             # For stdio mode, print errors to stderr
             import sys as sys_module

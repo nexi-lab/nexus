@@ -1,6 +1,6 @@
 """Citation extraction and management for LLM document reading.
 
-Moved from nexus.llm.citation (Issue #1521).
+Moved from nexus.bricks.llm.citation (Issue #1521).
 Service-layer concern: citation extraction depends on document-reading
 orchestration, not on the LLM brick itself.
 """

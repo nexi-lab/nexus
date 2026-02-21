@@ -61,6 +61,11 @@ class ProxyBrickConfig:
     # Streaming
     stream_threshold_bytes: int = 65_536  # 64 KB
 
+    # Edge sync (Issue #1707)
+    auth_grace_period_seconds: float = 14400  # 4 hours
+    conflict_scan_enabled: bool = True
+    reconnect_health_check_url: str | None = None
+
     # ------------------------------------------------------------------
     # Named policy profiles (Issue #2073)
     # ------------------------------------------------------------------

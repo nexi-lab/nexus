@@ -7,6 +7,7 @@ when the circuit breaker allows requests.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 from typing import TYPE_CHECKING
@@ -52,12 +53,21 @@ class ReplayEngine:
         self._batch_size = batch_size
         self._poll_interval = poll_interval
         self._stopped = False
+        self._wake = asyncio.Event()
+        self._replayed_keys: set[str] = set()
+
+    def wake(self) -> None:
+        """Signal the replay loop to check the queue immediately."""
+        self._wake.set()
 
     async def run(self) -> None:
         """Background task that drains the offline queue when online."""
         while not self._stopped:
             try:
-                await asyncio.sleep(self._poll_interval)
+                # Wait for wake signal or poll interval, whichever comes first
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(self._wake.wait(), timeout=self._poll_interval)
+                self._wake.clear()
                 if self._circuit.is_open:
                     continue
 
@@ -65,9 +75,26 @@ class ReplayEngine:
                 if not batch:
                     continue
 
+                # Re-check after dequeue — circuit may have opened during the async call
+                if self._circuit.is_open:
+                    continue
+
                 logger.info("Replaying %d queued operations", len(batch))
                 for op in batch:
+                    # Re-check before each replay to avoid racing with circuit state changes
+                    if self._circuit.is_open:
+                        logger.warning("Circuit opened during replay — stopping batch")
+                        break
+
                     try:
+                        # Idempotency check: skip if already replayed
+                        if op.idempotency_key and op.idempotency_key in self._replayed_keys:
+                            logger.info(
+                                "Skipping duplicate op %d (key=%s)", op.id, op.idempotency_key[:8]
+                            )
+                            await self._queue.mark_done(op.id)
+                            continue
+
                         kwargs = json.loads(op.kwargs_json)
                         if not isinstance(kwargs, dict):
                             logger.error("Invalid kwargs_json for op %d: not a dict", op.id)
@@ -76,6 +103,8 @@ class ReplayEngine:
                         await self._transport.call(op.method, params=kwargs)
                         await self._queue.mark_done(op.id)
                         await self._circuit.record_success()
+                        if op.idempotency_key:
+                            self._replayed_keys.add(op.idempotency_key)
                     except json.JSONDecodeError as jexc:
                         logger.error("Failed to decode op %d: %s", op.id, jexc)
                         await self._queue.mark_dead_letter(op.id)
@@ -98,5 +127,6 @@ class ReplayEngine:
                 await asyncio.sleep(self._poll_interval)
 
     async def stop(self) -> None:
-        """Signal stop and wait for clean shutdown."""
+        """Signal stop and wake the loop so it exits promptly."""
         self._stopped = True
+        self._wake.set()

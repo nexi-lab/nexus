@@ -5,6 +5,7 @@ Uses SQLAlchemy async ORM with aiosqlite for crash-safe persistence.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import time
@@ -34,6 +35,9 @@ class QueuedOperation:
     payload_ref: str | None
     retry_count: int
     created_at: float
+    idempotency_key: str | None = None
+    vector_clock: str | None = None
+    priority: int = 0
 
 
 class OfflineQueue:
@@ -79,15 +83,24 @@ class OfflineQueue:
             raise RuntimeError("Database not initialized. Call initialize() first")
         return self._session_factory
 
+    @staticmethod
+    def _generate_idempotency_key(method: str, kwargs: dict[str, Any] | None) -> str:
+        """Derive a deterministic idempotency key from method + kwargs."""
+        canonical = json.dumps({"m": method, "k": kwargs or {}}, sort_keys=True)
+        return hashlib.sha256(canonical.encode()).hexdigest()[:32]
+
     async def enqueue(
         self,
         method: str,
         args: tuple[Any, ...] = (),
         kwargs: dict[str, Any] | None = None,
         payload_ref: str | None = None,
+        vector_clock: str | None = None,
+        priority: int = 0,
     ) -> int:
         """Add an operation to the queue.  Returns the row id."""
         factory = self._get_session_factory()
+        idem_key = self._generate_idempotency_key(method, kwargs)
         async with factory() as session:
             op = PO(
                 method=method,
@@ -96,10 +109,28 @@ class OfflineQueue:
                 payload_ref=payload_ref,
                 created_at=time.time(),
                 max_retries=self._max_retry_count,
+                idempotency_key=idem_key,
+                vector_clock=vector_clock,
+                priority=priority,
             )
             session.add(op)
             await session.commit()
             return op.id
+
+    def _row_to_op(self, r: PO) -> QueuedOperation:
+        """Convert a PendingOperationModel row to a QueuedOperation."""
+        return QueuedOperation(
+            id=r.id,
+            method=r.method,
+            args_json=r.args_json,
+            kwargs_json=r.kwargs_json,
+            payload_ref=r.payload_ref,
+            retry_count=r.retry_count,
+            created_at=r.created_at,
+            idempotency_key=r.idempotency_key,
+            vector_clock=r.vector_clock,
+            priority=r.priority,
+        )
 
     async def dequeue_batch(self, limit: int = 50) -> list[QueuedOperation]:
         """Fetch up to *limit* pending operations (FIFO order)."""
@@ -108,18 +139,32 @@ class OfflineQueue:
             stmt = select(PO).where(PO.status == "pending").order_by(PO.id).limit(limit)
             result = await session.execute(stmt)
             rows = result.scalars().all()
-            return [
-                QueuedOperation(
-                    id=r.id,
-                    method=r.method,
-                    args_json=r.args_json,
-                    kwargs_json=r.kwargs_json,
-                    payload_ref=r.payload_ref,
-                    retry_count=r.retry_count,
-                    created_at=r.created_at,
-                )
-                for r in rows
-            ]
+            return [self._row_to_op(r) for r in rows]
+
+    async def dequeue_by_priority(self, limit: int = 50) -> list[QueuedOperation]:
+        """Fetch pending operations ordered by priority (desc), then id (asc)."""
+        factory = self._get_session_factory()
+        async with factory() as session:
+            stmt = (
+                select(PO)
+                .where(PO.status == "pending")
+                .order_by(PO.priority.desc(), PO.id)
+                .limit(limit)
+            )
+            result = await session.execute(stmt)
+            rows = result.scalars().all()
+            return [self._row_to_op(r) for r in rows]
+
+    async def has_idempotency_key(self, key: str) -> bool:
+        """Check if an operation with this idempotency key was already completed."""
+        factory = self._get_session_factory()
+        async with factory() as session:
+            result = await session.execute(
+                select(func.count())
+                .select_from(PO)
+                .where(PO.idempotency_key == key, PO.status == "done")
+            )
+            return result.scalar_one() > 0
 
     async def mark_done(self, op_id: int) -> None:
         """Mark an operation as successfully replayed."""

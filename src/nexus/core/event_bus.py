@@ -65,6 +65,7 @@ class FileEvent:
     etag: str | None = None
     agent_id: str | None = None
     revision: int | None = None  # Issue #1187: For consistency tracking
+    vector_clock: str | None = None  # Issue #1707: Edge split-brain causality
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
@@ -87,6 +88,8 @@ class FileEvent:
             result["agent_id"] = self.agent_id
         if self.revision is not None:
             result["revision"] = self.revision
+        if self.vector_clock is not None:
+            result["vector_clock"] = self.vector_clock
         return result
 
     def to_json(self) -> str:
@@ -107,6 +110,7 @@ class FileEvent:
             etag=data.get("etag"),
             agent_id=data.get("agent_id"),
             revision=data.get("revision"),  # Issue #1187
+            vector_clock=data.get("vector_clock"),  # Issue #1707
         )
 
     @classmethod

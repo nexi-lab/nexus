@@ -235,5 +235,7 @@ class PendingOperationModel(Base):
     max_retries: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
     status: Mapped[str] = mapped_column(Text, nullable=False, default="pending")
     idempotency_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    vector_clock: Mapped[str | None] = mapped_column(Text, nullable=True)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     __table_args__ = (Index("idx_pending_ops_status", "status", "id"),)

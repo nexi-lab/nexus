@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import time
+from typing import Any
 
 import pytest
 
 from nexus.bricks.auth.cache import AuthCache
 
 
-def test_cache_set_and_get():
+def test_cache_set_and_get() -> None:
     """Set then get returns the cached value."""
     cache = AuthCache(ttl=60, max_size=100)
     cache.set("token-abc", {"authenticated": True, "subject_id": "alice"})
@@ -21,13 +22,13 @@ def test_cache_set_and_get():
     assert result["subject_id"] == "alice"
 
 
-def test_cache_miss():
+def test_cache_miss() -> None:
     """get() returns None on miss."""
     cache = AuthCache(ttl=60, max_size=100)
     assert cache.get("nonexistent") is None
 
 
-def test_cache_get_returns_copy():
+def test_cache_get_returns_copy() -> None:
     """get() returns a copy — mutations don't affect cache."""
     cache = AuthCache(ttl=60, max_size=100)
     cache.set("tok", {"key": "value"})
@@ -42,7 +43,7 @@ def test_cache_get_returns_copy():
     assert original["key"] == "value"
 
 
-def test_cache_invalidate():
+def test_cache_invalidate() -> None:
     """invalidate() removes a specific entry."""
     cache = AuthCache(ttl=60, max_size=100)
     cache.set("token-1", {"user": "alice"})
@@ -54,13 +55,13 @@ def test_cache_invalidate():
     assert cache.get("token-2") is not None
 
 
-def test_cache_invalidate_nonexistent():
+def test_cache_invalidate_nonexistent() -> None:
     """invalidate() on non-existent key does not raise."""
     cache = AuthCache(ttl=60, max_size=100)
     cache.invalidate("ghost-token")  # should not raise
 
 
-def test_cache_clear():
+def test_cache_clear() -> None:
     """clear() removes all entries."""
     cache = AuthCache(ttl=60, max_size=100)
     cache.set("a", {"x": 1})
@@ -73,7 +74,7 @@ def test_cache_clear():
     assert cache.get("b") is None
 
 
-def test_cache_size():
+def test_cache_size() -> None:
     """size property tracks entry count."""
     cache = AuthCache(ttl=60, max_size=100)
     assert cache.size == 0
@@ -85,7 +86,7 @@ def test_cache_size():
     assert cache.size == 2
 
 
-def test_cache_ttl_expiration():
+def test_cache_ttl_expiration() -> None:
     """Entries expire after TTL seconds."""
     cache = AuthCache(ttl=1, max_size=100)
     cache.set("ephemeral", {"alive": True})
@@ -98,7 +99,7 @@ def test_cache_ttl_expiration():
     assert cache.get("ephemeral") is None
 
 
-def test_cache_max_size_eviction():
+def test_cache_max_size_eviction() -> None:
     """Oldest entries are evicted when max_size is exceeded."""
     cache = AuthCache(ttl=60, max_size=2)
     cache.set("first", {"n": 1})
@@ -109,7 +110,7 @@ def test_cache_max_size_eviction():
     assert cache.size <= 2
 
 
-def test_cache_overwrite():
+def test_cache_overwrite() -> None:
     """Setting a key twice overwrites the value."""
     cache = AuthCache(ttl=60, max_size=100)
     cache.set("tok", {"version": 1})
@@ -120,14 +121,14 @@ def test_cache_overwrite():
     assert result["version"] == 2
 
 
-def test_token_hash_consistency():
+def test_token_hash_consistency() -> None:
     """Same token always produces the same hash key."""
     h1 = AuthCache._token_hash("same-token")
     h2 = AuthCache._token_hash("same-token")
     assert h1 == h2
 
 
-def test_token_hash_uniqueness():
+def test_token_hash_uniqueness() -> None:
     """Different tokens produce different hash keys."""
     h1 = AuthCache._token_hash("token-a")
     h2 = AuthCache._token_hash("token-b")
@@ -140,14 +141,14 @@ def test_token_hash_uniqueness():
 
 
 @pytest.mark.asyncio
-async def test_get_or_fetch_cache_hit():
+async def test_get_or_fetch_cache_hit() -> None:
     """get_or_fetch returns cached value without calling fetch."""
     cache = AuthCache(ttl=60, max_size=100)
     cache.set("tok", {"user": "cached"})
 
     call_count = 0
 
-    async def _fetch():
+    async def _fetch() -> dict[str, str]:
         nonlocal call_count
         call_count += 1
         return {"user": "fetched"}
@@ -159,11 +160,11 @@ async def test_get_or_fetch_cache_hit():
 
 
 @pytest.mark.asyncio
-async def test_get_or_fetch_cache_miss():
+async def test_get_or_fetch_cache_miss() -> None:
     """get_or_fetch calls fetch on miss and caches result."""
     cache = AuthCache(ttl=60, max_size=100)
 
-    async def _fetch():
+    async def _fetch() -> dict[str, str]:
         return {"user": "alice"}
 
     result = await cache.get_or_fetch("tok", _fetch)
@@ -177,11 +178,11 @@ async def test_get_or_fetch_cache_miss():
 
 
 @pytest.mark.asyncio
-async def test_get_or_fetch_returns_none():
+async def test_get_or_fetch_returns_none() -> None:
     """get_or_fetch propagates None from fetch (auth failure)."""
     cache = AuthCache(ttl=60, max_size=100)
 
-    async def _fetch():
+    async def _fetch() -> None:
         return None
 
     result = await cache.get_or_fetch("bad-tok", _fetch)
@@ -191,12 +192,12 @@ async def test_get_or_fetch_returns_none():
 
 
 @pytest.mark.asyncio
-async def test_get_or_fetch_singleflight():
+async def test_get_or_fetch_singleflight() -> None:
     """Concurrent get_or_fetch for same token calls fetch only once."""
     cache = AuthCache(ttl=60, max_size=100)
     call_count = 0
 
-    async def _slow_fetch():
+    async def _slow_fetch() -> dict[str, Any]:
         nonlocal call_count
         call_count += 1
         await asyncio.sleep(0.05)  # simulate slow provider
@@ -220,12 +221,12 @@ async def test_get_or_fetch_singleflight():
 
 
 @pytest.mark.asyncio
-async def test_get_or_fetch_different_tokens():
+async def test_get_or_fetch_different_tokens() -> None:
     """Concurrent get_or_fetch for different tokens calls fetch for each."""
     cache = AuthCache(ttl=60, max_size=100)
     call_count = 0
 
-    async def _fetch():
+    async def _fetch() -> dict[str, int]:
         nonlocal call_count
         call_count += 1
         await asyncio.sleep(0.01)
@@ -242,11 +243,11 @@ async def test_get_or_fetch_different_tokens():
 
 
 @pytest.mark.asyncio
-async def test_get_or_fetch_exception_propagates():
+async def test_get_or_fetch_exception_propagates() -> None:
     """If fetch raises, all waiters get the exception."""
     cache = AuthCache(ttl=60, max_size=100)
 
-    async def _failing_fetch():
+    async def _failing_fetch() -> dict[str, Any]:
         await asyncio.sleep(0.02)
         raise RuntimeError("provider down")
 
@@ -258,11 +259,11 @@ async def test_get_or_fetch_exception_propagates():
 
 
 @pytest.mark.asyncio
-async def test_get_or_fetch_returns_copies():
+async def test_get_or_fetch_returns_copies() -> None:
     """Each caller gets an independent copy (mutation safety)."""
     cache = AuthCache(ttl=60, max_size=100)
 
-    async def _fetch():
+    async def _fetch() -> dict[str, str]:
         await asyncio.sleep(0.02)
         return {"mutable": "original"}
 

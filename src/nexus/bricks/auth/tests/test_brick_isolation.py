@@ -28,14 +28,14 @@ _REQUIRED_MODULES = [
 ]
 
 
-def test_verify_imports_all_required():
+def test_verify_imports_all_required() -> None:
     """verify_imports() returns True for all required auth modules."""
     result = verify_imports()
     for module in _REQUIRED_MODULES:
         assert result.get(module) is True, f"Required module {module} is not importable"
 
 
-def test_auth_brick_imports_without_server():
+def test_auth_brick_imports_without_server() -> None:
     """Auth brick can be imported without nexus.server.* dependencies.
 
     This test checks that importing the auth brick's core modules
@@ -71,7 +71,7 @@ def test_auth_brick_imports_without_server():
                     importlib.import_module(mod)
 
 
-def test_auth_brick_no_rebac_import():
+def test_auth_brick_no_rebac_import() -> None:
     """Auth brick does not import from nexus.bricks.rebac."""
     modules_before = set(sys.modules.keys())
 
@@ -94,7 +94,7 @@ def test_auth_brick_no_rebac_import():
                     importlib.import_module(mod)
 
 
-def test_auth_brick_no_pay_import():
+def test_auth_brick_no_pay_import() -> None:
     """Auth brick does not import from nexus.bricks.pay."""
     modules_before = set(sys.modules.keys())
 
@@ -116,7 +116,7 @@ def test_auth_brick_no_pay_import():
                     importlib.import_module(mod)
 
 
-def test_auth_result_is_frozen():
+def test_auth_result_is_frozen() -> None:
     """AuthResult is a frozen dataclass (immutable)."""
     from nexus.bricks.auth.types import AuthResult
 
@@ -125,7 +125,7 @@ def test_auth_result_is_frozen():
         result.subject_id = "bob"  # type: ignore[misc]
 
 
-def test_auth_result_defaults():
+def test_auth_result_defaults() -> None:
     """AuthResult defaults are sensible."""
     from nexus.bricks.auth.types import AuthResult
 
@@ -138,7 +138,7 @@ def test_auth_result_defaults():
     assert result.inherit_permissions is True
 
 
-def test_auth_cache_works_standalone():
+def test_auth_cache_works_standalone() -> None:
     """AuthCache works without any database or server dependencies."""
     from nexus.bricks.auth.cache import AuthCache
 
@@ -149,7 +149,7 @@ def test_auth_cache_works_standalone():
     assert cache.get("tok") is None
 
 
-def test_auth_constants_available():
+def test_auth_constants_available() -> None:
     """Auth constants are accessible from the brick."""
     from nexus.bricks.auth.constants import (
         API_KEY_MIN_LENGTH,
@@ -169,7 +169,7 @@ def test_auth_constants_available():
 
 
 @pytest.mark.asyncio
-async def test_auth_service_with_mock_provider():
+async def test_auth_service_with_mock_provider() -> None:
     """AuthService works with a mock provider (no real DB)."""
     from nexus.bricks.auth.service import AuthService
     from nexus.bricks.auth.types import AuthResult

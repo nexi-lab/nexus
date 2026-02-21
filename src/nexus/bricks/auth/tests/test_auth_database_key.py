@@ -39,7 +39,7 @@ def auth_provider_require_expiry(record_store):
     return DatabaseAPIKeyAuth(record_store, require_expiry=True)
 
 
-def test_create_key_basic(session_factory):
+def test_create_key_basic(session_factory) -> None:
     """Create a basic API key and verify it exists in the database."""
     with session_factory() as session:
         key_id, raw_key = DatabaseAPIKeyAuth.create_key(
@@ -61,7 +61,7 @@ def test_create_key_basic(session_factory):
         assert api_key.name == "Test Key"
 
 
-def test_create_key_with_zone(session_factory):
+def test_create_key_with_zone(session_factory) -> None:
     """Create a key with zone_id and verify the zone is stored."""
     with session_factory() as session:
         key_id, raw_key = DatabaseAPIKeyAuth.create_key(
@@ -79,7 +79,7 @@ def test_create_key_with_zone(session_factory):
         assert api_key.zone_id == "org_acme"
 
 
-def test_create_key_with_subject(session_factory):
+def test_create_key_with_subject(session_factory) -> None:
     """Create a key with subject_type and subject_id."""
     with session_factory() as session:
         key_id, raw_key = DatabaseAPIKeyAuth.create_key(
@@ -100,7 +100,7 @@ def test_create_key_with_subject(session_factory):
         assert api_key.subject_id == "agent_claude_001"
 
 
-def test_create_key_invalid_subject_type(session_factory):
+def test_create_key_invalid_subject_type(session_factory) -> None:
     """Invalid subject_type raises ValueError."""
     with (
         session_factory() as session,
@@ -115,7 +115,7 @@ def test_create_key_invalid_subject_type(session_factory):
 
 
 @pytest.mark.asyncio
-async def test_authenticate_valid_key(auth_provider, session_factory):
+async def test_authenticate_valid_key(auth_provider, session_factory) -> None:
     """Authenticate with a valid API key returns success."""
     with session_factory() as session:
         key_id, raw_key = DatabaseAPIKeyAuth.create_key(
@@ -138,35 +138,35 @@ async def test_authenticate_valid_key(auth_provider, session_factory):
 
 
 @pytest.mark.asyncio
-async def test_authenticate_invalid_key(auth_provider):
+async def test_authenticate_invalid_key(auth_provider) -> None:
     """Authenticate with an invalid API key returns failure."""
     result = await auth_provider.authenticate("sk-this-is-a-fake-key-that-does-not-exist-in-db")
     assert result.authenticated is False
 
 
 @pytest.mark.asyncio
-async def test_authenticate_empty_token(auth_provider):
+async def test_authenticate_empty_token(auth_provider) -> None:
     """Authenticate with empty string returns failure."""
     result = await auth_provider.authenticate("")
     assert result.authenticated is False
 
 
 @pytest.mark.asyncio
-async def test_authenticate_bad_format(auth_provider):
+async def test_authenticate_bad_format(auth_provider) -> None:
     """Authenticate with a key not starting with sk- returns failure."""
     result = await auth_provider.authenticate("bad-format-key-1234567890abcdef")
     assert result.authenticated is False
 
 
 @pytest.mark.asyncio
-async def test_authenticate_short_key(auth_provider):
+async def test_authenticate_short_key(auth_provider) -> None:
     """Authenticate with a key shorter than minimum length returns failure."""
     result = await auth_provider.authenticate("sk-short")
     assert result.authenticated is False
 
 
 @pytest.mark.asyncio
-async def test_authenticate_expired_key(auth_provider, session_factory):
+async def test_authenticate_expired_key(auth_provider, session_factory) -> None:
     """Authenticate with an expired key returns failure."""
     expired_time = datetime.now(UTC) - timedelta(days=1)
     with session_factory() as session:
@@ -183,7 +183,7 @@ async def test_authenticate_expired_key(auth_provider, session_factory):
 
 
 @pytest.mark.asyncio
-async def test_authenticate_revoked_key(auth_provider, session_factory):
+async def test_authenticate_revoked_key(auth_provider, session_factory) -> None:
     """Authenticate with a revoked key returns failure."""
     with session_factory() as session:
         key_id, raw_key = DatabaseAPIKeyAuth.create_key(
@@ -203,7 +203,7 @@ async def test_authenticate_revoked_key(auth_provider, session_factory):
 
 
 @pytest.mark.asyncio
-async def test_authenticate_require_expiry(auth_provider_require_expiry, session_factory):
+async def test_authenticate_require_expiry(auth_provider_require_expiry, session_factory) -> None:
     """When require_expiry=True, keys without expiry are rejected."""
     with session_factory() as session:
         _key_id, raw_key = DatabaseAPIKeyAuth.create_key(
@@ -220,7 +220,7 @@ async def test_authenticate_require_expiry(auth_provider_require_expiry, session
 @pytest.mark.asyncio
 async def test_authenticate_require_expiry_with_valid_expiry(
     auth_provider_require_expiry, session_factory
-):
+) -> None:
     """When require_expiry=True, keys with a future expiry are accepted."""
     future_time = datetime.now(UTC) + timedelta(days=30)
     with session_factory() as session:
@@ -237,7 +237,7 @@ async def test_authenticate_require_expiry_with_valid_expiry(
 
 
 @pytest.mark.asyncio
-async def test_validate_token(auth_provider, session_factory):
+async def test_validate_token(auth_provider, session_factory) -> None:
     """validate_token returns True for valid keys, False for invalid."""
     with session_factory() as session:
         _key_id, raw_key = DatabaseAPIKeyAuth.create_key(
@@ -254,7 +254,7 @@ async def test_validate_token(auth_provider, session_factory):
     )
 
 
-def test_revoke_key(session_factory):
+def test_revoke_key(session_factory) -> None:
     """Revoking a key marks it as revoked in the database."""
     with session_factory() as session:
         key_id, _raw_key = DatabaseAPIKeyAuth.create_key(
@@ -277,14 +277,14 @@ def test_revoke_key(session_factory):
         assert api_key.revoked_at is not None
 
 
-def test_revoke_key_not_found(session_factory):
+def test_revoke_key_not_found(session_factory) -> None:
     """Revoking a non-existent key returns False."""
     with session_factory() as session:
         result = DatabaseAPIKeyAuth.revoke_key(session, "non_existent_key_id")
     assert result is False
 
 
-def test_hash_consistency():
+def test_hash_consistency() -> None:
     """Hashing the same key twice produces the same result."""
     key = "sk-test-key-for-hash-consistency-check-12345"
     hash1 = DatabaseAPIKeyAuth._hash_key(key)
@@ -293,7 +293,7 @@ def test_hash_consistency():
     assert len(hash1) == 64  # SHA-256 hex digest
 
 
-def test_key_format_validation():
+def test_key_format_validation() -> None:
     """_validate_key_format checks prefix and minimum length."""
     assert DatabaseAPIKeyAuth._validate_key_format("sk-" + "x" * 29) is True
     assert DatabaseAPIKeyAuth._validate_key_format("sk-short") is False
@@ -301,13 +301,13 @@ def test_key_format_validation():
     assert DatabaseAPIKeyAuth._validate_key_format("") is False
 
 
-def test_close(auth_provider):
+def test_close(auth_provider) -> None:
     """close() doesn't raise."""
     auth_provider.close()
 
 
 @pytest.mark.asyncio
-async def test_last_used_at_updated(auth_provider, session_factory):
+async def test_last_used_at_updated(auth_provider, session_factory) -> None:
     """Authenticating a key updates last_used_at."""
     with session_factory() as session:
         key_id, raw_key = DatabaseAPIKeyAuth.create_key(

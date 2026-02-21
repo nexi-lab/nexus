@@ -78,7 +78,7 @@ def _make_jwt(alg: str = "RS256") -> str:
 
 
 @pytest.mark.asyncio
-async def test_sk_prefix_routes_to_api_key_provider():
+async def test_sk_prefix_routes_to_api_key_provider() -> None:
     """Token with sk- prefix routes to API key provider."""
     provider = DiscriminatingAuthProvider(
         api_key_provider=FakeAPIKeyProvider(),
@@ -91,7 +91,7 @@ async def test_sk_prefix_routes_to_api_key_provider():
 
 
 @pytest.mark.asyncio
-async def test_jwt_routes_to_jwt_provider():
+async def test_jwt_routes_to_jwt_provider() -> None:
     """JWT-format token routes to JWT provider."""
     provider = DiscriminatingAuthProvider(
         api_key_provider=FakeAPIKeyProvider(),
@@ -104,7 +104,7 @@ async def test_jwt_routes_to_jwt_provider():
 
 
 @pytest.mark.asyncio
-async def test_empty_token_rejected():
+async def test_empty_token_rejected() -> None:
     """Empty token is rejected immediately."""
     provider = DiscriminatingAuthProvider(
         api_key_provider=FakeAPIKeyProvider(),
@@ -115,7 +115,7 @@ async def test_empty_token_rejected():
 
 
 @pytest.mark.asyncio
-async def test_sk_prefix_without_api_key_provider():
+async def test_sk_prefix_without_api_key_provider() -> None:
     """sk- token rejected when no API key provider configured."""
     provider = DiscriminatingAuthProvider(
         api_key_provider=None,
@@ -126,7 +126,7 @@ async def test_sk_prefix_without_api_key_provider():
 
 
 @pytest.mark.asyncio
-async def test_jwt_without_jwt_provider():
+async def test_jwt_without_jwt_provider() -> None:
     """JWT token rejected when no JWT provider configured."""
     provider = DiscriminatingAuthProvider(
         api_key_provider=FakeAPIKeyProvider(),
@@ -137,7 +137,7 @@ async def test_jwt_without_jwt_provider():
 
 
 @pytest.mark.asyncio
-async def test_both_providers_none():
+async def test_both_providers_none() -> None:
     """All tokens rejected when no providers configured."""
     provider = DiscriminatingAuthProvider()
     assert (await provider.authenticate("sk-test")).authenticated is False
@@ -146,7 +146,7 @@ async def test_both_providers_none():
 
 
 @pytest.mark.asyncio
-async def test_non_jwt_non_sk_rejected():
+async def test_non_jwt_non_sk_rejected() -> None:
     """Token that is neither sk- nor JWT is rejected."""
     provider = DiscriminatingAuthProvider(
         api_key_provider=FakeAPIKeyProvider(),
@@ -157,7 +157,7 @@ async def test_non_jwt_non_sk_rejected():
 
 
 @pytest.mark.asyncio
-async def test_validate_token_delegates():
+async def test_validate_token_delegates() -> None:
     """validate_token delegates to authenticate."""
     provider = DiscriminatingAuthProvider(
         api_key_provider=FakeAPIKeyProvider(),
@@ -171,17 +171,17 @@ async def test_validate_token_delegates():
 # ---------------------------------------------------------------------------
 
 
-def test_looks_like_jwt_valid():
+def test_looks_like_jwt_valid() -> None:
     """Valid JWT header is detected."""
     assert DiscriminatingAuthProvider._looks_like_jwt(_make_jwt()) is True
 
 
-def test_looks_like_jwt_two_parts():
+def test_looks_like_jwt_two_parts() -> None:
     """Two-part token is NOT a JWT."""
     assert DiscriminatingAuthProvider._looks_like_jwt("part1.part2") is False
 
 
-def test_looks_like_jwt_no_alg():
+def test_looks_like_jwt_no_alg() -> None:
     """Three-part token without alg header is NOT a JWT."""
     header = base64.urlsafe_b64encode(json.dumps({"typ": "JWT"}).encode()).rstrip(b"=")
     payload = base64.urlsafe_b64encode(b"{}").rstrip(b"=")
@@ -190,12 +190,12 @@ def test_looks_like_jwt_no_alg():
     assert DiscriminatingAuthProvider._looks_like_jwt(token) is False
 
 
-def test_looks_like_jwt_invalid_base64():
+def test_looks_like_jwt_invalid_base64() -> None:
     """Three-part token with invalid base64 is NOT a JWT."""
     assert DiscriminatingAuthProvider._looks_like_jwt("!!!.@@@.###") is False
 
 
-def test_looks_like_jwt_empty_parts():
+def test_looks_like_jwt_empty_parts() -> None:
     """Three empty parts is NOT a JWT."""
     assert DiscriminatingAuthProvider._looks_like_jwt("..") is False
 
@@ -205,7 +205,7 @@ def test_looks_like_jwt_empty_parts():
 # ---------------------------------------------------------------------------
 
 
-def test_session_factory_forwarding():
+def test_session_factory_forwarding() -> None:
     """session_factory is forwarded from API key provider."""
 
     class ProviderWithFactory(FakeAPIKeyProvider):
@@ -217,7 +217,7 @@ def test_session_factory_forwarding():
     assert provider.session_factory == "mock_factory"
 
 
-def test_session_factory_none_without_api_provider():
+def test_session_factory_none_without_api_provider() -> None:
     """session_factory is None when no API key provider."""
     provider = DiscriminatingAuthProvider(jwt_provider=FakeJWTProvider())
     assert provider.session_factory is None
@@ -228,7 +228,7 @@ def test_session_factory_none_without_api_provider():
 # ---------------------------------------------------------------------------
 
 
-def test_close_propagates():
+def test_close_propagates() -> None:
     """close() calls close on both sub-providers."""
     api_prov = FakeAPIKeyProvider()
     jwt_prov = FakeJWTProvider()

@@ -347,7 +347,7 @@ class TestEnhancedMetrics:
         buf.enqueue_rename(old_path="/d.txt", new_path="/e.txt")
 
         by_type = buf.metrics["enqueued_by_type"]
-        assert by_type == {"write": 2, "delete": 1, "rename": 1}
+        assert by_type == {"write": 2, "delete": 1, "rename": 1, "mkdir": 0, "rmdir": 0}
 
     def test_retry_counter_increments(self, session_factory) -> None:
         """Total retries should increment on transient flush failure."""
@@ -368,3 +368,97 @@ class TestEnhancedMetrics:
 
         assert buf.metrics["total_retries"] >= 1
         assert buf.metrics["total_flushed"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Urgency-aware flush tests (Issue #2426)
+# ---------------------------------------------------------------------------
+
+
+class TestUrgencyBehavior:
+    """Tests for per-event urgency and urgency-aware flush thresholds."""
+
+    def test_urgency_field_stored_on_event(self) -> None:
+        """WriteEvent should store the urgency value."""
+        event = WriteEvent(event_type=EventType.WRITE, path="/test", urgency=2)
+        assert event.urgency == 2
+
+    def test_default_urgency_is_one(self) -> None:
+        """WriteEvent default urgency should be 1 (normal)."""
+        event = WriteEvent(event_type=EventType.WRITE, path="/test")
+        assert event.urgency == 1
+
+    def test_high_urgency_lowers_flush_threshold(self, record_store) -> None:
+        """Urgency=2 events should trigger flush at max_buffer_size // 10."""
+        buf = WriteBuffer(
+            record_store,
+            flush_interval_ms=10000,  # Long interval — no timer flush
+            max_buffer_size=100,  # Default threshold=100, urgency=2 → 10
+        )
+        buf.start()
+
+        # Enqueue 10 high-urgency events (threshold = max(100//10, 5) = 10)
+        for i in range(10):
+            buf.enqueue_write(
+                _make_metadata(path=f"/test/urgent{i}.txt", etag=f"u-{i}"),
+                is_new=True,
+                path=f"/test/urgent{i}.txt",
+                urgency=2,
+            )
+
+        # Give flush thread time to process
+        time.sleep(0.3)
+        buf.stop(timeout=5.0)
+
+        assert buf.metrics["total_flushed"] == 10
+
+    def test_low_urgency_batches_more(self, record_store) -> None:
+        """Urgency=0 events should use 2x max_buffer_size threshold."""
+        buf = WriteBuffer(
+            record_store,
+            flush_interval_ms=10000,
+            max_buffer_size=5,  # Default threshold=5, urgency=0 → 10
+        )
+
+        # Enqueue 5 low-urgency events (below 2x threshold of 10)
+        for i in range(5):
+            buf.enqueue_write(
+                _make_metadata(path=f"/test/low{i}.txt", etag=f"l-{i}"),
+                is_new=True,
+                path=f"/test/low{i}.txt",
+                urgency=0,
+            )
+
+        # Should NOT have auto-flushed (5 < 10 threshold)
+        assert buf.pending_count == 5
+
+    def test_urgency_passthrough_on_enqueue_methods(self, record_store) -> None:
+        """All enqueue methods should pass urgency through to WriteEvent."""
+        buf = WriteBuffer(record_store, flush_interval_ms=10000)
+
+        buf.enqueue_write(
+            _make_metadata(),
+            is_new=True,
+            path="/w.txt",
+            urgency=2,
+        )
+        buf.enqueue_delete(path="/d.txt", urgency=0)
+        buf.enqueue_rename(old_path="/old.txt", new_path="/new.txt", urgency=2)
+        buf.enqueue_mkdir(path="/dir", urgency=0)
+        buf.enqueue_rmdir(path="/dir2", urgency=2)
+
+        with buf._lock:
+            events = list(buf._buffer)
+        assert [e.urgency for e in events] == [2, 0, 2, 0, 2]
+
+    def test_metrics_include_urgency_breakdown(self, record_store) -> None:
+        """Metrics should include per-urgency enqueue counts."""
+        buf = WriteBuffer(record_store, flush_interval_ms=10000)
+
+        buf.enqueue_write(_make_metadata(path="/a.txt"), is_new=True, path="/a.txt", urgency=0)
+        buf.enqueue_write(_make_metadata(path="/b.txt"), is_new=True, path="/b.txt", urgency=1)
+        buf.enqueue_write(_make_metadata(path="/c.txt"), is_new=True, path="/c.txt", urgency=2)
+        buf.enqueue_write(_make_metadata(path="/d.txt"), is_new=True, path="/d.txt", urgency=1)
+
+        by_urgency = buf.metrics["enqueued_by_urgency"]
+        assert by_urgency == {0: 1, 1: 2, 2: 1}

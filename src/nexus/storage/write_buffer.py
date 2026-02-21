@@ -73,6 +73,9 @@ class WriteEvent:
     # Rmdir-specific
     recursive: bool = False
 
+    # Urgency (from IOProfile): 0=low, 1=normal, 2=high
+    urgency: int = 1
+
 
 class WriteBuffer:
     """Thread-safe write-behind buffer for PostgreSQL materialized view sync.
@@ -116,7 +119,14 @@ class WriteBuffer:
         self._flush_count = 0
         self._flush_duration_sum = 0.0
         self._flush_batch_size_sum = 0
-        self._enqueued_by_type: dict[str, int] = {"write": 0, "delete": 0, "rename": 0}
+        self._enqueued_by_type: dict[str, int] = {
+            "write": 0,
+            "delete": 0,
+            "rename": 0,
+            "mkdir": 0,
+            "rmdir": 0,
+        }
+        self._enqueued_by_urgency: dict[int, int] = {0: 0, 1: 0, 2: 0}
 
     def start(self) -> None:
         """Start the background flush thread."""
@@ -165,7 +175,7 @@ class WriteBuffer:
             return len(self._buffer)
 
     @property
-    def metrics(self) -> dict[str, int | float | dict[str, int]]:
+    def metrics(self) -> dict[str, Any]:
         """Return a consistent snapshot of buffer metrics."""
         with self._lock:
             return {
@@ -178,6 +188,7 @@ class WriteBuffer:
                 "flush_duration_sum": self._flush_duration_sum,
                 "flush_batch_size_sum": self._flush_batch_size_sum,
                 "enqueued_by_type": dict(self._enqueued_by_type),
+                "enqueued_by_urgency": dict(self._enqueued_by_urgency),
             }
 
     # -- Enqueue methods (called from hot path) ----------------------------
@@ -192,6 +203,7 @@ class WriteBuffer:
         agent_id: str | None = None,
         snapshot_hash: str | None = None,
         metadata_snapshot: dict[str, Any] | None = None,
+        urgency: int = 1,
     ) -> None:
         """Enqueue a write event. Returns immediately."""
         event = WriteEvent(
@@ -203,6 +215,7 @@ class WriteBuffer:
             agent_id=agent_id,
             snapshot_hash=snapshot_hash,
             metadata_snapshot=metadata_snapshot,
+            urgency=urgency,
         )
         self._enqueue(event)
 
@@ -214,6 +227,7 @@ class WriteBuffer:
         agent_id: str | None = None,
         snapshot_hash: str | None = None,
         metadata_snapshot: dict[str, Any] | None = None,
+        urgency: int = 1,
     ) -> None:
         """Enqueue a delete event. Returns immediately."""
         event = WriteEvent(
@@ -223,6 +237,7 @@ class WriteBuffer:
             agent_id=agent_id,
             snapshot_hash=snapshot_hash,
             metadata_snapshot=metadata_snapshot,
+            urgency=urgency,
         )
         self._enqueue(event)
 
@@ -235,6 +250,7 @@ class WriteBuffer:
         agent_id: str | None = None,
         snapshot_hash: str | None = None,
         metadata_snapshot: dict[str, Any] | None = None,
+        urgency: int = 1,
     ) -> None:
         """Enqueue a rename event. Returns immediately."""
         event = WriteEvent(
@@ -246,6 +262,7 @@ class WriteBuffer:
             agent_id=agent_id,
             snapshot_hash=snapshot_hash,
             metadata_snapshot=metadata_snapshot,
+            urgency=urgency,
         )
         self._enqueue(event)
 
@@ -255,6 +272,7 @@ class WriteBuffer:
         *,
         zone_id: str | None = None,
         agent_id: str | None = None,
+        urgency: int = 1,
     ) -> None:
         """Enqueue a mkdir event. Returns immediately."""
         event = WriteEvent(
@@ -262,6 +280,7 @@ class WriteBuffer:
             path=path,
             zone_id=zone_id,
             agent_id=agent_id,
+            urgency=urgency,
         )
         self._enqueue(event)
 
@@ -272,6 +291,7 @@ class WriteBuffer:
         zone_id: str | None = None,
         agent_id: str | None = None,
         recursive: bool = False,
+        urgency: int = 1,
     ) -> None:
         """Enqueue a rmdir event. Returns immediately."""
         event = WriteEvent(
@@ -280,23 +300,43 @@ class WriteBuffer:
             zone_id=zone_id,
             agent_id=agent_id,
             recursive=recursive,
+            urgency=urgency,
         )
         self._enqueue(event)
 
     # -- Internal ----------------------------------------------------------
 
     def _enqueue(self, event: WriteEvent) -> None:
-        """Add event to buffer, trigger flush if threshold reached."""
+        """Add event to buffer, trigger flush if urgency threshold reached.
+
+        Urgency-aware thresholds (from IOProfile):
+            urgency 0 (low/APPEND_ONLY): batch more (2x max_buffer_size)
+            urgency 1 (normal/BALANCED):  default threshold (max_buffer_size)
+            urgency 2 (high/EDIT):        flush sooner (max_buffer_size // 10, min 5)
+        """
         with self._lock:
             self._buffer.append(event)
             self._total_enqueued += 1
             self._enqueued_by_type[event.event_type.value] = (
                 self._enqueued_by_type.get(event.event_type.value, 0) + 1
             )
+            self._enqueued_by_urgency[event.urgency] = (
+                self._enqueued_by_urgency.get(event.urgency, 0) + 1
+            )
             buffer_size = len(self._buffer)
 
-        if buffer_size >= self._max_buffer_size:
+        # Urgency-aware threshold: most urgent pending event determines threshold
+        threshold = self._urgency_threshold(event.urgency)
+        if buffer_size >= threshold:
             self._flush_event.set()
+
+    def _urgency_threshold(self, urgency: int) -> int:
+        """Return flush threshold for given urgency level."""
+        if urgency >= 2:
+            return max(self._max_buffer_size // 10, 5)
+        if urgency == 0:
+            return self._max_buffer_size * 2
+        return self._max_buffer_size
 
     def _flush_loop(self) -> None:
         """Background loop: flush buffer periodically or on threshold."""

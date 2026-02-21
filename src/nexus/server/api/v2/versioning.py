@@ -346,6 +346,17 @@ def build_v2_registry(
     except ImportError as e:
         logger.warning("Failed to import Credentials routes: %s", e)
 
+    # ---- Access Manifests router (Issue #1754) ----
+    try:
+        from nexus.server.api.v2.routers.access_manifests import (
+            router as access_manifests_router,
+        )
+
+        registry.add(
+            RouterEntry(router=access_manifests_router, name="access_manifests", endpoint_count=5)
+        )
+    except ImportError as e:
+        logger.warning("Failed to import Access Manifests routes: %s", e)
     # ---- Search router (Issue #2056 — ported from v1) ----
     try:
         from nexus.server.api.v2.routers.search import router as search_router

@@ -273,12 +273,14 @@ def _startup_credential_service(app: FastAPI, svc: LifespanServices) -> None:
         from nexus.identity.credential_service import CredentialService
         from nexus.identity.credentials import CapabilityIssuer, CapabilityVerifier
         from nexus.identity.crypto import IdentityCrypto
+        from nexus.storage.models.access_manifest import AccessManifestModel
         from nexus.storage.models.identity import AgentCredentialModel
 
-        # Ensure agent_credentials table exists
+        # Ensure agent_credentials and access_manifests tables exist
         _nx_engine = svc.sql_engine
         if _nx_engine is not None:
             cast(Table, AgentCredentialModel.__table__).create(_nx_engine, checkfirst=True)
+            cast(Table, AccessManifestModel.__table__).create(_nx_engine, checkfirst=True)
 
         # Get or create a kernel identity for credential signing.
         # The kernel uses a well-known agent_id for its signing key.

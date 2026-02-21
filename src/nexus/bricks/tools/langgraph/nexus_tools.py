@@ -31,8 +31,8 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool, tool
 from langgraph.prebuilt import InjectedState
 
-from nexus.remote import RemoteNexusFS  # re-export for backward compatibility
 from nexus.bricks.tools._client import _get_nexus_client
+from nexus.remote import RemoteNexusFS  # re-export for backward compatibility
 
 __all__ = [
     "RemoteNexusFS",

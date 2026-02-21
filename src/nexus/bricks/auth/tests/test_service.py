@@ -59,7 +59,7 @@ def service(provider, cache):
 
 
 @pytest.mark.asyncio
-async def test_authenticate_success(service):
+async def test_authenticate_success(service) -> None:
     """Successful authentication returns correct AuthResult."""
     result = await service.authenticate("sk-valid-token")
     assert result.authenticated is True
@@ -68,14 +68,14 @@ async def test_authenticate_success(service):
 
 
 @pytest.mark.asyncio
-async def test_authenticate_empty_token(service):
+async def test_authenticate_empty_token(service) -> None:
     """Empty token returns unauthenticated without hitting provider."""
     result = await service.authenticate("")
     assert result.authenticated is False
 
 
 @pytest.mark.asyncio
-async def test_authenticate_caches_result(service, cache):
+async def test_authenticate_caches_result(service, cache) -> None:
     """Successful auth result is cached."""
     await service.authenticate("sk-cached-token")
 
@@ -86,7 +86,7 @@ async def test_authenticate_caches_result(service, cache):
 
 
 @pytest.mark.asyncio
-async def test_authenticate_cache_hit_skips_provider():
+async def test_authenticate_cache_hit_skips_provider() -> None:
     """On cache hit, provider.authenticate is NOT called."""
     mock_provider = MagicMock(spec=AuthProvider)
     mock_provider.authenticate = AsyncMock()
@@ -115,7 +115,7 @@ async def test_authenticate_cache_hit_skips_provider():
 
 
 @pytest.mark.asyncio
-async def test_authenticate_failed_not_cached():
+async def test_authenticate_failed_not_cached() -> None:
     """Failed authentication is NOT cached."""
     provider = StubProvider(result=AuthResult(authenticated=False))
     cache = AuthCache(ttl=60, max_size=100)
@@ -132,13 +132,13 @@ async def test_authenticate_failed_not_cached():
 
 
 @pytest.mark.asyncio
-async def test_validate_token_delegates(service):
+async def test_validate_token_delegates(service) -> None:
     """validate_token delegates to provider."""
     assert await service.validate_token("sk-any-token") is True
 
 
 @pytest.mark.asyncio
-async def test_validate_token_rejected():
+async def test_validate_token_rejected() -> None:
     """validate_token returns False for failed auth."""
     provider = StubProvider(result=AuthResult(authenticated=False))
     svc = AuthService(provider=provider)
@@ -151,7 +151,7 @@ async def test_validate_token_rejected():
 
 
 @pytest.mark.asyncio
-async def test_invalidate_cached_token(service, cache):
+async def test_invalidate_cached_token(service, cache) -> None:
     """invalidate_cached_token removes entry from cache."""
     await service.authenticate("sk-to-revoke")
     assert cache.get("sk-to-revoke") is not None
@@ -160,7 +160,7 @@ async def test_invalidate_cached_token(service, cache):
     assert cache.get("sk-to-revoke") is None
 
 
-def test_invalidate_nonexistent_token(service):
+def test_invalidate_nonexistent_token(service) -> None:
     """invalidate_cached_token on missing key does not raise."""
     service.invalidate_cached_token("sk-ghost")
 
@@ -170,7 +170,7 @@ def test_invalidate_nonexistent_token(service):
 # ---------------------------------------------------------------------------
 
 
-def test_setup_zone_personal_email(monkeypatch):
+def test_setup_zone_personal_email(monkeypatch) -> None:
     """setup_zone with personal email creates a personal zone."""
     provider = StubProvider()
     svc = AuthService(provider=provider)
@@ -186,11 +186,16 @@ def test_setup_zone_personal_email(monkeypatch):
         lambda _email: ("alice", "Alice's Zone", "gmail.com", True),
     )
     monkeypatch.setattr(_svc_mod, "suggest_zone_id", lambda _base_slug, _session: "alice-personal")
-    create_calls = []
+    create_calls: list[dict[str, object]] = []
+
+    def _fake_create_zone(**_kw: object) -> MagicMock:
+        create_calls.append(_kw)
+        return mock_zone
+
     monkeypatch.setattr(
         _svc_mod,
         "create_zone",
-        lambda **_kw: (create_calls.append(_kw), mock_zone)[1],
+        _fake_create_zone,
     )
 
     result = svc.setup_zone(mock_session, "alice@gmail.com")
@@ -202,7 +207,7 @@ def test_setup_zone_personal_email(monkeypatch):
     assert len(create_calls) == 1
 
 
-def test_setup_zone_work_email(monkeypatch):
+def test_setup_zone_work_email(monkeypatch) -> None:
     """setup_zone with work email creates a company zone."""
     provider = StubProvider()
     svc = AuthService(provider=provider)
@@ -228,7 +233,7 @@ def test_setup_zone_work_email(monkeypatch):
     assert result["domain"] == "acme.com"
 
 
-def test_setup_zone_with_overrides(monkeypatch):
+def test_setup_zone_with_overrides(monkeypatch) -> None:
     """setup_zone respects zone_id and zone_name overrides."""
     provider = StubProvider()
     svc = AuthService(provider=provider)
@@ -243,11 +248,16 @@ def test_setup_zone_with_overrides(monkeypatch):
         "get_zone_strategy_from_email",
         lambda _email: ("auto", "Auto Name", "example.com", False),
     )
-    suggest_calls = []
+    suggest_calls: list[int] = []
+
+    def _fake_suggest_zone_id(_base_slug: str, _session: object) -> str:
+        suggest_calls.append(1)
+        return "unused"
+
     monkeypatch.setattr(
         _svc_mod,
         "suggest_zone_id",
-        lambda _base_slug, _session: suggest_calls.append(1) or "unused",
+        _fake_suggest_zone_id,
     )
     monkeypatch.setattr(_svc_mod, "create_zone", lambda **_kw: mock_zone)
 
@@ -269,7 +279,7 @@ def test_setup_zone_with_overrides(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_close_clears_cache_and_provider():
+def test_close_clears_cache_and_provider() -> None:
     """close() cleans up provider and cache."""
     mock_provider = MagicMock(spec=AuthProvider)
     cache = AuthCache(ttl=60, max_size=100)
@@ -282,7 +292,7 @@ def test_close_clears_cache_and_provider():
     assert cache.size == 0
 
 
-def test_default_cache_created():
+def test_default_cache_created() -> None:
     """AuthService creates a default cache if none provided."""
     provider = StubProvider()
     svc = AuthService(provider=provider)
@@ -290,6 +300,6 @@ def test_default_cache_created():
     assert isinstance(svc.cache, AuthCache)
 
 
-def test_provider_property(service, provider):
+def test_provider_property(service, provider) -> None:
     """provider property returns the underlying provider."""
     assert service.provider is provider

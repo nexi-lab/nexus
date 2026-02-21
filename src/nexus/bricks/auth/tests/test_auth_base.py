@@ -7,7 +7,7 @@ import pytest
 from nexus.bricks.auth.providers.base import AuthProvider, AuthResult
 
 
-def test_auth_result_basic():
+def test_auth_result_basic() -> None:
     """Create AuthResult with all fields, assert values."""
     result = AuthResult(
         authenticated=True,
@@ -26,7 +26,7 @@ def test_auth_result_basic():
     assert result.inherit_permissions is True
 
 
-def test_auth_result_with_metadata():
+def test_auth_result_with_metadata() -> None:
     """AuthResult with metadata dict."""
     metadata = {"key_id": "key_123", "key_name": "Test Key"}
     result = AuthResult(
@@ -43,7 +43,7 @@ def test_auth_result_with_metadata():
     assert result.metadata["key_name"] == "Test Key"
 
 
-def test_auth_result_failed():
+def test_auth_result_failed() -> None:
     """AuthResult(authenticated=False), check defaults."""
     result = AuthResult(authenticated=False)
     assert result.authenticated is False
@@ -56,7 +56,7 @@ def test_auth_result_failed():
     assert result.inherit_permissions is True
 
 
-def test_auth_result_different_subject_types():
+def test_auth_result_different_subject_types() -> None:
     """Test user, agent, service, session subject types."""
     user_result = AuthResult(
         authenticated=True,
@@ -92,7 +92,7 @@ def test_auth_result_different_subject_types():
     assert session_result.subject_type == "session"
 
 
-def test_auth_result_admin_flag():
+def test_auth_result_admin_flag() -> None:
     """Test is_admin True/False."""
     admin_result = AuthResult(
         authenticated=True,
@@ -131,7 +131,7 @@ class ConcreteAuthProvider(AuthProvider):
 
 
 @pytest.mark.asyncio
-async def test_auth_provider_interface():
+async def test_auth_provider_interface() -> None:
     """Async test with concrete provider implementing authenticate/validate_token/close."""
     provider = ConcreteAuthProvider()
 
@@ -146,7 +146,7 @@ async def test_auth_provider_interface():
     assert await provider.validate_token("invalid_token") is False
 
 
-def test_auth_provider_close():
+def test_auth_provider_close() -> None:
     """close() doesn't raise."""
     provider = ConcreteAuthProvider()
     provider.close()

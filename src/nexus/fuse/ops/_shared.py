@@ -320,7 +320,9 @@ def get_file_content(
 
     # In text mode, try to parse
     if ctx.mode.value == "text" or (ctx.mode.value == "smart" and view_type):
-        from nexus.bricks.parsers import create_default_parse_fn
+        import importlib as _il
+
+        create_default_parse_fn = _il.import_module("nexus.bricks.parsers").create_default_parse_fn
         from nexus.lib.virtual_views import get_parsed_content
 
         if not hasattr(ctx, "_parse_fn"):

@@ -24,6 +24,8 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
+from nexus.constants import ROOT_ZONE_ID
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -211,7 +213,7 @@ def app(tmp_path, pg_engine, pg_session_factory, api_keys):
     with pg_session_factory() as session:
         session.execute(
             text(
-                "DELETE FROM memories WHERE zone_id = 'default' AND user_id IN ('pg-admin', 'pg-normal')"
+                f"DELETE FROM memories WHERE zone_id = '{ROOT_ZONE_ID}' AND user_id IN ('pg-admin', 'pg-normal')"
             )
         )
         session.commit()

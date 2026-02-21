@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.services.event_subsystem.log.replay import (
     EventReplayService,
     _decode_cursor,
@@ -54,7 +55,7 @@ def _insert_event(
     session_factory,
     path: str = "/test.txt",
     operation_type: str = "write",
-    zone_id: str = "default",
+    zone_id: str = ROOT_ZONE_ID,
     agent_id: str | None = None,
     sequence_number: int | None = None,
     created_at: datetime | None = None,

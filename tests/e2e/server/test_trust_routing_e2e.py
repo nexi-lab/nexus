@@ -108,13 +108,13 @@ def _setup_coordinator(entity_registry, rebac_manager, agent_id="coordinator_age
                 "subject": ("agent", agent_id),
                 "relation": "direct_editor",
                 "object": ("file", "/workspace/project/src/main.py"),
-                "zone_id": "default",
+                "zone_id": ROOT_ZONE_ID,
             },
             {
                 "subject": ("agent", agent_id),
                 "relation": "direct_editor",
                 "object": ("file", "/workspace/project/src/utils.py"),
-                "zone_id": "default",
+                "zone_id": ROOT_ZONE_ID,
             },
         ]
     )

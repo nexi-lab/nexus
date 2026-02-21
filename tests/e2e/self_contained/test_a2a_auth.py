@@ -222,7 +222,7 @@ class TestAuthCallback:
         assert data["result"]["id"]
 
     def test_auth_fn_none_defaults_to_default_zone(self) -> None:
-        """Without auth_fn, zone_id defaults to 'default'."""
+        """Without auth_fn, zone_id defaults to ROOT_ZONE_ID ('root')."""
         app = FastAPI()
         router = build_router(
             base_url="http://testserver",

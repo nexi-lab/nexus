@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pytest
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.services.event_subsystem.types import FileEvent, FileEventType
 
 # Skip if testcontainers or nats not installed
@@ -64,7 +65,7 @@ def exporter(nats_url: str):
     return NatsExporter(config)
 
 
-def _make_event(event_id: str = "test-1", zone_id: str = "default") -> FileEvent:
+def _make_event(event_id: str = "test-1", zone_id: str = ROOT_ZONE_ID) -> FileEvent:
     return FileEvent(
         type=FileEventType.FILE_WRITE,
         path="/test.txt",

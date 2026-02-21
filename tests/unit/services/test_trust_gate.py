@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.services.delegation.errors import InsufficientTrustError
 from nexus.services.delegation.models import DelegationMode
 from nexus.services.delegation.service import DelegationService
@@ -44,7 +45,7 @@ class FakeReputationScore:
     disputed_interactions: int = 0
     global_trust_score: float | None = None
     updated_at: datetime = datetime(2025, 1, 1)
-    zone_id: str = "default"
+    zone_id: str = ROOT_ZONE_ID
 
 
 @pytest.fixture()

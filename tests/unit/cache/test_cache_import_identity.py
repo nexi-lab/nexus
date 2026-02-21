@@ -1,46 +1,28 @@
-"""Verify backward-compat re-exports are identity-preserving (Issue #2055).
+"""Verify CacheStoreABC import identity and bricks/cache/ zero-core-imports (Issue #2055).
 
-After moving CacheStoreABC to bricks/cache/cache_store.py, all legacy import
-paths must resolve to the exact same class objects. This test catches broken
-re-export chains that would cause isinstance() failures.
+After moving CacheStoreABC to contracts/cache_store.py, all import paths must
+resolve to the exact same class objects. Shim files have been deleted — there
+is now a single canonical path: nexus.contracts.cache_store.
 """
 
 from __future__ import annotations
 
 
 class TestCacheStoreABCIdentity:
-    """CacheStoreABC must be the same object regardless of import path."""
+    """CacheStoreABC must be the same object via contracts and core.protocols."""
 
-    def test_core_cache_store_reexport(self) -> None:
-        """core.cache_store re-exports from bricks.cache.cache_store."""
-        from nexus.bricks.cache.cache_store import CacheStoreABC as canonical
-        from nexus.core.cache_store import CacheStoreABC as legacy
+    def test_contracts_is_canonical(self) -> None:
+        """contracts.cache_store is the canonical location."""
+        from nexus.contracts.cache_store import CacheStoreABC as canonical
+        from nexus.core.protocols import CacheStoreABC as via_protocols
 
-        assert canonical is legacy
+        assert canonical is via_protocols
 
+    def test_null_cache_store_identity(self) -> None:
+        from nexus.contracts.cache_store import NullCacheStore as canonical
+        from nexus.core.protocols import NullCacheStore as via_protocols
 
-class TestNullCacheStoreIdentity:
-    """NullCacheStore must be the same object regardless of import path."""
-
-    def test_core_cache_store_reexport(self) -> None:
-        from nexus.bricks.cache.cache_store import NullCacheStore as canonical
-        from nexus.core.cache_store import NullCacheStore as legacy
-
-        assert canonical is legacy
-
-
-class TestPersistentViewStoreShim:
-    """PostgresPersistentViewStore must be accessible from brick shim path."""
-
-    def test_storage_is_canonical(self) -> None:
-        from nexus.bricks.cache.persistent_view_postgres import (
-            PostgresPersistentViewStore as via_brick_shim,
-        )
-        from nexus.storage.persistent_view_postgres import (
-            PostgresPersistentViewStore as canonical,
-        )
-
-        assert canonical is via_brick_shim
+        assert canonical is via_protocols
 
 
 class TestZeroViolations:
@@ -52,7 +34,6 @@ class TestZeroViolations:
 
         import nexus.bricks.cache.base
         import nexus.bricks.cache.brick
-        import nexus.bricks.cache.cache_store
         import nexus.bricks.cache.domain
         import nexus.bricks.cache.factory
         import nexus.bricks.cache.inmemory
@@ -62,7 +43,6 @@ class TestZeroViolations:
         modules_to_check = [
             nexus.bricks.cache.base,
             nexus.bricks.cache.brick,
-            nexus.bricks.cache.cache_store,
             nexus.bricks.cache.domain,
             nexus.bricks.cache.factory,
             nexus.bricks.cache.inmemory,

@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 from nexus.bricks.skills.exceptions import SkillPermissionDeniedError, SkillValidationError
 
 if TYPE_CHECKING:
-    from nexus.core.cache_store import CacheStoreABC
+    from nexus.contracts.cache_store import CacheStoreABC
     from nexus.services.protocols.rebac import ReBACBrickProtocol
 
 logger = logging.getLogger(__name__)

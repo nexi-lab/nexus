@@ -26,7 +26,7 @@ import logging
 import struct
 from collections.abc import Awaitable, Callable
 
-from nexus.bricks.cache.cache_store import CacheStoreABC
+from nexus.contracts.cache_store import CacheStoreABC
 
 logger = logging.getLogger(__name__)
 

@@ -40,10 +40,10 @@ from nexus.bricks.cache.base import (
     TigerCacheProtocol,
 )
 from nexus.bricks.cache.brick import CacheBrick
-from nexus.bricks.cache.cache_store import CacheStoreABC, NullCacheStore
 from nexus.bricks.cache.factory import CacheFactory
 from nexus.bricks.cache.inmemory import InMemoryCacheStore
 from nexus.bricks.cache.settings import CacheSettings
+from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
 
 __all__ = [
     # Brick facade (Issue #1524)
@@ -60,7 +60,7 @@ __all__ = [
     "PermissionCacheProtocol",
     "ResourceMapCacheProtocol",
     "TigerCacheProtocol",
-    # Fourth Pillar ABC — canonical home since Issue #2055
+    # Fourth Pillar ABC — canonical home is nexus.contracts.cache_store (Issue #2055)
     "CacheStoreABC",
     "NullCacheStore",
     # CacheStoreABC drivers (for DI into CacheBrick/NexusFS)

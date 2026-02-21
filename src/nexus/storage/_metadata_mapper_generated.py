@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 from nexus.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
-    from nexus.core.metadata import FileMetadata
+    from nexus.contracts.metadata import FileMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +92,7 @@ class MetadataMapper:
     @staticmethod
     def from_proto(proto: Any) -> "FileMetadata":
         """Convert protobuf message to FileMetadata dataclass."""
-        from nexus.core.metadata import FileMetadata
+        from nexus.contracts.metadata import FileMetadata
 
         created_at = None
         if proto.created_at:
@@ -147,7 +147,7 @@ class MetadataMapper:
     @staticmethod
     def from_json(obj: dict[str, Any]) -> "FileMetadata":
         """Convert JSON dict to FileMetadata dataclass."""
-        from nexus.core.metadata import FileMetadata
+        from nexus.contracts.metadata import FileMetadata
 
         # Migration: convert legacy is_directory -> entry_type
         if "is_directory" in obj:

@@ -399,7 +399,7 @@ class TransactionalSnapshotService:
     @staticmethod
     def _restore_metadata_from_snapshot(path: str, original_hash: str, metadata_json: str) -> Any:
         """Build a FileMetadata from a JSON snapshot (used during rollback)."""
-        from nexus.core.metadata import FileMetadata
+        from nexus.contracts.metadata import FileMetadata
 
         meta_dict = json.loads(metadata_json)
         return FileMetadata(

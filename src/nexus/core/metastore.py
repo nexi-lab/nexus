@@ -26,7 +26,7 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from nexus.core.metadata import FileMetadata, PaginatedResult
+from nexus.contracts.metadata import FileMetadata, PaginatedResult
 
 
 @dataclass(frozen=True, slots=True)

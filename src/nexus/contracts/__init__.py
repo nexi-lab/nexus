@@ -75,6 +75,14 @@ from nexus.contracts.exceptions import (
     UploadOffsetMismatchError,
     ValidationError,
 )
+from nexus.contracts.metadata import (
+    DT_DIR,
+    DT_MOUNT,
+    DT_PIPE,
+    DT_REG,
+    FileMetadata,
+    PaginatedResult,
+)
 from nexus.contracts.rebac_types import (
     CROSS_ZONE_ALLOWED_RELATIONS,
     WILDCARD_SUBJECT,
@@ -111,6 +119,13 @@ __all__ = [
     # Constants (shared across bricks)
     "PriorityTier",
     "TIER_ALIASES",
+    # Metadata types (Issue #891 — moved from core/ to contracts/)
+    "DT_DIR",
+    "DT_MOUNT",
+    "DT_PIPE",
+    "DT_REG",
+    "FileMetadata",
+    "PaginatedResult",
     # Validators
     "EmailAddress",
     "EmailList",

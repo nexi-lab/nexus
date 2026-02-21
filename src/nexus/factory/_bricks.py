@@ -350,7 +350,7 @@ def _boot_independent_bricks(
     if snapshot_service is None:
         try:
             from nexus.bricks.snapshot.service import TransactionalSnapshotService
-            from nexus.core.metadata import FileMetadata
+            from nexus.contracts.metadata import FileMetadata
 
             snapshot_service = TransactionalSnapshotService(
                 record_store=ctx.record_store,

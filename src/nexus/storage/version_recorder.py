@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 from nexus.storage.models import FilePathModel, VersionHistoryModel
 
 if TYPE_CHECKING:
-    from nexus.core.metadata import FileMetadata
+    from nexus.contracts.metadata import FileMetadata
 
 
 def _utcnow_naive() -> datetime:

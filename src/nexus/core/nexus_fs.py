@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from nexus.bricks.rebac.entity_registry import EntityRegistry
     from nexus.services.memory.memory_api import Memory
 from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
+from nexus.contracts.metadata import FileMetadata
 from nexus.core.config import (
     BrickServices,
     CacheConfig,
@@ -30,7 +31,6 @@ from nexus.core.config import (
     WiredServices,
 )
 from nexus.core.filesystem import NexusFilesystem
-from nexus.core.metadata import FileMetadata
 from nexus.core.metastore import MetastoreABC
 from nexus.core.nexus_fs_bulk import NexusFSBulkMixin
 from nexus.core.nexus_fs_core import NexusFSCoreMixin

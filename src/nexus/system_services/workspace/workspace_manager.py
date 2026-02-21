@@ -303,7 +303,7 @@ class WorkspaceManager:
 
             from datetime import UTC, datetime
 
-            from nexus.core.metadata import FileMetadata
+            from nexus.contracts.metadata import FileMetadata
 
             for rel_path in manifest_paths:
                 entry = manifest.get(rel_path)

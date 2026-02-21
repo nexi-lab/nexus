@@ -11,7 +11,7 @@ from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.constants import ROOT_ZONE_ID
-from nexus.core.metadata import DT_DIR, DT_REG, FileMetadata
+from nexus.contracts.metadata import DT_DIR, DT_REG, FileMetadata
 from nexus.storage.models import Base, FilePathModel, VersionHistoryModel
 from nexus.storage.version_recorder import VersionRecorder
 

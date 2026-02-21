@@ -29,8 +29,8 @@ from nexus.bricks.ipc.delivery import MessageProcessor, MessageSender
 from nexus.bricks.ipc.envelope import MessageEnvelope, MessageType
 from nexus.bricks.ipc.provisioning import AgentProvisioner
 from nexus.bricks.ipc.signing import MessageSigner, MessageVerifier, SigningMode
+from nexus.contracts.metadata import FileMetadata, PaginatedResult
 from nexus.core.config import ParseConfig, PermissionConfig
-from nexus.core.metadata import FileMetadata, PaginatedResult
 from nexus.core.metastore import MetastoreABC
 from nexus.storage.models import Base
 from nexus.storage.zone_settings import ZoneSettings

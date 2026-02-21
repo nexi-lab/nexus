@@ -34,6 +34,7 @@ from nexus.backends.backend import Backend
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.contracts.exceptions import BackendError
 from nexus.core.hash_fast import hash_content
+from nexus.core.protocols.capabilities import ConnectorCapability
 from nexus.lib.response import HandlerResponse
 
 if TYPE_CHECKING:
@@ -84,6 +85,13 @@ class PassthroughBackend(Backend):
         >>> # Write content - stores in CAS, creates pointer
         >>> content_hash = backend.write_content(b"hello").unwrap()
     """
+
+    _CAPABILITIES = frozenset(
+        {
+            ConnectorCapability.PASSTHROUGH,
+            ConnectorCapability.ROOT_PATH,
+        }
+    )
 
     CONNECTION_ARGS: dict[str, ConnectionArg] = {
         "base_path": ConnectionArg(

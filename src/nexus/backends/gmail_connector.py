@@ -56,6 +56,7 @@ from nexus.connectors.base import (
 )
 from nexus.connectors.gmail.errors import ERROR_REGISTRY
 from nexus.contracts.exceptions import BackendError
+from nexus.core.protocols.capabilities import OAUTH_CONNECTOR_CAPABILITIES, ConnectorCapability
 from nexus.lib.response import HandlerResponse, timed_response
 
 try:
@@ -121,6 +122,14 @@ class GmailConnectorBackend(
     - Rate limited by Gmail API quotas
     - Emails are stored as YAML files (not editable)
     """
+
+    _CAPABILITIES = OAUTH_CONNECTOR_CAPABILITIES | frozenset(
+        {
+            ConnectorCapability.CACHE_BULK_READ,
+            ConnectorCapability.CACHE_SYNC,
+            ConnectorCapability.SKILL_DOC,
+        }
+    )
 
     # Gmail system labels to expose as folders (in priority order)
     # Each email appears in exactly ONE folder based on priority

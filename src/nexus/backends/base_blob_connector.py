@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING
 from nexus.backends.backend import Backend
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
+from nexus.core.protocols.capabilities import BLOB_CONNECTOR_CAPABILITIES
 from nexus.lib.response import HandlerResponse
 
 if TYPE_CHECKING:
@@ -58,6 +59,8 @@ class BaseBlobStorageConnector(Backend):
     - Reference counting (no deduplication)
     - Common directory operation patterns
     """
+
+    _CAPABILITIES = BLOB_CONNECTOR_CAPABILITIES
 
     def __init__(
         self,

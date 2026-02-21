@@ -19,6 +19,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from nexus.core.protocols.capabilities import ConnectorCapability
+
 if TYPE_CHECKING:
     from nexus.connectors.base import SkillDocMixin
     from nexus.core.protocols.connector import ConnectorProtocol
@@ -62,8 +64,8 @@ def on_mount(
         "skill_registered": False,
     }
 
-    # Check if backend has SkillDocMixin
-    if hasattr(backend, "write_skill_docs") and hasattr(backend, "SKILL_NAME"):
+    # Check if backend declares SKILL_DOC capability (Issue #2069)
+    if backend.has_capability(ConnectorCapability.SKILL_DOC):
         skill_mixin: SkillDocMixin = backend  # type: ignore
 
         # Set mount path on the mixin

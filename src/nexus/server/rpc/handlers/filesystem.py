@@ -13,6 +13,7 @@ import logging
 from typing import TYPE_CHECKING, Any, cast
 
 from nexus.constants import ROOT_ZONE_ID
+from nexus.core.protocols.capabilities import ConnectorCapability
 from nexus.server.path_utils import (
     unscope_internal_dict,
     unscope_internal_path,
@@ -57,36 +58,32 @@ def generate_download_url(
         backend = route.backend
         backend_path = route.backend_path
 
-        # S3 connector
-        if hasattr(backend, "generate_presigned_url"):
+        # S3 or GCS connector with signed URL support
+        if backend.has_capability(ConnectorCapability.SIGNED_URL):
             from dataclasses import replace
 
             if context and hasattr(context, "backend_path"):
                 context = replace(context, backend_path=backend_path)
-            result = backend.generate_presigned_url(backend_path, expires_in, context)
+
+            # S3 uses generate_presigned_url, GCS uses generate_signed_url
+            # (method unification deferred to Phase 6 cleanup)
+            generate_fn = getattr(
+                backend,
+                "generate_presigned_url",
+                getattr(backend, "generate_signed_url", None),
+            )
+            if generate_fn is None:
+                raise RuntimeError("Backend declares SIGNED_URL but has no signed URL method")
+            result = generate_fn(backend_path, expires_in, context)
             return {
                 "download_url": result["url"],
                 "expires_in": result["expires_in"],
                 "method": result["method"],
-                "backend": "s3",
-            }
-
-        # GCS connector
-        if hasattr(backend, "generate_signed_url"):
-            from dataclasses import replace
-
-            if context and hasattr(context, "backend_path"):
-                context = replace(context, backend_path=backend_path)
-            result = backend.generate_signed_url(backend_path, expires_in, context)
-            return {
-                "download_url": result["url"],
-                "expires_in": result["expires_in"],
-                "method": result["method"],
-                "backend": "gcs",
+                "backend": getattr(backend, "name", "unknown"),
             }
 
         # Local backend - use streaming endpoint with signed token
-        if backend.has_root_path:
+        if backend.has_capability(ConnectorCapability.ROOT_PATH):
             from urllib.parse import quote
 
             from nexus.server.streaming import _sign_stream_token

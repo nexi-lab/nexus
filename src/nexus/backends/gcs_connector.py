@@ -48,6 +48,7 @@ from nexus.backends.base_blob_connector import BaseBlobStorageConnector
 from nexus.backends.cache_mixin import CacheConnectorMixin
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
+from nexus.core.protocols.capabilities import BLOB_CONNECTOR_CAPABILITIES, ConnectorCapability
 from nexus.lib.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:
@@ -94,6 +95,14 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
     - No deduplication (same content stored multiple times)
     - Requires backend_path in OperationContext
     """
+
+    _CAPABILITIES = BLOB_CONNECTOR_CAPABILITIES | frozenset(
+        {
+            ConnectorCapability.CACHE_BULK_READ,
+            ConnectorCapability.CACHE_SYNC,
+            ConnectorCapability.SIGNED_URL,
+        }
+    )
 
     CONNECTION_ARGS: dict[str, ConnectionArg] = {
         "bucket_name": ConnectionArg(

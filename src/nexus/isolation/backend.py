@@ -100,6 +100,18 @@ class IsolatedBackend(Backend):
     def supports_parallel_mmap_read(self) -> bool:
         return bool(self._cached_prop("supports_parallel_mmap_read"))
 
+    # ── Capability Discovery (Issue #2069) ─────────────────────────────
+
+    @property
+    def capabilities(self) -> frozenset:
+        """Delegate to inner backend's capabilities (cached via _cached_prop)."""
+        result = self._cached_prop("capabilities")
+        return result if isinstance(result, frozenset) else frozenset()
+
+    def has_capability(self, cap: object) -> bool:
+        """Check capability using cached frozenset."""
+        return cap in self.capabilities
+
     # ── Content operations (CAS) ────────────────────────────────────────
 
     def write_content(

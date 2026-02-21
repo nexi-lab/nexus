@@ -52,6 +52,7 @@ from nexus.backends.slack_connector_utils import (
     list_messages_from_channel,
 )
 from nexus.contracts.exceptions import BackendError
+from nexus.core.protocols.capabilities import OAUTH_CONNECTOR_CAPABILITIES, ConnectorCapability
 from nexus.lib.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:
@@ -96,6 +97,13 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
     - Rate limited by Slack API quotas
     - Messages stored as JSON files
     """
+
+    _CAPABILITIES = OAUTH_CONNECTOR_CAPABILITIES | frozenset(
+        {
+            ConnectorCapability.CACHE_BULK_READ,
+            ConnectorCapability.CACHE_SYNC,
+        }
+    )
 
     # Top-level folder types
     FOLDER_TYPES = ["channels", "private-channels", "dms"]

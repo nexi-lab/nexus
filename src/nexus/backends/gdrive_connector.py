@@ -40,6 +40,7 @@ from nexus.backends.backend import Backend, HandlerStatusResponse
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.contracts.exceptions import BackendError
 from nexus.core.hash_fast import hash_content
+from nexus.core.protocols.capabilities import OAUTH_CONNECTOR_CAPABILITIES, ConnectorCapability
 from nexus.lib.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:
@@ -113,6 +114,12 @@ class GoogleDriveConnectorBackend(Backend):
     - Requires OAuth tokens for each user
     - Rate limited by Google Drive API quotas
     """
+
+    _CAPABILITIES = OAUTH_CONNECTOR_CAPABILITIES | frozenset(
+        {
+            ConnectorCapability.VIRTUAL_FILESYSTEM,
+        }
+    )
 
     user_scoped = True
 

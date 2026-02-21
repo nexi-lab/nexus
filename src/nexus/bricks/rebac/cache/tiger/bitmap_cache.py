@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Connection, Engine
 
     from nexus.bricks.rebac.cache.tiger.resource_map import TigerResourceMap
-    from nexus.bricks.rebac.manager import EnhancedReBACManager
+    from nexus.bricks.rebac.manager import ReBACManager
     from nexus.cache.base import TigerCacheProtocol
 
 logger = logging.getLogger(__name__)
@@ -88,7 +88,7 @@ class TigerCache:
         self,
         engine: Engine,
         resource_map: TigerResourceMap | None = None,
-        rebac_manager: EnhancedReBACManager | None = None,
+        rebac_manager: ReBACManager | None = None,
         dragonfly_cache: TigerCacheProtocol | None = None,
         l2_max_workers: int = 4,
         *,
@@ -272,7 +272,7 @@ class TigerCache:
             logger.warning(f"[TIGER] L2 Dragonfly error: {e}")
             return None
 
-    def set_rebac_manager(self, manager: EnhancedReBACManager) -> None:
+    def set_rebac_manager(self, manager: ReBACManager) -> None:
         """Set the ReBAC manager for permission computation."""
         self._rebac_manager = manager
 

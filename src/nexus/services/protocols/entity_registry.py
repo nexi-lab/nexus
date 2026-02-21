@@ -1,7 +1,7 @@
 """Entity registry service protocol (Issue #2133).
 
 Service contract for entity registration and lookup.
-Existing implementation: ``nexus.rebac.entity_registry.EntityRegistry`` (sync).
+Existing implementation: ``nexus.bricks.rebac.entity_registry.EntityRegistry`` (sync).
 
 References:
     - docs/architecture/KERNEL-ARCHITECTURE.md §3

@@ -7,6 +7,7 @@ service gets moved to the brick structure.
 
 from __future__ import annotations
 
+import importlib
 from types import SimpleNamespace
 
 import pytest
@@ -16,8 +17,10 @@ from sqlalchemy.orm import sessionmaker
 from nexus.backends.local import LocalBackend
 from nexus.bricks.memory.router import MemoryViewRouter
 from nexus.bricks.memory.service import Memory
-from nexus.rebac.entity_registry import EntityRegistry
 from nexus.storage.models import Base
+
+_er_mod = importlib.import_module("nexus.bricks.rebac.entity_registry")
+EntityRegistry = _er_mod.EntityRegistry
 
 # ---------------------------------------------------------------------------
 # Fixtures

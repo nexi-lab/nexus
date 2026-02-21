@@ -99,7 +99,7 @@ class PermissionChecker:
         # the MANAGE_ZONES capability).
         # ----------------------------------------------------------
         if ctx.is_admin and self._permission_enforcer:
-            from nexus.rebac.permissions_enhanced import AdminCapability
+            from nexus.bricks.rebac.permissions_enhanced import AdminCapability
 
             # Extract zone from path (format: /zone/{zone_id}/...)
             path_zone_id: str | None = None

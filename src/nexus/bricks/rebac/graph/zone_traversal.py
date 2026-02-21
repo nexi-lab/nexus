@@ -1,7 +1,7 @@
 """Zone-aware permission graph traversal with P0-5 limits.
 
 Extracts the zone-scoped graph traversal and direct relation checking
-from EnhancedReBACManager into focused, testable functions.
+from ReBACManager into focused, testable functions.
 
 Functions:
 - compute_permission_zone_aware: Recursive graph traversal with limits

@@ -18,12 +18,12 @@ import time
 import pytest
 from sqlalchemy import create_engine, text
 
-import nexus.rebac.rebac_tracing as _rebac_tracing_mod
-from nexus.rebac.manager import (
+import nexus.bricks.rebac.rebac_tracing as _rebac_tracing_mod
+from nexus.bricks.rebac.manager import (
     ConsistencyLevel,
     EnhancedReBACManager,
 )
-from nexus.rebac.rebac_tracing import (
+from nexus.bricks.rebac.rebac_tracing import (
     ATTR_CONSISTENCY,
     ATTR_DECISION,
     ATTR_DECISION_TIME_MS,

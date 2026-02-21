@@ -144,7 +144,7 @@ class IdentityMemoryMigration:
         """
         from types import SimpleNamespace
 
-        from nexus.rebac.entity_registry import EntityRegistry
+        from nexus.bricks.rebac.entity_registry import EntityRegistry
 
         registry = EntityRegistry(SimpleNamespace(session_factory=lambda: self.session))
 
@@ -171,7 +171,7 @@ class IdentityMemoryMigration:
         """
         from types import SimpleNamespace
 
-        from nexus.rebac.entity_registry import EntityRegistry
+        from nexus.bricks.rebac.entity_registry import EntityRegistry
 
         registry = EntityRegistry(SimpleNamespace(session_factory=lambda: self.session))
 

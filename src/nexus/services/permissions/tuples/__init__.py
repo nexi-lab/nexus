@@ -1,1 +1,1 @@
-"""Backward-compat shim — canonical: nexus.rebac.tuples."""
+"""Backward-compat shim — canonical: nexus.bricks.rebac.tuples."""

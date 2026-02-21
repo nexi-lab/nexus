@@ -118,11 +118,11 @@ def _filter_ignored_paths(
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from nexus.bricks.rebac.enforcer import PermissionEnforcer
+    from nexus.bricks.rebac.manager import ReBACManager
     from nexus.contracts.types import OperationContext
     from nexus.core.metastore import MetastoreABC
     from nexus.core.router import PathRouter
-    from nexus.rebac.enforcer import PermissionEnforcer
-    from nexus.rebac.manager import EnhancedReBACManager
 
 
 class SearchService(SemanticSearchMixin):
@@ -141,7 +141,7 @@ class SearchService(SemanticSearchMixin):
         metadata_store: MetastoreABC,
         permission_enforcer: PermissionEnforcer | None = None,
         router: PathRouter | None = None,
-        rebac_manager: EnhancedReBACManager | None = None,
+        rebac_manager: ReBACManager | None = None,
         enforce_permissions: bool = True,
         default_context: OperationContext | None = None,
         record_store: Any | None = None,
@@ -1334,7 +1334,7 @@ class SearchService(SemanticSearchMixin):
             return []
 
         from nexus.bricks.memory.router import MemoryViewRouter
-        from nexus.rebac.entity_registry import EntityRegistry
+        from nexus.bricks.rebac.entity_registry import EntityRegistry
 
         parts = [p for p in path.split("/") if p]
         session = self._gw_session_factory()

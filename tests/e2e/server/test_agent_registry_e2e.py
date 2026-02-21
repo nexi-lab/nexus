@@ -18,9 +18,9 @@ import time
 
 import pytest
 
+from nexus.bricks.rebac.entity_registry import EntityRegistry
+from nexus.bricks.rebac.manager import EnhancedReBACManager
 from nexus.contracts.agent_types import AgentState
-from nexus.rebac.entity_registry import EntityRegistry
-from nexus.rebac.manager import EnhancedReBACManager
 from nexus.services.agents.agent_registry import AgentRegistry
 from nexus.services.delegation.models import DelegationMode
 from nexus.services.delegation.service import DelegationService

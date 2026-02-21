@@ -15,7 +15,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.rebac.circuit_breaker import (
+from nexus.bricks.rebac.circuit_breaker import (
     AsyncCircuitBreaker,
     CircuitBreakerConfig,
     CircuitState,

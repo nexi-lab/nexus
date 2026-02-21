@@ -23,10 +23,10 @@ from pathlib import Path
 
 import pytest
 
+from nexus.bricks.rebac.async_namespace_manager import AsyncNamespaceManager
 from nexus.core.router import PathNotMountedError, PathRouter
 from nexus.plugins.async_hooks import AsyncHookEngine
 from nexus.plugins.hooks import PluginHooks
-from nexus.rebac.async_namespace_manager import AsyncNamespaceManager
 from nexus.services.agents.agent_registry import AgentRegistry, InvalidTransitionError
 from nexus.services.agents.async_agent_registry import AsyncAgentRegistry
 from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
@@ -382,7 +382,7 @@ class TestServerWiring:
         assert AsyncAgentRegistry is not None
 
     def test_async_namespace_manager_import(self) -> None:
-        from nexus.rebac.async_namespace_manager import AsyncNamespaceManager
+        from nexus.bricks.rebac.async_namespace_manager import AsyncNamespaceManager
 
         assert AsyncNamespaceManager is not None
 
@@ -472,11 +472,11 @@ class TestServerLifespanWiring:
         from unittest.mock import MagicMock
 
         from nexus.backends.local import LocalBackend
+        from nexus.bricks.rebac.async_namespace_manager import AsyncNamespaceManager
         from nexus.core.protocols.vfs_router import VFSRouterProtocol
         from nexus.core.router import PathRouter
         from nexus.plugins.async_hooks import AsyncHookEngine
         from nexus.plugins.hooks import PluginHooks
-        from nexus.rebac.async_namespace_manager import AsyncNamespaceManager
         from nexus.services.agents.agent_registry import AgentRegistry
         from nexus.services.agents.async_agent_registry import AsyncAgentRegistry
         from nexus.services.protocols.hook_engine import HookEngineProtocol

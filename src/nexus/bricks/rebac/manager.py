@@ -1,6 +1,6 @@
 """Flattened ReBAC Manager — canonical implementation (Issue #1385).
 
-Merges the former ReBACManager + EnhancedReBACManager into a single class.
+Merges the former ReBACManager + ReBACManager into a single class.
 
 Features:
 - P0-1: Consistency levels and version tokens
@@ -19,13 +19,16 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 import time
+import traceback
 import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy import bindparam, text
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from nexus.bricks.rebac.batch.bulk_checker import BulkPermissionChecker
@@ -40,6 +43,8 @@ from nexus.bricks.rebac.consistency.zone_manager import ZoneManager
 from nexus.bricks.rebac.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
 from nexus.bricks.rebac.directory.expander import DirectoryExpander
 from nexus.bricks.rebac.domain import (
+    RELATION_TO_PERMISSIONS,
+    WILDCARD_SUBJECT,
     Entity,
     NamespaceConfig,
 )
@@ -94,30 +99,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Maps relation names to the permissions they grant.  Shared by rebac_write,
-# rebac_write_batch, rebac_delete, and boundary-cache invalidation.
-_RELATION_TO_PERMISSIONS: dict[str, list[str]] = {
-    "direct_viewer": ["read"],
-    "direct_editor": ["read", "write"],
-    "direct_owner": ["read", "write", "execute"],
-    "viewer": ["read"],
-    "editor": ["read", "write"],
-    "owner": ["read", "write", "execute"],
-    "viewer-of": ["read"],
-    "owner-of": ["read", "write", "execute"],
-    "shared-viewer": ["read"],
-    "shared-editor": ["read", "write"],
-    "shared-owner": ["read", "write", "execute"],
-    "traverser-of": ["read"],
-    "reader": ["read"],
-    "writer": ["read", "write"],
-    "parent_viewer": ["read"],
-    "parent_editor": ["read", "write"],
-    "parent_owner": ["read", "write", "execute"],
-    "group_viewer": ["read"],
-    "group_editor": ["read", "write"],
-    "group_owner": ["read", "write", "execute"],
-}
+# Canonical mapping imported from domain.py — see RELATION_TO_PERMISSIONS.
+# Local alias kept for backward compat with code referencing the old name.
+_RELATION_TO_PERMISSIONS = RELATION_TO_PERMISSIONS
 
 
 # ============================================================================
@@ -126,7 +110,7 @@ _RELATION_TO_PERMISSIONS: dict[str, list[str]] = {
 
 
 class ReBACManager:
-    """Unified ReBAC Manager — flattened from ReBACManager + EnhancedReBACManager.
+    """Unified ReBAC Manager.
 
     Provides Zanzibar-style relationship-based access control with:
     - P0-1: Consistency levels and version tokens
@@ -453,7 +437,7 @@ class ReBACManager:
             # Legacy ConsistencyLevel
             consistency_level = consistency
         logger.debug(
-            f"EnhancedReBACManager.rebac_check called: enforce_zone_isolation={self.enforce_zone_isolation}, MAX_DEPTH={GraphLimits.MAX_DEPTH}"
+            f"ReBACManager.rebac_check called: enforce_zone_isolation={self.enforce_zone_isolation}, MAX_DEPTH={GraphLimits.MAX_DEPTH}"
         )
 
         # Issue #702: OTel tracing — wrap the entire check in a root span
@@ -631,13 +615,9 @@ class ReBACManager:
         Returns:
             True if tuple exists, False otherwise
         """
-        from datetime import UTC, datetime
-
         effective_zone = normalize_zone_id(zone_id)
         subject_type, subject_id = subject
         object_type, object_id = object
-
-        from nexus.bricks.rebac.domain import WILDCARD_SUBJECT
 
         with self._connection(readonly=True) as conn:
             cursor = self._create_cursor(conn)
@@ -718,8 +698,6 @@ class ReBACManager:
             zone_id: Zone ID
             logger: Logger instance
         """
-        import os
-
         object_type, object_id = object
         subject_type, subject_id = subject
         effective_zone = normalize_zone_id(zone_id)
@@ -780,8 +758,6 @@ class ReBACManager:
         # BUGFIX (Issue #3): Fail fast on missing zone_id in production
         # In production, missing zone_id is a security issue - reject immediately
         if not zone_id:
-            import os
-
             # Public role checks are zone-agnostic, so skip warning
             is_public_check = subject[0] == "role" and subject[1] == "public"
 
@@ -800,8 +776,6 @@ class ReBACManager:
                 )
             elif not is_public_check:
                 # Development/test: Allow defaulting but log stack trace for debugging
-                import traceback
-
                 logger.warning(
                     f"rebac_check called without zone_id, defaulting to 'root'. "
                     f"This is only allowed in development. Stack:\n{''.join(traceback.format_stack()[-5:])}"
@@ -985,7 +959,6 @@ class ReBACManager:
         try:
             from nexus.bricks.rebac.utils.fast import (
                 check_permission_single_rust,
-                is_rust_available,
             )
 
             if is_rust_available():
@@ -2283,14 +2256,12 @@ class ReBACManager:
             ...     offset=50,
             ... )
         """
-        import time as time_module
-
         from nexus.bricks.rebac.utils.fast import (
             RUST_AVAILABLE,
             list_objects_for_subject_rust,
         )
 
-        start_time = time_module.perf_counter()
+        start_time = time.perf_counter()
 
         subject_type, subject_id = subject
         zone_id = normalize_zone_id(zone_id)
@@ -2329,7 +2300,7 @@ class ReBACManager:
                     limit=limit,
                     offset=offset,
                 )
-                elapsed = (time_module.perf_counter() - start_time) * 1000
+                elapsed = (time.perf_counter() - start_time) * 1000
                 logger.debug(
                     f"[LIST-OBJECTS] Rust completed: {len(result)} objects in {elapsed:.1f}ms"
                 )
@@ -2369,9 +2340,7 @@ class ReBACManager:
 
         Slower than Rust but provides same functionality when Rust is not available.
         """
-        import time as time_module
-
-        start_time = time_module.perf_counter()
+        start_time = time.perf_counter()
 
         subject = Entity(subject_type, subject_id)
 
@@ -2439,7 +2408,7 @@ class ReBACManager:
         verified_objects.sort(key=lambda x: x[1])
         result = verified_objects[offset : offset + limit]
 
-        elapsed = (time_module.perf_counter() - start_time) * 1000
+        elapsed = (time.perf_counter() - start_time) * 1000
         logger.debug(
             f"[LIST-OBJECTS] Python completed: {len(result)} objects "
             f"(from {len(candidate_objects)} candidates) in {elapsed:.1f}ms"
@@ -2512,8 +2481,6 @@ class ReBACManager:
         Returns:
             List of tuple dictionaries for graph traversal
         """
-        from sqlalchemy import bindparam, text
-
         with self.engine.connect() as conn:
             if include_cross_zone_for_user:
                 # Include same-zone tuples AND cross-zone shares to this user
@@ -2761,9 +2728,6 @@ class ReBACManager:
     def _ensure_namespaces_initialized(self) -> None:
         """Ensure default namespaces are initialized (called before first ReBAC operation)."""
         if not self._namespaces_initialized:
-            import logging
-
-            logger = logging.getLogger(__name__)
             logger.info("Initializing default namespaces...")
 
             # Use engine.connect() to leverage pool_pre_ping for stale connection detection
@@ -2777,8 +2741,6 @@ class ReBACManager:
                 except Exception as e:  # fail-safe: namespace init is best-effort at startup
                     sa_conn.rollback()
                     logger.warning(f"Failed to initialize namespaces: {type(e).__name__}: {e}")
-                    import traceback
-
                     logger.debug(traceback.format_exc())
 
     def _fix_sql_placeholders(self, sql: str) -> str:
@@ -2837,9 +2799,6 @@ class ReBACManager:
                 existing = cursor.fetchone()
                 if not existing:
                     # Create namespace
-                    import json
-                    from datetime import UTC, datetime
-
                     cursor.execute(
                         self._fix_sql_placeholders(
                             "INSERT INTO rebac_namespaces (namespace_id, object_type, config, created_at, updated_at) VALUES (?, ?, ?, ?, ?)"
@@ -2858,9 +2817,6 @@ class ReBACManager:
                     existing_namespace_id = existing["namespace_id"]
                     if existing_namespace_id == ns_config.namespace_id:
                         # This is our default namespace, update it to pick up config changes
-                        import json
-                        from datetime import UTC, datetime
-
                         cursor.execute(
                             self._fix_sql_placeholders(
                                 "UPDATE rebac_namespaces SET config = ?, updated_at = ? WHERE namespace_id = ?"
@@ -2873,12 +2829,8 @@ class ReBACManager:
                         )
             conn.commit()
         except Exception as e:  # fail-safe: tables may not exist yet at startup
-            import logging
-
             logger = logging.getLogger(__name__)
             logger.warning(f"Failed to register default namespaces: {type(e).__name__}: {e}")
-            import traceback
-
             logger.debug(traceback.format_exc())
 
     def _initialize_default_namespaces(self) -> None:
@@ -2892,8 +2844,6 @@ class ReBACManager:
         Args:
             namespace: Namespace configuration to create
         """
-        from datetime import UTC, datetime
-
         with self._connection() as conn:
             cursor = self._create_cursor(conn)
 
@@ -2955,10 +2905,6 @@ class ReBACManager:
         Returns:
             NamespaceConfig or None if not found
         """
-        from datetime import datetime
-
-        from nexus.bricks.rebac.domain import NamespaceConfig
-
         with self._connection(readonly=True) as conn:
             cursor = self._create_cursor(conn)
 
@@ -3097,8 +3043,6 @@ class ReBACManager:
         object_zone_id: str | None,
     ) -> None:
         """Validate cross-zone relationships. Delegates to TupleRepository (Issue #1459)."""
-        from nexus.bricks.rebac.tuples.repository import TupleRepository
-
         TupleRepository.validate_cross_zone(zone_id, subject_zone_id, object_zone_id)
 
     # ====================================================================================
@@ -3214,10 +3158,6 @@ class ReBACManager:
             ... )
             True
         """
-        import logging
-
-        from nexus.bricks.rebac.domain import Entity
-
         logger = logging.getLogger(__name__)
 
         # Ensure default namespaces are initialized
@@ -3295,9 +3235,7 @@ class ReBACManager:
                 # We're the leader - compute and release
                 try:
                     logger.debug("🔎 Computing permission (no cache hit, computing from graph)")
-                    import time as time_module
-
-                    start_time = time_module.perf_counter()
+                    start_time = time.perf_counter()
                     result = self._compute_permission(
                         subject_entity,
                         permission,
@@ -3307,7 +3245,7 @@ class ReBACManager:
                         context=context,
                         zone_id=zone_id,
                     )
-                    delta = time_module.perf_counter() - start_time
+                    delta = time.perf_counter() - start_time
                     if logger.isEnabledFor(logging.DEBUG):
                         logger.debug(f"{'✅' if result else '❌'} REBAC RESULT: {result}")
 
@@ -3334,9 +3272,7 @@ class ReBACManager:
 
         # Context-based check or no L1 cache - compute directly (no stampede prevention)
         logger.debug("🔎 Computing permission (no cache hit, computing from graph)")
-        import time as time_module
-
-        start_time = time_module.perf_counter()
+        start_time = time.perf_counter()
         result = self._compute_permission(
             subject_entity,
             permission,
@@ -3346,7 +3282,7 @@ class ReBACManager:
             context=context,
             zone_id=zone_id,
         )
-        delta = time_module.perf_counter() - start_time
+        delta = time.perf_counter() - start_time
 
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(f"{'✅' if result else '❌'} REBAC RESULT: {result}")
@@ -3386,8 +3322,6 @@ class ReBACManager:
             ... ])
             >>> # Returns: [True, False, True]
         """
-        from nexus.bricks.rebac.domain import Entity
-
         if not checks:
             return []
 
@@ -3410,14 +3344,12 @@ class ReBACManager:
                 uncached_checks.append((i, subject_entity, permission, object_entity))
 
         # Phase 2: Compute uncached checks with delta tracking for XFetch (Issue #718)
-        import time as time_module
-
         for i, subject_entity, permission, object_entity in uncached_checks:
-            start_time = time_module.perf_counter()
+            start_time = time.perf_counter()
             result = self._compute_permission(
                 subject_entity, permission, object_entity, visited=set(), depth=0
             )
-            delta = time_module.perf_counter() - start_time
+            delta = time.perf_counter() - start_time
             self._cache_check_result(
                 subject_entity, permission, object_entity, result, zone_id=None, delta=delta
             )
@@ -3456,10 +3388,6 @@ class ReBACManager:
             ... ])
             >>> # Returns: [True, False, True]
         """
-        import logging
-
-        from nexus.bricks.rebac.domain import Entity
-
         logger = logging.getLogger(__name__)
 
         if not checks:
@@ -3496,11 +3424,9 @@ class ReBACManager:
                     f"⚡ Using Rust acceleration for {len(uncached_checks)} uncached checks"
                 )
                 try:
-                    import time as time_module
-
-                    start_time = time_module.perf_counter()
+                    start_time = time.perf_counter()
                     rust_results = self._compute_batch_rust([check for _, check in uncached_checks])
-                    total_delta = time_module.perf_counter() - start_time
+                    total_delta = time.perf_counter() - start_time
                     # Approximate per-check delta (Rust computes in bulk)
                     avg_delta = total_delta / len(uncached_checks) if uncached_checks else 0.0
 
@@ -3542,18 +3468,14 @@ class ReBACManager:
         results: dict[int, bool],
     ) -> None:
         """Compute uncached checks using Python (original implementation)."""
-        import time as time_module
-
-        from nexus.bricks.rebac.domain import Entity
-
         for i, (subject, permission, obj) in uncached_checks:
             subject_entity = Entity(subject[0], subject[1])
             object_entity = Entity(obj[0], obj[1])
-            start_time = time_module.perf_counter()
+            start_time = time.perf_counter()
             result = self._compute_permission(
                 subject_entity, permission, object_entity, visited=set(), depth=0
             )
-            delta = time_module.perf_counter() - start_time
+            delta = time.perf_counter() - start_time
             self._cache_check_result(
                 subject_entity, permission, object_entity, result, zone_id=None, delta=delta
             )
@@ -3607,10 +3529,6 @@ class ReBACManager:
 
         This fetches a superset of tuples to minimize database queries.
         """
-        import logging
-        from datetime import UTC, datetime
-
-        logger = logging.getLogger(__name__)
 
         with self._connection(readonly=True) as conn:
             cursor = self._create_cursor(conn)
@@ -3711,11 +3629,6 @@ class ReBACManager:
                 }
             }
         """
-        import uuid
-        from datetime import UTC, datetime
-
-        from nexus.bricks.rebac.domain import Entity
-
         # Generate request ID and timestamp
         request_id = f"req_{uuid.uuid4().hex[:12]}"
         timestamp = datetime.now(UTC).isoformat()
@@ -3790,8 +3703,6 @@ class ReBACManager:
 
         Delegates to PermissionComputer (Issue #1459 Phase 8).
         """
-        from nexus.bricks.rebac.graph.traversal import PermissionComputer
-
         return PermissionComputer.format_path_reason(subject, permission, obj, path)
 
     def _compute_permission_with_explanation(
@@ -3864,8 +3775,6 @@ class ReBACManager:
         self, conditions: dict[str, Any] | None, context: dict[str, Any] | None
     ) -> bool:
         """Evaluate ABAC conditions against runtime context. Delegates to TupleRepository."""
-        from nexus.bricks.rebac.tuples.repository import TupleRepository
-
         return TupleRepository.evaluate_conditions(conditions, context)
 
     def _get_direct_subjects(self, relation: str, obj: Entity) -> list[tuple[str, str]]:
@@ -3892,11 +3801,6 @@ class ReBACManager:
         Returns:
             Cached result or None if not cached or expired
         """
-        import logging
-        from datetime import UTC, datetime
-
-        logger = logging.getLogger(__name__)
-
         # Check L1 cache first (if enabled)
         if self._l1_cache:
             l1_result = self._l1_cache.get(
@@ -3981,10 +3885,6 @@ class ReBACManager:
             obj: (object_type, object_id) tuple
             zone_id: Optional zone ID
         """
-        import logging
-
-        logger = logging.getLogger(__name__)
-
         if not self._l1_cache:
             return
 
@@ -4020,20 +3920,12 @@ class ReBACManager:
             obj: (object_type, object_id) tuple
             zone_id: Optional zone ID
         """
-        import logging
-
-        from nexus.bricks.rebac.domain import Entity
-
-        logger = logging.getLogger(__name__)
-
         try:
             subject_entity = Entity(subject[0], subject[1])
             object_entity = Entity(obj[0], obj[1])
 
             # Compute permission (bypassing cache) and measure delta for XFetch
-            import time as time_module
-
-            start_time = time_module.perf_counter()
+            start_time = time.perf_counter()
             result = self._compute_permission(
                 subject_entity,
                 permission,
@@ -4043,7 +3935,7 @@ class ReBACManager:
                 context=None,
                 zone_id=zone_id,
             )
-            delta = time_module.perf_counter() - start_time
+            delta = time.perf_counter() - start_time
 
             # Update cache with delta for XFetch (Issue #718)
             if self._l1_cache:
@@ -4090,9 +3982,6 @@ class ReBACManager:
             conn: Optional database connection
             delta: Recomputation time in seconds for XFetch (Issue #718)
         """
-        import uuid
-        from datetime import UTC, datetime, timedelta
-
         # Cache in L1 first (faster)
         if self._l1_cache:
             self._l1_cache.set(
@@ -4201,8 +4090,6 @@ class ReBACManager:
         This method throttles cleanup operations to avoid checking on every rebac_check call.
         Only cleans up if more than 1 second has passed since last cleanup.
         """
-        from datetime import UTC, datetime
-
         now = datetime.now(UTC)
 
         # Throttle cleanup - only run if more than 1 second since last cleanup
@@ -4246,13 +4133,7 @@ class ReBACManager:
         pass
 
 
-# ====================================================================================
-# Backward Compatibility Alias
-# ====================================================================================
-
-# Backward-compat alias (Issue #1385)
-EnhancedReBACManager = ReBACManager
-"""Alias for backward compatibility. The Enhanced features (P0 fixes, Leopard, Tiger Cache,
-graph limits, zone isolation) are now merged into the base ReBACManager class (Issue #1385)."""
-
 ZoneAwareReBACManager = ReBACManager
+
+# Backward-compat alias — many tests and call-sites still reference the old name.
+EnhancedReBACManager = ReBACManager

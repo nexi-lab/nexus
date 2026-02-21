@@ -18,8 +18,8 @@ Requires real EnhancedReBACManager + NamespaceManager + EntityRegistry.
 
 import pytest
 
-from nexus.rebac.entity_registry import EntityRegistry
-from nexus.rebac.manager import EnhancedReBACManager
+from nexus.bricks.rebac.entity_registry import EntityRegistry
+from nexus.bricks.rebac.manager import EnhancedReBACManager
 from nexus.services.agents.agent_registry import AgentRegistry
 from nexus.services.delegation.errors import DelegationChainError, EscalationError
 from nexus.services.delegation.models import DelegationMode, DelegationStatus

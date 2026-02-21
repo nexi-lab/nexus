@@ -224,7 +224,7 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
     (
         "NamespaceManagerProtocol",
         "nexus.services.protocols.namespace_manager",
-        "nexus.rebac.async_namespace_manager.AsyncNamespaceManager",
+        "nexus.bricks.rebac.async_namespace_manager.AsyncNamespaceManager",
         True,
     ),
     (
@@ -263,13 +263,13 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
     (
         "MemoryPermissionCheckerProtocol",
         "nexus.services.protocols.memory",
-        "nexus.rebac.memory_permission_enforcer.MemoryPermissionEnforcer",
+        "nexus.bricks.rebac.memory_permission_enforcer.MemoryPermissionEnforcer",
         True,
     ),
     (
         "EntityResolverProtocol",
         "nexus.services.protocols.memory",
-        "nexus.rebac.entity_registry.EntityRegistry",
+        "nexus.bricks.rebac.entity_registry.EntityRegistry",
         True,
     ),
     # ── Brick-level protocols ─────────────────────────────────────────
@@ -295,13 +295,13 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
     (
         "PermissionEnforcerProtocol",
         "nexus.services.protocols.permission_enforcer",
-        "nexus.rebac.enforcer.PermissionEnforcer",
+        "nexus.bricks.rebac.enforcer.PermissionEnforcer",
         True,
     ),
     (
         "EntityRegistryProtocol",
         "nexus.services.protocols.entity_registry",
-        "nexus.rebac.entity_registry.EntityRegistry",
+        "nexus.bricks.rebac.entity_registry.EntityRegistry",
         True,
     ),
     (
@@ -362,7 +362,7 @@ def test_rebac_manager_satisfies_manager_methods() -> None:
     """
     from nexus.services.protocols.rebac import ReBACBrickProtocol
 
-    impl_cls = _try_import("nexus.rebac.manager", "ReBACManager")
+    impl_cls = _try_import("nexus.bricks.rebac.manager", "ReBACManager")
     if impl_cls is None:
         pytest.skip("Cannot import ReBACManager")
 

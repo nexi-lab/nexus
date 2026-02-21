@@ -4,7 +4,7 @@ Provides the canonical three-state machine (CLOSED → OPEN → HALF_OPEN)
 used by all circuit breaker implementations in the codebase:
 
 - ``nexus.lib.resiliency.AsyncCircuitBreaker`` (decorator-based)
-- ``nexus.rebac.circuit_breaker.AsyncCircuitBreaker`` (DB resilience)
+- ``nexus.bricks.rebac.circuit_breaker.AsyncCircuitBreaker`` (DB resilience)
 - ``nexus.proxy.circuit_breaker.AsyncCircuitBreaker`` (remote proxy)
 
 Design:

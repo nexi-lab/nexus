@@ -41,11 +41,11 @@ def verify_imports() -> dict[str, bool]:
 
     # Required modules
     for mod in [
-        "nexus.rebac.manager",
-        "nexus.rebac.types",
-        "nexus.rebac.graph",
-        "nexus.rebac.cache",
-        "nexus.rebac.tuples",
+        "nexus.bricks.rebac.manager",
+        "nexus.bricks.rebac.types",
+        "nexus.bricks.rebac.graph",
+        "nexus.bricks.rebac.cache",
+        "nexus.bricks.rebac.tuples",
     ]:
         try:
             importlib.import_module(mod)
@@ -56,7 +56,7 @@ def verify_imports() -> dict[str, bool]:
 
     # Optional modules
     for mod in [
-        "nexus.rebac.cache.tiger",
+        "nexus.bricks.rebac.cache.tiger",
     ]:
         try:
             importlib.import_module(mod)

@@ -18,7 +18,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
-from nexus.rebac.entity_registry import EntityRegistry
+from nexus.bricks.rebac.entity_registry import EntityRegistry
 
 
 def main() -> None:

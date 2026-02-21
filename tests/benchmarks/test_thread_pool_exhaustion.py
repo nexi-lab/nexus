@@ -392,7 +392,7 @@ async def test_async_thread_exhaustion(
         print("Created 100 test files")
 
         # FORCE WORST CASE: Disable Rust acceleration to simulate slow Python path
-        import nexus.rebac.utils.fast as rebac_fast
+        import nexus.bricks.rebac.utils.fast as rebac_fast
 
         _original_rust_available = rebac_fast.RUST_AVAILABLE  # noqa: F841
         rebac_fast.RUST_AVAILABLE = False

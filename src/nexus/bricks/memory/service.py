@@ -122,11 +122,13 @@ class Memory:
         if entity_registry is not None:
             self.entity_registry = entity_registry
         else:
+            import importlib
             from types import SimpleNamespace
 
-            from nexus.rebac.entity_registry import EntityRegistry
+            _er_mod = importlib.import_module("nexus.bricks.rebac.entity_registry")
+            _EntityRegistry = _er_mod.EntityRegistry
 
-            self.entity_registry = EntityRegistry(SimpleNamespace(session_factory=lambda: session))
+            self.entity_registry = _EntityRegistry(SimpleNamespace(session_factory=lambda: session))
 
         self.memory_router = MemoryViewRouter(session, self.entity_registry)
 
@@ -134,17 +136,19 @@ class Memory:
         if permission_enforcer is not None:
             self.permission_enforcer = permission_enforcer
         else:
+            import importlib
+
             from sqlalchemy import Engine
 
-            from nexus.rebac.manager import EnhancedReBACManager
-            from nexus.rebac.memory_permission_enforcer import (
-                MemoryPermissionEnforcer,
-            )
+            _rebac_mod = importlib.import_module("nexus.bricks.rebac.manager")
+            _ReBACManager = _rebac_mod.ReBACManager
+            _enforcer_mod = importlib.import_module("nexus.bricks.rebac.memory_permission_enforcer")
+            _MemoryPermissionEnforcer = _enforcer_mod.MemoryPermissionEnforcer
 
             bind = session.get_bind()
             assert isinstance(bind, Engine), "Expected Engine, got Connection"
-            rebac_manager = EnhancedReBACManager(bind)
-            self.permission_enforcer = MemoryPermissionEnforcer(
+            rebac_manager = _ReBACManager(bind)
+            self.permission_enforcer = _MemoryPermissionEnforcer(
                 memory_router=self.memory_router,
                 entity_registry=self.entity_registry,
                 rebac_manager=rebac_manager,

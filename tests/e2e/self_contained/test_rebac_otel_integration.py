@@ -11,8 +11,6 @@ Tests verify:
 - Performance: tracing adds < 5% overhead
 """
 
-from __future__ import annotations
-
 import time
 
 import pytest
@@ -72,7 +70,6 @@ except ImportError:
     _HAS_OTEL = False
 
 requires_otel = pytest.mark.skipif(not _HAS_OTEL, reason="opentelemetry-sdk not installed")
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

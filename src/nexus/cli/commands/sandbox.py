@@ -4,8 +4,6 @@ Provides CLI commands for creating, managing, and executing code in sandboxes.
 Supports E2B and other sandbox providers.
 """
 
-from __future__ import annotations
-
 import json
 import sys
 

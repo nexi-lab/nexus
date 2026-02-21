@@ -8,8 +8,6 @@ used by ``_write_observer`` / ``_notify_observer`` in the kernel.
 Issue #1169 / #1519.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
@@ -36,7 +34,7 @@ class CacheInvalidationObserver(Protocol):
     def on_read(
         self,
         path: str,
-        metadata: FileMetadata | None,
+        metadata: "FileMetadata | None",
         revision: int,
         zone_id: str,
         resource_type: str = "file",
@@ -66,7 +64,7 @@ class ReadSetCacheObserver:
     def on_read(
         self,
         path: str,
-        metadata: FileMetadata | None,
+        metadata: "FileMetadata | None",
         revision: int,
         zone_id: str,
         resource_type: str = "file",

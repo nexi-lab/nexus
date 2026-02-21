@@ -6,8 +6,6 @@ Two pluggable backends:
 - ``VFSTaskStore`` — file-based via IPCStorageDriver, Lego-compliant
 """
 
-from __future__ import annotations
-
 from nexus.bricks.a2a.stores.in_memory import InMemoryTaskStore
 from nexus.bricks.a2a.stores.vfs import VFSTaskStore
 

@@ -12,8 +12,6 @@ References:
     - Issue #997: Secrets audit trail
 """
 
-from __future__ import annotations
-
 from typing import Any, Protocol, runtime_checkable
 
 

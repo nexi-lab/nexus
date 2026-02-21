@@ -8,8 +8,6 @@ Tests that the trust gate in delegate() correctly:
 5. Is skipped when reputation_service is None
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from datetime import datetime
 from unittest.mock import MagicMock, patch

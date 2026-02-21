@@ -10,8 +10,6 @@ Tests the full IPC flow through the actual FastAPI server:
 Uses a custom auth_server fixture that starts nexus serve with --api-key.
 """
 
-from __future__ import annotations
-
 import json
 import os
 import signal

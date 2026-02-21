@@ -7,8 +7,6 @@ This module contains:
 - Shared helper functions (standalone, taking ctx: FUSESharedContext)
 """
 
-from __future__ import annotations
-
 import errno
 import functools
 import logging
@@ -60,7 +58,6 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-
 # ============================================================
 # Data types
 # ============================================================
@@ -82,7 +79,7 @@ class MetadataObj:
     is_directory: bool | None = None
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> MetadataObj:
+    def from_dict(cls, d: dict[str, Any]) -> "MetadataObj":
         return cls(
             path=d.get("path"),
             size=d.get("size"),
@@ -107,24 +104,24 @@ class FUSESharedContext:
     module-level helper functions.
     """
 
-    nexus_fs: NexusFilesystem
-    mode: MountMode
-    context: OperationContext | None
-    namespace_manager: NamespaceManager | None
+    nexus_fs: "NexusFilesystem"
+    mode: "MountMode"
+    context: "OperationContext | None"
+    namespace_manager: "NamespaceManager | None"
     cache: FUSECacheManager
     local_disk_cache: Any | None  # LocalDiskCache | None
     readahead: Any | None  # ReadaheadManager | None
     rust_client: Any | None
     use_rust: bool
-    events: FUSEEventDispatcher
+    events: "FUSEEventDispatcher"
     cache_config: dict[str, Any]
 
     # Mutable state (shared across handlers, protected by locks)
     fd_counter: int = 0
     open_files: dict[int, dict[str, Any]] = field(default_factory=dict)
-    files_lock: threading.RLock = field(default_factory=threading.RLock)
+    files_lock: "threading.RLock" = field(default_factory=threading.RLock)
     dir_cache: _TTLCache = field(default_factory=lambda: _TTLCache(maxsize=1024, ttl=5))
-    dir_cache_lock: threading.RLock = field(default_factory=threading.RLock)
+    dir_cache_lock: "threading.RLock" = field(default_factory=threading.RLock)
 
 
 # ============================================================

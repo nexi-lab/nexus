@@ -18,8 +18,6 @@ References:
     - Issue #1257: Hook engine per-agent scoping and verified execution
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import uuid
@@ -93,7 +91,7 @@ class ScopedHookEngine:
 
     def __init__(
         self,
-        inner: AsyncHookEngine,
+        inner: "AsyncHookEngine",
         *,
         default_timeout_ms: int = 5000,
     ) -> None:

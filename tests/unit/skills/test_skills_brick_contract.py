@@ -6,8 +6,6 @@ These tests enforce architectural constraints:
 3. Boundary contract enforcement (local exceptions, public API surface)
 """
 
-from __future__ import annotations
-
 import ast
 from pathlib import Path
 

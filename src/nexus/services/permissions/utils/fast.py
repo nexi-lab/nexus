@@ -12,8 +12,6 @@ Performance characteristics:
 The module automatically falls back to Python implementation if Rust is unavailable.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -21,10 +19,8 @@ if TYPE_CHECKING:
     from nexus.core.rebac import Entity
     from nexus.core.rebac import NamespaceConfig as ReBACNamespaceConfig
 
-
 # Internal type for namespace config dict (not the NamespaceConfig class)
 NamespaceConfigDict = dict[str, Any]  # Contains 'relations' and 'permissions' keys
-
 
 logger = logging.getLogger(__name__)
 
@@ -197,7 +193,7 @@ def _check_permissions_bulk_python(
     from nexus.core.rebac import Entity, NamespaceConfig
 
     # Convert namespace configs to proper format
-    namespaces: dict[str, ReBACNamespaceConfig] = {}
+    namespaces: "dict[str, ReBACNamespaceConfig]" = {}
     for obj_type, config_dict in namespace_configs.items():
         if isinstance(config_dict, NamespaceConfig):
             namespaces[obj_type] = config_dict
@@ -227,11 +223,11 @@ def _check_permissions_bulk_python(
 
 
 def _compute_permission_simple(
-    subject: Entity,
+    subject: "Entity",
     permission: str,
-    obj: Entity,
+    obj: "Entity",
     tuples: list[dict[str, Any]],
-    namespaces: dict[str, ReBACNamespaceConfig],
+    namespaces: "dict[str, ReBACNamespaceConfig]",
 ) -> bool:
     """
     Simplified permission computation for fallback.

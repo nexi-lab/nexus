@@ -1,7 +1,5 @@
 """File/directory mutation operations: create, unlink, mkdir, rmdir, rename."""
 
-from __future__ import annotations
-
 import errno
 import logging
 import os

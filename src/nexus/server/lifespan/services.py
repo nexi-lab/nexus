@@ -3,8 +3,6 @@
 Extracted from fastapi_server.py (#1602).
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import os
@@ -17,7 +15,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-async def startup_services(app: FastAPI) -> list[asyncio.Task]:
+async def startup_services(app: "FastAPI") -> list[asyncio.Task]:
     """Initialize application services and return background tasks.
 
     Covers:
@@ -51,7 +49,7 @@ async def startup_services(app: FastAPI) -> list[asyncio.Task]:
     return bg_tasks
 
 
-async def shutdown_services(app: FastAPI) -> None:
+async def shutdown_services(app: "FastAPI") -> None:
     """Shutdown services in reverse order."""
     # Stop Task Queue runner (Issue #574)
     task_runner = getattr(app.state, "task_runner", None)
@@ -145,7 +143,7 @@ async def shutdown_services(app: FastAPI) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _startup_agent_registry(app: FastAPI) -> None:
+def _startup_agent_registry(app: "FastAPI") -> None:
     """Initialize AgentRegistry for agent lifecycle tracking (Issue #1240)."""
     if app.state.nexus_fs and getattr(app.state.nexus_fs, "SessionLocal", None):
         try:
@@ -179,7 +177,7 @@ def _startup_agent_registry(app: FastAPI) -> None:
         app.state.async_agent_registry = None
 
 
-def _startup_key_service(app: FastAPI) -> None:
+def _startup_key_service(app: "FastAPI") -> None:
     """Initialize KeyService for agent identity (Issue #1355)."""
     if app.state.nexus_fs and getattr(app.state.nexus_fs, "SessionLocal", None):
         try:
@@ -218,7 +216,7 @@ def _startup_key_service(app: FastAPI) -> None:
         app.state.key_service = None
 
 
-def _startup_reputation_service(app: FastAPI) -> None:
+def _startup_reputation_service(app: "FastAPI") -> None:
     """Initialize ReputationService singleton for trust routing (#1619)."""
     if not (app.state.nexus_fs and getattr(app.state.nexus_fs, "SessionLocal", None)):
         app.state.reputation_service = None
@@ -236,7 +234,7 @@ def _startup_reputation_service(app: FastAPI) -> None:
         app.state.reputation_service = None
 
 
-def _startup_delegation_service(app: FastAPI) -> None:
+def _startup_delegation_service(app: "FastAPI") -> None:
     """Initialize DelegationService for agent delegation (Issue #1618)."""
     if not (app.state.nexus_fs and getattr(app.state.nexus_fs, "SessionLocal", None)):
         app.state.delegation_service = None
@@ -269,7 +267,7 @@ def _startup_delegation_service(app: FastAPI) -> None:
         app.state.delegation_service = None
 
 
-def _startup_sandbox_auth(app: FastAPI) -> None:
+def _startup_sandbox_auth(app: "FastAPI") -> None:
     """Initialize SandboxAuthService for authenticated sandbox creation (Issue #1307)."""
     if app.state.nexus_fs and not app.state.agent_registry:
         logger.info(
@@ -343,7 +341,7 @@ def _startup_sandbox_auth(app: FastAPI) -> None:
         )
 
 
-def _startup_transactional_snapshot(app: FastAPI) -> None:
+def _startup_transactional_snapshot(app: "FastAPI") -> None:
     """Expose TransactionalSnapshotService on app.state for REST API (Issue #1752)."""
     svc = getattr(app.state.nexus_fs, "_snapshot_service", None) if app.state.nexus_fs else None
     app.state.transactional_snapshot_service = svc
@@ -353,7 +351,7 @@ def _startup_transactional_snapshot(app: FastAPI) -> None:
         logger.debug("[SNAPSHOT] TransactionalSnapshotService not available")
 
 
-def _startup_rlm_service(app: FastAPI) -> None:
+def _startup_rlm_service(app: "FastAPI") -> None:
     """Initialize RLM inference service (Issue #1306).
 
     Requires SandboxAuthService (for SandboxManager) and an LLM provider.
@@ -389,7 +387,7 @@ def _startup_rlm_service(app: FastAPI) -> None:
         logger.warning("[RLM] Failed to initialize RLMInferenceService: %s", e, exc_info=True)
 
 
-def _startup_agent_tasks(app: FastAPI) -> list[asyncio.Task]:
+def _startup_agent_tasks(app: "FastAPI") -> list[asyncio.Task]:
     """Start agent heartbeat and stale detection background tasks (Issue #1240)."""
     if not app.state.agent_registry:
         return []
@@ -410,7 +408,7 @@ def _startup_agent_tasks(app: FastAPI) -> list[asyncio.Task]:
     return [app.state._heartbeat_task, app.state._stale_detection_task]
 
 
-async def _startup_scheduler(app: FastAPI) -> None:
+async def _startup_scheduler(app: "FastAPI") -> None:
     """Initialize SchedulerService if PostgreSQL database is available (Issue #1212)."""
     if not (app.state.database_url and "postgresql" in app.state.database_url):
         return
@@ -513,7 +511,7 @@ async def _startup_scheduler(app: FastAPI) -> None:
         logger.warning("Failed to initialize Scheduler service: %s", e, exc_info=True)
 
 
-def _startup_task_queue(app: FastAPI) -> asyncio.Task | None:
+def _startup_task_queue(app: "FastAPI") -> asyncio.Task | None:
     """Start Task Queue Engine background worker (Issue #574)."""
     if not app.state.nexus_fs:
         return None
@@ -541,7 +539,7 @@ def _startup_task_queue(app: FastAPI) -> asyncio.Task | None:
     return None
 
 
-async def _startup_workflow_engine(app: FastAPI) -> None:
+async def _startup_workflow_engine(app: "FastAPI") -> None:
     """Load workflows from persistent storage (Issue #1522)."""
     if not app.state.nexus_fs:
         return

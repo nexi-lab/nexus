@@ -11,8 +11,6 @@ Checks:
 - No performance regressions in hot paths (heartbeat, validate_ownership)
 """
 
-from __future__ import annotations
-
 import logging
 import time
 

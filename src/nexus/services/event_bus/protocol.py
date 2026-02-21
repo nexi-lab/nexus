@@ -1,7 +1,5 @@
 """EventBus protocols — abstract interfaces for event bus implementations."""
 
-from __future__ import annotations
-
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable

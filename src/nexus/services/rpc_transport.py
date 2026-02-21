@@ -5,8 +5,6 @@ This is a low-level utility, not a user-facing API. Used internally by:
 - NexusFilesystem (P2P federation forwarding)
 """
 
-from __future__ import annotations
-
 import logging
 import uuid
 from typing import TYPE_CHECKING, Any
@@ -201,7 +199,7 @@ class NexusRPCTransport:
         """Close the HTTP client and release resources."""
         self._client.close()
 
-    def __enter__(self) -> NexusRPCTransport:
+    def __enter__(self) -> "NexusRPCTransport":
         return self
 
     def __exit__(self, *args: Any) -> None:

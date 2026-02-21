@@ -13,8 +13,6 @@ Defines the directory layout for agent communication:
 All functions are pure — they compose path strings with no I/O.
 """
 
-from __future__ import annotations
-
 from datetime import datetime
 
 AGENTS_ROOT = "/agents"

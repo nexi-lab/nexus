@@ -6,8 +6,6 @@ These benchmarks compare Python regex vs Rust grep implementation.
 See issue #570 for context.
 """
 
-from __future__ import annotations
-
 import re
 
 import pytest

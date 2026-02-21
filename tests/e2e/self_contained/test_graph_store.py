@@ -18,8 +18,6 @@ Example:
     pytest tests/integration/test_graph_store.py -v
 """
 
-from __future__ import annotations
-
 import json
 import logging
 

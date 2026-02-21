@@ -3,8 +3,6 @@
 Fernet symmetric encryption (AES-128 CBC + HMAC-SHA256) for OAuth tokens.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from typing import Any

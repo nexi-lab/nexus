@@ -12,8 +12,6 @@ Testing approach:
 - Uses raw SQL for CHECK constraint tests (ORM may bypass CHECK)
 """
 
-from __future__ import annotations
-
 import json
 
 import pytest

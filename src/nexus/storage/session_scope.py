@@ -5,8 +5,6 @@ context manager that also translates SQLAlchemy errors to the Nexus
 DatabaseError hierarchy at the storage boundary.
 """
 
-from __future__ import annotations
-
 import socket
 from collections.abc import Callable, Generator
 from contextlib import contextmanager

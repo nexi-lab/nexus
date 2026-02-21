@@ -12,8 +12,6 @@ Usage::
         logger.warning("Output validation warnings: %s", warnings)
 """
 
-from __future__ import annotations
-
 import re
 
 # Pre-compiled credential patterns

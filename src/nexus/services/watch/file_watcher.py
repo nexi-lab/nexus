@@ -14,8 +14,6 @@ Used by NexusFS for:
 2. Cache invalidation - automatic cache updates on external changes
 """
 
-from __future__ import annotations
-
 import asyncio
 import ctypes
 import logging

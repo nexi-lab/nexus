@@ -9,8 +9,6 @@ The Skills System provides vendor-neutral skill management with:
 - Usage analytics and governance
 """
 
-from __future__ import annotations
-
 import json
 import re
 import sys

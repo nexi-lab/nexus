@@ -21,8 +21,6 @@ References:
     - Cerbos: config is policy, PDP is enforcement
 """
 
-from __future__ import annotations
-
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -249,11 +247,11 @@ def load_profiles_from_dict(raw: dict[str, Any]) -> ToolProfileConfig:
 
 
 def grant_tools_for_profile(
-    rebac_manager: EnhancedReBACManager,
+    rebac_manager: "EnhancedReBACManager",
     subject: tuple[str, str],
     profile: ToolProfile,
     zone_id: str | None = None,
-) -> list[WriteResult]:
+) -> "list[WriteResult]":
     """Batch-write ReBAC grants for all tools in a profile.
 
     Creates tuples: (subject, "direct_viewer", ("file", "/tools/{tool_name}"))
@@ -267,7 +265,7 @@ def grant_tools_for_profile(
     Returns:
         List of WriteResult objects (one per tool grant).
     """
-    results: list[WriteResult] = []
+    results: "list[WriteResult]" = []
 
     for tool_name in sorted(profile.tools):
         tool_path = f"{TOOL_PATH_PREFIX}{tool_name}"
@@ -292,7 +290,7 @@ def grant_tools_for_profile(
 
 
 def revoke_tools_by_tuple_ids(
-    rebac_manager: EnhancedReBACManager,
+    rebac_manager: "EnhancedReBACManager",
     tuple_ids: list[str],
 ) -> int:
     """Revoke tool grants by their tuple IDs.

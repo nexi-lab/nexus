@@ -3,8 +3,6 @@
 Tests tier-to-class mapping, cost demotion, IO promotion, and starvation.
 """
 
-from __future__ import annotations
-
 from nexus.bricks.scheduler.constants import PriorityClass, PriorityTier, RequestState
 from nexus.bricks.scheduler.policies.classifier import (
     classify_request,

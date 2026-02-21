@@ -3,8 +3,6 @@
 Tests emitter handler calls, exception isolation, and handler management.
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.bricks.scheduler.events import AgentStateEmitter, AgentStateEvent

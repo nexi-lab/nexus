@@ -24,8 +24,6 @@ Example email composition:
     ```
 """
 
-from __future__ import annotations
-
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -120,7 +118,7 @@ class SendEmailSchema(BaseModel):
     ]
 
     @model_validator(mode="after")
-    def validate_confirm_required(self) -> SendEmailSchema:
+    def validate_confirm_required(self) -> "SendEmailSchema":
         """Ensure confirm=true is set before sending."""
         if not self.confirm:
             raise ValueError(
@@ -186,7 +184,7 @@ class ReplyEmailSchema(BaseModel):
     ]
 
     @model_validator(mode="after")
-    def validate_confirm_required(self) -> ReplyEmailSchema:
+    def validate_confirm_required(self) -> "ReplyEmailSchema":
         """Ensure confirm=true is set before sending."""
         if not self.confirm:
             raise ValueError(
@@ -238,7 +236,7 @@ class ForwardEmailSchema(BaseModel):
     ]
 
     @model_validator(mode="after")
-    def validate_confirm_required(self) -> ForwardEmailSchema:
+    def validate_confirm_required(self) -> "ForwardEmailSchema":
         """Ensure confirm=true is set before forwarding."""
         if not self.confirm:
             raise ValueError(

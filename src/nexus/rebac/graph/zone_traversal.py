@@ -12,8 +12,6 @@ Functions:
 Related: Issue #1459 Phase 15+, performance optimization
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import time
@@ -58,12 +56,12 @@ class ZoneAwareTraversal:
 
     def __init__(
         self,
-        connection_factory: Callable[[], AbstractContextManager[Any]],
-        create_cursor: Callable[[Any], Any],
-        fix_sql: Callable[[str], str],
-        get_namespace: Callable[[str], NamespaceConfig | None],
-        evaluate_conditions: Callable[[dict[str, Any] | None, dict[str, Any] | None], bool],
-        zone_manager: ZoneManager,
+        connection_factory: "Callable[[], AbstractContextManager[Any]]",
+        create_cursor: "Callable[[Any], Any]",
+        fix_sql: "Callable[[str], str]",
+        get_namespace: "Callable[[str], NamespaceConfig | None]",
+        evaluate_conditions: "Callable[[dict[str, Any] | None, dict[str, Any] | None], bool]",
+        zone_manager: "ZoneManager",
         enable_graph_limits: bool = True,
     ) -> None:
         self._connection = connection_factory

@@ -21,8 +21,6 @@ Usage:
     content = response.unwrap()
 """
 
-from __future__ import annotations
-
 import functools
 import time
 from collections.abc import Callable
@@ -87,7 +85,7 @@ class HandlerResponse(Generic[T]):
         backend_name: str | None = None,
         path: str | None = None,
         affected_rows: int = 0,
-    ) -> HandlerResponse[T]:
+    ) -> "HandlerResponse[T]":
         """Create a success response.
 
         Args:
@@ -118,7 +116,7 @@ class HandlerResponse(Generic[T]):
         execution_time_ms: float = 0.0,
         backend_name: str | None = None,
         path: str | None = None,
-    ) -> HandlerResponse[Any]:
+    ) -> "HandlerResponse[Any]":
         """Create an error response.
 
         Args:
@@ -149,7 +147,7 @@ class HandlerResponse(Generic[T]):
         message: str | None = None,
         execution_time_ms: float = 0.0,
         backend_name: str | None = None,
-    ) -> HandlerResponse[Any]:
+    ) -> "HandlerResponse[Any]":
         """Create a not-found response.
 
         Args:
@@ -179,7 +177,7 @@ class HandlerResponse(Generic[T]):
         current_etag: str,
         execution_time_ms: float = 0.0,
         backend_name: str | None = None,
-    ) -> HandlerResponse[Any]:
+    ) -> "HandlerResponse[Any]":
         """Create a conflict response for optimistic concurrency failures.
 
         Args:
@@ -213,7 +211,7 @@ class HandlerResponse(Generic[T]):
         execution_time_ms: float = 0.0,
         backend_name: str | None = None,
         path: str | None = None,
-    ) -> HandlerResponse[Any]:
+    ) -> "HandlerResponse[Any]":
         """Create a response from an exception.
 
         Maps common exception types to appropriate response types:
@@ -361,7 +359,7 @@ P = ParamSpec("P")
 R = TypeVar("R")
 
 
-def timed_response(func: Callable[P, HandlerResponse[R]]) -> Callable[P, HandlerResponse[R]]:
+def timed_response(func: "Callable[P, HandlerResponse[R]]") -> "Callable[P, HandlerResponse[R]]":
     """Decorator to automatically track execution time for backend methods.
 
     Usage:
@@ -374,7 +372,7 @@ def timed_response(func: Callable[P, HandlerResponse[R]]) -> Callable[P, Handler
     """
 
     @functools.wraps(func)
-    def wrapper(*args: P.args, **kwargs: P.kwargs) -> HandlerResponse[R]:
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> "HandlerResponse[R]":
         start = time.perf_counter()
         try:
             response = func(*args, **kwargs)

@@ -4,8 +4,6 @@ Replaces the 48+ inline ``zone_id or "root"`` occurrences with a single
 canonical function so the default zone sentinel is defined in one place.
 """
 
-from __future__ import annotations
-
 DEFAULT_ZONE: str = "root"
 
 

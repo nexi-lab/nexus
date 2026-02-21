@@ -4,8 +4,6 @@ Drains the offline queue and replays operations through the transport
 when the circuit breaker allows requests.
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 import logging
@@ -40,9 +38,9 @@ class ReplayEngine:
 
     def __init__(
         self,
-        queue: OfflineQueueProtocol,
-        transport: HttpTransport,
-        circuit: AsyncCircuitBreaker,
+        queue: "OfflineQueueProtocol",
+        transport: "HttpTransport",
+        circuit: "AsyncCircuitBreaker",
         batch_size: int,
         poll_interval: float,
     ) -> None:

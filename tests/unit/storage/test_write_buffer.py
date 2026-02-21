@@ -3,8 +3,6 @@
 Issue #1246 Phase 3: Verifies buffering, flushing, retry, and metrics.
 """
 
-from __future__ import annotations
-
 import time
 from datetime import datetime
 from unittest.mock import MagicMock, patch

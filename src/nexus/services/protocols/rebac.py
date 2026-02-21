@@ -7,8 +7,6 @@ This is separate from PermissionProtocol (which defines the 6 core Zanzibar
 APIs). ReBACBrickProtocol defines the brick lifecycle + extended APIs.
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -42,7 +40,7 @@ class ReBACBrickProtocol(Protocol):
         expires_at: Any | None = None,
         conditions: dict[str, Any] | None = None,
         zone_id: str | None = None,
-    ) -> WriteResult: ...
+    ) -> "WriteResult": ...
 
     def rebac_delete(self, tuple_id: str) -> bool: ...
 

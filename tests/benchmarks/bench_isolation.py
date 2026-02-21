@@ -10,8 +10,6 @@ Measures ops/sec and p50/p95/p99 latency for:
     - IsolatedBackend with InterpreterPoolExecutor (Python 3.14+ only)
 """
 
-from __future__ import annotations
-
 import hashlib
 import sys
 import time

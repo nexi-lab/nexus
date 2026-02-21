@@ -4,8 +4,6 @@ DRY: replaces duplicated NamespaceManager construction in fastapi_server.py.
 Configures L3 persistent view store when a RecordStoreABC is provided.
 """
 
-from __future__ import annotations
-
 import logging
 import os
 from typing import TYPE_CHECKING
@@ -20,8 +18,8 @@ logger = logging.getLogger(__name__)
 
 
 def create_namespace_manager(
-    rebac_manager: EnhancedReBACManager,
-    record_store: RecordStoreABC | None = None,
+    rebac_manager: "EnhancedReBACManager",
+    record_store: "RecordStoreABC | None" = None,
 ) -> NamespaceManager:
     """Create NamespaceManager with config from environment variables.
 

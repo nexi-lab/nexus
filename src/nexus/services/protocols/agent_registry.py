@@ -11,8 +11,6 @@ References:
     - Issue #1383: Define 6 kernel protocol interfaces
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 

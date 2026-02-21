@@ -12,8 +12,6 @@ Section 1: Lightweight mocked tests (no DB)
 Section 2: Full integration tests with real SpendingPolicyService + SQLite
 """
 
-from __future__ import annotations
-
 import asyncio
 from decimal import Decimal
 from typing import Any

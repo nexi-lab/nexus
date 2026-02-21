@@ -5,8 +5,6 @@ Tests cover:
 - list_saved_mounts: User-based filtering of saved mount configurations
 """
 
-from __future__ import annotations
-
 import tempfile
 from collections.abc import Generator
 from pathlib import Path

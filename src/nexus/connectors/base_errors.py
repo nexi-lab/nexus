@@ -8,8 +8,6 @@ Contains error codes common across all connectors that use
     ERROR_REGISTRY = {**TRAIT_ERRORS, **CHECKPOINT_ERRORS, **DOMAIN_ERRORS}
 """
 
-from __future__ import annotations
-
 from types import MappingProxyType
 
 from nexus.connectors.base import ErrorDef

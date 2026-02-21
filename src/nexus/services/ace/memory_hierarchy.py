@@ -18,8 +18,6 @@ References:
     - SimpleMem Paper: https://arxiv.org/abs/2601.02553 (recursive consolidation)
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from dataclasses import dataclass, field
@@ -94,7 +92,7 @@ class HierarchicalMemoryManager:
 
     def __init__(
         self,
-        consolidation_engine: ConsolidationEngine,
+        consolidation_engine: "ConsolidationEngine",
         session: Session,
         zone_id: str = "root",
     ):
@@ -574,7 +572,7 @@ class HierarchicalMemoryManager:
 
 # Synchronous wrapper for non-async contexts
 def build_hierarchy(
-    consolidation_engine: ConsolidationEngine,
+    consolidation_engine: "ConsolidationEngine",
     session: Session,
     memories: list[MemoryModel] | None = None,
     memory_ids: list[str] | None = None,

@@ -4,8 +4,6 @@ Validates that the DedupWorkQueue correctly coalesces rapid events
 when wired into the EventsService cache invalidation pipeline.
 """
 
-from __future__ import annotations
-
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 

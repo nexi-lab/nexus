@@ -4,8 +4,6 @@ Tests the full task queue lifecycle through the actual HTTP API
 with --auth-type database enabled.
 """
 
-from __future__ import annotations
-
 import os
 import signal
 import socket

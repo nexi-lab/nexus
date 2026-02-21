@@ -15,8 +15,6 @@ Usage:
     manager = ReBACManager(engine)
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import threading
@@ -90,7 +88,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
 # ============================================================================
 # Flattened ReBAC Manager (Issue #1385)
 # ============================================================================
@@ -118,14 +115,14 @@ class ReBACManager:
 
     def __init__(
         self,
-        engine: Engine,
+        engine: "Engine",
         cache_ttl_seconds: int = 300,
         max_depth: int = 50,
         enforce_zone_isolation: bool = False,
         enable_graph_limits: bool = True,
         enable_leopard: bool = True,
         enable_tiger_cache: bool = True,
-        read_engine: Engine | None = None,
+        read_engine: "Engine | None" = None,
     ):
         """Initialize ReBAC manager.
 
@@ -193,7 +190,7 @@ class ReBACManager:
         self._zone_graph_cache_lock = threading.RLock()
 
         # Leopard index for O(1) transitive group lookups (Issue #692)
-        self._leopard: LeopardIndex | None = None
+        self._leopard: "LeopardIndex | None" = None
         if enable_leopard:
             from nexus.rebac.cache.leopard import LeopardIndex
 
@@ -205,8 +202,8 @@ class ReBACManager:
 
         # Tiger Cache for materialized permissions (Issue #682)
         # Only enable on PostgreSQL - SQLite has lock contention issues
-        self._tiger_cache: TigerCache | None = None
-        self._tiger_updater: TigerCacheUpdater | None = None
+        self._tiger_cache: "TigerCache | None" = None
+        self._tiger_updater: "TigerCacheUpdater | None" = None
         if enable_tiger_cache and engine.dialect.name == "postgresql":
             from nexus.rebac.cache.tiger import (
                 TigerCache,
@@ -268,7 +265,7 @@ class ReBACManager:
         # Iterator cache for paginated list operations (Issue #722)
         from nexus.rebac.cache.iterator import IteratorCache
 
-        self._iterator_cache: IteratorCache = IteratorCache(
+        self._iterator_cache: "IteratorCache" = IteratorCache(
             max_size=1000,
             ttl_seconds=cache_ttl_seconds,
         )

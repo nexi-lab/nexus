@@ -5,8 +5,6 @@ the host process's state.  All tests use ``ProcessPoolExecutor``
 (``force_process=True``) which is available on every Python version.
 """
 
-from __future__ import annotations
-
 import sys
 
 from nexus.isolation import IsolatedBackend, IsolationConfig

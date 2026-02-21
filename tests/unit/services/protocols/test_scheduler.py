@@ -1,7 +1,5 @@
 """Tests for SchedulerProtocol, AgentRequest, and InMemoryScheduler (Issue #1383)."""
 
-from __future__ import annotations
-
 import dataclasses
 
 import pytest

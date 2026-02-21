@@ -1,7 +1,5 @@
 """Skill importer for ZIP/archive packages."""
 
-from __future__ import annotations
-
 import io
 import logging
 import re
@@ -75,7 +73,7 @@ class SkillImporter:
         zip_data: bytes,
         tier: str = "user",
         allow_overwrite: bool = False,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Import skill from ZIP package.
 
@@ -330,7 +328,7 @@ class SkillImporter:
         self,
         skill_name: str,
         tier: str,
-        context: OperationContext | None,
+        context: "OperationContext | None",
     ) -> bool:
         """Check if skill name already exists in target tier.
 
@@ -355,7 +353,7 @@ class SkillImporter:
         self,
         skill_name: str,
         tier: str,
-        context: OperationContext | None,
+        context: "OperationContext | None",
     ) -> str:
         """Get target path for skill based on tier and context.
 
@@ -417,7 +415,7 @@ class SkillImporter:
         return None
 
     async def _copy_skill_directory(
-        self, source_dir: Path, target_path: str, context: OperationContext | None = None
+        self, source_dir: Path, target_path: str, context: "OperationContext | None" = None
     ) -> None:
         """Copy skill directory to target path in filesystem.
 

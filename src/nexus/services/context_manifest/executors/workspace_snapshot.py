@@ -9,8 +9,6 @@ Performance:
     - Thread pool is configurable via constructor (14B).
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import time

@@ -1,7 +1,5 @@
 """Skill governance and approval workflows."""
 
-from __future__ import annotations
-
 import logging
 import uuid
 from dataclasses import dataclass
@@ -99,7 +97,7 @@ class SkillGovernance:
 
     def __init__(
         self,
-        rebac_manager: ReBACManager | None = None,
+        rebac_manager: "ReBACManager | None" = None,
     ):
         """Initialize governance system.
 

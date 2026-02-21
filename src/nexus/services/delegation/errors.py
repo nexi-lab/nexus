@@ -10,8 +10,6 @@ Hierarchy:
     └── InsufficientTrustError    - Agent trust score below threshold (#1619)
 """
 
-from __future__ import annotations
-
 
 class DelegationError(Exception):
     """Base error for delegation operations."""

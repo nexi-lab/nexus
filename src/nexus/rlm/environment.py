@@ -11,8 +11,6 @@ Architecture Decisions:
   - Issue 14A: Per-request sandbox (no pooling)
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from typing import Any

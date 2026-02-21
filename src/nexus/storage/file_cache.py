@@ -29,8 +29,6 @@ Usage:
     file_cache.delete("zone1", "/mnt/gcs/file.txt")
 """
 
-from __future__ import annotations
-
 import json as _json
 import logging
 import os
@@ -67,7 +65,7 @@ class FileContentCache:
     - No false negatives (never skips existing files)
     """
 
-    _bloom: BloomFilter | None
+    _bloom: "BloomFilter | None"
 
     def __init__(
         self,

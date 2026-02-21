@@ -7,8 +7,6 @@ download resumption, and media seeking.
 Issue #790: HTTP Range Request Support.
 """
 
-from __future__ import annotations
-
 import re
 from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass

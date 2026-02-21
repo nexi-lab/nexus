@@ -17,8 +17,6 @@ Run with:
     pytest tests/benchmarks/test_rebac_latency.py -v --benchmark-only
 """
 
-from __future__ import annotations
-
 import pytest
 from sqlalchemy import create_engine
 
@@ -29,7 +27,6 @@ from nexus.storage.models import Base
 ZONE_ID = "bench_zone"
 SUBJECT_ALICE = ("agent", "alice")
 SUBJECT_BOB = ("agent", "bob")
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

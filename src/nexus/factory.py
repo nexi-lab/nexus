@@ -38,8 +38,6 @@ Usage::
     nx = NexusFS(backend=backend, metadata_store=metadata_store, services=services)
 """
 
-from __future__ import annotations
-
 import logging
 import time
 from dataclasses import dataclass
@@ -62,7 +60,6 @@ if TYPE_CHECKING:
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
-
 
 # ---------------------------------------------------------------------------
 # Boot context — carries shared deps between tier functions
@@ -301,7 +298,7 @@ def create_record_store(
     db_url: str | None = None,
     db_path: str | None = None,
     create_tables: bool = True,
-) -> RecordStoreABC:
+) -> "RecordStoreABC":
     """Create a RecordStore with Cloud SQL and read replica support auto-detected from env.
 
     When the ``CLOUD_SQL_INSTANCE`` environment variable is set, the
@@ -904,7 +901,7 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
         )
 
     # --- Workflow engine ---
-    workflow_engine: WorkflowProtocol | None = None
+    workflow_engine: "WorkflowProtocol | None" = None
     if ctx.dist.enable_workflows:
         # Try to get Rust glob_match for performance (falls back to fnmatch)
         _glob_match_fn: Any = None
@@ -1035,20 +1032,20 @@ def _start_background_services(kernel: dict[str, Any], system: dict[str, Any]) -
 
 
 def create_nexus_services(
-    record_store: RecordStoreABC,
-    metadata_store: MetastoreABC,
-    backend: Backend,
-    router: PathRouter,
+    record_store: "RecordStoreABC",
+    metadata_store: "MetastoreABC",
+    backend: "Backend",
+    router: "PathRouter",
     *,
-    permissions: PermissionConfig | None = None,
-    cache: CacheConfig | None = None,
-    distributed: DistributedConfig | None = None,
+    permissions: "PermissionConfig | None" = None,
+    cache: "CacheConfig | None" = None,
+    distributed: "DistributedConfig | None" = None,
     zone_id: str | None = None,
     agent_id: str | None = None,
     enable_write_buffer: bool | None = None,
     resiliency_raw: dict[str, Any] | None = None,
     enabled_bricks: frozenset[str] | None = None,
-) -> tuple[KernelServices, SystemServices, BrickServices]:
+) -> "tuple[KernelServices, SystemServices, BrickServices]":
     """Create default services for NexusFS dependency injection.
 
     Orchestrates 3-tier boot sequence:
@@ -1210,8 +1207,8 @@ def create_nexus_services(
 
 
 def _create_distributed_infra(
-    dist: DistributedConfig,
-    metadata_store: MetastoreABC,
+    dist: "DistributedConfig",
+    metadata_store: "MetastoreABC",
     session_factory: Any,
     coordination_url: str | None,
 ) -> tuple[Any, Any]:
@@ -1282,7 +1279,7 @@ def _create_distributed_infra(
 
 def _create_workflow_engine(
     record_store: Any, glob_match_fn: Any = None
-) -> WorkflowProtocol | None:
+) -> "WorkflowProtocol | None":
     """Create workflow engine with async store and DI.
 
     Args:
@@ -1343,27 +1340,27 @@ def _create_provider_registry(parsing: Any) -> Any:
 
 
 def create_nexus_fs(
-    backend: Backend,
-    metadata_store: MetastoreABC,
-    record_store: RecordStoreABC | None = None,
+    backend: "Backend",
+    metadata_store: "MetastoreABC",
+    record_store: "RecordStoreABC | None" = None,
     *,
     cache_store: Any = None,
     is_admin: bool = False,
     custom_namespaces: list[Any] | None = None,
-    cache: CacheConfig | None = None,
-    permissions: PermissionConfig | None = None,
-    distributed: DistributedConfig | None = None,
+    cache: "CacheConfig | None" = None,
+    permissions: "PermissionConfig | None" = None,
+    distributed: "DistributedConfig | None" = None,
     memory: Any = None,
     parsing: Any = None,
-    kernel_services: KernelServices | None = None,
-    system_services: SystemServices | None = None,
-    brick_services: BrickServices | None = None,
+    kernel_services: "KernelServices | None" = None,
+    system_services: "SystemServices | None" = None,
+    brick_services: "BrickServices | None" = None,
     enable_write_buffer: bool | None = None,
     enabled_bricks: frozenset[str] | None = None,
     zone_id: str | None = None,
     agent_id: str | None = None,
-    workflow_engine: WorkflowProtocol | None = None,
-) -> NexusFS:
+    workflow_engine: "WorkflowProtocol | None" = None,
+) -> "NexusFS":
     """Create NexusFS with default services — the recommended entry point.
 
     Args:

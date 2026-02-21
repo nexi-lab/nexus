@@ -3,8 +3,6 @@
 Covers boundary conditions, error handling, and unusual inputs.
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.cache.inmemory import InMemoryCacheStore

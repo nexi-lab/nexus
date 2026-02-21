@@ -9,8 +9,6 @@ This service handles all search operations:
 Extracted from: nexus_fs_search.py (2,817 lines)
 """
 
-from __future__ import annotations
-
 import asyncio
 import builtins
 import fnmatch
@@ -136,12 +134,12 @@ class SearchService(SemanticSearchMixin):
 
     def __init__(
         self,
-        metadata_store: MetastoreABC,
-        permission_enforcer: PermissionEnforcer | None = None,
-        router: PathRouter | None = None,
-        rebac_manager: EnhancedReBACManager | None = None,
+        metadata_store: "MetastoreABC",
+        permission_enforcer: "PermissionEnforcer | None" = None,
+        router: "PathRouter | None" = None,
+        rebac_manager: "EnhancedReBACManager | None" = None,
         enforce_permissions: bool = True,
-        default_context: OperationContext | None = None,
+        default_context: "OperationContext | None" = None,
         record_store: Any | None = None,
         # Gateway for NexusFS operations (Issue #1287, replaces 8 Callable params)
         gateway: NexusFSGateway | None = None,
@@ -978,7 +976,7 @@ class SearchService(SemanticSearchMixin):
         perm_start = time.time()
         ctx_raw = context or self._default_context
         assert isinstance(ctx_raw, OperationContext), "Context must be OperationContext"
-        ctx: OperationContext = ctx_raw
+        ctx: "OperationContext" = ctx_raw
 
         candidate_paths: set[str] = set()
         candidate_paths.update(meta.path for meta in all_files)

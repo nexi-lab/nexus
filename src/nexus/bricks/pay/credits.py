@@ -20,8 +20,6 @@ References:
 - https://docs.tigerbeetle.com/coding/recipes/rate-limiting/
 """
 
-from __future__ import annotations
-
 import asyncio
 import hashlib
 import logging
@@ -50,7 +48,6 @@ if TYPE_CHECKING:
     from nexus.storage.exchange_audit_logger import ExchangeAuditLogger
 
 _audit_logger_module = logging.getLogger(__name__ + ".audit")
-
 
 # =============================================================================
 # Exceptions
@@ -132,7 +129,7 @@ class CreditsService:
         tigerbeetle_address: str = "127.0.0.1:3000",
         cluster_id: int = 0,
         enabled: bool = True,
-        audit_logger: ExchangeAuditLogger | None = None,
+        audit_logger: "ExchangeAuditLogger | None" = None,
     ):
         """Initialize CreditsService.
 

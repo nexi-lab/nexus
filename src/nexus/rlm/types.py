@@ -9,8 +9,6 @@ brick. Follows the structured error category pattern:
 Reference: arXiv:2512.24601 (Zhang, Kraska, Khattab — MIT OASYS Lab)
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from enum import StrEnum
 

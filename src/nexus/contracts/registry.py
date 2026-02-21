@@ -16,8 +16,6 @@ so forcing them into ``BaseRegistry`` would *add* complexity.
 Design doc: NEXUS-LEGO-ARCHITECTURE.md S5.2, S12.5, S19.5.
 """
 
-from __future__ import annotations
-
 import importlib
 import inspect
 import logging

@@ -1,7 +1,5 @@
 """Integration tests for the full validation pipeline with mock sandbox."""
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock
 
 import pytest

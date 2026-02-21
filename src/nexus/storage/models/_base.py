@@ -5,8 +5,6 @@ Issue #1286: Added mixins (TimestampMixin, ZoneIsolationMixin, ResourceConfigMix
              uuid_pk() helper, and _get_uuid_server_default.
 """
 
-from __future__ import annotations
-
 import os
 import uuid
 from datetime import UTC, datetime

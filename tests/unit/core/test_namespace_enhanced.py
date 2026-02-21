@@ -9,8 +9,6 @@ Tests cover:
 - Cache freshness with grants_hash
 """
 
-from __future__ import annotations
-
 import pytest
 from sqlalchemy import create_engine
 

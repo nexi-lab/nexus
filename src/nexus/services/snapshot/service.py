@@ -13,8 +13,6 @@ Architecture:
 Follows VersionService pattern (DI constructor, asyncio.to_thread for DB ops).
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import uuid

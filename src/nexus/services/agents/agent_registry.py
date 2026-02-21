@@ -25,8 +25,6 @@ References:
     - Issue #1589: Extract HeartbeatBuffer from AgentRegistry (SRP)
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import types
@@ -111,7 +109,7 @@ class AgentRegistry:
 
     def __init__(
         self,
-        session_factory: sessionmaker[Session],
+        session_factory: "sessionmaker[Session]",
         entity_registry: Any = None,
         flush_interval: int = 60,
         max_buffer_size: int = 50_000,
@@ -126,7 +124,7 @@ class AgentRegistry:
         )
 
     @contextmanager
-    def _get_session(self) -> Generator[Session, None, None]:
+    def _get_session(self) -> "Generator[Session, None, None]":
         """Create a session from the factory with auto-commit/rollback."""
         session = self._session_factory()
         try:

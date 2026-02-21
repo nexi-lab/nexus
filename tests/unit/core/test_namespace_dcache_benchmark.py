@@ -9,8 +9,6 @@ Measures:
 Run with: uv run pytest tests/unit/core/test_namespace_dcache_benchmark.py -v -s --tb=short
 """
 
-from __future__ import annotations
-
 import statistics
 import time
 

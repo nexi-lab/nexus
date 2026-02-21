@@ -30,8 +30,6 @@ Usage:
     nx = NexusFS(metastore=metastore, record_store=record_store)
 """
 
-from __future__ import annotations
-
 import logging
 import os
 import threading
@@ -213,7 +211,7 @@ class SQLAlchemyRecordStore(RecordStoreABC):
 
             @event.listens_for(self._engine, "connect")
             def set_sqlite_pragma(
-                dbapi_connection: DBAPIConnection, _connection_record: ConnectionPoolEntry
+                dbapi_connection: "DBAPIConnection", _connection_record: "ConnectionPoolEntry"
             ) -> None:
                 cursor = dbapi_connection.cursor()
                 cursor.execute("PRAGMA journal_mode=WAL")

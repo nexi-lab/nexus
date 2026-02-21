@@ -5,8 +5,6 @@ This tests the systematic admin_only guard added to @rpc_expose decorator
 and enforced in _auto_dispatch.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from unittest.mock import MagicMock, patch
 

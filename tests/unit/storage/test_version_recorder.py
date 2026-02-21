@@ -4,8 +4,6 @@ Tests all write/update/delete paths and verifies field mapping
 from FileMetadata (proto) to FilePathModel (SQLAlchemy).
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 import pytest

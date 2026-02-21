@@ -3,8 +3,6 @@
 This module now delegates to nexus.auth brick providers (Issue #1399).
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 

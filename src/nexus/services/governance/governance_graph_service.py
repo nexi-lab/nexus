@@ -6,8 +6,6 @@ dynamic constraint management with TTL cache.
 Hot path: check_constraint() — <1ms cached, <5ms uncached.
 """
 
-from __future__ import annotations
-
 import contextlib
 import json
 import logging
@@ -45,7 +43,7 @@ class GovernanceGraphService:
 
     def __init__(
         self,
-        session_factory: Callable[[], AsyncSession],
+        session_factory: "Callable[[], AsyncSession]",
         cache_ttl: float = 60.0,
     ) -> None:
         self._session_factory = session_factory

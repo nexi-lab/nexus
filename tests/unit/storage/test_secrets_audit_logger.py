@@ -4,8 +4,6 @@ Mirrors the ExchangeAuditLogger test suite pattern.
 Covers: CRUD, hash integrity, immutability, pagination, filters, verify integrity.
 """
 
-from __future__ import annotations
-
 import gc
 from datetime import UTC, datetime
 

@@ -10,8 +10,6 @@ intentionally excluded from the mapping key.
 Related: Issue #682, Issue #979
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 from typing import TYPE_CHECKING
@@ -36,7 +34,7 @@ class TigerResourceMap:
     See: Issue #979 - Cross-zone resource map optimization
     """
 
-    def __init__(self, engine: Engine):
+    def __init__(self, engine: "Engine"):
         self._engine = engine
         self._is_postgresql = "postgresql" in str(engine.url)
 
@@ -50,7 +48,7 @@ class TigerResourceMap:
         self,
         resource_type: str,
         resource_id: str,
-        conn: Connection | None = None,
+        conn: "Connection | None" = None,
     ) -> int:
         """Get or create an integer ID for a resource.
 
@@ -73,7 +71,7 @@ class TigerResourceMap:
         # Query/insert in database
         from sqlalchemy import text
 
-        def do_get_or_create(connection: Connection) -> int:
+        def do_get_or_create(connection: "Connection") -> int:
             # Try to get existing (no zone filter)
             query = text("""
                 SELECT resource_int_id FROM tiger_resource_map
@@ -162,7 +160,7 @@ class TigerResourceMap:
         return int_id
 
     def get_resource_id(
-        self, int_id: int, conn: Connection | None = None
+        self, int_id: int, conn: "Connection | None" = None
     ) -> tuple[str, str] | None:
         """Get resource info from integer ID.
 
@@ -187,7 +185,7 @@ class TigerResourceMap:
             WHERE resource_int_id = :int_id
         """)
 
-        def execute(connection: Connection) -> tuple[str, str] | None:
+        def execute(connection: "Connection") -> tuple[str, str] | None:
             result = connection.execute(query, {"int_id": int_id})
             row = result.fetchone()
             if row:
@@ -211,7 +209,7 @@ class TigerResourceMap:
     def bulk_get_int_ids(
         self,
         resources: list[tuple[str, str]],  # List of (resource_type, resource_id)
-        conn: Connection,
+        conn: "Connection",
     ) -> dict[tuple[str, str], int | None]:
         """Bulk get integer IDs for multiple resources in a single query.
 
@@ -287,7 +285,7 @@ class TigerResourceMap:
     def get_int_ids_batch(
         self,
         resources: list[tuple[str, str]],
-        conn: Connection | None = None,
+        conn: "Connection | None" = None,
     ) -> dict[tuple[str, str], int]:
         """Get integer IDs for multiple resources in batch.
 
@@ -327,7 +325,7 @@ class TigerResourceMap:
             types = [m[0] for m in missing]
             ids = [m[1] for m in missing]
 
-            def execute(connection: Connection) -> None:
+            def execute(connection: "Connection") -> None:
                 db_result = connection.execute(query, {"types": types, "ids": ids})
                 for row in db_result:
                     key = (row.resource_type, row.resource_id)
@@ -342,7 +340,7 @@ class TigerResourceMap:
                 WHERE resource_type = :type AND resource_id = :id
             """)
 
-            def execute(connection: Connection) -> None:
+            def execute(connection: "Connection") -> None:
                 for key in missing:
                     db_result = connection.execute(query, {"type": key[0], "id": key[1]})
                     row = db_result.fetchone()

@@ -6,8 +6,6 @@ asyncio.gather(). Collects per-exporter failures for DLQ routing.
 Issue #1138: Event Stream Export.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from typing import TYPE_CHECKING
@@ -23,9 +21,9 @@ class ExporterRegistry:
     """Registry of event stream exporters with parallel dispatch."""
 
     def __init__(self) -> None:
-        self._exporters: dict[str, EventStreamExporterProtocol] = {}
+        self._exporters: "dict[str, EventStreamExporterProtocol]" = {}
 
-    def register(self, exporter: EventStreamExporterProtocol) -> None:
+    def register(self, exporter: "EventStreamExporterProtocol") -> None:
         """Register an exporter. Overwrites if name already exists."""
         self._exporters[exporter.name] = exporter
         logger.info("Registered event exporter: %s", exporter.name)
@@ -40,7 +38,7 @@ class ExporterRegistry:
     def exporter_names(self) -> list[str]:
         return list(self._exporters)
 
-    async def dispatch_batch(self, events: list[FileEvent]) -> dict[str, list[str]]:
+    async def dispatch_batch(self, events: "list[FileEvent]") -> dict[str, list[str]]:
         """Dispatch a batch of events to all registered exporters in parallel.
 
         Returns:
@@ -51,7 +49,7 @@ class ExporterRegistry:
             return {}
 
         async def _dispatch_one(
-            name: str, exporter: EventStreamExporterProtocol
+            name: str, exporter: "EventStreamExporterProtocol"
         ) -> tuple[str, list[str]]:
             try:
                 failed_ids = await exporter.publish_batch(events)

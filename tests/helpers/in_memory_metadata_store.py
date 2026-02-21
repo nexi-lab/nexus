@@ -5,8 +5,6 @@ including rename_path and set_file_metadata which are not part of the
 base MetastoreABC ABC but are used via duck-typing.
 """
 
-from __future__ import annotations
-
 from collections.abc import Sequence
 from typing import Any
 

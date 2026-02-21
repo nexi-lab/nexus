@@ -8,8 +8,6 @@ Validates:
 - get_search_daemon/set_search_daemon singleton
 """
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock, patch
 
 import pytest

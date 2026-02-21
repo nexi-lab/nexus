@@ -7,8 +7,6 @@ Extracted from ChangeLogStore (Issue #1127) during Phase 0 refactoring
 for Issue #1129 (Bidirectional Sync).
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 from collections.abc import Callable, Generator

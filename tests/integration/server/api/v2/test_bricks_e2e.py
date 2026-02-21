@@ -9,8 +9,6 @@ with mock brick instances. Validates:
 - Lifecycle events in log output
 """
 
-from __future__ import annotations
-
 import logging
 import time
 from unittest.mock import AsyncMock, MagicMock

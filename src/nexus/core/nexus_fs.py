@@ -1,7 +1,5 @@
 """Unified filesystem implementation for Nexus."""
 
-from __future__ import annotations
-
 import asyncio
 import builtins
 import contextlib
@@ -94,7 +92,7 @@ class NexusFS(  # type: ignore[misc]
         brick_services: BrickServices | None = None,
         parse_fn: Any | None = None,
         content_cache: Any | None = None,
-        parser_registry: ParserRegistry | None = None,
+        parser_registry: "ParserRegistry | None" = None,
         provider_registry: Any | None = None,
         vfs_lock_manager: Any | None = None,
         # Test injection params — "accept or build" services (Issue #2034)
@@ -300,7 +298,7 @@ class NexusFS(  # type: ignore[misc]
         self._semantic_search = None
 
         # Initialize Memory API
-        self._memory_api: Memory | None = None
+        self._memory_api: "Memory | None" = None
         self._memory_config: dict[str, str | None] = {
             "zone_id": None,
             "user_id": None,
@@ -955,7 +953,7 @@ class NexusFS(  # type: ignore[misc]
         """Default user_id from the instance context."""
         return getattr(self._default_context, "user_id", None)
 
-    def _get_memory_api(self, context: dict | None = None) -> Memory:
+    def _get_memory_api(self, context: dict | None = None) -> "Memory":
         """Get Memory API instance with context-specific configuration.
 
         Args:
@@ -1009,7 +1007,7 @@ class NexusFS(  # type: ignore[misc]
             is_system=context.get("is_system", False),
         )
 
-    def _ensure_entity_registry(self) -> EntityRegistry:
+    def _ensure_entity_registry(self) -> "EntityRegistry":
         """Lazily create and cache an EntityRegistry instance.
 
         Consolidates 7 deferred import sites (Issue #1291).
@@ -2855,7 +2853,7 @@ class NexusFS(  # type: ignore[misc]
         self,
         path: str,
         store_result: bool = True,
-    ) -> ParseResult:
+    ) -> "ParseResult":
         """
         Parse a file's content using the appropriate parser.
 
@@ -10804,7 +10802,7 @@ class NexusFS(  # type: ignore[misc]
         limit: int = 50,
         offset: int = 0,
         context: OperationContext | None = None,  # noqa: ARG002
-    ) -> list[dict[str, Any]]:  # type: ignore[valid-type]
+    ) -> builtins.list[dict[str, Any]]:
         """List tasks with optional filters."""
         return self.task_queue_service.list_tasks(
             task_type=task_type,

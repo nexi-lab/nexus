@@ -23,8 +23,6 @@ Usage:
     resp = wrapper.read_content(content_hash)
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import threading
@@ -42,7 +40,6 @@ if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
 
 logger = logging.getLogger(__name__)
-
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -106,7 +103,7 @@ class CachingBackendWrapper(DelegatingBackend):
         self,
         inner: Backend,
         config: CacheWrapperConfig | None = None,
-        cache_store: CacheStoreABC | None = None,
+        cache_store: "CacheStoreABC | None" = None,
     ) -> None:
         super().__init__(inner)
         self._config = config or CacheWrapperConfig()
@@ -145,7 +142,7 @@ class CachingBackendWrapper(DelegatingBackend):
 
     @timed_response
     def read_content(
-        self, content_hash: str, context: OperationContext | None = None
+        self, content_hash: str, context: "OperationContext | None" = None
     ) -> HandlerResponse[bytes]:
         """Read content with L1 → L2 → inner backend fallback."""
         # L1 check
@@ -186,7 +183,7 @@ class CachingBackendWrapper(DelegatingBackend):
 
     @timed_response
     def write_content(
-        self, content: bytes, context: OperationContext | None = None
+        self, content: bytes, context: "OperationContext | None" = None
     ) -> HandlerResponse[str]:
         """Write content to inner backend, then handle cache based on strategy."""
         response = self._inner.write_content(content, context=context)
@@ -211,7 +208,7 @@ class CachingBackendWrapper(DelegatingBackend):
 
     @timed_response
     def delete_content(
-        self, content_hash: str, context: OperationContext | None = None
+        self, content_hash: str, context: "OperationContext | None" = None
     ) -> HandlerResponse[None]:
         """Delete from inner backend and invalidate caches."""
         response = self._inner.delete_content(content_hash, context=context)
@@ -220,7 +217,7 @@ class CachingBackendWrapper(DelegatingBackend):
 
     @timed_response
     def content_exists(
-        self, content_hash: str, context: OperationContext | None = None
+        self, content_hash: str, context: "OperationContext | None" = None
     ) -> HandlerResponse[bool]:
         """Always delegate to inner backend — source of truth for existence.
 
@@ -233,9 +230,9 @@ class CachingBackendWrapper(DelegatingBackend):
     def batch_read_content(
         self,
         content_hashes: list[str],
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
         *,
-        contexts: dict[str, OperationContext] | None = None,
+        contexts: "dict[str, OperationContext] | None" = None,
     ) -> dict[str, bytes | None]:
         """Batch read with L1 cache for already-cached items."""
         result: dict[str, bytes | None] = {}
@@ -295,13 +292,13 @@ class CachingBackendWrapper(DelegatingBackend):
 
     @timed_response
     def get_content_size(
-        self, content_hash: str, context: OperationContext | None = None
+        self, content_hash: str, context: "OperationContext | None" = None
     ) -> HandlerResponse[int]:
         return self._inner.get_content_size(content_hash, context=context)
 
     @timed_response
     def get_ref_count(
-        self, content_hash: str, context: OperationContext | None = None
+        self, content_hash: str, context: "OperationContext | None" = None
     ) -> HandlerResponse[int]:
         return self._inner.get_ref_count(content_hash, context=context)
 
@@ -313,7 +310,7 @@ class CachingBackendWrapper(DelegatingBackend):
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[None]:
         return self._inner.mkdir(path, parents=parents, exist_ok=exist_ok, context=context)
 
@@ -322,13 +319,13 @@ class CachingBackendWrapper(DelegatingBackend):
         self,
         path: str,
         recursive: bool = False,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[None]:
         return self._inner.rmdir(path, recursive=recursive, context=context)
 
     @timed_response
     def is_directory(
-        self, path: str, context: OperationContext | None = None
+        self, path: str, context: "OperationContext | None" = None
     ) -> HandlerResponse[bool]:
         return self._inner.is_directory(path, context=context)
 

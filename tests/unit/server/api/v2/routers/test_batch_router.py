@@ -3,8 +3,6 @@
 Tests the full FastAPI router with a mock AsyncNexusFS via TestClient.
 """
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest

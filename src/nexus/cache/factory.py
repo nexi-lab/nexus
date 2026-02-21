@@ -32,8 +32,6 @@ Usage:
     await factory.shutdown()
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING
 
@@ -75,7 +73,7 @@ class CacheFactory:
         self,
         settings: CacheSettings,
         cache_store: CacheStoreABC | None = None,
-        record_store: RecordStoreABC | None = None,
+        record_store: "RecordStoreABC | None" = None,
     ):
         """Initialize cache factory.
 
@@ -88,8 +86,8 @@ class CacheFactory:
         """
         self._settings = settings
         self._cache_store: CacheStoreABC = cache_store or NullCacheStore()
-        self._cache_client: DragonflyClient | None = None  # kept for embedding cache
-        self._record_store: RecordStoreABC | None = record_store
+        self._cache_client: "DragonflyClient | None" = None  # kept for embedding cache
+        self._record_store: "RecordStoreABC | None" = record_store
         self._initialized = False
         self._has_cache_store = False
         self._using_postgres = False
@@ -284,11 +282,11 @@ class CacheFactory:
 
     def create_caching_wrapper(
         self,
-        inner: Backend,
-        config: CacheWrapperConfig | None = None,
+        inner: "Backend",
+        config: "CacheWrapperConfig | None" = None,
         *,
         enable_logging: bool = False,
-    ) -> CachingBackendWrapper:
+    ) -> "CachingBackendWrapper":
         """Create a CachingBackendWrapper for the given backend.
 
         Wires the wrapper with this factory's CacheStoreABC for L2 distributed
@@ -317,7 +315,7 @@ class CacheFactory:
         effective_config = config or CacheWrapperConfig()
 
         # Optional logging layer (Recursive Wrapping — PART 16, Issue #1449)
-        wrapped_inner: Backend = inner
+        wrapped_inner: "Backend" = inner
         if enable_logging:
             from nexus.backends.logging_wrapper import LoggingBackendWrapper
 
@@ -332,7 +330,7 @@ class CacheFactory:
             cache_store=cache_store,
         )
 
-    async def __aenter__(self) -> CacheFactory:
+    async def __aenter__(self) -> "CacheFactory":
         """Async context manager entry."""
         await self.initialize()
         return self

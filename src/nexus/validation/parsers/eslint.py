@@ -3,8 +3,6 @@
 Parses JSON output from `npx eslint --format json`.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import shlex

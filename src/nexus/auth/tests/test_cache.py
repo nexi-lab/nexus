@@ -1,7 +1,5 @@
 """Unit tests for AuthCache with invalidation (Decision #15)."""
 
-from __future__ import annotations
-
 import time
 
 from nexus.auth.cache import AuthCache

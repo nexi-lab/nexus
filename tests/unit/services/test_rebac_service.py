@@ -9,8 +9,6 @@ Covers the security-critical Relationship-Based Access Control service:
 - Permission enforcement (share permission checks)
 """
 
-from __future__ import annotations
-
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock
 

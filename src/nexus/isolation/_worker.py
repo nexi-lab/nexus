@@ -6,8 +6,6 @@ process) owns exactly one ``Backend`` instance that is lazily created on the
 first call and reused for subsequent calls.
 """
 
-from __future__ import annotations
-
 import importlib
 import logging
 from typing import Any

@@ -10,8 +10,6 @@ Provides distributed locking endpoints using Redis/Dragonfly:
 Extracted from ``fastapi_server.py`` during monolith decomposition (#1288).
 """
 
-from __future__ import annotations
-
 import logging
 from datetime import UTC, datetime
 from typing import Any, Literal

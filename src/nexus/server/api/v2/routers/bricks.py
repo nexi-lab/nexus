@@ -10,8 +10,6 @@ Endpoints:
     POST /api/v2/bricks/{name}/unmount — Unmount an active brick at runtime
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 
@@ -27,7 +25,6 @@ health_router = APIRouter(prefix="/api/v2/bricks", tags=["bricks"])
 
 # Admin router for lifecycle management — requires admin auth
 router = APIRouter(prefix="/api/v2/bricks", tags=["bricks"], dependencies=[Depends(require_admin)])
-
 
 # ---------------------------------------------------------------------------
 # Response models

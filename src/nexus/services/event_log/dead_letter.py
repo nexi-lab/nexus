@@ -6,8 +6,6 @@ failed export to external systems after exhausting retries.
 Issue #1138: Event Stream Export.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from datetime import UTC, datetime
@@ -39,7 +37,7 @@ class DeadLetterHandler:
 
     def route_to_dlq(
         self,
-        session: Session,
+        session: "Session",
         *,
         operation_id: str,
         exporter_name: str,
@@ -68,7 +66,7 @@ class DeadLetterHandler:
 
     def list_unresolved(
         self,
-        session: Session,
+        session: "Session",
         *,
         exporter_name: str | None = None,
         limit: int = 100,
@@ -90,8 +88,8 @@ class DeadLetterHandler:
 
     async def replay_dlq(
         self,
-        session: Session,
-        exporter_registry: ExporterRegistry,
+        session: "Session",
+        exporter_registry: "ExporterRegistry",
         *,
         limit: int = 100,
     ) -> int:

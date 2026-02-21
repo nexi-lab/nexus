@@ -14,8 +14,6 @@ Design decisions:
     - #15: LRU cache (maxsize=10,000) for agent history
 """
 
-from __future__ import annotations
-
 import ast
 import logging
 import threading
@@ -63,7 +61,7 @@ class SandboxRouter:
 
     def __init__(
         self,
-        available_providers: dict[str, SandboxProvider],
+        available_providers: "dict[str, SandboxProvider]",
         history_maxlen: int = 10,
         agent_cache_maxsize: int = 10_000,
     ) -> None:
@@ -81,7 +79,7 @@ class SandboxRouter:
         self._agent_history: OrderedDict[str, deque[str]] = OrderedDict()
 
         # Per-agent host function cache (evicted alongside history)
-        self._host_fn_cache: dict[str, dict[str, Callable[..., Any]]] = {}
+        self._host_fn_cache: "dict[str, dict[str, Callable[..., Any]]]" = {}
 
         # Metrics
         self.metrics = SandboxRouterMetrics()
@@ -234,7 +232,9 @@ class SandboxRouter:
                 return next_tier
         return None
 
-    def cache_host_functions(self, agent_id: str, host_fns: dict[str, Callable[..., Any]]) -> None:
+    def cache_host_functions(
+        self, agent_id: str, host_fns: "dict[str, Callable[..., Any]]"
+    ) -> None:
         """Cache host functions for an agent (for re-wiring on escalation).
 
         Args:
@@ -244,7 +244,7 @@ class SandboxRouter:
         with self._lock:
             self._host_fn_cache[agent_id] = dict(host_fns)
 
-    def get_cached_host_functions(self, agent_id: str) -> dict[str, Callable[..., Any]] | None:
+    def get_cached_host_functions(self, agent_id: str) -> "dict[str, Callable[..., Any]] | None":
         """Get cached host functions for an agent.
 
         Args:

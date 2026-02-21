@@ -7,8 +7,6 @@ Invariants proven:
   4. Pending count accuracy: pending_count == submitted - consumed - cancelled
 """
 
-from __future__ import annotations
-
 import asyncio
 
 from hypothesis import given, settings

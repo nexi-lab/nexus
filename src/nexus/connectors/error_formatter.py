@@ -4,8 +4,6 @@ Centralizes all error-with-skill-reference formatting (DRY #5-A).
 ``format_trait_error`` merged into ``format_error`` (Issue #2086, 6A).
 """
 
-from __future__ import annotations
-
 import posixpath
 
 from nexus.connectors.base import ErrorDef, ValidationError

@@ -17,7 +17,6 @@ from fastapi import HTTPException, Request
 
 logger = logging.getLogger(__name__)
 
-
 # =============================================================================
 # Core service dependencies
 # =============================================================================

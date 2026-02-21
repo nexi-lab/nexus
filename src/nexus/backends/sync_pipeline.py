@@ -25,8 +25,6 @@ Usage:
 Part of: #1461 (backend contract gaps)
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -74,7 +72,7 @@ class SyncPipelineService:
         max_file_size: int | None = None,
         generate_embeddings: bool = True,
         context: OperationContext | None = None,
-    ) -> SyncResult:
+    ) -> "SyncResult":
         """Execute the 7-step sync pipeline.
 
         Args:
@@ -165,7 +163,7 @@ class SyncPipelineService:
         include_patterns: list[str] | None,
         exclude_patterns: list[str] | None,
         context: OperationContext | None,
-        result: SyncResult,
+        result: "SyncResult",
     ) -> tuple[list[str], dict[str, str]]:
         """Step 1: Discover and filter files from backend."""
         from nexus.core import glob_fast
@@ -230,9 +228,9 @@ class SyncPipelineService:
         )
         return list(backend_to_virtual.keys()), backend_to_virtual
 
-    def _step2_load_cache(self, virtual_paths: list[str]) -> dict[str, CacheEntry]:
+    def _step2_load_cache(self, virtual_paths: list[str]) -> "dict[str, CacheEntry]":
         """Step 2: Bulk load existing cache entries (L1 + L2)."""
-        cached_entries: dict[str, CacheEntry] = self._connector.read_bulk_from_cache(
+        cached_entries: "dict[str, CacheEntry]" = self._connector.read_bulk_from_cache(
             virtual_paths, original=True
         )
         logger.info(
@@ -245,9 +243,9 @@ class SyncPipelineService:
         self,
         files: list[str],
         backend_to_virtual: dict[str, str],
-        cached_entries: dict[str, CacheEntry],
+        cached_entries: "dict[str, CacheEntry]",
         context: OperationContext | None,
-        result: SyncResult,
+        result: "SyncResult",
     ) -> tuple[list[str], dict[str, OperationContext], dict[str, dict]]:
         """Step 3: Check versions and determine which files need syncing."""
         connector = self._connector
@@ -372,7 +370,7 @@ class SyncPipelineService:
         max_size: int,
         generate_embeddings: bool,
         context: OperationContext | None,
-        result: SyncResult,
+        result: "SyncResult",
     ) -> tuple[list[dict], list[str]]:
         """Step 5: Process content and prepare cache entries."""
         zone_id = getattr(context, "zone_id", None) if context else None
@@ -439,7 +437,7 @@ class SyncPipelineService:
     def _step6_write_cache(
         self,
         cache_entries: list[dict],
-        result: SyncResult,
+        result: "SyncResult",
     ) -> None:
         """Step 6: Batch write to cache (single transaction)."""
         try:
@@ -452,7 +450,7 @@ class SyncPipelineService:
     def _step7_generate_embeddings(
         self,
         files: list[str],
-        result: SyncResult,
+        result: "SyncResult",
     ) -> None:
         """Step 7: Generate embeddings for semantic search (optional)."""
         for vpath in files:

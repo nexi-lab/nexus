@@ -9,8 +9,6 @@ Tests the CacheCoordinator → NamespaceManager wiring:
 This validates the full invalidation pipeline without needing a running FastAPI server.
 """
 
-from __future__ import annotations
-
 import pytest
 from sqlalchemy import create_engine
 

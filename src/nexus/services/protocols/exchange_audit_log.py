@@ -12,8 +12,6 @@ References:
     - Issue #1360: Exchange audit trail
 """
 
-from __future__ import annotations
-
 from datetime import datetime
 from decimal import Decimal
 from typing import Any, Protocol, runtime_checkable

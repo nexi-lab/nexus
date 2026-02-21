@@ -10,8 +10,6 @@ Classification rules:
 4. Starvation promotion: BACKGROUND → BATCH if wait > threshold
 """
 
-from __future__ import annotations
-
 from nexus.bricks.scheduler.constants import (
     STARVATION_PROMOTION_THRESHOLD_SECS,
     TIER_TO_CLASS,

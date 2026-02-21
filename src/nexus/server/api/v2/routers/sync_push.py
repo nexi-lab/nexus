@@ -6,8 +6,6 @@ flushing pending backlog entries to the source backend.
     POST /api/v2/sync/mounts/{mount_point}/push
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 from urllib.parse import unquote

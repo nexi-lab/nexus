@@ -1,7 +1,5 @@
 """Tests for create, unlink, mkdir, rmdir, rename mutation operations."""
 
-from __future__ import annotations
-
 import errno
 from typing import Any
 from unittest.mock import MagicMock, patch

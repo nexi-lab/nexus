@@ -5,8 +5,6 @@ pipeline: protocol params class, method exposure, and parameter parsing.
 No Docker or live server required.
 """
 
-from __future__ import annotations
-
 import dataclasses
 
 import pytest

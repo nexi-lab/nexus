@@ -4,8 +4,6 @@ Issue #1359 Phase 4: Automatic throttling based on fraud scores,
 agent suspension with appeal workflow, reputation integration.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import uuid
@@ -51,10 +49,10 @@ class ResponseService:
 
     def __init__(
         self,
-        session_factory: Callable[[], AsyncSession],
-        anomaly_service: AnomalyServiceProtocol | None = None,
-        collusion_service: CollusionServiceProtocol | None = None,
-        graph_service: GovernanceGraphProtocol | None = None,
+        session_factory: "Callable[[], AsyncSession]",
+        anomaly_service: "AnomalyServiceProtocol | None" = None,
+        collusion_service: "CollusionServiceProtocol | None" = None,
+        graph_service: "GovernanceGraphProtocol | None" = None,
     ) -> None:
         self._session_factory = session_factory
         self._anomaly_service = anomaly_service

@@ -1,7 +1,5 @@
 """Tests for X (Twitter) OAuth PKCE provider."""
 
-from __future__ import annotations
-
 import httpx
 import pytest
 

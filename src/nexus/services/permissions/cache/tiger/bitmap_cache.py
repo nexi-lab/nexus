@@ -14,8 +14,6 @@ Write path: L3 first (source of truth) -> L2 (if available) -> L1
 Related: Issue #682
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 import time
@@ -87,10 +85,10 @@ class TigerCache:
 
     def __init__(
         self,
-        engine: Engine,
-        resource_map: TigerResourceMap | None = None,
-        rebac_manager: EnhancedReBACManager | None = None,
-        dragonfly_cache: TigerCacheProtocol | None = None,
+        engine: "Engine",
+        resource_map: "TigerResourceMap | None" = None,
+        rebac_manager: "EnhancedReBACManager | None" = None,
+        dragonfly_cache: "TigerCacheProtocol | None" = None,
     ):
         """Initialize Tiger Cache.
 
@@ -108,7 +106,7 @@ class TigerCache:
         self._is_postgresql = "postgresql" in str(engine.url)
 
         # L2: Dragonfly distributed cache (optional)
-        self._dragonfly: TigerCacheProtocol | None = dragonfly_cache
+        self._dragonfly: "TigerCacheProtocol | None" = dragonfly_cache
         self._dragonfly_url: str | None = None  # Cached URL for sync Redis client
 
         # L1: In-memory cache for hot entries
@@ -123,11 +121,11 @@ class TigerCache:
         self._l2_executor: Any | None = None
 
     @property
-    def resource_map(self) -> TigerResourceMap:
+    def resource_map(self) -> "TigerResourceMap":
         """Public accessor for the resource map."""
         return self._resource_map
 
-    def set_dragonfly_cache(self, dragonfly_cache: TigerCacheProtocol | None) -> None:
+    def set_dragonfly_cache(self, dragonfly_cache: "TigerCacheProtocol | None") -> None:
         """Set or update the Dragonfly cache backend.
 
         This allows late binding of the Dragonfly cache after initialization,
@@ -266,7 +264,7 @@ class TigerCache:
             logger.warning(f"[TIGER] L2 Dragonfly error: {e}")
             return None
 
-    def set_rebac_manager(self, manager: EnhancedReBACManager) -> None:
+    def set_rebac_manager(self, manager: "EnhancedReBACManager") -> None:
         """Set the ReBAC manager for permission computation."""
         self._rebac_manager = manager
 
@@ -277,7 +275,7 @@ class TigerCache:
         permission: str,
         resource_type: str,
         zone_id: str,  # noqa: ARG002 - Kept for API compatibility, not used in cache key (Issue #979)
-        conn: Connection | None = None,
+        conn: "Connection | None" = None,
     ) -> set[int]:
         """Get all resource integer IDs that subject can access.
 
@@ -318,7 +316,7 @@ class TigerCache:
         permission: str,
         resource_type: str,
         resource_id: str,
-        conn: Connection | None = None,
+        conn: "Connection | None" = None,
     ) -> bool | None:
         """Check if subject has permission on resource using cached bitmap.
 
@@ -379,7 +377,7 @@ class TigerCache:
         permission: str,
         resource_type: str,
         zone_id: str,  # noqa: ARG002 - Kept for API compatibility, not used in cache key (Issue #979)
-        conn: Connection | None = None,
+        conn: "Connection | None" = None,
     ) -> bytes | None:
         """Get serialized bitmap bytes for Rust interop (Issue #896).
 
@@ -415,7 +413,7 @@ class TigerCache:
             TC.resource_type == key.resource_type,
         )
 
-        def execute(connection: Connection) -> bytes | None:
+        def execute(connection: "Connection") -> bytes | None:
             result = connection.execute(stmt)
             row = result.fetchone()
             if row:
@@ -548,7 +546,7 @@ class TigerCache:
         return paths
 
     def _load_from_db(
-        self, key: CacheKey, conn: Connection | None = None, skip_l2: bool = False
+        self, key: CacheKey, conn: "Connection | None" = None, skip_l2: bool = False
     ) -> Any:
         """Load bitmap from L2 (Dragonfly) or L3 (PostgreSQL).
 
@@ -596,7 +594,7 @@ class TigerCache:
             TC.resource_type == key.resource_type,
         )
 
-        def execute(connection: Connection) -> Any:  # Returns Bitmap or None
+        def execute(connection: "Connection") -> Any:  # Returns Bitmap or None
             result = connection.execute(stmt)
             row = result.fetchone()
             if row:
@@ -631,7 +629,7 @@ class TigerCache:
             with self._engine.connect() as new_conn:
                 return execute(new_conn)
 
-    def _bulk_load_from_db(self, keys: list[CacheKey], conn: Connection) -> dict[CacheKey, Any]:
+    def _bulk_load_from_db(self, keys: list[CacheKey], conn: "Connection") -> dict[CacheKey, Any]:
         """Bulk load bitmaps from database in a single query.
 
         Args:
@@ -775,7 +773,7 @@ class TigerCache:
         zone_id: str,
         resource_int_ids: set[int],
         revision: int,
-        conn: Connection | None = None,
+        conn: "Connection | None" = None,
     ) -> None:
         """Update the cache for a subject.
 
@@ -814,7 +812,7 @@ class TigerCache:
             "revision": revision,
         }
 
-        def execute(connection: Connection) -> None:
+        def execute(connection: "Connection") -> None:
             if self._is_postgresql:
                 pg_stmt = pg_insert(TC).values(**params, created_at=now, updated_at=now)
                 pg_stmt = pg_stmt.on_conflict_do_update(
@@ -881,7 +879,7 @@ class TigerCache:
         permission: str | None = None,
         resource_type: str | None = None,
         zone_id: str | None = None,
-        conn: Connection | None = None,
+        conn: "Connection | None" = None,
     ) -> int:
         """Invalidate cache entries matching the criteria.
 
@@ -919,7 +917,7 @@ class TigerCache:
         if conditions:
             stmt = stmt.where(*conditions)
 
-        def execute(connection: Connection) -> int:
+        def execute(connection: "Connection") -> int:
             result = connection.execute(stmt)
             return result.rowcount
 

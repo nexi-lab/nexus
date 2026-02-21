@@ -11,8 +11,6 @@ Usage:
     auth = container.resolve(AuthBrickProtocol)
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TypeVar
 

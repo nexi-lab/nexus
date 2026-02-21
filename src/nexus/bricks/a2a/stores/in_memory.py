@@ -6,8 +6,6 @@ terminates.  This is the default store when no persistent backend is
 configured.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 

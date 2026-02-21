@@ -6,8 +6,6 @@ These tests verify:
 2. modified_at only updates on real changes (writes), NOT on reads
 """
 
-from __future__ import annotations
-
 import time
 import uuid
 from datetime import UTC, datetime

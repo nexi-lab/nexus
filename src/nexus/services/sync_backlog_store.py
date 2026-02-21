@@ -4,8 +4,6 @@ Manages the sync_backlog table: enqueue, fetch, status transitions, and expiry.
 Inherits shared session/dialect logic from SyncStoreBase.
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -418,7 +416,7 @@ class SyncBacklogStore(SyncStoreBase):
             session.close()
 
     @staticmethod
-    def _to_entry(row: SyncBacklogModel) -> SyncBacklogEntry:
+    def _to_entry(row: "SyncBacklogModel") -> SyncBacklogEntry:
         """Convert SQLAlchemy model to frozen dataclass."""
         return SyncBacklogEntry(
             id=row.id,

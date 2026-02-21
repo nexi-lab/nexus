@@ -7,8 +7,6 @@ Provides CRUD operations for BackendChangeLogModel to support delta sync.
 Uses SyncStoreBase for shared session management and dialect detection.
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass

@@ -18,8 +18,6 @@ Usage:
     store = InMemoryCacheStore(max_size=10000)
 """
 
-from __future__ import annotations
-
 import asyncio
 import threading
 import time

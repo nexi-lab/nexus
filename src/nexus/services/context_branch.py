@@ -13,8 +13,6 @@ Architecture decisions (from plan review):
     P4-B: Skip auto-commit if workspace unchanged
 """
 
-from __future__ import annotations
-
 import logging
 import re
 import time
@@ -144,9 +142,9 @@ class ContextBranchService:
 
     def __init__(
         self,
-        workspace_manager: WorkspaceManager,
+        workspace_manager: "WorkspaceManager",
         session_factory: Any,
-        rebac_manager: ReBACManager | None = None,
+        rebac_manager: "ReBACManager | None" = None,
         default_zone_id: str | None = None,
         default_agent_id: str | None = None,
     ):

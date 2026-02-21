@@ -1,7 +1,5 @@
 """Tests for BrickContainer DI container (Issue #1393)."""
 
-from __future__ import annotations
-
 from typing import Protocol, runtime_checkable
 
 import pytest

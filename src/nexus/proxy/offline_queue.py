@@ -3,8 +3,6 @@
 Uses SQLAlchemy async ORM with aiosqlite for crash-safe persistence.
 """
 
-from __future__ import annotations
-
 import json
 import os
 import time

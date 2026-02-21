@@ -10,8 +10,6 @@ lookups instead of O(depth) tree walks.
 Related: Issue #1459 Phase 13, Leopard pattern
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -115,8 +113,8 @@ class DirectoryExpander:
 
     def __init__(
         self,
-        engine: Engine,
-        tiger_cache: TigerCache | None = None,
+        engine: "Engine",
+        tiger_cache: "TigerCache | None" = None,
         metadata_store: Any | None = None,
     ) -> None:
         self._engine = engine

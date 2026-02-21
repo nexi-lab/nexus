@@ -12,8 +12,6 @@ Write performance: callers should use ``asyncio.create_task()`` to
 fire-and-forget audit writes so they never block the hot path.
 """
 
-from __future__ import annotations
-
 import hashlib
 import json
 import logging
@@ -30,7 +28,6 @@ from nexus.storage.models.exchange_audit_log import ExchangeAuditLogModel
 from nexus.storage.query_mixin import AppendOnlyQueryMixin
 
 logger = logging.getLogger(__name__)
-
 
 # ---------------------------------------------------------------------------
 # Immutability guards (Decision #3)

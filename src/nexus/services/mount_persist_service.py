@@ -25,8 +25,6 @@ Example:
     ```
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from typing import TYPE_CHECKING, Any
@@ -50,9 +48,9 @@ class MountPersistService:
 
     def __init__(
         self,
-        mount_manager: MountManager | None,
-        mount_service: MountCoreService,
-        sync_service: SyncService | None = None,
+        mount_manager: "MountManager | None",
+        mount_service: "MountCoreService",
+        sync_service: "SyncService | None" = None,
     ):
         """Initialize persist service.
 
@@ -87,7 +85,7 @@ class MountPersistService:
         owner_user_id: str | None = None,
         zone_id: str | None = None,
         description: str | None = None,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> str:
         """Save mount configuration to database.
 
@@ -152,7 +150,7 @@ class MountPersistService:
     def load_mount(
         self,
         mount_point: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> str:
         """Load saved mount configuration and activate it.
 
@@ -297,7 +295,7 @@ class MountPersistService:
         self,
         owner_user_id: str | None = None,
         zone_id: str | None = None,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> list[dict[str, Any]]:
         """List saved mount configurations.
 

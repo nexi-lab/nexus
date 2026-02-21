@@ -4,8 +4,6 @@ Tests delegation to NexusFS for file ops, metadata, ReBAC,
 hierarchy, routing, and session access.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest

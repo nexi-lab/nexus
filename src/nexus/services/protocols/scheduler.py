@@ -12,8 +12,6 @@ References:
     - Issue #1274: Astraea-style state-aware scheduler
 """
 
-from __future__ import annotations
-
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable

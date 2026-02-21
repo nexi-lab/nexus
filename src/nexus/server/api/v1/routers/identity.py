@@ -7,8 +7,6 @@ Provides agent cryptographic identity endpoints:
 Extracted from ``fastapi_server.py`` during monolith decomposition (#1288).
 """
 
-from __future__ import annotations
-
 import asyncio
 import base64
 import logging

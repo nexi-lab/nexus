@@ -4,8 +4,6 @@ Validates that FileReaderProtocol is runtime_checkable, mock implementations
 satisfy isinstance checks, and all method contracts are correct.
 """
 
-from __future__ import annotations
-
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any

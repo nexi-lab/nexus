@@ -17,8 +17,6 @@ Usage::
 Issue #1366.
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import enum
@@ -191,7 +189,7 @@ class AsyncCircuitBreaker:
 
     # -- context manager -----------------------------------------------------
 
-    async def __aenter__(self) -> AsyncCircuitBreaker:
+    async def __aenter__(self) -> "AsyncCircuitBreaker":
         state = self.current_state
 
         if state is CircuitState.CLOSED:
@@ -293,13 +291,13 @@ class ResiliencyManager:
 
     def __init__(self, config: ResiliencyConfig) -> None:
         self._config = config
-        self._breakers: dict[str, AsyncCircuitBreaker] = {}
+        self._breakers: "dict[str, AsyncCircuitBreaker]" = {}
 
     @property
     def config(self) -> ResiliencyConfig:
         return self._config
 
-    def get_breaker(self, name: str) -> AsyncCircuitBreaker:
+    def get_breaker(self, name: str) -> "AsyncCircuitBreaker":
         """Get or create a circuit breaker by policy name (idempotent)."""
         if name in self._breakers:
             return self._breakers[name]

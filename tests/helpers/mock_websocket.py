@@ -1,7 +1,5 @@
 """Shared MockWebSocket for testing WebSocket-related functionality."""
 
-from __future__ import annotations
-
 import asyncio
 from typing import Any
 

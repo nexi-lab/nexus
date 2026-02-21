@@ -16,8 +16,6 @@ Usage:
     pytest tests/integration/test_delta_sync_postgres.py -v --tb=short
 """
 
-from __future__ import annotations
-
 import os
 from datetime import UTC, datetime
 
@@ -54,7 +52,6 @@ pytestmark = pytest.mark.skipif(
     not is_postgres_available(),
     reason="PostgreSQL not available (start with: docker compose --profile test up -d postgres-test)",
 )
-
 
 # ============================================================================
 # Fixtures

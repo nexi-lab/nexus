@@ -3,8 +3,6 @@
 Provides workspace-level version control for time-travel debugging and rollback.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from typing import TYPE_CHECKING, Any
@@ -41,9 +39,9 @@ class WorkspaceManager:
 
     def __init__(
         self,
-        metadata: MetastoreABC,
-        backend: Backend,
-        rebac_manager: ReBACManager | None = None,
+        metadata: "MetastoreABC",
+        backend: "Backend",
+        rebac_manager: "ReBACManager | None" = None,
         zone_id: str | None = None,
         agent_id: str | None = None,
         session_factory: Any | None = None,

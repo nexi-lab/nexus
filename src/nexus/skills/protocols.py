@@ -11,8 +11,6 @@ Verification:
 - Contract test verifies NexusFilesystem ABC satisfies this protocol
 """
 
-from __future__ import annotations
-
 from typing import Any, Protocol, runtime_checkable
 
 

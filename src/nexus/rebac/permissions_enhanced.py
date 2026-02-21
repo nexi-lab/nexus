@@ -10,8 +10,6 @@ Implements:
 This ensures admins have traceable, scoped access instead of unlimited bypass.
 """
 
-from __future__ import annotations
-
 import json
 import uuid
 from contextlib import contextmanager

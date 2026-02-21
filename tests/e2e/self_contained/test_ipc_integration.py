@@ -5,8 +5,6 @@ process → dead_letter. Uses InMemoryVFS to test components working
 together without kernel dependencies.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 import pytest

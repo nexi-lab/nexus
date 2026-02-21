@@ -12,8 +12,6 @@ Provides:
 - ABAC condition evaluation
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from contextlib import contextmanager, suppress
@@ -57,7 +55,7 @@ class TupleRepository:
                     Defaults to ``engine`` when not provided.
     """
 
-    def __init__(self, engine: Engine, read_engine: Engine | None = None) -> None:
+    def __init__(self, engine: "Engine", read_engine: "Engine | None" = None) -> None:
         self.engine = engine
         self.read_engine = read_engine or engine
 
@@ -109,7 +107,7 @@ class TupleRepository:
                 logger.debug("Failed to close connection: %s", e)
 
     @contextmanager
-    def connection(self, *, readonly: bool = False) -> Generator[Any, None, None]:
+    def connection(self, *, readonly: bool = False) -> "Generator[Any, None, None]":
         """Context manager for database connections.
 
         Uses engine.connect() which properly goes through the connection pool

@@ -1,7 +1,5 @@
 """Tests for @fuse_operation error mapping decorator."""
 
-from __future__ import annotations
-
 import errno
 
 import pytest

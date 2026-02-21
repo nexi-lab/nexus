@@ -4,8 +4,6 @@ This module tests the deferred permission buffer that optimizes
 permission operations via batching and background flushing.
 """
 
-from __future__ import annotations
-
 import threading
 import time
 from unittest.mock import MagicMock

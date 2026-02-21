@@ -5,8 +5,6 @@ and searchable text — without requiring the compiled Rust PyO3 library.
 A FakeLocalRaft simulates the real PyO3 LocalRaft behavior in pure Python.
 """
 
-from __future__ import annotations
-
 import json
 import time
 from dataclasses import dataclass, field

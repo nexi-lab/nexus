@@ -5,8 +5,6 @@ IPCVFSDriver bridges the CAS-oriented Backend ABC with path-oriented
 IPC storage, exposing agent messaging via the VFS Router.
 """
 
-from __future__ import annotations
-
 import json
 
 import pytest

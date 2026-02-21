@@ -10,8 +10,6 @@ Extracted from ``server/auth/token_manager.py`` to keep the server layer
 as a thin API adapter and push DB logic into the storage tier.
 """
 
-from __future__ import annotations
-
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any

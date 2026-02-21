@@ -9,8 +9,6 @@ Issue #1428 adds WorkspaceSnapshot, MemoryQuery, and Metrics integration tests.
 Uses tmp_path for filesystem and in-memory stubs for executors.
 """
 
-from __future__ import annotations
-
 import json
 import types
 from datetime import datetime

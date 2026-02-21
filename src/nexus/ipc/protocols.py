@@ -14,8 +14,6 @@ This keeps the IPC brick testable in isolation — unit tests inject
 in-memory fakes that satisfy these Protocols.
 """
 
-from __future__ import annotations
-
 from collections.abc import AsyncIterator
 from typing import Any, Protocol, runtime_checkable
 

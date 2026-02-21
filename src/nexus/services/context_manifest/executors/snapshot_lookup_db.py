@@ -7,8 +7,6 @@ SnapshotLookup: retrieve snapshot metadata by ID or latest.
 ManifestReader: read file paths from a CAS-stored workspace manifest.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from typing import Any, Protocol, runtime_checkable

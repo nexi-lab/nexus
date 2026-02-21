@@ -11,8 +11,6 @@ Tests the full pipeline:
 Requires: no external API keys (uses mock LLM generator).
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 import os

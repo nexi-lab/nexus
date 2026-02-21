@@ -11,8 +11,6 @@ Tests verify:
 - Concurrent operation safety
 """
 
-from __future__ import annotations
-
 import asyncio
 from decimal import Decimal
 

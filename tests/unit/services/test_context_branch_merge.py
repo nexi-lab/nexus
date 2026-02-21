@@ -11,8 +11,6 @@
 8. One deletes, other modifies (conflict)
 """
 
-from __future__ import annotations
-
 import hashlib
 from unittest.mock import MagicMock
 

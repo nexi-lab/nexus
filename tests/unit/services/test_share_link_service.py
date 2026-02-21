@@ -6,8 +6,6 @@ permission enforcement, and access logging.
 All async service methods are tested via asyncio.run().
 """
 
-from __future__ import annotations
-
 import asyncio
 from unittest.mock import MagicMock
 

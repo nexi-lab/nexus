@@ -11,8 +11,6 @@ References:
     - Issue #1357: Extensible protocol dispatch for agent commerce
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -31,8 +29,8 @@ class PaymentProtocol(Protocol):
     """
 
     @property
-    def protocol_name(self) -> TransactionProtocol: ...
+    def protocol_name(self) -> "TransactionProtocol": ...
 
     def can_handle(self, to: str, metadata: dict[str, Any] | None = None) -> bool: ...
 
-    async def transfer(self, request: ProtocolTransferRequest) -> ProtocolTransferResult: ...
+    async def transfer(self, request: "ProtocolTransferRequest") -> "ProtocolTransferResult": ...

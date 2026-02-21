@@ -6,8 +6,6 @@ Skip if dependencies not available or Docker is down.
 Issue #1138: Event Stream Export.
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.core.event_bus import FileEvent, FileEventType

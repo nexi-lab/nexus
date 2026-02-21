@@ -12,8 +12,6 @@ because FastAPI ``Depends()`` is not supported on WebSocket routes.
 Extracted from ``fastapi_server.py`` during monolith decomposition (#1288).
 """
 
-from __future__ import annotations
-
 import logging
 import uuid
 from datetime import datetime
@@ -37,7 +35,6 @@ from nexus.server.dependencies import get_auth_result, get_operation_context, re
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["events"])
-
 
 # =============================================================================
 # WebSocket endpoints (no Depends — use websocket.app.state directly)

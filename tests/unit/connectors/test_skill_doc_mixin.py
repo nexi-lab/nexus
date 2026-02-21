@@ -1,7 +1,5 @@
 """Characterization tests for SkillDocMixin — captures current behavior before refactoring."""
 
-from __future__ import annotations
-
 import pytest
 from pydantic import BaseModel
 

@@ -7,8 +7,6 @@ adaptive-k strategies.
 Issue: #1094 (parallel indexing pipeline)
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from collections.abc import Callable

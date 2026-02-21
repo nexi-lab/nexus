@@ -7,8 +7,6 @@ Tests cover:
 - Edge cases (full file, single byte, empty range)
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 
 import pytest

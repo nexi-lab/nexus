@@ -8,8 +8,6 @@ Verifies that:
 5. Non-compliant classes are correctly rejected
 """
 
-from __future__ import annotations
-
 import hashlib
 from typing import Any
 

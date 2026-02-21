@@ -10,8 +10,6 @@ Phase 2: Core Refactoring (Issue #988, Task 2.9)
 Extracted from: nexus_fs_llm.py (286 lines)
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
@@ -112,7 +110,7 @@ class LLMService:
         api_key: str | None = None,
         use_search: bool = True,
         search_mode: str = "semantic",
-        provider: LLMProvider | None = None,
+        provider: "LLMProvider | None" = None,
     ) -> str:
         """Read document with LLM and return answer.
 
@@ -184,8 +182,8 @@ class LLMService:
         search_mode: str = "semantic",
         search_limit: int = 10,
         include_citations: bool = True,
-        provider: LLMProvider | None = None,
-    ) -> DocumentReadResult:
+        provider: "LLMProvider | None" = None,
+    ) -> "DocumentReadResult":
         """Read document with LLM and return detailed result.
 
         Returns full DocumentReadResult with answer, citations, sources,
@@ -266,7 +264,7 @@ class LLMService:
         api_key: str | None = None,
         use_search: bool = True,
         search_mode: str = "semantic",
-        provider: LLMProvider | None = None,
+        provider: "LLMProvider | None" = None,
     ) -> AsyncIterator[str]:
         """Stream document reading response.
 
@@ -334,12 +332,12 @@ class LLMService:
     @rpc_expose(description="Create an LLM document reader for advanced usage")
     def create_llm_reader(
         self,
-        provider: LLMProvider | None = None,
+        provider: "LLMProvider | None" = None,
         model: str | None = None,
         api_key: str | None = None,
         system_prompt: str | None = None,
         max_context_tokens: int = 3000,
-    ) -> LLMDocumentReader:
+    ) -> "LLMDocumentReader":
         """Create an LLM document reader for advanced usage.
 
         Factory method that creates an LLMDocumentReader instance for users
@@ -416,12 +414,12 @@ class LLMService:
 
     def _get_llm_reader(
         self,
-        provider: LLMProvider | None = None,
+        provider: "LLMProvider | None" = None,
         model: str | None = None,
         api_key: str | None = None,
         system_prompt: str | None = None,
         max_context_tokens: int = 3000,
-    ) -> LLMDocumentReader:
+    ) -> "LLMDocumentReader":
         """Get or create LLM document reader.
 
         Internal helper that creates an LLMDocumentReader with proper

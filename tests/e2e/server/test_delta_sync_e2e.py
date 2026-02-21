@@ -11,8 +11,6 @@ Usage:
     pytest tests/integration/test_delta_sync_e2e.py -v --tb=short -o "addopts="
 """
 
-from __future__ import annotations
-
 import os
 import signal
 import socket
@@ -57,7 +55,6 @@ pytestmark = pytest.mark.skipif(
     not is_postgres_available(),
     reason="PostgreSQL not available (start with: docker compose --profile test up -d postgres-test)",
 )
-
 
 # ============================================================================
 # Part 1: Server + Auth tests (real FastAPI server with PostgreSQL)

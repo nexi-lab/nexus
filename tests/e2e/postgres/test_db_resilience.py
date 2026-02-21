@@ -4,8 +4,6 @@ Tests simulate database outages and verify that the application recovers
 gracefully. Requires a running PostgreSQL instance for DB tests.
 """
 
-from __future__ import annotations
-
 import asyncio
 import os
 

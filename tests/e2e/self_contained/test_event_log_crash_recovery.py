@@ -7,8 +7,6 @@ handles truncated records and corrupted CRC bytes.
 Issue #1397
 """
 
-from __future__ import annotations
-
 import struct
 from pathlib import Path
 

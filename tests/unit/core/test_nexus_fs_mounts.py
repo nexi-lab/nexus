@@ -11,8 +11,6 @@ Tests cover mount management operations:
 - sync_mount: Sync metadata from connector backend
 """
 
-from __future__ import annotations
-
 import contextlib
 import tempfile
 from collections.abc import Generator

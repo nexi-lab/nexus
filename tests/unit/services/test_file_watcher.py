@@ -9,8 +9,6 @@ Tests cover:
 Related: Issue #1106 Block 2
 """
 
-from __future__ import annotations
-
 import asyncio
 import sys
 from unittest.mock import MagicMock

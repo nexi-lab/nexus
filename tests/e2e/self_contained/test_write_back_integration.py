@@ -5,8 +5,6 @@ Tests the full flow: Nexus write event -> backlog enqueue -> backend write-back
 and mock backend. Includes conflict resolution integration tests.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock

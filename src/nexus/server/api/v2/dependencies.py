@@ -16,7 +16,6 @@ from fastapi import Depends, HTTPException, Request
 
 logger = logging.getLogger(__name__)
 
-
 # =============================================================================
 # Internal lazy-import helpers (avoid circular imports with fastapi_server)
 # =============================================================================

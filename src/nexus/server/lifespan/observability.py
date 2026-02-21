@@ -4,8 +4,6 @@ Issue #2072: Consolidate observability init/shutdown into unified registry.
 Replaces 6 inline _startup_* / 3 shutdown_* calls with a single registry.
 """
 
-from __future__ import annotations
-
 import logging
 import os
 from typing import TYPE_CHECKING
@@ -46,7 +44,7 @@ def create_registry() -> ObservabilityRegistry:
     return registry
 
 
-async def startup_observability(app: FastAPI) -> None:
+async def startup_observability(app: "FastAPI") -> None:
     """Initialize all observability subsystems via the registry."""
     global _registry
     _registry = create_registry()
@@ -73,7 +71,7 @@ async def shutdown_observability() -> None:
         _registry = None
 
 
-def _startup_thread_pool(app: FastAPI) -> None:
+def _startup_thread_pool(app: "FastAPI") -> None:
     """Configure thread pool size (Issue #932)."""
     from anyio import to_thread
 

@@ -5,8 +5,6 @@ with validation and error handling. Tests the mixin methods directly
 via a lightweight stub to avoid the heavy NexusFS constructor.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest

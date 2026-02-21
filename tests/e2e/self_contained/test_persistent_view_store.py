@@ -4,8 +4,6 @@ Tests with SQLite-backed store — verifies real SQL operations, JSON round-trip
 upsert semantics, and concurrent access patterns.
 """
 
-from __future__ import annotations
-
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest

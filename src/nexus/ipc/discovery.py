@@ -8,8 +8,6 @@ Bridges internal discovery (IPC storage) with external discovery
 (A2A Agent Card at ``/.well-known/agent.json``).
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from dataclasses import dataclass
@@ -65,7 +63,7 @@ class AgentDiscovery:
         storage: IPCStorageDriver,
         zone_id: str = "root",
         cache_ttl_seconds: float = 10.0,
-        cache_store: CacheStoreABC | None = None,
+        cache_store: "CacheStoreABC | None" = None,
     ) -> None:
         self._storage = storage
         self._zone_id = zone_id

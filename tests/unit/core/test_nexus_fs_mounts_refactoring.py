@@ -6,8 +6,6 @@ Tests cover the refactoring improvements:
 - MetadataSyncResult: Named tuple for metadata sync results
 """
 
-from __future__ import annotations
-
 import tempfile
 from collections.abc import Generator
 from dataclasses import dataclass

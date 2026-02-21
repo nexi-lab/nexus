@@ -20,8 +20,6 @@ References:
 Related: Issue #1206 (x402 protocol integration)
 """
 
-from __future__ import annotations
-
 import base64
 import hashlib
 import hmac
@@ -71,7 +69,6 @@ _WALLET_REGEX = re.compile(r"^0x[0-9a-fA-F]{40}$")
 
 # Default cache TTL for payment verifications
 DEFAULT_CACHE_TTL_SECONDS = 60.0
-
 
 # =============================================================================
 # Exceptions
@@ -229,14 +226,14 @@ class X402Client:
         )
 
         # Lazy-initialized persistent HTTP client with connection pooling
-        self._http_client: httpx.AsyncClient | None = None
+        self._http_client: "httpx.AsyncClient | None" = None
 
     @property
     def caip2_network(self) -> str:
         """Get CAIP-2 formatted network identifier."""
         return NETWORK_CAIP2_MAP.get(self.network, f"eip155:{self.network}")
 
-    async def _get_http_client(self) -> httpx.AsyncClient:
+    async def _get_http_client(self) -> "httpx.AsyncClient":
         """Get or create persistent HTTP client with connection pooling.
 
         Connection pooling reduces TCP/TLS handshake overhead for
@@ -558,7 +555,7 @@ class X402Client:
     async def process_topup_webhook(
         self,
         webhook_payload: dict[str, Any],
-        credits_service: CreditsService,
+        credits_service: "CreditsService",
     ) -> str:
         """Process x402 payment webhook and credit agent in TigerBeetle.
 

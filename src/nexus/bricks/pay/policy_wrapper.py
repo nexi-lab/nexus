@@ -10,8 +10,6 @@ Phases:
     4. DSL rules (recipient, time window, metadata, amount range)
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from decimal import Decimal
@@ -41,8 +39,8 @@ class PolicyEnforcedPayment:
 
     def __init__(
         self,
-        inner: PaymentProtocol,
-        policy_service: SpendingPolicyService,
+        inner: "PaymentProtocol",
+        policy_service: "SpendingPolicyService",
     ) -> None:
         self._inner = inner
         self._policy_service = policy_service

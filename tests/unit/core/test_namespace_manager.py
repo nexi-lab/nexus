@@ -11,8 +11,6 @@ Tests cover:
 - PermissionEnforcer integration: admin bypass, namespace check, ReBAC check
 """
 
-from __future__ import annotations
-
 import threading
 from unittest.mock import patch
 

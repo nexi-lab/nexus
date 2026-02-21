@@ -1,7 +1,5 @@
 """File I/O operations: open, read, write, release."""
 
-from __future__ import annotations
-
 import errno
 import logging
 from typing import cast

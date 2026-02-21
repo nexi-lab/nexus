@@ -1,7 +1,5 @@
 """EventBusBase — shared ABC for all event bus backends."""
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from abc import ABC, abstractmethod

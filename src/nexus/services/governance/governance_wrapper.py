@@ -7,8 +7,6 @@ PolicyEnforcedPayment (Lego Architecture Mechanism 2).
 Wrapper chain: GovernanceEnforcedPayment → PolicyEnforcedPayment → CreditsPaymentProtocol
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -54,9 +52,9 @@ class GovernanceEnforcedPayment:
 
     def __init__(
         self,
-        inner: PaymentProtocol,
-        graph_service: GovernanceGraphProtocol,
-        anomaly_service: AnomalyServiceProtocol,
+        inner: "PaymentProtocol",
+        graph_service: "GovernanceGraphProtocol",
+        anomaly_service: "AnomalyServiceProtocol",
     ) -> None:
         self._inner = inner
         self._graph_service = graph_service
@@ -71,7 +69,7 @@ class GovernanceEnforcedPayment:
         """Delegate to inner protocol."""
         return self._inner.can_handle(to, metadata)
 
-    async def transfer(self, request: ProtocolTransferRequest) -> ProtocolTransferResult:
+    async def transfer(self, request: "ProtocolTransferRequest") -> "ProtocolTransferResult":
         """Execute transfer with governance enforcement.
 
         Pre-check: governance constraint check (~1ms).

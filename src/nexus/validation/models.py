@@ -4,8 +4,6 @@ Pydantic models for structured validation results, errors, and configuration.
 All models are immutable (frozen) to prevent accidental mutation.
 """
 
-from __future__ import annotations
-
 import re
 from typing import Literal
 

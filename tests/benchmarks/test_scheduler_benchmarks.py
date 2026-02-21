@@ -4,8 +4,6 @@ Performance benchmarks for HRRN ranking and classifier throughput.
 Run with: uv run pytest tests/benchmarks/test_scheduler_benchmarks.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import time
 
 import pytest

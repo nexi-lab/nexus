@@ -8,8 +8,6 @@ Storage Affinity: **RecordStore** — relational upsert via RecordStoreABC.engin
 Upsert semantics: DELETE + INSERT (portable across PostgreSQL and SQLite).
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from datetime import UTC, datetime
@@ -72,7 +70,7 @@ class PostgresPersistentViewStore:
     Routes through RecordStoreABC for engine access (Four Pillars compliance).
     """
 
-    def __init__(self, record_store: RecordStoreABC) -> None:
+    def __init__(self, record_store: "RecordStoreABC") -> None:
         self._engine = record_store.engine
 
     def save_view(

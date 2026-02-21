@@ -17,8 +17,6 @@ Example:
     ```
 """
 
-from __future__ import annotations
-
 import bisect
 import logging
 import re
@@ -70,7 +68,7 @@ class SyncContext:
     include_patterns: list[str] | None = None
     exclude_patterns: list[str] | None = None
     generate_embeddings: bool = False
-    context: OperationContext | None = None
+    context: "OperationContext | None" = None
     progress_callback: ProgressCallback | None = None
     # Issue #1127: Delta sync support
     full_sync: bool = False  # Force full scan, bypassing delta checks
@@ -114,7 +112,7 @@ class SyncService:
     # Memory-efficient chunking: flush batch every N paths
     PATHS_CHUNK_SIZE = 10000
 
-    def __init__(self, gateway: NexusFSGateway):
+    def __init__(self, gateway: "NexusFSGateway"):
         """Initialize sync service.
 
         Args:
@@ -124,10 +122,10 @@ class SyncService:
         # Issue #1127: Initialize change log store for delta sync
         self._change_log = ChangeLogStore(gateway.session_factory)
         # Issue #1127: Per-mount sync locks to prevent concurrent races
-        self._mount_locks: dict[str, threading.Lock] = {}
+        self._mount_locks: "dict[str, threading.Lock]" = {}
         self._lock_guard = threading.Lock()
 
-    def _get_mount_lock(self, mount_point: str) -> threading.Lock:
+    def _get_mount_lock(self, mount_point: str) -> "threading.Lock":
         """Get or create a lock for a specific mount point.
 
         Thread-safe: uses a guard lock to protect the mount_locks dict.
@@ -672,7 +670,7 @@ class SyncService:
         path: str,
         backend_name: str,
         zone_id: str,
-        file_info: FileInfo,
+        file_info: "FileInfo",
     ) -> None:
         """Enqueue a change log upsert for batch flush, or upsert immediately.
 
@@ -707,7 +705,7 @@ class SyncService:
                 content_hash=file_info.content_hash,
             )
 
-    def _file_unchanged(self, file_info: FileInfo, cached: ChangeLogEntry) -> bool:
+    def _file_unchanged(self, file_info: "FileInfo", cached: ChangeLogEntry) -> bool:
         """Check if file is unchanged based on rsync-style comparison (Issue #1127).
 
         Uses tiered comparison strategy:
@@ -1170,7 +1168,7 @@ class SyncService:
         self,
         path: str,
         permission: str,
-        context: OperationContext | None,
+        context: "OperationContext | None",
     ) -> bool:
         """Check if user has permission on path.
 

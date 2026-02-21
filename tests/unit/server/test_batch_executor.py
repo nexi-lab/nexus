@@ -4,8 +4,6 @@ Tests the batch operation executor in isolation with a mock AsyncNexusFS.
 Covers all 13 edge case scenarios identified in the architecture review.
 """
 
-from __future__ import annotations
-
 import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock

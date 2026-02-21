@@ -7,8 +7,6 @@ Design reference:
     - NEXUS-LEGO-ARCHITECTURE.md PART 16, Recursive Wrapping Rule #2
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, PropertyMock
 
 import pytest

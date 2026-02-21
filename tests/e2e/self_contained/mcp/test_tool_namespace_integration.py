@@ -11,8 +11,6 @@ These tests verify:
     5. Performance: filtering 30 tools under 10ms
 """
 
-from __future__ import annotations
-
 import json
 import time
 from unittest.mock import Mock

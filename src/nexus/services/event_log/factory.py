@@ -8,8 +8,6 @@ the transactional outbox pattern (``EventDeliveryWorker``).
 Tracked by: #1397, #1241
 """
 
-from __future__ import annotations
-
 import logging
 
 from nexus.services.event_log.protocol import EventLogConfig, EventLogProtocol

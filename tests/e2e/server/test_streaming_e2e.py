@@ -11,8 +11,6 @@ permissions enabled. Specifically tests:
 5. Memory behavior: server doesn't OOM on moderately-sized files
 """
 
-from __future__ import annotations
-
 import base64
 import hashlib
 import os

@@ -13,8 +13,6 @@ Tests the full flow:
 5. Performance: auth + permission check completes within acceptable latency
 """
 
-from __future__ import annotations
-
 import os
 import signal
 import socket

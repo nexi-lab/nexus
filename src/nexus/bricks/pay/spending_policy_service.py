@@ -16,8 +16,6 @@ Ledger update (record_spending):
 Default behavior: open by default (no policy = allow all transactions).
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import time
@@ -83,7 +81,7 @@ class SpendingPolicyService:
 
     def __init__(
         self,
-        session_factory: Callable[[], AsyncSession],
+        session_factory: "Callable[[], AsyncSession]",
         *,
         cache_ttl: float = _CACHE_TTL,
         max_cache_entries: int = 4096,
@@ -865,7 +863,7 @@ def _to_micro_or_none(value: Decimal | None) -> int | None:
     return credits_to_micro(value)
 
 
-def _model_to_policy(model: SpendingPolicyModel) -> SpendingPolicy:
+def _model_to_policy(model: "SpendingPolicyModel") -> SpendingPolicy:
     """Convert SQLAlchemy model to frozen dataclass."""
     rules_parsed: list[dict[str, Any]] | None = None
     if model.rules is not None:

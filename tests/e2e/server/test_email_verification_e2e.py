@@ -19,8 +19,6 @@ Run with:
     pytest tests/e2e/test_email_verification_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import uuid
@@ -50,7 +48,6 @@ pytestmark = [
         reason="Requires native _nexus_raft module (maturin develop)",
     ),
 ]
-
 
 # ---------------------------------------------------------------------------
 # Helpers

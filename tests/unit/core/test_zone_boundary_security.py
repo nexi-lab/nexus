@@ -4,8 +4,6 @@ Tests that admins with admin:read:* cannot access files from other zones
 unless they have MANAGE_ZONES capability (system admin only).
 """
 
-from __future__ import annotations
-
 import tempfile
 from collections.abc import Generator
 from pathlib import Path

@@ -3,8 +3,6 @@
 TDD: Tests written FIRST, implementation follows.
 """
 
-from __future__ import annotations
-
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
@@ -120,7 +118,6 @@ class TestBrickRegistration:
 # ---------------------------------------------------------------------------
 # State machine transition matrix (parametrized)
 # ---------------------------------------------------------------------------
-
 
 # Valid transitions: (from_state, event, expected_state)
 VALID_TRANSITIONS = [

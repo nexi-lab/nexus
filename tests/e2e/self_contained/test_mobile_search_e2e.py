@@ -4,8 +4,6 @@ These tests verify that the mobile search configuration integrates correctly
 with the actual search infrastructure using different device tiers.
 """
 
-from __future__ import annotations
-
 import tempfile
 
 import pytest

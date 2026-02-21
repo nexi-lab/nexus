@@ -8,8 +8,6 @@ Issue #1457: Validates that:
 Uses FastAPI TestClient with real create_app + API key auth.
 """
 
-from __future__ import annotations
-
 import logging
 from unittest.mock import MagicMock
 

@@ -1,7 +1,5 @@
 """RedisEventBus — Redis Pub/Sub implementation of EventBusBase."""
 
-from __future__ import annotations
-
 import asyncio
 import json
 import logging

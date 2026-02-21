@@ -4,8 +4,6 @@ Tests cover: URL resolution, pool config via env vars, create_tables flag,
 creator/async_creator pass-through, async URL conversion, and lifecycle.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, patch
 
 

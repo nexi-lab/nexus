@@ -8,8 +8,6 @@ Architecture:
     Services operate on these; never pass ORM models outside service boundaries.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum

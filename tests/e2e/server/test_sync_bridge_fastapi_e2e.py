@@ -11,8 +11,6 @@ realistic FastAPI server context:
 Uses httpx ASGITransport to call the FastAPI app in-process (no subprocess).
 """
 
-from __future__ import annotations
-
 import asyncio
 import os
 import uuid

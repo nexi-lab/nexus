@@ -5,8 +5,6 @@ with secrets in headers/params, then captures server logs and
 verifies secrets are redacted.
 """
 
-from __future__ import annotations
-
 import os
 import signal
 import socket

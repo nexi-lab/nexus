@@ -4,8 +4,6 @@ Issue #1359 Phase 0: Superset of statuses from SpendingApproval,
 SkillApproval, and DisputeRecord.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum

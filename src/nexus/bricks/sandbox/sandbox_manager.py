@@ -7,8 +7,6 @@ Uses session-per-operation pattern: each DB operation gets a fresh session
 from the session_factory, preventing stale identity maps and connection leaks.
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
@@ -136,7 +134,7 @@ class SandboxManager:
                 logger.warning(f"Failed to initialize Monty provider: {e}")
 
         # Smart routing (Issue #1317)
-        self._router: SandboxRouter | None = None
+        self._router: "SandboxRouter | None" = None
 
         logger.info(f"Initialized sandbox manager with providers: {list(self.providers.keys())}")
 

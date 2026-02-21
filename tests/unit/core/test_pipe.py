@@ -4,8 +4,6 @@ Tests RingBuffer (kfifo equivalent) and PipeManager (mkfifo equivalent).
 See: src/nexus/core/pipe.py, KERNEL-ARCHITECTURE.md §6.
 """
 
-from __future__ import annotations
-
 import asyncio
 
 import pytest

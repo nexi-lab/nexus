@@ -4,8 +4,6 @@ Covers failure scenarios, cache fallback, write operation behavior,
 circuit recovery, and business exception pass-through.
 """
 
-from __future__ import annotations
-
 import asyncio
 from unittest.mock import MagicMock
 

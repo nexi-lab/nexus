@@ -9,8 +9,6 @@ References:
     - docs/design/KERNEL-ARCHITECTURE.md §1 (service DI)
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -28,24 +26,24 @@ class MountCoreProtocol(Protocol):
         backend_config: dict[str, Any],
         priority: int = 0,
         readonly: bool = False,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> str: ...
 
     def remove_mount(
         self,
         mount_point: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]: ...
 
     def list_mounts(
         self,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> list[dict[str, Any]]: ...
 
     def get_mount(
         self,
         mount_point: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any] | None: ...
 
     def has_mount(self, mount_point: str) -> bool: ...
@@ -61,5 +59,5 @@ class MountCoreProtocol(Protocol):
         revoke_oauth: bool = False,
         provider: str | None = None,
         user_email: str | None = None,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]: ...

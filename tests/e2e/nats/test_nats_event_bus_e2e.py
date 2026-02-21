@@ -11,8 +11,6 @@ Requires: NATS JetStream server (port 4222)
 Related: Issue #1331
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 import os
@@ -47,7 +45,6 @@ pytestmark = [
     ),
     pytest.mark.skipif(not nats_available, reason="NATS not available on :4222"),
 ]
-
 
 # ============================================================================
 # Helpers

@@ -4,8 +4,6 @@ Replaces 7+ duplicated ``INSERT INTO rebac_changelog`` SQL blocks with a
 single reusable constant and helper functions.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from typing import Any
 

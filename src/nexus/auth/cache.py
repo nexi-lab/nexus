@@ -4,8 +4,6 @@ Extracted from server/dependencies.py. Provides TTL-based caching
 for authentication results with explicit invalidation for revocation.
 """
 
-from __future__ import annotations
-
 import hashlib
 import logging
 from typing import Any

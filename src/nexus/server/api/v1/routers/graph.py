@@ -9,8 +9,6 @@ Provides knowledge graph query endpoints:
 Extracted from ``fastapi_server.py`` during monolith decomposition (#1288).
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -24,7 +22,6 @@ from nexus.server.dependencies import require_auth
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["graph"])
-
 
 # ---------------------------------------------------------------------------
 # Shared helpers (DRY: replaces 4x copy-pasted boilerplate)

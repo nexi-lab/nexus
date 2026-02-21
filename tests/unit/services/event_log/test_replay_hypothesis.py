@@ -7,8 +7,6 @@ Tests properties:
 - Cursor stability (re-running same cursor yields same results)
 """
 
-from __future__ import annotations
-
 import tempfile
 import uuid
 from collections.abc import Generator

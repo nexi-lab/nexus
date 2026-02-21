@@ -21,8 +21,6 @@ Usage:
 Related: Issue #1459 (decomposition), Issue #773 (zone isolation)
 """
 
-from __future__ import annotations
-
 import logging
 
 from nexus.rebac.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS

@@ -15,8 +15,6 @@ Design decisions:
     - #4A / #16C: Events emitted synchronously from this service
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from dataclasses import dataclass, field
@@ -61,10 +59,10 @@ class SandboxAuthService:
     def __init__(
         self,
         agent_registry: Any,  # AgentRegistry injected via DI
-        sandbox_manager: SandboxManager,
-        namespace_manager: NamespaceManager | None = None,
+        sandbox_manager: "SandboxManager",
+        namespace_manager: "NamespaceManager | None" = None,
         nexus_pay: Any = None,
-        event_log: AgentEventLog | None = None,
+        event_log: "AgentEventLog | None" = None,
         budget_enforcement: bool = False,
     ) -> None:
         self._registry = agent_registry

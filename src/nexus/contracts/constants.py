@@ -8,8 +8,6 @@ other bricks").
 See: NEXUS-LEGO-ARCHITECTURE.md §3.3, §5.4
 """
 
-from __future__ import annotations
-
 from enum import IntEnum
 
 

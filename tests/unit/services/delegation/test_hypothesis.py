@@ -6,8 +6,6 @@ This holds regardless of mode, scope_prefix, remove/add/readonly lists.
 Uses Hypothesis to generate random inputs and verify the invariant holds.
 """
 
-from __future__ import annotations
-
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -42,7 +40,6 @@ _grant = st.tuples(_relation, _absolute_path)
 _grant_list = st.lists(_grant, min_size=0, max_size=50)
 
 _mode = st.sampled_from([DelegationMode.COPY, DelegationMode.CLEAN, DelegationMode.SHARED])
-
 
 # ---------------------------------------------------------------------------
 # Anti-escalation invariant

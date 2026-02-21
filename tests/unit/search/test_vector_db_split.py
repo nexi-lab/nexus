@@ -7,8 +7,6 @@ These are characterization tests — they document current behavior
 before the vector_db split refactoring.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, patch
 
 import pytest

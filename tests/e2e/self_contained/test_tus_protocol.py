@@ -4,8 +4,6 @@ Tests the full HTTP layer using httpx.AsyncClient against the
 tus uploads router with a real service and in-memory SQLite backend.
 """
 
-from __future__ import annotations
-
 import base64
 import hashlib
 from pathlib import Path
@@ -87,7 +85,6 @@ async def client(app: FastAPI) -> AsyncClient:
 
 
 TUS_HEADERS = {"Tus-Resumable": "1.0.0"}
-
 
 # --- Tests ---
 

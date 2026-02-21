@@ -6,8 +6,6 @@ Usage:
     PYTHONPATH=src python3.13 tests/benchmarks/e2e_write_buffer_pg_compare.py
 """
 
-from __future__ import annotations
-
 import base64
 import os
 import re

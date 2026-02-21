@@ -37,8 +37,6 @@ Design reference:
     - Issue #1705: EncryptedStorage + CompressedStorage recursive wrappers
 """
 
-from __future__ import annotations
-
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -98,7 +96,6 @@ def is_zstd_available() -> bool:
 _COMPRESSED_HEADER = b"NEXZ\x01"
 _HEADER_LEN = len(_COMPRESSED_HEADER)
 
-
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -153,7 +150,7 @@ class CompressedStorage(DelegatingBackend):
         RuntimeError: If zstd is not available at construction time.
     """
 
-    def __init__(self, inner: Backend, config: CompressedStorageConfig | None = None) -> None:
+    def __init__(self, inner: "Backend", config: CompressedStorageConfig | None = None) -> None:
         super().__init__(inner)
         if not _ZSTD_AVAILABLE:
             raise RuntimeError(
@@ -191,7 +188,7 @@ class CompressedStorage(DelegatingBackend):
     # === Compressed Content Operations ===
 
     def write_content(
-        self, content: bytes, context: OperationContext | None = None
+        self, content: bytes, context: "OperationContext | None" = None
     ) -> HandlerResponse[str]:
         """Compress content and write to inner backend.
 
@@ -202,7 +199,7 @@ class CompressedStorage(DelegatingBackend):
         return self._inner.write_content(data_to_write, context=context)
 
     def read_content(
-        self, content_hash: str, context: OperationContext | None = None
+        self, content_hash: str, context: "OperationContext | None" = None
     ) -> HandlerResponse[bytes]:
         """Read from inner backend and decompress content."""
         response = self._inner.read_content(content_hash, context=context)
@@ -214,9 +211,9 @@ class CompressedStorage(DelegatingBackend):
     def batch_read_content(
         self,
         content_hashes: list[str],
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
         *,
-        contexts: dict[str, OperationContext] | None = None,
+        contexts: "dict[str, OperationContext] | None" = None,
     ) -> dict[str, bytes | None]:
         """Read batch from inner backend and decompress each item."""
         raw_results = self._inner.batch_read_content(

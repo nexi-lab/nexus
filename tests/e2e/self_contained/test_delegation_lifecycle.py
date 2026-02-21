@@ -4,8 +4,6 @@ Tests with real EnhancedReBACManager + NamespaceManager backed by
 SQLite in-memory. Covers edge cases specified in the plan.
 """
 
-from __future__ import annotations
-
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker

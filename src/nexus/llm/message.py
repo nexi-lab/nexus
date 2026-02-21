@@ -1,7 +1,5 @@
 """Message types for LLM interactions."""
 
-from __future__ import annotations
-
 from enum import StrEnum
 from typing import Any, Literal
 
@@ -72,7 +70,7 @@ class ToolCall(BaseModel):
 
     id: str
     type: Literal["function"] = "function"
-    function: ToolFunction
+    function: "ToolFunction"
 
 
 class ToolFunction(BaseModel):
@@ -140,7 +138,7 @@ class Message(BaseModel):
         return result
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Message:
+    def from_dict(cls, data: dict[str, Any]) -> "Message":
         """Create a Message from a dict."""
         role = MessageRole(data["role"])
         content = data.get("content")

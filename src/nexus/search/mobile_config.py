@@ -24,8 +24,6 @@ References:
 - Snowflake Arctic-Embed: https://huggingface.co/Snowflake/snowflake-arctic-embed-xs
 """
 
-from __future__ import annotations
-
 import logging
 import platform
 from dataclasses import dataclass, field
@@ -33,7 +31,6 @@ from enum import StrEnum
 from typing import Any
 
 logger = logging.getLogger(__name__)
-
 
 # =============================================================================
 # Enums
@@ -382,7 +379,6 @@ RERANKER_MODELS: dict[str, RerankerModelConfig] = {
     ),
 }
 
-
 # =============================================================================
 # Tier Presets
 # =============================================================================
@@ -430,7 +426,6 @@ TIER_PRESETS: dict[DeviceTier, MobileSearchConfig] = {
         lazy_load=False,  # No local models to load
     ),
 }
-
 
 # =============================================================================
 # Device Detection

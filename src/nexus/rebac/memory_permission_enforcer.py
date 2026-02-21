@@ -9,8 +9,6 @@ Migration from v0.5.x:
   - All permissions managed through ReBAC relationships
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any
 
 from nexus.core.permissions import OperationContext, Permission
@@ -36,7 +34,7 @@ class MemoryPermissionEnforcer(PermissionEnforcer):
     def __init__(
         self,
         metadata_store: Any = None,
-        rebac_manager: EnhancedReBACManager | None = None,
+        rebac_manager: "EnhancedReBACManager | None" = None,
         memory_router: MemoryViewRouter | None = None,
         entity_registry: EntityRegistry | None = None,
     ) -> None:

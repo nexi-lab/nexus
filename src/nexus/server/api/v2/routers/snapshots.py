@@ -11,8 +11,6 @@ Provides endpoints for managing transactional filesystem snapshots:
 All endpoints require authentication and are scoped to the user's zone_id.
 """
 
-from __future__ import annotations
-
 import logging
 from datetime import datetime
 from typing import Any
@@ -23,7 +21,6 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/snapshots", tags=["snapshots"])
-
 
 # ---------------------------------------------------------------------------
 # Pydantic models

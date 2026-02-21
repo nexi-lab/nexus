@@ -14,8 +14,6 @@ AsyncMock Docker/E2B to simulate the production server environment
 without needing external Docker daemon or E2B API keys.
 """
 
-from __future__ import annotations
-
 import logging
 import statistics
 import time

@@ -12,8 +12,6 @@ Documents and tests which operations currently call the observer:
 Phase 1.3 of #1246/#1330 consolidation plan.
 """
 
-from __future__ import annotations
-
 import tempfile
 from collections.abc import Generator
 from pathlib import Path

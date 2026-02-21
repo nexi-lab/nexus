@@ -22,8 +22,6 @@ Example:
     run_server(app, host="0.0.0.0", port=2026)
 """
 
-from __future__ import annotations
-
 import asyncio
 import dataclasses
 import hashlib
@@ -96,7 +94,6 @@ if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
 
 logger = logging.getLogger(__name__)
-
 
 # ============================================================================
 # Pydantic Models for Request/Response
@@ -212,10 +209,8 @@ async def to_thread_with_timeout(
 # Set once during ``create_app()``.
 _fastapi_app: FastAPI | None = None
 
-
 # Stream token signing/verification is now in streaming.py.
 # Auth dependencies (get_auth_result, require_auth, get_operation_context) are in dependencies.py.
-
 
 # ============================================================================
 # Lifespan Management
@@ -1203,7 +1198,7 @@ async def lifespan(_app: FastAPI) -> Any:
 
 
 def create_app(
-    nexus_fs: NexusFS,
+    nexus_fs: "NexusFS",
     api_key: str | None = None,
     auth_provider: Any = None,
     database_url: str | None = None,
@@ -1528,7 +1523,7 @@ def create_app(
     return app
 
 
-def _initialize_oauth_provider(nexus_fs: NexusFS, auth_provider: Any) -> None:
+def _initialize_oauth_provider(nexus_fs: "NexusFS", auth_provider: Any) -> None:
     """Initialize OAuth provider if Google OAuth credentials are available.
 
     Args:
@@ -1604,7 +1599,7 @@ def _initialize_oauth_provider(nexus_fs: NexusFS, auth_provider: Any) -> None:
     # (moved from here to avoid being gated on OAuth credentials)
 
 
-def _discover_exposed_methods(nexus_fs: NexusFS) -> dict[str, Any]:
+def _discover_exposed_methods(nexus_fs: "NexusFS") -> dict[str, Any]:
     """Discover all methods marked with @rpc_expose decorator."""
     exposed = {}
 
@@ -3573,7 +3568,7 @@ def run_server(
 
 
 def run_server_from_config(
-    nexus_fs: NexusFS,
+    nexus_fs: "NexusFS",
     host: str = "0.0.0.0",
     port: int = 2026,
     api_key: str | None = None,

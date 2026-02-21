@@ -8,8 +8,6 @@ Tests the local disk cache layer for FUSE operations including:
 - Block-level storage for large files
 """
 
-from __future__ import annotations
-
 import hashlib
 import os
 import tempfile

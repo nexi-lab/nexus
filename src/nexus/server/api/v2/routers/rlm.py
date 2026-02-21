@@ -11,8 +11,6 @@ Architecture Decisions:
     - Issue 13A: Dedicated thread pool (returns 503 when full)
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from collections.abc import AsyncIterator
@@ -27,7 +25,6 @@ from nexus.server.dependencies import require_auth
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/rlm", tags=["rlm"], dependencies=[Depends(require_auth)])
-
 
 # ---------------------------------------------------------------------------
 # Request / response models

@@ -11,8 +11,6 @@ Phase 2:   In-memory graph computation (Rust or Python fallback)
 Related: Issue #1459 Phase 15+, Performance optimization
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 import time as time_module
@@ -61,14 +59,14 @@ class BulkPermissionChecker:
 
     def __init__(
         self,
-        engine: Engine,
-        get_namespace: Callable[[str], NamespaceConfig | None],
+        engine: "Engine",
+        get_namespace: "Callable[[str], NamespaceConfig | None]",
         enforce_zone_isolation: bool,
         l1_cache: Any | None,
-        tiger_cache: TigerCache | None,
-        compute_bulk_helper: Callable[..., bool],
-        rebac_check_single: Callable[..., bool],
-        cache_result: Callable[..., None],
+        tiger_cache: "TigerCache | None",
+        compute_bulk_helper: "Callable[..., bool]",
+        rebac_check_single: "Callable[..., bool]",
+        cache_result: "Callable[..., None]",
         tuple_version: int,
     ) -> None:
         self._engine = engine
@@ -84,7 +82,7 @@ class BulkPermissionChecker:
     def update_refs(
         self,
         l1_cache: Any | None = None,
-        tiger_cache: TigerCache | None = None,
+        tiger_cache: "TigerCache | None" = None,
         tuple_version: int | None = None,
     ) -> None:
         """Update mutable references that may change after construction."""

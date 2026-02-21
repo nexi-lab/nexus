@@ -11,8 +11,6 @@ Industry references:
 Issue: #1092, #1499
 """
 
-from __future__ import annotations
-
 import logging
 import os
 import re

@@ -7,8 +7,6 @@ Covers:
 4. _safe_json_loads edge cases (corrupt, None, empty, valid)
 """
 
-from __future__ import annotations
-
 import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker

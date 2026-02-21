@@ -4,8 +4,6 @@ Issue #1360 Phase 1: Transaction Audit Log types.
 Stored as String columns (not PG ENUM) for forward-compatible schema evolution.
 """
 
-from __future__ import annotations
-
 from enum import StrEnum
 
 

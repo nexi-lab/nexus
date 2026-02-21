@@ -24,8 +24,6 @@ Example:
     nx.skills_create("my-skill", "A skill", template="basic")
 """
 
-from __future__ import annotations
-
 import builtins
 import logging
 import time
@@ -64,7 +62,6 @@ from nexus.remote.rpc_proxy import RPCProxyBase
 from nexus.server.protocol import RPCRequest, RPCResponse
 
 logger = logging.getLogger(__name__)
-
 
 # ============================================================
 # Backwards-compat: flat method → domain delegation map
@@ -130,7 +127,6 @@ _DOMAIN_METHOD_MAP: dict[str, tuple[str, str]] = {
     "get_share_link_access_logs": ("share_links", "get_access_logs"),
 }
 
-
 # ============================================================
 # RemoteNexusFS — Sync RPC Proxy Client
 # ============================================================
@@ -175,7 +171,7 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         self._agent_id: str | None = None
         self._zone_id: str | None = None
         self._semantic_search = None
-        self._memory_api: MemoryClient | None = None
+        self._memory_api: "MemoryClient | None" = None
 
         # Pre-build default timeout config
         self._default_timeout = httpx.Timeout(
@@ -233,13 +229,13 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
     # ============================================================
 
     @cached_property
-    def skills(self) -> SkillsClient:
+    def skills(self) -> "SkillsClient":
         from nexus.remote.domain.skills import SkillsClient as _SkillsClient
 
         return _SkillsClient(self._call_rpc)
 
     @cached_property
-    def sandbox(self) -> SandboxClient:
+    def sandbox(self) -> "SandboxClient":
         from nexus.remote.domain.sandbox import SandboxClient as _SandboxClient
 
         return _SandboxClient(
@@ -249,19 +245,19 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         )
 
     @cached_property
-    def oauth(self) -> OAuthClient:
+    def oauth(self) -> "OAuthClient":
         from nexus.remote.domain.oauth import OAuthClient as _OAuthClient
 
         return _OAuthClient(self._call_rpc)
 
     @cached_property
-    def mcp(self) -> MCPClient:
+    def mcp(self) -> "MCPClient":
         from nexus.remote.domain.mcp import MCPClient as _MCPClient
 
         return _MCPClient(self._call_rpc)
 
     @cached_property
-    def share_links(self) -> ShareLinksClient:
+    def share_links(self) -> "ShareLinksClient":
         from nexus.remote.domain.share_links import ShareLinksClient as _ShareLinksClient
 
         return _ShareLinksClient(self._call_rpc)
@@ -741,7 +737,7 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
     # ============================================================
 
     @property
-    def memory(self) -> MemoryClient:
+    def memory(self) -> "MemoryClient":
         if self._memory_api is None:
             from nexus.remote.domain.memory import MemoryClient as _MemoryClient
 
@@ -773,7 +769,7 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         result: dict[str, Any] = self._call_rpc("snapshot_rollback", {"snapshot_id": snapshot_id})
         return result
 
-    def __enter__(self) -> RemoteNexusFS:
+    def __enter__(self) -> "RemoteNexusFS":
         return self
 
     def __exit__(self, *args: Any) -> None:

@@ -12,8 +12,6 @@ Provides:
 Constructor takes explicit deps — no ``self`` god-reference to NexusFS.
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 import time
@@ -65,7 +63,7 @@ class QueryObserver:
         self._total_queries = 0
         self._slow_queries = 0
         self._last_event: QueryEvent | None = None
-        self._engines: list[Engine] = []
+        self._engines: "list[Engine]" = []
 
         # Pool counters
         self._pool_checkouts = 0
@@ -112,13 +110,13 @@ class QueryObserver:
         return self._pool_invalidations
 
     @property
-    def engines(self) -> list[Engine]:
+    def engines(self) -> "list[Engine]":
         """Return a copy of instrumented engines."""
         return list(self._engines)
 
     # -- Engine instrumentation ----------------------------------------------
 
-    def instrument_engine(self, engine: Engine) -> None:
+    def instrument_engine(self, engine: "Engine") -> None:
         """Attach event listeners to a SQLAlchemy engine."""
         if self._config.enable_query_logging:
             event.listen(engine, "before_cursor_execute", self._before_cursor_execute)
@@ -133,7 +131,7 @@ class QueryObserver:
 
         self._engines.append(engine)
 
-    def remove_listeners(self, engine: Engine) -> None:
+    def remove_listeners(self, engine: "Engine") -> None:
         """Remove all event listeners from an engine."""
         if self._config.enable_query_logging:
             event.remove(engine, "before_cursor_execute", self._before_cursor_execute)
@@ -296,7 +294,7 @@ class ObservabilitySubsystem(Subsystem):
     def __init__(
         self,
         config: ObservabilityConfig,
-        engines: Sequence[Engine] = (),
+        engines: "Sequence[Engine]" = (),
     ) -> None:
         self._config = config
         self._observer = QueryObserver(config=config)
@@ -309,7 +307,7 @@ class ObservabilitySubsystem(Subsystem):
         """Access the underlying QueryObserver."""
         return self._observer
 
-    def instrument_engine(self, engine: Engine) -> None:
+    def instrument_engine(self, engine: "Engine") -> None:
         """Instrument an additional engine after construction."""
         self._observer.instrument_engine(engine)
 

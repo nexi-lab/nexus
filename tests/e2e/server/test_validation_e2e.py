@@ -7,8 +7,6 @@ exercises the complete RPC serialization path, and validates performance.
 Uses httpx ASGITransport for in-process testing (no subprocess).
 """
 
-from __future__ import annotations
-
 import asyncio
 import os
 import time

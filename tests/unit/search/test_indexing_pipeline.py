@@ -4,8 +4,6 @@ Tests the parallel indexing pipeline with mock embedding providers
 and mock sessions. All tests should FAIL before implementation is wired.
 """
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

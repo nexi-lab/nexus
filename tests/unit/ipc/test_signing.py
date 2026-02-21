@@ -1,7 +1,5 @@
 """Unit tests for IPC message signing and verification (#1729)."""
 
-from __future__ import annotations
-
 import json
 import time
 from datetime import UTC, datetime

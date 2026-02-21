@@ -16,8 +16,6 @@ the inner driver — only writes need zone routing.
 Issue: #1727
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import re
@@ -62,11 +60,11 @@ class CrossZoneStorageDriver:
 
     def __init__(
         self,
-        inner: IPCStorageDriver,
-        agent_registry: AgentRegistryProtocol,
+        inner: "IPCStorageDriver",
+        agent_registry: "AgentRegistryProtocol",
         local_zone_id: str,
-        permission_checker: PermissionProtocol | None = None,
-        hot_publisher: HotPathPublisher | None = None,
+        permission_checker: "PermissionProtocol | None" = None,
+        hot_publisher: "HotPathPublisher | None" = None,
         cache_ttl_seconds: int = 30,
     ) -> None:
         self._inner = inner

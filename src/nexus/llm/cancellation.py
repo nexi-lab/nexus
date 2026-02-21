@@ -1,7 +1,5 @@
 """Cancellation handling utilities for async LLM operations."""
 
-from __future__ import annotations
-
 import signal
 from collections.abc import Awaitable, Callable
 

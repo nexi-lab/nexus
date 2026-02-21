@@ -1,7 +1,5 @@
 """Tests for Microsoft OAuth provider."""
 
-from __future__ import annotations
-
 import httpx
 import pytest
 

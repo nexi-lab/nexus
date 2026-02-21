@@ -15,13 +15,10 @@ References:
     - Issue #1287: Extract NexusFS Domain Services from God Object
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
-
 
 @runtime_checkable
 class RevisionServiceProtocol(Protocol):
@@ -37,7 +34,7 @@ class RevisionServiceProtocol(Protocol):
         *,
         limit: int = 50,
         offset: int = 0,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """List version history for a file.
 
@@ -57,7 +54,7 @@ class RevisionServiceProtocol(Protocol):
         path: str,
         version: int | str,
         *,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Get a specific version of a file.
 
@@ -77,7 +74,7 @@ class RevisionServiceProtocol(Protocol):
         version_a: int | str,
         version_b: int | str,
         *,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Compute diff between two versions.
 

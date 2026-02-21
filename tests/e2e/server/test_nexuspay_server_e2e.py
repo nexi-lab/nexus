@@ -19,8 +19,6 @@ Requirements:
 - Database: scorpio (user: scorpio, password: scorpio) or set TEST_DATABASE_URL
 """
 
-from __future__ import annotations
-
 import base64
 import json
 import os

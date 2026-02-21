@@ -10,8 +10,6 @@ Reports:
     - Hierarchical path lock (3-level deep)
 """
 
-from __future__ import annotations
-
 import statistics
 import threading
 import time

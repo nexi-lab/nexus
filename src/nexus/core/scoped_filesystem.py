@@ -13,8 +13,6 @@ Example:
     registry = SkillRegistry(filesystem=scoped_fs)
 """
 
-from __future__ import annotations
-
 import builtins
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
@@ -273,7 +271,7 @@ class ScopedFilesystem:
         """Remove a directory."""
         self._fs.rmdir(self._scope_path(path), recursive)
 
-    def is_directory(self, path: str, context: OperationContext | None = None) -> bool:
+    def is_directory(self, path: str, context: "OperationContext | None" = None) -> bool:
         """Check if path is a directory."""
         return self._fs.is_directory(self._scope_path(path), context)
 
@@ -584,7 +582,7 @@ class ScopedFilesystem:
         """Close the filesystem and release resources."""
         self._fs.close()
 
-    def __enter__(self) -> ScopedFilesystem:
+    def __enter__(self) -> "ScopedFilesystem":
         """Context manager entry."""
         return self
 

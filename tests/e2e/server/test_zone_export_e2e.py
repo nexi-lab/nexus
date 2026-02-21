@@ -7,8 +7,6 @@ Tests the complete export workflow including:
 - Reading bundle contents
 """
 
-from __future__ import annotations
-
 import tarfile
 import tempfile
 from pathlib import Path

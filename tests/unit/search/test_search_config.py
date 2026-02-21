@@ -7,8 +7,6 @@ Validates:
 - get_env_bool/float/int helpers
 """
 
-from __future__ import annotations
-
 import dataclasses
 
 import pytest

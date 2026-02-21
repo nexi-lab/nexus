@@ -7,8 +7,6 @@ Tests cover:
 - Permission level validation
 """
 
-from __future__ import annotations
-
 import tempfile
 from collections.abc import Generator
 from pathlib import Path

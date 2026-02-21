@@ -7,8 +7,6 @@ Tests cover:
 - Router metrics accumulation through manager
 """
 
-from __future__ import annotations
-
 import logging
 from unittest.mock import AsyncMock
 

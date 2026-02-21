@@ -16,8 +16,6 @@ Covers:
 - ShareLinkService: 6 async methods (direct pass-through)
 """
 
-from __future__ import annotations
-
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 

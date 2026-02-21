@@ -10,8 +10,6 @@ References:
     - Issue #1383: Define 6 kernel protocol interfaces
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any
 
 from nexus.core.protocols.vfs_router import MountInfo, ResolvedPath
@@ -21,7 +19,7 @@ if TYPE_CHECKING:
 
 
 def _to_resolved_path(
-    result: RouteResult,
+    result: "RouteResult",
     virtual_path: str,
     zone_id: str | None,
 ) -> ResolvedPath:
@@ -35,7 +33,7 @@ def _to_resolved_path(
     )
 
 
-def _to_mount_info(config: MountConfig) -> MountInfo:
+def _to_mount_info(config: "MountConfig") -> MountInfo:
     """Convert a ``MountConfig`` to the protocol-level ``MountInfo``."""
     return MountInfo(
         mount_point=config.mount_point,
@@ -51,7 +49,7 @@ class AsyncVFSRouter:
     ``PathRouter`` operates on in-memory data structures with no I/O.
     """
 
-    def __init__(self, inner: PathRouter) -> None:
+    def __init__(self, inner: "PathRouter") -> None:
         self._inner = inner
 
     async def route(

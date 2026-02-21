@@ -9,8 +9,6 @@ Tests cover:
 - Individual domain dataclass field validation
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.core.deployment_profile import DeploymentProfile

@@ -15,8 +15,6 @@ References:
     - Issue #1274: Astraea-style state-aware scheduler
 """
 
-from __future__ import annotations
-
 import asyncio
 from typing import TYPE_CHECKING, Any
 
@@ -29,7 +27,7 @@ if TYPE_CHECKING:
     from nexus.services.agents.agent_registry import AgentRegistry
 
 
-def _to_agent_info(record: AgentRecord) -> AgentInfo:
+def _to_agent_info(record: "AgentRecord") -> AgentInfo:
     """Convert an ``AgentRecord`` to the protocol-level ``AgentInfo``.
 
     Maps the persistence-layer dataclass to the lightweight snapshot
@@ -60,9 +58,9 @@ class AsyncAgentRegistry:
 
     def __init__(
         self,
-        inner: AgentRegistry,
+        inner: "AgentRegistry",
         *,
-        state_emitter: AgentStateEmitter | None = None,
+        state_emitter: "AgentStateEmitter | None" = None,
     ) -> None:
         self._inner = inner
         self._state_emitter = state_emitter

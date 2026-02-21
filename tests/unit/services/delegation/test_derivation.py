@@ -4,8 +4,6 @@ Tests derive_grants(), validate_scope_prefix(), and helper functions.
 All functions are pure (no I/O), so these tests are fast and isolated.
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.services.delegation.derivation import (

@@ -1,7 +1,5 @@
 """Pydantic models for Transactional Snapshot API (Issue #1752)."""
 
-from __future__ import annotations
-
 from nexus.server.api.v2.models.base import ApiModel
 
 
@@ -38,7 +36,7 @@ class RollbackResultResponse(ApiModel):
 
     snapshot_id: str
     reverted: list[str]
-    conflicts: list[ConflictInfoResponse]
+    conflicts: "list[ConflictInfoResponse]"
     deleted: list[str]
     stats: dict[str, int]
 

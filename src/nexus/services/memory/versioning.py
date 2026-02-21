@@ -12,8 +12,6 @@ Usage:
     versioning.rollback("mem_123", version=1)
 """
 
-from __future__ import annotations
-
 import builtins
 import difflib
 import logging

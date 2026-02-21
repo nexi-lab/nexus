@@ -9,8 +9,6 @@ Verifies:
 - End-to-end inference flow with mocked sandbox + LLM
 """
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest

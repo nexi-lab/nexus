@@ -3,8 +3,6 @@
 Issue #1287: Extract NexusFS Domain Services from God Object (Phase A).
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.core.types import ContextIdentity, extract_context_identity

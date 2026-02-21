@@ -7,8 +7,6 @@ a RecordStore with session_factory is available.
 Issue: #1727
 """
 
-from __future__ import annotations
-
 
 class TestIPCBrickWiring:
     """Verify IPC brick is correctly wired in _boot_brick_services."""

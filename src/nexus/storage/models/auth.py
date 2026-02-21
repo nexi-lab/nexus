@@ -3,8 +3,6 @@
 Issue #1286: Extracted from monolithic __init__.py.
 """
 
-from __future__ import annotations
-
 import json
 import uuid
 from datetime import UTC, datetime
@@ -65,7 +63,7 @@ class UserModel(Base):
     )
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
 
-    oauth_accounts: Mapped[list[UserOAuthAccountModel]] = relationship(
+    oauth_accounts: "Mapped[list[UserOAuthAccountModel]]" = relationship(
         "UserOAuthAccountModel", back_populates="user", cascade="all, delete-orphan"
     )
 
@@ -316,7 +314,7 @@ class ZoneModel(Base):
     )
 
     @property
-    def parsed_settings(self) -> ZoneSettings:
+    def parsed_settings(self) -> "ZoneSettings":
         """Parse settings JSON into a ZoneSettings Pydantic model."""
         from nexus.storage.zone_settings import ZoneSettings
 

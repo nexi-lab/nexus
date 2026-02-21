@@ -6,8 +6,6 @@ Verifies that the auth brick:
 - Works with a mock session_factory (no real database needed)
 """
 
-from __future__ import annotations
-
 import contextlib
 import importlib
 import sys

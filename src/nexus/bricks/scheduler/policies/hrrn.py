@@ -9,8 +9,6 @@ as their response ratio grows with wait time.
 No I/O, no side effects — suitable for Hypothesis property-based testing.
 """
 
-from __future__ import annotations
-
 from nexus.bricks.scheduler.constants import DEFAULT_EST_SERVICE_TIME_SECS
 
 

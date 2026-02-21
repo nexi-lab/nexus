@@ -4,8 +4,6 @@ Tests realistic cache workflows using InMemoryCacheStore as the driver.
 DragonflyCacheStore would use the same ABC interface against a real Dragonfly instance.
 """
 
-from __future__ import annotations
-
 import asyncio
 
 import pytest

@@ -3,8 +3,6 @@
 Issue #1286: Extracted from monolithic __init__.py.
 """
 
-from __future__ import annotations
-
 import json
 from datetime import UTC, datetime
 

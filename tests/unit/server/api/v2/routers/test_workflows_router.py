@@ -4,8 +4,6 @@ Issue #1522: Tests for all 8 workflow endpoints using FastAPI TestClient
 with a mock workflow engine.
 """
 
-from __future__ import annotations
-
 import uuid
 from unittest.mock import AsyncMock, Mock, patch
 

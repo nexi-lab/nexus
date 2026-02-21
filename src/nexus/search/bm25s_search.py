@@ -29,8 +29,6 @@ References:
     - BM25S GitHub: https://github.com/xhluca/bm25s
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 import logging
@@ -55,7 +53,6 @@ try:
 except ImportError:
     bm25s_module = None
     BM25S_AVAILABLE = False
-
 
 # Common programming stopwords (keywords that appear frequently but aren't discriminating)
 CODE_STOPWORDS = frozenset(
@@ -309,14 +306,14 @@ class BM25SIndex:
 
     # Class-level instance cache keyed by resolved index_dir.
     # Each zone can have its own index_dir, so this supports zone isolation.
-    _instances: dict[str, BM25SIndex] = {}
+    _instances: "dict[str, BM25SIndex]" = {}
     _instances_lock = threading.Lock()
 
     @classmethod
     def get_instance(
         cls,
         index_dir: str | Path = ".nexus-data/bm25s",
-    ) -> BM25SIndex:
+    ) -> "BM25SIndex":
         """Get or create a BM25SIndex for the given index directory.
 
         Instances are cached per resolved index_dir so each zone can

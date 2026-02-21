@@ -4,8 +4,6 @@ Verifies that the IndexingPipeline correctly batches embeddings across
 multiple documents and assigns them back to the correct documents.
 """
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest

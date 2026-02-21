@@ -3,8 +3,6 @@
 Tests the adaptive k calculation through the FastAPI /api/search/query endpoint.
 """
 
-from __future__ import annotations
-
 import logging
 from unittest.mock import MagicMock
 

@@ -7,8 +7,6 @@ Provides REST access to the IPC subsystem:
     POST /api/v2/ipc/provision/{agent_id}   — Provision IPC directories for an agent
 """
 
-from __future__ import annotations
-
 import logging
 import re
 from typing import Any
@@ -23,7 +21,6 @@ router = APIRouter(prefix="/api/v2/ipc", tags=["ipc"])
 # Agent ID validation: alphanumeric, colons, hyphens, underscores, dots.
 # Rejects slashes and other path-traversal characters at the REST boundary.
 _AGENT_ID_RE = re.compile(r"^[a-zA-Z0-9:_\-\.]+$")
-
 
 # ---------------------------------------------------------------------------
 # Lazy imports (avoid circular imports with fastapi_server)

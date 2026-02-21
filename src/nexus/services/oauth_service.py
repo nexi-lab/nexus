@@ -11,8 +11,6 @@ Phase 2: Core Refactoring (Issue #988, Task 2.6)
 Extracted from: nexus_fs_oauth.py (1,116 lines)
 """
 
-from __future__ import annotations
-
 import builtins
 import json
 import logging
@@ -42,7 +40,7 @@ class PKCEStateStore:
 
     def __init__(
         self,
-        cache_store: CacheStoreABC | None = None,
+        cache_store: "CacheStoreABC | None" = None,
         ttl: int = 600,
     ) -> None:
         self._cache_store = cache_store
@@ -161,7 +159,7 @@ class OAuthService:
     @rpc_expose(description="List all available OAuth providers")
     async def oauth_list_providers(
         self,
-        context: OperationContext | None = None,  # noqa: ARG002 - Required by RPC protocol
+        context: "OperationContext | None" = None,  # noqa: ARG002 - Required by RPC protocol
     ) -> builtins.list[dict[str, Any]]:
         """List all available OAuth providers from configuration.
 
@@ -294,7 +292,7 @@ class OAuthService:
         state: str | None = None,
         redirect_uri: str | None = None,
         code_verifier: str | None = None,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Exchange OAuth authorization code for tokens and store credentials.
 
@@ -443,7 +441,7 @@ class OAuthService:
         self,
         provider: str | None = None,
         include_revoked: bool = False,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> builtins.list[dict[str, Any]]:
         """List all OAuth credentials for the current user.
 
@@ -535,7 +533,7 @@ class OAuthService:
         self,
         provider: str,
         user_email: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Revoke an OAuth credential.
 
@@ -609,7 +607,7 @@ class OAuthService:
         self,
         provider: str,
         user_email: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Test if an OAuth credential is valid and can be refreshed.
 
@@ -714,7 +712,7 @@ class OAuthService:
         self,
         provider: str,
         redirect_url: str | None = None,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Connect to an MCP provider using Klavis hosted OAuth.
 
@@ -1121,7 +1119,7 @@ class OAuthService:
         provider: str,
         user_email: str,
         zone_id: str,
-        context: OperationContext | None,
+        context: "OperationContext | None",
         *,
         action: str = "access",
     ) -> None:

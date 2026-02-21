@@ -8,8 +8,6 @@ Scheduling (Decision #15): every 5 minutes OR when 1000 uncovered
 records accumulate, whichever comes first.
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import logging

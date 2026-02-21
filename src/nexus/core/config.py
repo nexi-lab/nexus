@@ -19,8 +19,6 @@ Service container hierarchy (matches NEXUS-LEGO-ARCHITECTURE §2):
     BrickServices   — Tier 2: optional, silent on failure, hot-swappable
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -155,7 +153,7 @@ class KernelServices:
     overlay_resolver: Any = None
 
     # Cache invalidation (Issue #1169 / #1519)
-    cache_observer: CacheInvalidationObserver | None = None
+    cache_observer: "CacheInvalidationObserver | None" = None
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +179,7 @@ class SystemServices:
     async_agent_registry: Any = None
 
     # Namespace visibility (Issue #1502)
-    namespace_manager: NamespaceManagerProtocol | None = None
+    namespace_manager: "NamespaceManagerProtocol | None" = None
     async_namespace_manager: Any = None
 
     # Workspace branching (Issue #1315)
@@ -223,7 +221,7 @@ class BrickServices:
     # Infrastructure bricks
     event_bus: Any = None
     lock_manager: Any = None
-    workflow_engine: WorkflowProtocol | None = None
+    workflow_engine: "WorkflowProtocol | None" = None
     rebac_circuit_breaker: Any = None
 
     # Feature bricks

@@ -12,8 +12,6 @@ Rules are evaluated in order. First matching deny rule short-circuits.
 If all rules pass (or no rules), the transaction is allowed.
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field

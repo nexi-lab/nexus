@@ -1,7 +1,5 @@
 """Tests for AsyncAgentRegistry wrapper (Issue #1440)."""
 
-from __future__ import annotations
-
 import types
 from datetime import UTC, datetime
 from unittest.mock import MagicMock

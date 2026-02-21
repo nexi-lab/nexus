@@ -1,7 +1,5 @@
 """Tests for OfflineQueueProtocol and InMemoryQueue (#10-A)."""
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.proxy.queue_protocol import InMemoryQueue, QueueFullError

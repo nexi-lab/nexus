@@ -29,8 +29,6 @@ Example:
     )  # Returns True (alice is member of eng_team, which owns file)
 """
 
-from __future__ import annotations
-
 import json
 import uuid
 from dataclasses import dataclass, field
@@ -98,7 +96,7 @@ class Entity:
         return (self.entity_type, self.entity_id)
 
     @classmethod
-    def from_tuple(cls, tup: tuple[str, str]) -> Entity:
+    def from_tuple(cls, tup: tuple[str, str]) -> "Entity":
         """Create entity from (type, id) tuple."""
         return cls(entity_type=tup[0], entity_id=tup[1])
 
@@ -125,9 +123,9 @@ class ReBACTuple:
     """
 
     tuple_id: str
-    subject: Entity
+    subject: "Entity"
     relation: str
-    object: Entity
+    object: "Entity"
     subject_relation: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     expires_at: datetime | None = None
@@ -166,7 +164,7 @@ class ReBACTuple:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ReBACTuple:
+    def from_dict(cls, data: dict[str, Any]) -> "ReBACTuple":
         """Create tuple from dictionary."""
         return cls(
             tuple_id=data["tuple_id"],
@@ -402,7 +400,7 @@ class NamespaceConfig:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> NamespaceConfig:
+    def from_dict(cls, data: dict[str, Any]) -> "NamespaceConfig":
         """Create from dictionary."""
         return cls(
             namespace_id=data["namespace_id"],
@@ -430,9 +428,9 @@ class CheckCacheEntry:
     """
 
     cache_id: str
-    subject: Entity
+    subject: "Entity"
     permission: str
-    object: Entity
+    object: "Entity"
     result: bool
     computed_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     expires_at: datetime = field(default_factory=lambda: datetime.now(UTC))
@@ -467,7 +465,7 @@ class CheckCacheEntry:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> CheckCacheEntry:
+    def from_dict(cls, data: dict[str, Any]) -> "CheckCacheEntry":
         """Create from dictionary."""
         return cls(
             cache_id=data["cache_id"],
@@ -498,9 +496,9 @@ class ChangelogEntry:
 
     change_id: int
     change_type: str
-    subject: Entity
+    subject: "Entity"
     relation: str
-    object: Entity
+    object: "Entity"
     tuple_id: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
@@ -528,7 +526,7 @@ class ChangelogEntry:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ChangelogEntry:
+    def from_dict(cls, data: dict[str, Any]) -> "ChangelogEntry":
         """Create from dictionary."""
         return cls(
             change_id=data["change_id"],

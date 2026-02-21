@@ -18,8 +18,6 @@ Backend-specific logic is delegated to:
 - vector_db_postgres.py: PostgreSQL init, vector search, keyword search
 """
 
-from __future__ import annotations
-
 import asyncio
 import atexit
 import concurrent.futures
@@ -77,7 +75,7 @@ class VectorDatabase:
     to vector_db_sqlite and vector_db_postgres modules.
     """
 
-    def __init__(self, engine: Engine, hnsw_config: HNSWConfig | None = None):
+    def __init__(self, engine: "Engine", hnsw_config: HNSWConfig | None = None):
         """Initialize vector database.
 
         Args:
@@ -125,7 +123,7 @@ class VectorDatabase:
 
         self.vec_available, self.bm25_available = init_postgresql(conn, self.hnsw_config)
 
-    def store_embedding(self, session: Session, chunk_id: str, embedding: list[float]) -> None:
+    def store_embedding(self, session: "Session", chunk_id: str, embedding: list[float]) -> None:
         """Store embedding for a chunk.
 
         Args:
@@ -144,7 +142,7 @@ class VectorDatabase:
 
     def vector_search(
         self,
-        session: Session,
+        session: "Session",
         query_embedding: list[float],
         limit: int = 10,
         path_filter: str | None = None,
@@ -174,7 +172,7 @@ class VectorDatabase:
             raise ValueError(f"Unsupported database type: {self.db_type}")
 
     def keyword_search(
-        self, session: Session, query: str, limit: int = 10, path_filter: str | None = None
+        self, session: "Session", query: str, limit: int = 10, path_filter: str | None = None
     ) -> list[dict[str, Any]]:
         """Search by keywords using Zoekt, BM25S, or FTS.
 
@@ -358,7 +356,7 @@ class VectorDatabase:
 
     def hybrid_search(
         self,
-        session: Session,
+        session: "Session",
         query: str,
         query_embedding: list[float],
         limit: int = 10,

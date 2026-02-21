@@ -4,8 +4,6 @@ Tests what happens when Raft succeeds but PostgreSQL fails,
 and verifies audit_strict_mode behavior for single and batch writes.
 """
 
-from __future__ import annotations
-
 import contextlib
 from datetime import datetime
 from unittest.mock import MagicMock, patch

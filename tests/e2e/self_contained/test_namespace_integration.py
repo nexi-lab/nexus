@@ -9,8 +9,6 @@ Tests the full integration of namespace visibility with ReBAC permissions:
 Uses in-memory SQLite and synchronous PermissionEnforcer for fast, reliable testing.
 """
 
-from __future__ import annotations
-
 import time
 from typing import TYPE_CHECKING
 
@@ -28,7 +26,7 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture
-def engine() -> Engine:
+def engine() -> "Engine":
     """In-memory SQLite engine for tests."""
     eng = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(eng)
@@ -36,7 +34,7 @@ def engine() -> Engine:
 
 
 @pytest.fixture
-def rebac_manager(engine: Engine) -> EnhancedReBACManager:
+def rebac_manager(engine: "Engine") -> EnhancedReBACManager:
     """EnhancedReBACManager for ReBAC grants."""
     return EnhancedReBACManager(
         engine=engine,

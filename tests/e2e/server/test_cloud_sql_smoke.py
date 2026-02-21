@@ -9,8 +9,6 @@ Required environment variables:
     CLOUD_SQL_DB:       Database name (default: "nexus")
 """
 
-from __future__ import annotations
-
 import os
 from typing import Any
 

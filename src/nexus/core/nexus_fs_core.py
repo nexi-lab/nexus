@@ -8,8 +8,6 @@ This module contains the fundamental file operations:
 - exists: Check file existence
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import hashlib
@@ -47,7 +45,7 @@ class NexusFSCoreMixin:
     # Issue #1169: Defaults for per-instance zone revision state.
     # Actual instances override these in _init_zone_revision().
     _zone_revision: int = 0
-    _zone_revision_lock: threading.Lock | None = None
+    _zone_revision_lock: "threading.Lock | None" = None
     _read_tracking_enabled: bool = False
 
     # Type hints for attributes/methods that will be provided by NexusFS parent class
@@ -55,16 +53,16 @@ class NexusFSCoreMixin:
         from nexus.core.metastore import MetastoreABC
         from nexus.rebac.enforcer import PermissionEnforcer
 
-        metadata: MetastoreABC
-        backend: Backend
-        router: PathRouter
+        metadata: "MetastoreABC"
+        backend: "Backend"
+        router: "PathRouter"
         is_admin: bool
         auto_parse: bool
-        parser_registry: ParserRegistry
-        _default_context: OperationContext
-        _parser_threads: list[threading.Thread]
-        _parser_threads_lock: threading.Lock
-        _permission_enforcer: PermissionEnforcer | None
+        parser_registry: "ParserRegistry"
+        _default_context: "OperationContext"
+        _parser_threads: "list[threading.Thread]"
+        _parser_threads_lock: "threading.Lock"
+        _permission_enforcer: "PermissionEnforcer | None"
         _event_tasks: set[asyncio.Task[Any]]  # Issue #913: Tracked async event tasks
         _overlay_resolver: Any  # Issue #1264: OverlayResolver service
         _workspace_registry: Any  # Workspace registry for overlay config lookup
@@ -81,14 +79,14 @@ class NexusFSCoreMixin:
             self,
             path: str,
             permission: Permission,
-            context: OperationContext | None,
+            context: "OperationContext | None",
             file_metadata: FileMetadata | None = None,
         ) -> None: ...
         def _get_routing_params(
-            self, context: OperationContext | dict[Any, Any] | None
+            self, context: "OperationContext | dict[Any, Any] | None"
         ) -> tuple[str | None, str | None, bool]: ...
         def _get_created_by(
-            self, context: OperationContext | dict[Any, Any] | None
+            self, context: "OperationContext | dict[Any, Any] | None"
         ) -> str | None: ...
         async def parse(self, path: str, store_result: bool = True) -> Any: ...
 
@@ -323,7 +321,7 @@ class NexusFSCoreMixin:
                 NexusFSCoreMixin._revision_notifier = NullRevisionNotifier()
         return self._revision_notifier
 
-    def _get_revision_lock(self, zone_id: str) -> threading.Lock:
+    def _get_revision_lock(self, zone_id: str) -> "threading.Lock":
         """Get or create a per-zone lock for revision increments (Issue #1180).
 
         Always acquires the guard lock for correctness. The overhead is
@@ -510,7 +508,7 @@ class NexusFSCoreMixin:
 
     def _record_read_if_tracking(
         self,
-        context: OperationContext | None,
+        context: "OperationContext | None",
         resource_type: str,
         resource_id: str,
         access_type: str = "content",
@@ -587,7 +585,7 @@ class NexusFSCoreMixin:
         self,
         path: str,
         timeout: float,
-        context: OperationContext | None,
+        context: "OperationContext | None",
     ) -> str | None:
         """Acquire distributed lock synchronously (for use in sync write()).
 
@@ -651,7 +649,7 @@ class NexusFSCoreMixin:
         self,
         lock_id: str,
         path: str,
-        context: OperationContext | None,
+        context: "OperationContext | None",
     ) -> None:
         """Release distributed lock synchronously.
 
@@ -679,7 +677,7 @@ class NexusFSCoreMixin:
             logger.error(f"Failed to release lock {lock_id} for {path}: {e}")
 
     def _apply_dynamic_viewer_filter_if_needed(
-        self, path: str, content: bytes, context: OperationContext | None
+        self, path: str, content: bytes, context: "OperationContext | None"
     ) -> bytes:
         """Apply dynamic_viewer column-level filtering for CSV files if needed.
 
@@ -868,7 +866,7 @@ class NexusFSCoreMixin:
     def read(
         self,
         path: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
         return_metadata: bool = False,
         parsed: bool = False,
     ) -> bytes | dict[str, Any]:
@@ -1106,7 +1104,7 @@ class NexusFSCoreMixin:
     def read_bulk(
         self,
         paths: list[str],
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
         return_metadata: bool = False,
         skip_errors: bool = True,
     ) -> dict[str, bytes | dict[str, Any] | None]:
@@ -1492,7 +1490,7 @@ class NexusFSCoreMixin:
         path: str,
         start: int,
         end: int,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> bytes:
         """
         Read a specific byte range from a file.
@@ -1572,7 +1570,7 @@ class NexusFSCoreMixin:
 
     @rpc_expose(description="Stream file content in chunks")
     def stream(
-        self, path: str, chunk_size: int = 65536, context: OperationContext | None = None
+        self, path: str, chunk_size: int = 65536, context: "OperationContext | None" = None
     ) -> Any:
         """
         Stream file content in chunks without loading entire file into memory.
@@ -1634,7 +1632,7 @@ class NexusFSCoreMixin:
         start: int,
         end: int,
         chunk_size: int = 65536,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> Any:
         """Stream a byte range [start, end] of file content.
 
@@ -1676,7 +1674,7 @@ class NexusFSCoreMixin:
         self,
         path: str,
         chunks: Iterator[bytes],
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """
         Write file content from an iterator of chunks.
@@ -1785,7 +1783,7 @@ class NexusFSCoreMixin:
         self,
         path: str,
         content: bytes | str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
         if_match: str | None = None,
         if_none_match: bool = False,
         force: bool = False,
@@ -1887,7 +1885,7 @@ class NexusFSCoreMixin:
         self,
         path: str,
         content: bytes,
-        context: OperationContext | None,
+        context: "OperationContext | None",
         if_match: str | None,
         if_none_match: bool,
         force: bool,
@@ -2181,7 +2179,7 @@ class NexusFSCoreMixin:
         self,
         path: str,
         update_fn: Callable[[bytes], bytes],
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
         timeout: float = 30.0,
         ttl: float = 30.0,
     ) -> dict[str, Any]:
@@ -2264,7 +2262,7 @@ class NexusFSCoreMixin:
         self,
         path: str,
         content: bytes | str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
         if_match: str | None = None,
         force: bool = False,
     ) -> dict[str, Any]:
@@ -2385,7 +2383,7 @@ class NexusFSCoreMixin:
         self,
         path: str,
         edits: list[tuple[str, str]] | list[dict[str, Any]] | list[Any],
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
         if_match: str | None = None,
         fuzzy_threshold: float = 0.85,
         preview: bool = False,
@@ -2585,7 +2583,7 @@ class NexusFSCoreMixin:
 
     @rpc_expose(description="Write multiple files in a single transaction")
     def write_batch(
-        self, files: list[tuple[str, bytes]], context: OperationContext | None = None
+        self, files: list[tuple[str, bytes]], context: "OperationContext | None" = None
     ) -> list[dict[str, Any]]:
         """
         Write multiple files in a single transaction for improved performance.
@@ -2956,7 +2954,7 @@ class NexusFSCoreMixin:
                 )
 
     @rpc_expose(description="Delete file")
-    def delete(self, path: str, context: OperationContext | None = None) -> dict[str, Any]:
+    def delete(self, path: str, context: "OperationContext | None" = None) -> dict[str, Any]:
         """
         Delete a file or memory.
 
@@ -3097,7 +3095,7 @@ class NexusFSCoreMixin:
 
     @rpc_expose(description="Rename/move file")
     def rename(
-        self, old_path: str, new_path: str, context: OperationContext | None = None
+        self, old_path: str, new_path: str, context: "OperationContext | None" = None
     ) -> dict[str, Any]:
         """
         Rename/move a file by updating its path in metadata.
@@ -3508,7 +3506,7 @@ class NexusFSCoreMixin:
             return []
 
     @rpc_expose(description="Get file metadata without reading content")
-    def stat(self, path: str, context: OperationContext | None = None) -> dict[str, Any]:
+    def stat(self, path: str, context: "OperationContext | None" = None) -> dict[str, Any]:
         """
         Get file metadata without reading the file content.
 
@@ -3623,7 +3621,7 @@ class NexusFSCoreMixin:
     def stat_bulk(
         self,
         paths: list[str],
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
         skip_errors: bool = True,
     ) -> dict[str, dict[str, Any] | None]:
         """
@@ -3749,7 +3747,7 @@ class NexusFSCoreMixin:
         return results
 
     @rpc_expose(description="Check if file exists")
-    def exists(self, path: str, context: OperationContext | None = None) -> bool:
+    def exists(self, path: str, context: "OperationContext | None" = None) -> bool:
         """
         Check if a file or directory exists.
 
@@ -3812,7 +3810,7 @@ class NexusFSCoreMixin:
 
     @rpc_expose(description="Check existence of multiple paths in single call")
     def exists_batch(
-        self, paths: list[str], context: OperationContext | None = None
+        self, paths: list[str], context: "OperationContext | None" = None
     ) -> dict[str, bool]:
         """
         Check existence of multiple paths in a single call (Issue #859).
@@ -3849,7 +3847,7 @@ class NexusFSCoreMixin:
 
     @rpc_expose(description="Get metadata for multiple paths in single call")
     def metadata_batch(
-        self, paths: list[str], context: OperationContext | None = None
+        self, paths: list[str], context: "OperationContext | None" = None
     ) -> dict[str, dict[str, Any] | None]:
         """
         Get metadata for multiple paths in a single call (Issue #859).
@@ -3948,7 +3946,7 @@ class NexusFSCoreMixin:
         return hashlib.md5(content).hexdigest()
 
     def _read_memory_path(
-        self, path: str, return_metadata: bool = False, context: OperationContext | None = None
+        self, path: str, return_metadata: bool = False, context: "OperationContext | None" = None
     ) -> bytes | dict[str, Any]:
         """Read memory via virtual path (Phase 2 Integration).
 
@@ -4038,7 +4036,7 @@ class NexusFSCoreMixin:
             "size": len(content),
         }
 
-    def _delete_memory_path(self, path: str, context: OperationContext | None = None) -> None:
+    def _delete_memory_path(self, path: str, context: "OperationContext | None" = None) -> None:
         """Delete memory via virtual path (Phase 2 Integration).
 
         Args:
@@ -4145,7 +4143,7 @@ class NexusFSCoreMixin:
         self,
         paths: list[str],
         recursive: bool = False,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, dict]:
         """
         Delete multiple files or directories in a single operation.
@@ -4205,7 +4203,7 @@ class NexusFSCoreMixin:
         self,
         path: str,
         recursive: bool = False,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
         is_implicit: bool | None = None,
     ) -> None:
         """Internal rmdir implementation without RPC decoration.
@@ -4287,7 +4285,7 @@ class NexusFSCoreMixin:
     def rename_bulk(
         self,
         renames: list[tuple[str, str]],
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, dict]:
         """
         Rename/move multiple files in a single operation.

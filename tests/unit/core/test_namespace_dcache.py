@@ -9,8 +9,6 @@ Tests cover:
 - Pre-computed mount_paths: stored in cache, used by is_visible
 """
 
-from __future__ import annotations
-
 import threading
 import time
 from unittest.mock import patch

@@ -4,8 +4,6 @@ Tests: ensure_main_branch, create_branch, list_branches, get_branch,
        get_current_branch, delete_branch, commit, checkout, log, diff.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 

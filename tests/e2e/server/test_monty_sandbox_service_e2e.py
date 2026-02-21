@@ -13,8 +13,6 @@ Validates:
 - No performance regressions
 """
 
-from __future__ import annotations
-
 import logging
 import statistics
 import time
@@ -44,7 +42,6 @@ from nexus.services.agents.agent_registry import AgentRegistry  # noqa: E402
 from nexus.storage.models import Base  # noqa: E402
 
 logger = logging.getLogger(__name__)
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

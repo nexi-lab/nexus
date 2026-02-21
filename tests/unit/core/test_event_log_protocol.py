@@ -9,8 +9,6 @@ operation_log is now handled by EventDeliveryWorker (outbox).
 Issue #1397
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.services.event_log import EventLogConfig, EventLogProtocol

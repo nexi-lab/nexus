@@ -1,7 +1,5 @@
 """Tests that the OAuth brick has zero imports from nexus.server, nexus.core, nexus.rebac."""
 
-from __future__ import annotations
-
 import ast
 import pathlib
 

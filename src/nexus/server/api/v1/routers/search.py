@@ -10,8 +10,6 @@ Provides search daemon endpoints:
 Extracted from ``fastapi_server.py`` during monolith decomposition (#1288).
 """
 
-from __future__ import annotations
-
 import logging
 import time
 from typing import Any
@@ -29,9 +27,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["search"])
 
-
 # Graph-enhanced search business logic extracted to service layer (Issue #434).
-
 
 # =============================================================================
 # Endpoints

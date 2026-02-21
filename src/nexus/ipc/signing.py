@@ -10,8 +10,6 @@ Classes:
     VerifyResult: Frozen result of a verification attempt.
 """
 
-from __future__ import annotations
-
 import base64
 import logging
 from dataclasses import dataclass
@@ -54,7 +52,7 @@ class MessageSigner:
 
     def __init__(
         self,
-        key_service: KeyService,
+        key_service: "KeyService",
         crypto: IdentityCrypto,
         agent_id: str,
     ) -> None:
@@ -62,7 +60,7 @@ class MessageSigner:
         self._crypto = crypto
         self._agent_id = agent_id
         self._cached_key_id: str | None = None
-        self._cached_private_key: Ed25519PrivateKey | None = None
+        self._cached_private_key: "Ed25519PrivateKey | None" = None
         self._cached_did: str | None = None
 
     def sign(self, envelope: MessageEnvelope) -> MessageEnvelope:
@@ -115,7 +113,7 @@ class MessageVerifier:
         crypto: IdentityCrypto for verification operations.
     """
 
-    def __init__(self, key_service: KeyService, crypto: IdentityCrypto) -> None:
+    def __init__(self, key_service: "KeyService", crypto: IdentityCrypto) -> None:
         self._key_service = key_service
         self._crypto = crypto
 

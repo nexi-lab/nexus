@@ -4,8 +4,6 @@ Verifies that all storage driver implementations satisfy the
 ``IPCStorageDriver`` runtime-checkable protocol.
 """
 
-from __future__ import annotations
-
 from nexus.ipc.storage.protocol import IPCStorageDriver
 
 

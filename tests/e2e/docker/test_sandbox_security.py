@@ -10,8 +10,6 @@ Requires:
 Skip with: pytest -m "not docker"
 """
 
-from __future__ import annotations
-
 import logging
 
 import pytest
@@ -33,7 +31,6 @@ pytestmark = [
     pytest.mark.skipif(not DOCKER_AVAILABLE, reason="Docker not available"),
     pytest.mark.integration,
 ]
-
 
 from nexus.bricks.sandbox.security_profile import SandboxSecurityProfile  # noqa: E402
 

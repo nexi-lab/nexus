@@ -17,8 +17,6 @@ Run with:
     uv run pytest tests/e2e/test_governance_e2e.py -v -o "addopts="
 """
 
-from __future__ import annotations
-
 import time
 from datetime import UTC, datetime
 

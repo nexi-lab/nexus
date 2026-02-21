@@ -14,13 +14,10 @@ References:
     - Issue #1287: Extract NexusFS Domain Services from God Object
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
-
 
 @runtime_checkable
 class ContentServiceProtocol(Protocol):
@@ -37,7 +34,7 @@ class ContentServiceProtocol(Protocol):
         path: str,
         *,
         format: str | None = None,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Read file with automatic parsing/conversion.
 
@@ -56,7 +53,7 @@ class ContentServiceProtocol(Protocol):
         self,
         path: str,
         *,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> str:
         """Detect the content type of a file.
 

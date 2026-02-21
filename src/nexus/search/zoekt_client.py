@@ -25,8 +25,6 @@ References:
     - https://sourcegraph.com/blog/sourcegraph-accepting-zoekt-maintainership
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import os
@@ -321,7 +319,7 @@ class ZoektIndexManager:
 
         # Debouncing state
         self._pending_paths: set[str] = set()
-        self._timer: threading.Timer | None = None
+        self._timer: "threading.Timer | None" = None
         self._lock = threading.Lock()
         self._indexing = False
 

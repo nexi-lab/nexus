@@ -9,8 +9,6 @@ Usage:
     .venv/bin/python -m pytest tests/e2e/test_raft_auth_permissions_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import os
 import re
 import signal

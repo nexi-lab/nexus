@@ -1,7 +1,5 @@
 """Unit tests for shared messaging primitives."""
 
-from __future__ import annotations
-
 from nexus.bricks.a2a.messaging import (
     DataPart,
     FilePart,

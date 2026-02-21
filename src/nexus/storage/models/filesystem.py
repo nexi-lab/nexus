@@ -3,8 +3,6 @@
 Issue #1286: Extracted from monolithic __init__.py.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -102,7 +100,7 @@ class FileMetadataModel(Base):
         DateTime, nullable=False, default=lambda: datetime.now(UTC)
     )
 
-    file_path: Mapped[FilePathModel] = relationship(
+    file_path: "Mapped[FilePathModel]" = relationship(
         "FilePathModel", back_populates="metadata_entries"
     )
 

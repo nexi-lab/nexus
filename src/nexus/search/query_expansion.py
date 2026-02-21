@@ -21,8 +21,6 @@ References:
     - QMD: https://github.com/tobi/qmd
 """
 
-from __future__ import annotations
-
 import asyncio
 import hashlib
 import logging
@@ -535,7 +533,7 @@ class CachedQueryExpander(QueryExpander):
     def __init__(
         self,
         expander: QueryExpander,
-        cache: Redis,
+        cache: "Redis",
         ttl: int = 3600,
         key_prefix: str = "qexp",
     ) -> None:

@@ -1,7 +1,5 @@
 """Metadata operations: getattr, readdir."""
 
-from __future__ import annotations
-
 import logging
 import stat
 import time

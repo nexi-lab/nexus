@@ -13,8 +13,6 @@ Tests cover ReBAC operations:
 - Dynamic viewer functionality
 """
 
-from __future__ import annotations
-
 # Check if pandas is available (required for dynamic viewer tests)
 import importlib.util
 import tempfile

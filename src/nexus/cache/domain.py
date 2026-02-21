@@ -18,8 +18,6 @@ NOTE: These are SERVICE-LEVEL domain caches, NOT kernel code.
       consume these domain caches.
 """
 
-from __future__ import annotations
-
 import hashlib
 import json
 import logging

@@ -8,8 +8,6 @@ in ``nexus.services.protocols.workflow`` (they are service-tier contracts,
 not brick-specific).  Re-exported here for backward compatibility.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 

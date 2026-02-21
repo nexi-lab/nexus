@@ -30,8 +30,6 @@ Performance targets:
 Issue: #951
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import logging
@@ -146,8 +144,8 @@ class SearchDaemon:
         self.stats = DaemonStats()
 
         # Search components (initialized on startup)
-        self._bm25s_index: BM25SIndex | None = None
-        self._async_engine: AsyncEngine | None = None
+        self._bm25s_index: "BM25SIndex | None" = None
+        self._async_engine: "AsyncEngine | None" = None
         self._async_session: Any | None = None  # async_sessionmaker (Issue #1597)
         self._async_search: Any | None = None  # AsyncSemanticSearch (legacy)
         self._embedding_provider: Any = None
@@ -159,10 +157,10 @@ class SearchDaemon:
             self._async_session = async_session_factory
 
         # Entropy-aware chunker for filtering redundant content (Issue #1024)
-        self._entropy_chunker: EntropyAwareChunker | None = None
+        self._entropy_chunker: "EntropyAwareChunker | None" = None
 
         # Indexing pipeline for parallel refresh (Issue #1094)
-        self._indexing_pipeline: IndexingPipeline | None = None
+        self._indexing_pipeline: "IndexingPipeline | None" = None
 
         # State
         self._initialized = False

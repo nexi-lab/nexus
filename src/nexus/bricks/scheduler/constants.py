@@ -8,8 +8,6 @@ because they are shared across bricks (pay, scheduler, server).
 Related: Issue #1212
 """
 
-from __future__ import annotations
-
 from decimal import Decimal
 from enum import StrEnum
 
@@ -61,7 +59,6 @@ VALID_TASK_STATUSES = frozenset(
         TASK_STATUS_CANCELLED,
     }
 )
-
 
 # =============================================================================
 # Astraea-Style Enums (Issue #1274)

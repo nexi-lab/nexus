@@ -6,8 +6,6 @@ Zone membership has moved to: nexus.server.services.zone_membership
 This file re-exports all symbols for backward compatibility.
 """
 
-from __future__ import annotations
-
 # User lookup functions (now in auth brick)
 from nexus.auth.user_queries import (  # noqa: F401
     check_email_available,

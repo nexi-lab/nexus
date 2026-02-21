@@ -8,8 +8,6 @@ References:
     - docs/design/KERNEL-ARCHITECTURE.md §1 (service DI)
 """
 
-from __future__ import annotations
-
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
@@ -33,7 +31,7 @@ class SyncContext:
     include_patterns: list[str] | None = None
     exclude_patterns: list[str] | None = None
     generate_embeddings: bool = False
-    context: OperationContext | None = None
+    context: "OperationContext | None" = None
     progress_callback: ProgressCallback | None = None
     full_sync: bool = False
 

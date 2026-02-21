@@ -14,8 +14,6 @@ Tests cover:
 Related: Issue #1331
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 from dataclasses import dataclass

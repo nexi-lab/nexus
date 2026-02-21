@@ -4,8 +4,6 @@ Provides the ability to query filesystem state at any historical operation point
 enabling debugging, analysis, and understanding of agent behavior over time.
 """
 
-from __future__ import annotations
-
 import json
 from typing import TYPE_CHECKING, Any
 
@@ -23,7 +21,7 @@ if TYPE_CHECKING:
 class TimeTravelReader:
     """Read filesystem state at historical operation points."""
 
-    def __init__(self, session: Session, backend: Backend):
+    def __init__(self, session: "Session", backend: "Backend"):
         """Initialize time-travel reader.
 
         Args:

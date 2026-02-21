@@ -10,8 +10,6 @@ Same pattern as the former ``PGEventLog`` (removed in Issue #1241).
 Issue: #1243, #1469
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from typing import Any

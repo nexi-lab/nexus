@@ -7,8 +7,6 @@ Note: Uses Starlette TestClient for WebSocket testing as the websockets
 library has compatibility issues with Python 3.14.
 """
 
-from __future__ import annotations
-
 import sys
 from typing import Any
 

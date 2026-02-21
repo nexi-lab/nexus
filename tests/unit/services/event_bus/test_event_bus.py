@@ -10,8 +10,6 @@ Tests cover:
 Related: Issue #1106 Block 2
 """
 
-from __future__ import annotations
-
 import json
 from unittest.mock import AsyncMock, MagicMock
 

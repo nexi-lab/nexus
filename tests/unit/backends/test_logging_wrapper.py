@@ -12,8 +12,6 @@ Design reference:
     - NEXUS-LEGO-ARCHITECTURE.md PART 16, Recursive Wrapping (Mechanism 2)
 """
 
-from __future__ import annotations
-
 import logging
 from unittest.mock import MagicMock, PropertyMock
 

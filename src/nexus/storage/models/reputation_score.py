@@ -11,8 +11,6 @@ Design decisions:
 - Interaction counts for quick summary stats.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, Float, Index, Integer, String

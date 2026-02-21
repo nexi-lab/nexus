@@ -9,8 +9,6 @@ PermissionEnforcer lives in services/permissions/enforcer.py — re-exported her
 for backward compatibility.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 

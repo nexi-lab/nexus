@@ -4,8 +4,6 @@ CAS-backed version tracking for files and skills with full history.
 Every file write creates a new version, preserving all previous versions.
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 from typing import cast
 

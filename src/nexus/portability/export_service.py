@@ -12,8 +12,6 @@ References:
 - Epic #1161: Zone Data Portability
 """
 
-from __future__ import annotations
-
 import logging
 import os
 import tarfile
@@ -61,7 +59,7 @@ class ZoneExportService:
 
     def __init__(
         self,
-        nexus_fs: NexusFS,
+        nexus_fs: "NexusFS",
     ):
         """Initialize the export service.
 
@@ -69,8 +67,8 @@ class ZoneExportService:
             nexus_fs: NexusFS instance with metadata store and backend access
         """
         self.nexus_fs = nexus_fs
-        self.metadata_store: MetastoreABC = nexus_fs.metadata
-        self.backend: Backend = nexus_fs.backend
+        self.metadata_store: "MetastoreABC" = nexus_fs.metadata
+        self.backend: "Backend" = nexus_fs.backend
 
     def export_zone(
         self,
@@ -405,7 +403,7 @@ class ZoneExportService:
 
 # Convenience function for CLI usage
 def export_zone_bundle(
-    nexus_fs: NexusFS,
+    nexus_fs: "NexusFS",
     zone_id: str,
     output_path: Path,
     include_content: bool = True,

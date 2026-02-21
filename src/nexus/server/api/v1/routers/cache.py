@@ -8,8 +8,6 @@ Provides cache management endpoints:
 Extracted from ``fastapi_server.py`` during monolith decomposition (#1288).
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 

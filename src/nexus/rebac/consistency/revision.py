@@ -16,8 +16,6 @@ Usage:
 Related: Issue #1459 (decomposition), P0-1 (consistency levels)
 """
 
-from __future__ import annotations
-
 import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol
@@ -50,7 +48,7 @@ class ConnectionHelper(Protocol):
 
 
 def increment_version_token(
-    engine: Engine,
+    engine: "Engine",
     conn_helper: ConnectionHelper,
     zone_id: str = "root",
 ) -> str:
@@ -128,7 +126,7 @@ def increment_version_token(
         return f"v{version}"
 
 
-def get_zone_revision_for_grant(engine: Engine, zone_id: str) -> int:
+def get_zone_revision_for_grant(engine: "Engine", zone_id: str) -> int:
     """Get current zone revision for consistency during expansion.
 
     This prevents the "new enemy" problem: files created after the grant

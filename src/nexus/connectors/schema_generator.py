@@ -4,8 +4,6 @@ Converts connector metadata (Pydantic schemas, operation traits, error
 registries) into SKILL.md markdown and writes skill directories.
 """
 
-from __future__ import annotations
-
 import logging
 import posixpath
 from typing import Any

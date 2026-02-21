@@ -6,8 +6,6 @@ Evaluation tests require:
 - Manual trigger with: pytest tests/evaluation -m evaluation
 """
 
-from __future__ import annotations
-
 import os
 
 import pytest

@@ -27,8 +27,6 @@ Performance expectations:
 - Cache miss detection: O(1) via Bloom filter
 """
 
-from __future__ import annotations
-
 import contextlib
 import logging
 import os
@@ -148,7 +146,7 @@ class LocalDiskCache:
         self._clock_order: list[str] = []
 
         # Bloom filter for fast miss detection
-        self._bloom: BloomFilter | None = None
+        self._bloom: "BloomFilter | None" = None
         self._bloom_capacity = bloom_capacity
         self._bloom_fp_rate = bloom_fp_rate
 

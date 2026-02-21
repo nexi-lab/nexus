@@ -1,7 +1,5 @@
 """Tests for getattr and readdir metadata operations."""
 
-from __future__ import annotations
-
 import errno
 import stat
 from typing import Any

@@ -12,8 +12,6 @@ Tests three user types:
 - Unauthenticated: rejected with 401
 """
 
-from __future__ import annotations
-
 import os
 import signal
 import socket

@@ -8,8 +8,6 @@ Canonical location: ``nexus.rebac.types``
 Backward-compat shim: ``nexus.services.permissions.types``
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -24,7 +22,6 @@ __all__ = [
     "GraphLimits",
     "GraphLimitExceeded",
 ]
-
 
 # ============================================================================
 # P0-1: Consistency Levels and Version Tokens
@@ -185,7 +182,7 @@ class CheckResult:
     cache_age_ms: float | None = None
     traversal_stats: TraversalStats | None = None
     indeterminate: bool = False  # BUGFIX (Issue #5): Track limit-driven denials
-    limit_exceeded: GraphLimitExceeded | None = None  # BUGFIX (Issue #5): Which limit was hit
+    limit_exceeded: "GraphLimitExceeded | None" = None  # BUGFIX (Issue #5): Which limit was hit
 
 
 # ============================================================================

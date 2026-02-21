@@ -18,15 +18,12 @@ References:
     - MiniScope: mechanical enforcement > prompt-based
 """
 
-from __future__ import annotations
-
 import asyncio
 import functools
 import logging
 from typing import Any
 
 logger = logging.getLogger(__name__)
-
 
 # ---------------------------------------------------------------------------
 # Error envelope

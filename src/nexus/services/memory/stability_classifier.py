@@ -10,8 +10,6 @@ Usage:
     # StabilityClassification(temporal_stability="static", confidence=0.95, ...)
 """
 
-from __future__ import annotations
-
 import logging
 import re
 from dataclasses import dataclass, field

@@ -40,8 +40,6 @@ References:
     - Linux VFS dcache: https://docs.kernel.org/filesystems/path-lookup.html
 """
 
-from __future__ import annotations
-
 import bisect
 import hashlib
 import logging
@@ -190,14 +188,14 @@ class NamespaceManager:
 
     def __init__(
         self,
-        rebac_manager: EnhancedReBACManager,
+        rebac_manager: "EnhancedReBACManager",
         cache_maxsize: int = 10_000,
         cache_ttl: int = 300,
         revision_window: int = 10,
         dcache_maxsize: int = 100_000,
         dcache_positive_ttl: int = 300,
         dcache_negative_ttl: int = 60,
-        persistent_store: PersistentViewStore | None = None,
+        persistent_store: "PersistentViewStore | None" = None,
     ) -> None:
         self._rebac_manager = rebac_manager
         self._revision_window = revision_window
@@ -218,12 +216,12 @@ class NamespaceManager:
         self._dcache_lock = threading.Lock()
 
         # Positive entries: path is visible to subject. Longer TTL (stable).
-        self._dcache_positive: TTLCache[NamespaceManager._DCacheKey, bool] = TTLCache(
+        self._dcache_positive: "TTLCache[NamespaceManager._DCacheKey, bool]" = TTLCache(
             maxsize=dcache_maxsize, ttl=dcache_positive_ttl
         )
         # Negative entries: path is NOT visible to subject. Shorter TTL (security:
         # newly-granted paths must become visible within negative TTL).
-        self._dcache_negative: TTLCache[NamespaceManager._DCacheKey, bool] = TTLCache(
+        self._dcache_negative: "TTLCache[NamespaceManager._DCacheKey, bool]" = TTLCache(
             maxsize=dcache_maxsize // 2, ttl=dcache_negative_ttl
         )
 
@@ -364,8 +362,8 @@ class NamespaceManager:
         if miss_indices:
             _entries, mount_paths = self._get_mount_data(subject, zone_id)
 
-            new_positive: list[NamespaceManager._DCacheKey] = []
-            new_negative: list[NamespaceManager._DCacheKey] = []
+            new_positive: "list[NamespaceManager._DCacheKey]" = []
+            new_negative: "list[NamespaceManager._DCacheKey]" = []
 
             for i in miss_indices:
                 result = self._check_path_in_mount_paths(mount_paths, paths[i])

@@ -8,8 +8,6 @@ Architecture Decision: Issue 3B — custom client wrapping LiteLLMProvider
 for full observability, cost tracking, and caching.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from typing import Any

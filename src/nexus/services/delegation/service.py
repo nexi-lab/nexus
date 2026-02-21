@@ -21,8 +21,6 @@ On failure at step 2+: unregister agent (no key exists, safe to retry).
     - DelegationScope serialization
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import uuid
@@ -75,18 +73,18 @@ class DelegationService:
 
     def __init__(
         self,
-        session_factory: sessionmaker[Session],
-        rebac_manager: EnhancedReBACManager,
-        namespace_manager: NamespaceManager | None = None,
-        entity_registry: EntityRegistry | None = None,
-        agent_registry: AgentRegistry | None = None,
-        reputation_service: ReputationService | None = None,
+        session_factory: "sessionmaker[Session]",
+        rebac_manager: "EnhancedReBACManager",
+        namespace_manager: "NamespaceManager | None" = None,
+        entity_registry: "EntityRegistry | None" = None,
+        agent_registry: "AgentRegistry | None" = None,
+        reputation_service: "ReputationService | None" = None,
     ) -> None:
         self._session_factory = session_factory
         self._rebac_manager = rebac_manager
         self._namespace_manager = namespace_manager
         self._entity_registry = entity_registry
-        self._agent_registry: AgentRegistry | None = agent_registry
+        self._agent_registry: "AgentRegistry | None" = agent_registry
         self._reputation_service = reputation_service
         logger.info("[DelegationService] Initialized")
 
@@ -97,7 +95,7 @@ class DelegationService:
         Eliminates duplicated try/except/rollback/finally across methods.
         Set commit=False for read-only operations.
         """
-        session: Session = self._session_factory()
+        session: "Session" = self._session_factory()
         try:
             yield session
             if commit:

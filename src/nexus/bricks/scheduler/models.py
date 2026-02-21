@@ -6,8 +6,6 @@ Pydantic models for API request/response are in the router module.
 Related: Issue #1212, #1274
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal

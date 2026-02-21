@@ -13,8 +13,6 @@ Phase 2: Core Refactoring (Issue #1287)
 Extracted from: nexus_fs_events.py (836 lines)
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import logging
@@ -51,9 +49,9 @@ class EventsService:
 
     def __init__(
         self,
-        backend: ConnectorProtocol,
-        event_bus: EventBusBase | None = None,
-        lock_manager: LockManagerBase | None = None,
+        backend: "ConnectorProtocol",
+        event_bus: "EventBusBase | None" = None,
+        lock_manager: "LockManagerBase | None" = None,
         zone_id: str | None = None,
         metadata_cache: Any = None,
     ):
@@ -69,7 +67,7 @@ class EventsService:
         self._backend = backend
         self._event_bus = event_bus
         self._lock_manager = lock_manager
-        self._file_watcher: FileWatcher | None = None  # lazy init in _get_file_watcher()
+        self._file_watcher: "FileWatcher | None" = None  # lazy init in _get_file_watcher()
         self._zone_id = zone_id
         self._metadata_cache = metadata_cache
         self._cache_invalidation_started = False
@@ -94,7 +92,7 @@ class EventsService:
         """Check if distributed lock manager is available."""
         return self._lock_manager is not None
 
-    def _get_file_watcher(self) -> FileWatcher:
+    def _get_file_watcher(self) -> "FileWatcher":
         """Get or create the file watcher instance for same-box mode."""
         if not self._is_same_box():
             raise NotImplementedError(
@@ -109,7 +107,7 @@ class EventsService:
 
         return self._file_watcher
 
-    def _get_zone_id(self, context: OperationContext | None) -> str:
+    def _get_zone_id(self, context: "OperationContext | None") -> str:
         """Get zone ID from context or default."""
         if context and hasattr(context, "zone_id") and context.zone_id:
             return context.zone_id
@@ -153,7 +151,7 @@ class EventsService:
         path: str,
         timeout: float = 30.0,
         since_revision: int | None = None,
-        _context: OperationContext | None = None,
+        _context: "OperationContext | None" = None,
     ) -> dict[str, Any] | None:
         """Wait for file system changes on a path.
 
@@ -255,7 +253,7 @@ class EventsService:
         timeout: float = 30.0,
         ttl: float = 30.0,
         max_holders: int = 1,
-        _context: OperationContext | None = None,
+        _context: "OperationContext | None" = None,
     ) -> str | None:
         """Acquire an advisory lock on a path.
 
@@ -320,7 +318,7 @@ class EventsService:
         lock_id: str,
         path: str,
         ttl: float = 30.0,
-        _context: OperationContext | None = None,
+        _context: "OperationContext | None" = None,
     ) -> bool:
         """Extend a lock's TTL (heartbeat for long-running operations).
 
@@ -365,7 +363,7 @@ class EventsService:
         self,
         lock_id: str,
         path: str | None = None,
-        _context: OperationContext | None = None,
+        _context: "OperationContext | None" = None,
     ) -> bool:
         """Release an advisory lock.
 
@@ -423,7 +421,7 @@ class EventsService:
         path: str,
         timeout: float = 30.0,
         ttl: float = 30.0,
-        _context: OperationContext | None = None,
+        _context: "OperationContext | None" = None,
     ) -> AsyncIterator[str]:
         """Acquire a distributed lock as an async context manager.
 

@@ -13,8 +13,6 @@ Tests cover:
 - Boundary conditions
 """
 
-from __future__ import annotations
-
 import tempfile
 import uuid
 from collections.abc import Generator

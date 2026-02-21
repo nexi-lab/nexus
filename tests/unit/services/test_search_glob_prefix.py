@@ -5,8 +5,6 @@ correctly determine when to add **/ to glob patterns, using dynamic namespace
 data from the router instead of hardcoded prefixes.
 """
 
-from __future__ import annotations
-
 from unittest.mock import Mock
 
 import pytest

@@ -15,8 +15,6 @@ References:
     - Issue #1704: Brick lifecycle manager
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol, runtime_checkable
@@ -32,7 +30,6 @@ PRE_UNMOUNT: str = "pre_unmount"
 POST_UNMOUNT: str = "post_unmount"
 BRICK_STARTED: str = "brick_started"
 BRICK_STOPPED: str = "brick_stopped"
-
 
 # ---------------------------------------------------------------------------
 # State enum

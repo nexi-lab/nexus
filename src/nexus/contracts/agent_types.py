@@ -7,8 +7,6 @@ Originally in ``nexus.services.agents.agent_record``; moved here so bricks
 can import them without violating the zero-core-imports rule.
 """
 
-from __future__ import annotations
-
 import types
 from dataclasses import dataclass
 from datetime import datetime

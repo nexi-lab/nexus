@@ -9,8 +9,6 @@ kernel→server import violations. server/auth/user_helpers.py re-exports
 these for backward compatibility.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 

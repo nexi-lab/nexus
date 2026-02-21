@@ -9,8 +9,6 @@ Validates the complete metrics pipeline end-to-end:
 6. Verify collector doesn't leak sensitive data
 """
 
-from __future__ import annotations
-
 import os
 import signal
 import socket

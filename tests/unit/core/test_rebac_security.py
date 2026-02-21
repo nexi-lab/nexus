@@ -12,8 +12,6 @@ This module covers critical security properties:
 - Consistency level validation
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest

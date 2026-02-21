@@ -7,8 +7,6 @@ Mirrors the v2 versioning pattern:
 Issue #1288: Decompose FastAPI server monolith into domain routers.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING
 
@@ -113,7 +111,7 @@ def build_v1_registry() -> RouterRegistry:
     return registry
 
 
-def register_v1_routers(app: FastAPI, registry: RouterRegistry) -> None:
+def register_v1_routers(app: "FastAPI", registry: RouterRegistry) -> None:
     """Mount every router in *registry* onto *app*."""
     for entry in registry.entries:
         if entry.prefix is not None:

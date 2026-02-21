@@ -7,8 +7,6 @@ Tests the per-subject namespace visibility model with a real FastAPI server:
 - Performance validation for namespace visibility checks
 """
 
-from __future__ import annotations
-
 import os
 import shutil
 import signal

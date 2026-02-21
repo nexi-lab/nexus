@@ -7,8 +7,6 @@ Follows the ``pay/`` exemplary brick pattern:
 - Owns both ``ParserRegistry`` and ``ProviderRegistry``
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from collections.abc import Callable

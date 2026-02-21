@@ -14,8 +14,6 @@ References:
     - Linux io_uring: submission queue / completion queue pattern
 """
 
-from __future__ import annotations
-
 import asyncio
 import base64
 import logging
@@ -43,7 +41,6 @@ MAX_PAYLOAD_BYTES = 10 * 1024 * 1024
 # Issue #2071: Sourced from ProfileTuning.network.default_http_timeout at runtime.
 # Kept as module-level fallback for callers without DI tuning.
 DEFAULT_OPERATION_TIMEOUT = 30.0
-
 
 # =============================================================================
 # Operation Models (Pydantic discriminated union)
@@ -120,7 +117,6 @@ BatchOperation = Annotated[
     Discriminator(_get_op_discriminator),
 ]
 
-
 # =============================================================================
 # Request / Response Models
 # =============================================================================
@@ -141,7 +137,7 @@ class BatchRequest(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _check_total_payload_size(self) -> BatchRequest:
+    def _check_total_payload_size(self) -> "BatchRequest":
         """Reject if total write content exceeds 10 MB."""
         total = 0
         for op in self.operations:
@@ -211,7 +207,7 @@ class BatchExecutor:
 
     def __init__(
         self,
-        fs: AsyncNexusFS,
+        fs: "AsyncNexusFS",
         operation_timeout: float = DEFAULT_OPERATION_TIMEOUT,
     ) -> None:
         self._fs = fs
@@ -219,8 +215,8 @@ class BatchExecutor:
 
     async def execute(
         self,
-        request: BatchRequest,
-        context: OperationContext,
+        request: "BatchRequest",
+        context: "OperationContext",
     ) -> BatchResponse:
         """Execute all operations in the batch sequentially.
 
@@ -261,7 +257,7 @@ class BatchExecutor:
     async def _dispatch(
         self,
         op: ReadOp | WriteOp | DeleteOp | StatOp | ExistsOp | ListOp | MkdirOp,
-        context: OperationContext,
+        context: "OperationContext",
     ) -> OperationResult:
         """Dispatch a single operation to the appropriate AsyncNexusFS method."""
         if isinstance(op, ReadOp):
@@ -281,7 +277,7 @@ class BatchExecutor:
         msg = f"Unknown operation type: {type(op).__name__}"
         raise ValueError(msg)
 
-    async def _exec_read(self, op: ReadOp, context: OperationContext) -> OperationResult:
+    async def _exec_read(self, op: ReadOp, context: "OperationContext") -> OperationResult:
         raw_content: Any = await self._fs.read(op.path, context=context)
         text: str
         if isinstance(raw_content, bytes):
@@ -296,7 +292,7 @@ class BatchExecutor:
             text = str(raw_content)
         return OperationResult(index=0, status=200, data={"content": text}, error=None)
 
-    async def _exec_write(self, op: WriteOp, context: OperationContext) -> OperationResult:
+    async def _exec_write(self, op: WriteOp, context: "OperationContext") -> OperationResult:
         if op.encoding == "base64":
             content: bytes | str = base64.b64decode(op.content)
         else:
@@ -308,11 +304,11 @@ class BatchExecutor:
         )
         return OperationResult(index=0, status=201, data=result, error=None)
 
-    async def _exec_delete(self, op: DeleteOp, context: OperationContext) -> OperationResult:
+    async def _exec_delete(self, op: DeleteOp, context: "OperationContext") -> OperationResult:
         result = await self._fs.delete(op.path, context=context)
         return OperationResult(index=0, status=200, data=result, error=None)
 
-    async def _exec_stat(self, op: StatOp, context: OperationContext) -> OperationResult:
+    async def _exec_stat(self, op: StatOp, context: "OperationContext") -> OperationResult:
         meta = await self._fs.get_metadata(op.path, context=context)
         if meta is None:
             raise NexusFileNotFoundError(path=op.path)
@@ -331,15 +327,15 @@ class BatchExecutor:
             error=None,
         )
 
-    async def _exec_exists(self, op: ExistsOp, context: OperationContext) -> OperationResult:
+    async def _exec_exists(self, op: ExistsOp, context: "OperationContext") -> OperationResult:
         exists = await self._fs.exists(op.path, context=context)
         return OperationResult(index=0, status=200, data={"exists": exists}, error=None)
 
-    async def _exec_list(self, op: ListOp, context: OperationContext) -> OperationResult:
+    async def _exec_list(self, op: ListOp, context: "OperationContext") -> OperationResult:
         items = await self._fs.list_dir(op.path, context=context)
         return OperationResult(index=0, status=200, data={"items": items}, error=None)
 
-    async def _exec_mkdir(self, op: MkdirOp, context: OperationContext) -> OperationResult:
+    async def _exec_mkdir(self, op: MkdirOp, context: "OperationContext") -> OperationResult:
         await self._fs.mkdir(op.path, parents=op.parents, context=context)
         return OperationResult(
             index=0, status=201, data={"created": True, "path": op.path}, error=None

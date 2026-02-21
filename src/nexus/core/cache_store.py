@@ -26,8 +26,6 @@ Usage:
     nx = NexusFS(backend=backend, metadata_store=store)
 """
 
-from __future__ import annotations
-
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -141,7 +139,7 @@ class CacheStoreABC(ABC):
         """Close connections and release resources."""
         ...
 
-    async def __aenter__(self) -> CacheStoreABC:
+    async def __aenter__(self) -> "CacheStoreABC":
         return self
 
     async def __aexit__(self, *args: Any) -> None:

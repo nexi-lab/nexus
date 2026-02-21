@@ -4,8 +4,6 @@ Handles sqlite-vec vector search and FTS5 keyword search.
 Extracted from vector_db.py to isolate backend-specific logic.
 """
 
-from __future__ import annotations
-
 import logging
 import struct
 from typing import TYPE_CHECKING, Any
@@ -136,7 +134,7 @@ def reload_sqlite_vec(conn: Any) -> None:
         pass
 
 
-def sqlite_store_embedding(session: Session, chunk_id: str, embedding: list[float]) -> None:
+def sqlite_store_embedding(session: "Session", chunk_id: str, embedding: list[float]) -> None:
     """Store embedding as BLOB in SQLite."""
     blob = struct.pack(f"{len(embedding)}f", *embedding)
     session.execute(
@@ -146,7 +144,7 @@ def sqlite_store_embedding(session: Session, chunk_id: str, embedding: list[floa
 
 
 def sqlite_vector_search(
-    session: Session,
+    session: "Session",
     embedding: list[float],
     limit: int,
     path_filter: str | None,
@@ -187,7 +185,7 @@ def sqlite_vector_search(
 
 
 def sqlite_keyword_search(
-    session: Session,
+    session: "Session",
     query: str,
     limit: int,
     path_filter: str | None,

@@ -12,8 +12,6 @@ Profile hierarchy (superset relationship):
     embedded ⊂ lite ⊂ full ⊆ cloud
 """
 
-from __future__ import annotations
-
 import logging
 from enum import StrEnum
 from typing import TYPE_CHECKING
@@ -87,7 +85,6 @@ ALL_BRICK_NAMES: frozenset[str] = frozenset(
     }
 )
 
-
 # ---------------------------------------------------------------------------
 # DeploymentProfile enum
 # ---------------------------------------------------------------------------
@@ -116,7 +113,7 @@ class DeploymentProfile(StrEnum):
         """Check if a brick is enabled by default in this profile."""
         return brick in self.default_bricks()
 
-    def tuning(self) -> ProfileTuning:
+    def tuning(self) -> "ProfileTuning":
         """Return the performance tuning configuration for this profile.
 
         Issue #2071: Per-profile performance thresholds.

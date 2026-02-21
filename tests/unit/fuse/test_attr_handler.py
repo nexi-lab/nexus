@@ -1,7 +1,5 @@
 """Tests for chmod, chown, truncate, utimens attribute operations."""
 
-from __future__ import annotations
-
 import errno
 import os
 from typing import Any

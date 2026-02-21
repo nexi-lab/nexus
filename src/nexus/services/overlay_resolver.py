@@ -12,8 +12,6 @@ Issue #1264: CAS dedup at VFS level.
 Pattern follows: services/search_service.py (independent service, injected into NexusFS)
 """
 
-from __future__ import annotations
-
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -102,8 +100,8 @@ class OverlayResolver:
 
     def __init__(
         self,
-        metadata: MetastoreABC,
-        backend: ConnectorProtocol,
+        metadata: "MetastoreABC",
+        backend: "ConnectorProtocol",
         *,
         max_cached_manifests: int = 256,
     ) -> None:
@@ -141,7 +139,7 @@ class OverlayResolver:
         self,
         path: str,
         overlay_config: OverlayConfig,
-    ) -> FileMetadata | None:
+    ) -> "FileMetadata | None":
         """Resolve a file read through the overlay layers.
 
         Resolution order:
@@ -184,7 +182,7 @@ class OverlayResolver:
         # Synthesize FileMetadata from base manifest entry
         return self._manifest_entry_to_metadata(entry, path)
 
-    def is_whiteout(self, meta: FileMetadata) -> bool:
+    def is_whiteout(self, meta: "FileMetadata") -> bool:
         """Check if a metadata entry is a whiteout marker.
 
         Whiteout markers represent files that exist in the base layer
@@ -233,7 +231,7 @@ class OverlayResolver:
         self,
         prefix: str,
         overlay_config: OverlayConfig,
-    ) -> list[FileMetadata]:
+    ) -> "list[FileMetadata]":
         """List files by merging upper and base layers.
 
         Two-pass set merge:
@@ -254,7 +252,7 @@ class OverlayResolver:
         # Pass 1: Collect upper-layer entries
         upper_entries = self._metadata.list(prefix=prefix)
         upper_paths: set[str] = set()
-        result: list[FileMetadata] = []
+        result: "list[FileMetadata]" = []
 
         for meta in upper_entries:
             upper_paths.add(meta.path)
@@ -407,7 +405,7 @@ class OverlayResolver:
         self,
         entry: ManifestEntry,
         full_path: str,
-    ) -> FileMetadata:
+    ) -> "FileMetadata":
         """Synthesize a FileMetadata from a base-layer ManifestEntry.
 
         Args:

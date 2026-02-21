@@ -5,8 +5,6 @@ and immutable return types. Used by identity models and services, and available 
 backfill into existing code (agent_registry.py, workspace_registry.py) in future PRs.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import types

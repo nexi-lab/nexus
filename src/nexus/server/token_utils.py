@@ -4,8 +4,6 @@ Provides a single source of truth for parsing sk-style API tokens
 used by both authentication and rate limiting.
 """
 
-from __future__ import annotations
-
 from typing import NamedTuple
 
 

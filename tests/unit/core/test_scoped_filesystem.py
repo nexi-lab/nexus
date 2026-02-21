@@ -3,8 +3,6 @@
 Tests path scoping/unscoping for multi-zone isolation.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, PropertyMock
 
 import pytest

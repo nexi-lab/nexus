@@ -10,8 +10,6 @@ inline HRRN score DESC, enqueued_at ASC for Astraea-style scheduling.
 Related: Issue #1212, #1274
 """
 
-from __future__ import annotations
-
 import json
 from datetime import datetime
 from decimal import Decimal
@@ -245,7 +243,6 @@ FROM scheduled_tasks
 WHERE status = 'queued' AND zone_id = $1
 GROUP BY priority_class
 """
-
 
 # =============================================================================
 # Row-to-Model Conversion

@@ -13,8 +13,6 @@ These tests use real WorkspaceManifest serialization and OverlayResolver,
 with mocked metadata store and backend for isolation.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest

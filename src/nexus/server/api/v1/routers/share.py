@@ -8,8 +8,6 @@ Provides public share link endpoints (anonymous access allowed):
 Extracted from ``fastapi_server.py`` during monolith decomposition (#1288).
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 
@@ -27,7 +25,6 @@ from nexus.server.range_utils import build_range_response
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["share"])
-
 
 # =============================================================================
 # Helpers

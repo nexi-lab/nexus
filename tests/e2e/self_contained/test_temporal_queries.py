@@ -14,8 +14,6 @@ Example:
     pytest tests/integration/test_temporal_queries.py
 """
 
-from __future__ import annotations
-
 import logging
 import os
 from datetime import UTC, datetime, timedelta

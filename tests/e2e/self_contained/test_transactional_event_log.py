@@ -7,8 +7,6 @@ End-to-end flow:
 4. Verify retry on dispatch failure
 """
 
-from __future__ import annotations
-
 import tempfile
 import time
 from collections.abc import Generator

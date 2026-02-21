@@ -1,7 +1,5 @@
 """Tests for version history garbage collection (Issue #974)."""
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import tempfile

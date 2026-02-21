@@ -17,8 +17,6 @@ Example:
     ...     print(f"{name}: {config.type.value}")
 """
 
-from __future__ import annotations
-
 import logging
 import os
 from dataclasses import dataclass, field
@@ -94,7 +92,7 @@ class ProviderConfig:
     backend: BackendConfig | None = None
 
     @classmethod
-    def from_dict(cls, name: str, data: dict[str, Any]) -> ProviderConfig:
+    def from_dict(cls, name: str, data: dict[str, Any]) -> "ProviderConfig":
         """Create ProviderConfig from dictionary."""
         provider_type = ProviderType(data.get("type", "local"))
 
@@ -197,7 +195,7 @@ class MCPProviderRegistry(BaseRegistry[ProviderConfig]):
     YAML serialization, factory classmethods, and provider-type filtering.
     """
 
-    def __init__(self, providers: dict[str, ProviderConfig] | None = None):
+    def __init__(self, providers: "dict[str, ProviderConfig] | None" = None):
         """Initialize registry.
 
         Args:
@@ -209,7 +207,7 @@ class MCPProviderRegistry(BaseRegistry[ProviderConfig]):
                 self.register(name, config, allow_overwrite=True)
 
     @classmethod
-    def from_yaml(cls, path: str | Path) -> MCPProviderRegistry:
+    def from_yaml(cls, path: str | Path) -> "MCPProviderRegistry":
         """Load registry from YAML file.
 
         Args:
@@ -232,7 +230,7 @@ class MCPProviderRegistry(BaseRegistry[ProviderConfig]):
         return cls(providers=providers)
 
     @classmethod
-    def load_default(cls) -> MCPProviderRegistry:
+    def load_default(cls) -> "MCPProviderRegistry":
         """Load default provider registry.
 
         Searches for mcp-providers.yaml in:
@@ -272,7 +270,7 @@ class MCPProviderRegistry(BaseRegistry[ProviderConfig]):
         return cls.with_builtin_defaults()
 
     @classmethod
-    def with_builtin_defaults(cls) -> MCPProviderRegistry:
+    def with_builtin_defaults(cls) -> "MCPProviderRegistry":
         """Create registry with built-in default providers.
 
         Returns:
@@ -312,7 +310,7 @@ class MCPProviderRegistry(BaseRegistry[ProviderConfig]):
         }
         return cls(providers=providers)
 
-    def get(self, name: str) -> ProviderConfig | None:
+    def get(self, name: str) -> "ProviderConfig | None":
         """Get provider configuration by name.
 
         Args:
@@ -323,7 +321,7 @@ class MCPProviderRegistry(BaseRegistry[ProviderConfig]):
         """
         return super().get(name)
 
-    def list_providers(self) -> list[tuple[str, ProviderConfig]]:
+    def list_providers(self) -> "list[tuple[str, ProviderConfig]]":
         """List all providers.
 
         Returns:
@@ -331,7 +329,7 @@ class MCPProviderRegistry(BaseRegistry[ProviderConfig]):
         """
         return [(name, self.get_or_raise(name)) for name in self.list_names()]
 
-    def list_klavis_providers(self) -> list[tuple[str, ProviderConfig]]:
+    def list_klavis_providers(self) -> "list[tuple[str, ProviderConfig]]":
         """List Klavis-hosted providers.
 
         Returns:
@@ -343,7 +341,7 @@ class MCPProviderRegistry(BaseRegistry[ProviderConfig]):
             if config.type == ProviderType.KLAVIS
         ]
 
-    def list_local_providers(self) -> list[tuple[str, ProviderConfig]]:
+    def list_local_providers(self) -> "list[tuple[str, ProviderConfig]]":
         """List local providers.
 
         Returns:
@@ -355,7 +353,7 @@ class MCPProviderRegistry(BaseRegistry[ProviderConfig]):
             if config.type == ProviderType.LOCAL
         ]
 
-    def add_provider(self, config: ProviderConfig) -> None:
+    def add_provider(self, config: "ProviderConfig") -> None:
         """Add a provider to the registry.
 
         Args:

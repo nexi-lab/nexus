@@ -20,8 +20,6 @@ Runner:
 - load: Load full skill content on-demand
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any, cast
 
@@ -83,7 +81,7 @@ class SkillService:
 
     def __init__(
         self,
-        gateway: NexusFSGateway,
+        gateway: "NexusFSGateway",
     ):
         """Initialize skill service.
 
@@ -105,7 +103,7 @@ class SkillService:
         self,
         skill_path: str,
         share_with: str,
-        context: OperationContext | None,
+        context: "OperationContext | None",
     ) -> str:
         """Grant read permission on a skill to users, groups, or make public.
 
@@ -160,7 +158,7 @@ class SkillService:
         self,
         skill_path: str,
         unshare_from: str,
-        context: OperationContext | None,
+        context: "OperationContext | None",
     ) -> bool:
         """Revoke read permission on a skill from a user, group, or public.
 
@@ -215,7 +213,7 @@ class SkillService:
 
     def discover(
         self,
-        context: OperationContext | None,
+        context: "OperationContext | None",
         filter: str = "all",
     ) -> list[SkillInfo]:
         """Discover skills the user has permission to see.
@@ -240,7 +238,7 @@ class SkillService:
 
     def _discover_impl(
         self,
-        context: OperationContext | None,
+        context: "OperationContext | None",
         filter: str = "all",
     ) -> list[SkillInfo]:
         """Synchronous implementation of discover (reused by export)."""
@@ -355,7 +353,7 @@ class SkillService:
     def subscribe(
         self,
         skill_path: str,
-        context: OperationContext | None,
+        context: "OperationContext | None",
     ) -> bool:
         """Subscribe to a skill, adding it to the user's library.
 
@@ -388,7 +386,7 @@ class SkillService:
     def unsubscribe(
         self,
         skill_path: str,
-        context: OperationContext | None,
+        context: "OperationContext | None",
     ) -> bool:
         """Unsubscribe from a skill, removing it from the user's library.
 
@@ -418,7 +416,7 @@ class SkillService:
 
     def get_prompt_context(
         self,
-        context: OperationContext | None,
+        context: "OperationContext | None",
         max_skills: int = 50,
     ) -> PromptContext:
         """Get skill metadata formatted for system prompt injection.
@@ -478,7 +476,7 @@ class SkillService:
     def load(
         self,
         skill_path: str,
-        context: OperationContext | None,
+        context: "OperationContext | None",
     ) -> SkillContent:
         """Load full skill content on-demand.
 
@@ -528,7 +526,7 @@ class SkillService:
     # Helper Methods: Permission & Validation
     # =========================================================================
 
-    def _validate_context(self, context: OperationContext | None) -> None:
+    def _validate_context(self, context: "OperationContext | None") -> None:
         """Validate that context has required fields."""
         if not context or not context.zone_id or not context.user_id:
             raise ValidationError("Context with zone_id and user_id required")
@@ -555,7 +553,7 @@ class SkillService:
             return match.group(1)
         return "unknown"
 
-    def _assert_skill_owner(self, skill_path: str, context: OperationContext) -> None:
+    def _assert_skill_owner(self, skill_path: str, context: "OperationContext") -> None:
         """Assert that the user owns the skill (has execute permission).
 
         Ownership is checked on the SKILL.md file because that's where
@@ -577,7 +575,7 @@ class SkillService:
                 f"User '{context.user_id}' does not own skill '{skill_path}'"
             )
 
-    def _assert_can_read(self, skill_path: str, context: OperationContext) -> None:
+    def _assert_can_read(self, skill_path: str, context: "OperationContext") -> None:
         """Assert that the user can read the skill.
 
         A user can read a skill if:
@@ -589,7 +587,7 @@ class SkillService:
                 f"User '{context.user_id}' cannot read skill '{skill_path}'"
             )
 
-    def _can_read_skill(self, skill_path: str, context: OperationContext) -> bool:
+    def _can_read_skill(self, skill_path: str, context: "OperationContext") -> bool:
         """Check if user can read skill (direct permission OR public).
 
         Permission is checked on SKILL.md file because:
@@ -668,7 +666,7 @@ class SkillService:
         )
 
     def _parse_share_target(
-        self, share_with: str, context: OperationContext
+        self, share_with: str, context: "OperationContext"
     ) -> tuple[str, str] | tuple[str, str, str]:
         """Parse share_with string into ReBAC subject tuple."""
         if share_with == "public":
@@ -702,11 +700,11 @@ class SkillService:
     # Helper Methods: Subscriptions
     # =========================================================================
 
-    def _get_subscriptions_path(self, context: OperationContext) -> str:
+    def _get_subscriptions_path(self, context: "OperationContext") -> str:
         """Get path to user's subscriptions config file."""
         return f"/zone/{context.zone_id}/user/{context.user_id}/skill/.subscribed.yaml"
 
-    def _load_subscriptions(self, context: OperationContext) -> list[str]:
+    def _load_subscriptions(self, context: "OperationContext") -> list[str]:
         """Load user's subscribed skills from config file.
 
         Uses a request-scoped cache keyed by (user_id, zone_id) to avoid
@@ -738,7 +736,7 @@ class SkillService:
         self._subscriptions_cache[cache_key] = []
         return []
 
-    def _load_assigned_skills(self, context: OperationContext) -> list[str]:
+    def _load_assigned_skills(self, context: "OperationContext") -> list[str]:
         """Load agent's assigned skills from config.yaml metadata.
 
         For agents, skills are assigned (not subscribed) and stored in
@@ -786,7 +784,7 @@ class SkillService:
 
         return []
 
-    def _save_subscriptions(self, context: OperationContext, skills: list[str]) -> None:
+    def _save_subscriptions(self, context: "OperationContext", skills: list[str]) -> None:
         """Save user's subscribed skills to config file."""
         import yaml
 
@@ -814,7 +812,7 @@ class SkillService:
 
     def _collect_skill_paths(
         self,
-        context: OperationContext,
+        context: "OperationContext",
         *,
         public_paths: list[str] | None = None,
         shared_paths: list[str] | None = None,
@@ -927,7 +925,7 @@ class SkillService:
 
         return public_paths
 
-    def _find_skills_in_directory(self, base_dir: str, context: OperationContext) -> list[str]:
+    def _find_skills_in_directory(self, base_dir: str, context: "OperationContext") -> list[str]:
         """Find skill directories within a base directory.
 
         Args:
@@ -983,7 +981,7 @@ class SkillService:
 
         return skill_paths
 
-    def _find_direct_viewer_skills(self, context: OperationContext) -> list[str]:
+    def _find_direct_viewer_skills(self, context: "OperationContext") -> list[str]:
         """Find skills where user has direct_viewer relation.
 
         Queries the ReBAC tuples to find all skills that have been
@@ -1029,7 +1027,7 @@ class SkillService:
         return shared_paths
 
     def _load_skill_metadata(
-        self, skill_path: str, context: OperationContext, *, is_public: bool = False
+        self, skill_path: str, context: "OperationContext", *, is_public: bool = False
     ) -> dict[str, Any]:
         """Load skill metadata from SKILL.md file.
 
@@ -1125,7 +1123,7 @@ class SkillService:
         output_path: str | None = None,
         format: str = "generic",
         include_dependencies: bool = False,  # noqa: ARG002 - reserved for future dependency graph support
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Export a skill to .skill (ZIP) format.
 
@@ -1243,7 +1241,7 @@ class SkillService:
         zip_data: str | None = None,
         target_path: str | None = None,
         allow_overwrite: bool = False,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
         tier: str | None = None,  # noqa: ARG002 - Legacy parameter (ignored)
     ) -> dict[str, Any]:
         """Import a skill from .skill (ZIP) format.
@@ -1380,7 +1378,7 @@ class SkillService:
         source_path: str | None = None,
         zip_bytes: bytes | str | None = None,
         zip_data: str | None = None,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Validate a .skill (ZIP) package without importing it.
 

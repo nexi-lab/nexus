@@ -11,8 +11,6 @@ For remote servers, commands call the RPC API (add_mount, remove_mount, etc.).
 For local instances, commands interact directly with the NexusFS methods.
 """
 
-from __future__ import annotations
-
 import json
 import sys
 

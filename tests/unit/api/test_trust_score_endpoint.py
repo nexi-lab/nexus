@@ -7,8 +7,6 @@ Tests the GET /api/v2/agents/{agent_id}/trust-score endpoint:
 4. Returns 400 for invalid dimension
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from datetime import datetime
 

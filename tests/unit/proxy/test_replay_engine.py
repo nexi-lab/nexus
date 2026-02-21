@@ -1,7 +1,5 @@
 """Tests for ReplayEngine and ProxyBrick._do_forward() (#11-A)."""
 
-from __future__ import annotations
-
 import asyncio
 import json
 from unittest.mock import AsyncMock

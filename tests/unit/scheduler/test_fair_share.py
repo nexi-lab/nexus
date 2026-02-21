@@ -3,8 +3,6 @@
 Tests admission, counters, limits, sync, and snapshots.
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.bricks.scheduler.policies.fair_share import FairShareCounter, FairShareSnapshot

@@ -8,8 +8,6 @@ executing migrations between Nexus versions. It supports:
 - Destructive operation warnings
 """
 
-from __future__ import annotations
-
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -38,8 +36,8 @@ class MigrationStep:
     to_version: str
     name: str
     description: str
-    migrate_fn: Callable[[MigrationContext], MigrationResult]
-    rollback_fn: Callable[[MigrationContext], MigrationResult] | None = None
+    migrate_fn: "Callable[[MigrationContext], MigrationResult]"
+    rollback_fn: "Callable[[MigrationContext], MigrationResult] | None" = None
     requires_backup: bool = True
     is_destructive: bool = False
     alembic_revision: str | None = None

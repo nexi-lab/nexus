@@ -11,8 +11,6 @@ Tests all 8 edge cases identified during review:
 8. Empty workspace branching
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 

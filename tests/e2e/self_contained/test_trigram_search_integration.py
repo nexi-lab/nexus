@@ -4,8 +4,6 @@ Tests the SearchService.grep() method with the trigram strategy,
 including strategy selection, fallback behavior, and index management.
 """
 
-from __future__ import annotations
-
 import os
 from unittest.mock import patch
 

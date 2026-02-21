@@ -31,8 +31,6 @@ Inspired by:
 - n8n node discovery system and credentials separation
 """
 
-from __future__ import annotations
-
 import inspect
 import logging
 from collections.abc import Callable
@@ -176,7 +174,7 @@ class ConnectorInfo:
     name: str
     """Unique identifier for the connector (e.g., 'gcs_connector', 's3_connector')."""
 
-    connector_class: type[Backend]
+    connector_class: "type[Backend]"
     """The connector class."""
 
     description: str = ""
@@ -230,7 +228,7 @@ class ConnectorInfo:
         return [name for name, arg in self.connection_args.items() if arg.secret]
 
 
-def derive_config_mapping(connector_class: type[Backend]) -> dict[str, str]:
+def derive_config_mapping(connector_class: "type[Backend]") -> dict[str, str]:
     """Auto-derive config key -> constructor param mapping from CONNECTION_ARGS.
 
     For each ``(param_name, connection_arg)`` in ``CONNECTION_ARGS``:
@@ -294,7 +292,7 @@ class ConnectorRegistry:
     def register(
         cls,
         name: str,
-        connector_class: type[Backend],
+        connector_class: "type[Backend]",
         description: str = "",
         category: str = "storage",
         requires: list[str] | None = None,
@@ -357,7 +355,7 @@ class ConnectorRegistry:
         cls._base.register(name, info, allow_overwrite=True)
 
     @classmethod
-    def get(cls, name: str) -> type[Backend]:
+    def get(cls, name: str) -> "type[Backend]":
         """Get a connector class by name.
 
         Args:
@@ -478,7 +476,7 @@ def register_connector(
     category: str = "storage",
     requires: list[str] | None = None,
     service_name: str | None = None,
-) -> Callable[[type[Backend]], type[Backend]]:
+) -> "Callable[[type[Backend]], type[Backend]]":
     """Decorator to register a connector class.
 
     Use this decorator on connector classes to automatically register them
@@ -506,7 +504,7 @@ def register_connector(
         ...     pass
     """
 
-    def decorator(cls: type[Backend]) -> type[Backend]:
+    def decorator(cls: "type[Backend]") -> "type[Backend]":
         ConnectorRegistry.register(
             name=name,
             connector_class=cls,
@@ -527,7 +525,7 @@ def _ensure_optional_backends_registered() -> None:
     _register_optional_backends()
 
 
-def create_connector(name: str, **config: Any) -> Backend:
+def create_connector(name: str, **config: Any) -> "Backend":
     """Factory function to create a connector instance by name.
 
     This is a convenience function that looks up the connector class
@@ -555,7 +553,7 @@ def create_connector(name: str, **config: Any) -> Backend:
     return BackendFactory.create(name, config)
 
 
-def create_connector_from_config(name: str, backend_config: dict[str, Any]) -> Backend:
+def create_connector_from_config(name: str, backend_config: dict[str, Any]) -> "Backend":
     """Factory function to create a connector from a config dict.
 
     This maps config dict keys to constructor parameters using the

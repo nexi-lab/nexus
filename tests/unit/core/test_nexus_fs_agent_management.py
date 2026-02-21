@@ -8,8 +8,6 @@ Tests cover:
 - API key expiration determination
 """
 
-from __future__ import annotations
-
 import tempfile
 from collections.abc import Generator
 from datetime import UTC, datetime, timedelta

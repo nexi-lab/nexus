@@ -4,8 +4,6 @@ Handles OAuth-based user login (distinct from backend integrations).
 Accepts any provider via DI: ``dict[str, OAuthProviderProtocol]``.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import secrets

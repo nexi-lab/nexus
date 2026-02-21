@@ -21,8 +21,6 @@ Usage:
     bridge.stop()
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import threading
@@ -81,7 +79,7 @@ class AsyncReBACBridge:
 
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
-        self._manager: AsyncReBACManager | None = None
+        self._manager: "AsyncReBACManager | None" = None
         self._record_store: Any | None = None  # SQLAlchemyRecordStore fallback
         self._started = False
         self._lock = threading.Lock()

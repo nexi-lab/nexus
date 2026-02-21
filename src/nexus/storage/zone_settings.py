@@ -5,8 +5,6 @@ Provides a Pydantic BaseModel with extra='allow' for forward-compatible
 zone settings stored as JSON in ZoneModel.settings.
 """
 
-from __future__ import annotations
-
 from enum import StrEnum
 
 from pydantic import BaseModel

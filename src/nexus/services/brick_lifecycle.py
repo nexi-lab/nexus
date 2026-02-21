@@ -20,8 +20,6 @@ References:
     - Issue #1704: Brick lifecycle manager
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import time
@@ -49,7 +47,6 @@ logger = logging.getLogger(__name__)
 
 # Default timeout for brick.start() in seconds
 DEFAULT_START_TIMEOUT: float = 5.0
-
 
 # ---------------------------------------------------------------------------
 # OTel tracing — zero-overhead when telemetry is not enabled
@@ -145,7 +142,6 @@ _TRANSITIONS: dict[tuple[BrickState, str], BrickState] = {
     (BrickState.STOPPING, "stopped"): BrickState.UNREGISTERED,
     (BrickState.STOPPING, "failed"): BrickState.FAILED,
 }
-
 
 # ---------------------------------------------------------------------------
 # Internal mutable brick entry (not exposed outside this module)

@@ -3,8 +3,6 @@
 Follows the Lego Architecture brick manifest pattern (see llm/manifest.py).
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 
 

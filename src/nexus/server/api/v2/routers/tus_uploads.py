@@ -10,11 +10,10 @@ Endpoints:
 Every endpoint (except OPTIONS) validates the Tus-Resumable header.
 """
 
-from __future__ import annotations
-
 import base64
 import logging
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 
@@ -89,8 +88,9 @@ def create_tus_uploads_router(
     public_router = APIRouter(tags=["uploads"])
     router = APIRouter(tags=["uploads"], dependencies=[Depends(require_auth)])
 
-    def _get_service() -> ChunkedUploadService:
-        svc: ChunkedUploadService | None = get_upload_service()  # type: ignore[operator]
+    def _get_service() -> "ChunkedUploadService":
+        getter = cast(Callable[[], Any], get_upload_service)
+        svc: "ChunkedUploadService | None" = getter()
         if svc is None:
             raise HTTPException(status_code=503, detail="Upload service not available")
         return svc

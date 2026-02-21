@@ -1,7 +1,5 @@
 """Database-backed API key authentication provider."""
 
-from __future__ import annotations
-
 import hashlib
 import hmac
 import logging

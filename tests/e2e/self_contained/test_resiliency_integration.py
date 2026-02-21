@@ -4,8 +4,6 @@ Verifies the full pipeline: config → manager → decorator → CB state transi
 → health check reporting — using fast timings suitable for CI.
 """
 
-from __future__ import annotations
-
 import asyncio
 
 import pytest

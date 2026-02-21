@@ -4,8 +4,6 @@ Issue #1360: Tests checkpoint creation, Merkle root correctness,
 threshold-based triggering, and idempotency.
 """
 
-from __future__ import annotations
-
 from decimal import Decimal
 
 import pytest

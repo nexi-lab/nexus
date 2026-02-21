@@ -7,8 +7,6 @@ Based on SimpleMem research (arXiv:2601.02553) which achieves
 58.62 F1 on temporal reasoning vs 48.91 for Mem0.
 """
 
-from __future__ import annotations
-
 import re
 from datetime import UTC, datetime, timedelta
 from typing import NamedTuple

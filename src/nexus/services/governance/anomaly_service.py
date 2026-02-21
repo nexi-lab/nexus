@@ -7,8 +7,6 @@ Hot path: analyze_transaction() — Z-score vs cached baseline (<1ms).
 Background: recompute_baselines() — batch job for baseline refresh.
 """
 
-from __future__ import annotations
-
 import contextlib
 import json
 import logging
@@ -104,7 +102,7 @@ class AnomalyService:
 
     def __init__(
         self,
-        session_factory: Callable[[], AsyncSession],
+        session_factory: "Callable[[], AsyncSession]",
         detector: AnomalyDetectorProtocol | None = None,
         config: AnomalyDetectionConfig | None = None,
     ) -> None:

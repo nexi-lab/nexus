@@ -11,8 +11,6 @@ Tier hierarchy (Liedtke minimality):
     - services/ must NOT import from server/ (except via protocols)
 """
 
-from __future__ import annotations
-
 import ast
 from pathlib import Path
 

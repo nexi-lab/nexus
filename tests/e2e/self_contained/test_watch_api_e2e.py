@@ -7,8 +7,6 @@ Note: Some tests require event infrastructure (Redis or same-box backend).
 Tests gracefully handle the 501 response when events are not available.
 """
 
-from __future__ import annotations
-
 import asyncio
 from typing import TYPE_CHECKING, cast
 
@@ -18,14 +16,13 @@ from starlette.testclient import TestClient
 if TYPE_CHECKING:
     from nexus import NexusFS
 
-
 # Note: nexus_fs fixture is provided by conftest.py
 
 
 class TestWatchAPIValidation:
     """Tests for parameter validation (don't require event infrastructure)."""
 
-    def test_watch_invalid_timeout_too_high(self, nexus_fs: NexusFS) -> None:
+    def test_watch_invalid_timeout_too_high(self, nexus_fs: "NexusFS") -> None:
         """Test that timeout > 300 is rejected."""
         from nexus.server.fastapi_server import create_app
 
@@ -36,7 +33,7 @@ class TestWatchAPIValidation:
 
             assert response.status_code == 422  # Validation error
 
-    def test_watch_invalid_timeout_too_low(self, nexus_fs: NexusFS) -> None:
+    def test_watch_invalid_timeout_too_low(self, nexus_fs: "NexusFS") -> None:
         """Test that timeout < 0.1 is rejected."""
         from nexus.server.fastapi_server import create_app
 
@@ -51,7 +48,7 @@ class TestWatchAPIValidation:
 class TestWatchAPIEndpoint:
     """Tests for GET /api/watch endpoint (may return 501 without event infrastructure)."""
 
-    def test_watch_returns_valid_response(self, nexus_fs: NexusFS) -> None:
+    def test_watch_returns_valid_response(self, nexus_fs: "NexusFS") -> None:
         """Test that watch returns a valid response (200 or 501)."""
         from nexus.server.fastapi_server import create_app
 
@@ -69,7 +66,7 @@ class TestWatchAPIEndpoint:
                 assert data["timeout"] is True
                 assert data["changes"] == []
 
-    def test_watch_default_parameters(self, nexus_fs: NexusFS) -> None:
+    def test_watch_default_parameters(self, nexus_fs: "NexusFS") -> None:
         """Test watch with default parameters."""
         from nexus.server.fastapi_server import create_app
 
@@ -86,7 +83,7 @@ class TestWatchAPIEndpoint:
                 assert "timeout" in data
                 assert "changes" in data
 
-    def test_watch_with_glob_pattern(self, nexus_fs: NexusFS) -> None:
+    def test_watch_with_glob_pattern(self, nexus_fs: "NexusFS") -> None:
         """Test watch with glob pattern."""
         from nexus.server.fastapi_server import create_app
 
@@ -103,7 +100,7 @@ class TestWatchAPIEndpoint:
                 data = response.json()
                 assert data["timeout"] is True
 
-    def test_watch_response_format(self, nexus_fs: NexusFS) -> None:
+    def test_watch_response_format(self, nexus_fs: "NexusFS") -> None:
         """Test that response has correct format when events are available."""
         from nexus.server.fastapi_server import create_app
 
@@ -135,7 +132,7 @@ class TestWatchAPIWithEvents:
     """
 
     @pytest.mark.asyncio
-    async def test_watch_detects_file_write(self, nexus_fs: NexusFS) -> None:
+    async def test_watch_detects_file_write(self, nexus_fs: "NexusFS") -> None:
         """Test that watch detects file write events (requires event infrastructure)."""
         from nexus.server.fastapi_server import create_app
 
@@ -190,7 +187,7 @@ class TestWatchAPIErrorHandling:
             assert response.status_code == 503
             assert "not initialized" in response.json()["detail"].lower()
 
-    def test_watch_not_implemented_message(self, nexus_fs: NexusFS) -> None:
+    def test_watch_not_implemented_message(self, nexus_fs: "NexusFS") -> None:
         """Test that 501 response has helpful message."""
         from nexus.server.fastapi_server import create_app
 
@@ -208,7 +205,7 @@ class TestWatchAPIErrorHandling:
 class TestWatchAPIDocumentation:
     """Tests to verify API documentation is correct."""
 
-    def test_openapi_schema_includes_watch(self, nexus_fs: NexusFS) -> None:
+    def test_openapi_schema_includes_watch(self, nexus_fs: "NexusFS") -> None:
         """Test that /api/watch is documented in OpenAPI schema."""
         from nexus.server.fastapi_server import create_app
 

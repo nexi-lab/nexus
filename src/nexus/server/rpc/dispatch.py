@@ -12,8 +12,6 @@ Key design decisions:
   parameter instead of reaching into module-level globals.
 """
 
-from __future__ import annotations
-
 import asyncio
 import dataclasses
 import logging

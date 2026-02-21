@@ -5,8 +5,6 @@ permission checks into TigerBitmap -> LeopardIndex -> HierarchyPreFilter ->
 ZonePreFilter -> BulkReBAC stages.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest

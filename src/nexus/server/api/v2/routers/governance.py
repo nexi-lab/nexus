@@ -9,8 +9,6 @@ Provides endpoints for:
 - Response Actions: Suspensions, appeals
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 
@@ -25,7 +23,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/api/v2/governance", tags=["governance"], dependencies=[Depends(require_admin)]
 )
-
 
 # =============================================================================
 # Pydantic Request/Response Models

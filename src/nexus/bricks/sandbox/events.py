@@ -10,8 +10,6 @@ Design decisions:
     - Session-per-operation pattern (same as AgentRegistry)
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import uuid
@@ -40,11 +38,11 @@ class AgentEventLog:
         session_factory: SQLAlchemy sessionmaker for database access.
     """
 
-    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+    def __init__(self, session_factory: "sessionmaker[Session]") -> None:
         self._session_factory = session_factory
 
     @contextmanager
-    def _get_session(self) -> Generator[Session, None, None]:
+    def _get_session(self) -> "Generator[Session, None, None]":
         """Create a session with auto-commit/rollback."""
         session = self._session_factory()
         try:

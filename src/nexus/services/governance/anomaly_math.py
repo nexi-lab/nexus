@@ -6,8 +6,6 @@ No ORM or service dependencies — pure functions only.
 Pattern follows: nexus.services.reputation.reputation_math
 """
 
-from __future__ import annotations
-
 import math
 import uuid
 from collections.abc import Sequence

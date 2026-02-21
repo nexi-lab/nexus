@@ -38,8 +38,6 @@ See also:
     - https://skiplabs.io/blog/cache_invalidation (Skip invalidation)
 """
 
-from __future__ import annotations
-
 import contextlib
 import logging
 import os
@@ -128,7 +126,7 @@ class ReadSetEntry:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ReadSetEntry:
+    def from_dict(cls, data: dict[str, Any]) -> "ReadSetEntry":
         """Create from dictionary."""
         return cls(
             resource_type=data["resource_type"],
@@ -169,7 +167,7 @@ class ReadSet:
 
     query_id: str
     zone_id: str
-    entries: list[ReadSetEntry] = field(default_factory=list)
+    entries: "list[ReadSetEntry]" = field(default_factory=list)
     created_at: float = field(default_factory=time.time)
     expires_at: float | None = None  # None = no expiry
 
@@ -182,7 +180,7 @@ class ReadSet:
         for entry in self.entries:
             self._index_entry(entry)
 
-    def _index_entry(self, entry: ReadSetEntry) -> None:
+    def _index_entry(self, entry: "ReadSetEntry") -> None:
         """Add entry to internal indexes."""
         self._path_set.add(entry.resource_id)
         if entry.resource_type == ResourceType.DIRECTORY or entry.access_type == AccessType.LIST:
@@ -196,7 +194,7 @@ class ReadSet:
         resource_id: str,
         revision: int,
         access_type: str = AccessType.CONTENT,
-    ) -> ReadSetEntry:
+    ) -> "ReadSetEntry":
         """Record a resource read.
 
         Args:
@@ -265,7 +263,7 @@ class ReadSet:
 
         return False
 
-    def get_affected_entries(self, write_path: str, write_revision: int) -> list[ReadSetEntry]:
+    def get_affected_entries(self, write_path: str, write_revision: int) -> "list[ReadSetEntry]":
         """Get all entries affected by a write operation.
 
         Args:
@@ -309,7 +307,7 @@ class ReadSet:
         """Return number of entries in the read set."""
         return len(self.entries)
 
-    def __iter__(self) -> Iterator[ReadSetEntry]:
+    def __iter__(self) -> "Iterator[ReadSetEntry]":
         """Iterate over entries."""
         return iter(self.entries)
 
@@ -324,7 +322,7 @@ class ReadSet:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ReadSet:
+    def from_dict(cls, data: dict[str, Any]) -> "ReadSet":
         """Create from dictionary."""
         entries = [ReadSetEntry.from_dict(e) for e in data.get("entries", [])]
         return cls(
@@ -336,7 +334,7 @@ class ReadSet:
         )
 
     @classmethod
-    def create(cls, zone_id: str, ttl_seconds: float | None = None) -> ReadSet:
+    def create(cls, zone_id: str, ttl_seconds: float | None = None) -> "ReadSet":
         """Factory method to create a new read set with auto-generated ID.
 
         Args:
@@ -381,7 +379,7 @@ class RWLock:
         self._pending_writers: int = 0
 
     @contextlib.contextmanager
-    def read_lock(self) -> Generator[None, None, None]:
+    def read_lock(self) -> "Generator[None, None, None]":
         """Acquire shared read lock. Blocks if a writer holds or is waiting."""
         with self._condition:
             while self._writer or self._pending_writers > 0:
@@ -396,7 +394,7 @@ class RWLock:
                     self._condition.notify_all()
 
     @contextlib.contextmanager
-    def write_lock(self) -> Generator[None, None, None]:
+    def write_lock(self) -> "Generator[None, None, None]":
         """Acquire exclusive write lock. Blocks until all readers/writers release."""
         with self._condition:
             self._pending_writers += 1
@@ -446,7 +444,7 @@ class ReadSetRegistry:
         Args:
             default_ttl_seconds: Default TTL for read sets (1 hour)
         """
-        self._read_sets: dict[str, ReadSet] = {}
+        self._read_sets: "dict[str, ReadSet]" = {}
         self._reverse_index: dict[str, set[str]] = {}  # path -> query_ids
         self._directory_index: dict[str, set[str]] = {}  # dir_path -> query_ids
         self._zone_index: dict[str, set[str]] = {}  # zone_id -> query_ids
@@ -462,7 +460,7 @@ class ReadSetRegistry:
             "cleanups": 0,
         }
 
-    def register(self, read_set: ReadSet) -> None:
+    def register(self, read_set: "ReadSet") -> None:
         """Register a read set for a subscription/query.
 
         Args:
@@ -618,7 +616,7 @@ class ReadSetRegistry:
 
             return affected
 
-    def get_read_set(self, query_id: str) -> ReadSet | None:
+    def get_read_set(self, query_id: str) -> "ReadSet | None":
         """Get a read set by query ID.
 
         Args:
@@ -729,7 +727,7 @@ def set_global_registry(registry: ReadSetRegistry | None) -> None:
         _global_registry = registry
 
 
-def enable_read_tracking(ctx: OperationContext, zone_id: str | None = None) -> None:
+def enable_read_tracking(ctx: "OperationContext", zone_id: str | None = None) -> None:
     """Enable read tracking and initialize read set on an OperationContext.
 
     Standalone replacement for the former ``OperationContext.enable_read_tracking()``

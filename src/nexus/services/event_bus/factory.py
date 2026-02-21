@@ -1,7 +1,5 @@
 """EventBus factory — create event bus instances by backend name."""
 
-from __future__ import annotations
-
 from typing import Any
 
 from nexus.services.event_bus.base import EventBusBase

@@ -4,8 +4,6 @@ Manage authorization relationships using Zanzibar-style ReBAC.
 Enables team-based permissions, hierarchical access, and dynamic inheritance.
 """
 
-from __future__ import annotations
-
 import sys
 from typing import Any
 

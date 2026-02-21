@@ -4,8 +4,6 @@ Extracts business logic from route handlers into a testable service.
 Route handlers become thin: validate input -> service.method() -> format response.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 

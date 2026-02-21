@@ -4,8 +4,6 @@ TDD-first tests for the extracted handler module.  Tests verify
 pure async handler functions in isolation (no HTTP layer).
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 import pytest

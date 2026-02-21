@@ -1,7 +1,5 @@
 """Tests for AsyncNamespaceManager wrapper (Issue #1440)."""
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest

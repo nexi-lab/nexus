@@ -24,8 +24,6 @@ Phase 1 = Python (this file). Phase 2 = Rust lock-free SPSC via nexus_fast (Task
 See: federation-memo.md §7j, ISSUE-A2A-PHASE2-VFS-IPC.md
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from collections import deque
@@ -244,7 +242,7 @@ class PipeManager:
     memory, like Linux kfifo data in kmalloc'd kernel heap.
     """
 
-    def __init__(self, metastore: MetastoreABC, zone_id: str = "root") -> None:
+    def __init__(self, metastore: "MetastoreABC", zone_id: str = "root") -> None:
         self._metastore = metastore
         self._zone_id = zone_id
         self._buffers: dict[str, RingBuffer] = {}

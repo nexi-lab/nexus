@@ -7,8 +7,6 @@ Verifies the full pipeline:
     register agent → create sandbox → verify state transitions → verify events
 """
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest

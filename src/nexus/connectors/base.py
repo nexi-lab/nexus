@@ -9,8 +9,6 @@ This module provides opt-in mixins that connectors can use to add:
 Each connector configures these mixins via class attributes.
 """
 
-from __future__ import annotations
-
 import logging
 import posixpath
 from dataclasses import dataclass, field
@@ -28,7 +26,6 @@ if TYPE_CHECKING:
     from nexus.skills.registry import SkillRegistry
 
 logger = logging.getLogger(__name__)
-
 
 # =============================================================================
 # Enums & Data Classes
@@ -216,7 +213,7 @@ class SkillDocMixin:
     ERROR_REGISTRY: dict[str, ErrorDef] = {}
     EXAMPLES: dict[str, str] = {}  # Example files: {"create_meeting.yaml": "content..."}
 
-    _skill_registry: SkillRegistry | None = None
+    _skill_registry: "SkillRegistry | None" = None
     _mount_path: str | None = None  # Set during mount
 
     @property
@@ -226,7 +223,7 @@ class SkillDocMixin:
             return posixpath.join(self._mount_path.rstrip("/"), self.SKILL_DIR, "SKILL.md")
         return "/.skill/SKILL.md"  # Default fallback
 
-    def set_skill_registry(self, registry: SkillRegistry) -> None:
+    def set_skill_registry(self, registry: "SkillRegistry") -> None:
         """Set the skill registry for this connector."""
         self._skill_registry = registry
 
@@ -234,7 +231,7 @@ class SkillDocMixin:
         """Set the mount path (called during mount)."""
         self._mount_path = mount_path
 
-    def _get_doc_generator(self) -> SkillDocGenerator:
+    def _get_doc_generator(self) -> "SkillDocGenerator":
         """Lazy-create the SkillDocGenerator."""
         from nexus.connectors.schema_generator import SkillDocGenerator
 
@@ -247,7 +244,7 @@ class SkillDocMixin:
             skill_dir=self.SKILL_DIR,
         )
 
-    def _get_error_formatter(self) -> SkillErrorFormatter:
+    def _get_error_formatter(self) -> "SkillErrorFormatter":
         """Lazy-create the SkillErrorFormatter."""
         from nexus.connectors.error_formatter import SkillErrorFormatter
 

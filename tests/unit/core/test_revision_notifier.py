@@ -1,7 +1,5 @@
 """Tests for RevisionNotifier and NullRevisionNotifier (Issue #1432)."""
 
-from __future__ import annotations
-
 import threading
 import time
 from unittest.mock import patch

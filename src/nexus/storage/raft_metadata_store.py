@@ -22,8 +22,7 @@ Usage:
     store = await RaftMetadataStore.remote("10.0.0.2:2026")
 """
 
-from __future__ import annotations
-
+import builtins
 import json
 import logging
 from collections.abc import Iterator, Sequence
@@ -258,7 +257,7 @@ class RaftMetadataStore(MetastoreABC):
         return result
 
     @classmethod
-    def embedded(cls, db_path: str, zone_id: str | None = None) -> RaftMetadataStore:
+    def embedded(cls, db_path: str, zone_id: str | None = None) -> "RaftMetadataStore":
         """Create an embedded metastore using direct sled access.
 
         This is the fast path (~5μs per operation) for standalone mode.
@@ -287,7 +286,7 @@ class RaftMetadataStore(MetastoreABC):
         cls,
         address: str,
         zone_id: str | None = None,
-    ) -> RaftMetadataStore:
+    ) -> "RaftMetadataStore":
         """Create a remote Raft metadata store using gRPC.
 
         This connects to a remote Raft node over gRPC (~200μs per operation).
@@ -962,7 +961,7 @@ class RaftMetadataStore(MetastoreABC):
         else:
             raise NotImplementedError("Remote lock info requires async")
 
-    def list_locks(self, prefix: str = "", limit: int = 1000) -> list[dict[str, Any]]:
+    def list_locks(self, prefix: str = "", limit: int = 1000) -> builtins.list[dict[str, Any]]:
         """List all active locks matching a prefix.
 
         Args:
@@ -1077,7 +1076,7 @@ class RaftMetadataStore(MetastoreABC):
         prefix: str = "",
         recursive: bool = True,
         zone_id: str | None = None,
-    ) -> list[FileMetadata]:
+    ) -> builtins.list["FileMetadata"]:
         """List all files with given path prefix (async).
 
         RaftMetadataStore is zone-local: each zone has its own sled database,

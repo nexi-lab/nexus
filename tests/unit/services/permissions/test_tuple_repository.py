@@ -13,8 +13,6 @@ Tests cover:
 - Read/write engine separation (Issue #725)
 """
 
-from __future__ import annotations
-
 import uuid
 from datetime import UTC, datetime, timedelta
 

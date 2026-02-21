@@ -17,8 +17,6 @@ all affected caches are properly invalidated in the correct order:
 Related: Issue #1459 (decomposition), Issue #1244, Issue #1077, Issue #922, Issue #919
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -71,10 +69,10 @@ class CacheCoordinator:
 
     def __init__(
         self,
-        l1_cache: ReBACPermissionCache | None = None,
-        boundary_cache: PermissionBoundaryCache | None = None,
-        iterator_cache: IteratorCache | None = None,
-        zone_graph_cache: MutableMapping[str, Any] | None = None,
+        l1_cache: "ReBACPermissionCache | None" = None,
+        boundary_cache: "PermissionBoundaryCache | None" = None,
+        iterator_cache: "IteratorCache | None" = None,
+        zone_graph_cache: "MutableMapping[str, Any] | None" = None,
     ) -> None:
         """Initialize the coordinator.
 
@@ -90,13 +88,11 @@ class CacheCoordinator:
         self._zone_graph_cache = zone_graph_cache
 
         # Callback registries for external caches (boundary, visibility, etc.)
-        self._boundary_invalidators: list[
-            tuple[str, Callable[[str, str, str, str, str], None]]
-        ] = []
-        self._visibility_invalidators: list[tuple[str, Callable[[str, str], None]]] = []
+        self._boundary_invalidators: "list[ tuple[str, Callable[[str, str, str, str, str], None]] ]" = []
+        self._visibility_invalidators: "list[tuple[str, Callable[[str, str], None]]]" = []
         # Namespace cache invalidators: callback(subject_type, subject_id, zone_id)
         # Used by NamespaceManager to invalidate dcache + mount table on grant/revoke (Issue #1244)
-        self._namespace_invalidators: list[tuple[str, Callable[[str, str, str], None]]] = []
+        self._namespace_invalidators: "list[tuple[str, Callable[[str, str, str], None]]]" = []
 
         # Metrics
         self._invalidation_count = 0
@@ -111,15 +107,15 @@ class CacheCoordinator:
     # Cache setters (for lazy initialization)
     # ------------------------------------------------------------------
 
-    def set_l1_cache(self, cache: ReBACPermissionCache) -> None:
+    def set_l1_cache(self, cache: "ReBACPermissionCache") -> None:
         """Set the L1 permission check cache."""
         self._l1_cache = cache
 
-    def set_boundary_cache(self, cache: PermissionBoundaryCache) -> None:
+    def set_boundary_cache(self, cache: "PermissionBoundaryCache") -> None:
         """Set the boundary cache."""
         self._boundary_cache = cache
 
-    def set_iterator_cache(self, cache: IteratorCache) -> None:
+    def set_iterator_cache(self, cache: "IteratorCache") -> None:
         """Set the iterator cache."""
         self._iterator_cache = cache
 
@@ -134,7 +130,7 @@ class CacheCoordinator:
     def register_boundary_invalidator(
         self,
         callback_id: str,
-        callback: Callable[[str, str, str, str, str], None],
+        callback: "Callable[[str, str, str, str, str], None]",
     ) -> None:
         """Register a boundary cache invalidation callback.
 
@@ -158,7 +154,7 @@ class CacheCoordinator:
     def register_visibility_invalidator(
         self,
         callback_id: str,
-        callback: Callable[[str, str], None],
+        callback: "Callable[[str, str], None]",
     ) -> None:
         """Register a directory visibility cache invalidation callback.
 
@@ -182,7 +178,7 @@ class CacheCoordinator:
     def register_namespace_invalidator(
         self,
         callback_id: str,
-        callback: Callable[[str, str, str], None],
+        callback: "Callable[[str, str, str], None]",
     ) -> None:
         """Register a namespace cache invalidation callback (Issue #1244).
 

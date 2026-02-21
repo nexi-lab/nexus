@@ -10,8 +10,6 @@ Set NEXUS_NATS_URL to override the default nats://localhost:4222.
 Related: Issue #1331
 """
 
-from __future__ import annotations
-
 import asyncio
 import os
 

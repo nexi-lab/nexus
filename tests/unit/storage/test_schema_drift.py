@@ -4,8 +4,6 @@ Verifies that FileMetadata (proto) and FilePathModel (SQLAlchemy) stay in sync.
 Catches field additions/removals that aren't reflected in both representations.
 """
 
-from __future__ import annotations
-
 import dataclasses
 from datetime import datetime
 

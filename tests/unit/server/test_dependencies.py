@@ -8,8 +8,6 @@ Tests cover:
 - get_async_read_session_factory: read replica dependency (Issue #725)
 """
 
-from __future__ import annotations
-
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 

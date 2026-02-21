@@ -18,15 +18,12 @@ References:
     - Issue #1752: Transactional filesystem snapshots for agent rollback
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
-
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -209,7 +206,7 @@ class TransactionalSnapshotProtocol(Protocol):
         paths: list[str],
         *,
         zone_id: str = "root",
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> SnapshotId:
         """Create a COW snapshot of specified paths.
 
@@ -236,7 +233,7 @@ class TransactionalSnapshotProtocol(Protocol):
         self,
         snapshot_id: SnapshotId,
         *,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> None:
         """Release snapshot — changes are permanent.
 
@@ -256,7 +253,7 @@ class TransactionalSnapshotProtocol(Protocol):
         self,
         snapshot_id: SnapshotId,
         *,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> TransactionResult:
         """Restore all paths to pre-snapshot state.
 

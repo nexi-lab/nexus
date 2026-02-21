@@ -3,8 +3,6 @@
 TDD: RED tests written first, then implementation to make them GREEN.
 """
 
-from __future__ import annotations
-
 import asyncio
 
 import pytest

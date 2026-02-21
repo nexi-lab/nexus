@@ -3,8 +3,6 @@
 TDD: Tests written FIRST, implementation follows.
 """
 
-from __future__ import annotations
-
 import dataclasses
 from enum import Enum
 

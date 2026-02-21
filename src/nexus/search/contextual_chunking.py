@@ -15,8 +15,6 @@ Design decisions (from plan review):
 - Context and text stored separately, composed at index-time for embedding
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import re
@@ -31,7 +29,6 @@ if TYPE_CHECKING:
     from nexus.search.chunking import DocumentChunk, DocumentChunker
 
 logger = logging.getLogger(__name__)
-
 
 # ---------------------------------------------------------------------------
 # Data Models
@@ -59,7 +56,7 @@ class ChunkContext(BaseModel):
 class ContextualChunk:
     """A document chunk enriched with LLM-generated context."""
 
-    chunk: DocumentChunk  # Original chunk from the base chunker
+    chunk: "DocumentChunk"  # Original chunk from the base chunker
     context: ChunkContext | None  # None when the LLM call failed
     position: int  # 0-based position in the document
     doc_summary: str  # Document-level summary used for generation
@@ -108,7 +105,6 @@ ContextGenerator = Callable[
     Awaitable[ChunkContext],
 ]
 
-
 # ---------------------------------------------------------------------------
 # ContextualChunker
 # ---------------------------------------------------------------------------
@@ -129,7 +125,7 @@ class ContextualChunker:
         self,
         context_generator: ContextGenerator,
         config: ContextualChunkingConfig | None = None,
-        base_chunker: DocumentChunker | None = None,
+        base_chunker: "DocumentChunker | None" = None,
     ) -> None:
         self._context_generator = context_generator
         self._config = config or ContextualChunkingConfig(enabled=True)
@@ -249,7 +245,7 @@ class ContextualChunker:
         self,
         semaphore: asyncio.Semaphore,
         doc_summary: str,
-        chunk: DocumentChunk,
+        chunk: "DocumentChunk",
         prev_chunks: list[str],
         next_chunks: list[str],
         position: int,

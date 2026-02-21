@@ -9,8 +9,6 @@ Tests that run_sync() and fire_and_forget() work correctly in:
 Does NOT depend on pytest-asyncio — uses explicit event loop helper.
 """
 
-from __future__ import annotations
-
 import asyncio
 import concurrent.futures
 import time

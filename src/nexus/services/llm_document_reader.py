@@ -10,8 +10,6 @@ Key refactoring (Issue #1521):
 - Moved to services/ as an orchestration concern (Issue 1)
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -53,9 +51,9 @@ class LLMDocumentReader:
 
     def __init__(
         self,
-        nx: NexusFilesystem,
-        provider: LLMProvider,
-        search: SemanticSearch | None = None,
+        nx: "NexusFilesystem",
+        provider: "LLMProvider",
+        search: "SemanticSearch | None" = None,
         system_prompt: str | None = None,
         max_context_tokens: int = 3000,
     ):

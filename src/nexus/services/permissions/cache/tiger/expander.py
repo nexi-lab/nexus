@@ -5,8 +5,6 @@ individual file-level bitmap entries in batches, enabling non-blocking
 grant operations, progress tracking, and failure recovery.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
@@ -50,8 +48,8 @@ class DirectoryGrantExpander:
 
     def __init__(
         self,
-        engine: Engine,
-        tiger_cache: TigerCache,
+        engine: "Engine",
+        tiger_cache: "TigerCache",
         metadata_store: Any = None,
     ):
         """Initialize the expander.

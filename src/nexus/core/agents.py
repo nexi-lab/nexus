@@ -12,8 +12,6 @@ Key concepts:
 See: docs/design/AGENT_IDENTITY_AND_SESSIONS.md
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -29,7 +27,7 @@ def register_agent(
     name: str | None = None,
     zone_id: str | None = None,
     metadata: dict | None = None,
-    entity_registry: EntityRegistry | None = None,
+    entity_registry: "EntityRegistry | None" = None,
 ) -> dict:
     """Register an agent (auth-agnostic).
 
@@ -96,12 +94,12 @@ def register_agent(
 
 
 def create_agent_with_api_key(
-    session: Session,
+    session: "Session",
     user_id: str,
     agent_id: str,
     name: str,
     expires_at: datetime | None = None,
-    entity_registry: EntityRegistry | None = None,
+    entity_registry: "EntityRegistry | None" = None,
     **kwargs: Any,
 ) -> tuple[dict, str]:
     """Convenience: Register agent + create API key.
@@ -151,7 +149,7 @@ def create_agent_with_api_key(
     return agent, raw_key
 
 
-def unregister_agent(agent_id: str, entity_registry: EntityRegistry | None = None) -> bool:
+def unregister_agent(agent_id: str, entity_registry: "EntityRegistry | None" = None) -> bool:
     """Unregister an agent.
 
     Removes entity registry entry. Does NOT revoke API keys - do that separately.
@@ -168,7 +166,9 @@ def unregister_agent(agent_id: str, entity_registry: EntityRegistry | None = Non
     return False
 
 
-def validate_agent_ownership(agent_id: str, user_id: str, entity_registry: EntityRegistry) -> bool:
+def validate_agent_ownership(
+    agent_id: str, user_id: str, entity_registry: "EntityRegistry"
+) -> bool:
     """Validate that agent belongs to user.
 
     Used in request handlers to verify agent ownership.

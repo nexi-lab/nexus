@@ -15,8 +15,6 @@ References:
 - Rust nexus_fast: Already uses string-interner for permissions (lib.rs:26-29)
 """
 
-from __future__ import annotations
-
 import threading
 from dataclasses import dataclass
 from datetime import UTC
@@ -125,7 +123,7 @@ class PathInterner:
         with self._lock:
             return len(self._ids)
 
-    def __iter__(self) -> Iterator[str]:
+    def __iter__(self) -> "Iterator[str]":
         """Iterate over all interned paths."""
         with self._lock:
             # Return a copy to avoid issues with concurrent modification
@@ -445,7 +443,7 @@ class CompactFileMetadata:
             interner = get_path_interner()
         return interner.get(self.path_id)
 
-    def to_file_metadata(self, interner: PathInterner | None = None) -> FileMetadata:
+    def to_file_metadata(self, interner: PathInterner | None = None) -> "FileMetadata":
         """Convert to standard FileMetadata.
 
         Args:
@@ -487,9 +485,9 @@ class CompactFileMetadata:
     @classmethod
     def from_file_metadata(
         cls,
-        metadata: FileMetadata,
+        metadata: "FileMetadata",
         interner: PathInterner | None = None,
-    ) -> CompactFileMetadata:
+    ) -> "CompactFileMetadata":
         """Create CompactFileMetadata from standard FileMetadata.
 
         Args:

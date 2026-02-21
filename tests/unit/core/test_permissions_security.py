@@ -405,7 +405,7 @@ class TestZoneIdPropagation:
         assert call_kwargs[1]["zone_id"] == "org_acme" or call_kwargs[0][3] == "org_acme"
 
     def test_missing_zone_id_defaults_to_default(self):
-        """When zone_id is None, 'default' is passed to rebac_manager."""
+        """When zone_id is None, ROOT_ZONE_ID ('root') is passed to rebac_manager."""
         rebac = MagicMock()
         rebac.rebac_check.return_value = True
         enforcer = PermissionEnforcer(rebac_manager=rebac)

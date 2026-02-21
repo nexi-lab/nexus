@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.services.event_subsystem.types import FileEvent
 from nexus.storage.models import OperationLogModel
 from nexus.storage.record_store import SQLAlchemyRecordStore
@@ -41,7 +42,7 @@ def _insert_undelivered(
     session_factory,
     path: str = "/test.txt",
     operation_type: str = "write",
-    zone_id: str = "default",
+    zone_id: str = ROOT_ZONE_ID,
     agent_id: str | None = None,
     new_path: str | None = None,
     sequence_number: int | None = None,

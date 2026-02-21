@@ -116,7 +116,7 @@ async def engine() -> AsyncGenerator[AsyncEngine, None]:
                 relation TEXT NOT NULL,
                 object_type TEXT NOT NULL,
                 object_id TEXT NOT NULL,
-                zone_id TEXT NOT NULL DEFAULT 'default',
+                zone_id TEXT NOT NULL DEFAULT 'root',
                 conditions TEXT,
                 expires_at TIMESTAMPTZ,
                 created_at TIMESTAMPTZ,
@@ -142,7 +142,7 @@ async def engine() -> AsyncGenerator[AsyncEngine, None]:
                 member_id TEXT NOT NULL,
                 group_type TEXT NOT NULL,
                 group_id TEXT NOT NULL,
-                zone_id TEXT NOT NULL DEFAULT 'default',
+                zone_id TEXT NOT NULL DEFAULT 'root',
                 depth INTEGER NOT NULL DEFAULT 1,
                 updated_at TIMESTAMPTZ,
                 PRIMARY KEY (member_type, member_id, group_type, group_id, zone_id)

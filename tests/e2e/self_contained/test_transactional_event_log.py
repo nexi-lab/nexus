@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.core.metadata import FileMetadata
+from nexus.contracts.metadata import FileMetadata
 from nexus.services.event_subsystem.types import FileEventType
 from nexus.storage.models import OperationLogModel
 from nexus.storage.record_store import SQLAlchemyRecordStore

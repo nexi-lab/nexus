@@ -23,7 +23,7 @@ from nexus.contracts.overlay_config import OverlayConfig
 from nexus.contracts.workspace_manifest import ManifestEntry, WorkspaceManifest
 
 if TYPE_CHECKING:
-    from nexus.core.metadata import FileMetadata
+    from nexus.contracts.metadata import FileMetadata
     from nexus.core.metastore import MetastoreABC
     from nexus.core.protocols.connector import ConnectorProtocol
 
@@ -196,7 +196,7 @@ class OverlayResolver:
             path: Full absolute path to the file being deleted
             overlay_config: Overlay configuration for this workspace
         """
-        from nexus.core.metadata import FileMetadata
+        from nexus.contracts.metadata import FileMetadata
 
         whiteout_meta = FileMetadata(
             path=path,
@@ -399,7 +399,7 @@ class OverlayResolver:
         Returns:
             FileMetadata pointing to the CAS content
         """
-        from nexus.core.metadata import FileMetadata
+        from nexus.contracts.metadata import FileMetadata
 
         return FileMetadata(
             path=full_path,

@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from nexus.core.metadata import FileMetadata
+from nexus.contracts.metadata import FileMetadata
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 # ---------------------------------------------------------------------------

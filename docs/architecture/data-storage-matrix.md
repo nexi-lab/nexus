@@ -498,7 +498,7 @@ Names explain the **"What"** and **"Why"**, not the **"How"**.
 | **CacheStore** | `CacheStoreABC` (in `contracts/cache_store.py`) | "The Reflexes" — sessions, signals, ephemeral data | Dragonfly (prod), In-Memory (dev) | **Optional** — ABC in contracts/ (like `include/linux/fscache.h`), kernel accepts via DI, services consume |
 
 **Naming Note**: The Metastore pillar class is `MetastoreABC` (in `core/metastore.py`), providing typed FileMetadata CRUD.
-Data classes (`FileMetadata`, `PaginatedResult`) live in `core/metadata.py`. Issue #1525 completed the rename.
+Data classes (`FileMetadata`, `PaginatedResult`) live in `contracts/metadata.py`. Issue #1525 completed the rename.
 
 ### Complete Data Type → Pillar Mapping
 

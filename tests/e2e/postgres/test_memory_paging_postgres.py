@@ -123,7 +123,7 @@ def app(tmp_path, pg_engine, pg_session_factory, api_keys):
     # In-memory metadata store (same stub as in fastapi e2e test)
     from collections.abc import Sequence
 
-    from nexus.core.metadata import FileMetadata, PaginatedResult
+    from nexus.contracts.metadata import FileMetadata, PaginatedResult
     from nexus.core.metastore import MetastoreABC
 
     class InMemoryMetadataStore(MetastoreABC):

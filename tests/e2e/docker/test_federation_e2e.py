@@ -26,7 +26,7 @@ import httpx
 import pytest
 
 from nexus.constants import ROOT_ZONE_ID
-from nexus.core.metadata import FileMetadata
+from nexus.contracts.metadata import FileMetadata
 from nexus.raft.client import RaftClient
 
 # All tests share one Docker cluster — run sequentially in a single xdist worker.

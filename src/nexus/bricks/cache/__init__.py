@@ -40,7 +40,6 @@ from nexus.bricks.cache.base import (
     TigerCacheProtocol,
 )
 from nexus.bricks.cache.brick import CacheBrick
-from nexus.bricks.cache.factory import CacheFactory
 from nexus.bricks.cache.inmemory import InMemoryCacheStore
 from nexus.bricks.cache.settings import CacheSettings
 from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
@@ -48,8 +47,6 @@ from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
 __all__ = [
     # Brick facade (Issue #1524)
     "CacheBrick",
-    # Factory + config (deprecated — use CacheBrick instead)
-    "CacheFactory",
     "CacheSettings",
     # CachingBackendWrapper — transparent caching decorator for any Backend (#1392)
     "CachingBackendWrapper",

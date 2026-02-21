@@ -10,8 +10,8 @@ import asyncio
 
 import pytest
 
+from nexus.bricks.cache.brick import CacheBrick
 from nexus.bricks.cache.domain import PermissionCache, TigerCache
-from nexus.bricks.cache.factory import CacheFactory
 from nexus.bricks.cache.inmemory import InMemoryCacheStore
 from nexus.bricks.cache.settings import CacheSettings
 from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
@@ -304,45 +304,45 @@ class TestTigerCacheDomain:
 
 
 # ---------------------------------------------------------------------------
-# Scenario 6: CacheFactory with injected CacheStoreABC
+# Scenario 6: CacheBrick with injected CacheStoreABC
 # ---------------------------------------------------------------------------
 
 
-class TestCacheFactoryIntegration:
-    """CacheFactory creates domain caches from injected CacheStoreABC."""
+class TestCacheBrickIntegration:
+    """CacheBrick creates domain caches from injected CacheStoreABC."""
 
-    async def test_factory_with_injected_store(self):
-        """Inject InMemoryCacheStore → factory builds domain caches on it."""
+    async def test_brick_with_injected_store(self):
+        """Inject InMemoryCacheStore → brick builds domain caches on it."""
         store = InMemoryCacheStore()
         settings = CacheSettings(cache_backend="auto", dragonfly_url=None)
-        factory = CacheFactory(settings, cache_store=store)
-        await factory.initialize()
+        brick = CacheBrick(cache_store=store, settings=settings)
+        await brick.initialize()
 
-        # Factory exposes the injected store
-        assert factory.cache_store is store
+        # Brick exposes the injected store
+        assert brick.cache_store is store
 
         # Domain caches work through the store
-        perm = factory.get_permission_cache()
+        perm = brick.get_permission_cache()
         await perm.set("user", "alice", "read", "file", "/a", True, "zone1")
         assert await perm.get("user", "alice", "read", "file", "/a", "zone1") is True
 
-        tiger = factory.get_tiger_cache()
+        tiger = brick.get_tiger_cache()
         await tiger.set_bitmap("user", "alice", "read", "file", "zone1", b"bitmap", 1)
         result = await tiger.get_bitmap("user", "alice", "read", "file", "zone1")
         assert result is not None
 
-        await factory.shutdown()
+        await brick.shutdown()
 
-    async def test_factory_defaults_to_null(self):
-        """No Dragonfly URL → NullCacheStore → all cache ops are no-ops."""
+    async def test_brick_defaults_to_null(self):
+        """No cache store → NullCacheStore → all cache ops are no-ops."""
         settings = CacheSettings(cache_backend="auto", dragonfly_url=None)
-        factory = CacheFactory(settings)
-        await factory.initialize()
+        brick = CacheBrick(settings=settings)
+        await brick.initialize()
 
-        assert isinstance(factory.cache_store, NullCacheStore)
+        assert isinstance(brick.cache_store, NullCacheStore)
 
-        perm = factory.get_permission_cache()
+        perm = brick.get_permission_cache()
         await perm.set("user", "alice", "read", "file", "/a", True, "zone1")
         assert await perm.get("user", "alice", "read", "file", "/a", "zone1") is None  # no-op
 
-        await factory.shutdown()
+        await brick.shutdown()

@@ -83,14 +83,6 @@ class TestCacheBrickConstruction:
         assert brick.settings.permission_ttl == 600
         assert brick.settings.tiger_ttl == 7200
 
-    def test_init_with_record_store(self) -> None:
-        """CacheBrick with record_store should store it for postgres fallback."""
-        from nexus.bricks.cache.brick import CacheBrick
-
-        record_store = MagicMock()
-        brick = CacheBrick(record_store=record_store)
-        assert brick._record_store is record_store
-
 
 # ---------------------------------------------------------------------------
 # Protocol accessor tests

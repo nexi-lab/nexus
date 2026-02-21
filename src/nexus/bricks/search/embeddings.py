@@ -480,14 +480,13 @@ class CachedEmbeddingProvider(EmbeddingProvider):
 
     Usage::
 
-        # Initialize cache (CacheFactory from nexus.bricks.cache)
-        settings = CacheSettings.from_env()
-        factory = CacheFactory(settings)
-        await factory.initialize()
+        # Initialize cache (CacheBrick from nexus.bricks.cache)
+        brick = CacheBrick(cache_store=my_store, settings=settings)
+        await brick.start()
 
         # Wrap any embedding provider
         base_provider = create_embedding_provider("openai")
-        embedding_cache = factory.get_embedding_cache()
+        embedding_cache = brick.get_embedding_cache()
 
         if embedding_cache:
             provider = CachedEmbeddingProvider(base_provider, embedding_cache)

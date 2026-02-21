@@ -17,7 +17,6 @@ from __future__ import annotations
 import asyncio
 import os
 from collections.abc import Generator
-from typing import Any
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -363,63 +362,3 @@ class TestPostgresResourceMapCache:
         id2 = await cache.get_int_id("file", "/test/idempotent.txt", "zone1")
 
         assert id1 == id2
-
-
-# ---------------------------------------------------------------------------
-# CacheFactory Integration Tests
-# ---------------------------------------------------------------------------
-
-
-class TestCacheFactoryPostgresFallback:
-    """Verify CacheFactory returns PostgreSQL implementations when configured."""
-
-    async def test_factory_postgres_fallback(self, pg_engine: Engine) -> None:
-        from nexus.bricks.cache.factory import CacheFactory
-        from nexus.bricks.cache.settings import CacheSettings
-        from nexus.storage.record_store import SQLAlchemyRecordStore
-
-        # Wrap engine in RecordStoreABC — CacheFactory must go through the pillar
-        record_store = SQLAlchemyRecordStore(db_url=str(pg_engine.url))
-
-        settings = CacheSettings(cache_backend="auto", dragonfly_url=None)
-        factory = CacheFactory(settings, record_store=record_store)
-        await factory.initialize()
-
-        assert factory.is_using_postgres is True
-        assert factory.backend_name == "PostgreSQL"
-
-        # Domain caches should be PostgreSQL-backed
-        perm = factory.get_permission_cache()
-        assert isinstance(perm, PostgresPermissionCache)
-
-        tiger = factory.get_tiger_cache()
-        assert isinstance(tiger, PostgresTigerCache)
-
-        resmap = factory.get_resource_map_cache()
-        assert isinstance(resmap, PostgresResourceMapCache)
-
-        # Verify they actually work
-        await perm.set("user", "alice", "read", "file", "/a", True, "zone1")
-        assert await perm.get("user", "alice", "read", "file", "/a", "zone1") is True
-
-        # Health check
-        health: dict[str, Any] = await factory.health_check()
-        assert health["healthy"] is True
-        assert health["backend"] == "PostgreSQL"
-
-        await factory.shutdown()
-
-    async def test_factory_no_record_store_uses_null(self) -> None:
-        """Without record_store or CacheStoreABC driver, factory uses NullCacheStore."""
-        from nexus.bricks.cache.factory import CacheFactory
-        from nexus.bricks.cache.settings import CacheSettings
-        from nexus.contracts.cache_store import NullCacheStore
-
-        settings = CacheSettings(cache_backend="auto", dragonfly_url=None)
-        factory = CacheFactory(settings)
-        await factory.initialize()
-
-        assert factory.is_using_postgres is False
-        assert isinstance(factory.cache_store, NullCacheStore)
-
-        await factory.shutdown()

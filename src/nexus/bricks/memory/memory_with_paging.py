@@ -98,17 +98,14 @@ class MemoryWithPaging(Memory):
             # Fallback: wrap the provided session (single-threaded use)
             session_factory = lambda: session  # noqa: E731
 
-        # Create VectorDatabase from engine if not provided directly
+        # VectorDatabase must be injected via vector_db param (DI).
+        # The factory layer is responsible for creating VectorDatabase
+        # from the engine and passing it here.
         if vector_db is None and engine is not None:
-            try:
-                from nexus.bricks.search.vector_db import VectorDatabase
-
-                _is_pg = not str(engine.url).startswith("sqlite")
-                vector_db = VectorDatabase(engine, is_postgresql=_is_pg)
-                vector_db.initialize()
-            except Exception as e:
-                logger.warning(f"Failed to initialize VectorDatabase: {e}")
-                vector_db = None
+            logger.debug(
+                "engine provided but no vector_db — "
+                "inject vector_db from factory for pgvector-accelerated search"
+            )
 
         if enable_paging:
             self.pager = MemoryPager(

@@ -118,7 +118,7 @@ class WrapperMetrics:
                 return self._otel_counters
 
             try:
-                from nexus.server.telemetry import is_telemetry_enabled
+                from nexus.lib.telemetry import is_telemetry_enabled
 
                 if not is_telemetry_enabled():
                     return None

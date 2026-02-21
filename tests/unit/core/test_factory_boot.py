@@ -76,6 +76,9 @@ EXPECTED_SYSTEM_KEYS = frozenset(
         "scoped_hook_engine",
         "tiger_cache_manager",
         "zone_lifecycle",
+        # Issue #2360: Scheduler promoted to always-started system service
+        "scheduler_service",
+        "scheduler_state_emitter",
     }
 )
 

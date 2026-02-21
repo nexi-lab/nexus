@@ -417,7 +417,7 @@ def _boot_wired_services(
 
     memory_provider: Any = None
     try:
-        from nexus.services.memory_provider import MemoryProvider
+        from nexus.bricks.memory.memory_provider import MemoryProvider
 
         memory_provider = MemoryProvider(
             session_factory=_nx_session_factory,

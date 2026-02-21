@@ -13,7 +13,7 @@ import pytest
 _CORE_MODULES = [
     "nexus.core.config",
     "nexus.core.nexus_fs",
-    "nexus.core.async_bridge",
+    "nexus.rebac.async_bridge",
     "nexus.core.protocols",
     "nexus.core.protocols.vfs_router",
     "nexus.core.protocols.vfs_core",

@@ -16,7 +16,7 @@ import logging
 import time
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from nexus.server.dependencies import require_auth
 
@@ -29,7 +29,7 @@ router = APIRouter(prefix="/api/v2/search", tags=["search"])
 # =============================================================================
 
 
-def _get_search_daemon(request: Any) -> Any:
+def _get_search_daemon(request: Request) -> Any:
     """Get SearchDaemon from app.state, raising 503 if not enabled."""
     daemon = getattr(request.app.state, "search_daemon", None)
     if daemon is None:
@@ -40,7 +40,7 @@ def _get_search_daemon(request: Any) -> Any:
     return daemon
 
 
-def _get_record_store(request: Any) -> Any:
+def _get_record_store(request: Request) -> Any:
     """Get RecordStore from app.state."""
     store = getattr(request.app.state, "record_store", None)
     if store is None:
@@ -48,12 +48,12 @@ def _get_record_store(request: Any) -> Any:
     return store
 
 
-def _get_optional_search_daemon(request: Any) -> Any:
+def _get_optional_search_daemon(request: Request) -> Any:
     """Get SearchDaemon from app.state, returning None if not enabled."""
     return getattr(request.app.state, "search_daemon", None)
 
 
-def _get_async_read_session_factory(request: Any) -> Any:
+def _get_async_read_session_factory(request: Request) -> Any:
     """Get async read session factory for read-only operations."""
     factory = getattr(request.app.state, "async_read_session_factory", None)
     if factory is not None:

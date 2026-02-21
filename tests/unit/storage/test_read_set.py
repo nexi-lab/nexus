@@ -6,7 +6,7 @@ precise cache invalidation and efficient subscription updates.
 
 import time
 
-from nexus.core.read_set import (
+from nexus.storage.read_set import (
     AccessType,
     ReadSet,
     ReadSetEntry,

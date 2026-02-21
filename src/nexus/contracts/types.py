@@ -20,7 +20,7 @@ from enum import IntFlag, StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from nexus.core.read_set import ReadSet
+    from nexus.storage.read_set import ReadSet
 
 logger = logging.getLogger(__name__)
 
@@ -175,7 +175,7 @@ class OperationContext:
             access_type: Type of access (content, metadata, list, exists)
 
         Example:
-            >>> from nexus.core.read_set import enable_read_tracking
+            >>> from nexus.storage.read_set import enable_read_tracking
             >>> ctx = OperationContext(user_id="alice", groups=[], track_reads=True)
             >>> enable_read_tracking(ctx, "zone1")
             >>> ctx.record_read("file", "/inbox/a.txt", revision=10)

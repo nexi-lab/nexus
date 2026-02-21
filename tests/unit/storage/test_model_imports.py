@@ -117,6 +117,9 @@ EXPECTED_MODELS = [
     "SnapshotEntryModel",
     # Context Branching (Issue #1315)
     "ContextBranchModel",
+    # Credentials & Access Manifests (Issues #1753, #1754)
+    "AgentCredentialModel",
+    "AccessManifestModel",
 ]
 
 

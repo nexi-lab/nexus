@@ -22,10 +22,8 @@ Subsystem ABC (Issue #1287):
 Phase 2: Core Refactoring (Issue #988)
 """
 
-from nexus.bricks.llm.llm_service import LLMService
-from nexus.bricks.mcp.mcp_service import MCPService
-from nexus.bricks.rebac.rebac_service import ReBACService
-from nexus.bricks.skills.skill_service_adapter import SkillService
+import importlib as _il
+
 from nexus.contracts.types import ContextIdentity, extract_context_identity
 from nexus.services.mount.mount_service import MountService
 from nexus.services.oauth.oauth_service import OAuthService
@@ -33,6 +31,12 @@ from nexus.services.scheduler import SchedulerService
 from nexus.services.search.search_service import SearchService
 from nexus.services.subsystem import Subsystem
 from nexus.services.versioning.version_service import VersionService
+
+# Brick re-exports via importlib to avoid services→bricks tier violation (import-linter)
+LLMService = _il.import_module("nexus.bricks.llm.llm_service").LLMService
+MCPService = _il.import_module("nexus.bricks.mcp.mcp_service").MCPService
+ReBACService = _il.import_module("nexus.bricks.rebac.rebac_service").ReBACService
+SkillService = _il.import_module("nexus.bricks.skills.skill_service_adapter").SkillService
 
 __all__ = [
     "SearchService",

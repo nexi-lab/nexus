@@ -4,7 +4,7 @@ Contains error codes common across all connectors that use
 ``TraitBasedMixin`` and ``CheckpointMixin``.  Each connector's
 ``errors.py`` merges these with its own domain-specific codes::
 
-    from nexus.connectors.base_errors import TRAIT_ERRORS, CHECKPOINT_ERRORS
+    from nexus.backends.connectors.base_errors import TRAIT_ERRORS, CHECKPOINT_ERRORS
     ERROR_REGISTRY = {**TRAIT_ERRORS, **CHECKPOINT_ERRORS, **DOMAIN_ERRORS}
 """
 
@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from types import MappingProxyType
 
-from nexus.connectors.base import ErrorDef
+from nexus.backends.connectors.base import ErrorDef
 
 # ---------------------------------------------------------------------------
 # Trait validation errors (used by TraitBasedMixin.validate_traits)

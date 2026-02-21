@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from nexus.connectors.base import (
+from nexus.backends.connectors.base import (
     ConfirmLevel,
     ErrorDef,
     OpTraits,

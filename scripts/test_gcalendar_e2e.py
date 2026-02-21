@@ -91,7 +91,7 @@ def test_validation_errors(backend) -> bool:
     """Test that validation errors are properly raised."""
     print_header("Test 2: Validation Errors")
 
-    from nexus.connectors.base import ValidationError
+    from nexus.backends.connectors.base import ValidationError
 
     tests_passed = True
 

@@ -163,7 +163,7 @@ def test_schema_validation() -> bool:
 
     from pydantic import ValidationError as PydanticValidationError
 
-    from nexus.connectors.gmail.schemas import (
+    from nexus.backends.connectors.gmail.schemas import (
         DraftEmailSchema,
         ForwardEmailSchema,
         ReplyEmailSchema,
@@ -276,7 +276,7 @@ def test_trait_validation(backend) -> bool:
     """Test trait-based validation."""
     print_header("Test 3: Trait Validation")
 
-    from nexus.connectors.base import ValidationError
+    from nexus.backends.connectors.base import ValidationError
 
     tests_passed = True
 
@@ -348,7 +348,7 @@ def test_operation_traits(backend) -> bool:
     """Test operation trait configuration."""
     print_header("Test 4: Operation Traits")
 
-    from nexus.connectors.base import ConfirmLevel, Reversibility
+    from nexus.backends.connectors.base import ConfirmLevel, Reversibility
 
     tests_passed = True
 

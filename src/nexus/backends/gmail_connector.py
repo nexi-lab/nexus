@@ -42,10 +42,7 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.backends.backend import Backend
 from nexus.backends.cache_mixin import IMMUTABLE_VERSION, CacheConnectorMixin
-from nexus.backends.gmail_connector_utils import fetch_emails_batch, list_emails_by_folder
-from nexus.backends.oauth_mixin import OAuthConnectorMixin
-from nexus.backends.registry import ArgType, ConnectionArg, register_connector
-from nexus.connectors.base import (
+from nexus.backends.connectors.base import (
     CheckpointMixin,
     ConfirmLevel,
     OpTraits,
@@ -54,7 +51,10 @@ from nexus.connectors.base import (
     TraitBasedMixin,
     ValidatedMixin,
 )
-from nexus.connectors.gmail.errors import ERROR_REGISTRY
+from nexus.backends.connectors.gmail.errors import ERROR_REGISTRY
+from nexus.backends.gmail_connector_utils import fetch_emails_batch, list_emails_by_folder
+from nexus.backends.oauth_mixin import OAuthConnectorMixin
+from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.core.exceptions import BackendError
 from nexus.core.response import HandlerResponse, timed_response
 
@@ -302,7 +302,7 @@ class GmailConnectorBackend(
         try:
             # Load static SKILL.md from package resources
             skill_md_content = (
-                resources.files("nexus.connectors.gmail")
+                resources.files("nexus.backends.connectors.gmail")
                 .joinpath("SKILL.md")
                 .read_text(encoding="utf-8")
             )

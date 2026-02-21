@@ -12,7 +12,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from nexus.connectors.base import ConfirmLevel, ErrorDef, OpTraits
+from nexus.backends.connectors.base import ConfirmLevel, ErrorDef, OpTraits
 
 logger = logging.getLogger(__name__)
 

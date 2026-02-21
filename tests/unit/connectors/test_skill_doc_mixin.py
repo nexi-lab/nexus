@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import BaseModel
 
-from nexus.connectors.base import (
+from nexus.backends.connectors.base import (
     ConfirmLevel,
     ErrorDef,
     OpTraits,

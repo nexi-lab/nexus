@@ -4,7 +4,7 @@ Provides hooks that run when connectors are mounted, such as
 auto-generating SKILL.md documentation.
 
 Usage:
-    >>> from nexus.connectors.mount_hooks import on_mount
+    >>> from nexus.backends.connectors.mount_hooks import on_mount
     >>> from nexus.backends.gcalendar_connector import GoogleCalendarConnectorBackend
     >>>
     >>> # After adding mount to router
@@ -17,10 +17,10 @@ Usage:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
-    from nexus.connectors.base import SkillDocMixin
+    from nexus.backends.connectors.base import SkillDocMixin
     from nexus.core.protocols.connector import ConnectorProtocol
 
 logger = logging.getLogger(__name__)
@@ -64,7 +64,7 @@ def on_mount(
 
     # Check if backend has SkillDocMixin
     if hasattr(backend, "write_skill_docs") and hasattr(backend, "SKILL_NAME"):
-        skill_mixin: SkillDocMixin = backend  # type: ignore
+        skill_mixin = cast("SkillDocMixin", backend)
 
         # Set mount path on the mixin
         if hasattr(skill_mixin, "set_mount_path"):

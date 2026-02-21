@@ -15,7 +15,7 @@ Example:
     ...     SCHEMAS = {"create": CreateSchema}
 """
 
-from nexus.connectors.base import (
+from nexus.backends.connectors.base import (
     CheckpointMixin,
     ConfirmLevel,
     ErrorDef,
@@ -26,9 +26,9 @@ from nexus.connectors.base import (
     ValidatedMixin,
     ValidationError,
 )
-from nexus.connectors.error_formatter import SkillErrorFormatter
-from nexus.connectors.mount_hooks import generate_all_skill_docs, on_mount
-from nexus.connectors.schema_generator import SkillDocGenerator
+from nexus.backends.connectors.error_formatter import SkillErrorFormatter
+from nexus.backends.connectors.mount_hooks import generate_all_skill_docs, on_mount
+from nexus.backends.connectors.schema_generator import SkillDocGenerator
 
 __all__ = [
     "Reversibility",

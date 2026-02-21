@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import posixpath
 
-from nexus.connectors.base import ErrorDef, ValidationError
+from nexus.backends.connectors.base import ErrorDef, ValidationError
 
 
 class SkillErrorFormatter:

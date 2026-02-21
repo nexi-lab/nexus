@@ -187,7 +187,7 @@ class TestCrossModuleWiring:
 
     def test_document_reader_uses_chunk_like(self) -> None:
         """LLMDocumentReader resolves imports from services."""
-        mod = importlib.import_module("nexus.services.llm_document_reader")
+        mod = importlib.import_module("nexus.services.llm.llm_document_reader")
         assert hasattr(mod, "LLMDocumentReader")
         assert hasattr(mod, "ReadChunk")
 
@@ -199,11 +199,11 @@ class TestCrossModuleWiring:
         import sys
 
         # Remove cached modules to force fresh resolution
-        to_remove = [k for k in sys.modules if "nexus.services.llm_document_reader" in k]
+        to_remove = [k for k in sys.modules if "nexus.services.llm.llm_document_reader" in k]
         saved = {k: sys.modules.pop(k) for k in to_remove}
 
         try:
-            importlib.import_module("nexus.services.llm_document_reader")
+            importlib.import_module("nexus.services.llm.llm_document_reader")
         finally:
             sys.modules.update(saved)
 

@@ -5,7 +5,7 @@ Blocks RFC 1918 private ranges, loopback, link-local, and cloud metadata IPs.
 
 Usage::
 
-    from nexus.server.security import validate_outbound_url
+    from nexus.lib.security import validate_outbound_url
 
     validate_outbound_url("https://example.com/webhook")   # OK
     validate_outbound_url("http://169.254.169.254/meta")   # raises ValueError

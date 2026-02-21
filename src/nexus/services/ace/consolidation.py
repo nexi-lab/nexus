@@ -280,7 +280,7 @@ class ConsolidationEngine:
         Returns:
             Consolidation prompt
         """
-        from nexus.security.prompt_sanitizer import wrap_untrusted_data
+        from nexus.lib.security.prompt_sanitizer import wrap_untrusted_data
 
         prompt = """# Memory Consolidation Task
 

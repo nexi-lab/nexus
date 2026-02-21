@@ -5,7 +5,7 @@ contain leaked system prompts or credential patterns.
 
 Usage::
 
-    from nexus.security import validate_llm_output
+    from nexus.lib.security import validate_llm_output
 
     warnings = validate_llm_output(response, system_prompt=system_prompt)
     if warnings:

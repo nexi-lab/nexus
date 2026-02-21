@@ -5,7 +5,7 @@ Moved from core/ to services/memory/ as part of #2124.
 
 import pytest
 
-from nexus.services.memory.coref_resolver import (
+from nexus.bricks.memory.coref_resolver import (
     CorefResult,
     HeuristicCorefResolver,
     LLMCorefResolver,

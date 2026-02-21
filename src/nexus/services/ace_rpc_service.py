@@ -38,7 +38,7 @@ class ACERPCService:
 
     def _get_memory_api(self, context: dict | None = None) -> Any:
         """Get Memory API instance with context-specific configuration."""
-        from nexus.services.memory.memory_api import Memory
+        from nexus.bricks.memory.service import Memory
 
         if self._ensure_entity_registry_fn is not None:
             self._ensure_entity_registry_fn()

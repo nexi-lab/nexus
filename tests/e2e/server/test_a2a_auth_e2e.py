@@ -224,7 +224,7 @@ class TestA2APersistenceE2E:
         assert agents_dir.exists(), f"Agents directory not found: {agents_dir}"
 
         # Find the task JSON file under any agent's tasks/ directory
-        all_json = list(agents_dir.rglob(f"*_{task_id}.json"))
+        all_json = [f for f in agents_dir.rglob(f"*_{task_id}.json") if "tasks" in f.parts]
         assert len(all_json) == 1, f"Expected 1 file for task {task_id}, found {len(all_json)}"
 
         # Verify the file is inside a tasks/ directory

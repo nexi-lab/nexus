@@ -22,11 +22,10 @@ logger = logging.getLogger(__name__)
 
 
 def _save_app_state(monkeypatch):
-    """Record _app_state attributes so monkeypatch auto-restores them at teardown."""
+    """Record _fastapi_app state so monkeypatch auto-restores it at teardown."""
     from nexus.server import fastapi_server as fas
 
-    for attr in ("nexus_fs", "api_key", "auth_provider"):
-        monkeypatch.setattr(fas._app_state, attr, getattr(fas._app_state, attr))
+    monkeypatch.setattr(fas, "_fastapi_app", fas._fastapi_app)
 
 
 @pytest.fixture

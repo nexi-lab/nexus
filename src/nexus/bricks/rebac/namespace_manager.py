@@ -56,6 +56,7 @@ from sqlalchemy.exc import OperationalError
 
 if TYPE_CHECKING:
     from nexus.bricks.rebac.manager import ReBACManager
+    from nexus.services.protocols.persistent_view import PersistentViewStore
 
 logger = logging.getLogger(__name__)
 
@@ -206,7 +207,7 @@ class NamespaceManager:
         dcache_maxsize: int = 100_000,
         dcache_positive_ttl: int = 300,
         dcache_negative_ttl: int = 60,
-        persistent_store: Any | None = None,
+        persistent_store: PersistentViewStore | None = None,
     ) -> None:
         self._rebac_manager = rebac_manager
         self._revision_window = revision_window

@@ -43,9 +43,11 @@ from nexus.bricks.pay.sdk import NexusPay
 from nexus.bricks.pay.x402 import X402Client, X402PaymentVerification
 from nexus.bricks.rebac.async_manager import AsyncReBACManager
 from nexus.bricks.rebac.async_permissions import AsyncPermissionEnforcer
+from nexus.bricks.rebac.manager import ReBACManager
 from nexus.core.async_nexus_fs import AsyncNexusFS
 from nexus.server.middleware.x402 import X402PaymentMiddleware
 from nexus.storage.models import (
+    Base,
     DirectoryEntryModel,
     FilePathModel,
     VersionHistoryModel,
@@ -95,71 +97,32 @@ async def engine() -> AsyncGenerator[AsyncEngine, None]:
     """
     engine = create_async_engine(TEST_ASYNC_DB_URL, echo=False)
 
+    from nexus.storage.models.permissions import (
+        ReBACChangelogModel,
+        ReBACCheckCacheModel,
+        ReBACGroupClosureModel,
+        ReBACNamespaceModel,
+        ReBACTupleModel,
+        ReBACVersionSequenceModel,
+    )
+
+    _test_tables = [
+        FilePathModel.__table__,
+        DirectoryEntryModel.__table__,
+        VersionHistoryModel.__table__,
+        ReBACTupleModel.__table__,
+        ReBACNamespaceModel.__table__,
+        ReBACGroupClosureModel.__table__,
+        ReBACChangelogModel.__table__,
+        ReBACVersionSequenceModel.__table__,
+        ReBACCheckCacheModel.__table__,
+    ]
+
     async with engine.begin() as conn:
-        # File storage tables (ORM models)
-        tables = [
-            FilePathModel.__table__,
-            DirectoryEntryModel.__table__,
-            VersionHistoryModel.__table__,
-        ]
-        for table in tables:
-            await conn.run_sync(lambda c, t=table: t.create(c, checkfirst=True))
-
-        # ReBAC tables (raw SQL for compatibility with async_rebac_manager queries)
-        await conn.execute(
-            text("""
-            CREATE TABLE IF NOT EXISTS rebac_tuples (
-                tuple_id TEXT PRIMARY KEY,
-                subject_type TEXT NOT NULL,
-                subject_id TEXT NOT NULL,
-                subject_relation TEXT,
-                relation TEXT NOT NULL,
-                object_type TEXT NOT NULL,
-                object_id TEXT NOT NULL,
-                zone_id TEXT NOT NULL DEFAULT 'root',
-                conditions TEXT,
-                expires_at TIMESTAMPTZ,
-                created_at TIMESTAMPTZ,
-                updated_at TIMESTAMPTZ
-            )
-        """)
-        )
-        await conn.execute(
-            text("""
-            CREATE TABLE IF NOT EXISTS rebac_namespaces (
-                namespace_id TEXT PRIMARY KEY,
-                object_type TEXT NOT NULL UNIQUE,
-                config TEXT NOT NULL,
-                created_at TIMESTAMPTZ,
-                updated_at TIMESTAMPTZ
-            )
-        """)
-        )
-        await conn.execute(
-            text("""
-            CREATE TABLE IF NOT EXISTS rebac_group_closure (
-                member_type TEXT NOT NULL,
-                member_id TEXT NOT NULL,
-                group_type TEXT NOT NULL,
-                group_id TEXT NOT NULL,
-                zone_id TEXT NOT NULL DEFAULT 'root',
-                depth INTEGER NOT NULL DEFAULT 1,
-                updated_at TIMESTAMPTZ,
-                PRIMARY KEY (member_type, member_id, group_type, group_id, zone_id)
-            )
-        """)
-        )
-
-        # Clean any leftover test data
-        try:
-            await conn.execute(
-                text(
-                    "TRUNCATE file_paths, directory_entries, version_history, "
-                    "rebac_tuples, rebac_namespaces, rebac_group_closure CASCADE"
-                )
-            )
-        except Exception:
-            pass
+        # Drop then recreate only the tables this test needs (not all ORM tables),
+        # so schema changes are always picked up without disturbing other tables.
+        await conn.run_sync(lambda c: Base.metadata.drop_all(c, tables=_test_tables))
+        await conn.run_sync(lambda c: Base.metadata.create_all(c, tables=_test_tables))
 
         # Insert default namespace config: file type with owner/writer/reader → read/write
         ns_config = json.dumps(
@@ -174,26 +137,18 @@ async def engine() -> AsyncGenerator[AsyncEngine, None]:
         )
         await conn.execute(
             text(
-                "INSERT INTO rebac_namespaces (namespace_id, object_type, config) "
-                "VALUES (:id, :type, :config) "
-                "ON CONFLICT (object_type) DO UPDATE SET config = :config"
+                "INSERT INTO rebac_namespaces (namespace_id, object_type, config, created_at, updated_at) "
+                "VALUES (:id, :type, :config, NOW(), NOW()) "
+                "ON CONFLICT (object_type) DO UPDATE SET config = :config, updated_at = NOW()"
             ),
             {"id": "file_ns", "type": "file", "config": ns_config},
         )
 
     yield engine
 
-    # Cleanup after tests
+    # Cleanup after tests — drop only the tables we created
     async with engine.begin() as conn:
-        try:
-            await conn.execute(
-                text(
-                    "TRUNCATE file_paths, directory_entries, version_history, "
-                    "rebac_tuples, rebac_namespaces, rebac_group_closure CASCADE"
-                )
-            )
-        except Exception:
-            pass
+        await conn.run_sync(lambda c: Base.metadata.drop_all(c, tables=_test_tables))
 
     await engine.dispose()
 
@@ -206,7 +161,13 @@ async def rebac_manager(engine: AsyncEngine) -> AsyncReBACManager:
     Grants test_user owner permission on root "/" in zone test-tenant,
     so file operations succeed for paths under /.
     """
-    manager = AsyncReBACManager(engine, enable_l1_cache=False)
+    from sqlalchemy import create_engine
+
+    # Use a pure sync engine — engine.sync_engine from asyncpg still
+    # requires greenlet context, which asyncio.to_thread() doesn't provide.
+    sync_engine = create_engine(TEST_SYNC_DB_URL)
+    sync_manager = ReBACManager(sync_engine, enable_tiger_cache=False)
+    manager = AsyncReBACManager(sync_manager)
 
     # Grant test_user owner on root "/" — inherits to all child paths
     await manager.write_tuple(
@@ -289,7 +250,7 @@ async def client(
 
     # Create real app via create_app with PostgreSQL URL
     from nexus.server.dependencies import get_auth_result
-    from nexus.server.fastapi_server import _fastapi_app, create_app
+    from nexus.server.fastapi_server import create_app
 
     app = create_app(
         nexus_fs=mock_nexus_fs,
@@ -297,7 +258,7 @@ async def client(
     )
 
     # Inject AsyncNexusFS (simulating lifespan)
-    _fastapi_app.state.async_nexus_fs = async_fs
+    app.state.async_nexus_fs = async_fs
 
     # Wire NexusPay into the server
     nexuspay = NexusPay(
@@ -351,7 +312,7 @@ async def client(
 
     await async_fs.close()
     metadata_store.close()
-    _fastapi_app.state.async_nexus_fs = None
+    app.state.async_nexus_fs = None
     app.dependency_overrides.clear()
 
 
@@ -527,10 +488,10 @@ async def test_file_write_denied_when_no_permission(
     mock_nexus_fs._coordination_client = None
 
     from nexus.server.dependencies import get_auth_result
-    from nexus.server.fastapi_server import _fastapi_app, create_app
+    from nexus.server.fastapi_server import create_app
 
     app = create_app(nexus_fs=mock_nexus_fs, database_url=TEST_SYNC_DB_URL)
-    _fastapi_app.state.async_nexus_fs = async_fs
+    app.state.async_nexus_fs = async_fs
     app.state.credits_service = mock_credits_service
     app.state.x402_client = x402_client
 
@@ -562,7 +523,7 @@ async def test_file_write_denied_when_no_permission(
 
     await async_fs.close()
     metadata_store.close()
-    _fastapi_app.state.async_nexus_fs = None
+    app.state.async_nexus_fs = None
     app.dependency_overrides.clear()
 
 
@@ -683,14 +644,14 @@ async def auth_enforced_client(
     mock_nexus_fs._event_bus = None
     mock_nexus_fs._coordination_client = None
 
-    from nexus.server.fastapi_server import _fastapi_app, create_app
+    from nexus.server.fastapi_server import create_app
 
     app = create_app(
         nexus_fs=mock_nexus_fs,
         database_url=TEST_SYNC_DB_URL,
         api_key="test-secret-api-key-12345",
     )
-    _fastapi_app.state.async_nexus_fs = async_fs
+    app.state.async_nexus_fs = async_fs
     app.state.credits_service = mock_credits_service
     app.state.x402_client = x402_client
 
@@ -704,7 +665,7 @@ async def auth_enforced_client(
 
     await async_fs.close()
     metadata_store.close()
-    _fastapi_app.state.async_nexus_fs = None
+    app.state.async_nexus_fs = None
 
 
 @pytest.mark.asyncio
@@ -803,10 +764,10 @@ async def test_file_permission_denied_does_not_affect_pay(
     mock_nexus_fs._coordination_client = None
 
     from nexus.server.dependencies import get_auth_result
-    from nexus.server.fastapi_server import _fastapi_app, create_app
+    from nexus.server.fastapi_server import create_app
 
     app = create_app(nexus_fs=mock_nexus_fs, database_url=TEST_SYNC_DB_URL)
-    _fastapi_app.state.async_nexus_fs = async_fs
+    app.state.async_nexus_fs = async_fs
     app.state.credits_service = mock_credits_service
     app.state.x402_client = x402_client
 
@@ -851,7 +812,7 @@ async def test_file_permission_denied_does_not_affect_pay(
 
     await async_fs.close()
     metadata_store.close()
-    _fastapi_app.state.async_nexus_fs = None
+    app.state.async_nexus_fs = None
     app.dependency_overrides.clear()
 
 
@@ -925,14 +886,14 @@ async def db_auth_client(
     mock_nexus_fs._event_bus = None
     mock_nexus_fs._coordination_client = None
 
-    from nexus.server.fastapi_server import _fastapi_app, create_app
+    from nexus.server.fastapi_server import create_app
 
     app = create_app(
         nexus_fs=mock_nexus_fs,
         database_url=TEST_SYNC_DB_URL,
         auth_provider=db_auth,
     )
-    _fastapi_app.state.async_nexus_fs = async_fs
+    app.state.async_nexus_fs = async_fs
     app.state.credits_service = mock_credits_service
     app.state.x402_client = x402_client
 
@@ -946,7 +907,7 @@ async def db_auth_client(
 
     await async_fs.close()
     metadata_store.close()
-    _fastapi_app.state.async_nexus_fs = None
+    app.state.async_nexus_fs = None
 
     # Cleanup: remove test key from PostgreSQL
     with SessionFactory() as session:

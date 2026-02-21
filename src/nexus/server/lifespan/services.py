@@ -185,6 +185,26 @@ def _startup_agent_registry(app: FastAPI, svc: LifespanServices) -> None:
 
             app.state.async_agent_registry = AsyncAgentRegistry(app.state.agent_registry)
 
+            # Issue #2172: Create AgentWarmupService with step registry
+            try:
+                from nexus.services.agents.agent_warmup import AgentWarmupService
+                from nexus.services.agents.warmup_steps import register_standard_steps
+
+                app.state.agent_warmup_service = AgentWarmupService(
+                    agent_registry=app.state.agent_registry,
+                    namespace_manager=svc.namespace_manager,
+                    enabled_bricks=getattr(app.state, "enabled_bricks", frozenset()),
+                    cache_store=getattr(app.state, "cache_brick", None),
+                    mcp_config=None,
+                )
+                register_standard_steps(app.state.agent_warmup_service)
+                logger.info("[WARMUP] AgentWarmupService initialized with standard steps")
+            except Exception as e:
+                logger.warning(
+                    "[WARMUP] Failed to initialize AgentWarmupService: %s", e, exc_info=True
+                )
+                app.state.agent_warmup_service = None
+
             logger.info("[AGENT-REG] AgentRegistry initialized and wired")
         except Exception as e:
             logger.warning("[AGENT-REG] Failed to initialize AgentRegistry: %s", e, exc_info=True)

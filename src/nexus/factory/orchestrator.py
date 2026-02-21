@@ -475,15 +475,25 @@ def create_nexus_fs(
                         l2_cache=_l2_cache,
                     )
                 )
+            else:
+                logger.info("[BOOT:FACTORY] CacheZoneFinalizer skipped: no L1/L2 cache")
 
             # Mount finalizer: remove zone mounts
             _mcs = getattr(_wired, "mount_core_service", None)
             if _mcs is not None:
                 _zl.register_finalizer(MountZoneFinalizer(mount_service=_mcs))
+            else:
+                logger.info(
+                    "[BOOT:FACTORY] MountZoneFinalizer skipped: mount_core_service unavailable"
+                )
 
             # BrickDrain finalizer: drain/finalize zone-aware bricks
             if _blm is not None:
                 _zl.register_finalizer(BrickDrainFinalizer(brick_lifecycle_manager=_blm))
+            else:
+                logger.info(
+                    "[BOOT:FACTORY] BrickDrainFinalizer skipped: brick_lifecycle_manager unavailable"
+                )
 
             logger.debug("[BOOT:FACTORY] Zone late finalizers registered")
         except Exception as exc:

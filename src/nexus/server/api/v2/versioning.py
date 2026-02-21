@@ -74,7 +74,7 @@ class RouterRegistry:
 
 def build_v2_registry(
     *,
-    async_nexus_fs_getter: object | None = None,
+    nexus_fs_getter: object | None = None,
     chunked_upload_service_getter: object | None = None,
 ) -> RouterRegistry:
     """Import all v2 routers and return a populated registry.
@@ -83,7 +83,7 @@ def build_v2_registry(
     module doesn't prevent the rest from loading.
 
     Args:
-        async_nexus_fs_getter: Optional callable returning the async FS
+        nexus_fs_getter: Optional callable returning the NexusFS
             instance (used by the async_files factory router).
     """
     registry = RouterRegistry()
@@ -160,7 +160,7 @@ def build_v2_registry(
     try:
         from nexus.server.api.v2.routers.async_files import create_async_files_router
 
-        async_files_router = create_async_files_router(get_fs=async_nexus_fs_getter)
+        async_files_router = create_async_files_router(get_fs=nexus_fs_getter)
         registry.add(
             RouterEntry(
                 router=async_files_router,
@@ -273,7 +273,7 @@ def build_v2_registry(
     try:
         from nexus.server.api.v2.routers.batch import create_batch_router
 
-        batch_router = create_batch_router(get_fs=async_nexus_fs_getter)
+        batch_router = create_batch_router(get_fs=nexus_fs_getter)
         registry.add(
             RouterEntry(
                 router=batch_router,

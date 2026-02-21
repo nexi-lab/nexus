@@ -964,7 +964,6 @@ ignore_imports = [
     "nexus.core.nexus_fs_core -> nexus.bricks.parsers.registry",
     "nexus.core.nexus_fs_core -> nexus.bricks.memory.router",
     # --- kernel (core) importing bricks (rebac, Issue #2179) ---
-    "nexus.core.async_nexus_fs -> nexus.bricks.rebac.async_permissions",
     "nexus.core.nexus_fs -> nexus.bricks.rebac.entity_registry",
     "nexus.core.nexus_fs_core -> nexus.bricks.rebac.entity_registry",
     "nexus.core.nexus_fs_core -> nexus.services.event_subsystem.types",

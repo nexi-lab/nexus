@@ -256,7 +256,7 @@ class StreamingProtocol(Protocol):
 class BatchContentProtocol(Protocol):
     """Bulk content read optimization.
 
-    Used by object_store, async_nexus_fs, and memory services to reduce
+    Used by object_store and memory services to reduce
     round-trips when reading multiple content items.
     """
 

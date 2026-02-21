@@ -30,7 +30,6 @@ from nexus.contracts.exceptions import (
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
-    from nexus.core.async_nexus_fs import AsyncNexusFS
 
 logger = logging.getLogger(__name__)
 
@@ -207,7 +206,7 @@ class BatchExecutor:
 
     def __init__(
         self,
-        fs: "AsyncNexusFS",
+        fs: Any,
         operation_timeout: float = DEFAULT_OPERATION_TIMEOUT,
     ) -> None:
         self._fs = fs
@@ -278,7 +277,7 @@ class BatchExecutor:
         raise ValueError(msg)
 
     async def _exec_read(self, op: ReadOp, context: "OperationContext") -> OperationResult:
-        raw_content: Any = await self._fs.read(op.path, context=context)
+        raw_content: Any = await asyncio.to_thread(self._fs.read, op.path, context=context)
         text: str
         if isinstance(raw_content, bytes):
             text = raw_content.decode("utf-8", errors="replace")
@@ -297,7 +296,8 @@ class BatchExecutor:
             content: bytes | str = base64.b64decode(op.content)
         else:
             content = op.content.encode("utf-8")
-        result = await self._fs.write(
+        result = await asyncio.to_thread(
+            self._fs.write,
             path=op.path,
             content=content,
             context=context,
@@ -305,11 +305,11 @@ class BatchExecutor:
         return OperationResult(index=0, status=201, data=result, error=None)
 
     async def _exec_delete(self, op: DeleteOp, context: "OperationContext") -> OperationResult:
-        result = await self._fs.delete(op.path, context=context)
+        result = await asyncio.to_thread(self._fs.delete, op.path, context=context)
         return OperationResult(index=0, status=200, data=result, error=None)
 
     async def _exec_stat(self, op: StatOp, context: "OperationContext") -> OperationResult:
-        meta = await self._fs.get_metadata(op.path, context=context)
+        meta = await asyncio.to_thread(self._fs.get_metadata, op.path, context=context)
         if meta is None:
             raise NexusFileNotFoundError(path=op.path)
         return OperationResult(
@@ -328,15 +328,23 @@ class BatchExecutor:
         )
 
     async def _exec_exists(self, op: ExistsOp, context: "OperationContext") -> OperationResult:
-        exists = await self._fs.exists(op.path, context=context)
+        exists = await asyncio.to_thread(self._fs.exists, op.path, context=context)
         return OperationResult(index=0, status=200, data={"exists": exists}, error=None)
 
     async def _exec_list(self, op: ListOp, context: "OperationContext") -> OperationResult:
-        items = await self._fs.list_dir(op.path, context=context)
+        full_paths = await asyncio.to_thread(
+            self._fs.list, op.path, recursive=False, context=context
+        )
+        # NexusFS.list() returns full paths; strip prefix to get names
+        prefix = op.path.rstrip("/") + "/"
+        items = [
+            fp[len(prefix) :] if fp.startswith(prefix) else fp.rsplit("/", 1)[-1]
+            for fp in full_paths
+        ]
         return OperationResult(index=0, status=200, data={"items": items}, error=None)
 
     async def _exec_mkdir(self, op: MkdirOp, context: "OperationContext") -> OperationResult:
-        await self._fs.mkdir(op.path, parents=op.parents, context=context)
+        await asyncio.to_thread(self._fs.mkdir, op.path, parents=op.parents, context=context)
         return OperationResult(
             index=0, status=201, data={"created": True, "path": op.path}, error=None
         )

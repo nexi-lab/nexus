@@ -1,4 +1,4 @@
-"""Permissions startup: async ReBAC, AsyncNexusFS, cache factory, Tiger Cache.
+"""Permissions startup: async ReBAC, cache factory, Tiger Cache.
 
 Extracted from fastapi_server.py (#1602).
 """
@@ -46,7 +46,7 @@ async def startup_permissions(app: "FastAPI", svc: "LifespanServices") -> list[a
 
 
 async def _startup_async_rebac(app: "FastAPI", svc: "LifespanServices") -> None:
-    """Initialize async ReBAC manager and AsyncNexusFS."""
+    """Initialize async ReBAC manager."""
     if not svc.database_url:
         return
 
@@ -67,73 +67,6 @@ async def _startup_async_rebac(app: "FastAPI", svc: "LifespanServices") -> None:
             _sync_mgr = ReBACManager(engine=_store.engine)
             app.state.async_rebac_manager = AsyncReBACManager(_sync_mgr)
             logger.info("Async ReBAC manager initialized (fresh sync manager via RecordStore)")
-
-        # Issue #940: Initialize AsyncNexusFS with permission enforcement
-        try:
-            from nexus.bricks.rebac.async_permissions import AsyncPermissionEnforcer
-            from nexus.core.async_nexus_fs import AsyncNexusFS
-
-            backend_root = os.getenv("NEXUS_BACKEND_ROOT", ".nexus-data/backend")
-            tenant_id = os.getenv("NEXUS_TENANT_ID", "default")
-            enforce_permissions = os.getenv("NEXUS_ENFORCE_PERMISSIONS", "true").lower() in (
-                "true",
-                "1",
-                "yes",
-            )
-
-            # Issue #1239: Create namespace manager for per-subject visibility
-            # Issue #1265: Factory function handles L3 persistent store wiring
-            namespace_manager = None
-            if enforce_permissions and svc.nexus_fs is not None:
-                sync_rebac = svc.rebac_manager
-                if sync_rebac:
-                    from nexus.bricks.rebac.namespace_factory import (
-                        create_namespace_manager,
-                    )
-
-                    ns_record_store = svc.record_store
-                    namespace_manager = create_namespace_manager(
-                        rebac_manager=sync_rebac,
-                        record_store=ns_record_store,
-                    )
-                    # Wire event-driven invalidation: rebac_write → namespace cache (Issue #1244)
-                    sync_rebac.register_namespace_invalidator(
-                        "namespace_dcache",
-                        lambda st, sid, _zid: namespace_manager.invalidate((st, sid)),
-                    )
-                    logger.info(
-                        "[NAMESPACE] NamespaceManager initialized for AsyncPermissionEnforcer "
-                        "(using sync rebac_manager, L3=%s, event-driven invalidation=enabled)",
-                        "enabled" if ns_record_store else "disabled",
-                    )
-
-            # Create permission enforcer with async ReBAC
-            permission_enforcer = AsyncPermissionEnforcer(
-                rebac_manager=app.state.async_rebac_manager,
-                namespace_manager=namespace_manager,
-                agent_registry=app.state.agent_registry,
-            )
-
-            # Create AsyncNexusFS using the same RaftMetadataStore as sync NexusFS
-            from nexus.storage.content_cache import ContentCache as _ContentCache
-
-            app.state.async_nexus_fs = AsyncNexusFS(
-                backend_root=backend_root,
-                metadata_store=svc.nexus_fs.metadata,
-                tenant_id=tenant_id,
-                enforce_permissions=enforce_permissions,
-                permission_enforcer=permission_enforcer,
-                content_cache=_ContentCache(max_size_mb=256),
-            )
-            await app.state.async_nexus_fs.initialize()
-            logger.info(
-                "AsyncNexusFS initialized (backend=%s, tenant=%s, enforce_permissions=%s)",
-                backend_root,
-                tenant_id,
-                enforce_permissions,
-            )
-        except Exception as e:
-            logger.warning("Failed to initialize AsyncNexusFS: %s", e, exc_info=True)
 
     except Exception as e:
         logger.warning("Failed to initialize async ReBAC manager: %s", e, exc_info=True)

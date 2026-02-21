@@ -551,6 +551,26 @@ class PathNotMountedError(NexusError):
         super().__init__(msg, path)
 
 
+class CredentialError(NexusError):
+    """Credential operation error with structured code (Issue #1753).
+
+    Used for credential issuance, verification, and revocation failures.
+    This is an expected error — maps to HTTP 400 Bad Request.
+
+    Codes: "expired", "revoked", "invalid_jws", "unknown_issuer",
+           "invalid_signature", "malformed".
+    """
+
+    is_expected = True
+    status_code = 400
+    error_type = "Bad Request"
+
+    def __init__(self, code: str, message: str, credential_id: str | None = None):
+        self.code = code
+        self.credential_id = credential_id
+        super().__init__(message)
+
+
 class ZoneTerminatingError(NexusError):
     """Raised when a write is attempted on a zone in Terminating phase.
 

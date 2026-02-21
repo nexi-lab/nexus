@@ -98,6 +98,8 @@ class Memory:
         entity_registry: Any = None,
         llm_provider: Any = None,
         permission_enforcer: Any = None,
+        embedding_provider: Any = None,
+        graph_store_class: type[Any] | None = None,
     ):
         """Initialize Memory API.
 
@@ -110,6 +112,8 @@ class Memory:
             entity_registry: Entity registry instance (MemoryEntityRegistryProtocol).
             llm_provider: Optional LLM provider for reflection/learning.
             permission_enforcer: Optional permission enforcer (MemoryPermissionProtocol).
+            embedding_provider: Optional embedding provider for semantic search (DI).
+            graph_store_class: Optional GraphStore class for entity/relationship storage (DI).
         """
         self.session = session
         self.backend = backend
@@ -117,6 +121,8 @@ class Memory:
         self.user_id = user_id
         self.agent_id = agent_id
         self.llm_provider = llm_provider
+        self._embedding_provider = embedding_provider
+        self._graph_store_class = graph_store_class
 
         # Initialize components — accept injected deps or fall back
         if entity_registry is not None:
@@ -539,8 +545,12 @@ class Memory:
         import os
 
         from nexus.bricks.memory._sync import run_sync
-        from nexus.bricks.search.graph_store import GraphStore
         from nexus.storage.record_store import SQLAlchemyRecordStore
+
+        GraphStore = self._graph_store_class
+        if GraphStore is None:
+            logger.debug("No graph_store_class injected, skipping graph storage")
+            return
 
         # Get database URL from session's engine
         db_url = os.environ.get("NEXUS_DATABASE_URL", "")
@@ -944,23 +954,11 @@ class Memory:
 
         # For semantic/hybrid search, we need embeddings
         if embedding_provider is None:
-            # Try to use a default embedding provider if available
-            try:
-                from nexus.bricks.search.embeddings import create_embedding_provider
-
-                # Try to create an embedding provider (checks for API keys in env)
-                try:
-                    embedding_provider = create_embedding_provider(provider="openrouter")
-                except Exception as e:
-                    # Fall back to keyword search if no provider available
-                    logger.debug(
-                        "Failed to create embedding provider, falling back to keyword search: %s", e
-                    )
-                    return self._keyword_search(
-                        query, scope, memory_type, limit, after_dt, before_dt
-                    )
-            except ImportError:
-                # Fall back to keyword search
+            # Use the DI-injected embedding provider if available
+            embedding_provider = self._embedding_provider
+            if embedding_provider is None:
+                # Fall back to keyword search if no provider available
+                logger.debug("No embedding provider available, falling back to keyword search")
                 return self._keyword_search(query, scope, memory_type, limit, after_dt, before_dt)
 
         # Generate query embedding
@@ -2041,17 +2039,14 @@ class Memory:
 
         from nexus.storage.models import MemoryModel
 
-        # Try to get embedding provider
+        # Try to get embedding provider via DI
         if embedding_provider is None:
-            try:
-                from nexus.bricks.search.embeddings import create_embedding_provider
-
-                embedding_provider = create_embedding_provider(provider="openrouter")
-            except Exception as e:
+            embedding_provider = self._embedding_provider
+            if embedding_provider is None:
                 raise ValueError(
-                    f"Failed to create embedding provider: {e}. "
-                    "Please provide an embedding provider or set OPENROUTER_API_KEY env var."
-                ) from e
+                    "No embedding provider available for index_memories_async(). "
+                    "Pass embedding_provider= or inject via Memory(..., embedding_provider=...)."
+                )
 
         # Query memories without embeddings
         stmt = select(MemoryModel).where(MemoryModel.embedding.is_(None))

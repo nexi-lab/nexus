@@ -35,12 +35,14 @@ def generate_skill_md(
     This re-export allows services outside the skills brick to import
     from the services layer without reaching into the brick.
     """
-    from nexus.bricks.skills.skill_generator import generate_skill_md as _generate
+    import importlib as _il
 
-    return _generate(
+    _generate = _il.import_module("nexus.bricks.skills.skill_generator").generate_skill_md
+    result: str = _generate(
         service_name=service_name,
         mount_path=mount_path,
         mcp_tools=mcp_tools,
         mcp_mount=mcp_mount,
         tool_defs=tool_defs,
     )
+    return result

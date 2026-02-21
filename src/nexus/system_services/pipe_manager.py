@@ -1,9 +1,14 @@
 """PipeManager — VFS named pipe manager (fs/pipe.c equivalent).
 
-Manages DT_PIPE lifecycle and buffer registry with per-pipe locking for MPMC.
+System service (Tier 1) managing DT_PIPE lifecycle and buffer registry
+with per-pipe locking for MPMC.
 
-    pipe.py         = kfifo     (include/linux/kfifo.h + lib/kfifo.c)
-    pipe_manager.py = fs/pipe.c (VFS named pipe with per-pipe lock for MPMC)
+    core/pipe.py    = kfifo     (include/linux/kfifo.h + lib/kfifo.c)  [kernel]
+    pipe_manager.py = fs/pipe.c (VFS named pipe with per-pipe lock)    [system service]
+
+Moved from core/ to system_services/ per NEXUS-LEGO-ARCHITECTURE.md — the kernel
+contains only VFSRouter + MetastoreABC + ConnectorProtocol. PipeManager builds on
+the kernel (uses MetastoreABC, RingBuffer) but is a system-tier service (#2366).
 
 Concurrency model (aligned with Linux pipe(7)):
   - RingBuffer (kfifo) is SPSC, no internal lock.
@@ -13,7 +18,7 @@ Concurrency model (aligned with Linux pipe(7)):
   - Sync methods (pipe_write_nowait) are atomic under asyncio event loop
     (no await points), safe for MPSC without lock.
 
-See: pipe.py for RingBuffer, federation-memo.md §7j
+See: core/pipe.py for RingBuffer, federation-memo.md §7j
 """
 
 import asyncio

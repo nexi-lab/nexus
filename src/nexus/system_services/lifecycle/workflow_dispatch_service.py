@@ -24,8 +24,8 @@ from nexus.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from nexus.bricks.workflows.protocol import WorkflowProtocol
-    from nexus.core.pipe_manager import PipeManager
     from nexus.lib.mutation_hooks import MutationEvent
+    from nexus.system_services.pipe_manager import PipeManager
 
 logger = logging.getLogger(__name__)
 

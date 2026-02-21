@@ -1,7 +1,9 @@
 """Unit tests for DT_PIPE kernel IPC primitive.
 
-Tests RingBuffer (kfifo equivalent) and PipeManager (mkfifo equivalent).
-See: src/nexus/core/pipe.py, KERNEL-ARCHITECTURE.md §6.
+Tests RingBuffer (kfifo equivalent, kernel tier) and PipeManager
+(mkfifo equivalent, system service tier).
+See: src/nexus/core/pipe.py, src/nexus/system_services/pipe_manager.py,
+     KERNEL-ARCHITECTURE.md §6.
 """
 
 import asyncio
@@ -17,7 +19,7 @@ from nexus.core.pipe import (
     PipeNotFoundError,
     RingBuffer,
 )
-from nexus.core.pipe_manager import PipeManager
+from nexus.system_services.pipe_manager import PipeManager
 
 # ======================================================================
 # RingBuffer — basic operations

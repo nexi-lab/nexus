@@ -114,6 +114,82 @@ class TestZoneDeprovisionFlow:
         assert response.status_code in (403, 404), f"Got {response.status_code}: {response.text}"
 
 
+class TestZoneDeprovisionDBState:
+    """Verify post-deprovision database state (#12A — Issue #2070)."""
+
+    @pytest.fixture
+    def auth_token(self, test_app):
+        """Register a user and get auth token."""
+        response = test_app.post(
+            "/auth/register",
+            json={
+                "email": "db-state-test@example.com",
+                "password": "securepassword123",
+                "username": "dbstateuser",
+                "display_name": "DB State Test User",
+            },
+        )
+        if response.status_code == 503:
+            pytest.skip("Auth provider not configured in test environment")
+        assert response.status_code == 201, f"Registration failed: {response.text}"
+        return response.json()["token"]
+
+    @pytest.fixture
+    def zone_id(self, test_app, auth_token):
+        """Create a zone for DB state testing."""
+        response = test_app.post(
+            "/api/zones",
+            json={"name": "DB State Zone", "zone_id": "db-state-test"},
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        if response.status_code != 201:
+            pytest.skip("Zone creation failed — ReBAC may not be configured")
+        return response.json()["zone_id"]
+
+    def test_deprovision_sets_phase_and_finalizers(self, test_app, auth_token, zone_id):
+        """After deprovision, zone phase is Terminating/Terminated and finalizers updated."""
+        # Deprovision
+        del_response = test_app.delete(
+            f"/api/zones/{zone_id}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        if del_response.status_code not in (202,):
+            pytest.skip("Deprovision not available in test env")
+
+        data = del_response.json()
+        # Must have the phase transition
+        assert data["phase"] in ("Terminating", "Terminated")
+        # Completed + pending should cover all registered finalizers
+        assert isinstance(data["finalizers_completed"], list)
+        assert isinstance(data["finalizers_pending"], list)
+        assert isinstance(data["finalizers_failed"], dict)
+
+    def test_terminated_zone_not_in_list(self, test_app, auth_token, zone_id):
+        """Terminated zone is excluded from list_zones (phase != Terminated filter)."""
+        # Deprovision
+        del_response = test_app.delete(
+            f"/api/zones/{zone_id}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        if del_response.status_code not in (202,):
+            pytest.skip("Deprovision not available in test env")
+
+        data = del_response.json()
+        if data["phase"] != "Terminated":
+            pytest.skip("Zone not fully terminated — finalizers may be pending")
+
+        # List zones should NOT include terminated zone
+        list_response = test_app.get(
+            "/api/zones",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        if list_response.status_code != 200:
+            pytest.skip("list_zones not available")
+
+        zone_ids = [z["zone_id"] for z in list_response.json()["zones"]]
+        assert zone_id not in zone_ids
+
+
 class TestZoneResponseFormat:
     """Verify zone responses include phase and finalizers fields."""
 

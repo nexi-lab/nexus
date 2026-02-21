@@ -108,14 +108,19 @@ def _boot_independent_bricks(
     # === Auto-discovered bricks ===
     auto_results: dict[str, Any] = {}
     for desc in _discover_brick_factories("independent"):
-        # Manifest pre-check: skip brick if required modules are missing
-        if desc.manifest is not None and not desc.manifest.all_required_present:
-            logger.debug(
-                "[BOOT:BRICK] Skipping %s — required modules missing",
-                desc.result_key,
+        # Manifest pre-check: verify imports once, skip if required modules missing
+        _manifest_status: dict[str, bool] | None = None
+        if desc.manifest is not None:
+            _manifest_status = desc.manifest.verify_imports()
+            _required_ok = all(
+                _manifest_status.get(mod, False) for mod in desc.manifest.required_modules
             )
-            desc.manifest.verify_imports()  # Log details at ERROR/WARNING
-            continue
+            if not _required_ok:
+                logger.debug(
+                    "[BOOT:BRICK] Skipping %s — required modules missing",
+                    desc.result_key,
+                )
+                continue
 
         if desc.name is None:
             # No profile gate — always create
@@ -132,15 +137,17 @@ def _boot_independent_bricks(
                 _on,
             )
 
-        # Log manifest verification for successfully created bricks
-        if desc.manifest is not None and auto_results.get(desc.result_key) is not None:
-            _status = desc.manifest.verify_imports()
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(
-                    "[BOOT:BRICK] %s manifest: %s",
-                    desc.result_key,
-                    _status,
-                )
+        # Log cached manifest status for successfully created bricks
+        if (
+            _manifest_status is not None
+            and auto_results.get(desc.result_key) is not None
+            and logger.isEnabledFor(logging.DEBUG)
+        ):
+            logger.debug(
+                "[BOOT:BRICK] %s manifest: %s",
+                desc.result_key,
+                _manifest_status,
+            )
 
     # === Manually-wired bricks (complex conditional logic) ===
 
@@ -377,8 +384,10 @@ def _boot_independent_bricks(
             logger.debug("[BOOT:BRICK] ReputationService unavailable: %s", _rep_exc)
 
     # --- DelegationService (Issue #2131: extracted to bricks) ---
-    delegation_service: Any = auto_results.pop("delegation_service", None)
-    if delegation_service is None and ctx.record_store is not None:
+    # Always recreate with reputation_service (cross-brick dep wired by kernel)
+    auto_results.pop("delegation_service", None)
+    delegation_service: Any = None
+    if ctx.record_store is not None:
         try:
             from nexus.bricks.delegation.service import DelegationService
 

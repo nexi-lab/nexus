@@ -95,7 +95,7 @@ class ZoneExportService:
         """
         import nexus
 
-        logger.info(f"Starting export for zone {zone_id} to {options.output_path}")
+        logger.info("Starting export for zone %s to %s", zone_id, options.output_path)
 
         # Create temporary directory for building bundle
         with tempfile.TemporaryDirectory(prefix="nexus_export_") as temp_dir:
@@ -180,9 +180,10 @@ class ZoneExportService:
             )
 
             logger.info(
-                f"Export complete: {manifest.file_count} files, "
-                f"{manifest.content_blob_count} blobs, "
-                f"{manifest.total_size_bytes} bytes total"
+                "Export complete: %d files, %d blobs, %d bytes total",
+                manifest.file_count,
+                manifest.content_blob_count,
+                manifest.total_size_bytes,
             )
 
             return manifest
@@ -297,7 +298,7 @@ class ZoneExportService:
                 # Read content from backend
                 response = self.backend.read_content(content_hash)
                 if not response.success or response.data is None:
-                    logger.warning(f"Failed to read content {content_hash}: {response.error}")
+                    logger.warning("Failed to read content %s: %s", content_hash, response.error)
                     continue
 
                 # Write to CAS structure (2-char prefix directories)
@@ -314,7 +315,7 @@ class ZoneExportService:
                     progress_callback(idx + 1, total_hashes)
 
             except Exception as e:
-                logger.warning(f"Error exporting blob {content_hash}: {e}")
+                logger.warning("Error exporting blob %s: %s", content_hash, e)
 
         # Final progress update
         if progress_callback:
@@ -363,10 +364,10 @@ class ZoneExportService:
                     f.write(record.to_jsonl() + "\n")
                     perm_count += 1
 
-            logger.info(f"Exported {perm_count} permission tuples for zone {zone_id}")
+            logger.info("Exported %d permission tuples for zone %s", perm_count, zone_id)
 
         except Exception as e:
-            logger.warning(f"Error exporting permissions: {e}")
+            logger.warning("Error exporting permissions: %s", e)
 
         return perm_count
 
@@ -398,7 +399,7 @@ class ZoneExportService:
                     arcname = item.relative_to(source_dir)
                     tar.add(item, arcname=str(arcname))
 
-        logger.info(f"Created bundle: {output_path} ({output_path.stat().st_size} bytes)")
+        logger.info("Created bundle: %s (%d bytes)", output_path, output_path.stat().st_size)
 
 
 # Convenience function for CLI usage

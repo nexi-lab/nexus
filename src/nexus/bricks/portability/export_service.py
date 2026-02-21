@@ -33,7 +33,7 @@ from nexus.bricks.portability.models import (
 )
 
 if TYPE_CHECKING:
-    from nexus.contracts.portability_types import PortabilityFSProtocol
+    from nexus.contracts.portability_types import PortabilityFSProtocol, ReBACPortabilityProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -60,15 +60,19 @@ class ZoneExportService:
     def __init__(
         self,
         nexus_fs: PortabilityFSProtocol,
+        *,
+        rebac: ReBACPortabilityProtocol | None = None,
     ):
         """Initialize the export service.
 
         Args:
             nexus_fs: NexusFS-compatible instance with metadata store and backend access
+            rebac: Optional ReBAC manager for permission export (DI).
         """
         self.nexus_fs = nexus_fs
         self.metadata_store = nexus_fs.metadata
         self.backend = nexus_fs.backend
+        self._rebac = rebac
 
     def export_zone(
         self,
@@ -342,15 +346,13 @@ class ZoneExportService:
         """
         perm_count = 0
 
-        # Get ReBAC manager if available
-        rebac_manager = getattr(self.nexus_fs, "rebac_manager", None)
-        if rebac_manager is None:
-            logger.info("No ReBAC manager available, skipping permission export")
+        if self._rebac is None:
+            logger.info("No ReBAC manager injected, skipping permission export")
             return 0
 
         try:
             # Fetch all tuples for the zone from the database
-            tuples = rebac_manager.get_zone_tuples(zone_id)
+            tuples = self._rebac.get_zone_tuples(zone_id)
 
             with output_path.open("w", encoding="utf-8") as f:
                 for t in tuples:
@@ -413,6 +415,7 @@ def export_zone_bundle(
     path_prefix: str | None = None,
     compression_level: int = 6,
     progress_callback: ProgressCallback | None = None,
+    rebac: ReBACPortabilityProtocol | None = None,
 ) -> ExportManifest:
     """Convenience function to export a zone to a .nexus bundle.
 
@@ -426,6 +429,7 @@ def export_zone_bundle(
         path_prefix: Optional path prefix filter
         compression_level: Compression level (1-9)
         progress_callback: Optional progress callback
+        rebac: Optional ReBAC manager for permission export (DI).
 
     Returns:
         ExportManifest with export statistics
@@ -439,5 +443,5 @@ def export_zone_bundle(
         compression_level=compression_level,
     )
 
-    service = ZoneExportService(nexus_fs)
+    service = ZoneExportService(nexus_fs, rebac=rebac)
     return service.export_zone(zone_id, options, progress_callback)

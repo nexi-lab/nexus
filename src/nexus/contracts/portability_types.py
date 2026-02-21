@@ -41,6 +41,29 @@ class ContentBackendProtocol(Protocol):
 
 
 @runtime_checkable
+class ReBACPortabilityProtocol(Protocol):
+    """Narrow ReBAC surface for portability permission export/import.
+
+    Bricks must not reach into NexusFS via getattr to find the rebac_manager.
+    Instead, callers inject an explicit rebac dependency that satisfies this protocol.
+    """
+
+    def get_zone_tuples(self, zone_id: str) -> list[dict[str, str]]:
+        """Return all ReBAC tuples for a zone (used by export)."""
+        ...
+
+    def rebac_write(
+        self,
+        subject: tuple[str, str],
+        relation: str,
+        object: tuple[str, str],
+        zone_id: str,
+    ) -> None:
+        """Write a single ReBAC tuple (used by import)."""
+        ...
+
+
+@runtime_checkable
 class PortabilityFSProtocol(Protocol):
     """Narrow NexusFS surface used by the portability brick.
 

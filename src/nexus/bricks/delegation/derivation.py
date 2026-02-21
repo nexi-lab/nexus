@@ -109,11 +109,11 @@ def derive_grants(
         if existing is None or _relation_rank(relation) > _relation_rank(existing):
             parent_map[object_id] = relation
 
-    if mode is DelegationMode.COPY:
+    if mode == DelegationMode.COPY:
         result = _derive_copy(parent_map, remove_set, readonly_set, scope_prefix)
-    elif mode is DelegationMode.CLEAN:
+    elif mode == DelegationMode.CLEAN:
         result = _derive_clean(parent_map, add_set, scope_prefix)
-    elif mode is DelegationMode.SHARED:
+    elif mode == DelegationMode.SHARED:
         result = _derive_shared(parent_map, scope_prefix)
     else:
         raise InvalidDelegationModeError(f"Unknown delegation mode: {mode}")

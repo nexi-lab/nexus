@@ -20,6 +20,11 @@ References:
     - W3C VC Data Model: Verifiable Credentials
 """
 
+from nexus.identity.credentials import (
+    CapabilityIssuer,
+    CapabilityVerifier,
+    DelegationChain,
+)
 from nexus.identity.crypto import IdentityCrypto
 from nexus.identity.did import create_did_key, resolve_did_key
 from nexus.identity.key_service import AgentKeyRecord, KeyService
@@ -27,6 +32,9 @@ from nexus.identity.utils import parse_metadata, serialize_metadata
 
 __all__ = [
     "AgentKeyRecord",
+    "CapabilityIssuer",
+    "CapabilityVerifier",
+    "DelegationChain",
     "IdentityCrypto",
     "KeyService",
     "create_did_key",

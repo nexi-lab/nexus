@@ -105,6 +105,7 @@ EXPECTED_MODELS = [
     "PendingOperationModel",
     # Identity
     "AgentKeyModel",
+    "AgentCredentialModel",
     # Permissions
     "AdminBypassAuditModel",
     # A2A

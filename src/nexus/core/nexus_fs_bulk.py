@@ -71,7 +71,8 @@ class NexusFSBulkMixin:
         auto_parse: bool
         _default_context: "OperationContext"
         _enforce_permissions: bool
-        _permission_enforcer: "PermissionEnforcerProtocol | None"
+        _permission_enforcer: PermissionEnforcerProtocol | None
+        _rebac_manager: Any
         _permission_checker: Any
         _write_observer: "WriteObserverProtocol | None"
         _hook_pipeline: "VFSHookPipeline | None"
@@ -748,12 +749,7 @@ class NexusFSBulkMixin:
 
         # Batch direct_owner grants
         _rebac_start = time.perf_counter()
-        if (
-            hasattr(self, "_rebac_manager")
-            and self._rebac_manager
-            and ctx.user_id
-            and not ctx.is_system
-        ):
+        if self._rebac_manager and ctx.user_id and not ctx.is_system:
             owner_grants = []
             for (path, _), _meta in zip(validated_files, metadata_list, strict=False):
                 is_new_file = existing_metadata.get(path) is None

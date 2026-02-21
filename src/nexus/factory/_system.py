@@ -1,17 +1,18 @@
 """Boot Tier 1 (SYSTEM) — critical + degradable services.
 
 Issue #2193: Absorbs 11 former-kernel services per Liedtke's test.
+Issue #2440: Demote ReBAC from critical to degradable (Null Object fallback).
 
 Two severity classes:
 
 **Critical** (single try/except → BootError):
-    rebac_manager, audit_store, entity_registry, permission_enforcer,
-    write_observer — the "Trusted Computing Base outside the kernel".
+    write_observer — the only critical system service.
 
-**Degradable** (per-service try/except → WARNING + None):
-    dir_visibility_cache, hierarchy_manager, deferred_permission_buffer,
-    workspace_registry, mount_manager, workspace_manager, plus all
-    original system services (agent registry, namespace, etc.).
+**Degradable** (per-service try/except → WARNING + NoOp/None):
+    rebac_manager, audit_store, entity_registry, permission_enforcer
+    (NoOp fallback on failure), dir_visibility_cache, hierarchy_manager,
+    deferred_permission_buffer, workspace_registry, mount_manager,
+    workspace_manager, plus all original system services.
 """
 
 import logging
@@ -35,15 +36,19 @@ def _boot_system_services(
 ) -> dict[str, Any]:
     """Boot Tier 1 (SYSTEM) — critical + degradable services.
 
-    1. **Critical section** — creates ReBAC, permissions, audit, entity
-       registry, and write observer.  A single try/except raises
-       ``BootError`` if any critical service fails.
+    1. **Critical section** — creates write observer.  A single
+       try/except raises ``BootError`` if it fails.
 
-    2. **Degradable former-kernel section** — creates dir visibility
+    2. **Degradable ReBAC section** (Issue #2440) — creates ReBAC
+       manager, audit store, entity registry, permission enforcer.
+       On failure or when ``_on("rebac")`` is False, NoOp stubs are
+       injected so the system boots without permission enforcement.
+
+    3. **Degradable former-kernel section** — creates dir visibility
        cache, hierarchy manager, deferred permission buffer, workspace
        services.  Per-service try/except logs WARNING and sets None.
 
-    3. **Original system services** — agent registry, namespace,
+    4. **Original system services** — agent registry, namespace,
        observability, resiliency, lifecycle management.  Same degraded
        pattern as before.
 
@@ -59,53 +64,11 @@ def _boot_system_services(
     _on = _make_gate(brick_on)
 
     # =====================================================================
-    # CRITICAL SECTION (BootError on failure) — Issue #2193
+    # CRITICAL SECTION (BootError on failure) — write_observer only
     # =====================================================================
     from nexus.contracts.exceptions import BootError
 
     try:
-        # Config-time dialect flag (KERNEL-ARCHITECTURE §7)
-        _is_pg = not ctx.db_url.startswith("sqlite")
-
-        # --- ReBAC Manager ---
-        from nexus.bricks.rebac.manager import ReBACManager
-
-        rebac_manager = ReBACManager(
-            engine=ctx.engine,
-            cache_ttl_seconds=ctx.cache_ttl_seconds or 300,
-            max_depth=10,
-            enforce_zone_isolation=ctx.perm.enforce_zone_isolation,
-            enable_graph_limits=True,
-            enable_tiger_cache=ctx.perm.enable_tiger_cache,
-            read_engine=ctx.read_engine,
-            is_postgresql=_is_pg,
-        )
-
-        # --- Audit Store ---
-        from nexus.bricks.rebac.permissions_enhanced import AuditStore
-
-        audit_store = AuditStore(engine=ctx.engine, is_postgresql=_is_pg)
-
-        # --- Entity Registry ---
-        from nexus.bricks.rebac.entity_registry import EntityRegistry
-
-        entity_registry = EntityRegistry(ctx.record_store)
-
-        # --- Permission Enforcer ---
-        from nexus.bricks.rebac.enforcer import PermissionEnforcer
-
-        permission_enforcer = PermissionEnforcer(
-            metadata_store=ctx.metadata_store,
-            rebac_manager=rebac_manager,
-            allow_admin_bypass=ctx.perm.allow_admin_bypass,
-            allow_system_bypass=True,
-            audit_store=audit_store,
-            admin_bypass_paths=[],
-            router=ctx.router,
-            entity_registry=entity_registry,
-        )
-
-        # --- RecordStore Syncer (constructed, NOT started) ---
         import os
 
         write_observer: WriteObserverProtocol | None = None
@@ -137,16 +100,85 @@ def _boot_system_services(
                 strict_mode=ctx.audit.strict_mode,
             )
 
-        logger.debug(
-            "[BOOT:SYSTEM] Critical services created: rebac_manager, audit_store, "
-            "entity_registry, permission_enforcer, write_observer"
-        )
+        logger.debug("[BOOT:SYSTEM] Critical service created: write_observer")
 
     except BootError:
         raise
     except Exception as exc:
         logger.critical("[BOOT:SYSTEM] Critical service failure: %s", exc)
         raise BootError(str(exc), tier="system-critical") from exc
+
+    # =====================================================================
+    # DEGRADABLE REBAC SECTION (NoOp fallback on failure) — Issue #2440
+    # Per NEXUS-LEGO-ARCHITECTURE §5.2: ReBAC can fail independently.
+    # =====================================================================
+    from nexus.contracts.noop_rebac import (
+        NoOpAuditStore,
+        NoOpEntityRegistry,
+        NoOpPermissionEnforcer,
+        NoOpReBACManager,
+    )
+
+    # Config-time dialect flag (KERNEL-ARCHITECTURE §7)
+    _is_pg = not ctx.db_url.startswith("sqlite")
+
+    rebac_manager: Any
+    audit_store: Any
+    entity_registry: Any
+    permission_enforcer: Any
+
+    if _on("rebac"):
+        try:
+            from nexus.bricks.rebac.manager import ReBACManager
+
+            rebac_manager = ReBACManager(
+                engine=ctx.engine,
+                cache_ttl_seconds=ctx.cache_ttl_seconds or 300,
+                max_depth=10,
+                enforce_zone_isolation=ctx.perm.enforce_zone_isolation,
+                enable_graph_limits=True,
+                enable_tiger_cache=ctx.perm.enable_tiger_cache,
+                read_engine=ctx.read_engine,
+                is_postgresql=_is_pg,
+            )
+
+            from nexus.bricks.rebac.permissions_enhanced import AuditStore
+
+            audit_store = AuditStore(engine=ctx.engine, is_postgresql=_is_pg)
+
+            from nexus.bricks.rebac.entity_registry import EntityRegistry
+
+            entity_registry = EntityRegistry(ctx.record_store)
+
+            from nexus.bricks.rebac.enforcer import PermissionEnforcer
+
+            permission_enforcer = PermissionEnforcer(
+                metadata_store=ctx.metadata_store,
+                rebac_manager=rebac_manager,
+                allow_admin_bypass=ctx.perm.allow_admin_bypass,
+                allow_system_bypass=True,
+                audit_store=audit_store,
+                admin_bypass_paths=[],
+                router=ctx.router,
+                entity_registry=entity_registry,
+            )
+
+            logger.debug(
+                "[BOOT:SYSTEM] ReBAC services created: rebac_manager, audit_store, "
+                "entity_registry, permission_enforcer"
+            )
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] ReBAC unavailable, using NoOp: %s", exc)
+            rebac_manager = NoOpReBACManager()
+            audit_store = NoOpAuditStore()
+            entity_registry = NoOpEntityRegistry()
+            permission_enforcer = NoOpPermissionEnforcer()
+    else:
+        logger.debug("[BOOT:SYSTEM] ReBAC disabled by profile, using NoOp")
+        rebac_manager = NoOpReBACManager()
+        audit_store = NoOpAuditStore()
+        entity_registry = NoOpEntityRegistry()
+        permission_enforcer = NoOpPermissionEnforcer()
 
     # =====================================================================
     # DEGRADABLE FORMER-KERNEL SECTION (WARNING + None) — Issue #2193

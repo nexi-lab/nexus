@@ -14,6 +14,7 @@ import pytest
 
 from nexus.bricks.rebac.entity_registry import EntityRegistry
 from nexus.bricks.rebac.manager import EnhancedReBACManager
+from nexus.constants import ROOT_ZONE_ID
 from nexus.services.agents.agent_registry import AgentRegistry
 from nexus.services.delegation.errors import InsufficientTrustError
 from nexus.services.delegation.models import (
@@ -143,7 +144,7 @@ class TestTrustRoutingE2E:
                 rater_agent_id=f"rater-{i}",
                 rated_agent_id="coordinator_agent",
                 exchange_id=f"exchange-{i}",
-                zone_id="default",
+                zone_id=ROOT_ZONE_ID,
                 outcome="positive",
                 reliability_score=1.0,
                 quality_score=0.9,
@@ -161,7 +162,7 @@ class TestTrustRoutingE2E:
             worker_id="worker-trust-ok",
             worker_name="Trusted Worker",
             delegation_mode=DelegationMode.COPY,
-            zone_id="default",
+            zone_id=ROOT_ZONE_ID,
             min_trust_score=0.5,
         )
 
@@ -184,7 +185,7 @@ class TestTrustRoutingE2E:
                 rater_agent_id=f"rater-{i}",
                 rated_agent_id="coordinator_agent",
                 exchange_id=f"neg-exchange-{i}",
-                zone_id="default",
+                zone_id=ROOT_ZONE_ID,
                 outcome="negative",
                 reliability_score=0.0,
             )
@@ -197,7 +198,7 @@ class TestTrustRoutingE2E:
                 worker_id="worker-trust-fail",
                 worker_name="Untrusted Worker",
                 delegation_mode=DelegationMode.COPY,
-                zone_id="default",
+                zone_id=ROOT_ZONE_ID,
                 min_trust_score=0.7,
             )
 
@@ -220,7 +221,7 @@ class TestTrustRoutingE2E:
                 worker_id="worker-no-rep",
                 worker_name="Unknown Worker",
                 delegation_mode=DelegationMode.COPY,
-                zone_id="default",
+                zone_id=ROOT_ZONE_ID,
                 min_trust_score=0.5,
             )
 
@@ -243,7 +244,7 @@ class TestTrustRoutingE2E:
             worker_id="worker-complete",
             worker_name="Completable Worker",
             delegation_mode=DelegationMode.COPY,
-            zone_id="default",
+            zone_id=ROOT_ZONE_ID,
         )
 
         # Complete the delegation with positive outcome
@@ -276,7 +277,7 @@ class TestTrustRoutingE2E:
             worker_id="worker-fail",
             worker_name="Failing Worker",
             delegation_mode=DelegationMode.COPY,
-            zone_id="default",
+            zone_id=ROOT_ZONE_ID,
         )
 
         updated = delegation_service.complete_delegation(
@@ -306,7 +307,7 @@ class TestTrustRoutingE2E:
                 rater_agent_id=f"external-{i}",
                 rated_agent_id="coordinator_agent",
                 exchange_id=f"lifecycle-{i}",
-                zone_id="default",
+                zone_id=ROOT_ZONE_ID,
                 outcome="positive",
                 reliability_score=1.0,
                 quality_score=0.9,
@@ -324,7 +325,7 @@ class TestTrustRoutingE2E:
             worker_id="worker-lifecycle",
             worker_name="Lifecycle Worker",
             delegation_mode=DelegationMode.COPY,
-            zone_id="default",
+            zone_id=ROOT_ZONE_ID,
             min_trust_score=0.5,
         )
 

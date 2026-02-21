@@ -428,7 +428,9 @@ class TestReconcilerZoneAwareness:
         brick.start = AsyncMock(side_effect=RuntimeError("fail"))
         manager.register("search", brick, protocol_name="SP")
         await manager.mount("search")
-        assert manager.get_status("search").state == BrickState.FAILED  # type: ignore[union-attr]
+        _s = manager.get_status("search")
+        assert _s is not None
+        assert _s.state == BrickState.FAILED
 
         # Mark zone as terminating
         reconciler.mark_zone_terminating("zone-1", brick_names={"search"})
@@ -471,13 +473,17 @@ class TestReconcilerZoneAwareness:
         brick.health_check = AsyncMock(return_value=False)  # Would fail
         manager.register("search", brick, protocol_name="SP")
         await manager.mount("search")
-        assert manager.get_status("search").state == BrickState.ACTIVE  # type: ignore[union-attr]
+        _s = manager.get_status("search")
+        assert _s is not None
+        assert _s.state == BrickState.ACTIVE
 
         reconciler.mark_zone_terminating("zone-1", brick_names={"search"})
         await reconciler.reconcile()
 
         # Should NOT have transitioned to FAILED (health check skipped)
-        assert manager.get_status("search").state == BrickState.ACTIVE  # type: ignore[union-attr]
+        _s = manager.get_status("search")
+        assert _s is not None
+        assert _s.state == BrickState.ACTIVE
 
 
 # ---------------------------------------------------------------------------
@@ -499,8 +505,12 @@ class TestDAGOperationHelper:
 
         report = await manager.mount_all()
         assert report.active == 2
-        assert manager.get_status("a").state == BrickState.ACTIVE  # type: ignore[union-attr]
-        assert manager.get_status("b").state == BrickState.ACTIVE  # type: ignore[union-attr]
+        _s = manager.get_status("a")
+        assert _s is not None
+        assert _s.state == BrickState.ACTIVE
+        _s = manager.get_status("b")
+        assert _s is not None
+        assert _s.state == BrickState.ACTIVE
 
     @pytest.mark.asyncio
     async def test_unmount_all_uses_helper_regression(self, manager: BrickLifecycleManager) -> None:
@@ -513,8 +523,12 @@ class TestDAGOperationHelper:
 
         await manager.mount_all()
         await manager.unmount_all()
-        assert manager.get_status("a").state == BrickState.UNREGISTERED  # type: ignore[union-attr]
-        assert manager.get_status("b").state == BrickState.UNREGISTERED  # type: ignore[union-attr]
+        _s = manager.get_status("a")
+        assert _s is not None
+        assert _s.state == BrickState.UNMOUNTED
+        _s = manager.get_status("b")
+        assert _s is not None
+        assert _s.state == BrickState.UNMOUNTED
 
     @pytest.mark.asyncio
     async def test_helper_respects_filter_fn(self, manager: BrickLifecycleManager) -> None:
@@ -527,13 +541,21 @@ class TestDAGOperationHelper:
 
         # Only mount "a" (not "b") by using mount directly
         await manager.mount("a")
-        assert manager.get_status("a").state == BrickState.ACTIVE  # type: ignore[union-attr]
-        assert manager.get_status("b").state == BrickState.REGISTERED  # type: ignore[union-attr]
+        _s = manager.get_status("a")
+        assert _s is not None
+        assert _s.state == BrickState.ACTIVE
+        _s = manager.get_status("b")
+        assert _s is not None
+        assert _s.state == BrickState.REGISTERED
 
         # unmount_all should only unmount ACTIVE bricks
         await manager.unmount_all()
-        assert manager.get_status("a").state == BrickState.UNREGISTERED  # type: ignore[union-attr]
-        assert manager.get_status("b").state == BrickState.REGISTERED  # type: ignore[union-attr]
+        _s = manager.get_status("a")
+        assert _s is not None
+        assert _s.state == BrickState.UNMOUNTED
+        _s = manager.get_status("b")
+        assert _s is not None
+        assert _s.state == BrickState.REGISTERED
 
     @pytest.mark.asyncio
     async def test_helper_respects_max_concurrent(self, manager: BrickLifecycleManager) -> None:

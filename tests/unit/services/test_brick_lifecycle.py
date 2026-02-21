@@ -19,6 +19,14 @@ from nexus.services.brick_lifecycle import (
     InvalidTransitionError,
 )
 from nexus.services.protocols.brick_lifecycle import (
+    EVENT_FAILED,
+    EVENT_MOUNT,
+    EVENT_RESET,
+    EVENT_STARTED,
+    EVENT_STOPPED,
+    EVENT_UNMOUNT,
+    EVENT_UNMOUNTED,
+    EVENT_UNREGISTER,
     BrickSpec,
     BrickState,
 )
@@ -77,15 +85,25 @@ class TestBrickRegistration:
         assert status is not None
         assert status.state == BrickState.REGISTERED
 
-    def test_unregister_removes_brick(self, manager: BrickLifecycleManager) -> None:
+    @pytest.mark.asyncio
+    async def test_unregister_removes_brick(self, manager: BrickLifecycleManager) -> None:
         brick = _make_lifecycle_brick("search")
         manager.register("search", brick, protocol_name="SearchProtocol")
-        manager.unregister("search")
+        await manager.mount("search")
+        await manager.unmount("search")
+        await manager.unregister("search")
         assert manager.get_status("search") is None
 
-    def test_unregister_nonexistent_raises(self, manager: BrickLifecycleManager) -> None:
+    @pytest.mark.asyncio
+    async def test_unregister_nonexistent_raises(self, manager: BrickLifecycleManager) -> None:
         with pytest.raises(KeyError, match="not found"):
-            manager.unregister("nonexistent")
+            await manager.unregister("nonexistent")
+
+    def test_force_unregister_removes_brick(self, manager: BrickLifecycleManager) -> None:
+        brick = _make_lifecycle_brick("search")
+        manager.register("search", brick, protocol_name="SearchProtocol")
+        manager._force_unregister("search")
+        assert manager.get_status("search") is None
 
 
 # ---------------------------------------------------------------------------
@@ -95,40 +113,33 @@ class TestBrickRegistration:
 
 # Valid transitions: (from_state, event, expected_state)
 VALID_TRANSITIONS = [
-    (BrickState.REGISTERED, "mount", BrickState.STARTING),
-    (BrickState.REGISTERED, "failed", BrickState.FAILED),  # Issue #2060: 5B
-    (BrickState.STARTING, "started", BrickState.ACTIVE),
-    (BrickState.STARTING, "failed", BrickState.FAILED),
-    (BrickState.ACTIVE, "unmount", BrickState.STOPPING),
-    (BrickState.ACTIVE, "failed", BrickState.FAILED),
-    (BrickState.STOPPING, "stopped", BrickState.UNREGISTERED),
-    (BrickState.STOPPING, "failed", BrickState.FAILED),
-    (BrickState.FAILED, "reset", BrickState.REGISTERED),  # Issue #2060: 7A
+    (BrickState.REGISTERED, EVENT_MOUNT, BrickState.STARTING),
+    (BrickState.REGISTERED, EVENT_FAILED, BrickState.FAILED),  # Issue #2060: 5B
+    (BrickState.STARTING, EVENT_STARTED, BrickState.ACTIVE),
+    (BrickState.STARTING, EVENT_FAILED, BrickState.FAILED),
+    (BrickState.ACTIVE, EVENT_UNMOUNT, BrickState.STOPPING),
+    (BrickState.ACTIVE, EVENT_FAILED, BrickState.FAILED),
+    (BrickState.STOPPING, EVENT_STOPPED, BrickState.UNMOUNTED),  # Issue #2363
+    (BrickState.STOPPING, EVENT_FAILED, BrickState.FAILED),
+    (BrickState.UNMOUNTED, EVENT_MOUNT, BrickState.STARTING),  # Issue #2363: re-mount
+    (BrickState.UNMOUNTED, EVENT_UNREGISTER, BrickState.UNREGISTERED),  # Issue #2363
+    (BrickState.UNMOUNTED, EVENT_FAILED, BrickState.FAILED),  # Issue #2363
+    (BrickState.FAILED, EVENT_RESET, BrickState.REGISTERED),  # Issue #2060: 7A
 ]
 
-# Invalid transitions: (from_state, event)
-INVALID_TRANSITIONS = [
-    (BrickState.REGISTERED, "started"),
-    (BrickState.REGISTERED, "stopped"),
-    (BrickState.REGISTERED, "unmount"),
-    (BrickState.STARTING, "mount"),
-    (BrickState.STARTING, "unmount"),
-    (BrickState.STARTING, "stopped"),
-    (BrickState.ACTIVE, "mount"),
-    (BrickState.ACTIVE, "started"),
-    (BrickState.ACTIVE, "stopped"),
-    (BrickState.STOPPING, "mount"),
-    (BrickState.STOPPING, "started"),
-    (BrickState.STOPPING, "unmount"),
-    (BrickState.UNREGISTERED, "mount"),
-    (BrickState.UNREGISTERED, "unmount"),
-    (BrickState.UNREGISTERED, "started"),
-    (BrickState.UNREGISTERED, "stopped"),
-    (BrickState.FAILED, "mount"),
-    (BrickState.FAILED, "started"),
-    (BrickState.FAILED, "stopped"),
-    (BrickState.FAILED, "unmount"),
+# Programmatic invalid transition generation (Issue #2363: 9A)
+ALL_EVENTS = [
+    EVENT_MOUNT,
+    EVENT_STARTED,
+    EVENT_FAILED,
+    EVENT_UNMOUNT,
+    EVENT_STOPPED,
+    EVENT_UNMOUNTED,
+    EVENT_UNREGISTER,
+    EVENT_RESET,
 ]
+_VALID_SET = {(s, e) for s, e, _ in VALID_TRANSITIONS}
+INVALID_TRANSITIONS = [(s, e) for s in BrickState for e in ALL_EVENTS if (s, e) not in _VALID_SET]
 
 
 class TestStateTransitions:
@@ -156,7 +167,9 @@ class TestStateTransitions:
         manager._force_state("test", from_state)
         # Apply the event
         manager._transition("test", event)
-        assert manager.get_status("test").state == expected_state  # type: ignore[union-attr]
+        _s = manager.get_status("test")
+        assert _s is not None
+        assert _s.state == expected_state
 
     @pytest.mark.parametrize(
         ("from_state", "event"),
@@ -269,7 +282,9 @@ class TestMountUnmount:
         brick = _make_lifecycle_brick("search")
         manager.register("search", brick, protocol_name="SearchProtocol")
         await manager.mount("search")
-        assert manager.get_status("search").state == BrickState.ACTIVE  # type: ignore[union-attr]
+        _s = manager.get_status("search")
+        assert _s is not None
+        assert _s.state == BrickState.ACTIVE
         brick.start.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -278,7 +293,9 @@ class TestMountUnmount:
         brick = _make_stateless_brick("pay")
         manager.register("pay", brick, protocol_name="PaymentProtocol")
         await manager.mount("pay")
-        assert manager.get_status("pay").state == BrickState.ACTIVE  # type: ignore[union-attr]
+        _s = manager.get_status("pay")
+        assert _s is not None
+        assert _s.state == BrickState.ACTIVE
 
     @pytest.mark.asyncio
     async def test_mount_failing_brick_transitions_to_failed(
@@ -295,22 +312,26 @@ class TestMountUnmount:
 
     @pytest.mark.asyncio
     async def test_unmount_lifecycle_brick(self, manager: BrickLifecycleManager) -> None:
-        """Unmount should: ACTIVE→STOPPING→(stop())→UNREGISTERED."""
+        """Unmount should: ACTIVE→STOPPING→(stop())→UNMOUNTED."""
         brick = _make_lifecycle_brick("search")
         manager.register("search", brick, protocol_name="SearchProtocol")
         await manager.mount("search")
         await manager.unmount("search")
-        assert manager.get_status("search").state == BrickState.UNREGISTERED  # type: ignore[union-attr]
+        _s = manager.get_status("search")
+        assert _s is not None
+        assert _s.state == BrickState.UNMOUNTED
         brick.stop.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_unmount_stateless_brick(self, manager: BrickLifecycleManager) -> None:
-        """Stateless brick unmount should go directly to UNREGISTERED."""
+        """Stateless brick unmount should go directly to UNMOUNTED."""
         brick = _make_stateless_brick("pay")
         manager.register("pay", brick, protocol_name="PaymentProtocol")
         await manager.mount("pay")
         await manager.unmount("pay")
-        assert manager.get_status("pay").state == BrickState.UNREGISTERED  # type: ignore[union-attr]
+        _s = manager.get_status("pay")
+        assert _s is not None
+        assert _s.state == BrickState.UNMOUNTED
 
     @pytest.mark.asyncio
     async def test_mount_nonexistent_raises(self, manager: BrickLifecycleManager) -> None:
@@ -464,9 +485,15 @@ class TestMountAllUnmountAll:
 
         await manager.mount_all()
 
-        assert manager.get_status("a").state == BrickState.ACTIVE  # type: ignore[union-attr]
-        assert manager.get_status("b").state == BrickState.FAILED  # type: ignore[union-attr]
-        assert manager.get_status("c").state == BrickState.ACTIVE  # type: ignore[union-attr]
+        _s = manager.get_status("a")
+        assert _s is not None
+        assert _s.state == BrickState.ACTIVE
+        _s = manager.get_status("b")
+        assert _s is not None
+        assert _s.state == BrickState.FAILED
+        _s = manager.get_status("c")
+        assert _s is not None
+        assert _s.state == BrickState.ACTIVE
 
 
 # ---------------------------------------------------------------------------
@@ -491,13 +518,19 @@ class TestResetAndSpec:
         )
         manager.register("search", brick, protocol_name="SearchProtocol")
         await manager.mount("search")
-        assert manager.get_status("search").state == BrickState.FAILED  # type: ignore[union-attr]
+        _s = manager.get_status("search")
+        assert _s is not None
+        assert _s.state == BrickState.FAILED
 
         manager.reset("search")
-        assert manager.get_status("search").state == BrickState.REGISTERED  # type: ignore[union-attr]
+        _s = manager.get_status("search")
+        assert _s is not None
+        assert _s.state == BrickState.REGISTERED
 
         await manager.mount("search")
-        assert manager.get_status("search").state == BrickState.ACTIVE  # type: ignore[union-attr]
+        _s = manager.get_status("search")
+        assert _s is not None
+        assert _s.state == BrickState.ACTIVE
 
     def test_reset_clears_error_and_timestamps(self, manager: BrickLifecycleManager) -> None:
         brick = _make_lifecycle_brick("search")
@@ -562,7 +595,9 @@ class TestResetAndSpec:
         # The _safe_mount calls mount which on exception transitions to FAILED
         brick.start = AsyncMock(side_effect=RuntimeError("boom"))
         await manager._safe_mount("test", timeout=5.0)
-        assert manager.get_status("test").state == BrickState.FAILED  # type: ignore[union-attr]
+        _s = manager.get_status("test")
+        assert _s is not None
+        assert _s.state == BrickState.FAILED
 
     @pytest.mark.asyncio
     async def test_dag_failure_skips_dependent(self, manager: BrickLifecycleManager) -> None:
@@ -575,10 +610,14 @@ class TestResetAndSpec:
 
         await manager.mount_all()
 
-        assert manager.get_status("a").state == BrickState.FAILED  # type: ignore[union-attr]
+        _s = manager.get_status("a")
+        assert _s is not None
+        assert _s.state == BrickState.FAILED
         # B depends on A; mount_all skips bricks whose deps aren't ACTIVE.
         # B stays REGISTERED — the reconciler will mount it once A recovers.
-        assert manager.get_status("b").state == BrickState.REGISTERED  # type: ignore[union-attr]
+        _s = manager.get_status("b")
+        assert _s is not None
+        assert _s.state == BrickState.REGISTERED
 
 
 # ---------------------------------------------------------------------------
@@ -601,6 +640,7 @@ class BrickLifecycleStateMachine(RuleBasedStateMachine):
         self._loop = asyncio.new_event_loop()
         self.manager = BrickLifecycleManager()
         self._mounted: set[str] = set()
+        self._unregistered: set[str] = set()
         self._counter = 0
 
     def teardown(self) -> None:
@@ -629,7 +669,10 @@ class BrickLifecycleStateMachine(RuleBasedStateMachine):
     @rule(name=bricks)
     def mount_brick(self, name: str) -> None:
         status = self.manager.get_status(name)
-        if status is not None and status.state == BrickState.REGISTERED:
+        if status is not None and status.state in (
+            BrickState.REGISTERED,
+            BrickState.UNMOUNTED,
+        ):
             self._run(self.manager.mount(name))
             self._mounted.add(name)
 
@@ -640,6 +683,22 @@ class BrickLifecycleStateMachine(RuleBasedStateMachine):
             self._run(self.manager.unmount(name))
             self._mounted.discard(name)
 
+    @rule(name=bricks)
+    def remount_brick(self, name: str) -> None:
+        """Issue #2363: re-mount from UNMOUNTED."""
+        status = self.manager.get_status(name)
+        if status is not None and status.state == BrickState.UNMOUNTED:
+            self._run(self.manager.remount(name))
+            self._mounted.add(name)
+
+    @rule(name=bricks)
+    def unregister_brick(self, name: str) -> None:
+        """Issue #2363: unregister from UNMOUNTED."""
+        status = self.manager.get_status(name)
+        if status is not None and status.state == BrickState.UNMOUNTED:
+            self._run(self.manager.unregister(name))
+            self._unregistered.add(name)
+
     @rule()
     def check_health_invariant(self) -> None:
         """Health report counters should always be consistent."""
@@ -648,14 +707,236 @@ class BrickLifecycleStateMachine(RuleBasedStateMachine):
         assert report.active + report.failed <= report.total
         for brick_status in report.bricks:
             assert isinstance(brick_status.state, BrickState)
+            # UNMOUNTED bricks are not counted as active or failed
+            if brick_status.state == BrickState.UNMOUNTED:
+                assert brick_status.state not in (BrickState.ACTIVE, BrickState.FAILED)
 
     @rule(name=bricks)
     def check_status_invariant(self, name: str) -> None:
-        """Status should always be retrievable for registered bricks."""
-        status = self.manager.get_status(name)
-        assert status is not None
-        assert isinstance(status.state, BrickState)
+        """Status should be retrievable for non-unregistered bricks."""
+        if name in self._unregistered:
+            # UNREGISTERED bricks should not be in the dict
+            assert self.manager.get_status(name) is None
+        else:
+            status = self.manager.get_status(name)
+            assert status is not None
+            assert isinstance(status.state, BrickState)
 
 
 TestBrickLifecycleHypothesis = BrickLifecycleStateMachine.TestCase
 TestBrickLifecycleHypothesis.settings = settings(max_examples=50, stateful_step_count=20)
+
+
+# ---------------------------------------------------------------------------
+# Remount tests (Issue #2363)
+# ---------------------------------------------------------------------------
+
+
+class TestRemount:
+    """Test re-mounting from UNMOUNTED state."""
+
+    @pytest.fixture
+    def manager(self) -> BrickLifecycleManager:
+        return BrickLifecycleManager()
+
+    @pytest.mark.asyncio
+    async def test_remount_lifecycle_brick(self, manager: BrickLifecycleManager) -> None:
+        """UNMOUNTED → STARTING → ACTIVE."""
+        brick = _make_lifecycle_brick("search")
+        manager.register("search", brick, protocol_name="SearchProtocol")
+        await manager.mount("search")
+        await manager.unmount("search")
+        _s = manager.get_status("search")
+        assert _s is not None
+        assert _s.state == BrickState.UNMOUNTED
+
+        await manager.remount("search")
+        _s = manager.get_status("search")
+        assert _s is not None
+        assert _s.state == BrickState.ACTIVE
+        assert brick.start.await_count == 2  # mounted twice
+
+    @pytest.mark.asyncio
+    async def test_remount_stateless_brick(self, manager: BrickLifecycleManager) -> None:
+        """Stateless brick re-mount: UNMOUNTED → ACTIVE."""
+        brick = _make_stateless_brick("pay")
+        manager.register("pay", brick, protocol_name="PaymentProtocol")
+        await manager.mount("pay")
+        await manager.unmount("pay")
+        _s = manager.get_status("pay")
+        assert _s is not None
+        assert _s.state == BrickState.UNMOUNTED
+
+        await manager.remount("pay")
+        _s = manager.get_status("pay")
+        assert _s is not None
+        assert _s.state == BrickState.ACTIVE
+
+    @pytest.mark.asyncio
+    async def test_remount_from_non_unmounted_raises(self, manager: BrickLifecycleManager) -> None:
+        """remount() should raise if brick is not UNMOUNTED."""
+        brick = _make_lifecycle_brick("search")
+        manager.register("search", brick, protocol_name="SearchProtocol")
+        with pytest.raises(InvalidTransitionError):
+            await manager.remount("search")  # Still REGISTERED
+
+    @pytest.mark.asyncio
+    async def test_remount_after_failed_stop(self, manager: BrickLifecycleManager) -> None:
+        """If stop() fails during unmount, brick goes to FAILED, not UNMOUNTED."""
+        brick = _make_lifecycle_brick("search")
+        brick.stop = AsyncMock(side_effect=RuntimeError("drain error"))
+        manager.register("search", brick, protocol_name="SearchProtocol")
+        await manager.mount("search")
+        await manager.unmount("search")
+        _s = manager.get_status("search")
+        assert _s is not None
+        assert _s.state == BrickState.FAILED
+
+    @pytest.mark.asyncio
+    async def test_mount_from_unmounted_via_mount(self, manager: BrickLifecycleManager) -> None:
+        """mount() should also work from UNMOUNTED (not just remount())."""
+        brick = _make_lifecycle_brick("search")
+        manager.register("search", brick, protocol_name="SearchProtocol")
+        await manager.mount("search")
+        await manager.unmount("search")
+        _s = manager.get_status("search")
+        assert _s is not None
+        assert _s.state == BrickState.UNMOUNTED
+
+        await manager.mount("search")
+        _s = manager.get_status("search")
+        assert _s is not None
+        assert _s.state == BrickState.ACTIVE
+
+    @pytest.mark.asyncio
+    async def test_remount_with_dependencies(self, manager: BrickLifecycleManager) -> None:
+        """Re-mounting a brick with dependencies should work if deps are ACTIVE."""
+        brick_a = _make_lifecycle_brick("a")
+        brick_b = _make_lifecycle_brick("b")
+        manager.register("a", brick_a, protocol_name="AP")
+        manager.register("b", brick_b, protocol_name="BP", depends_on=("a",))
+        await manager.mount_all()
+
+        # Unmount b only
+        await manager.unmount("b")
+        _s = manager.get_status("b")
+        assert _s is not None
+        assert _s.state == BrickState.UNMOUNTED
+
+        # Remount b — a is still ACTIVE
+        await manager.remount("b")
+        _s = manager.get_status("b")
+        assert _s is not None
+        assert _s.state == BrickState.ACTIVE
+
+
+# ---------------------------------------------------------------------------
+# Unregister tests (Issue #2363)
+# ---------------------------------------------------------------------------
+
+
+class TestUnregister:
+    """Test unregister lifecycle operation."""
+
+    @pytest.fixture
+    def manager(self) -> BrickLifecycleManager:
+        return BrickLifecycleManager()
+
+    @pytest.mark.asyncio
+    async def test_unregister_from_unmounted(self, manager: BrickLifecycleManager) -> None:
+        """UNMOUNTED → unregister → UNREGISTERED (removed from dict)."""
+        brick = _make_lifecycle_brick("search")
+        manager.register("search", brick, protocol_name="SearchProtocol")
+        await manager.mount("search")
+        await manager.unmount("search")
+        _s = manager.get_status("search")
+        assert _s is not None
+        assert _s.state == BrickState.UNMOUNTED
+
+        await manager.unregister("search")
+        assert manager.get_status("search") is None
+
+    @pytest.mark.asyncio
+    async def test_unregister_from_non_unmounted_raises(
+        self, manager: BrickLifecycleManager
+    ) -> None:
+        """unregister() should raise if brick is not UNMOUNTED."""
+        brick = _make_lifecycle_brick("search")
+        manager.register("search", brick, protocol_name="SearchProtocol")
+        with pytest.raises(InvalidTransitionError):
+            await manager.unregister("search")  # Still REGISTERED
+
+    @pytest.mark.asyncio
+    async def test_unregister_removes_from_dict(self, manager: BrickLifecycleManager) -> None:
+        """After unregister, brick should not appear in _bricks dict."""
+        brick = _make_lifecycle_brick("search")
+        manager.register("search", brick, protocol_name="SearchProtocol")
+        await manager.mount("search")
+        await manager.unmount("search")
+        await manager.unregister("search")
+        assert "search" not in manager._bricks
+
+    def test_force_unregister_bypasses_state(self, manager: BrickLifecycleManager) -> None:
+        """_force_unregister() should remove regardless of state (testing only)."""
+        brick = _make_lifecycle_brick("search")
+        manager.register("search", brick, protocol_name="SearchProtocol")
+        manager._force_unregister("search")
+        assert manager.get_status("search") is None
+
+
+# ---------------------------------------------------------------------------
+# Shutdown tests (Issue #2363)
+# ---------------------------------------------------------------------------
+
+
+class TestShutdown:
+    """Test shutdown_all and unregister_all."""
+
+    @pytest.fixture
+    def manager(self) -> BrickLifecycleManager:
+        return BrickLifecycleManager()
+
+    @pytest.mark.asyncio
+    async def test_shutdown_all_unmounts_then_unregisters(
+        self, manager: BrickLifecycleManager
+    ) -> None:
+        """shutdown_all chains unmount_all → unregister_all."""
+        manager.register("a", _make_lifecycle_brick("a"), protocol_name="AP")
+        manager.register("b", _make_lifecycle_brick("b"), protocol_name="BP")
+        await manager.mount_all()
+
+        await manager.shutdown_all()
+
+        # All bricks should have been unregistered (removed from dict)
+        assert len(manager._bricks) == 0
+
+    @pytest.mark.asyncio
+    async def test_unregister_all(self, manager: BrickLifecycleManager) -> None:
+        """unregister_all removes all UNMOUNTED bricks."""
+        manager.register("a", _make_lifecycle_brick("a"), protocol_name="AP")
+        manager.register("b", _make_lifecycle_brick("b"), protocol_name="BP")
+        await manager.mount_all()
+        await manager.unmount_all()
+
+        # Both should be UNMOUNTED now
+        _s = manager.get_status("a")
+        assert _s is not None
+        assert _s.state == BrickState.UNMOUNTED
+        _s = manager.get_status("b")
+        assert _s is not None
+        assert _s.state == BrickState.UNMOUNTED
+
+        await manager.unregister_all()
+        assert len(manager._bricks) == 0
+
+    @pytest.mark.asyncio
+    async def test_unmounted_at_is_set(self, manager: BrickLifecycleManager) -> None:
+        """unmounted_at should be set when brick enters UNMOUNTED."""
+        brick = _make_lifecycle_brick("search")
+        manager.register("search", brick, protocol_name="SearchProtocol")
+        await manager.mount("search")
+        await manager.unmount("search")
+        status = manager.get_status("search")
+        assert status is not None
+        assert status.unmounted_at is not None
+        assert status.unmounted_at > 0

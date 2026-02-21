@@ -23,11 +23,13 @@ from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.constants import SYSTEM_PATH_PREFIX
 from nexus.contracts.exceptions import BackendError, ConflictError, NexusFileNotFoundError
 from nexus.contracts.types import Permission
+from nexus.core.file_events import FileEvent, FileEventType
 from nexus.core.hash_fast import hash_content
 from nexus.core.metadata import FileMetadata
 from nexus.core.protocols.capabilities import ConnectorCapability
 from nexus.lib.mutation_hooks import MutationOp
 from nexus.lib.rpc_decorator import rpc_expose
+from nexus.lib.sync_bridge import fire_and_forget
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +130,7 @@ class NexusFSCoreMixin:
 
     def _publish_file_event(
         self,
-        event_type: str,
+        event_type: FileEventType,
         path: str,
         zone_id: str | None,
         size: int | None = None,
@@ -140,10 +142,11 @@ class NexusFSCoreMixin:
         """Publish a file event to the distributed event bus.
 
         Issue #1106 Block 2: Centralized event publishing to avoid code duplication.
+        Issue #2175: Accepts FileEventType enum directly for type safety.
         Handles both async (event loop running) and sync (no event loop) contexts.
 
         Args:
-            event_type: Event type string (e.g., "file_write", "file_delete", "file_rename")
+            event_type: FileEventType enum value (e.g., FileEventType.FILE_WRITE)
             path: Path of the affected file
             zone_id: Zone ID (defaults to "root" if None)
             size: File size in bytes (optional)
@@ -152,24 +155,12 @@ class NexusFSCoreMixin:
             old_path: Previous path for rename events (optional)
             revision: Filesystem revision for consistency tracking (Issue #1187)
         """
-        if not hasattr(self, "_event_bus") or self._event_bus is None:
+        if self._event_bus is None:
             return
 
         try:
-            from nexus.services.event_subsystem.types import FileEvent, FileEventType
-
-            # Map string to enum
-            type_map = {
-                "file_write": FileEventType.FILE_WRITE,
-                "file_delete": FileEventType.FILE_DELETE,
-                "file_rename": FileEventType.FILE_RENAME,
-                "dir_create": FileEventType.DIR_CREATE,
-                "dir_delete": FileEventType.DIR_DELETE,
-            }
-            file_event_type = type_map.get(event_type, event_type)
-
             event = FileEvent(
-                type=file_event_type,
+                type=event_type,
                 path=path,
                 zone_id=zone_id or "root",
                 size=size,
@@ -178,9 +169,6 @@ class NexusFSCoreMixin:
                 old_path=old_path,
                 revision=revision,
             )
-
-            # Fire event asynchronously (fire-and-forget via sync bridge)
-            from nexus.lib.sync_bridge import fire_and_forget
 
             # Ensure event bus is started (lazy init for NATS JetStream)
             if not getattr(self._event_bus, "_started", False):
@@ -194,7 +182,7 @@ class NexusFSCoreMixin:
 
             fire_and_forget(self._event_bus.publish(event))
         except Exception as e:
-            logger.warning(f"Failed to create {event_type} event: {e}")
+            logger.warning("Failed to publish %s event for %s: %s", event_type, path, e)
 
     def _fire_workflow_event(
         self,
@@ -1749,7 +1737,7 @@ class NexusFSCoreMixin:
 
         # Issue #1106 Block 2: Publish event to distributed event bus
         self._publish_file_event(
-            event_type="file_write",
+            event_type=FileEventType.FILE_WRITE,
             path=path,
             zone_id=zone_id,
             size=len(content),
@@ -2355,7 +2343,7 @@ class NexusFSCoreMixin:
 
         # Issue #1106 Block 2: Publish event to distributed event bus
         self._publish_file_event(
-            event_type="file_delete",
+            event_type=FileEventType.FILE_DELETE,
             path=path,
             zone_id=zone_id,
             size=meta.size,
@@ -2623,7 +2611,7 @@ class NexusFSCoreMixin:
 
         # Issue #1106 Block 2: Publish event to distributed event bus
         self._publish_file_event(
-            event_type="file_rename",
+            event_type=FileEventType.FILE_RENAME,
             path=new_path,
             old_path=old_path,
             zone_id=zone_id,
@@ -3021,5 +3009,13 @@ class NexusFSCoreMixin:
         # Delete the directory metadata (only if explicit directory)
         if not is_implicit:
             self.metadata.delete(path)
+
+        # Issue #2175: Publish dir_delete event (parity with rmdir)
+        self._publish_file_event(
+            event_type=FileEventType.DIR_DELETE,
+            path=path,
+            zone_id=zone_id,
+            agent_id=agent_id,
+        )
 
     # rename_bulk → moved to NexusFSBulkMixin (Issue #2272)

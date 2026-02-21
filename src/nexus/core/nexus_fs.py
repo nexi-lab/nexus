@@ -1066,11 +1066,14 @@ class NexusFS(  # type: ignore[misc]
         )
 
         # Issue #1331: Publish dir_create event to event bus
+        from nexus.core.file_events import FileEventType
+
         self._publish_file_event(
-            event_type="dir_create",
+            event_type=FileEventType.DIR_CREATE,
             path=path,
             zone_id=ctx.zone_id,
             agent_id=ctx.agent_id,
+            revision=new_revision,
         )
 
     @rpc_expose(description="Remove directory")
@@ -1226,6 +1229,17 @@ class NexusFS(  # type: ignore[misc]
             new_revision,
             agent_id=ctx.agent_id,
             user_id=ctx.user_id,
+        )
+
+        # Issue #2175: Publish dir_delete event to event bus (parity with mkdir)
+        from nexus.core.file_events import FileEventType
+
+        self._publish_file_event(
+            event_type=FileEventType.DIR_DELETE,
+            path=path,
+            zone_id=ctx.zone_id,
+            agent_id=ctx.agent_id,
+            revision=new_revision,
         )
 
     @rpc_expose(description="Check if path is a directory")

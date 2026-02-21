@@ -10,8 +10,6 @@ Covers:
 - All allowed variables resolve correctly
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.bricks.context_manifest.template import ALLOWED_VARIABLES, resolve_template

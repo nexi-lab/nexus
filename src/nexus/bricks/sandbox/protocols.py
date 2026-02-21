@@ -6,8 +6,6 @@ Concrete implementations are wired by factory/server code at boot time.
 Issue #2189: Replace concrete nexus.storage imports with Protocol abstractions.
 """
 
-from __future__ import annotations
-
 from datetime import datetime
 from typing import Any, Protocol
 

@@ -9,8 +9,6 @@ validating:
 - X-API-Version header is present on v2 responses
 """
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -25,7 +23,6 @@ from nexus.server.dependencies import require_auth
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
 
 _auth_result = {"authenticated": True, "is_admin": False, "subject_id": "test-user"}
 

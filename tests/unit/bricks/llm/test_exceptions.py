@@ -1,7 +1,5 @@
 """Tests for exception hierarchy (src/nexus/llm/exceptions.py)."""
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.bricks.llm.exceptions import (

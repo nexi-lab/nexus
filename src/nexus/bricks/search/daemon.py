@@ -30,8 +30,6 @@ Performance targets:
 Issue: #951
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import logging

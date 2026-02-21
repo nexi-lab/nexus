@@ -13,8 +13,6 @@ Tests the full file CRUD pipeline as a normal (non-admin) user:
 5. Write-back service active during all operations
 """
 
-from __future__ import annotations
-
 import os
 import shutil
 import signal

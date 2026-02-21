@@ -5,8 +5,6 @@ conversions.  Extracted from ``database.py`` and ``in_memory.py``
 to eliminate duplicated serialization logic (Decision 3 / #1586).
 """
 
-from __future__ import annotations
-
 import json
 from typing import Any
 

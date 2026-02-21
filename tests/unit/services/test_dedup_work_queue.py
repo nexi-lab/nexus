@@ -12,8 +12,6 @@ Tests cover:
 - Benchmark: throughput under coalescing workload
 """
 
-from __future__ import annotations
-
 import asyncio
 import time
 

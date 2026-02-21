@@ -9,8 +9,6 @@ Setup:
     pytest tests/e2e/postgres/test_read_replica.py -v
 """
 
-from __future__ import annotations
-
 import os
 
 import pytest

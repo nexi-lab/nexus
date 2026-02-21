@@ -4,8 +4,6 @@ Shared trait/checkpoint errors are inherited from ``base_errors``.
 Domain-specific errors are defined here.
 """
 
-from __future__ import annotations
-
 from nexus.connectors.base import ErrorDef
 from nexus.connectors.base_errors import CHECKPOINT_ERRORS, TRAIT_ERRORS
 

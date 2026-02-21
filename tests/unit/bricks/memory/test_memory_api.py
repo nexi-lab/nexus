@@ -7,8 +7,6 @@ Skills module is restructured into the brick layout.
 Tests cover: store, get, retrieve, delete, list, query, search.
 """
 
-from __future__ import annotations
-
 import importlib
 from types import SimpleNamespace
 

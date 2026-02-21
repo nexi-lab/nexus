@@ -1,7 +1,5 @@
 """Database-backed API key authentication provider."""
 
-from __future__ import annotations
-
 import hashlib
 import hmac
 import logging
@@ -32,7 +30,7 @@ class DatabaseAPIKeyAuth(AuthProvider):
     - Audit trail of key usage
     """
 
-    def __init__(self, record_store: RecordStoreABC, require_expiry: bool = False) -> None:
+    def __init__(self, record_store: "RecordStoreABC", require_expiry: bool = False) -> None:
         self._record_store = record_store
         self.session_factory = record_store.session_factory
         self.require_expiry = require_expiry

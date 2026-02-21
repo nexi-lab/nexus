@@ -5,8 +5,6 @@ the profiling module integrates properly with existing observability
 components (Grafana datasources, Docker Compose, Tempo correlation).
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 
 import yaml

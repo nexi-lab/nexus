@@ -7,8 +7,6 @@ Issue #2132: Previously 0% test coverage.
 Issue #2075: Updated for decomposed architecture.
 """
 
-from __future__ import annotations
-
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock

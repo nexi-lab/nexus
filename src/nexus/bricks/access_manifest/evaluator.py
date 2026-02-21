@@ -5,8 +5,6 @@ First-match-wins semantics with case-insensitive fnmatch glob patterns.
 Default: DENY (least privilege) when no entry matches.
 """
 
-from __future__ import annotations
-
 import fnmatch
 
 from nexus.contracts.access_manifest_types import ManifestEntry, ToolPermission

@@ -9,8 +9,6 @@ Categories:
   3. Methods not on NexusFS class (admin, memory, skills, trajectory, etc.)
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Any
 

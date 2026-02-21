@@ -29,8 +29,6 @@ Example:
         3. O(depth) → O(1)
 """
 
-from __future__ import annotations
-
 import logging
 import os
 import threading

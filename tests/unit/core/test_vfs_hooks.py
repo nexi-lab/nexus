@@ -1,7 +1,5 @@
 """Unit tests for VFSHookPipeline and hook protocols."""
 
-from __future__ import annotations
-
 from nexus.core.vfs_hooks import (
     ReadHookContext,
     RenameHookContext,

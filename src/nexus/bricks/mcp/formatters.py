@@ -4,8 +4,6 @@ This module provides utilities for formatting MCP tool responses in different
 formats (JSON, Markdown) to optimize for token usage and readability.
 """
 
-from __future__ import annotations
-
 import json
 from typing import Any
 

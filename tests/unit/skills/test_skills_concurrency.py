@@ -8,8 +8,6 @@ Tests thread-safety of:
 - Subscription cache TTL under contention
 """
 
-from __future__ import annotations
-
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
@@ -83,7 +81,6 @@ def _make_ctx(user_id: str = "alice", zone_id: str = "acme") -> FakeOperationCon
 
 
 SKILL_BASE = "/zone/acme/user/alice/skill/"
-
 
 # ---------------------------------------------------------------------------
 # Parallel Discover

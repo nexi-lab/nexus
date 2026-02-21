@@ -4,8 +4,6 @@ These satisfy the Protocol interfaces defined in ``nexus.ipc.protocols``
 without any real I/O, enabling fast, isolated unit tests.
 """
 
-from __future__ import annotations
-
 import asyncio
 from collections.abc import AsyncIterator
 from typing import Any

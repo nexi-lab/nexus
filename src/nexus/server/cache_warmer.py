@@ -22,8 +22,6 @@ References:
     - Issue #921: HotspotDetector pattern
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import threading
@@ -38,7 +36,6 @@ if TYPE_CHECKING:
     from nexus.storage.local_disk_cache import LocalDiskCache
 
 logger = logging.getLogger(__name__)
-
 
 # =============================================================================
 # Configuration
@@ -423,10 +420,10 @@ class CacheWarmer:
 
     def __init__(
         self,
-        nexus_fs: NexusFS,
+        nexus_fs: "NexusFS",
         config: WarmupConfig | None = None,
         file_tracker: FileAccessTracker | None = None,
-        local_disk_cache: LocalDiskCache | None = None,
+        local_disk_cache: "LocalDiskCache | None" = None,
     ):
         """Initialize cache warmer.
 
@@ -983,7 +980,7 @@ class BackgroundCacheWarmer:
 
 
 async def warmup_on_mount(
-    nexus_fs: NexusFS,
+    nexus_fs: "NexusFS",
     mount_path: str,
     depth: int = 2,
     include_content: bool = False,

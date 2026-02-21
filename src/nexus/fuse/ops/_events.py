@@ -4,8 +4,6 @@ Extracted from NexusFUSEOperations to be independently testable
 and composable via FUSESharedContext.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from collections.abc import Callable

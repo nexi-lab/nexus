@@ -5,8 +5,6 @@ After extraction to ``nexus.bricks.rebac.consistency``, both
 should resolve to the canonical brick implementation.
 """
 
-from __future__ import annotations
-
 
 class TestShimReExports:
     """Verify all public symbols are accessible via old import paths."""

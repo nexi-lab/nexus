@@ -14,8 +14,6 @@ Modes:
     SHARED: all parent grants (within scope_prefix) → cap at MAX
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 
 from nexus.services.delegation.errors import (

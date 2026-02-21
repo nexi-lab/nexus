@@ -1,7 +1,5 @@
 """Tests for LLMConfig (src/nexus/llm/config.py)."""
 
-from __future__ import annotations
-
 import pytest
 from pydantic import SecretStr, ValidationError
 

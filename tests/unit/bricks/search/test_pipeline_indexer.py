@@ -4,8 +4,6 @@ Tests the extracted PipelineIndexer class: file resolution, batch document
 preparation, path_id lookup, and pipeline delegation.
 """
 
-from __future__ import annotations
-
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 

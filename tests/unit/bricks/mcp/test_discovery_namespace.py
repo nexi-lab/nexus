@@ -8,8 +8,6 @@ the ToolNamespaceMiddleware's visible tool set:
     - nexus_discovery_load_tools: invisible → "not found"
 """
 
-from __future__ import annotations
-
 import json
 from unittest.mock import Mock
 

@@ -20,8 +20,6 @@ References:
     - src/nexus/core/protocols/connector.py
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.backends.local import LocalBackend
@@ -64,7 +62,6 @@ _UNSUPPORTED_ATTR_PROTOCOLS: list[type] = [
 ]
 
 _ALL_UNSUPPORTED_PROTOCOLS: list[type] = _UNSUPPORTED_METHOD_PROTOCOLS + _UNSUPPORTED_ATTR_PROTOCOLS
-
 
 # ---------------------------------------------------------------------------
 # Parametrized: LocalBackend vs all 8 connector sub-protocols

@@ -1,7 +1,5 @@
 """Tests for _try_rust delegation and fallback logic."""
 
-from __future__ import annotations
-
 import errno
 from typing import Any
 from unittest.mock import MagicMock

@@ -13,8 +13,6 @@ Internal path formats handled:
 Related: Issue #1202 - list('/') returns paths with /tenant: prefix
 """
 
-from __future__ import annotations
-
 from typing import overload
 
 

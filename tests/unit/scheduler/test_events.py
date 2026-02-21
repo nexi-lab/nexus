@@ -3,8 +3,6 @@
 Tests emitter handler calls, exception isolation, and handler management.
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.constants import ROOT_ZONE_ID

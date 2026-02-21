@@ -6,8 +6,6 @@ so that bricks can expose RPC endpoints without NexusFS delegation
 boilerplate (Issue #2035, Follow-up 1).
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -17,7 +15,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def discover_exposed_methods(nexus_fs: NexusFS, *additional_sources: Any) -> dict[str, Any]:
+def discover_exposed_methods(nexus_fs: "NexusFS", *additional_sources: Any) -> dict[str, Any]:
     """Discover all methods marked with @rpc_expose decorator.
 
     Scans NexusFS and any additional sources (brick services) for methods

@@ -8,8 +8,6 @@ For actual search operations, use the standard search APIs with the
 appropriate embedding provider configured via MobileSearchConfig.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 
@@ -26,7 +24,6 @@ from nexus.server.dependencies import require_auth
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/mobile", tags=["mobile"], dependencies=[Depends(require_auth)])
-
 
 # =============================================================================
 # Request/Response Models

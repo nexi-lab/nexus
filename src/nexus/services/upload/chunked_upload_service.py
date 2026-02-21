@@ -8,8 +8,6 @@ Manages the lifecycle of chunked upload sessions:
 - Per-session locking for concurrent chunk uploads
 """
 
-from __future__ import annotations
-
 import asyncio
 import base64
 import hashlib
@@ -93,9 +91,9 @@ class ChunkedUploadService:
 
     def __init__(
         self,
-        record_store: RecordStoreABC,
-        backend: ConnectorProtocol,
-        metadata_store: MetastoreABC | None = None,
+        record_store: "RecordStoreABC",
+        backend: "ConnectorProtocol",
+        metadata_store: "MetastoreABC | None" = None,
         config: ChunkedUploadConfig | None = None,
     ):
         self._session_factory = record_store.session_factory

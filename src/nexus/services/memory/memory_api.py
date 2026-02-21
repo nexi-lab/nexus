@@ -7,8 +7,6 @@ Includes temporal query operators (Issue #1023) for time-based filtering
 inspired by SimpleMem (arXiv:2601.02553).
 """
 
-from __future__ import annotations
-
 import builtins
 import logging
 from collections.abc import Callable
@@ -102,9 +100,9 @@ class Memory:
         zone_id: str | None = None,
         user_id: str | None = None,
         agent_id: str | None = None,
-        entity_registry: EntityResolverProtocol | None = None,
+        entity_registry: "EntityResolverProtocol | None" = None,
         llm_provider: Any = None,
-        permission_enforcer: MemoryPermissionCheckerProtocol | None = None,
+        permission_enforcer: "MemoryPermissionCheckerProtocol | None" = None,
     ):
         """Initialize Memory API.
 

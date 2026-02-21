@@ -12,8 +12,6 @@ On any unexpected exception the probe **fails open** (returns 200) so a
 transient bug cannot cascade into a pod kill-loop.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 

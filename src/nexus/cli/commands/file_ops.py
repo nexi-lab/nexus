@@ -1,7 +1,5 @@
 """File operation commands - read, write, cat, cp, mv, rm, sync."""
 
-from __future__ import annotations
-
 import sys
 from pathlib import Path
 from typing import Any

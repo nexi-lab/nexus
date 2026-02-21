@@ -11,8 +11,6 @@ Tests the conflict management endpoints end-to-end:
 3. Conflict log store is wired and accessible via REST
 """
 
-from __future__ import annotations
-
 import os
 import shutil
 import signal

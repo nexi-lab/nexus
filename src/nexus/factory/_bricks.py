@@ -3,8 +3,6 @@
 Includes brick auto-discovery via ``brick_factory.py`` convention.
 """
 
-from __future__ import annotations
-
 import logging
 import time
 from collections.abc import Callable
@@ -16,7 +14,6 @@ from nexus.factory._boot_context import _BootContext
 from nexus.factory._helpers import _make_gate, _resolve_tasks_db_path, _safe_create
 
 logger = logging.getLogger(__name__)
-
 
 # ---------------------------------------------------------------------------
 # Brick auto-discovery (Issue #2180)

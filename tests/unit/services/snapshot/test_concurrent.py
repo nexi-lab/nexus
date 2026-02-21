@@ -4,8 +4,6 @@ Tests: Registry stress, CAS hold concurrent, Conflict detection,
        Deterministic interleaving.
 """
 
-from __future__ import annotations
-
 from concurrent.futures import ThreadPoolExecutor
 
 from nexus.services.snapshot.registry import TransactionRegistry

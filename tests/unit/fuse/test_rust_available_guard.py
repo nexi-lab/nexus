@@ -5,8 +5,6 @@ The _rust_available property MUST return False when a namespace context is
 present, preventing zone-unaware Rust delegation for agent mounts.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Any
 from unittest.mock import MagicMock

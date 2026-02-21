@@ -4,8 +4,6 @@ Loads validators.yaml files from sandbox workspaces and caches parsed
 configurations to avoid repeated YAML parsing overhead.
 """
 
-from __future__ import annotations
-
 import logging
 import os
 from typing import Any

@@ -1,7 +1,5 @@
 """Reflection system for analyzing trajectories and extracting learnings."""
 
-from __future__ import annotations
-
 import json
 import uuid
 from datetime import UTC, datetime

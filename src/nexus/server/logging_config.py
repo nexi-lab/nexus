@@ -32,8 +32,6 @@ Usage::
     configure_logging(env="prod", redaction_enabled=False)  # Disable redaction
 """
 
-from __future__ import annotations
-
 import logging
 import logging.config
 import os

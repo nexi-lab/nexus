@@ -40,8 +40,6 @@ References:
     - Linux VFS dcache: https://docs.kernel.org/filesystems/path-lookup.html
 """
 
-from __future__ import annotations
-
 import bisect
 import hashlib
 import logging
@@ -200,14 +198,14 @@ class NamespaceManager:
 
     def __init__(
         self,
-        rebac_manager: ReBACManager,
+        rebac_manager: "ReBACManager",
         cache_maxsize: int = 10_000,
         cache_ttl: int = 300,
         revision_window: int = 10,
         dcache_maxsize: int = 100_000,
         dcache_positive_ttl: int = 300,
         dcache_negative_ttl: int = 60,
-        persistent_store: PersistentViewStore | None = None,
+        persistent_store: "PersistentViewStore | None" = None,
     ) -> None:
         self._rebac_manager = rebac_manager
         self._revision_window = revision_window

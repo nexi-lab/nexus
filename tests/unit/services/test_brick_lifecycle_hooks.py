@@ -3,8 +3,6 @@
 Phase 3 TDD: hook firing, veto support, event barrier concurrency tests.
 """
 
-from __future__ import annotations
-
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 

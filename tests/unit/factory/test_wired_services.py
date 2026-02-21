@@ -1,7 +1,5 @@
 """Tests for WiredServices dataclass and _boot_wired_services typing (Issue #2133)."""
 
-from __future__ import annotations
-
 import dataclasses
 from typing import Any
 from unittest.mock import MagicMock

@@ -8,8 +8,6 @@ References:
     - Issue #1428: Review fix — DRY (5A), typed protocols (6A)
 """
 
-from __future__ import annotations
-
 import time
 from typing import Protocol, runtime_checkable
 

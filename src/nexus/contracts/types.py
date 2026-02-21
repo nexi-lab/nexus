@@ -12,8 +12,6 @@ Types:
     - ``extract_context_identity()``: DRY helper to extract identity from OperationContext.
 """
 
-from __future__ import annotations
-
 import logging
 import uuid
 from collections.abc import Callable
@@ -121,7 +119,7 @@ class OperationContext:
     virtual_path: str | None = None  # Full virtual path with mount prefix (for cache keys)
 
     # Read Set Tracking for Query Dependencies (Issue #1166)
-    read_set: ReadSet | None = None
+    read_set: "ReadSet | None" = None
     track_reads: bool = False
 
     def __post_init__(self) -> None:

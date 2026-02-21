@@ -3,8 +3,6 @@
 Unit tests for the SQL-backed TaskQueue, using mocked asyncpg connections.
 """
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock
 
 import pytest

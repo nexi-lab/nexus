@@ -14,8 +14,6 @@ Design decisions:
       may need to cache additional references after extraction.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -60,7 +58,7 @@ class LifespanServices:
 
     # --- Issue #2195, #2360: EventLog + Scheduler (from SystemServices) ----
     event_log: Any = None
-    scheduler_service: SchedulerProtocol | None = None
+    scheduler_service: "SchedulerProtocol | None" = None
 
     # --- Brick services container ----------------------------------------
     brick_services: Any = None  # The whole BrickServices dataclass
@@ -85,7 +83,7 @@ class LifespanServices:
     observability_registry: Any = None
 
     @classmethod
-    def from_app(cls, app: FastAPI) -> LifespanServices:
+    def from_app(cls, app: "FastAPI") -> "LifespanServices":
         """Extract all factory-produced services into a typed container.
 
         This method is the **single place** where ``getattr()`` is used to

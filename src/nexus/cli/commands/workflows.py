@@ -1,7 +1,5 @@
 """Workflow Automation commands - manage and execute workflows."""
 
-from __future__ import annotations
-
 import asyncio
 import json
 import os

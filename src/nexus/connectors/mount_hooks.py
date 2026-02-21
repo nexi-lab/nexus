@@ -14,8 +14,6 @@ Usage:
     >>> on_mount(calendar_backend, "/mnt/calendar", filesystem=nx)
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -29,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 def on_mount(
-    backend: ConnectorProtocol,
+    backend: "ConnectorProtocol",
     mount_path: str,
     filesystem: Any = None,
     skill_registry: Any = None,

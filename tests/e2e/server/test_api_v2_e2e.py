@@ -7,8 +7,6 @@ Note: Some ACE endpoints require sklearn. Tests will check for sklearn-related
 errors and pass if the error indicates sklearn is not installed.
 """
 
-from __future__ import annotations
-
 import uuid
 
 import httpx

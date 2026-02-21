@@ -10,8 +10,6 @@ References:
     - Issue #2051: Decompose SandboxManager and DockerSandboxProvider
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -66,7 +64,7 @@ class SandboxProtocol(Protocol):
         code: str,
         timeout: int = 300,
         as_script: bool = False,
-    ) -> CodeExecutionResult:
+    ) -> "CodeExecutionResult":
         """Run code in a sandbox.
 
         Handles escalation transparently (monty → docker → e2b).

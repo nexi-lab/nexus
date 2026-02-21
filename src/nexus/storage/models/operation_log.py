@@ -3,8 +3,6 @@
 Issue #1246 Phase 4: Extracted from monolithic models.py.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 from sqlalchemy import BigInteger, Boolean, DateTime, Index, String, Text, text

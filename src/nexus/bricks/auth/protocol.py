@@ -3,8 +3,6 @@
 All consumers depend on this protocol, never on concrete implementations.
 """
 
-from __future__ import annotations
-
 from typing import Protocol, runtime_checkable
 
 from nexus.bricks.auth.types import AuthResult

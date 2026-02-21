@@ -4,8 +4,6 @@ Implements SandboxProvider interface using Docker containers for local code exec
 Designed for development and testing environments.
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import logging

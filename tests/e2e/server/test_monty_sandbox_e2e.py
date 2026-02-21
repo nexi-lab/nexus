@@ -8,8 +8,6 @@ Requires:
     - Server fixtures from conftest.py (nexus_server, isolated_db)
 """
 
-from __future__ import annotations
-
 import time
 
 import httpx
@@ -27,7 +25,6 @@ pytestmark = [
     pytest.mark.skipif(not MONTY_AVAILABLE, reason="pydantic-monty not installed"),
     pytest.mark.e2e,
 ]
-
 
 # ---------------------------------------------------------------------------
 # Helpers

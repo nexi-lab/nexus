@@ -3,8 +3,6 @@
 Manage AI agents for delegation and multi-agent workflows.
 """
 
-from __future__ import annotations
-
 import click
 from rich.console import Console
 from rich.table import Table

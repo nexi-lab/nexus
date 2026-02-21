@@ -6,8 +6,6 @@ the WebSocket endpoints removed during v1 sunset.
 Issue #1116 (original WebSocket), #2056 (SSE replacement).
 """
 
-from __future__ import annotations
-
 from starlette.testclient import TestClient
 
 

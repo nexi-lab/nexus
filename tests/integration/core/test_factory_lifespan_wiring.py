@@ -8,8 +8,6 @@ This is an integration test because it exercises the real factory boot path
 (with mocked infrastructure) and the real lifespan wiring functions.
 """
 
-from __future__ import annotations
-
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 

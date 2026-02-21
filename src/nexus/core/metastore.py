@@ -20,8 +20,6 @@ SSOT: proto/nexus/core/metadata.proto defines the FileMetadata fields.
 This ABC defines the *operations* over those fields.
 """
 
-from __future__ import annotations
-
 import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import Iterator, Sequence

@@ -13,8 +13,6 @@ Tests:
 Parametrized across LocalBackend and MockBackend.
 """
 
-from __future__ import annotations
-
 import hashlib
 import time
 from unittest.mock import MagicMock

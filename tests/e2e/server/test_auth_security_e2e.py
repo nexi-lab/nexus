@@ -13,8 +13,6 @@ Run with:
     pytest tests/e2e/test_auth_security_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -44,7 +42,6 @@ pytestmark = [
         reason="Requires native _nexus_raft module (maturin develop)",
     ),
 ]
-
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -5,8 +5,6 @@ used by all wrapper test files.  Centralizes mock setup so Backend
 interface changes only need updating in one place.
 """
 
-from __future__ import annotations
-
 import hashlib
 from unittest.mock import MagicMock, PropertyMock
 

@@ -14,8 +14,6 @@ Reference: SimpleMem: Efficient Lifelong Memory for LLM Agents
 https://arxiv.org/html/2601.02553
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING

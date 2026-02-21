@@ -8,8 +8,6 @@ Tests cover:
 - Async executor usage for non-blocking operation
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, patch
 
 import pytest

@@ -3,8 +3,6 @@
 These tests will initially FAIL (RED) until ParsersBrick is implemented in Phase 4.
 """
 
-from __future__ import annotations
-
 
 class TestParsersBrickConstruction:
     def test_construct_default(self) -> None:

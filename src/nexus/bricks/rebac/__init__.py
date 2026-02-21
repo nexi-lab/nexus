@@ -14,8 +14,6 @@ Usage:
     from nexus.bricks.rebac import ReBACManager, PermissionEnforcer, CheckResult
 """
 
-from __future__ import annotations
-
 import importlib
 from typing import TYPE_CHECKING
 

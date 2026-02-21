@@ -7,8 +7,6 @@ Two-table design:
 Follows patterns from operation_log.py.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, Index, Integer, String, Text, text

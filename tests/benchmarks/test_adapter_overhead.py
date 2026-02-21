@@ -5,8 +5,6 @@ Covers: HandlerResponse creation, @timed_response decorator, and
 BackendObjectStore adapter methods (read, write, exists).
 """
 
-from __future__ import annotations
-
 import hashlib
 import time
 

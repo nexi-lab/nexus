@@ -15,8 +15,6 @@ Tests cover:
   10. Backward compatibility (existing hooks without phase_type)
 """
 
-from __future__ import annotations
-
 import asyncio
 from typing import Any
 

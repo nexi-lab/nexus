@@ -10,8 +10,6 @@ Features:
     - Snapshot for health API
 """
 
-from __future__ import annotations
-
 import threading
 from collections import defaultdict
 from typing import Any

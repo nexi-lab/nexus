@@ -7,8 +7,6 @@ Includes temporal query operators (Issue #1023) for time-based filtering.
 Includes version tracking (#1184) for memory audit trails.
 """
 
-from __future__ import annotations
-
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -25,7 +23,7 @@ if TYPE_CHECKING:
 class MemoryViewRouter:
     """Router for resolving virtual paths to canonical memory IDs."""
 
-    def __init__(self, session: Session, entity_registry: EntityResolverProtocol | None = None):
+    def __init__(self, session: Session, entity_registry: "EntityResolverProtocol | None" = None):
         """Initialize memory view router.
 
         Args:

@@ -4,8 +4,6 @@ PgMonitor methods that rely on pg_stat_statements should return empty /
 false values when running against a non-PostgreSQL backend (e.g. SQLite).
 """
 
-from __future__ import annotations
-
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session

@@ -1,7 +1,5 @@
 """Skill governance and approval workflows."""
 
-from __future__ import annotations
-
 import dataclasses
 import json
 import logging
@@ -133,8 +131,8 @@ class SkillGovernance:
 
     def __init__(
         self,
-        rebac_manager: ReBACBrickProtocol | None = None,
-        cache_store: CacheStoreABC | None = None,
+        rebac_manager: "ReBACBrickProtocol | None" = None,
+        cache_store: "CacheStoreABC | None" = None,
     ):
         """Initialize governance system.
 

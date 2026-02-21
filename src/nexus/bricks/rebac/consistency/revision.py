@@ -16,8 +16,6 @@ Usage:
 Related: Issue #1459 (decomposition), P0-1 (consistency levels)
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING
 
@@ -34,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 
 def increment_version_token(
-    engine: Engine,
+    engine: "Engine",
     zone_id: str = ROOT_ZONE_ID,
     *,
     is_postgresql: bool = False,
@@ -105,7 +103,7 @@ def increment_version_token(
     return f"v{version}"
 
 
-def get_zone_revision_for_grant(engine: Engine, zone_id: str) -> int:
+def get_zone_revision_for_grant(engine: "Engine", zone_id: str) -> int:
     """Get current zone revision for consistency during expansion.
 
     This prevents the "new enemy" problem: files created after the grant

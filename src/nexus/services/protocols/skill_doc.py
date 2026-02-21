@@ -4,8 +4,6 @@ Moved from nexus.bricks.skills.skill_generator to break cross-brick dependency.
 mount_core_service.py and oauth_service.py import generate_skill_md.
 """
 
-from __future__ import annotations
-
 from typing import Any, Protocol, runtime_checkable
 
 

@@ -4,8 +4,6 @@ Tests the full lifecycle (create → publish → discover → subscribe → load
 using in-memory fakes from skills/testing.py — zero kernel dependencies.
 """
 
-from __future__ import annotations
-
 import base64
 import io
 import json
@@ -52,7 +50,6 @@ def pkg_svc(fs, perms, svc):
 
 
 SKILL_PATH = "/zone/acme/user/alice/skill/code-review/"
-
 
 # ---------------------------------------------------------------------------
 # Full Lifecycle

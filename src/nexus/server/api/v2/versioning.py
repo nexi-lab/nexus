@@ -10,8 +10,6 @@ Provides:
 Issue #995: API versioning strategy for breaking changes.
 """
 
-from __future__ import annotations
-
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -26,7 +24,6 @@ logger = logging.getLogger(__name__)
 
 # Current API version — bump on breaking changes.
 API_VERSION = "2.0"
-
 
 # ---------------------------------------------------------------------------
 # Router registry
@@ -50,7 +47,7 @@ class RouterEntry:
         endpoint_count: Informational count for logging.
     """
 
-    router: APIRouter
+    router: "APIRouter"
     name: str
     prefix: str | None = None
     deprecated: str | None = None
@@ -396,7 +393,7 @@ def build_v2_registry(
 
 
 def register_v2_routers(
-    app: FastAPI,
+    app: "FastAPI",
     registry: RouterRegistry,
 ) -> None:
     """Mount every router in *registry* onto *app*.

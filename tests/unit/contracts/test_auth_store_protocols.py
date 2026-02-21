@@ -6,8 +6,6 @@ Issue #2436: Validates that:
 3. SQLAlchemy store implementations satisfy their Protocols
 """
 
-from __future__ import annotations
-
 from datetime import datetime
 
 import pytest

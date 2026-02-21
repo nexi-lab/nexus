@@ -7,8 +7,6 @@ block other handlers or the caller.
 Designed as fallback when NATS is unavailable.
 """
 
-from __future__ import annotations
-
 import contextlib
 import logging
 from collections.abc import Awaitable, Callable

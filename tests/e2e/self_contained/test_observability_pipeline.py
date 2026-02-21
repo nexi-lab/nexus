@@ -5,8 +5,6 @@ wired through the real FastAPI application (create_app), and that
 the middleware correctly tracks request metrics with acceptable overhead.
 """
 
-from __future__ import annotations
-
 import os
 import time
 

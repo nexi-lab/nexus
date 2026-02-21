@@ -1,7 +1,5 @@
 """Tests for VFSRouterProtocol, ResolvedPath, and MountInfo (Issue #1383)."""
 
-from __future__ import annotations
-
 import dataclasses
 
 import pytest

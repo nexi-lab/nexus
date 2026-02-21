@@ -12,8 +12,6 @@ use real OAuth tokens in CI. For full E2E testing with real
 Google API, use OAuth authentication via the integrations page.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, patch
 
 import pytest

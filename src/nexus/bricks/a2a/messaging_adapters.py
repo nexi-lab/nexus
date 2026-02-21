@@ -7,8 +7,6 @@ Moved from ``core/`` to ``a2a/`` because this module depends on
 ``nexus.bricks.a2a.models`` — the kernel must not import from services.
 """
 
-from __future__ import annotations
-
 from typing import Any, Literal
 
 from nexus.bricks.a2a.models import DataPart, Message

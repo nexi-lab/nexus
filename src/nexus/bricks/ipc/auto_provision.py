@@ -4,8 +4,6 @@ Hooks into AgentRegistry to automatically provision inbox/outbox/processed/dead_
 directories when an agent is created, eliminating the manual provisioning step.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING
 
@@ -17,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 async def auto_provision_on_agent_create(
     agent_id: str,
-    provisioner: AgentProvisioner,
+    provisioner: "AgentProvisioner",
 ) -> None:
     """Auto-provision IPC directories when an agent is created.
 

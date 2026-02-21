@@ -3,8 +3,6 @@
 TDD: Tests written first per Decision 10.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest

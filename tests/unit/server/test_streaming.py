@@ -9,8 +9,6 @@ Tests cover:
 - _get_stream_secret: lazy initialization, caching
 """
 
-from __future__ import annotations
-
 import hmac
 import time
 from unittest.mock import patch

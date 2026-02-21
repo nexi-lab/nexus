@@ -6,8 +6,6 @@ Verifies:
 3. Import cycle safety — contracts/ has zero runtime imports from services/ or core/.
 """
 
-from __future__ import annotations
-
 import ast
 from pathlib import Path
 

@@ -4,8 +4,6 @@ These tests verify the context building functionality for LLM prompts,
 including adaptive retrieval depth based on query complexity (Issue #1021).
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 
 import pytest

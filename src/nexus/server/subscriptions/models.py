@@ -1,7 +1,5 @@
 """Pydantic models for subscription API."""
 
-from __future__ import annotations
-
 from datetime import datetime
 from typing import Any
 
@@ -130,7 +128,7 @@ class WebhookPayload(BaseModel):
     event: str = Field(..., description="Event type (file_write, file_delete, etc.)")
     timestamp: datetime = Field(..., description="When the event occurred")
     data: dict[str, Any] = Field(..., description="Event data")
-    subscription: SubscriptionInfo = Field(..., description="Subscription info")
+    subscription: "SubscriptionInfo" = Field(..., description="Subscription info")
 
 
 class SubscriptionInfo(BaseModel):

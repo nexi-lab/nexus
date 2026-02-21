@@ -9,8 +9,6 @@ a parallel isinstance chain. Adding a new exception subclass automatically
 gets the correct HTTP mapping — no changes needed here.
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 from fastapi import Request

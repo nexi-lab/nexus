@@ -14,8 +14,6 @@ References:
     - Issue #1341: Context manifest with deterministic pre-execution
 """
 
-from __future__ import annotations
-
 import re
 
 # ---------------------------------------------------------------------------

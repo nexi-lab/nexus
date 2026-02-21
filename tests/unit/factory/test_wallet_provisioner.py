@@ -1,7 +1,5 @@
 """Tests for WalletProvisioner — Issue #2180."""
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, patch
 
 from nexus.factory.wallet import WalletProvisioner, create_wallet_provisioner

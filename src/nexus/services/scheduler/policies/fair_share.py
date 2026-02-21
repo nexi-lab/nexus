@@ -6,8 +6,6 @@ max_concurrent limits. Syncs from DB on startup for crash recovery.
 No I/O — the sync method accepts pre-fetched data.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 
 from cachetools import LRUCache

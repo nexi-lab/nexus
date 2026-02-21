@@ -12,8 +12,6 @@ Public API:
     - Response actions: ResponseService, SuspensionRecord, ThrottleConfig
 """
 
-from __future__ import annotations
-
 # Services (lazy imports to avoid heavy deps at package level)
 from nexus.bricks.governance.anomaly_service import AnomalyService
 

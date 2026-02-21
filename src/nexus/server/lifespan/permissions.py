@@ -3,8 +3,6 @@
 Extracted from fastapi_server.py (#1602).
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import os
@@ -18,7 +16,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-async def startup_permissions(app: FastAPI, svc: LifespanServices) -> list[asyncio.Task]:
+async def startup_permissions(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.Task]:
     """Initialize permission infrastructure and return background tasks.
 
     Covers:
@@ -47,7 +45,7 @@ async def startup_permissions(app: FastAPI, svc: LifespanServices) -> list[async
 # ---------------------------------------------------------------------------
 
 
-async def _startup_async_rebac(app: FastAPI, svc: LifespanServices) -> None:
+async def _startup_async_rebac(app: "FastAPI", svc: "LifespanServices") -> None:
     """Initialize async ReBAC manager and AsyncNexusFS."""
     if not svc.database_url:
         return
@@ -141,7 +139,7 @@ async def _startup_async_rebac(app: FastAPI, svc: LifespanServices) -> None:
         logger.warning("Failed to initialize async ReBAC manager: %s", e, exc_info=True)
 
 
-async def _startup_cache_brick(app: FastAPI, svc: LifespanServices) -> None:
+async def _startup_cache_brick(app: "FastAPI", svc: "LifespanServices") -> None:
     """Initialize cache for Dragonfly/Redis or NullCacheStore fallback (Issue #1075, #1251, #1524).
 
     Prefers CacheBrick from BrickServices (injected by factory). Falls back to
@@ -187,7 +185,7 @@ async def _startup_cache_brick(app: FastAPI, svc: LifespanServices) -> None:
         logger.warning("Failed to initialize cache: %s", e, exc_info=True)
 
 
-def _startup_tiger_cache(app: FastAPI, svc: LifespanServices) -> list[asyncio.Task]:
+def _startup_tiger_cache(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.Task]:
     """Start Tiger Cache worker, warm-up, and DirectoryGrantExpander."""
     bg_tasks: list[asyncio.Task] = []
 
@@ -262,7 +260,7 @@ def _startup_tiger_cache(app: FastAPI, svc: LifespanServices) -> list[asyncio.Ta
     return bg_tasks
 
 
-def _startup_backfill(_app: FastAPI, svc: LifespanServices) -> list[asyncio.Task]:
+def _startup_backfill(_app: "FastAPI", svc: "LifespanServices") -> list[asyncio.Task]:
     """Auto-backfill sparse directory index for system paths (Issue #perf19)."""
     bg_tasks: list[asyncio.Task] = []
 
@@ -291,7 +289,7 @@ def _startup_backfill(_app: FastAPI, svc: LifespanServices) -> list[asyncio.Task
     return bg_tasks
 
 
-def _startup_cache_warmup(_app: FastAPI, svc: LifespanServices) -> None:
+def _startup_cache_warmup(_app: "FastAPI", svc: "LifespanServices") -> None:
     """File cache warmup on server startup (Issue #1076)."""
     if not svc.nexus_fs:
         return
@@ -332,7 +330,7 @@ def _startup_cache_warmup(_app: FastAPI, svc: LifespanServices) -> None:
         logger.debug("[WARMUP] Server startup warmup skipped: %s", e)
 
 
-def _startup_circuit_breaker(app: FastAPI, svc: LifespanServices) -> None:
+def _startup_circuit_breaker(app: "FastAPI", svc: "LifespanServices") -> None:
     """Wire circuit breaker and manifest resolver from factory (Issue #726, #2130)."""
     if svc.nexus_fs:
         brk = svc.brick_services

@@ -4,8 +4,6 @@ Tests happy paths, SQL failure injection, partial failures, and session exhausti
 Phase 1.1 of #1246/#1330 consolidation plan.
 """
 
-from __future__ import annotations
-
 import tempfile
 from collections.abc import Generator
 from datetime import UTC, datetime

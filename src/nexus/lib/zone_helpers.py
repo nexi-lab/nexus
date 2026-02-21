@@ -12,8 +12,6 @@ Tier-neutral utility — ``lib/`` (zero kernel deps).
 ``nexus.services.protocols.rebac.ReBACBrickProtocol``.
 """
 
-from __future__ import annotations
-
 import contextlib
 import logging
 from typing import Any

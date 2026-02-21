@@ -18,8 +18,6 @@ Fallback chain (Issue #582, #1395):
     3. SHA-256 (last resort, WARNING: incompatible hashes!)
 """
 
-from __future__ import annotations
-
 import hashlib
 import logging
 from typing import Any

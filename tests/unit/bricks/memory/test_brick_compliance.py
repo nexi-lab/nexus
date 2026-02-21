@@ -6,8 +6,6 @@ Validates that the Memory brick:
 3. Satisfies MemoryProtocol via isinstance check
 """
 
-from __future__ import annotations
-
 import ast
 import pathlib
 

@@ -7,8 +7,6 @@ This is the most production-like test — real HTTP server, real network
 requests, real NexusFS with RaftMetadataStore.
 """
 
-from __future__ import annotations
-
 import json
 import uuid
 

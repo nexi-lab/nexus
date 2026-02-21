@@ -3,8 +3,6 @@
 Supports all Google services (Drive, Gmail, Calendar, etc.) via scope selection.
 """
 
-from __future__ import annotations
-
 from typing import Any
 from urllib.parse import urlencode
 

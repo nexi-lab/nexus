@@ -12,8 +12,6 @@ Validates the __getattr__-based proxy dispatch works end-to-end:
 Issue #1289: Protocol + RPC Proxy pattern.
 """
 
-from __future__ import annotations
-
 import os
 import signal
 import socket

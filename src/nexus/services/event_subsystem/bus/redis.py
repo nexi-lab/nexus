@@ -1,7 +1,5 @@
 """RedisEventBus — Redis Pub/Sub implementation of EventBusBase."""
 
-from __future__ import annotations
-
 import asyncio
 import json
 import logging
@@ -56,7 +54,7 @@ class RedisEventBus(EventBusBase):
     def __init__(
         self,
         redis_client: PubSubClientProtocol,
-        record_store: RecordStoreABC | None = None,
+        record_store: "RecordStoreABC | None" = None,
         node_id: str | None = None,
         event_log: Any | None = None,
     ):

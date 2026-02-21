@@ -14,8 +14,6 @@ Performance:
 Related: Issue #919
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 import time
@@ -50,7 +48,7 @@ class DirectoryVisibilityCache:
 
     def __init__(
         self,
-        tiger_cache: TigerCache | None = None,
+        tiger_cache: "TigerCache | None" = None,
         ttl: int = 300,  # 5 minutes default
         max_entries: int = 10000,
     ):

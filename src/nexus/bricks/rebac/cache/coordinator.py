@@ -23,8 +23,6 @@ Also handles:
 Related: Issue #1459 (decomposition), Issue #2179 (rebac-brick), Issue #1244, Issue #1077
 """
 
-from __future__ import annotations
-
 import logging
 import time as time_module
 from datetime import UTC, datetime
@@ -73,25 +71,25 @@ class CacheCoordinator:
 
     def __init__(
         self,
-        l1_cache: ReBACPermissionCache | None = None,
-        boundary_cache: PermissionBoundaryCache | None = None,
-        iterator_cache: IteratorCache | None = None,
-        zone_graph_cache: MutableMapping[str, Any] | None = None,
+        l1_cache: "ReBACPermissionCache | None" = None,
+        boundary_cache: "PermissionBoundaryCache | None" = None,
+        iterator_cache: "IteratorCache | None" = None,
+        zone_graph_cache: "MutableMapping[str, Any] | None" = None,
         *,
         # Database access callbacks (Issue #2179 Step 2.5)
-        connection_factory: Callable[..., Any] | None = None,
-        get_connection: Callable[[], Any] | None = None,
-        close_connection: Callable[[Any], None] | None = None,
-        create_cursor: Callable[[Any], Any] | None = None,
-        fix_sql: Callable[[str], str] | None = None,
+        connection_factory: "Callable[..., Any] | None" = None,
+        get_connection: "Callable[[], Any] | None" = None,
+        close_connection: "Callable[[Any], None] | None" = None,
+        create_cursor: "Callable[[Any], Any] | None" = None,
+        fix_sql: "Callable[[str], str] | None" = None,
         # Eager recompute callbacks
-        get_namespace_cb: Callable[[str], Any] | None = None,
-        compute_permission_cb: Callable[..., bool] | None = None,
-        cache_check_result_cb: Callable[..., None] | None = None,
+        get_namespace_cb: "Callable[[str], Any] | None" = None,
+        compute_permission_cb: "Callable[..., bool] | None" = None,
+        cache_check_result_cb: "Callable[..., None] | None" = None,
         # Stats / cleanup
         cache_ttl_seconds: int = 300,
-        get_tuple_version: Callable[[], int] | None = None,
-        set_tuple_version: Callable[[int], None] | None = None,
+        get_tuple_version: "Callable[[], int] | None" = None,
+        set_tuple_version: "Callable[[int], None] | None" = None,
     ) -> None:
         """Initialize the coordinator.
 
@@ -156,15 +154,15 @@ class CacheCoordinator:
     # Cache setters (for lazy initialization)
     # ------------------------------------------------------------------
 
-    def set_l1_cache(self, cache: ReBACPermissionCache) -> None:
+    def set_l1_cache(self, cache: "ReBACPermissionCache") -> None:
         """Set the L1 permission check cache."""
         self._l1_cache = cache
 
-    def set_boundary_cache(self, cache: PermissionBoundaryCache) -> None:
+    def set_boundary_cache(self, cache: "PermissionBoundaryCache") -> None:
         """Set the boundary cache."""
         self._boundary_cache = cache
 
-    def set_iterator_cache(self, cache: IteratorCache) -> None:
+    def set_iterator_cache(self, cache: "IteratorCache") -> None:
         """Set the iterator cache."""
         self._iterator_cache = cache
 
@@ -179,7 +177,7 @@ class CacheCoordinator:
     def register_boundary_invalidator(
         self,
         callback_id: str,
-        callback: Callable[[str, str, str, str, str], None],
+        callback: "Callable[[str, str, str, str, str], None]",
     ) -> None:
         """Register a boundary cache invalidation callback.
 
@@ -203,7 +201,7 @@ class CacheCoordinator:
     def register_visibility_invalidator(
         self,
         callback_id: str,
-        callback: Callable[[str, str], None],
+        callback: "Callable[[str, str], None]",
     ) -> None:
         """Register a directory visibility cache invalidation callback.
 
@@ -227,7 +225,7 @@ class CacheCoordinator:
     def register_namespace_invalidator(
         self,
         callback_id: str,
-        callback: Callable[[str, str, str], None],
+        callback: "Callable[[str, str, str], None]",
     ) -> None:
         """Register a namespace cache invalidation callback (Issue #1244).
 
@@ -335,9 +333,9 @@ class CacheCoordinator:
 
     def invalidate_for_tuple_change(
         self,
-        subject: Entity,
+        subject: "Entity",
         relation: str,
-        obj: Entity,
+        obj: "Entity",
         zone_id: str | None = None,
         subject_relation: str | None = None,
         expires_at: datetime | None = None,
@@ -546,9 +544,9 @@ class CacheCoordinator:
 
     def _eager_recompute(
         self,
-        subject: Entity,
+        subject: "Entity",
         relation: str,
-        obj: Entity,
+        obj: "Entity",
         zone_id: str | None,
         conn: Any,
     ) -> None:

@@ -15,8 +15,6 @@ References:
     - UCAN Specification: https://ucan.xyz/specification/
 """
 
-from __future__ import annotations
-
 import hashlib
 import json
 import logging

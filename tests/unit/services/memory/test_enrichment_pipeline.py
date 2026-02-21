@@ -7,8 +7,6 @@ Each test covers one enrichment step in isolation, ensuring behavioral equivalen
 after extraction.
 """
 
-from __future__ import annotations
-
 from unittest.mock import patch
 
 import pytest

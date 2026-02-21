@@ -3,8 +3,6 @@
 Tests fork creation, read fall-through, isolation, discard, cleanup, and listing.
 """
 
-from __future__ import annotations
-
 import time
 from datetime import datetime
 from unittest.mock import MagicMock

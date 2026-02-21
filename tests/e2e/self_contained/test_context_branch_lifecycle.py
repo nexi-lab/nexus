@@ -8,8 +8,6 @@ Tests full workflows with real DB + mocked CAS:
 - Cross-session continuity (branch persists across service instances)
 """
 
-from __future__ import annotations
-
 import hashlib
 from datetime import UTC, datetime
 from types import SimpleNamespace

@@ -1,7 +1,5 @@
 """Static API key authentication provider."""
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 
@@ -59,7 +57,7 @@ class StaticAPIKeyAuth(AuthProvider):
         pass
 
     @classmethod
-    def from_config(cls, config: dict[str, Any]) -> StaticAPIKeyAuth:
+    def from_config(cls, config: dict[str, Any]) -> "StaticAPIKeyAuth":
         """Create from configuration dictionary."""
         api_keys = config.get("api_keys", {})
         if not api_keys:

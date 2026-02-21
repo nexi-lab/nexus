@@ -11,8 +11,6 @@ Covers:
 - SearchService: 4 sync + 2 async (direct pass-through)
 """
 
-from __future__ import annotations
-
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 

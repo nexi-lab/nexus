@@ -7,8 +7,6 @@ Tests cover the new features added to the delivery worker:
 - Error classification and retry tracking
 """
 
-from __future__ import annotations
-
 import asyncio
 import tempfile
 import uuid

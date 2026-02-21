@@ -9,8 +9,6 @@ Uses the nexus_server fixture from conftest.py which starts
 Run with: .venv/bin/python3.12 -m pytest tests/e2e/test_range_e2e.py -v -p no:xdist -o "addopts="
 """
 
-from __future__ import annotations
-
 import base64
 
 import httpx

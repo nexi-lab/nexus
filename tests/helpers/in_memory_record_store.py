@@ -5,8 +5,6 @@ lightweight test double that supports real SQL operations without external
 dependencies. Follows the same pattern as InMemoryMetastore.
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 from nexus.storage.record_store import RecordStoreABC

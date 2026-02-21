@@ -5,8 +5,6 @@ get_trajectory, query_trajectories, and permission checks
 using mocked database session and CAS backend.
 """
 
-from __future__ import annotations
-
 from typing import Any
 from unittest.mock import MagicMock
 

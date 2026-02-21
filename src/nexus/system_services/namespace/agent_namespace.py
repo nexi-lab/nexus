@@ -11,8 +11,6 @@ and should not be shared across threads.  The ``AgentNamespaceForkService``
 holds the collection of forks behind a ``threading.Lock``.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -54,7 +52,7 @@ class AgentNamespace:
         agent_id: str,
         zone_id: str | None,
         mode: ForkMode,
-        parent_snapshot: dict[str, MountEntry],
+        parent_snapshot: "dict[str, MountEntry]",
     ) -> None:
         self.fork_id = fork_id
         self.parent_fork_id = parent_fork_id
@@ -68,7 +66,7 @@ class AgentNamespace:
         self._overlay: dict[str, MountEntry] = {}
         self._deleted_keys: set[str] = set()
 
-    def get(self, path: str) -> MountEntry | None:
+    def get(self, path: str) -> "MountEntry | None":
         """Read a single path.
 
         Lookup order: deleted_keys → overlay → parent_snapshot.
@@ -82,7 +80,7 @@ class AgentNamespace:
             return None
         return self._parent_snapshot.get(path)
 
-    def put(self, path: str, entry: MountEntry) -> None:
+    def put(self, path: str, entry: "MountEntry") -> None:
         """Write to the overlay. Never mutates the parent snapshot."""
         self._overlay[path] = entry
         self._deleted_keys.discard(path)
@@ -92,7 +90,7 @@ class AgentNamespace:
         self._deleted_keys.add(path)
         self._overlay.pop(path, None)
 
-    def get_all(self) -> dict[str, MountEntry]:
+    def get_all(self) -> "dict[str, MountEntry]":
         """Materialized view: parent + overlay - deletions.
 
         Returns a new dict (never a reference to internal state).
@@ -120,7 +118,7 @@ class AgentNamespace:
             mount_count=len(self.get_all()),
         )
 
-    def get_overlay(self) -> dict[str, MountEntry]:
+    def get_overlay(self) -> "dict[str, MountEntry]":
         """Return a copy of the overlay dict."""
         return dict(self._overlay)
 
@@ -128,6 +126,6 @@ class AgentNamespace:
         """Return a copy of the tombstone set."""
         return set(self._deleted_keys)
 
-    def get_parent_snapshot(self) -> dict[str, MountEntry]:
+    def get_parent_snapshot(self) -> "dict[str, MountEntry]":
         """Return a copy of the parent snapshot."""
         return dict(self._parent_snapshot)

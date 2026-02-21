@@ -1,7 +1,5 @@
 """Unit tests for OperationResult and OperationWarning."""
 
-from __future__ import annotations
-
 from nexus.core.operation_result import OperationResult, OperationWarning
 
 

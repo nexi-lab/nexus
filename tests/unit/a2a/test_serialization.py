@@ -3,8 +3,6 @@
 TDD-first tests for the extracted serialization module.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock

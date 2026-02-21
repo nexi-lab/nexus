@@ -8,8 +8,6 @@ This module provides utilities for importing data from:
 Issue #165: Migration Tools & Upgrade Paths
 """
 
-from __future__ import annotations
-
 import hashlib
 import importlib
 import os
@@ -116,7 +114,7 @@ class DataMigrator:
         )
     """
 
-    def __init__(self, nx: NexusFilesystem) -> None:
+    def __init__(self, nx: "NexusFilesystem") -> None:
         """Initialize data migrator.
 
         Args:

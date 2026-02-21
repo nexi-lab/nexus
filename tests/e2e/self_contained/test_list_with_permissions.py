@@ -4,8 +4,6 @@ Wire up real SearchService + RaftMetadataStore + OperationContext
 to verify zone-scoped listing with permission filtering.
 """
 
-from __future__ import annotations
-
 import tempfile
 from pathlib import Path
 from typing import Any

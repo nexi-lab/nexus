@@ -4,8 +4,6 @@ Handles Tiger Cache initialization, resource map syncing, and background
 worker lifecycle. Operates independently of NexusFS via dependency injection.
 """
 
-from __future__ import annotations
-
 import logging
 import os
 import sys
@@ -29,7 +27,7 @@ class TigerCacheManager:
     def __init__(
         self,
         rebac_manager: Any,
-        metadata_store: MetastoreABC,
+        metadata_store: "MetastoreABC",
         default_zone_id: str,
         process_queue_fn: Callable | None = None,
         warm_cache_fn: Callable | None = None,

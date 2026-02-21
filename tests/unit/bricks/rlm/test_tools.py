@@ -8,8 +8,6 @@ Tests verify:
 - Output formatting
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, patch
 
 from nexus.bricks.rlm.tools import (

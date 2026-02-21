@@ -7,8 +7,6 @@ these interfaces — never on SQLAlchemy models directly.
 Issue #2436: Move auth/ to bricks/auth/ with Protocol DI.
 """
 
-from __future__ import annotations
-
 from datetime import datetime
 from typing import Protocol, runtime_checkable
 

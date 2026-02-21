@@ -4,8 +4,6 @@ Tests the full zone lifecycle: create → deprovision → verify cleanup.
 Requires a running nexus server (test_app fixture from conftest.py).
 """
 
-from __future__ import annotations
-
 import pytest
 
 

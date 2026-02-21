@@ -4,8 +4,6 @@ Provides functions to convert between the existing Pydantic-based A2A models
 (``nexus.bricks.a2a.models``) and the gRPC protobuf messages (``nexus.bricks.a2a.a2a_pb2``).
 """
 
-from __future__ import annotations
-
 import base64
 from datetime import UTC, datetime
 from typing import Any

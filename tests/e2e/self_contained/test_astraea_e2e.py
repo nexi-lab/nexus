@@ -7,8 +7,6 @@ and agent state event flow without requiring a live PostgreSQL database.
 Run with: uv run pytest tests/integration/scheduler/test_astraea_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 

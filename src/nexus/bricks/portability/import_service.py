@@ -11,8 +11,6 @@ References:
 - Epic #1161: Zone Data Portability
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -36,7 +34,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _create_import_context() -> OperationContext:
+def _create_import_context() -> "OperationContext":
     """Create a system context for import operations.
 
     Import is a privileged system operation that bypasses normal permission checks.
@@ -73,7 +71,7 @@ class ZoneImportService:
 
     def __init__(
         self,
-        nexus_fs: PortabilityFSProtocol,
+        nexus_fs: "PortabilityFSProtocol",
         *,
         file_metadata_class: type[Any] | None = None,
     ):
@@ -601,7 +599,7 @@ class ZoneImportService:
 
 
 def import_zone_bundle(
-    nexus_fs: PortabilityFSProtocol,
+    nexus_fs: "PortabilityFSProtocol",
     bundle_path: Path,
     target_zone_id: str | None = None,
     conflict_mode: ConflictMode = ConflictMode.SKIP,

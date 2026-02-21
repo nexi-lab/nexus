@@ -4,8 +4,6 @@ Encapsulates lazy Memory / MemoryWithPaging instantiation so that
 NexusFS no longer owns the creation logic directly.
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -37,7 +35,7 @@ class MemoryProvider:
     def __init__(
         self,
         *,
-        session_factory: Callable[[], Session],
+        session_factory: "Callable[[], Session]",
         backend: Any,
         entity_registry: Any | None,
         enable_paging: bool,

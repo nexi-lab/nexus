@@ -5,8 +5,6 @@ paths resolve to the **same Python object** — ensuring isinstance checks,
 dict keys, pickling, etc. all work identically regardless of import path.
 """
 
-from __future__ import annotations
-
 
 class TestLLMTypesIdentity:
     """Verify nexus.contracts.llm_types ↔ nexus.llm.message identity."""

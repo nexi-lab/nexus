@@ -13,8 +13,6 @@ Tests cover:
 - Performance: _forward() overhead < 5ms, enqueue < 5ms
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 import logging

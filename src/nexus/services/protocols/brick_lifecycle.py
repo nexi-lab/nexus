@@ -15,8 +15,6 @@ References:
     - Issue #1704: Brick lifecycle manager
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from datetime import timedelta
 from enum import Enum, StrEnum
@@ -56,7 +54,6 @@ EVENT_STOPPED: str = "stopped"
 EVENT_UNMOUNTED: str = "unmounted"
 EVENT_UNREGISTER: str = "unregister"
 EVENT_RESET: str = "reset"
-
 
 # ---------------------------------------------------------------------------
 # State enum

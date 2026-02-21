@@ -22,8 +22,6 @@ Usage:
     >>> wrapped = BackendFactory.wrap(backend, "compress")
 """
 
-from __future__ import annotations
-
 import functools
 import inspect
 import logging
@@ -43,7 +41,7 @@ class BackendFactory:
     """
 
     @staticmethod
-    def create(backend_type: str, config: dict[str, Any], **extra_kwargs: Any) -> Backend:
+    def create(backend_type: str, config: dict[str, Any], **extra_kwargs: Any) -> "Backend":
         """Create a backend instance by type name and config dict.
 
         Uses ConnectorRegistry for all registered connectors. Extra kwargs
@@ -108,7 +106,9 @@ class BackendFactory:
         return frozenset(sig.parameters.keys()) - frozenset({"self"}), accepts_var_kw
 
     @staticmethod
-    def wrap(inner: Backend, wrapper_type: str, config: dict[str, Any] | None = None) -> Backend:
+    def wrap(
+        inner: "Backend", wrapper_type: str, config: dict[str, Any] | None = None
+    ) -> "Backend":
         """Wrap a backend with a single wrapper layer.
 
         Chain explicitly::

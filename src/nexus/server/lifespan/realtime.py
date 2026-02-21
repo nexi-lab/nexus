@@ -3,8 +3,6 @@
 Extracted from fastapi_server.py (#1602).
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import os
@@ -18,7 +16,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-async def startup_realtime(app: FastAPI, svc: LifespanServices) -> list[asyncio.Task]:
+async def startup_realtime(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.Task]:
     """Initialize realtime infrastructure and return background tasks.
 
     Covers:
@@ -41,7 +39,7 @@ async def startup_realtime(app: FastAPI, svc: LifespanServices) -> list[asyncio.
     return bg_tasks
 
 
-async def shutdown_realtime(app: FastAPI, svc: LifespanServices) -> None:
+async def shutdown_realtime(app: "FastAPI", svc: "LifespanServices") -> None:
     """Shutdown realtime infrastructure in reverse order."""
     # Disconnect Lock Manager coordination client (Issue #1186)
     coord_client = svc.coordination_client
@@ -107,7 +105,7 @@ async def shutdown_realtime(app: FastAPI, svc: LifespanServices) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _startup_event_log(app: FastAPI, svc: LifespanServices) -> None:
+def _startup_event_log(app: "FastAPI", svc: "LifespanServices") -> None:
     """Wire factory-created EventLog into app.state (Issue #2195).
 
     Construction moved to ``factory._boot_system_services``.
@@ -119,7 +117,7 @@ def _startup_event_log(app: FastAPI, svc: LifespanServices) -> None:
         logger.info("Event log wired from factory (WAL)")
 
 
-async def _startup_event_bus(app: FastAPI, svc: LifespanServices) -> None:
+async def _startup_event_bus(app: "FastAPI", svc: "LifespanServices") -> None:
     """Start event bus and wire event log for WAL-first persistence (Issue #1397)."""
     if not svc.nexus_fs:
         return
@@ -153,7 +151,7 @@ async def _startup_event_bus(app: FastAPI, svc: LifespanServices) -> None:
         logger.info("Event log wired into EventBus (WAL-first before pub/sub)")
 
 
-async def _startup_websocket(app: FastAPI, svc: LifespanServices) -> None:
+async def _startup_websocket(app: "FastAPI", svc: "LifespanServices") -> None:
     """Initialize WebSocket Manager for real-time events (Issue #1116)."""
     try:
         from nexus.server.websocket import WebSocketManager
@@ -170,7 +168,7 @@ async def _startup_websocket(app: FastAPI, svc: LifespanServices) -> None:
         logger.warning("Failed to start WebSocket manager: %s", e)
 
 
-async def _startup_writeback(app: FastAPI, svc: LifespanServices) -> None:
+async def _startup_writeback(app: "FastAPI", svc: "LifespanServices") -> None:
     """Initialize WriteBack Service for bidirectional sync (Issue #1129/#1130)."""
     write_back_enabled = os.getenv("NEXUS_WRITE_BACK", "").lower() in ("true", "1", "yes")
     if not (write_back_enabled and svc.nexus_fs):
@@ -223,7 +221,7 @@ async def _startup_writeback(app: FastAPI, svc: LifespanServices) -> None:
         logger.warning("Failed to start WriteBack service: %s", e)
 
 
-async def _startup_lock_manager(_app: FastAPI, svc: LifespanServices) -> None:
+async def _startup_lock_manager(_app: "FastAPI", svc: "LifespanServices") -> None:
     """Connect Lock Manager coordination client (Issue #1186)."""
     if not svc.nexus_fs:
         return
@@ -237,7 +235,7 @@ async def _startup_lock_manager(_app: FastAPI, svc: LifespanServices) -> None:
             logger.warning("Failed to connect lock manager coordination client: %s", e)
 
 
-def _startup_exporter_registry(app: FastAPI, _svc: LifespanServices) -> None:
+def _startup_exporter_registry(app: "FastAPI", _svc: "LifespanServices") -> None:
     """Initialize ExporterRegistry and configured exporters (Issue #1138)."""
     app.state.exporter_registry = None
 

@@ -7,8 +7,6 @@ These are the persistence layer. Domain models live in models.py.
 Services convert between these and domain models at the boundary.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 from sqlalchemy import Boolean, DateTime, Float, Index, Integer, String, Text

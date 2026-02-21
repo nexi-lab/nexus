@@ -5,8 +5,6 @@ Performs batch ``DELETE FROM entities WHERE zone_id = ?`` and
 search data when a zone is deprovisioned.
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Callable
 from typing import Any

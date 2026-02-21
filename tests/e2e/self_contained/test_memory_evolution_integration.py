@@ -4,8 +4,6 @@ Tests the full pipeline: MemoryModel → EvolutionDetector → apply_evolution_r
 using in-memory SQLite for isolation.
 """
 
-from __future__ import annotations
-
 import json
 
 import pytest

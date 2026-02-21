@@ -4,8 +4,6 @@ Tier-neutral utility (``nexus.lib``) — zero kernel dependency.
 Also re-exported from ``nexus.services.protocols.rpc`` for convenience.
 """
 
-from __future__ import annotations
-
 from collections.abc import Callable
 from typing import Any, TypeVar
 

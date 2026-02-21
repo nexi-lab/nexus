@@ -16,8 +16,6 @@ Concurrency model (aligned with Linux pipe(7)):
 See: pipe.py for RingBuffer, federation-memo.md §7j
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from typing import TYPE_CHECKING
@@ -64,7 +62,7 @@ class PipeManager:
     memory, like Linux kfifo data in kmalloc'd kernel heap.
     """
 
-    def __init__(self, metastore: MetastoreABC, zone_id: str = ROOT_ZONE_ID) -> None:
+    def __init__(self, metastore: "MetastoreABC", zone_id: str = ROOT_ZONE_ID) -> None:
         self._metastore = metastore
         self._zone_id = zone_id
         self._buffers: dict[str, RingBuffer] = {}

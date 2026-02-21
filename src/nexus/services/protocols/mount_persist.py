@@ -8,8 +8,6 @@ References:
     - docs/design/KERNEL-ARCHITECTURE.md §1 (service DI)
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -30,13 +28,13 @@ class MountPersistProtocol(Protocol):
         owner_user_id: str | None = None,
         zone_id: str | None = None,
         description: str | None = None,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> str: ...
 
     def load_mount(
         self,
         mount_point: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> str: ...
 
     def load_all_mounts(
@@ -48,7 +46,7 @@ class MountPersistProtocol(Protocol):
         self,
         owner_user_id: str | None = None,
         zone_id: str | None = None,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> list[dict[str, Any]]: ...
 
     def delete_saved_mount(self, mount_point: str) -> bool: ...

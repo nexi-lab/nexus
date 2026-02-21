@@ -8,8 +8,6 @@ Validates that the decorator correctly:
 - Handles None data in responses
 """
 
-from __future__ import annotations
-
 import time
 
 import pytest

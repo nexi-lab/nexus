@@ -12,8 +12,6 @@ Ported from v1 with improvements:
 - Generic error messages (don't leak internal details)
 """
 
-from __future__ import annotations
-
 import logging
 import time
 from typing import Any
@@ -25,7 +23,6 @@ from nexus.server.dependencies import require_auth
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/search", tags=["search"])
-
 
 # =============================================================================
 # Dependencies

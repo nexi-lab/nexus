@@ -5,8 +5,6 @@ CacheStoreABC contract. Each implementation must handle all abstract
 methods correctly and return the documented types.
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.bricks.cache.inmemory import InMemoryCacheStore

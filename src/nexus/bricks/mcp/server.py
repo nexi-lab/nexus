@@ -4,8 +4,6 @@ This module implements a Model Context Protocol (MCP) server that exposes
 Nexus functionality to AI agents and tools using the fastmcp framework.
 """
 
-from __future__ import annotations
-
 import contextlib
 import contextvars
 import json

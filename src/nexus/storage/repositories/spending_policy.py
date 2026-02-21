@@ -10,8 +10,6 @@ The service layer works exclusively in Decimal credits.
 Issue #2189: Extracted from bricks/pay/spending_policy_service.py.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import uuid
@@ -141,7 +139,7 @@ class SQLAlchemySpendingPolicyRepository:
     (micro-credits) at this boundary.
     """
 
-    def __init__(self, record_store: RecordStoreABC) -> None:
+    def __init__(self, record_store: "RecordStoreABC") -> None:
         self._session_factory = record_store.async_session_factory
 
     # -- Policy CRUD --

@@ -4,8 +4,6 @@ Provides a default LogEmailSender that logs the verification URL
 to the console (development mode).
 """
 
-from __future__ import annotations
-
 import logging
 
 logger = logging.getLogger(__name__)

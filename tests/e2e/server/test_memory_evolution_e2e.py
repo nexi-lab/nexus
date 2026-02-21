@@ -9,8 +9,6 @@ following the pattern from test_memory_classification_e2e.py.
 Run with: python -m pytest tests/e2e/test_memory_evolution_e2e.py -v
 """
 
-from __future__ import annotations
-
 import json
 import shutil
 import tempfile

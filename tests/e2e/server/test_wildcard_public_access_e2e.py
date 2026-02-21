@@ -10,8 +10,6 @@ Usage:
     uv run pytest tests/e2e/test_wildcard_public_access_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import json
 import uuid
 from datetime import UTC, datetime

@@ -1,7 +1,5 @@
 """LLM metrics tracking with Nexus metadata database integration."""
 
-from __future__ import annotations
-
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -21,7 +19,7 @@ class TokenUsage:
         """Total tokens used."""
         return self.prompt_tokens + self.completion_tokens
 
-    def __add__(self, other: TokenUsage) -> TokenUsage:
+    def __add__(self, other: "TokenUsage") -> "TokenUsage":
         """Add two token usage objects."""
         return TokenUsage(
             prompt_tokens=self.prompt_tokens + other.prompt_tokens,
@@ -50,7 +48,7 @@ class LLMMetrics:
 
     model_name: str
     accumulated_cost: float = 0.0
-    accumulated_token_usage: TokenUsage = field(default_factory=TokenUsage)
+    accumulated_token_usage: "TokenUsage" = field(default_factory=TokenUsage)
     response_latencies: list[ResponseLatency] = field(default_factory=list)
 
     def add_cost(self, cost: float) -> None:
@@ -103,7 +101,7 @@ class LLMMetrics:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> LLMMetrics:
+    def from_dict(cls, data: dict[str, Any]) -> "LLMMetrics":
         """Create metrics from dictionary."""
         token_usage_data = data.get("token_usage", {})
         token_usage = TokenUsage(

@@ -30,8 +30,6 @@ Usage::
     )
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
@@ -115,7 +113,6 @@ ATTR_BATCH_SIZE = "authz.batch.size"
 ATTR_BATCH_ALLOWED = "authz.batch.allowed_count"
 ATTR_BATCH_DENIED = "authz.batch.denied_count"
 ATTR_BATCH_DURATION_MS = "authz.batch.duration_ms"
-
 
 # ---------------------------------------------------------------------------
 # Span helpers — rebac.check

@@ -6,8 +6,6 @@ from ReBACService into the share mixin.
 Issue #2132: Previously 0% test coverage.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any

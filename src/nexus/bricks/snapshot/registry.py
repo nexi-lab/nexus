@@ -9,8 +9,6 @@ The outermost check ``has_active_transactions()`` is a single ``bool(dict)`` cal
 skips all snapshot logic entirely.
 """
 
-from __future__ import annotations
-
 import threading
 
 

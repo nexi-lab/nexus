@@ -10,5 +10,3 @@ here in the brick.
 
 See: https://a2a-protocol.org/latest/specification/
 """
-
-from __future__ import annotations

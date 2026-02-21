@@ -4,8 +4,6 @@ Frozen dataclass controlling which indexing targets are enabled
 and the maximum content size before truncation.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 
 

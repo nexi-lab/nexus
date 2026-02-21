@@ -7,8 +7,6 @@ from here instead of duplicating inline helpers.
 Issue #2138: Protocol return types replace ``Any`` for static type safety.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
@@ -25,7 +23,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
 # =============================================================================
 # Router-facing re-exports (#2138)
 # =============================================================================
@@ -38,7 +35,7 @@ def _get_require_auth() -> Any:
     return require_auth
 
 
-def _get_operation_context(auth_result: dict[str, Any]) -> OperationContext:
+def _get_operation_context(auth_result: dict[str, Any]) -> "OperationContext":
     """Build an OperationContext from *auth_result*."""
     return cast("OperationContext", get_operation_context(auth_result))
 
@@ -56,7 +53,7 @@ class ACEContext(NamedTuple):
     user_id: str
     agent_id: str | None
     zone_id: str
-    context: OperationContext
+    context: "OperationContext"
 
 
 def _get_ace_context(nexus_fs: Any, auth_result: dict[str, Any]) -> ACEContext:

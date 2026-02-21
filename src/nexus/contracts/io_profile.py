@@ -12,8 +12,6 @@ Each mount can specify one of six profiles:
 - ARCHIVE:      Cold storage, all I/O features disabled
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -28,7 +26,7 @@ class IOProfile(StrEnum):
     BALANCED = "balanced"
     ARCHIVE = "archive"
 
-    def config(self) -> IOProfileConfig:
+    def config(self) -> "IOProfileConfig":
         """Return the IOProfileConfig for this profile."""
         return _PROFILE_CONFIGS[self]
 
@@ -60,7 +58,7 @@ class IOProfileConfig:
     write_buffer_sync_mode: bool  # True = sync writes, False = async
 
 
-_PROFILE_CONFIGS: dict[IOProfile, IOProfileConfig] = {
+_PROFILE_CONFIGS: "dict[IOProfile, IOProfileConfig]" = {
     IOProfile.FAST_READ: IOProfileConfig(
         readahead_enabled=True,
         readahead_initial_window=512 * 1024,

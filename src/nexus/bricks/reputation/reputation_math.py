@@ -14,8 +14,6 @@ Time decay:
 - Recent events weigh more than older ones.
 """
 
-from __future__ import annotations
-
 import math
 
 # Default half-life: 30 days in seconds

@@ -1,7 +1,5 @@
 """Tests for OAuth brick protocol conformance."""
 
-from __future__ import annotations
-
 from nexus.bricks.auth.oauth.protocol import OAuthProviderProtocol, OAuthTokenManagerProtocol
 from nexus.bricks.auth.oauth.types import OAuthCredential
 

@@ -12,8 +12,6 @@ provision_user creates), then verify RPC responses return clean paths.
 Uses Starlette TestClient with real NexusFS + RaftMetadataStore.
 """
 
-from __future__ import annotations
-
 import json
 import uuid
 from pathlib import Path

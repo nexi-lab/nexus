@@ -4,8 +4,6 @@ All permission/ReBAC implementation files have moved to ``nexus.bricks.rebac``.
 This package re-exports for backward compatibility.
 """
 
-from __future__ import annotations
-
 import importlib
 import importlib.abc
 import importlib.machinery

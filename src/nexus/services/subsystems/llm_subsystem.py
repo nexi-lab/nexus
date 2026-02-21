@@ -9,8 +9,6 @@ logic; this subsystem adds only the Subsystem ABC contract.
 Constructor takes explicit deps — no ``self`` god-reference to NexusFS.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -33,12 +31,12 @@ class LLMSubsystem(Subsystem):
         llm_service: LLMServiceProtocol implementation with the 4 RPC methods.
     """
 
-    def __init__(self, llm_service: LLMServiceProtocol) -> None:
+    def __init__(self, llm_service: "LLMServiceProtocol") -> None:
         self._service = llm_service
         logger.info("[LLMSubsystem] Initialized")
 
     @property
-    def service(self) -> LLMServiceProtocol:
+    def service(self) -> "LLMServiceProtocol":
         """Access the underlying LLM service."""
         return self._service
 

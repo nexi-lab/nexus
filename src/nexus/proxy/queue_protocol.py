@@ -6,8 +6,6 @@ so ``ProxyBrick`` doesn't depend on the concrete ``OfflineQueue`` (SQLite).
 ``InMemoryQueue`` provides a lightweight test/fallback implementation.
 """
 
-from __future__ import annotations
-
 import hashlib
 import itertools
 import time

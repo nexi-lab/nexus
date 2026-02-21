@@ -5,8 +5,6 @@ across ``anomaly_service.py``, ``governance_graph_service.py``, and
 ``response_service.py``.
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING
 
 from nexus.bricks.governance.approval.types import ApprovalStatus
@@ -27,7 +25,7 @@ if TYPE_CHECKING:
     )
 
 
-def alert_model_to_domain(model: AnomalyAlertModel) -> AnomalyAlert:
+def alert_model_to_domain(model: "AnomalyAlertModel") -> AnomalyAlert:
     """Convert ``AnomalyAlertModel`` to domain ``AnomalyAlert``."""
     details = parse_json_metadata(getattr(model, "details", None))
 
@@ -46,7 +44,7 @@ def alert_model_to_domain(model: AnomalyAlertModel) -> AnomalyAlert:
     )
 
 
-def edge_model_to_domain(model: GovernanceEdgeModel) -> GovernanceEdge:
+def edge_model_to_domain(model: "GovernanceEdgeModel") -> GovernanceEdge:
     """Convert ``GovernanceEdgeModel`` to domain ``GovernanceEdge``."""
     metadata = parse_json_metadata(getattr(model, "metadata_json", None))
 
@@ -62,7 +60,7 @@ def edge_model_to_domain(model: GovernanceEdgeModel) -> GovernanceEdge:
     )
 
 
-def suspension_model_to_domain(model: SuspensionModel) -> SuspensionRecord:
+def suspension_model_to_domain(model: "SuspensionModel") -> SuspensionRecord:
     """Convert ``SuspensionModel`` to domain ``SuspensionRecord``."""
     return SuspensionRecord(
         suspension_id=model.id,

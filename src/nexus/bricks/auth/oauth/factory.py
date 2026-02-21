@@ -3,8 +3,6 @@
 Creates OAuth provider instances from YAML configuration.
 """
 
-from __future__ import annotations
-
 import importlib
 import logging
 import os
@@ -31,7 +29,7 @@ class OAuthProviderFactory:
             self._oauth_config = self._get_default_oauth_config()
 
     @classmethod
-    def from_file(cls, path: Path | str) -> OAuthProviderFactory:
+    def from_file(cls, path: Path | str) -> "OAuthProviderFactory":
         path = Path(path)
         if not path.exists():
             raise FileNotFoundError(f"OAuth config file not found: {path}")
@@ -50,7 +48,7 @@ class OAuthProviderFactory:
         return cls(config=oauth_config)
 
     @classmethod
-    def from_dict(cls, config_dict: dict[str, Any]) -> OAuthProviderFactory:
+    def from_dict(cls, config_dict: dict[str, Any]) -> "OAuthProviderFactory":
         try:
             oauth_config = OAuthConfig(**config_dict)
         except ValidationError as e:

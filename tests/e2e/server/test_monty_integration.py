@@ -8,8 +8,6 @@ Tests cover:
 - Performance benchmarks for Monty vs baseline
 """
 
-from __future__ import annotations
-
 import statistics
 import time
 from types import SimpleNamespace

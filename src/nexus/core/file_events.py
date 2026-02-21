@@ -10,8 +10,6 @@ by higher tiers. FileEvent is a kernel data type, even though it's primarily
 used by service-layer event bus implementations.
 """
 
-from __future__ import annotations
-
 import json
 import uuid
 from dataclasses import dataclass, field
@@ -99,7 +97,7 @@ class FileEvent:
         return json.dumps(self.to_dict())
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> FileEvent:
+    def from_dict(cls, data: dict[str, Any]) -> "FileEvent":
         """Create FileEvent from dictionary."""
         return cls(
             type=data["type"],
@@ -116,7 +114,7 @@ class FileEvent:
         )
 
     @classmethod
-    def from_json(cls, json_str: str | bytes) -> FileEvent:
+    def from_json(cls, json_str: str | bytes) -> "FileEvent":
         """Deserialize from JSON string."""
         if isinstance(json_str, bytes):
             json_str = json_str.decode("utf-8")
@@ -127,7 +125,7 @@ class FileEvent:
         cls,
         change: Any,  # FileChange from services/watch/file_watcher.py (avoid circular import)
         zone_id: str | None = None,
-    ) -> FileEvent:
+    ) -> "FileEvent":
         """Create FileEvent from Layer 1 FileChange.
 
         Maps ChangeType to FileEventType:

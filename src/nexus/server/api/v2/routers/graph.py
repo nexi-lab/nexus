@@ -53,6 +53,14 @@ def _get_nexus_fs(request: Any) -> Any:
     return fs
 
 
+def _get_record_store(request: Any) -> Any:
+    """Get RecordStore from app.state."""
+    store = getattr(request.app.state, "record_store", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail="Record store not available")
+    return store
+
+
 def _get_async_read_session_factory(request: Any) -> Any:
     """Get async read session factory for graph queries."""
     factory = getattr(request.app.state, "async_read_session_factory", None)
@@ -73,12 +81,14 @@ def _get_async_read_session_factory(request: Any) -> Any:
 
 
 @asynccontextmanager
-async def _graph_session(async_session_factory: Any, zone_id: str) -> AsyncIterator[Any]:
+async def _graph_session(
+    record_store: Any, async_session_factory: Any, zone_id: str
+) -> AsyncIterator[Any]:
     """Create a GraphStore from the RecordStoreABC async session factory."""
     from nexus.bricks.search.graph_store import GraphStore
 
     async with async_session_factory() as session:
-        yield GraphStore(session, zone_id=zone_id)
+        yield GraphStore(record_store, session, zone_id=zone_id)
 
 
 def _zone_id_from(nexus_fs: Any) -> str:
@@ -96,12 +106,13 @@ async def get_graph_entity(
     entity_id: str,
     _auth_result: dict[str, Any] = Depends(require_auth),
     nexus_fs: Any = Depends(_get_nexus_fs),
+    record_store: Any = Depends(_get_record_store),
     async_sf: Any = Depends(_get_async_read_session_factory),
 ) -> dict[str, Any]:
     """Get an entity by ID from the knowledge graph."""
     try:
         zone_id = _zone_id_from(nexus_fs)
-        async with _graph_session(async_sf, zone_id) as graph_store:
+        async with _graph_session(record_store, async_sf, zone_id) as graph_store:
             entity = await graph_store.get_entity(entity_id)
             return {"entity": entity.to_dict() if entity else None}
     except Exception as e:
@@ -116,12 +127,13 @@ async def get_graph_neighbors(
     direction: str = Query("both", description="Direction: outgoing, incoming, both"),
     _auth_result: dict[str, Any] = Depends(require_auth),
     nexus_fs: Any = Depends(_get_nexus_fs),
+    record_store: Any = Depends(_get_record_store),
     async_sf: Any = Depends(_get_async_read_session_factory),
 ) -> dict[str, Any]:
     """Get N-hop neighbors of an entity."""
     try:
         zone_id = _zone_id_from(nexus_fs)
-        async with _graph_session(async_sf, zone_id) as graph_store:
+        async with _graph_session(record_store, async_sf, zone_id) as graph_store:
             neighbors = await graph_store.get_neighbors(entity_id, hops=hops, direction=direction)
             return {
                 "neighbors": [
@@ -139,12 +151,13 @@ async def get_graph_subgraph(
     body: SubgraphRequest,
     _auth_result: dict[str, Any] = Depends(require_auth),
     nexus_fs: Any = Depends(_get_nexus_fs),
+    record_store: Any = Depends(_get_record_store),
     async_sf: Any = Depends(_get_async_read_session_factory),
 ) -> dict[str, Any]:
     """Extract a subgraph for GraphRAG context building."""
     try:
         zone_id = _zone_id_from(nexus_fs)
-        async with _graph_session(async_sf, zone_id) as graph_store:
+        async with _graph_session(record_store, async_sf, zone_id) as graph_store:
             subgraph = await graph_store.get_subgraph(body.entity_ids, max_hops=body.max_hops)
             result: dict[str, Any] = subgraph.to_dict()
             return result
@@ -160,12 +173,13 @@ async def search_graph_entities(
     fuzzy: bool = Query(False, description="Search in aliases as well"),
     _auth_result: dict[str, Any] = Depends(require_auth),
     nexus_fs: Any = Depends(_get_nexus_fs),
+    record_store: Any = Depends(_get_record_store),
     async_sf: Any = Depends(_get_async_read_session_factory),
 ) -> dict[str, Any]:
     """Search for entities by name."""
     try:
         zone_id = _zone_id_from(nexus_fs)
-        async with _graph_session(async_sf, zone_id) as graph_store:
+        async with _graph_session(record_store, async_sf, zone_id) as graph_store:
             entity = await graph_store.find_entity(name=name, entity_type=entity_type, fuzzy=fuzzy)
             return {"entity": entity.to_dict() if entity else None}
     except Exception as e:

@@ -671,6 +671,42 @@ class NexusFSBulkMixin:
                 is_new=is_new,
             )
 
+        # Issue #2175: Publish batch events to EventBus using publish_batch()
+        # for single fire-and-forget crossing (Redis pipeline = single RTT).
+        _event_bus = getattr(self, "_event_bus", None)
+        if _event_bus is not None and metadata_list:
+            try:
+                from nexus.core.file_events import FileEvent, FileEventType
+                from nexus.lib.sync_bridge import fire_and_forget
+
+                batch_events = [
+                    FileEvent(
+                        type=FileEventType.FILE_WRITE,
+                        path=meta.path,
+                        zone_id=zone_id or ROOT_ZONE_ID,
+                        size=meta.size,
+                        etag=meta.etag,
+                        agent_id=agent_id,
+                        revision=new_revision,
+                    )
+                    for meta in metadata_list
+                ]
+
+                # Single async dispatch for entire batch
+                if not getattr(_event_bus, "_started", False):
+
+                    async def _start_and_batch() -> None:
+                        await _event_bus.start()
+                        await _event_bus.publish_batch(batch_events)
+
+                    fire_and_forget(_start_and_batch())
+                else:
+                    fire_and_forget(_event_bus.publish_batch(batch_events))
+            except Exception as e:
+                logger.warning(
+                    "write_batch: Failed to publish %d events: %s", len(metadata_list), e
+                )
+
         # Create parent tuples and grant direct_owner for new files
         ctx = context if context is not None else self._default_context
         zone_id_for_perms = ctx.zone_id or "root"

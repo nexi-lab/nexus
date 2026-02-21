@@ -1,9 +1,10 @@
-"""Distributed infrastructure — event bus, lock manager, workflow engine."""
+"""Distributed infrastructure — event bus, event log, lock manager, workflow engine."""
 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+import os
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from nexus.bricks.workflows.protocol import WorkflowProtocol
@@ -13,16 +14,58 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _create_event_log_wal() -> Any:
+    """Create WAL EventLog for durable event persistence (Issue #2175).
+
+    Uses env vars for configuration (same as server lifespan):
+    - NEXUS_WAL_DIR: WAL directory (default: .nexus-data/wal)
+    - NEXUS_WAL_SYNC_MODE: fsync mode (default: "every")
+    - NEXUS_WAL_SEGMENT_SIZE: segment size in bytes (default: 4MB)
+
+    Returns EventLogProtocol instance or None if Rust WAL unavailable.
+    """
+    try:
+        from pathlib import Path
+
+        from nexus.services.event_subsystem.log.factory import create_event_log
+        from nexus.services.event_subsystem.log.protocol import EventLogConfig
+
+        wal_dir = os.getenv("NEXUS_WAL_DIR", ".nexus-data/wal")
+        sync_mode_raw = os.getenv("NEXUS_WAL_SYNC_MODE", "every")
+        sync_mode: Literal["every", "none"] = "every" if sync_mode_raw != "none" else "none"
+        segment_size = int(os.getenv("NEXUS_WAL_SEGMENT_SIZE", str(4 * 1024 * 1024)))
+
+        config = EventLogConfig(
+            wal_dir=Path(wal_dir),
+            segment_size_bytes=segment_size,
+            sync_mode=sync_mode,
+        )
+        event_log = create_event_log(config)
+        if event_log:
+            logger.info(
+                "Event log WAL initialized (wal_dir=%s, sync_mode=%s)",
+                wal_dir,
+                sync_mode,
+            )
+        return event_log
+    except Exception as e:
+        logger.debug("Event log WAL not available: %s", e)
+        return None
+
+
 def _create_distributed_infra(
     dist: DistributedConfig,
     metadata_store: MetastoreABC,
     record_store: Any,
     coordination_url: str | None,
 ) -> tuple[Any, Any]:
-    """Create event bus and lock manager (was NexusFS.__init__ lines 439-521).
+    """Create event bus, event log, and lock manager.
 
     Returns (event_bus, lock_manager) tuple.
     Either event_bus or lock_manager may be None.
+
+    Issue #2175: EventLog WAL is created and wired into EventBus
+    for durable event persistence (WAL-first before pub/sub).
     """
     event_bus: Any = None
     lock_manager: Any = None
@@ -74,6 +117,16 @@ def _create_distributed_infra(
                     "Distributed event bus initialized (dragonfly: %s, SSOT: PostgreSQL)",
                     event_url_resolved,
                 )
+
+        # Issue #2175: Wire EventLog WAL into EventBus for durable persistence.
+        # WAL-first pattern: events are durably appended before pub/sub broadcast.
+        # Server lifespan may re-wire later (same idempotent pattern).
+        if event_bus is not None and dist.enable_events:
+            event_log = _create_event_log_wal()
+            if event_log is not None and hasattr(event_bus, "set_event_log"):
+                event_bus.set_event_log(event_log)
+                logger.info("Event log WAL wired into EventBus (WAL-first durability)")
+
     except ImportError as e:
         logger.warning("Could not initialize distributed event system: %s", e)
 

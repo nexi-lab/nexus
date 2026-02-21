@@ -191,8 +191,13 @@ class TestBootSystemServices:
         }
         assert expected_keys == set(result.keys())
 
-    def test_critical_failure_raises_boot_error(self) -> None:
-        """Critical service failure (rebac_manager) raises BootError."""
+    def test_rebac_failure_degrades_to_noop(self) -> None:
+        """Issue #2440: ReBAC failure degrades to NoOp (not BootError).
+
+        ReBAC was demoted from critical to degradable. When ReBACManager
+        init fails, NoOp stubs are injected and boot continues.
+        """
+        from nexus.contracts.noop_rebac import NoOpReBACManager
         from nexus.factory import _boot_system_services
 
         ctx = _make_mock_ctx()
@@ -200,10 +205,10 @@ class TestBootSystemServices:
             "nexus.bricks.rebac.manager.ReBACManager",
             side_effect=RuntimeError("db connection failed"),
         ):
-            with pytest.raises(BootError) as exc_info:
-                _boot_system_services(ctx)
-            assert "system-critical" in exc_info.value.tier
-            assert "db connection failed" in str(exc_info.value)
+            result = _boot_system_services(ctx)
+        assert isinstance(result["rebac_manager"], NoOpReBACManager)
+        # Critical service (write_observer) should still work
+        assert result["write_observer"] is not None
 
     def test_event_log_present_in_system_keys(self) -> None:
         """Event log should be present in system service dict (Issue #2195)."""
@@ -285,8 +290,11 @@ class TestBootSystemServices:
         assert result["permission_enforcer"] is not None
         assert any("[BOOT:SYSTEM]" in r.message for r in caplog.records)
 
-    def test_critical_services_are_not_none(self) -> None:
-        """All 5 critical services must be non-None on success."""
+    def test_critical_and_rebac_services_are_not_none(self) -> None:
+        """Critical (write_observer) + degradable ReBAC services are non-None.
+
+        Issue #2440: ReBAC services are degradable but always get NoOp fallback.
+        """
         from nexus.factory import _boot_system_services
 
         ctx = _make_mock_ctx()
@@ -299,7 +307,7 @@ class TestBootSystemServices:
             "permission_enforcer",
             "write_observer",
         ):
-            assert result[key] is not None, f"Critical service {key} should not be None"
+            assert result[key] is not None, f"Service {key} should not be None"
 
 
 # ---------------------------------------------------------------------------
@@ -584,7 +592,13 @@ class TestCreateNexusServicesIntegration:
         assert system.permission_enforcer is not None
         assert brick.rebac_circuit_breaker is not None
 
-    def test_critical_failure_propagates_boot_error(self) -> None:
+    def test_rebac_failure_degrades_to_noop_in_full_boot(self) -> None:
+        """Issue #2440: ReBAC failure during full boot degrades to NoOp.
+
+        create_nexus_services() should NOT raise BootError when ReBACManager
+        fails — it falls back to NoOp stubs.
+        """
+        from nexus.contracts.noop_rebac import NoOpReBACManager
         from nexus.factory import create_nexus_services
 
         record_store = MagicMock()
@@ -592,19 +606,18 @@ class TestCreateNexusServicesIntegration:
         record_store.session_factory = MagicMock()
         record_store.database_url = "sqlite:///:memory:"
 
-        with (
-            patch(
-                "nexus.bricks.rebac.manager.ReBACManager",
-                side_effect=RuntimeError("fatal"),
-            ),
-            pytest.raises(BootError),
+        with patch(
+            "nexus.bricks.rebac.manager.ReBACManager",
+            side_effect=RuntimeError("fatal"),
         ):
-            create_nexus_services(
+            kernel, system, brick = create_nexus_services(
                 record_store=record_store,
                 metadata_store=MagicMock(),
                 backend=MagicMock(),
                 router=MagicMock(),
             )
+        assert isinstance(system.rebac_manager, NoOpReBACManager)
+        assert system.write_observer is not None
 
     def test_boot_tags_in_log_output(self, caplog: pytest.LogCaptureFixture) -> None:
         from nexus.factory import create_nexus_services

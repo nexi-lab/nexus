@@ -169,12 +169,15 @@ class KernelServices:
 class SystemServices:
     """Tier 1 (SYSTEM) — critical + degradable services.
 
-    Contains two severity classes (Issue #2193):
+    Contains two severity classes (Issue #2193, #2440):
 
     **Critical** (BootError on failure):
-        rebac_manager, audit_store, entity_registry, permission_enforcer,
-        write_observer — the "Trusted Computing Base outside the kernel"
-        per microkernel terminology (seL4/MINIX 3 pattern).
+        write_observer — the only critical system service.
+
+    **Degradable — ReBAC** (NoOp fallback on failure, Issue #2440):
+        rebac_manager, audit_store, entity_registry, permission_enforcer.
+        When ReBAC is disabled or fails to init, NoOp stubs are injected
+        so the system boots without permission enforcement.
 
     **Degradable** (WARNING + None on failure):
         dir_visibility_cache, hierarchy_manager, deferred_permission_buffer,
@@ -186,23 +189,28 @@ class SystemServices:
 
     Issue #2034: Extracted from the monolithic KernelServices.
     Issue #2193: Absorbed former Tier 0 services per Liedtke's test.
+    Issue #2440: Demoted ReBAC from critical to degradable (Null Object).
     """
 
     # =================================================================
-    # Former-kernel CRITICAL services (BootError on failure)
+    # CRITICAL services (BootError on failure)
     # =================================================================
-
-    # ReBAC permission subsystem — critical (Issue #2133: typed with Protocols)
-    rebac_manager: "ReBACBrickProtocol | None" = None
-    audit_store: Any = None
-    entity_registry: "EntityRegistryProtocol | None" = None
-    permission_enforcer: "PermissionEnforcerProtocol | None" = None
 
     # Write sync — critical
     write_observer: "WriteObserverProtocol | None" = None
 
     # =================================================================
-    # Former-kernel DEGRADABLE services (WARNING + None on failure)
+    # DEGRADABLE — ReBAC (NoOp fallback, Issue #2440)
+    # =================================================================
+
+    # ReBAC permission subsystem (Issue #2133: typed with Protocols)
+    rebac_manager: "ReBACBrickProtocol | None" = None
+    audit_store: Any = None
+    entity_registry: "EntityRegistryProtocol | None" = None
+    permission_enforcer: "PermissionEnforcerProtocol | None" = None
+
+    # =================================================================
+    # DEGRADABLE services (WARNING + None on failure)
     # =================================================================
 
     # ReBAC caching / hierarchy — degradable

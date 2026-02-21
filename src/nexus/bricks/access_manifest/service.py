@@ -23,11 +23,14 @@ from nexus.contracts.access_manifest_types import (
     ManifestEntry,
     ToolPermission,
 )
-from nexus.contracts.credential_types import CredentialStatus
 from nexus.storage.models.access_manifest import AccessManifestModel
 
 # Inlined from nexus.mcp.profiles to avoid cross-brick import (LEGO compliance)
 TOOL_PATH_PREFIX = "/tools/"
+
+# Manifest status constants (avoid coupling to credential_types.CredentialStatus dataclass)
+_STATUS_ACTIVE = "active"
+_STATUS_REVOKED = "revoked"
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -197,7 +200,7 @@ class AccessManifestService:
             zone_id=zone_id,
             name=name,
             entries_json=_entries_to_json(entries),
-            status=CredentialStatus.ACTIVE,
+            status=_STATUS_ACTIVE,
             valid_from=now,
             valid_until=valid_until,
             credential_id=credential_id,
@@ -227,7 +230,7 @@ class AccessManifestService:
             zone_id=zone_id,
             name=name,
             entries=entries,
-            status=CredentialStatus.ACTIVE,
+            status=_STATUS_ACTIVE,
             valid_from=now.isoformat(),
             valid_until=valid_until.isoformat(),
             created_by=created_by,
@@ -301,7 +304,7 @@ class AccessManifestService:
             session.execute(
                 update(AccessManifestModel)
                 .where(AccessManifestModel.manifest_id == manifest_id)
-                .values(status=CredentialStatus.REVOKED, revoked_at=now)
+                .values(status=_STATUS_REVOKED, revoked_at=now)
             )
 
         self._cache.invalidate((agent_id, zone_id))
@@ -356,7 +359,7 @@ class AccessManifestService:
             if zone_id is not None:
                 query = query.where(AccessManifestModel.zone_id == zone_id)
             if active_only:
-                query = query.where(AccessManifestModel.status == CredentialStatus.ACTIVE)
+                query = query.where(AccessManifestModel.status == _STATUS_ACTIVE)
             query = query.order_by(AccessManifestModel.created_at.desc())
             query = query.offset(offset).limit(limit)
 
@@ -378,7 +381,7 @@ class AccessManifestService:
                     select(AccessManifestModel)
                     .where(AccessManifestModel.agent_id == agent_id)
                     .where(AccessManifestModel.zone_id == zone_id)
-                    .where(AccessManifestModel.status == CredentialStatus.ACTIVE)
+                    .where(AccessManifestModel.status == _STATUS_ACTIVE)
                     .order_by(AccessManifestModel.created_at.desc())
                     .limit(1)
                 )

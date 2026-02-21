@@ -120,9 +120,7 @@ class TestAPIKeyStore:
         assert store.get_by_hash("h1") is None
 
     def test_revoke_key_with_zone_filter(self, store):
-        dto = store.create_key(
-            key_hash="h1", user_id="u1", name="k", zone_id="zone-a"
-        )
+        dto = store.create_key(key_hash="h1", user_id="u1", name="k", zone_id="zone-a")
         # Wrong zone should fail
         assert store.revoke_key(dto.key_id, zone_id="zone-b") is False
         # Correct zone should succeed
@@ -199,11 +197,15 @@ class TestOAuthCredentialStore:
 
     def test_list_credentials(self, store):
         store.store_credential(
-            provider="google", user_email="a@b.com", zone_id="z1",
+            provider="google",
+            user_email="a@b.com",
+            zone_id="z1",
             encrypted_access_token="enc-at",
         )
         store.store_credential(
-            provider="github", user_email="a@b.com", zone_id="z1",
+            provider="github",
+            user_email="a@b.com",
+            zone_id="z1",
             encrypted_access_token="enc-at",
         )
         results = store.list_credentials(zone_id="z1")
@@ -211,7 +213,9 @@ class TestOAuthCredentialStore:
 
     def test_list_credentials_excludes_revoked(self, store):
         store.store_credential(
-            provider="google", user_email="a@b.com", zone_id="z1",
+            provider="google",
+            user_email="a@b.com",
+            zone_id="z1",
             encrypted_access_token="enc-at",
         )
         store.revoke_credential("google", "a@b.com", "z1")
@@ -243,9 +247,7 @@ class TestOAuthAccountStore:
         return SQLAlchemyOAuthAccountStore(session_factory)
 
     def test_create_and_get_by_provider(self, store):
-        dto = store.create_account(
-            user_id="u1", provider="google", provider_user_id="gid1"
-        )
+        dto = store.create_account(user_id="u1", provider="google", provider_user_id="gid1")
         assert isinstance(dto, OAuthAccountDTO)
         assert dto.user_id == "u1"
         assert dto.provider == "google"
@@ -258,12 +260,8 @@ class TestOAuthAccountStore:
         assert store.get_by_provider("google", "nonexistent") is None
 
     def test_get_accounts_for_user(self, store):
-        store.create_account(
-            user_id="u1", provider="google", provider_user_id="gid1"
-        )
-        store.create_account(
-            user_id="u1", provider="github", provider_user_id="ghid1"
-        )
+        store.create_account(user_id="u1", provider="google", provider_user_id="gid1")
+        store.create_account(user_id="u1", provider="github", provider_user_id="ghid1")
         accounts = store.get_accounts_for_user("u1")
         assert len(accounts) == 2
 
@@ -271,9 +269,7 @@ class TestOAuthAccountStore:
         assert store.get_accounts_for_user("nobody") == []
 
     def test_delete_account(self, store):
-        dto = store.create_account(
-            user_id="u1", provider="google", provider_user_id="gid1"
-        )
+        dto = store.create_account(user_id="u1", provider="google", provider_user_id="gid1")
         assert store.delete_account(dto.id) is True
         assert store.get_by_provider("google", "gid1") is None
 
@@ -281,9 +277,7 @@ class TestOAuthAccountStore:
         assert store.delete_account("nonexistent") is False
 
     def test_update_last_used(self, store):
-        dto = store.create_account(
-            user_id="u1", provider="google", provider_user_id="gid1"
-        )
+        dto = store.create_account(user_id="u1", provider="google", provider_user_id="gid1")
         # Should not raise
         store.update_last_used(dto.id)
 

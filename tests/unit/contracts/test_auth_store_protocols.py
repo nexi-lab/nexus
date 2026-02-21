@@ -110,16 +110,12 @@ class TestOAuthCredentialDTO:
 
 class TestOAuthAccountDTO:
     def test_frozen(self):
-        dto = OAuthAccountDTO(
-            id="oa1", user_id="u1", provider="google", provider_user_id="gid"
-        )
+        dto = OAuthAccountDTO(id="oa1", user_id="u1", provider="google", provider_user_id="gid")
         with pytest.raises(AttributeError):
             dto.id = "oa2"  # type: ignore[misc]
 
     def test_defaults(self):
-        dto = OAuthAccountDTO(
-            id="oa1", user_id="u1", provider="google", provider_user_id="gid"
-        )
+        dto = OAuthAccountDTO(id="oa1", user_id="u1", provider="google", provider_user_id="gid")
         assert dto.provider_email is None
         assert dto.display_name is None
         assert dto.last_used_at is None

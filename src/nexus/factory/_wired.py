@@ -432,6 +432,44 @@ def _boot_wired_services(
     except Exception as exc:
         logger.debug("[BOOT:WIRED] MemoryProvider unavailable: %s", exc)
 
+    # --- TimeTravelService: historical operation-point queries (Issue #882) ---
+    time_travel_service: Any = None
+    if _nx_session_factory is not None:
+        try:
+            from nexus.services.versioning.time_travel_service import TimeTravelService
+
+            time_travel_service = TimeTravelService(
+                session_factory=_nx_session_factory,
+                backend=nx.backend,
+                default_zone_id=getattr(_nx_default_context, "zone_id", None),
+            )
+            logger.debug("[BOOT:WIRED] TimeTravelService created")
+        except Exception as exc:
+            logger.debug("[BOOT:WIRED] TimeTravelService unavailable: %s", exc)
+
+    # --- OperationsService: audit trail queries + undo (Issue #882) ---
+    operations_service: Any = None
+    if _nx_session_factory is not None:
+        try:
+            from nexus.services.versioning.operation_undo_service import OperationUndoService
+            from nexus.services.versioning.operations_service import OperationsService
+
+            _undo_service = OperationUndoService(
+                router=kernel_services.router,
+                write_fn=nx.write,
+                delete_fn=nx.delete,
+                rename_fn=nx.rename,
+                exists_fn=nx.exists,
+                fallback_backend=getattr(nx, "backend", None),
+            )
+            operations_service = OperationsService(
+                session_factory=_nx_session_factory,
+                undo_service=_undo_service,
+            )
+            logger.debug("[BOOT:WIRED] OperationsService created")
+        except Exception as exc:
+            logger.debug("[BOOT:WIRED] OperationsService unavailable: %s", exc)
+
     result = _WiredServices(
         rebac_service=rebac_service,
         mount_service=mount_service,
@@ -450,6 +488,8 @@ def _boot_wired_services(
         share_link_service=share_link_service,
         events_service=events_service,
         task_queue_service=brick_services.task_queue_service,
+        time_travel_service=time_travel_service,
+        operations_service=operations_service,
         workspace_rpc_service=workspace_rpc_service,
         agent_rpc_service=agent_rpc_service,
         user_provisioning_service=user_provisioning_service,

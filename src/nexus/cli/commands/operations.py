@@ -4,7 +4,7 @@ CAS-backed operation logging for all filesystem operations.
 Provides audit trail, undo capability, and debugging support.
 """
 
-from typing import Any
+from __future__ import annotations
 
 import click
 from rich.table import Table
@@ -67,29 +67,13 @@ def ops_diff(
     try:
         nx = get_filesystem(backend_config)
 
-        # Import at function level to avoid scoping issues
-        try:
-            from nexus.core.nexus_fs import NexusFS
-            from nexus.storage.time_travel import TimeTravelReader
-        except ImportError as e:
-            console.print(f"[red]Error:[/red] Failed to import time-travel modules: {e}")
-            nx.close()
-            return
-
-        if not isinstance(nx, NexusFS):
+        time_travel = getattr(nx, "time_travel_service", None)
+        if time_travel is None:
             console.print("[red]Error:[/red] Time-travel is only supported with local NexusFS")
             nx.close()
             return
 
-        # Create time-travel reader with a session
-        with nx.SessionLocal() as session:
-            time_travel = TimeTravelReader(session, nx.backend)
-
-            # Get diff between operations
-            diff_result = time_travel.diff_operations(
-                path, operation_1, operation_2, zone_id=nx._default_context.zone_id
-            )
-
+        diff_result = time_travel.diff_operations(path, operation_1, operation_2)
         nx.close()
 
         # Display results
@@ -207,64 +191,56 @@ def ops_log(
     try:
         nx = get_filesystem(backend_config)
 
-        # Access operation logger through metadata store
-        from nexus.storage.operation_logger import OperationLogger
+        ops_service = getattr(nx, "operations_service", None)
+        if ops_service is None:
+            raise click.ClickException("Operation log requires a local NexusFS instance")
 
-        session_factory = getattr(nx, "SessionLocal", None)
-        if session_factory is None:
-            raise click.ClickException(
-                "Operation log requires a local NexusFS instance with SessionLocal"
+        operations = ops_service.list_operations(
+            zone_id=zone,
+            agent_id=agent,
+            operation_type=op_type,
+            path=path,
+            status=status,
+            limit=limit,
+        )
+
+        if not operations:
+            console.print("[yellow]No operations found[/yellow]")
+            nx.close()
+            return
+
+        # Display table
+        table = Table(title="Operation Log")
+        table.add_column("Time", style="cyan")
+        table.add_column("Type", style="yellow")
+        table.add_column("Path", style="green")
+        table.add_column("Agent", style="blue")
+        table.add_column("Status")
+        table.add_column("Op ID", style="dim")
+
+        for op in operations:
+            status_display = "[green]✓[/green]" if op["status"] == "success" else "[red]✗[/red]"
+            created_at = op["created_at"].strftime("%Y-%m-%d %H:%M:%S")
+
+            # Truncate operation ID for display
+            op_id_short = op["operation_id"][:8]
+
+            # For rename operations, show both paths
+            path_display = op["path"]
+            if op["operation_type"] == "rename" and op["new_path"]:
+                path_display = f"{op['path']} → {op['new_path']}"
+
+            table.add_row(
+                created_at,
+                op["operation_type"],
+                path_display,
+                op["agent_id"] or "-",
+                status_display,
+                op_id_short,
             )
-        with session_factory() as session:
-            logger = OperationLogger(session)
 
-            # List operations with filters
-            operations = logger.list_operations(
-                zone_id=zone,
-                agent_id=agent,
-                operation_type=op_type,
-                path=path,
-                status=status,
-                limit=limit,
-            )
-
-            if not operations:
-                console.print("[yellow]No operations found[/yellow]")
-                nx.close()
-                return
-
-            # Display table
-            table = Table(title="Operation Log")
-            table.add_column("Time", style="cyan")
-            table.add_column("Type", style="yellow")
-            table.add_column("Path", style="green")
-            table.add_column("Agent", style="blue")
-            table.add_column("Status")
-            table.add_column("Op ID", style="dim")
-
-            for op in operations:
-                status_display = "[green]✓[/green]" if op.status == "success" else "[red]✗[/red]"
-                created_at = op.created_at.strftime("%Y-%m-%d %H:%M:%S")
-
-                # Truncate operation ID for display
-                op_id_short = op.operation_id[:8]
-
-                # For rename operations, show both paths
-                path_display = op.path
-                if op.operation_type == "rename" and op.new_path:
-                    path_display = f"{op.path} → {op.new_path}"
-
-                table.add_row(
-                    created_at,
-                    op.operation_type,
-                    path_display,
-                    op.agent_id or "-",
-                    status_display,
-                    op_id_short,
-                )
-
-            console.print(table)
-            console.print(f"\n[dim]Showing {len(operations)} operations[/dim]")
+        console.print(table)
+        console.print(f"\n[dim]Showing {len(operations)} operations[/dim]")
 
         nx.close()
 
@@ -289,63 +265,45 @@ def undo(agent: str | None, yes: bool, backend_config: BackendConfig) -> None:
     try:
         nx = get_filesystem(backend_config)
 
-        from nexus.storage.operation_logger import OperationLogger
+        ops_service = getattr(nx, "operations_service", None)
+        if ops_service is None:
+            raise click.ClickException("Undo requires a local NexusFS instance")
 
-        session_factory = getattr(nx, "SessionLocal", None)
-        if session_factory is None:
-            raise click.ClickException("Undo requires a local NexusFS instance with SessionLocal")
-        with session_factory() as session:
-            logger = OperationLogger(session)
+        last_op = ops_service.get_last_operation(
+            agent_id=agent,
+            status="success",
+        )
 
-            # Get last successful operation
-            last_op = logger.get_last_operation(
-                agent_id=agent,
-                status="success",
-            )
+        if not last_op:
+            console.print("[yellow]No operations to undo[/yellow]")
+            nx.close()
+            return
 
-            if not last_op:
-                console.print("[yellow]No operations to undo[/yellow]")
+        # Show operation details
+        console.print("\n[bold]Last Operation:[/bold]")
+        console.print(f"  Type: {last_op['operation_type']}")
+        console.print(f"  Path: {last_op['path']}")
+        if last_op["new_path"]:
+            console.print(f"  New Path: {last_op['new_path']}")
+        console.print(f"  Time: {last_op['created_at'].strftime('%Y-%m-%d %H:%M:%S')}")
+        console.print(f"  Agent: {last_op['agent_id'] or 'N/A'}")
+
+        if not yes:
+            confirmed = click.confirm("\nUndo this operation?")
+            if not confirmed:
+                console.print("Cancelled")
                 nx.close()
                 return
 
-            # Show operation details
-            console.print("\n[bold]Last Operation:[/bold]")
-            console.print(f"  Type: {last_op.operation_type}")
-            console.print(f"  Path: {last_op.path}")
-            if last_op.new_path:
-                console.print(f"  New Path: {last_op.new_path}")
-            console.print(f"  Time: {last_op.created_at.strftime('%Y-%m-%d %H:%M:%S')}")
-            console.print(f"  Agent: {last_op.agent_id or 'N/A'}")
+        # Perform undo via service layer (S24: Operations Undo)
+        result = ops_service.undo_by_id(last_op["operation_id"])
 
-            if not yes:
-                confirmed = click.confirm("\nUndo this operation?")
-                if not confirmed:
-                    console.print("Cancelled")
-                    nx.close()
-                    return
+        if result["success"]:
+            console.print(f"  {result['message']}")
+        else:
+            console.print(f"  [yellow]Warning: {result['message']}[/yellow]")
 
-            # Perform undo via service layer (S24: Operations Undo)
-            from nexus.services.versioning.operation_undo_service import OperationUndoService
-
-            # Bind to Any — undo needs concrete NexusFS attrs (router, backend)
-            # not on the NexusFilesystem protocol.
-            _nx: Any = nx
-            undo_service = OperationUndoService(
-                router=_nx.router,
-                write_fn=nx.write,
-                delete_fn=nx.delete,
-                rename_fn=nx.rename,
-                exists_fn=nx.exists,
-                fallback_backend=getattr(nx, "backend", None),
-            )
-            result = undo_service.undo_operation(last_op)
-
-            if result.success:
-                console.print(f"  {result.message}")
-            else:
-                console.print(f"  [yellow]Warning: {result.message}[/yellow]")
-
-            console.print(f"\n[green]✓[/green] Undid operation: {last_op.operation_type}")
+        console.print(f"\n[green]✓[/green] Undid operation: {last_op['operation_type']}")
 
         nx.close()
 

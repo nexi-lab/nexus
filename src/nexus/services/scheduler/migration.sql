@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS scheduled_tasks (
     idempotency_key TEXT UNIQUE,
 
     -- Multi-tenancy
-    zone_id TEXT NOT NULL DEFAULT 'default',
+    zone_id TEXT NOT NULL DEFAULT 'root',
 
     -- Error tracking
     error_message TEXT

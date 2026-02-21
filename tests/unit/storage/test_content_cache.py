@@ -332,3 +332,122 @@ class TestContentCacheEdgeCases:
         # May or may not be compressed depending on actual ratio
         stats = cache.get_stats()
         assert stats["entries"] == 1
+
+
+class TestContentCachePriority:
+    """Test priority-aware eviction (Issue #2427)."""
+
+    def _make_cache(self, size_bytes: int) -> ContentCache:
+        """Create a cache with exact byte capacity (no compression)."""
+        cache = ContentCache(max_size_mb=1, compression_threshold=999_999_999)
+        cache._max_size_bytes = size_bytes
+        return cache
+
+    def test_priority_stored_and_retrieved(self):
+        """put with priority stores it; get still returns correct bytes."""
+        cache = self._make_cache(1024)
+        cache.put("h1", b"data", priority=3)
+        assert cache.get("h1") == b"data"
+
+    def test_low_priority_evicted_first(self):
+        """Fill cache, verify priority=0 evicted before priority=3."""
+        cache = self._make_cache(20)  # fits 2x 10-byte entries
+
+        cache.put("low", b"A" * 10, priority=0)
+        cache.put("high", b"B" * 10, priority=3)
+        # Cache is full (20/20). Adding another entry forces eviction.
+        cache.put("new", b"C" * 10, priority=2)
+
+        # low (priority=0) should be evicted, high (priority=3) survives
+        assert cache.get("low") is None
+        assert cache.get("high") == b"B" * 10
+        assert cache.get("new") == b"C" * 10
+
+    def test_same_priority_uses_lru(self):
+        """Same priority falls back to LRU order."""
+        cache = self._make_cache(20)
+
+        cache.put("first", b"A" * 10, priority=1)
+        cache.put("second", b"B" * 10, priority=1)
+        # Both are priority=1. "first" is LRU.
+        cache.put("third", b"C" * 10, priority=1)
+
+        # "first" (oldest, same priority) should be evicted
+        assert cache.get("first") is None
+        assert cache.get("second") == b"B" * 10
+        assert cache.get("third") == b"C" * 10
+
+    def test_priority_upgrade_on_reput(self):
+        """Re-putting same hash with higher priority upgrades it."""
+        cache = self._make_cache(20)  # fits exactly 2 entries
+
+        cache.put("h1", b"A" * 10, priority=0)
+        cache.put("h2", b"B" * 10, priority=0)
+        # Upgrade h1 to priority=3 (no eviction, same hash updates in-place)
+        cache.put("h1", b"A" * 10, priority=3)
+        # Now force eviction — cache is full (20/20)
+        cache.put("h3", b"C" * 10, priority=2)
+
+        # h2 (priority=0) should be evicted, h1 (upgraded to 3) should survive
+        assert cache.get("h2") is None
+        assert cache.get("h1") == b"A" * 10
+        assert cache.get("h3") == b"C" * 10
+
+    def test_all_high_priority_still_evicts(self):
+        """Full cache with all priority=3 eventually evicts LRU."""
+        cache = self._make_cache(20)
+
+        cache.put("a", b"A" * 10, priority=3)
+        cache.put("b", b"B" * 10, priority=3)
+        # All priority=3: pass 1 finds nothing, pass 2 evicts LRU
+        cache.put("c", b"C" * 10, priority=3)
+
+        # "a" is LRU, should be evicted by fallback pass
+        assert cache.get("a") is None
+        assert cache.get("b") == b"B" * 10
+        assert cache.get("c") == b"C" * 10
+
+    def test_mixed_priority_eviction_order(self):
+        """Mixed priorities evict in correct order: low first, then LRU."""
+        cache = self._make_cache(40)
+
+        cache.put("archive", b"A" * 10, priority=0)  # lowest
+        cache.put("write", b"B" * 10, priority=1)  # normal
+        cache.put("edit", b"C" * 10, priority=2)  # elevated
+        cache.put("read", b"D" * 10, priority=3)  # highest
+        # Full at 40/40. Need to evict 10 bytes for new entry.
+        cache.put("new", b"E" * 10, priority=1)
+
+        # archive (priority=0) evicted first
+        assert cache.get("archive") is None
+        assert cache.get("write") == b"B" * 10
+        assert cache.get("edit") == b"C" * 10
+        assert cache.get("read") == b"D" * 10
+        assert cache.get("new") == b"E" * 10
+
+    def test_stats_include_priority_distribution(self):
+        """get_stats() reports priority breakdown."""
+        cache = self._make_cache(1024)
+
+        cache.put("a", b"A", priority=0)
+        cache.put("b", b"B", priority=1)
+        cache.put("c", b"C", priority=2)
+        cache.put("d", b"D", priority=3)
+        cache.put("e", b"E", priority=1)
+
+        stats = cache.get_stats()
+        dist = stats["priority_distribution"]
+        assert dist == {0: 1, 1: 2, 2: 1, 3: 1}
+
+    def test_default_priority_is_zero(self):
+        """put() without priority uses 0 (backward compat)."""
+        cache = self._make_cache(20)
+
+        cache.put("old_api", b"A" * 10)  # no priority kwarg
+        cache.put("high", b"B" * 10, priority=3)
+        # Force eviction
+        cache.put("new", b"C" * 10, priority=1)
+
+        # old_api (default priority=0) should be evicted first
+        assert cache.get("old_api") is None
+        assert cache.get("high") == b"B" * 10

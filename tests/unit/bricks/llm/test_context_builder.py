@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from nexus.services.llm_context_builder import AdaptiveRetrievalConfig, ContextBuilder
+from nexus.services.llm.llm_context_builder import AdaptiveRetrievalConfig, ContextBuilder
 
 
 @dataclass
@@ -337,3 +337,13 @@ class TestDynamicKCalculation:
         assert "k_base" in params
         assert "complexity_score" in params
         assert params["k_base"] == 10
+
+
+class TestContextBuilderSatisfiesAdaptiveKProtocol:
+    """AdaptiveKProtocol conformance for ContextBuilder (moved from bricks test)."""
+
+    def test_context_builder_satisfies_protocol(self) -> None:
+        from nexus.services.protocols.adaptive_k import AdaptiveKProtocol
+
+        builder = ContextBuilder()
+        assert isinstance(builder, AdaptiveKProtocol)

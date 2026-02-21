@@ -30,7 +30,7 @@ from nexus.services.oauth.oauth_service import OAuthService
 from nexus.services.rebac.rebac_service import ReBACService
 from nexus.services.scheduler import SchedulerService
 from nexus.services.search.search_service import SearchService
-from nexus.services.skills.skill_service import SkillService  # backward compat shim (Issue #2035)
+from nexus.services.skills.skill_service import SkillService
 from nexus.services.subsystem import Subsystem
 from nexus.services.versioning.version_service import VersionService
 

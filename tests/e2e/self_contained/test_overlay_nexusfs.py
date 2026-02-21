@@ -20,7 +20,7 @@ from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.contracts.workspace_manifest import ManifestEntry, WorkspaceManifest
 from nexus.core.metadata import FileMetadata
 from nexus.core.metastore import CasResult, MetastoreABC
-from nexus.services.overlay_resolver import OverlayResolver
+from nexus.system_services.workspace.overlay_resolver import OverlayResolver
 
 
 class InMemoryMetastore(MetastoreABC):

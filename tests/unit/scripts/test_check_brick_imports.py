@@ -66,7 +66,7 @@ class TestCheckFile:
 
     def test_detects_from_nexus_services_import(self, brick_file):
         path = brick_file("""\
-            from nexus.services.search_service import SearchService
+            from nexus.services.search.search_service import SearchService
         """)
         violations = check_file(path)
         assert len(violations) == 1
@@ -74,7 +74,7 @@ class TestCheckFile:
 
     def test_detects_import_nexus_services(self, brick_file):
         path = brick_file("""\
-            import nexus.services.rebac_service
+            import nexus.services.rebac.rebac_service
         """)
         violations = check_file(path)
         assert len(violations) == 1
@@ -103,14 +103,14 @@ class TestCheckFile:
     def test_skips_comments(self, brick_file):
         path = brick_file("""\
             # from nexus.core.nexus_fs import NexusFS
-            # import nexus.services.search_service
+            # import nexus.services.search.search_service
         """)
         assert check_file(path) == []
 
     def test_skips_string_literals(self, brick_file):
         path = brick_file("""\
             "from nexus.core.nexus_fs import NexusFS"
-            'import nexus.services.search_service'
+            'import nexus.services.search.search_service'
         """)
         assert check_file(path) == []
 
@@ -124,7 +124,7 @@ class TestCheckFile:
         path = brick_file("""\
             from nexus.core.nexus_fs import NexusFS
             from nexus.core.protocols.vfs_router import VFSRouterProtocol
-            from nexus.services.search_service import SearchService
+            from nexus.services.search.search_service import SearchService
             import os
         """)
         violations = check_file(path)

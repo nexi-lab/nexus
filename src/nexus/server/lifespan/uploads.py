@@ -33,7 +33,7 @@ async def startup_uploads(app: FastAPI, svc: LifespanServices) -> list[asyncio.T
     elif svc.nexus_fs and svc.record_store is not None:
         # Fallback: create from env vars when factory didn't provide the service
         try:
-            from nexus.services.chunked_upload_service import (
+            from nexus.services.upload.chunked_upload_service import (
                 ChunkedUploadConfig,
                 ChunkedUploadService,
             )

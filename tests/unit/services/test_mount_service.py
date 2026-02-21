@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from nexus.contracts.types import OperationContext
-from nexus.services.mount_service import MountService
+from nexus.services.mount.mount_service import MountService
 
 # =============================================================================
 # Fixtures

@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from nexus.contracts.types import OperationContext
-from nexus.services.rebac_service import ReBACService
+from nexus.services.rebac.rebac_service import ReBACService
 
 # =========================================================================
 # Fixtures

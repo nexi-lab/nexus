@@ -1,8 +1,4 @@
-"""Agent Delegation API — backward-compatibility re-exports (Issue #2131).
-
-The delegation brick has been moved to ``nexus.bricks.delegation``.
-This module re-exports the public API for backward compatibility.
-"""
+"""Agent Delegation API — public re-exports from ``nexus.bricks.delegation`` (Issue #2131)."""
 
 from nexus.bricks.delegation.derivation import GrantSpec as GrantSpec
 from nexus.bricks.delegation.derivation import derive_grants as derive_grants

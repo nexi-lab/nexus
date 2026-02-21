@@ -130,7 +130,7 @@ async def create_semantic_search_components(
     # --- ContextBuilder (optional, Issue #2036) ---
     _context_builder = None
     try:
-        from nexus.services.llm_context_builder import (
+        from nexus.services.llm.llm_context_builder import (
             AdaptiveRetrievalConfig,
             ContextBuilder,
         )

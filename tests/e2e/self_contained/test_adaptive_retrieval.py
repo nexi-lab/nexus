@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.services.llm_context_builder import AdaptiveRetrievalConfig, ContextBuilder
+from nexus.services.llm.llm_context_builder import AdaptiveRetrievalConfig, ContextBuilder
 
 # Configure logging to verify adaptive k behavior
 logging.basicConfig(level=logging.DEBUG)

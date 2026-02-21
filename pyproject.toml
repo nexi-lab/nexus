@@ -595,7 +595,6 @@ module = [
     "nexus.bricks.mcp.middleware",
     "nexus.bricks.mcp.oauth_mappings",
     "nexus.bricks.mcp.profiles",
-    "nexus.bricks.mcp.server",
     "nexus.fuse.operations",
     "nexus.fuse.ops._shared",
     "nexus.bricks.skills.parser",
@@ -605,6 +604,11 @@ module = [
 ]
 # yaml/requests/cachetools stubs handled at project level
 disable_error_code = ["import-untyped"]
+
+[[tool.mypy.overrides]]
+module = ["nexus.bricks.mcp.server"]
+# cachetools stubs may or may not be installed; suppress both directions
+disable_error_code = ["import-untyped", "no-any-return", "redundant-cast"]
 
 [[tool.mypy.overrides]]
 module = [

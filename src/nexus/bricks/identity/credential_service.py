@@ -25,16 +25,16 @@ from typing import TYPE_CHECKING, Any, cast
 from sqlalchemy import select, update
 from sqlalchemy.engine import CursorResult
 
-from nexus.contracts.credential_types import (
-    Capability,
-    CredentialClaims,
-    CredentialStatus,
-)
 from nexus.bricks.identity.credentials import (
     CapabilityIssuer,
     CapabilityVerifier,
     DelegationChain,
     serialize_capabilities_json,
+)
+from nexus.contracts.credential_types import (
+    Capability,
+    CredentialClaims,
+    CredentialStatus,
 )
 from nexus.storage.models.identity import AgentCredentialModel
 

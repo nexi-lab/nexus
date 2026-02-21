@@ -24,6 +24,8 @@ from typing import Any
 
 import pytest
 
+from nexus.bricks.identity.crypto import IdentityCrypto
+from nexus.bricks.identity.key_service import KeyService
 from nexus.bricks.ipc.conventions import dead_letter_path, inbox_path, processed_path
 from nexus.bricks.ipc.delivery import MessageProcessor, MessageSender
 from nexus.bricks.ipc.envelope import MessageEnvelope, MessageType
@@ -32,8 +34,6 @@ from nexus.bricks.ipc.signing import MessageSigner, MessageVerifier, SigningMode
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.core.metadata import FileMetadata, PaginatedResult
 from nexus.core.metastore import MetastoreABC
-from nexus.bricks.identity.crypto import IdentityCrypto
-from nexus.bricks.identity.key_service import KeyService
 from nexus.storage.models import Base
 from nexus.storage.zone_settings import ZoneSettings
 from tests.unit.bricks.ipc.fakes import InMemoryStorageDriver

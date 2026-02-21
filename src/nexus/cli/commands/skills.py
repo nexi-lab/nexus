@@ -1598,7 +1598,9 @@ def skills_mcp_mount(
 
                 # Register OAuth provider for automatic token refresh
                 if oauth_provider == "google":
-                    from nexus.bricks.auth.oauth.base_provider import BaseOAuthProvider as OAuthProvider
+                    from nexus.bricks.auth.oauth.base_provider import (
+                        BaseOAuthProvider as OAuthProvider,
+                    )
                     from nexus.bricks.auth.oauth.providers.google import GoogleOAuthProvider
 
                     client_id = os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_ID")

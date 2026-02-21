@@ -1,5 +1,5 @@
 """Tests for SchedulerProtocol, AgentRequest, InMemoryScheduler,
-and CreditsReservationProtocol (Issues #1383, #2360)."""
+CreditsReservationProtocol, and classify_agent_request (Issues #1383, #2360)."""
 
 from __future__ import annotations
 
@@ -9,11 +9,13 @@ from decimal import Decimal
 import pytest
 
 from nexus.services.protocols.scheduler import (
+    _MAX_COMPLETED,
     AgentRequest,
     CreditsReservationProtocol,
     InMemoryScheduler,
     NullCreditsReservation,
     SchedulerProtocol,
+    classify_agent_request,
 )
 
 # ---------------------------------------------------------------------------
@@ -295,3 +297,100 @@ class TestNullCreditsReservation:
     async def test_release_reservation_is_noop(self) -> None:
         null = NullCreditsReservation()
         await null.release_reservation("any-id")  # Should not raise
+
+
+# ---------------------------------------------------------------------------
+# classify_agent_request tests (Issue #2360 — DRY fix)
+# ---------------------------------------------------------------------------
+
+
+class TestClassifyAgentRequest:
+    """Verify classify_agent_request shared helper."""
+
+    def test_normal_priority_maps_to_batch(self) -> None:
+        """PriorityTier.NORMAL (2) → 'batch'."""
+        req = AgentRequest(agent_id="a1", zone_id=None, priority=2)
+        assert classify_agent_request(req) == "batch"
+
+    def test_critical_priority_maps_to_interactive(self) -> None:
+        """PriorityTier.CRITICAL (0) → 'interactive'."""
+        req = AgentRequest(agent_id="a1", zone_id=None, priority=0)
+        assert classify_agent_request(req) == "interactive"
+
+    def test_low_priority_maps_to_background(self) -> None:
+        """PriorityTier.LOW (3) → 'background'."""
+        req = AgentRequest(agent_id="a1", zone_id=None, priority=3)
+        assert classify_agent_request(req) == "background"
+
+    def test_io_wait_promotes_background_to_batch(self) -> None:
+        """BACKGROUND + IO_WAIT → 'batch' (IO promotion)."""
+        req = AgentRequest(agent_id="a1", zone_id=None, priority=3, request_state="io_wait")
+        assert classify_agent_request(req) == "batch"
+
+    def test_invalid_priority_defaults_to_normal(self) -> None:
+        """Unknown priority value → NORMAL → 'batch'."""
+        req = AgentRequest(agent_id="a1", zone_id=None, priority=999)
+        assert classify_agent_request(req) == "batch"
+
+    def test_invalid_request_state_defaults_to_pending(self) -> None:
+        """Unknown request_state → PENDING (no promotion)."""
+        req = AgentRequest(agent_id="a1", zone_id=None, priority=3, request_state="unknown_state")
+        assert classify_agent_request(req) == "background"
+
+
+@pytest.mark.asyncio
+class TestClassifyParity:
+    """InMemoryScheduler.classify() must agree with classify_agent_request."""
+
+    @pytest.mark.parametrize(
+        "priority,request_state",
+        [
+            (0, "pending"),  # CRITICAL
+            (1, "pending"),  # HIGH
+            (2, "pending"),  # NORMAL
+            (3, "pending"),  # LOW
+            (4, "pending"),  # BEST_EFFORT
+            (3, "io_wait"),  # IO promotion
+            (0, "io_wait"),  # No promotion (already interactive)
+            (999, "pending"),  # Invalid priority
+            (2, "unknown"),  # Invalid state
+        ],
+    )
+    async def test_classify_matches_shared_function(
+        self, priority: int, request_state: str
+    ) -> None:
+        req = AgentRequest(
+            agent_id="a1", zone_id=None, priority=priority, request_state=request_state
+        )
+        scheduler = InMemoryScheduler()
+        scheduler_result = await scheduler.classify(req)
+        shared_result = classify_agent_request(req)
+        assert scheduler_result == shared_result, (
+            f"Divergence for priority={priority}, state={request_state}: "
+            f"scheduler={scheduler_result!r}, shared={shared_result!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Bounded completed dict tests (Issue #2360 — performance)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestInMemorySchedulerCompletedBound:
+    """Verify _completed dict is bounded to _MAX_COMPLETED entries."""
+
+    async def test_completed_eviction(self) -> None:
+        scheduler = InMemoryScheduler()
+        # Submit and complete _MAX_COMPLETED + 50 tasks
+        task_ids = []
+        for _ in range(_MAX_COMPLETED + 50):
+            tid = await scheduler.submit(AgentRequest(agent_id="a1", zone_id="z1"))
+            task_ids.append(tid)
+            await scheduler.next()  # Dequeue to allow completion
+            await scheduler.complete(tid)
+
+        # Dict should be bounded
+        assert len(scheduler._completed) <= _MAX_COMPLETED
+        # Most recent tasks should still be present
+        assert await scheduler.get_status(task_ids[-1]) is not None

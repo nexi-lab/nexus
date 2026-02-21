@@ -74,23 +74,14 @@ async def shutdown_services(app: FastAPI, svc: LifespanServices) -> None:
             logger.warning("Error shutting down Task Queue runner: %s", e, exc_info=True)
 
     # Shutdown scheduler (Issue #1212, #2360)
+    # Both SchedulerService and InMemoryScheduler implement shutdown().
     scheduler_svc = getattr(app.state, "scheduler_service", None)
-    if scheduler_svc is not None and hasattr(scheduler_svc, "shutdown"):
+    if scheduler_svc is not None:
         try:
             await scheduler_svc.shutdown()
             logger.info("Scheduler service shut down")
         except Exception as e:
             logger.warning("Error shutting down scheduler: %s", e, exc_info=True)
-    else:
-        # Legacy fallback: close pool directly
-        scheduler_pool = getattr(app.state, "_scheduler_pool", None)
-        if scheduler_pool:
-            try:
-                await scheduler_pool.close()
-                logger.info("Scheduler pool closed")
-            except Exception as e:
-                logger.warning("Error closing scheduler pool: %s", e, exc_info=True)
-            app.state._scheduler_pool = None
 
     # Cancel agent background tasks and final flush (Issue #1240, #2170)
     heartbeat_task = getattr(app.state, "_heartbeat_task", None)
@@ -585,19 +576,22 @@ async def _startup_scheduler(app: FastAPI, svc: LifespanServices) -> None:
                 _min_size,
                 _max_size,
             )
+        # Design decision: scheduler uses its own asyncpg pool for isolation.
+        # Scheduler queries don't compete with application queries.
+        # 2-5 extra connections is negligible cost for the isolation benefit.
         pool = await asyncpg.create_pool(pg_dsn, min_size=_min_size, max_size=_max_size)
         app.state._scheduler_pool = pool
 
-        await scheduler.initialize(pool)
+        # At this point scheduler is SchedulerService (InMemoryScheduler
+        # returned early above), which has .initialize() outside the Protocol.
+        if hasattr(scheduler, "initialize"):
+            await scheduler.initialize(pool)
 
-        # Wire emitter into AsyncAgentRegistry if available
+        # Wire hook cleanup handler into state emitter (Issue #1257)
+        # Note: state_emitter is constructor-injected into AsyncAgentRegistry
+        # by factory._boot_system_services() — no post-construction wiring needed.
         state_emitter = getattr(scheduler, "_state_emitter", None)
         if state_emitter is not None:
-            async_reg = getattr(app.state, "async_agent_registry", None)
-            if async_reg is not None:
-                async_reg._state_emitter = state_emitter
-
-            # Wire hook cleanup handler into state emitter (Issue #1257)
             scoped_hook_engine = svc.scoped_hook_engine
             if scoped_hook_engine is not None:
                 from nexus.system_services.lifecycle.hook_engine import create_agent_cleanup_handler

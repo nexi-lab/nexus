@@ -269,17 +269,9 @@ class SchedulerService:
 
     async def classify(self, request: AgentRequest) -> str:
         """Classify an AgentRequest into a PriorityClass."""
-        try:
-            tier = PriorityTier(request.priority)
-        except ValueError:
-            tier = PriorityTier.NORMAL
+        from nexus.services.protocols.scheduler import classify_agent_request
 
-        try:
-            req_state = RequestState(request.request_state)
-        except ValueError:
-            req_state = RequestState.PENDING
-
-        return classify_request(tier, req_state)
+        return classify_agent_request(request)
 
     async def metrics(self, *, zone_id: str | None = None) -> dict[str, Any]:
         """Get scheduler metrics including queue stats and fair-share."""
@@ -300,9 +292,12 @@ class SchedulerService:
         }
 
     async def pending_count(self, *, zone_id: str | None = None) -> int:
-        """Count pending tasks. Placeholder for protocol conformance."""
-        m = await self.metrics(zone_id=zone_id)
-        return sum(row.get("cnt", 0) for row in m.get("queue_by_class", []))
+        """Count pending tasks via a direct COUNT(*) query.
+
+        More efficient than metrics() which aggregates by priority_class.
+        """
+        async with self.pool.acquire() as conn:
+            return await self._queue.count_pending(conn, zone_id=zone_id)
 
     async def cancel(self, agent_id: str) -> int:
         """Cancel all queued tasks for an agent. Returns count cancelled."""

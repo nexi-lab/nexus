@@ -76,6 +76,9 @@ EXPECTED_SYSTEM_KEYS = frozenset(
         "scoped_hook_engine",
         "tiger_cache_manager",
         "zone_lifecycle",
+        # Issue #2195: EventLog + Scheduler wired into system tier
+        "event_log",
+        "scheduler_service",
     }
 )
 
@@ -221,6 +224,8 @@ class TestBootSystemServices:
             "tiger_cache_manager",
             "delivery_worker",
             "observability_subsystem",
+            "event_log",  # Issue #2195: requires WAL dir
+            "scheduler_service",  # Issue #2195: requires PostgreSQL
         }
         for key, value in result.items():
             if key in _NULLABLE_KEYS:

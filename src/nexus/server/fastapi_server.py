@@ -382,6 +382,12 @@ def create_app(
             wds = getattr(app.state, "workflow_dispatch", None)
             if wds is not None and hasattr(wds, "set_subscription_manager"):
                 wds.set_subscription_manager(app.state.subscription_manager)
+            # Issue #914: Inject getter into delivery worker (fixes services→server import)
+            from nexus.server.subscriptions import get_subscription_manager
+
+            _dw = nexus_fs.exposed_services().get("delivery_worker")
+            if _dw is not None:
+                _dw._subscription_manager_getter = get_subscription_manager
             logger.info("Subscription manager initialized and injected into NexusFS")
     except Exception as e:
         logger.warning(f"Failed to initialize subscription manager: {e}")

@@ -30,7 +30,7 @@ from collections.abc import Iterator, Sequence
 from typing import Any
 
 from nexus.core.metadata import FileMetadata, PaginatedResult
-from nexus.core.metastore import MetastoreABC
+from nexus.core.metastore import CasResult, MetastoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -203,6 +203,28 @@ class RaftMetadataStore(MetastoreABC):
             # Compiled PyO3 binary may not yet support the consistency parameter
             return self._engine.set_metadata(metadata.path, data)
 
+    def _cas_put_engine(
+        self,
+        metadata: FileMetadata,
+        expected_version: int,
+        *,
+        consistency: str = "sc",
+    ) -> CasResult:
+        """Atomic CAS via PyO3 cas_set_metadata (single redb txn, ~8μs).
+
+        Falls back to the ABC default (read-check-write) if the compiled
+        PyO3 binary does not yet expose ``cas_set_metadata``.
+        """
+        data = _serialize_metadata(metadata)
+        try:
+            success, current_version = self._engine.cas_set_metadata(
+                metadata.path, data, expected_version, consistency=consistency
+            )
+        except (TypeError, AttributeError):
+            # PyO3 binary doesn't support CAS yet — fall back to ABC default
+            return super().put_if_version(metadata, expected_version, consistency=consistency)
+        return CasResult(success=success, current_version=current_version)
+
     def _delete_engine(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
         """Delete metadata from the embedded sled engine.
 
@@ -335,6 +357,31 @@ class RaftMetadataStore(MetastoreABC):
             return self._put_engine(metadata, consistency=consistency)
         else:
             raise NotImplementedError("Remote mode requires async. Use put_async() instead.")
+
+    def put_if_version(
+        self,
+        metadata: FileMetadata,
+        expected_version: int,
+        *,
+        consistency: str = "sc",
+    ) -> CasResult:
+        """Atomic compare-and-swap on FileMetadata.version.
+
+        Overrides the ABC default with a true atomic CAS via the
+        embedded PyO3 engine (single redb write transaction).
+
+        Args:
+            metadata: The new metadata to store.
+            expected_version: Version that must match the current stored
+                version.  Use 0 for create-only semantics.
+            consistency: ``"sc"`` (default) or ``"ec"``.
+
+        Returns:
+            CasResult indicating success and the current version.
+        """
+        if self._has_engine:
+            return self._cas_put_engine(metadata, expected_version, consistency=consistency)
+        raise NotImplementedError("Remote CAS requires async. Use put_if_version_async() instead.")
 
     def is_committed(self, token: int) -> str | None:
         """Check if an EC write token has been replicated to a majority.

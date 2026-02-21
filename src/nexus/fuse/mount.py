@@ -296,7 +296,11 @@ class NexusFUSE:
 
         def warmup_thread() -> None:
             try:
-                from nexus.server.cache_warmer import CacheWarmer, WarmupConfig
+                import importlib as _il
+
+                _cw = _il.import_module("nexus.server.cache_warmer")
+                CacheWarmer = _cw.CacheWarmer
+                WarmupConfig = _cw.WarmupConfig
 
                 logger.info(
                     f"[WARMUP] Starting automatic warmup for mount at / "
@@ -309,7 +313,7 @@ class NexusFUSE:
                     include_content=False,  # Metadata only for fast warmup
                 )
 
-                warmer = CacheWarmer(nexus_fs=self.nexus_fs, config=config)  # type: ignore[arg-type]
+                warmer = CacheWarmer(nexus_fs=self.nexus_fs, config=config)
 
                 # Run async warmup in sync context
                 async def do_warmup() -> Any:

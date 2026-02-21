@@ -21,8 +21,8 @@ from nexus.constants import DEFAULT_OAUTH_REDIRECT_URI
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from nexus.contracts.cache_store import CacheStoreABC
     from nexus.contracts.types import OperationContext
-    from nexus.core.cache_store import CacheStoreABC
 
 
 class PKCEStateStore:

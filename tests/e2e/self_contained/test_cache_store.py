@@ -14,7 +14,7 @@ from nexus.bricks.cache.domain import PermissionCache, TigerCache
 from nexus.bricks.cache.factory import CacheFactory
 from nexus.bricks.cache.inmemory import InMemoryCacheStore
 from nexus.bricks.cache.settings import CacheSettings
-from nexus.core.cache_store import CacheStoreABC, NullCacheStore
+from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
 
 # ---------------------------------------------------------------------------
 # Fixture: shared InMemoryCacheStore for realistic scenarios

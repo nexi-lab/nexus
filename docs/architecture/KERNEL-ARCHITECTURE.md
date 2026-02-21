@@ -90,7 +90,7 @@ not by domain or implementation.
 | **Metastore** | `MetastoreABC` | Ordered KV, CAS, prefix scan, optional Raft SC | **Required** — sole kernel init param |
 | **ObjectStore** | `ObjectStoreABC` (= `Backend`) | Streaming I/O, immutable blobs, petabyte scale | **Interface only** — instances mounted dynamically |
 | **RecordStore** | `RecordStoreABC` | Relational ACID, JOINs, FK, vector search | **Services only** — optional, injected for ReBAC/Auth/etc. |
-| **CacheStore** | `CacheStoreABC` | Ephemeral KV, Pub/Sub, TTL | **Optional** — kernel defines ABC, services consume; defaults to `NullCacheStore` |
+| **CacheStore** | `CacheStoreABC` | Ephemeral KV, Pub/Sub, TTL | **Optional** — ABC in `contracts/` (like `include/linux/fscache.h`), kernel accepts via DI, services consume; defaults to `NullCacheStore` |
 
 **Orthogonality:** Between pillars = different query patterns. Within pillars = interchangeable
 drivers (deployment-time config). See `data-storage-matrix.md` for full proof.
@@ -142,7 +142,9 @@ See `ops-scenario-matrix.md` for full Ops-Scenario affinity proof.
 | `MetastoreABC` | `struct inode_operations` | Typed FileMetadata CRUD (the inode layer) |
 | `VFSRouterProtocol` | VFS `lookup_slow()` | Path resolution only — mount CRUD lives in Service `MountProtocol` |
 | `ObjectStoreABC` (= `Backend`) | `struct file_operations` | Blob I/O interface (read/write/delete/list) |
-| `CacheStoreABC` | (no direct analogue) | Ephemeral KV + Pub/Sub primitives |
+| `CacheStoreABC` | `include/linux/fscache.h` | Ephemeral KV + Pub/Sub primitives — ABC in `contracts/`, kernel accepts optionally, services/bricks consume |
+| `VFSLockManagerProtocol` | per-inode `i_rwsem` | Path-level RW locking with hierarchy awareness |
+| `PipeManagerProtocol` | `pipe(2)` + `fs/pipe.c` | Named pipe lifecycle + MPMC data path (see §6 Kernel Tier) |
 
 `MetastoreABC` is kernel because it IS the inode layer — the typed contract
 between VFS and storage. Without it, the kernel cannot describe files.

@@ -43,7 +43,6 @@ from nexus.bricks.cache.base import (
     ResourceMapCacheProtocol,
     TigerCacheProtocol,
 )
-from nexus.bricks.cache.cache_store import CacheStoreABC, NullCacheStore
 from nexus.bricks.cache.domain import (
     EmbeddingCache,
     PermissionCache,
@@ -51,6 +50,7 @@ from nexus.bricks.cache.domain import (
     TigerCache,
 )
 from nexus.bricks.cache.settings import CacheSettings
+from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend

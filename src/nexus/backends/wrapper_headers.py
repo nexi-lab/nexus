@@ -20,6 +20,9 @@ WRAPPER_HEADERS: dict[str, bytes] = {}
 def register_header(name: str, header: bytes) -> bytes:
     """Register a magic header for a wrapper, checking for prefix collisions.
 
+    Must be called at module import time (protected by Python's import lock).
+    Do not call at runtime from multiple threads.
+
     Args:
         name: Human-readable wrapper name (e.g., "compressed").
         header: Magic bytes to register.

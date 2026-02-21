@@ -707,8 +707,13 @@ async def create_cached_embedding_provider(
 
     # Try to create cached provider via CacheStoreABC
     try:
-        from nexus.bricks.cache.domain import EmbeddingCache
-        from nexus.bricks.cache.dragonfly import DragonflyCacheStore, DragonflyClient
+        import importlib as _il
+
+        _cache_domain = _il.import_module("nexus.bricks.cache.domain")
+        EmbeddingCache = _cache_domain.EmbeddingCache
+        _cache_dragonfly = _il.import_module("nexus.bricks.cache.dragonfly")
+        DragonflyCacheStore = _cache_dragonfly.DragonflyCacheStore
+        DragonflyClient = _cache_dragonfly.DragonflyClient
 
         # Connect to cache
         client = DragonflyClient(url=cache_url)

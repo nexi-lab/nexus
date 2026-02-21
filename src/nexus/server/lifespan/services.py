@@ -521,7 +521,7 @@ async def _startup_scheduler(app: FastAPI, svc: LifespanServices) -> None:
     _sys = getattr(_nx, "_system_services", None) if _nx else None
     scheduler = getattr(_sys, "scheduler_service", None) if _sys else None
 
-    if scheduler is None:
+    if scheduler is None or not svc.database_url:
         return
 
     try:

@@ -8,11 +8,8 @@ This module contains the fundamental file operations:
 - exists: Check file existence
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
-import hashlib
 import logging
 import threading
 import time
@@ -20,23 +17,26 @@ from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from nexus.core.exceptions import BackendError, ConflictError, NexusFileNotFoundError
+from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import SYSTEM_PATH_PREFIX
+from nexus.contracts.exceptions import BackendError, ConflictError, NexusFileNotFoundError
+from nexus.contracts.metadata import FileMetadata
+from nexus.contracts.types import Permission
+from nexus.core.file_events import FileEvent, FileEventType
 from nexus.core.hash_fast import hash_content
-from nexus.core.metadata import FileMetadata
-from nexus.core.permissions import Permission
-from nexus.core.rpc_decorator import rpc_expose
+from nexus.core.protocols.capabilities import ConnectorCapability
+from nexus.lib.mutation_hooks import MutationOp
+from nexus.lib.rpc_decorator import rpc_expose
+from nexus.lib.sync_bridge import fire_and_forget
 
 logger = logging.getLogger(__name__)
 
-# Kernel-reserved path prefix for internal system entries (zone revisions, etc.)
-# These entries are stored in MetastoreABC but filtered from user-visible operations.
-SYSTEM_PATH_PREFIX = "/__sys__/"
-
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
-    from nexus.core.permissions import OperationContext
+    from nexus.bricks.parsers.registry import ParserRegistry
+    from nexus.contracts.types import OperationContext
+    from nexus.contracts.write_observer import WriteObserverProtocol
     from nexus.core.router import PathRouter
-    from nexus.parsers.registry import ParserRegistry
 
 
 class NexusFSCoreMixin:
@@ -47,29 +47,28 @@ class NexusFSCoreMixin:
     # Issue #1169: Defaults for per-instance zone revision state.
     # Actual instances override these in _init_zone_revision().
     _zone_revision: int = 0
-    _zone_revision_lock: threading.Lock | None = None
+    _zone_revision_lock: "threading.Lock | None" = None
     _read_tracking_enabled: bool = False
 
     # Type hints for attributes/methods that will be provided by NexusFS parent class
     if TYPE_CHECKING:
         from nexus.core.metastore import MetastoreABC
-        from nexus.rebac.enforcer import PermissionEnforcer
+        from nexus.services.protocols.permission_enforcer import PermissionEnforcerProtocol
 
-        metadata: MetastoreABC
-        backend: Backend
-        router: PathRouter
+        metadata: "MetastoreABC"
+        backend: "Backend"
+        router: "PathRouter"
         is_admin: bool
         auto_parse: bool
-        parser_registry: ParserRegistry
-        _default_context: OperationContext
-        _parser_threads: list[threading.Thread]
-        _parser_threads_lock: threading.Lock
-        _permission_enforcer: PermissionEnforcer | None
+        parser_registry: "ParserRegistry"
+        _default_context: "OperationContext"
+        _parser_threads: "list[threading.Thread]"
+        _parser_threads_lock: "threading.Lock"
+        _permission_enforcer: "PermissionEnforcerProtocol | None"
         _event_tasks: set[asyncio.Task[Any]]  # Issue #913: Tracked async event tasks
         _overlay_resolver: Any  # Issue #1264: OverlayResolver service
         _workspace_registry: Any  # Workspace registry for overlay config lookup
-        _write_observer: Any  # Duck-typed: on_write()/on_delete()
-        _audit_strict_mode: bool
+        _write_observer: "WriteObserverProtocol | None"
 
         @property
         def zone_id(self) -> str | None: ...
@@ -81,14 +80,14 @@ class NexusFSCoreMixin:
             self,
             path: str,
             permission: Permission,
-            context: OperationContext | None,
+            context: "OperationContext | None",
             file_metadata: FileMetadata | None = None,
         ) -> None: ...
         def _get_routing_params(
-            self, context: OperationContext | dict[Any, Any] | None
+            self, context: "OperationContext | dict[Any, Any] | None"
         ) -> tuple[str | None, str | None, bool]: ...
         def _get_created_by(
-            self, context: OperationContext | dict[Any, Any] | None
+            self, context: "OperationContext | dict[Any, Any] | None"
         ) -> str | None: ...
         async def parse(self, path: str, store_result: bool = True) -> Any: ...
 
@@ -117,7 +116,7 @@ class NexusFSCoreMixin:
         if overlay_data is None:
             return None
 
-        from nexus.services.overlay_resolver import OverlayConfig
+        from nexus.contracts.overlay_config import OverlayConfig
 
         return OverlayConfig(
             enabled=overlay_data.get("enabled", False),
@@ -126,39 +125,9 @@ class NexusFSCoreMixin:
             agent_id=overlay_data.get("agent_id"),
         )
 
-    def _create_tracked_event_task(
-        self, coro: Any, timeout: float = 30.0, name: str | None = None
-    ) -> asyncio.Task[Any]:
-        """Create an async task that is tracked and auto-cleaned up.
-
-        Issue #913: Prevents memory leaks from fire-and-forget tasks.
-        Tasks are stored in _event_tasks and automatically removed when done.
-
-        Args:
-            coro: The coroutine to run
-            timeout: Timeout in seconds (default: 30s to prevent hanging tasks)
-            name: Optional task name for debugging
-
-        Returns:
-            The created task (already tracked)
-        """
-
-        async def wrapped_coro() -> Any:
-            try:
-                return await asyncio.wait_for(coro, timeout=timeout)
-            except TimeoutError:
-                logger.warning(f"Event task timed out after {timeout}s: {name or 'unnamed'}")
-            except Exception as e:
-                logger.error(f"Event task failed: {name or 'unnamed'}: {e}")
-
-        task = asyncio.create_task(wrapped_coro(), name=name)
-        self._event_tasks.add(task)
-        task.add_done_callback(self._event_tasks.discard)
-        return task
-
     def _publish_file_event(
         self,
-        event_type: str,
+        event_type: FileEventType,
         path: str,
         zone_id: str | None,
         size: int | None = None,
@@ -170,10 +139,11 @@ class NexusFSCoreMixin:
         """Publish a file event to the distributed event bus.
 
         Issue #1106 Block 2: Centralized event publishing to avoid code duplication.
+        Issue #2175: Accepts FileEventType enum directly for type safety.
         Handles both async (event loop running) and sync (no event loop) contexts.
 
         Args:
-            event_type: Event type string (e.g., "file_write", "file_delete", "file_rename")
+            event_type: FileEventType enum value (e.g., FileEventType.FILE_WRITE)
             path: Path of the affected file
             zone_id: Zone ID (defaults to "root" if None)
             size: File size in bytes (optional)
@@ -182,24 +152,12 @@ class NexusFSCoreMixin:
             old_path: Previous path for rename events (optional)
             revision: Filesystem revision for consistency tracking (Issue #1187)
         """
-        if not hasattr(self, "_event_bus") or self._event_bus is None:
+        if self._event_bus is None:
             return
 
         try:
-            from nexus.core.event_bus import FileEvent, FileEventType
-
-            # Map string to enum
-            type_map = {
-                "file_write": FileEventType.FILE_WRITE,
-                "file_delete": FileEventType.FILE_DELETE,
-                "file_rename": FileEventType.FILE_RENAME,
-                "dir_create": FileEventType.DIR_CREATE,
-                "dir_delete": FileEventType.DIR_DELETE,
-            }
-            file_event_type = type_map.get(event_type, event_type)
-
             event = FileEvent(
-                type=file_event_type,
+                type=event_type,
                 path=path,
                 zone_id=zone_id or "root",
                 size=size,
@@ -208,9 +166,6 @@ class NexusFSCoreMixin:
                 old_path=old_path,
                 revision=revision,
             )
-
-            # Fire event asynchronously (fire-and-forget via sync bridge)
-            from nexus.core.sync_bridge import fire_and_forget
 
             # Ensure event bus is started (lazy init for NATS JetStream)
             if not getattr(self._event_bus, "_started", False):
@@ -224,7 +179,7 @@ class NexusFSCoreMixin:
 
             fire_and_forget(self._event_bus.publish(event))
         except Exception as e:
-            logger.warning(f"Failed to create {event_type} event: {e}")
+            logger.warning("Failed to publish %s event for %s: %s", event_type, path, e)
 
     def _fire_workflow_event(
         self,
@@ -254,14 +209,14 @@ class NexusFSCoreMixin:
                 logger.warning("Workflow event queue full, dropping event: %s", label)
         else:
             # Fallback: fire-and-forget (no queue — CLI or pre-startup)
-            from nexus.core.sync_bridge import fire_and_forget
+            from nexus.lib.sync_bridge import fire_and_forget
 
             fire_and_forget(
                 self.workflow_engine.fire_event(trigger_type, event_context)  # type: ignore[attr-defined]
             )
 
         if self.subscription_manager:  # type: ignore[attr-defined]
-            from nexus.core.sync_bridge import fire_and_forget
+            from nexus.lib.sync_bridge import fire_and_forget
 
             event_type = label.split(":")[0] if ":" in label else label
             fire_and_forget(
@@ -271,6 +226,53 @@ class NexusFSCoreMixin:
                     event_context.get("zone_id", "root"),
                 )
             )
+
+    def _fire_post_mutation_hooks(
+        self,
+        op: MutationOp,
+        path: str,
+        zone_id: str,
+        revision: int,
+        *,
+        agent_id: str | None = None,
+        user_id: str | None = None,
+        timestamp: str | None = None,
+        etag: str | None = None,
+        size: int | None = None,
+        version: int | None = None,
+        is_new: bool = False,
+        new_path: str | None = None,
+    ) -> None:
+        """Fire MutationEvent to all registered post-mutation hooks.
+
+        Called after every successful write/delete/rename. Error policy:
+        fire-and-forget — hook failures are logged but never abort the mutation.
+        """
+        hooks = getattr(self, "_post_mutation_hooks", None)
+        if not hooks:
+            return
+
+        from nexus.lib.mutation_hooks import MutationEvent
+
+        event = MutationEvent(
+            operation=op,
+            path=path,
+            zone_id=zone_id,
+            revision=revision,
+            agent_id=agent_id,
+            user_id=user_id,
+            timestamp=timestamp,
+            etag=etag,
+            size=size,
+            version=version,
+            is_new=is_new,
+            new_path=new_path,
+        )
+        for hook in hooks:
+            try:
+                hook.on_mutation(event)
+            except Exception as exc:
+                logger.warning("Post-mutation hook %s failed: %s", type(hook).__name__, exc)
 
     async def _start_workflow_consumer(self) -> None:
         """Background consumer for bounded workflow event queue (#1522)."""
@@ -313,17 +315,17 @@ class NexusFSCoreMixin:
         """
         if self._revision_notifier is None:
             try:
-                from nexus.core.revision_notifier import RevisionNotifier
+                from nexus.lib.revision_notifier import RevisionNotifier
 
                 NexusFSCoreMixin._revision_notifier = RevisionNotifier()
             except Exception:
-                from nexus.core.revision_notifier import NullRevisionNotifier
+                from nexus.lib.revision_notifier import NullRevisionNotifier
 
                 logger.warning("Failed to create RevisionNotifier; using NullRevisionNotifier")
                 NexusFSCoreMixin._revision_notifier = NullRevisionNotifier()
         return self._revision_notifier
 
-    def _get_revision_lock(self, zone_id: str) -> threading.Lock:
+    def _get_revision_lock(self, zone_id: str) -> "threading.Lock":
         """Get or create a per-zone lock for revision increments (Issue #1180).
 
         Always acquires the guard lock for correctness. The overhead is
@@ -339,62 +341,6 @@ class NexusFSCoreMixin:
             if zone_id not in self._revision_locks:
                 self._revision_locks[zone_id] = threading.Lock()
             return self._revision_locks[zone_id]
-
-    def _increment_and_get_revision(self, zone_id: str) -> int:
-        """Atomically increment and return the new revision for a zone.
-
-        Issue #1187: Provides monotonic revision counters for filesystem
-        consistency tokens (zookies). Each write operation increments the counter
-        and includes the new revision in the returned zookie.
-
-        Issue #1330 Phase 4.2: Uses native redb REVISIONS_TABLE via
-        metadata.increment_revision(). redb's single-writer transaction
-        provides atomicity — no Python _revision_lock needed.
-
-        Falls back to FileMetadata-based counter if increment_revision()
-        is not available on the metadata store.
-
-        Args:
-            zone_id: The zone to increment revision for
-
-        Returns:
-            The new revision number after incrementing
-        """
-        # Fast path: native redb counter (no lock, atomic via redb txn)
-        if hasattr(self.metadata, "increment_revision"):
-            try:
-                return self.metadata.increment_revision(zone_id)
-            except Exception as e:
-                logger.warning(f"Failed to increment revision for zone {zone_id}: {e}")
-                return int(time.time() * 1000)
-
-        # Legacy fallback: FileMetadata-based counter (requires lock)
-        from nexus.core.metadata import FileMetadata
-
-        rev_path = f"{SYSTEM_PATH_PREFIX}zone_rev/{zone_id}"
-        # Issue #1180: Per-zone lock ensures atomic read-modify-write without
-        # cross-zone contention. TODO: Replace with sled atomic_increment (Phase B).
-        with self._get_revision_lock(zone_id):
-            try:
-                meta = self.metadata.get(rev_path)
-                new_rev = (meta.version + 1) if meta else 1
-                self.metadata.put(
-                    FileMetadata(
-                        path=rev_path,
-                        backend_name="__sys__",
-                        physical_path="__sys__",
-                        size=0,
-                        version=new_rev,
-                        zone_id=zone_id,
-                    )
-                )
-                # Issue #1180 Phase B: Notify waiters of the new revision.
-                self._get_revision_notifier().notify_revision(zone_id, new_rev)
-                return new_rev
-            except Exception as e:
-                logger.warning(f"Failed to increment revision for zone {zone_id}: {e}")
-                # Fallback: return timestamp-based pseudo-revision
-                return int(time.time() * 1000)
 
     def _get_current_revision(self, zone_id: str) -> int:
         """Get the current revision for a zone.
@@ -510,7 +456,7 @@ class NexusFSCoreMixin:
 
     def _record_read_if_tracking(
         self,
-        context: OperationContext | None,
+        context: "OperationContext | None",
         resource_type: str,
         resource_id: str,
         access_type: str = "content",
@@ -587,7 +533,7 @@ class NexusFSCoreMixin:
         self,
         path: str,
         timeout: float,
-        context: OperationContext | None,
+        context: "OperationContext | None",
     ) -> str | None:
         """Acquire distributed lock synchronously (for use in sync write()).
 
@@ -612,7 +558,7 @@ class NexusFSCoreMixin:
                 "Ensure NexusFS is initialized with enable_distributed_locks=True."
             )
 
-        from nexus.core.exceptions import LockTimeout
+        from nexus.contracts.exceptions import LockTimeout
 
         # Run async lock in sync context
         # Check if we're in an async context - if so, user should use locked() instead
@@ -638,7 +584,7 @@ class NexusFSCoreMixin:
                 timeout=timeout,
             )
 
-        from nexus.core.sync_bridge import run_sync
+        from nexus.lib.sync_bridge import run_sync
 
         lock_id = run_sync(acquire_lock())
 
@@ -651,7 +597,7 @@ class NexusFSCoreMixin:
         self,
         lock_id: str,
         path: str,
-        context: OperationContext | None,
+        context: "OperationContext | None",
     ) -> None:
         """Release distributed lock synchronously.
 
@@ -671,91 +617,15 @@ class NexusFSCoreMixin:
         async def release_lock() -> None:
             await self._lock_manager.release(lock_id, zone_id, path)
 
-        from nexus.core.sync_bridge import run_sync
+        from nexus.lib.sync_bridge import run_sync
 
         try:
             run_sync(release_lock())
         except Exception as e:
             logger.error(f"Failed to release lock {lock_id} for {path}: {e}")
 
-    def _apply_dynamic_viewer_filter_if_needed(
-        self, path: str, content: bytes, context: OperationContext | None
-    ) -> bytes:
-        """Apply dynamic_viewer column-level filtering for CSV files if needed.
-
-        Args:
-            path: File path
-            content: Original file content
-            context: Operation context
-
-        Returns:
-            Filtered content if dynamic_viewer permission exists, otherwise original content
-        """
-        # Only process CSV files
-        if not path.lower().endswith(".csv"):
-            logger.debug(f"_apply_dynamic_viewer_filter: Skipping non-CSV file: {path}")
-            return content
-
-        # Extract subject from context (uses NexusFSReBACMixin method)
-        if not hasattr(self, "_get_subject_from_context"):
-            logger.debug("_apply_dynamic_viewer_filter: No _get_subject_from_context method")
-            return content
-
-        subject = self._get_subject_from_context(context)
-        if not subject:
-            logger.debug(f"_apply_dynamic_viewer_filter: No subject found in context for {path}")
-            return content
-
-        logger.debug(
-            f"_apply_dynamic_viewer_filter: Checking dynamic_viewer for {subject} on {path}"
-        )
-
-        # Check if ReBAC is available
-        if not hasattr(self, "_rebac_manager") or not hasattr(self, "get_dynamic_viewer_config"):
-            logger.debug(
-                "_apply_dynamic_viewer_filter: ReBAC or get_dynamic_viewer_config not available"
-            )
-            return content
-
-        try:
-            # Get dynamic_viewer configuration for this subject + file
-            column_config = self.get_dynamic_viewer_config(subject=subject, file_path=path)  # type: ignore[attr-defined]
-
-            if not column_config:
-                # No dynamic_viewer permission, return original content
-                logger.debug(
-                    f"_apply_dynamic_viewer_filter: No dynamic_viewer config for {subject} on {path}"
-                )
-                return content
-
-            logger.info(
-                f"_apply_dynamic_viewer_filter: Applying filter for {subject} on {path}: {column_config}"
-            )
-
-            # Apply filtering
-            content_str = content.decode("utf-8") if isinstance(content, bytes) else content
-            result = self.apply_dynamic_viewer_filter(  # type: ignore[attr-defined]
-                data=content_str, column_config=column_config, file_format="csv"
-            )
-
-            # Return filtered content as bytes
-            filtered_content = result["filtered_data"]
-            logger.info(f"_apply_dynamic_viewer_filter: Successfully filtered {path}")
-            if isinstance(filtered_content, str):
-                return filtered_content.encode("utf-8")
-            elif isinstance(filtered_content, bytes):
-                return filtered_content
-            else:
-                # Fallback: convert to string then bytes
-                return str(filtered_content).encode("utf-8")
-
-        except Exception as e:
-            # Log error but don't fail the read operation
-            logger.warning(f"Failed to apply dynamic_viewer filter for {path}: {e}")
-            import traceback
-
-            logger.warning(traceback.format_exc())
-            return content
+    # _apply_dynamic_viewer_filter_if_needed → removed (Issue #2272)
+    # Replaced by DynamicViewerReadHook in services/vfs_hook_impls.py
 
     async def _get_parsed_content_async(
         self, path: str, content: bytes
@@ -860,7 +730,7 @@ class NexusFSCoreMixin:
                 return future.result()
         except RuntimeError:
             # No running loop - use sync bridge
-            from nexus.core.sync_bridge import run_sync
+            from nexus.lib.sync_bridge import run_sync
 
             return run_sync(self._get_parsed_content_async(path, content))
 
@@ -868,7 +738,7 @@ class NexusFSCoreMixin:
     def read(
         self,
         path: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
         return_metadata: bool = False,
         parsed: bool = False,
     ) -> bytes | dict[str, Any]:
@@ -930,14 +800,14 @@ class NexusFSCoreMixin:
         path = self._validate_path(path)
 
         # Phase 2 Integration: Intercept memory paths
-        from nexus.services.memory.memory_router import MemoryViewRouter
+        from nexus.bricks.memory.router import MemoryViewRouter
 
         if MemoryViewRouter.is_memory_path(path):
             return self._read_memory_path(path, return_metadata, context=context)
 
         # Check read permission (handles virtual views by checking original file)
         perm_check_start = time.time()
-        self._check_permission(path, Permission.READ, context)
+        self._permission_checker.check(path, Permission.READ, context)
         perm_check_elapsed = time.time() - perm_check_start
 
         # Log slow permission checks
@@ -947,7 +817,7 @@ class NexusFSCoreMixin:
             )
 
         # Fix #332: Handle virtual parsed views (e.g., report_parsed.pdf.md)
-        from nexus.core.virtual_views import get_parsed_content, parse_virtual_path
+        from nexus.lib.virtual_views import get_parsed_content, parse_virtual_path
 
         def metadata_exists(check_path: str) -> bool:
             return self.metadata.exists(check_path)
@@ -977,10 +847,23 @@ class NexusFSCoreMixin:
                 read_context = replace(context, backend_path=route.backend_path)
             original_content = route.backend.read_content(meta.etag, context=read_context).unwrap()
 
-            # Apply dynamic_viewer filtering for CSV files before parsing
-            original_content = self._apply_dynamic_viewer_filter_if_needed(
-                original_path, original_content, context
-            )
+            # Issue #2272: Dispatch post-read hooks (dynamic viewer filtering) before parsing
+            _pipeline = getattr(self, "_hook_pipeline", None)
+            if _pipeline is not None and _pipeline.read_hook_count > 0:
+                from nexus.core.vfs_hooks import ReadHookContext
+
+                _read_ctx = ReadHookContext(
+                    path=original_path,
+                    context=context,
+                    zone_id=zone_id,
+                    agent_id=agent_id,
+                    metadata=meta,
+                    content=original_content,
+                    content_hash=meta.etag,
+                )
+                _pipeline.run_post_read(_read_ctx)
+                if _read_ctx.content is not None:
+                    original_content = _read_ctx.content
 
             # Parse the content (parse_fn injected by subclass; avoids parsers import in core/)
             content = get_parsed_content(
@@ -1020,7 +903,7 @@ class NexusFSCoreMixin:
             read_context = replace(context, backend_path=route.backend_path, virtual_path=path)
         else:
             # Create minimal context with just backend_path for connectors
-            from nexus.core.permissions import OperationContext
+            from nexus.contracts.types import OperationContext
 
             read_context = OperationContext(
                 user_id="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
@@ -1030,8 +913,9 @@ class NexusFSCoreMixin:
         # These connectors don't use metadata - they fetch data directly from APIs
         # Also check has_virtual_filesystem for connectors like HN that have virtual directories
         is_dynamic_connector = (
-            route.backend.user_scoped is True and route.backend.has_token_manager is True
-        ) or route.backend.has_virtual_filesystem is True
+            route.backend.has_capability(ConnectorCapability.USER_SCOPED)
+            and route.backend.has_capability(ConnectorCapability.TOKEN_MANAGER)
+        ) or route.backend.has_capability(ConnectorCapability.VIRTUAL_FILESYSTEM)
 
         if is_dynamic_connector:
             # Dynamic connector - read directly from backend without metadata check
@@ -1073,8 +957,24 @@ class NexusFSCoreMixin:
 
         content = route.backend.read_content(meta.etag, context=read_context).unwrap()
 
-        # Apply dynamic_viewer filtering for CSV files
-        content = self._apply_dynamic_viewer_filter_if_needed(path, content, context)
+        # Issue #2033 Phase 5: Dispatch post-read hooks (dynamic viewer, tracking, etc.)
+        _pipeline = getattr(self, "_hook_pipeline", None)
+        if _pipeline is not None and _pipeline.read_hook_count > 0:
+            from nexus.core.vfs_hooks import ReadHookContext
+
+            _read_ctx = ReadHookContext(
+                path=path,
+                context=context,
+                zone_id=zone_id,
+                agent_id=agent_id,
+                metadata=meta,
+                content=content,
+                content_hash=meta.etag,
+            )
+            _pipeline.run_post_read(_read_ctx)
+            # Issue #2272: Use `is not None` to avoid `or` gotcha with empty bytes
+            if _read_ctx.content is not None:
+                content = _read_ctx.content
 
         # Handle parsed=True flag - return parsed content instead of raw bytes
         if parsed:
@@ -1102,389 +1002,7 @@ class NexusFSCoreMixin:
 
         return content
 
-    @rpc_expose(description="Read multiple files in a single RPC call")
-    def read_bulk(
-        self,
-        paths: list[str],
-        context: OperationContext | None = None,
-        return_metadata: bool = False,
-        skip_errors: bool = True,
-    ) -> dict[str, bytes | dict[str, Any] | None]:
-        """
-        Read multiple files in a single RPC call for improved performance.
-
-        This method is optimized for bulk operations like grep, where many files
-        need to be read. It batches permission checks and reduces RPC overhead.
-
-        Args:
-            paths: List of virtual paths to read
-            context: Optional operation context for permission checks
-            return_metadata: If True, return dicts with content and metadata
-            skip_errors: If True, skip files that can't be read and return None.
-                        If False, raise exception on first error.
-
-        Returns:
-            Dict mapping path -> content (or None if skip_errors=True and read failed)
-            If return_metadata=False: {path: bytes}
-            If return_metadata=True: {path: {content, etag, version, ...}}
-
-        Performance:
-            - Single RPC call instead of N calls
-            - Batch permission checks (one DB query instead of N)
-            - Reduced network round trips
-            - Expected speedup: 2-5x for 50+ files
-
-        Examples:
-            >>> # Read multiple files at once
-            >>> results = nx.read_bulk(["/file1.txt", "/file2.txt", "/file3.txt"])
-            >>> print(results["/file1.txt"])  # b'content'
-            >>> print(results["/file2.txt"])  # b'content' or None if failed
-
-            >>> # With metadata
-            >>> results = nx.read_bulk(["/file1.txt"], return_metadata=True)
-            >>> print(results["/file1.txt"]["content"])
-            >>> print(results["/file1.txt"]["etag"])
-        """
-        import time
-
-        bulk_start = time.time()
-        results: dict[str, bytes | dict[str, Any] | None] = {}
-
-        # Validate all paths
-        validated_paths = []
-        for path in paths:
-            try:
-                validated_path = self._validate_path(path)
-                validated_paths.append(validated_path)
-            except Exception as exc:
-                logger.debug("Path validation failed in read_bulk for %s: %s", path, exc)
-                if skip_errors:
-                    results[path] = None
-                    continue
-                raise
-
-        if not validated_paths:
-            return results
-
-        # Batch permission check using filter_list
-        perm_start = time.time()
-        allowed_set: set[str]
-        if not self._enforce_permissions:  # type: ignore[attr-defined]
-            # Skip permission check if permissions are disabled
-            allowed_set = set(validated_paths)
-        else:
-            try:
-                # Use the existing bulk permission check from list()
-                # Note: filter_list assumes READ permission, which is what we want
-                from nexus.core.permissions import OperationContext
-
-                ctx = context if context is not None else self._default_context
-                assert isinstance(ctx, OperationContext), "Context must be OperationContext"
-                allowed_paths = self._permission_enforcer.filter_list(validated_paths, ctx)
-                allowed_set = set(allowed_paths)
-            except Exception as e:
-                logger.error(f"[READ-BULK] Permission check failed: {e}")
-                if not skip_errors:
-                    raise
-                # If skip_errors, assume no files are allowed
-                allowed_set = set()
-
-        perm_elapsed = time.time() - perm_start
-        logger.info(
-            f"[READ-BULK] Permission check: {len(allowed_set)}/{len(validated_paths)} allowed in {perm_elapsed * 1000:.1f}ms"
-        )
-
-        # Mark denied files
-        for path in validated_paths:
-            if path not in allowed_set:
-                results[path] = None
-
-        # Read allowed files
-        read_start = time.time()
-        zone_id, agent_id, is_admin = self._get_routing_params(context)
-
-        # Group paths by backend for potential bulk optimization
-        # Use get_batch for metadata lookup (single query instead of N queries)
-        path_info: dict[str, tuple[FileMetadata, Any]] = {}  # path -> (meta, route)
-        backend_paths: dict[Any, list[str]] = {}  # backend -> [paths]
-
-        # Batch metadata lookup
-        meta_start = time.time()
-        batch_meta = self.metadata.get_batch(list(allowed_set))
-        meta_elapsed = (time.time() - meta_start) * 1000
-        logger.info(
-            f"[READ-BULK] Batch metadata lookup: {len(batch_meta)} paths in {meta_elapsed:.1f}ms"
-        )
-
-        # Process metadata and group by backend
-        route_start = time.time()
-        for path in allowed_set:
-            try:
-                meta = batch_meta.get(path)
-                if meta is None or meta.etag is None:
-                    if skip_errors:
-                        results[path] = None
-                        continue
-                    raise NexusFileNotFoundError(path)
-
-                route = self.router.route(
-                    path,
-                    zone_id=zone_id,
-                    is_admin=is_admin,
-                    check_write=False,
-                )
-                path_info[path] = (meta, route)
-
-                # Group by backend
-                backend = route.backend
-                if backend not in backend_paths:
-                    backend_paths[backend] = []
-                backend_paths[backend].append(path)
-            except Exception as e:
-                logger.warning(f"[READ-BULK] Failed to route {path}: {type(e).__name__}: {e}")
-                if skip_errors:
-                    results[path] = None
-                else:
-                    raise
-
-        route_elapsed = (time.time() - route_start) * 1000
-        logger.info(f"[READ-BULK] Routing: {len(path_info)} paths in {route_elapsed:.1f}ms")
-
-        # Try bulk read for backends that support it (CacheConnectorMixin)
-        for backend, paths_for_backend in backend_paths.items():
-            if hasattr(backend, "read_bulk_from_cache") and len(paths_for_backend) > 1:
-                # Use bulk cache lookup
-                logger.info(
-                    f"[READ-BULK] Using bulk cache for {len(paths_for_backend)} files on {type(backend).__name__}"
-                )
-                try:
-                    cache_entries = backend.read_bulk_from_cache(paths_for_backend, original=True)
-
-                    # Process cache hits
-                    paths_needing_backend: list[str] = []
-                    for path in paths_for_backend:
-                        entry = cache_entries.get(path)
-                        if entry and not entry.stale and entry.content_binary:
-                            content = entry.content_binary
-                            content = self._apply_dynamic_viewer_filter_if_needed(
-                                path, content, context
-                            )
-                            meta, route = path_info[path]
-                            assert meta.etag is not None  # Guaranteed by check above
-                            if return_metadata:
-                                results[path] = {
-                                    "content": content,
-                                    "etag": meta.etag,
-                                    "version": meta.version,
-                                    "modified_at": meta.modified_at,
-                                    "size": len(content),
-                                }
-                            else:
-                                results[path] = content
-                        else:
-                            paths_needing_backend.append(path)
-
-                    # Fall back to individual reads for cache misses
-                    for path in paths_needing_backend:
-                        try:
-                            meta, route = path_info[path]
-                            assert meta.etag is not None  # Guaranteed by check above
-                            read_context = context
-                            if context:
-                                from dataclasses import replace
-
-                                read_context = replace(context, backend_path=route.backend_path)
-                            content = route.backend.read_content(
-                                meta.etag, context=read_context
-                            ).unwrap()
-                            content = self._apply_dynamic_viewer_filter_if_needed(
-                                path, content, context
-                            )
-                            if return_metadata:
-                                results[path] = {
-                                    "content": content,
-                                    "etag": meta.etag,
-                                    "version": meta.version,
-                                    "modified_at": meta.modified_at,
-                                    "size": len(content),
-                                }
-                            else:
-                                results[path] = content
-                        except Exception as e:
-                            logger.warning(
-                                f"[READ-BULK] Failed to read {path}: {type(e).__name__}: {e}"
-                            )
-                            if skip_errors:
-                                results[path] = None
-                            else:
-                                raise
-                except Exception as e:
-                    logger.warning(
-                        f"[READ-BULK] Bulk cache failed, falling back to individual reads: {e}"
-                    )
-                    # Fall back to individual reads
-                    for path in paths_for_backend:
-                        try:
-                            meta, route = path_info[path]
-                            assert meta.etag is not None  # Guaranteed by check above
-                            read_context = context
-                            if context:
-                                from dataclasses import replace
-
-                                read_context = replace(context, backend_path=route.backend_path)
-                            content = route.backend.read_content(
-                                meta.etag, context=read_context
-                            ).unwrap()
-                            content = self._apply_dynamic_viewer_filter_if_needed(
-                                path, content, context
-                            )
-                            if return_metadata:
-                                results[path] = {
-                                    "content": content,
-                                    "etag": meta.etag,
-                                    "version": meta.version,
-                                    "modified_at": meta.modified_at,
-                                    "size": len(content),
-                                }
-                            else:
-                                results[path] = content
-                        except Exception as e:
-                            logger.warning(
-                                f"[READ-BULK] Failed to read {path}: {type(e).__name__}: {e}"
-                            )
-                            if skip_errors:
-                                results[path] = None
-                            else:
-                                raise
-            else:
-                # Try parallel I/O for LocalBackend using nexus_fast
-                if backend.supports_parallel_mmap_read is True and len(paths_for_backend) > 1:
-                    # Use Rust parallel mmap reads for LocalBackend
-                    try:
-                        from nexus_fast import read_files_bulk
-
-                        # Build mapping: disk_path -> (virtual_path, meta)
-                        disk_to_virtual: dict[str, tuple[str, Any]] = {}
-                        disk_paths: list[str] = []
-                        for path in paths_for_backend:
-                            meta, route = path_info[path]
-                            assert meta.etag is not None
-                            disk_path = str(backend._hash_to_path(meta.etag))
-                            disk_to_virtual[disk_path] = (path, meta)
-                            disk_paths.append(disk_path)
-
-                        # Parallel mmap read
-                        logger.info(
-                            f"[READ-BULK] Using parallel mmap for {len(disk_paths)} LocalBackend files"
-                        )
-                        disk_contents = read_files_bulk(disk_paths)
-
-                        # Map results back to virtual paths
-                        for disk_path, content in disk_contents.items():
-                            vpath, meta = disk_to_virtual[disk_path]
-                            assert meta is not None  # Guaranteed by check above
-                            content = self._apply_dynamic_viewer_filter_if_needed(
-                                vpath, content, context
-                            )
-                            if return_metadata:
-                                results[vpath] = {
-                                    "content": content,
-                                    "etag": meta.etag,
-                                    "version": meta.version,
-                                    "modified_at": meta.modified_at,
-                                    "size": len(content),
-                                }
-                            else:
-                                results[vpath] = content
-
-                        # Mark missing files as None if skip_errors
-                        for path in paths_for_backend:
-                            if path not in results:
-                                if skip_errors:
-                                    results[path] = None
-                                else:
-                                    raise NexusFileNotFoundError(path)
-                    except ImportError:
-                        logger.warning(
-                            "[READ-BULK] nexus_fast not available, falling back to sequential"
-                        )
-                        # Fall through to sequential reads below
-                        for path in paths_for_backend:
-                            if path in results:
-                                continue
-                            try:
-                                meta, route = path_info[path]
-                                assert meta.etag is not None
-                                content = route.backend.read_content(
-                                    meta.etag, context=None
-                                ).unwrap()
-                                content = self._apply_dynamic_viewer_filter_if_needed(
-                                    path, content, context
-                                )
-                                results[path] = (
-                                    content
-                                    if not return_metadata
-                                    else {
-                                        "content": content,
-                                        "etag": meta.etag,
-                                        "version": meta.version,
-                                        "modified_at": meta.modified_at,
-                                        "size": len(content),
-                                    }
-                                )
-                            except Exception as exc:
-                                logger.debug(
-                                    "Failed to read content for %s during batch read: %s", path, exc
-                                )
-                                if skip_errors:
-                                    results[path] = None
-                                else:
-                                    raise
-                else:
-                    # Sequential reads for other backends or single files
-                    for path in paths_for_backend:
-                        try:
-                            meta, route = path_info[path]
-                            assert meta.etag is not None  # Guaranteed by check above
-                            read_context = context
-                            if context:
-                                from dataclasses import replace
-
-                                read_context = replace(context, backend_path=route.backend_path)
-                            content = route.backend.read_content(
-                                meta.etag, context=read_context
-                            ).unwrap()
-                            content = self._apply_dynamic_viewer_filter_if_needed(
-                                path, content, context
-                            )
-                            if return_metadata:
-                                results[path] = {
-                                    "content": content,
-                                    "etag": meta.etag,
-                                    "version": meta.version,
-                                    "modified_at": meta.modified_at,
-                                    "size": len(content),
-                                }
-                            else:
-                                results[path] = content
-                        except Exception as e:
-                            logger.warning(
-                                f"[READ-BULK] Failed to read {path}: {type(e).__name__}: {e}"
-                            )
-                            if skip_errors:
-                                results[path] = None
-                            else:
-                                raise
-
-        read_elapsed = time.time() - read_start
-        bulk_elapsed = time.time() - bulk_start
-
-        logger.info(
-            f"[READ-BULK] Completed: {len(results)} files in {bulk_elapsed * 1000:.1f}ms "
-            f"(perm={perm_elapsed * 1000:.0f}ms, read={read_elapsed * 1000:.0f}ms)"
-        )
-
-        return results
+    # read_bulk → moved to NexusFSBulkMixin (Issue #2272)
 
     @rpc_expose(description="Read a byte range from a file")
     def read_range(
@@ -1492,7 +1010,7 @@ class NexusFSCoreMixin:
         path: str,
         start: int,
         end: int,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> bytes:
         """
         Read a specific byte range from a file.
@@ -1540,7 +1058,7 @@ class NexusFSCoreMixin:
         path = self._validate_path(path)
 
         # Check read permission
-        self._check_permission(path, Permission.READ, context)
+        self._permission_checker.check(path, Permission.READ, context)
 
         # Route to backend with access control
         zone_id, agent_id, is_admin = self._get_routing_params(context)
@@ -1572,7 +1090,7 @@ class NexusFSCoreMixin:
 
     @rpc_expose(description="Stream file content in chunks")
     def stream(
-        self, path: str, chunk_size: int = 65536, context: OperationContext | None = None
+        self, path: str, chunk_size: int = 65536, context: "OperationContext | None" = None
     ) -> Any:
         """
         Stream file content in chunks without loading entire file into memory.
@@ -1608,7 +1126,7 @@ class NexusFSCoreMixin:
         path = self._validate_path(path)
 
         # Check read permission
-        self._check_permission(path, Permission.READ, context)
+        self._permission_checker.check(path, Permission.READ, context)
 
         # Route to backend with access control
         zone_id, agent_id, is_admin = self._get_routing_params(context)
@@ -1634,7 +1152,7 @@ class NexusFSCoreMixin:
         start: int,
         end: int,
         chunk_size: int = 65536,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> Any:
         """Stream a byte range [start, end] of file content.
 
@@ -1653,7 +1171,7 @@ class NexusFSCoreMixin:
             bytes: Chunks of file content within the requested range
         """
         path = self._validate_path(path)
-        self._check_permission(path, Permission.READ, context)
+        self._permission_checker.check(path, Permission.READ, context)
 
         zone_id, agent_id, is_admin = self._get_routing_params(context)
         route = self.router.route(
@@ -1676,7 +1194,7 @@ class NexusFSCoreMixin:
         self,
         path: str,
         chunks: Iterator[bytes],
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """
         Write file content from an iterator of chunks.
@@ -1711,6 +1229,7 @@ class NexusFSCoreMixin:
             >>> result = nx.write_stream("/workspace/large.bin", file_chunks("/tmp/large.bin"))
         """
         path = self._validate_path(path)
+        self._check_zone_writable(context)  # Issue #2061: write-gating
 
         # Route to backend with write access check
         zone_id, agent_id, is_admin = self._get_routing_params(context)
@@ -1726,7 +1245,7 @@ class NexusFSCoreMixin:
             raise PermissionError(f"Path is read-only: {path}")
 
         # Check write permission
-        self._check_permission(path, Permission.WRITE, context)
+        self._permission_checker.check(path, Permission.WRITE, context)
 
         # Get existing metadata for version tracking
         now = datetime.now(UTC)
@@ -1763,15 +1282,17 @@ class NexusFSCoreMixin:
         self.metadata.put(new_meta)
 
         # Sync to RecordStore via write_observer (closes gap: write_stream was missing this)
-        self._notify_observer(
-            "write",
-            path,
-            metadata=new_meta,
-            is_new=(meta is None),
-            path=path,
-            zone_id=zone_id,
-            agent_id=agent_id,
-        )
+        # Observer owns error policy (Issue #2152).
+        if (obs := self._write_observer) is not None:
+            # observer owns error policy (#2152)
+            obs.on_write(
+                metadata=new_meta,
+                is_new=(meta is None),
+                path=path,
+                zone_id=zone_id,
+                agent_id=agent_id,
+                urgency=self._resolve_write_urgency(route.io_profile),
+            )
 
         return {
             "etag": content_hash,
@@ -1785,7 +1306,7 @@ class NexusFSCoreMixin:
         self,
         path: str,
         content: bytes | str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
         if_match: str | None = None,
         if_none_match: bool = False,
         force: bool = False,
@@ -1858,9 +1379,10 @@ class NexusFSCoreMixin:
             content = content.encode("utf-8")
 
         path = self._validate_path(path)
+        self._check_zone_writable(context)  # Issue #2061: write-gating
 
         # Phase 2 Integration: Intercept memory paths
-        from nexus.services.memory.memory_router import MemoryViewRouter
+        from nexus.bricks.memory.router import MemoryViewRouter
 
         if MemoryViewRouter.is_memory_path(path):
             return self._write_memory_path(path, content)
@@ -1887,7 +1409,7 @@ class NexusFSCoreMixin:
         self,
         path: str,
         content: bytes,
-        context: OperationContext | None,
+        context: "OperationContext | None",
         if_match: str | None,
         if_none_match: bool,
         force: bool,
@@ -1932,14 +1454,18 @@ class NexusFSCoreMixin:
 
             if meta is not None:
                 # For existing files, check permission on the file itself
-                self._check_permission(path, Permission.WRITE, ctx, file_metadata=meta)
+                self._permission_checker.check(path, Permission.WRITE, ctx, file_metadata=meta)
             else:
                 # For new files, check permission on parent directory
                 parent_path = self._get_parent_path(path)  # type: ignore[attr-defined]
                 if parent_path:
-                    self._check_permission(parent_path, Permission.WRITE, ctx)
+                    self._permission_checker.check(parent_path, Permission.WRITE, ctx)
 
-        # Optimistic concurrency control
+        # Optimistic concurrency control — early validation for fast-fail.
+        # The atomic CAS check at metadata.put_if_version() provides the
+        # actual race-free guarantee; this is just a courtesy check.
+        use_cas = False  # whether to use atomic CAS at the put() call site
+        expected_version: int = 0  # version for CAS comparison
         if not force:
             # Check if_none_match (create-only mode)
             if if_none_match and meta is not None:
@@ -1961,6 +1487,14 @@ class NexusFSCoreMixin:
                         expected_etag=if_match,
                         current_etag=meta.etag or "(no etag)",
                     )
+                # Etag matches — use atomic CAS at write time
+                use_cas = True
+                expected_version = meta.version
+
+            # Create-only via if_none_match: CAS with expected_version=0
+            if if_none_match:
+                use_cas = True
+                expected_version = 0
 
         # Write to routed backend - returns content hash
         # Add backend_path to context for path-based connectors
@@ -1971,7 +1505,7 @@ class NexusFSCoreMixin:
             context = replace(context, backend_path=route.backend_path, virtual_path=path)
         else:
             # Create minimal context with just backend_path for connectors
-            from nexus.core.permissions import OperationContext
+            from nexus.contracts.types import OperationContext
 
             context = OperationContext(
                 user_id="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
@@ -2008,7 +1542,24 @@ class NexusFSCoreMixin:
             owner_id=owner_id,  # Issue #920: O(1) owner permission checks
         )
 
-        self.metadata.put(metadata)
+        # Issue #2066: Atomic CAS at the metadata write call site.
+        # When OCC is requested (if_match or if_none_match), use
+        # put_if_version() for a zero-race-window guarantee.
+        if use_cas:
+            from nexus.core.metastore import CasResult
+
+            cas_result: CasResult = self.metadata.put_if_version(metadata, expected_version)
+            if not cas_result.success:
+                if if_none_match:
+                    raise FileExistsError(f"File already exists: {path}")
+                raise ConflictError(
+                    path=path,
+                    expected_etag=if_match or "",
+                    current_etag=f"(version {cas_result.current_version})",
+                )
+        else:
+            # No OCC requested — blind write
+            self.metadata.put(metadata)
 
         # Issue #1169: Advance zone revision counter after mutation
         new_revision = self._increment_zone_revision()
@@ -2018,11 +1569,24 @@ class NexusFSCoreMixin:
         if cache_observer is not None:
             cache_observer.on_write(path, new_revision, zone_id or "root")
 
+        # Issue #625: Fire post-mutation hooks for single-file write
+        self._fire_post_mutation_hooks(
+            MutationOp.WRITE,
+            path,
+            zone_id or ROOT_ZONE_ID,
+            new_revision,
+            agent_id=agent_id,
+            etag=content_hash,
+            size=len(content),
+            version=new_version,
+            is_new=(meta is None),
+        )
+
         # Leopard-style: Add new file to ancestor directory grants
         # When a file is created in a directory that has been granted to users,
         # the file should inherit those permissions (if include_future_files=True)
         is_new_file = meta is None
-        if is_new_file and hasattr(self, "_rebac_manager") and self._rebac_manager:
+        if is_new_file and self._rebac_manager:
             try:
                 tiger_cache = getattr(self._rebac_manager, "_tiger_cache", None)
                 if tiger_cache:
@@ -2031,17 +1595,11 @@ class NexusFSCoreMixin:
                         zone_id=zone_id or "root",
                     )
                     if added_count > 0:
-                        import logging
-
-                        logger = logging.getLogger(__name__)
                         logger.debug(
                             f"[LEOPARD] New file {path} added to {added_count} ancestor directory grants"
                         )
             except Exception as e:
                 # Log but don't fail the write operation
-                import logging
-
-                logger = logging.getLogger(__name__)
                 logger.warning(f"[LEOPARD] Failed to add new file to ancestor grants: {e}")
 
         # Invalidate cached parsed_text when file is updated
@@ -2056,10 +1614,6 @@ class NexusFSCoreMixin:
 
         # P0-3: Create parent relationship tuples for file inheritance
         # This enables permission inheritance from parent directories
-        import logging
-
-        logger = logging.getLogger(__name__)
-
         # Issue #1071: Use deferred buffer for async permission operations if available
         # This reduces single-file write latency from ~36ms to ~10ms by batching
         # permission operations in the background. Owner access is guaranteed by
@@ -2081,7 +1635,7 @@ class NexusFSCoreMixin:
             if hasattr(self, "_hierarchy_manager"):
                 try:
                     logger.info(
-                        f"write: Calling ensure_parent_tuples for {path}, zone_id={ctx.zone_id or 'default'}"
+                        f"write: Calling ensure_parent_tuples for {path}, zone_id={ctx.zone_id or ROOT_ZONE_ID}"
                     )
                     created_count = self._hierarchy_manager.ensure_parent_tuples(
                         path, zone_id=ctx.zone_id or "root"
@@ -2093,7 +1647,7 @@ class NexusFSCoreMixin:
                     )
 
             # Issue #548: Grant direct_owner permission to the user who created the file
-            if meta is None and hasattr(self, "_rebac_manager") and self._rebac_manager:
+            if meta is None and self._rebac_manager:
                 try:
                     if ctx.user_id and not ctx.is_system:
                         logger.debug(
@@ -2113,33 +1667,51 @@ class NexusFSCoreMixin:
                         f"write: Failed to grant direct_owner permission for {path}: {e}"
                     )
 
-        # Auto-parse file if enabled and format is supported
-        if self.auto_parse:
-            self._auto_parse_file(path)
+        # Issue #2272: Removed inline _auto_parse_file() — AutoParseWriteHook handles this.
+        # Issue #2033 Phase 5: Dispatch post-write hooks (auto-parse, tiger cache, etc.)
+        _pipeline = getattr(self, "_hook_pipeline", None)
+        if _pipeline is not None and _pipeline.write_hook_count > 0:
+            from nexus.core.vfs_hooks import WriteHookContext
+
+            _write_ctx = WriteHookContext(
+                path=path,
+                content=content,
+                context=context,
+                zone_id=zone_id,
+                agent_id=agent_id,
+                is_new_file=(meta is None),
+                content_hash=content_hash,
+                old_metadata=meta,
+                new_version=new_version,
+                snapshot_hash=snapshot_hash,
+                metadata_snapshot=metadata_snapshot,
+            )
+            _pipeline.run_post_write(_write_ctx)
 
         # Issue #1752: Auto-track write in active transaction (snapshot for rollback)
-        _snapshot_svc = getattr(self, "_snapshot_service", None)
-        if _snapshot_svc is not None:
-            _txn_id = _snapshot_svc.is_tracked(path)
+        # Issue #2131 (14A): Direct attribute access (set in __init__ via BrickServices)
+        if self._snapshot_service is not None:
+            _txn_id = self._snapshot_service.is_tracked(path)
             if _txn_id is not None:
-                _snapshot_svc.track_write(
+                self._snapshot_service.track_write(
                     _txn_id, path, snapshot_hash, metadata_snapshot, content_hash
                 )
 
         # Task #45: Sync to RecordStore via write_observer (audit trail + version history)
         # Observer is optional — injected by factory.py, not created by kernel.
-        # Issue #1246: Unified error handling via _notify_observer.
-        self._notify_observer(
-            "write",
-            path,
-            metadata=metadata,
-            is_new=(meta is None),
-            path=path,
-            zone_id=zone_id,
-            agent_id=agent_id,
-            snapshot_hash=snapshot_hash,
-            metadata_snapshot=metadata_snapshot,
-        )
+        # Issue #1631: Direct typed dispatch — observer owns error policy (#2152).
+        if (obs := self._write_observer) is not None:
+            # observer owns error policy (#2152)
+            obs.on_write(
+                metadata=metadata,
+                is_new=(meta is None),
+                path=path,
+                zone_id=zone_id,
+                agent_id=agent_id,
+                snapshot_hash=snapshot_hash,
+                metadata_snapshot=metadata_snapshot,
+                urgency=self._resolve_write_urgency(route.io_profile),
+            )
 
         # v0.7.0: Fire workflow event for automatic trigger execution
         is_new_file = meta is None or meta.etag is None
@@ -2161,7 +1733,7 @@ class NexusFSCoreMixin:
 
         # Issue #1106 Block 2: Publish event to distributed event bus
         self._publish_file_event(
-            event_type="file_write",
+            event_type=FileEventType.FILE_WRITE,
             path=path,
             zone_id=zone_id,
             size=len(content),
@@ -2181,7 +1753,7 @@ class NexusFSCoreMixin:
         self,
         path: str,
         update_fn: Callable[[bytes], bytes],
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
         timeout: float = 30.0,
         ttl: float = 30.0,
     ) -> dict[str, Any]:
@@ -2264,7 +1836,7 @@ class NexusFSCoreMixin:
         self,
         path: str,
         content: bytes | str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
         if_match: str | None = None,
         force: bool = False,
     ) -> dict[str, Any]:
@@ -2343,7 +1915,7 @@ class NexusFSCoreMixin:
             if if_match is not None and not force:
                 current_etag = result.get("etag")
                 if current_etag != if_match:
-                    from nexus.core.exceptions import ConflictError
+                    from nexus.contracts.exceptions import ConflictError
 
                     raise ConflictError(
                         path=path,
@@ -2353,9 +1925,9 @@ class NexusFSCoreMixin:
         except Exception as e:
             # If file doesn't exist, treat as empty (will create new file)
             # Permission errors on non-existent files are OK - write() will check parent permissions
-            from nexus.core.exceptions import NexusFileNotFoundError
+            from nexus.contracts.exceptions import NexusFileNotFoundError
 
-            if not isinstance(e, (NexusFileNotFoundError, PermissionError)):
+            if not isinstance(e, NexusFileNotFoundError | PermissionError):
                 # Re-raise unexpected errors
                 raise
             # For FileNotFoundError or PermissionError, continue with empty content
@@ -2385,7 +1957,7 @@ class NexusFSCoreMixin:
         self,
         path: str,
         edits: list[tuple[str, str]] | list[dict[str, Any]] | list[Any],
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
         if_match: str | None = None,
         fuzzy_threshold: float = 0.85,
         preview: bool = False,
@@ -2460,8 +2032,8 @@ class NexusFSCoreMixin:
             ...     {"old_str": "def foo():", "new_str": "def bar():", "hint_line": 42}
             ... ], fuzzy_threshold=0.8)
         """
-        from nexus.utils.edit_engine import EditEngine
-        from nexus.utils.edit_engine import EditOperation as EditOp
+        from nexus.core.edit_engine import EditEngine
+        from nexus.core.edit_engine import EditOperation as EditOp
 
         path = self._validate_path(path)
 
@@ -2497,7 +2069,7 @@ class NexusFSCoreMixin:
         for edit in edits:
             if isinstance(edit, EditOp):
                 edit_operations.append(edit)
-            elif isinstance(edit, (tuple, list)) and len(edit) >= 2:
+            elif isinstance(edit, tuple | list) and len(edit) >= 2:
                 # Handle both tuple and list (JSON deserializes tuples as lists)
                 edit_operations.append(EditOp(old_str=edit[0], new_str=edit[1]))
             elif isinstance(edit, dict):
@@ -2583,380 +2155,34 @@ class NexusFSCoreMixin:
             "modified_at": write_result.get("modified_at"),
         }
 
-    @rpc_expose(description="Write multiple files in a single transaction")
-    def write_batch(
-        self, files: list[tuple[str, bytes]], context: OperationContext | None = None
-    ) -> list[dict[str, Any]]:
-        """
-        Write multiple files in a single transaction for improved performance.
+    # write_batch → moved to NexusFSBulkMixin (Issue #2272)
 
-        This is 13x faster than calling write() multiple times for small files
-        because it uses a single database transaction instead of N transactions.
+    @staticmethod
+    def _resolve_write_urgency(io_profile: str) -> str | None:
+        """Map IOProfile sync_mode to urgency string for WriteBuffer (#2426 Phase 2).
 
-        All files are written atomically - either all succeed or all fail.
-
-        Args:
-            files: List of (path, content) tuples to write
-            context: Optional operation context for permission checks (uses default if not provided)
-
-        Returns:
-            List of metadata dicts for each file (in same order as input):
-                - etag: Content hash (SHA-256) of the written content
-                - version: New version number
-                - modified_at: Modification timestamp
-                - size: File size in bytes
-
-        Raises:
-            InvalidPathError: If any path is invalid
-            BackendError: If write operation fails
-            AccessDeniedError: If access is denied (zone isolation or read-only namespace)
-            PermissionError: If any path is read-only or user doesn't have write permission
-
-        Examples:
-            >>> # Write 100 small files in a single batch (13x faster!)
-            >>> files = [(f"/logs/file_{i}.txt", b"log data") for i in range(100)]
-            >>> results = nx.write_batch(files)
-            >>> print(f"Wrote {len(results)} files")
-
-            >>> # Atomic batch write - all or nothing
-            >>> files = [
-            ...     ("/config/setting1.json", b'{"enabled": true}'),
-            ...     ("/config/setting2.json", b'{"timeout": 30}'),
-            ... ]
-            >>> nx.write_batch(files)
-        """
-        if not files:
-            return []
-
-        # Validate all paths first
-        validated_files: list[tuple[str, bytes]] = []
-        for path, content in files:
-            validated_path = self._validate_path(path)
-            validated_files.append((validated_path, content))
-
-        # Route all paths and check write access
-        zone_id, agent_id, is_admin = self._get_routing_params(context)
-        routes = []
-        for path, _ in validated_files:
-            route = self.router.route(
-                path,
-                zone_id=zone_id,
-                is_admin=is_admin,
-                check_write=True,
-            )
-            # Check if path is read-only
-            if route.readonly:
-                raise PermissionError(f"Path is read-only: {path}")
-            routes.append(route)
-
-        # Get existing metadata for all paths (single query)
-        paths = [path for path, _ in validated_files]
-        existing_metadata = self.metadata.get_batch(paths)
-
-        # Check write permissions for existing files (pass pre-fetched metadata
-        # to avoid redundant FFI calls in _check_permission's owner fast-path)
-        if self._enforce_permissions:  # type: ignore[attr-defined]
-            for path in paths:
-                meta = existing_metadata.get(path)
-                if meta is not None:
-                    self._check_permission(path, Permission.WRITE, context, file_metadata=meta)
-
-        now = datetime.now(UTC)
-        metadata_list: list[FileMetadata] = []
-        results: list[dict[str, Any]] = []
-
-        # Write all content to backend CAS (deduplicated automatically)
-        for (path, content), route in zip(validated_files, routes, strict=False):
-            # Write to backend - returns content hash
-            content_hash = route.backend.write_content(content, context=context).unwrap()
-
-            # Get existing metadata for this file
-            meta = existing_metadata.get(path)
-
-            # UNIX permissions removed - all access control via ReBAC
-
-            # Calculate new version number (increment if updating)
-            new_version = (meta.version + 1) if meta else 1
-
-            # Build metadata for batch insert
-            # Note: UNIX permissions (owner/group/mode) removed - use ReBAC instead
-            metadata = FileMetadata(
-                path=path,
-                backend_name=route.backend.name,  # FIX: Use routed backend name, not default backend
-                physical_path=content_hash,  # CAS: hash is the "physical" location
-                size=len(content),
-                etag=content_hash,  # SHA-256 hash for integrity
-                created_at=meta.created_at if meta else now,
-                modified_at=now,
-                version=new_version,
-                created_by=getattr(self, "agent_id", None)
-                or getattr(self, "user_id", None),  # Track who created/modified this version
-                zone_id=zone_id or "root",  # Issue #904, #773: Store zone_id for PREWHERE filtering
-            )
-            metadata_list.append(metadata)
-
-            # Build result dict
-            results.append(
-                {
-                    "etag": content_hash,
-                    "version": new_version,
-                    "modified_at": now,
-                    "size": len(content),
-                }
-            )
-
-        # Store all metadata in a single transaction (with version history)
-        self.metadata.put_batch(metadata_list)
-
-        # Task #45: Sync batch to RecordStore (audit trail + version history)
-        # Issue #1246: Unified error handling — no longer silently suppressed.
-        items = [
-            (metadata, existing_metadata.get(metadata.path) is None) for metadata in metadata_list
-        ]
-        self._notify_observer(
-            "write_batch",
-            f"batch({len(metadata_list)} files)",
-            items=items,
-            zone_id=zone_id,
-            agent_id=agent_id,
-        )
-
-        # Issue #548: Create parent tuples and grant direct_owner for new files
-        # This ensures agents can read files they create (via user inheritance)
-        # PERF OPTIMIZATION: Use batch operations instead of individual calls (20x faster)
-        import logging
-        import time as _time
-
-        logger = logging.getLogger(__name__)
-        ctx = context if context is not None else self._default_context
-        zone_id_for_perms = ctx.zone_id or "root"
-
-        # PERF: Batch hierarchy tuple creation (single transaction instead of N)
-        _hierarchy_start = _time.perf_counter()
-        all_paths = [path for path, _ in validated_files]
-        if hasattr(self, "_hierarchy_manager") and hasattr(
-            self._hierarchy_manager, "ensure_parent_tuples_batch"
-        ):
-            try:
-                created_count = self._hierarchy_manager.ensure_parent_tuples_batch(
-                    all_paths, zone_id=zone_id_for_perms
-                )
-                logger.info(
-                    f"write_batch: Batch created {created_count} parent tuples for {len(all_paths)} files"
-                )
-            except Exception as e:
-                logger.warning(
-                    f"write_batch: Batch parent tuples failed, falling back to individual: {e}"
-                )
-                # Fallback to individual calls if batch fails
-                for path in all_paths:
-                    try:
-                        self._hierarchy_manager.ensure_parent_tuples(
-                            path, zone_id=zone_id_for_perms
-                        )
-                    except Exception as e2:
-                        logger.warning(
-                            f"write_batch: Failed to create parent tuples for {path}: {e2}"
-                        )
-        elif hasattr(self, "_hierarchy_manager"):
-            # No batch method available, use individual calls
-            for path in all_paths:
-                try:
-                    self._hierarchy_manager.ensure_parent_tuples(path, zone_id=zone_id_for_perms)
-                except Exception as e:
-                    logger.warning(f"write_batch: Failed to create parent tuples for {path}: {e}")
-        _hierarchy_elapsed = (_time.perf_counter() - _hierarchy_start) * 1000
-
-        # PERF: Batch direct_owner grants (single transaction instead of N)
-        _rebac_start = _time.perf_counter()
-        if (
-            hasattr(self, "_rebac_manager")
-            and self._rebac_manager
-            and ctx.user_id
-            and not ctx.is_system
-        ):
-            # Collect all owner grants needed for new files
-            owner_grants = []
-            for (path, _), _meta in zip(validated_files, metadata_list, strict=False):
-                is_new_file = existing_metadata.get(path) is None
-                if is_new_file:
-                    owner_grants.append(
-                        {
-                            "subject": ("user", ctx.user_id),
-                            "relation": "direct_owner",
-                            "object": ("file", path),
-                            "zone_id": zone_id_for_perms,
-                        }
-                    )
-
-            if owner_grants and hasattr(self._rebac_manager, "rebac_write_batch"):
-                try:
-                    grant_count = self._rebac_manager.rebac_write_batch(owner_grants)
-                    logger.info(f"write_batch: Batch granted direct_owner to {grant_count} files")
-                except Exception as e:
-                    logger.warning(
-                        f"write_batch: Batch rebac_write failed, falling back to individual: {e}"
-                    )
-                    # Fallback to individual calls
-                    for grant in owner_grants:
-                        try:
-                            self._rebac_manager.rebac_write(
-                                subject=grant["subject"],
-                                relation=grant["relation"],
-                                object=grant["object"],
-                                zone_id=grant["zone_id"],
-                            )
-                        except Exception as e2:
-                            logger.warning(f"write_batch: Failed to grant direct_owner: {e2}")
-            elif owner_grants:
-                # No batch method available, use individual calls
-                for grant in owner_grants:
-                    try:
-                        self._rebac_manager.rebac_write(
-                            subject=grant["subject"],
-                            relation=grant["relation"],
-                            object=grant["object"],
-                            zone_id=grant["zone_id"],
-                        )
-                    except Exception as e:
-                        logger.warning(f"write_batch: Failed to grant direct_owner: {e}")
-        _rebac_elapsed = (_time.perf_counter() - _rebac_start) * 1000
-
-        # Log detailed timing breakdown for performance analysis
-        logger.warning(
-            f"[WRITE-BATCH-PERF] files={len(validated_files)}, "
-            f"hierarchy={_hierarchy_elapsed:.1f}ms, rebac={_rebac_elapsed:.1f}ms, "
-            f"per_file_avg={(_hierarchy_elapsed + _rebac_elapsed) / len(validated_files):.1f}ms"
-        )
-
-        # Auto-parse files if enabled
-        if self.auto_parse:
-            for path, _ in validated_files:
-                self._auto_parse_file(path)
-
-        return results
-
-    def _notify_observer(self, operation: str, op_path: str, **kwargs: Any) -> None:
-        """Notify the write observer of a mutation, with unified error policy.
-
-        Replaces the inconsistent error handling where single writes used
-        audit_strict_mode but batch/delete/rename silently suppressed errors.
-
-        Issue #1246: All observer calls now follow the same policy:
-        - audit_strict_mode=True: raise AuditLogError on failure
-        - audit_strict_mode=False: log critical warning, continue
-
-        Args:
-            operation: One of 'write', 'write_batch', 'delete', 'rename'.
-            op_path: Primary path affected (for error messages only).
-            **kwargs: Passed directly to the observer method.
-        """
-        if not self._write_observer:
-            return
-
-        try:
-            method = getattr(self._write_observer, f"on_{operation}")
-            method(**kwargs)
-        except Exception as e:
-            from nexus.core.exceptions import AuditLogError
-
-            if self._audit_strict_mode:
-                logger.error(
-                    f"AUDIT LOG FAILURE: {operation} on '{op_path}' ABORTED. "
-                    f"Error: {e}. Set audit_strict_mode=False to allow writes without audit logs."
-                )
-                raise AuditLogError(
-                    f"Operation aborted: audit logging failed for {operation}: {e}",
-                    path=op_path,
-                    original_error=e,
-                ) from e
-            else:
-                logger.critical(
-                    f"AUDIT LOG FAILURE: {operation} on '{op_path}' SUCCEEDED but audit log FAILED. "
-                    f"Error: {e}. This creates an audit trail gap!"
-                )
-
-    def _auto_parse_file(self, path: str) -> None:
-        """Auto-parse a file in the background (fire-and-forget).
-
-        Args:
-            path: Virtual path to the file
+        Returns "high" for sync-mode profiles (e.g. EDIT), None otherwise.
+        Unknown/invalid profiles gracefully default to None (normal urgency).
         """
         try:
-            # Check if parser is available for this file type
-            self.parser_registry.get_parser(path)
+            from nexus.contracts.io_profile import IOProfile
 
-            # Run parsing in a background thread
-            # CRITICAL: Use daemon=False to prevent abrupt termination during DB writes
-            # Threads are tracked for graceful shutdown in close()
-            thread = threading.Thread(
-                target=self._parse_in_thread,
-                args=(path,),
-                daemon=False,  # Changed from True to prevent DB corruption on shutdown
-                name=f"parser-{path}",  # Named for debugging
-            )
-            # Track thread for graceful shutdown
-            with self._parser_threads_lock:
-                # Clean up finished threads before adding new one
-                self._parser_threads = [t for t in self._parser_threads if t.is_alive()]
-                self._parser_threads.append(thread)
-            thread.start()
-        except Exception as e:
-            # Log if no parser available (expected) but don't fail the write operation
-            logger.debug(f"Auto-parse skipped for {path}: {type(e).__name__}: {e}")
+            profile = IOProfile(io_profile)
+            if profile.config().write_buffer_sync_mode:
+                return "high"
+        except (ValueError, KeyError, AttributeError):
+            pass  # Unknown/missing profile, default to normal urgency
+        return None
 
-    def _parse_in_thread(self, path: str) -> None:
-        """Parse file in a background thread.
+    # _handle_observer_error → removed (Issue #2152)
+    # Observer owns its error policy via strict_mode. No kernel safety net needed.
+    # See RecordStoreWriteObserver._handle_error() in storage/record_store_syncer.py.
 
-        Args:
-            path: Virtual path to the file
-        """
-        try:
-            # Run async parse via sync bridge (thread-safe)
-            from nexus.core.sync_bridge import run_sync
-
-            run_sync(self.parse(path, store_result=True))
-        except Exception as e:
-            # Log parsing errors for visibility but don't crash
-            # IMPORTANT: Log with enough detail to debug issues
-            import traceback
-
-            error_type = type(e).__name__
-            error_msg = str(e)
-
-            # Categorize errors for better logging
-            if "disk" in error_msg.lower() or "space" in error_msg.lower():
-                logger.error(
-                    f"Auto-parse FAILED for {path}: Disk error - {error_type}: {error_msg}"
-                )
-            elif "database" in error_msg.lower() or "connection" in error_msg.lower():
-                logger.error(
-                    f"Auto-parse FAILED for {path}: Database error - {error_type}: {error_msg}"
-                )
-            elif "memory" in error_msg.lower() or isinstance(e, MemoryError):
-                logger.error(
-                    f"Auto-parse FAILED for {path}: Memory error - {error_type}: {error_msg}"
-                )
-            elif "permission" in error_msg.lower() or isinstance(e, (PermissionError, OSError)):
-                logger.warning(
-                    f"Auto-parse FAILED for {path}: Permission/OS error - {error_type}: {error_msg}"
-                )
-            elif (
-                "unsupported" in error_msg.lower()
-                or "not supported" in error_msg.lower()
-                or error_type == "UnsupportedFormatException"
-            ):
-                # Expected for files that don't need parsing - log at debug level
-                logger.debug(f"Auto-parse skipped for {path}: Unsupported format - {error_msg}")
-            else:
-                # Unknown error - log with stack trace for debugging
-                logger.warning(
-                    f"Auto-parse FAILED for {path}: {error_type}: {error_msg}\n"
-                    f"Stack trace:\n{traceback.format_exc()}"
-                )
+    # _auto_parse_file + _parse_in_thread → removed (Issue #2272)
+    # Replaced by AutoParseWriteHook in services/vfs_hook_impls.py
 
     @rpc_expose(description="Delete file")
-    def delete(self, path: str, context: OperationContext | None = None) -> dict[str, Any]:
+    def delete(self, path: str, context: "OperationContext | None" = None) -> dict[str, Any]:
         """
         Delete a file or memory.
 
@@ -2980,9 +2206,10 @@ class NexusFSCoreMixin:
             PermissionError: If path is read-only or user doesn't have write permission
         """
         path = self._validate_path(path)
+        self._check_zone_writable(context)  # Issue #2061: write-gating
 
         # Phase 2 Integration: Intercept memory paths
-        from nexus.services.memory.memory_router import MemoryViewRouter
+        from nexus.bricks.memory.router import MemoryViewRouter
 
         if MemoryViewRouter.is_memory_path(path):
             self._delete_memory_path(path, context=context)
@@ -3028,26 +2255,25 @@ class NexusFSCoreMixin:
         }
 
         # Check write permission for delete        # This comes AFTER zone isolation check so AccessDeniedError takes precedence
-        self._check_permission(path, Permission.WRITE, context)
+        self._permission_checker.check(path, Permission.WRITE, context)
 
         # Issue #1752: Auto-track delete in active transaction (snapshot for rollback)
-        _snapshot_svc = getattr(self, "_snapshot_service", None)
-        if _snapshot_svc is not None:
-            _txn_id = _snapshot_svc.is_tracked(path)
+        # Issue #2131 (14A): Direct attribute access (set in __init__ via BrickServices)
+        if self._snapshot_service is not None:
+            _txn_id = self._snapshot_service.is_tracked(path)
             if _txn_id is not None:
-                _snapshot_svc.track_delete(_txn_id, path, snapshot_hash, metadata_snapshot)
+                self._snapshot_service.track_delete(_txn_id, path, snapshot_hash, metadata_snapshot)
 
         # Task #45: Sync to RecordStore BEFORE deleting CAS content
-        # Issue #1246: Unified error handling via _notify_observer.
-        self._notify_observer(
-            "delete",
-            path,
-            path=path,
-            zone_id=zone_id,
-            agent_id=agent_id,
-            snapshot_hash=snapshot_hash,
-            metadata_snapshot=metadata_snapshot,
-        )
+        # Issue #1631: Direct typed dispatch — observer owns error policy (#2152).
+        if (obs := self._write_observer) is not None:
+            obs.on_delete(
+                path=path,
+                zone_id=zone_id,
+                agent_id=agent_id,
+                snapshot_hash=snapshot_hash,
+                metadata_snapshot=metadata_snapshot,
+            )
 
         # Delete from routed backend CAS (decrements ref count)
         # Content is only physically deleted when ref_count reaches 0
@@ -3068,6 +2294,17 @@ class NexusFSCoreMixin:
         if cache_observer is not None:
             cache_observer.on_delete(path, new_revision, zone_id or "root")
 
+        # Issue #625: Fire post-mutation hooks for delete
+        self._fire_post_mutation_hooks(
+            MutationOp.DELETE,
+            path,
+            zone_id or ROOT_ZONE_ID,
+            new_revision,
+            agent_id=agent_id,
+            etag=meta.etag,
+            size=meta.size,
+        )
+
         # v0.7.0: Fire workflow event for automatic trigger execution
         self._fire_workflow_event(
             "file_delete",
@@ -3085,7 +2322,7 @@ class NexusFSCoreMixin:
 
         # Issue #1106 Block 2: Publish event to distributed event bus
         self._publish_file_event(
-            event_type="file_delete",
+            event_type=FileEventType.FILE_DELETE,
             path=path,
             zone_id=zone_id,
             size=meta.size,
@@ -3093,11 +2330,25 @@ class NexusFSCoreMixin:
             agent_id=agent_id,
         )
 
+        # Issue #2033 Phase 5: Dispatch post-delete hooks
+        _pipeline = getattr(self, "_hook_pipeline", None)
+        if _pipeline is not None and _pipeline.delete_hook_count > 0:
+            from nexus.core.vfs_hooks import DeleteHookContext
+
+            _delete_ctx = DeleteHookContext(
+                path=path,
+                context=context,
+                zone_id=zone_id,
+                agent_id=agent_id,
+                metadata=meta,
+            )
+            _pipeline.run_post_delete(_delete_ctx)
+
         return {}
 
     @rpc_expose(description="Rename/move file")
     def rename(
-        self, old_path: str, new_path: str, context: OperationContext | None = None
+        self, old_path: str, new_path: str, context: "OperationContext | None" = None
     ) -> dict[str, Any]:
         """
         Rename/move a file by updating its path in metadata.
@@ -3129,6 +2380,7 @@ class NexusFSCoreMixin:
         """
         old_path = self._validate_path(old_path)
         new_path = self._validate_path(new_path)
+        self._check_zone_writable(context)  # Issue #2061: write-gating
 
         # Route both paths
         zone_id, agent_id, is_admin = self._get_routing_params(context)
@@ -3173,7 +2425,7 @@ class NexusFSCoreMixin:
         # For connector backends, also verify the file exists in backend storage
         # (metadata might be stale if previous operations failed)
         if self.metadata.exists(new_path):
-            if new_route.backend.supports_rename is True:
+            if new_route.backend.has_capability(ConnectorCapability.RENAME):
                 # Connector backend - verify file actually exists in storage
                 # If metadata says it exists but storage doesn't, clean up stale metadata
                 try:
@@ -3217,7 +2469,7 @@ class NexusFSCoreMixin:
 
         # For path-based connector backends, we need to move the actual file
         # in the backend storage (not just metadata)
-        if old_route.backend.supports_rename is True:
+        if old_route.backend.has_capability(ConnectorCapability.RENAME):
             # Connector backend - move the file in backend storage
             try:
                 old_route.backend.rename_file(old_route.backend_path, new_route.backend_path)
@@ -3243,18 +2495,21 @@ class NexusFSCoreMixin:
         if cache_observer is not None:
             cache_observer.on_rename(old_path, new_path, new_revision, zone_id or "root")
 
-        # Update ReBAC permissions to follow the renamed file/directory
-        # This ensures permissions are preserved when files are moved
-        import logging
-
-        logger = logging.getLogger(__name__)
-
-        logger.warning(f"[RENAME-REBAC] Starting ReBAC update: {old_path} -> {new_path}")
-        logger.warning(
-            f"[RENAME-REBAC] has _rebac_manager: {hasattr(self, '_rebac_manager')}, is truthy: {bool(getattr(self, '_rebac_manager', None))}"
+        # Issue #625: Fire post-mutation hooks for rename
+        self._fire_post_mutation_hooks(
+            MutationOp.RENAME,
+            old_path,
+            zone_id or ROOT_ZONE_ID,
+            new_revision,
+            agent_id=agent_id,
+            new_path=new_path,
         )
 
-        if hasattr(self, "_rebac_manager") and self._rebac_manager:
+        # Update ReBAC permissions to follow the renamed file/directory
+        # This ensures permissions are preserved when files are moved
+        logger.warning("[RENAME-REBAC] Starting ReBAC update: %s -> %s", old_path, new_path)
+
+        if self._rebac_manager:
             try:
                 logger.warning(
                     f"[RENAME-REBAC] Calling update_object_path: old={old_path}, new={new_path}, is_dir={is_directory}"
@@ -3282,36 +2537,34 @@ class NexusFSCoreMixin:
             logger.warning("[RENAME-REBAC] SKIPPED - no _rebac_manager available")
 
         # Leopard-style: Update Tiger Cache bitmaps for moved files
-        # When a file moves between directories, permissions may change:
-        # - If old directory had grants, file should be removed from those users' bitmaps
-        # - If new directory has grants, file should be added to those users' bitmaps
-        if hasattr(self, "_rebac_manager") and self._rebac_manager:
-            try:
-                tiger_cache = getattr(self._rebac_manager, "_tiger_cache", None)
-                if tiger_cache:
-                    self._update_tiger_cache_on_move(
-                        tiger_cache=tiger_cache,
-                        old_path=old_path,
-                        new_path=new_path,
-                        is_directory=bool(is_directory),
-                        zone_id=zone_id or "root",
-                    )
-            except Exception as e:
-                # Log but don't fail the rename operation
-                logger.warning(f"[LEOPARD] Failed to update Tiger Cache on move: {e}")
+        # Issue #2272: Removed inline _update_tiger_cache_on_move() — TigerCacheRenameHook handles this.
+        # Issue #2033 Phase 5: Dispatch post-rename hooks (tiger cache, etc.)
+        _pipeline = getattr(self, "_hook_pipeline", None)
+        if _pipeline is not None and _pipeline.rename_hook_count > 0:
+            from nexus.core.vfs_hooks import RenameHookContext
+
+            _rename_ctx = RenameHookContext(
+                old_path=old_path,
+                new_path=new_path,
+                context=context,
+                zone_id=zone_id,
+                agent_id=agent_id,
+                is_directory=bool(is_directory),
+                metadata=meta,
+            )
+            _pipeline.run_post_rename(_rename_ctx)
 
         # Task #45: Sync to RecordStore (audit trail)
-        # Issue #1246: Unified error handling via _notify_observer.
-        self._notify_observer(
-            "rename",
-            old_path,
-            old_path=old_path,
-            new_path=new_path,
-            zone_id=zone_id,
-            agent_id=agent_id,
-            snapshot_hash=snapshot_hash,
-            metadata_snapshot=metadata_snapshot,
-        )
+        # Issue #1631: Direct typed dispatch — observer owns error policy (#2152).
+        if (obs := self._write_observer) is not None:
+            obs.on_rename(
+                old_path=old_path,
+                new_path=new_path,
+                zone_id=zone_id,
+                agent_id=agent_id,
+                snapshot_hash=snapshot_hash,
+                metadata_snapshot=metadata_snapshot,
+            )
 
         # v0.7.0: Fire workflow event for automatic trigger execution
         self._fire_workflow_event(
@@ -3331,7 +2584,7 @@ class NexusFSCoreMixin:
 
         # Issue #1106 Block 2: Publish event to distributed event bus
         self._publish_file_event(
-            event_type="file_rename",
+            event_type=FileEventType.FILE_RENAME,
             path=new_path,
             old_path=old_path,
             zone_id=zone_id,
@@ -3342,173 +2595,11 @@ class NexusFSCoreMixin:
 
         return {}
 
-    def _update_tiger_cache_on_move(
-        self,
-        tiger_cache: Any,
-        old_path: str,
-        new_path: str,
-        is_directory: bool,
-        zone_id: str,
-    ) -> None:
-        """Update Tiger Cache bitmaps when a file/directory is moved.
-
-        Leopard-style optimization: When a file moves between directories,
-        permissions may change based on ancestor directory grants:
-        - If old directory had grants, file should be removed from those users' bitmaps
-        - If new directory has grants, file should be added to those users' bitmaps
-        - Grants in both paths need no change (permission still applies)
-
-        Args:
-            tiger_cache: The TigerCache instance
-            old_path: Original file path
-            new_path: New file path
-            is_directory: Whether this is a directory move
-            zone_id: Zone ID
-        """
-        # Get grants that apply to old and new paths
-        old_grants = tiger_cache.get_directory_grants_for_path(old_path, zone_id)
-        new_grants = tiger_cache.get_directory_grants_for_path(new_path, zone_id)
-
-        # Create grant keys for comparison (subject_type, subject_id, permission)
-        def grant_key(g: dict) -> tuple:
-            return (g["subject_type"], g["subject_id"], g["permission"])
-
-        old_grant_keys = {grant_key(g) for g in old_grants}
-        new_grant_keys = {grant_key(g) for g in new_grants}
-
-        # Grants only in old path -> remove file from those bitmaps
-        grants_to_remove = old_grant_keys - new_grant_keys
-        # Grants only in new path -> add file to those bitmaps
-        grants_to_add = new_grant_keys - old_grant_keys
-
-        if not grants_to_remove and not grants_to_add:
-            logger.debug(
-                f"[LEOPARD] No permission changes needed for move: {old_path} -> {new_path}"
-            )
-            return
-
-        # Get files to update (single file or all descendants for directory)
-        if is_directory:
-            files_to_update = self._get_directory_files_for_move(old_path, new_path, zone_id)
-        else:
-            files_to_update = [(old_path, new_path)]
-
-        logger.info(
-            f"[LEOPARD] Updating permissions for move: {old_path} -> {new_path}, "
-            f"files={len(files_to_update)}, grants_to_remove={len(grants_to_remove)}, "
-            f"grants_to_add={len(grants_to_add)}"
-        )
-
-        # Process each file
-        resource_map = getattr(tiger_cache, "_resource_map", None)
-        if not resource_map:
-            logger.warning("[LEOPARD] No resource map available, skipping bitmap updates")
-            return
-
-        for _old_file_path, new_file_path in files_to_update:
-            # Get int_id for the file (use new path since file was already renamed)
-            int_id = resource_map.get_or_create_int_id("file", new_file_path)
-            if int_id <= 0:
-                logger.warning(f"[LEOPARD] Failed to get int_id for: {new_file_path}")
-                continue
-
-            # Remove from old grants' bitmaps
-            for subject_type, subject_id, permission in grants_to_remove:
-                try:
-                    tiger_cache.remove_from_bitmap(
-                        subject_type=subject_type,
-                        subject_id=subject_id,
-                        permission=permission,
-                        resource_type="file",
-                        zone_id=zone_id,
-                        resource_int_id=int_id,
-                    )
-                    logger.debug(
-                        f"[LEOPARD] Removed {new_file_path} from bitmap: "
-                        f"{subject_type}:{subject_id} ({permission})"
-                    )
-                except Exception as e:
-                    logger.warning(f"[LEOPARD] Failed to remove from bitmap: {e}")
-
-            # Add to new grants' bitmaps
-            for grant in new_grants:
-                key = grant_key(grant)
-                if key not in grants_to_add:
-                    continue
-
-                # Check if grant includes future files (moved files count as "new" to this path)
-                if not grant.get("include_future_files", True):
-                    continue
-
-                try:
-                    tiger_cache.add_to_bitmap(
-                        grant["subject_type"],
-                        grant["subject_id"],
-                        grant["permission"],
-                        "file",
-                        zone_id,
-                        int_id,
-                    )
-
-                    # Persist immediately (write-through)
-                    tiger_cache.persist_single_grant(
-                        grant["subject_type"],
-                        grant["subject_id"],
-                        grant["permission"],
-                        "file",
-                        new_file_path,
-                        zone_id,
-                    )
-
-                    logger.debug(
-                        f"[LEOPARD] Added {new_file_path} to bitmap: "
-                        f"{grant['subject_type']}:{grant['subject_id']} ({grant['permission']})"
-                    )
-                except Exception as e:
-                    logger.warning(f"[LEOPARD] Failed to add to bitmap: {e}")
-
-        logger.info(f"[LEOPARD] Completed permission updates for move: {old_path} -> {new_path}")
-
-    def _get_directory_files_for_move(
-        self,
-        old_dir_path: str,
-        new_dir_path: str,
-        zone_id: str,
-    ) -> list[tuple[str, str]]:
-        """Get all files under a directory for move permission updates.
-
-        Args:
-            old_dir_path: Original directory path
-            new_dir_path: New directory path
-            zone_id: Zone ID
-
-        Returns:
-            List of (old_file_path, new_file_path) tuples
-        """
-        # Normalize paths
-        old_prefix = old_dir_path.rstrip("/") + "/"
-        new_prefix = new_dir_path.rstrip("/") + "/"
-
-        try:
-            # Query all files under directory (using new path since already renamed)
-            # The files have already been renamed via metadata update, so query new paths
-            result = []
-            for file_meta in self.metadata.list_iter(
-                prefix=new_prefix, recursive=True, zone_id=zone_id
-            ):
-                new_file_path = file_meta.path
-                if new_file_path:
-                    # Compute what the old path would have been
-                    relative_path = new_file_path[len(new_prefix) :]
-                    old_file_path = old_prefix + relative_path
-                    result.append((old_file_path, new_file_path))
-            return result
-        except Exception as e:
-            logger.warning(f"[LEOPARD] Failed to list directory files: {e}")
-            return []
+    # _update_tiger_cache_on_move + _get_directory_files_for_move → removed (Issue #2272)
+    # Replaced by TigerCacheRenameHook in services/vfs_hook_impls.py
 
     @rpc_expose(description="Get file metadata without reading content")
-    def stat(self, path: str, context: OperationContext | None = None) -> dict[str, Any]:
+    def stat(self, path: str, context: "OperationContext | None" = None) -> dict[str, Any]:
         """
         Get file metadata without reading the file content.
 
@@ -3552,14 +2643,14 @@ class NexusFSCoreMixin:
                 # Fall back to descendant access check if TRAVERSE denied (Unix-like behavior)
                 has_permission = self._permission_enforcer.check(path, Permission.TRAVERSE, ctx)
                 if not has_permission:
-                    has_permission = self._has_descendant_access(path, Permission.READ, ctx)  # type: ignore[attr-defined]
+                    has_permission = self._descendant_checker.has_access(path, Permission.READ, ctx)  # type: ignore[attr-defined]
                 if not has_permission:
                     raise PermissionError(
                         f"Access denied: User '{ctx.user_id}' does not have TRAVERSE "
                         f"permission for '{path}'"
                     )
         else:
-            self._check_permission(path, Permission.READ, context)
+            self._permission_checker.check(path, Permission.READ, context)
 
         # Return directory info for implicit directories
         if is_implicit_dir:
@@ -3619,137 +2710,10 @@ class NexusFSCoreMixin:
             "is_directory": False,
         }
 
-    @rpc_expose(description="Get metadata for multiple files in bulk")
-    def stat_bulk(
-        self,
-        paths: list[str],
-        context: OperationContext | None = None,
-        skip_errors: bool = True,
-    ) -> dict[str, dict[str, Any] | None]:
-        """
-        Get metadata for multiple files in a single RPC call.
-
-        This is optimized for bulk operations where many file stats are needed.
-        It batches permission checks and metadata lookups for better performance.
-
-        Args:
-            paths: List of virtual paths to stat
-            context: Optional operation context for permission checks
-            skip_errors: If True, skip files that can't be stat'd and return None.
-                        If False, raise exception on first error.
-
-        Returns:
-            Dict mapping path -> stat dict (or None if skip_errors=True and stat failed)
-            Each stat dict contains: size, etag, version, modified_at, is_directory
-
-        Performance:
-            - Single RPC call instead of N calls
-            - Batch permission checks (one DB query instead of N)
-            - Batch metadata lookups
-            - Expected speedup: 10-50x for 100+ files
-        """
-        import time
-
-        bulk_start = time.time()
-        results: dict[str, dict[str, Any] | None] = {}
-
-        # Validate all paths
-        validated_paths = []
-        for path in paths:
-            try:
-                validated_path = self._validate_path(path)
-                validated_paths.append(validated_path)
-            except Exception as exc:
-                logger.debug("Path validation failed in metadata_bulk for %s: %s", path, exc)
-                if skip_errors:
-                    results[path] = None
-                    continue
-                raise
-
-        if not validated_paths:
-            return results
-
-        # Batch permission check using filter_list
-        perm_start = time.time()
-        allowed_set: set[str]
-        if not self._enforce_permissions:  # type: ignore[attr-defined]
-            allowed_set = set(validated_paths)
-        else:
-            try:
-                from nexus.core.permissions import OperationContext
-
-                ctx = context if context is not None else self._default_context
-                assert isinstance(ctx, OperationContext), "Context must be OperationContext"
-                allowed_paths = self._permission_enforcer.filter_list(validated_paths, ctx)
-                allowed_set = set(allowed_paths)
-            except Exception as e:
-                logger.error(f"[STAT-BULK] Permission check failed: {e}")
-                if not skip_errors:
-                    raise
-                allowed_set = set()
-
-        perm_elapsed = time.time() - perm_start
-        logger.info(
-            f"[STAT-BULK] Permission check: {len(allowed_set)}/{len(validated_paths)} allowed in {perm_elapsed * 1000:.1f}ms"
-        )
-
-        # Mark denied files
-        for path in validated_paths:
-            if path not in allowed_set:
-                results[path] = None
-
-        # Batch metadata lookup - single SQL query for all paths
-        meta_start = time.time()
-
-        # Batch fetch metadata for all files in single query
-        # Note: We assume paths are files (not implicit directories) since stat_bulk
-        # is typically called on paths returned by list(). If a path isn't found,
-        # we check if it's an implicit directory as a fallback.
-        try:
-            batch_meta = self.metadata.get_batch(list(allowed_set))
-            for path, meta in batch_meta.items():
-                if meta is None:
-                    # Path not found in metadata - check if it's an implicit directory
-                    if self.metadata.is_implicit_directory(path):
-                        results[path] = {
-                            "size": 0,
-                            "etag": None,
-                            "version": None,
-                            "modified_at": None,
-                            "is_directory": True,
-                        }
-                    elif skip_errors:
-                        results[path] = None
-                    else:
-                        raise NexusFileNotFoundError(path)
-                else:
-                    modified_at_str = meta.modified_at.isoformat() if meta.modified_at else None
-                    results[path] = {
-                        "size": meta.size,
-                        "etag": meta.etag,
-                        "version": meta.version,
-                        "modified_at": modified_at_str,
-                        "is_directory": False,
-                    }
-        except NexusFileNotFoundError:
-            raise
-        except Exception as e:
-            logger.warning(f"[STAT-BULK] Batch metadata failed: {type(e).__name__}: {e}")
-            if not skip_errors:
-                raise
-
-        meta_elapsed = time.time() - meta_start
-        bulk_elapsed = time.time() - bulk_start
-
-        logger.info(
-            f"[STAT-BULK] Completed: {len(results)} files in {bulk_elapsed * 1000:.1f}ms "
-            f"(perm={perm_elapsed * 1000:.0f}ms, meta={meta_elapsed * 1000:.0f}ms)"
-        )
-
-        return results
+    # stat_bulk → moved to NexusFSBulkMixin (Issue #2272)
 
     @rpc_expose(description="Check if file exists")
-    def exists(self, path: str, context: OperationContext | None = None) -> bool:
+    def exists(self, path: str, context: "OperationContext | None" = None) -> bool:
         """
         Check if a file or directory exists.
 
@@ -3810,145 +2774,10 @@ class NexusFSCoreMixin:
         except Exception:  # InvalidPathError
             return False
 
-    @rpc_expose(description="Check existence of multiple paths in single call")
-    def exists_batch(
-        self, paths: list[str], context: OperationContext | None = None
-    ) -> dict[str, bool]:
-        """
-        Check existence of multiple paths in a single call (Issue #859).
-
-        This reduces network round trips when checking many paths at once.
-        Processing 10 paths requires 1 round trip instead of 10.
-
-        Args:
-            paths: List of virtual paths to check
-            context: Operation context for permission checks (uses default if None)
-
-        Returns:
-            Dictionary mapping each path to its existence status (True/False)
-
-        Performance:
-            - Single RPC call instead of N calls
-            - 10x fewer round trips for multi-path operations
-            - Each path is checked independently (errors don't affect others)
-
-        Examples:
-            >>> results = nx.exists_batch(["/file1.txt", "/file2.txt", "/missing.txt"])
-            >>> print(results)
-            {"/file1.txt": True, "/file2.txt": True, "/missing.txt": False}
-        """
-        results: dict[str, bool] = {}
-        for path in paths:
-            try:
-                results[path] = self.exists(path, context=context)
-            except Exception as exc:
-                # Any error means file doesn't exist or isn't accessible
-                logger.debug("Exists check failed for %s: %s", path, exc)
-                results[path] = False
-        return results
-
-    @rpc_expose(description="Get metadata for multiple paths in single call")
-    def metadata_batch(
-        self, paths: list[str], context: OperationContext | None = None
-    ) -> dict[str, dict[str, Any] | None]:
-        """
-        Get metadata for multiple paths in a single call (Issue #859).
-
-        This reduces network round trips when fetching metadata for many files.
-        Processing 10 paths requires 1 round trip instead of 10.
-
-        Args:
-            paths: List of virtual paths to get metadata for
-            context: Operation context for permission checks (uses default if None)
-
-        Returns:
-            Dictionary mapping each path to its metadata dict or None if not found.
-            Metadata includes: path, size, etag, mime_type, created_at, modified_at,
-            version, zone_id, is_directory.
-
-        Performance:
-            - Single RPC call instead of N calls
-            - 10x fewer round trips for multi-path operations
-            - Leverages batch metadata fetch from database
-
-        Examples:
-            >>> results = nx.metadata_batch(["/file1.txt", "/missing.txt"])
-            >>> print(results["/file1.txt"]["size"])
-            1024
-            >>> print(results["/missing.txt"])
-            None
-        """
-        results: dict[str, dict[str, Any] | None] = {}
-
-        # Validate paths and collect valid ones
-        valid_paths: list[str] = []
-        for path in paths:
-            try:
-                validated = self._validate_path(path)
-                valid_paths.append(validated)
-            except Exception as exc:
-                logger.debug("Path validation failed in metadata_batch for %s: %s", path, exc)
-                results[path] = None
-
-        # Batch fetch metadata from database
-        if valid_paths and hasattr(self.metadata, "get_batch"):
-            batch_metadata = self.metadata.get_batch(valid_paths)
-        else:
-            # Fallback to individual fetches if get_batch not available
-            batch_metadata = {p: self.metadata.get(p) for p in valid_paths}
-
-        # Process results with permission checks
-        for path in valid_paths:
-            try:
-                meta = batch_metadata.get(path)
-
-                if meta is None:
-                    results[path] = None
-                    continue
-
-                # Check permission if enforcement enabled
-                if self._enforce_permissions:  # type: ignore[attr-defined]
-                    ctx = context if context is not None else self._default_context
-                    if not self._has_descendant_access(path, Permission.READ, ctx):  # type: ignore[attr-defined]
-                        results[path] = None
-                        continue
-
-                # Check if it's a directory
-                is_dir = self.is_directory(path, context=context)  # type: ignore[attr-defined]
-
-                results[path] = {
-                    "path": meta.path,
-                    "backend_name": meta.backend_name,
-                    "physical_path": meta.physical_path,
-                    "size": meta.size,
-                    "etag": meta.etag,
-                    "mime_type": meta.mime_type,
-                    "created_at": meta.created_at,
-                    "modified_at": meta.modified_at,
-                    "version": meta.version,
-                    "zone_id": meta.zone_id,
-                    "is_directory": is_dir,
-                }
-            except Exception as exc:
-                logger.debug("Failed to build metadata result for %s: %s", path, exc)
-                results[path] = None
-
-        return results
-
-    def _compute_etag(self, content: bytes) -> str:
-        """
-        Compute ETag for file content.
-
-        Args:
-            content: File content
-
-        Returns:
-            ETag (MD5 hash)
-        """
-        return hashlib.md5(content).hexdigest()
+    # exists_batch, metadata_batch → moved to NexusFSBulkMixin (Issue #2272)
 
     def _read_memory_path(
-        self, path: str, return_metadata: bool = False, context: OperationContext | None = None
+        self, path: str, return_metadata: bool = False, context: "OperationContext | None" = None
     ) -> bytes | dict[str, Any]:
         """Read memory via virtual path (Phase 2 Integration).
 
@@ -3962,8 +2791,8 @@ class NexusFSCoreMixin:
         Raises:
             NexusFileNotFoundError: If memory doesn't exist.
         """
-        from nexus.rebac.entity_registry import EntityRegistry
-        from nexus.services.memory.memory_router import MemoryViewRouter
+        from nexus.bricks.memory.router import MemoryViewRouter
+        from nexus.bricks.rebac.entity_registry import EntityRegistry
 
         # Get memory via router
         session = self.SessionLocal()
@@ -4038,7 +2867,7 @@ class NexusFSCoreMixin:
             "size": len(content),
         }
 
-    def _delete_memory_path(self, path: str, context: OperationContext | None = None) -> None:
+    def _delete_memory_path(self, path: str, context: "OperationContext | None" = None) -> None:
         """Delete memory via virtual path (Phase 2 Integration).
 
         Args:
@@ -4047,8 +2876,8 @@ class NexusFSCoreMixin:
         Raises:
             NexusFileNotFoundError: If memory doesn't exist.
         """
-        from nexus.rebac.entity_registry import EntityRegistry
-        from nexus.services.memory.memory_router import MemoryViewRouter
+        from nexus.bricks.memory.router import MemoryViewRouter
+        from nexus.bricks.rebac.entity_registry import EntityRegistry
 
         # Get memory via router
         session = self.SessionLocal()
@@ -4067,145 +2896,16 @@ class NexusFSCoreMixin:
         finally:
             session.close()
 
-    @rpc_expose(description="Shutdown background parser threads")
-    def shutdown_parser_threads(self, timeout: float = 10.0) -> dict[str, Any]:
-        """Gracefully shutdown background parser threads.
+    # shutdown_parser_threads → removed (Issue #2272)
+    # Use AutoParseWriteHook.shutdown() from services/vfs_hook_impls.py instead.
 
-        CRITICAL: Must be called before closing NexusFS to prevent database corruption!
-        Non-daemon parser threads can have in-progress database writes that must complete.
-
-        This method waits for all parser threads to finish or times out after the specified
-        duration. This prevents abrupt termination that could corrupt the database.
-
-        Args:
-            timeout: Maximum seconds to wait for each thread to finish (default: 10s)
-
-        Returns:
-            Dict with shutdown statistics:
-                - total_threads: Number of parser threads that were running
-                - completed: Number of threads that finished gracefully
-                - timed_out: Number of threads that exceeded timeout
-                - timeout_threads: List of thread names that timed out
-
-        Example:
-            >>> nx = NexusFS(...)
-            >>> # ... use filesystem ...
-            >>> stats = nx.shutdown_parser_threads(timeout=5.0)
-            >>> if stats['timed_out'] > 0:
-            ...     logger.warning(f"{stats['timed_out']} parser threads timed out")
-            >>> nx.close()
-        """
-        with self._parser_threads_lock:
-            threads_to_wait = [t for t in self._parser_threads if t.is_alive()]
-            total = len(threads_to_wait)
-
-        if total == 0:
-            return {"total_threads": 0, "completed": 0, "timed_out": 0, "timeout_threads": []}
-
-        logger.info(f"Waiting for {total} parser threads to complete (timeout: {timeout}s)...")
-
-        completed = 0
-        timed_out = 0
-        timeout_threads = []
-
-        for thread in threads_to_wait:
-            logger.debug(f"Waiting for parser thread: {thread.name}")
-            thread.join(timeout=timeout)
-
-            if thread.is_alive():
-                # Thread exceeded timeout
-                timed_out += 1
-                timeout_threads.append(thread.name)
-                logger.warning(
-                    f"Parser thread '{thread.name}' did not complete within {timeout}s. "
-                    f"Thread may still be writing to database - potential data loss risk!"
-                )
-            else:
-                # Thread completed successfully
-                completed += 1
-                logger.debug(f"Parser thread '{thread.name}' completed")
-
-        # Clear the thread list
-        with self._parser_threads_lock:
-            self._parser_threads.clear()
-
-        logger.info(
-            f"Parser thread shutdown complete: {completed} completed, {timed_out} timed out"
-        )
-
-        return {
-            "total_threads": total,
-            "completed": completed,
-            "timed_out": timed_out,
-            "timeout_threads": timeout_threads,
-        }
-
-    @rpc_expose(description="Delete multiple files/directories")
-    def delete_bulk(
-        self,
-        paths: list[str],
-        recursive: bool = False,
-        context: OperationContext | None = None,
-    ) -> dict[str, dict]:
-        """
-        Delete multiple files or directories in a single operation.
-
-        Each path is processed independently - failures on one path don't affect others.
-        Directories require recursive=True to delete non-empty directories.
-
-        Args:
-            paths: List of virtual paths to delete
-            recursive: If True, delete non-empty directories (like rm -rf)
-            context: Optional operation context for permission checks
-
-        Returns:
-            Dictionary mapping each path to its result:
-                {"success": True} or {"success": False, "error": "error message"}
-
-        Example:
-            >>> results = nx.delete_bulk(['/a.txt', '/b.txt', '/folder'])
-            >>> for path, result in results.items():
-            ...     if result['success']:
-            ...         print(f"Deleted {path}")
-            ...     else:
-            ...         print(f"Failed {path}: {result['error']}")
-        """
-        results = {}
-        for path in paths:
-            try:
-                path = self._validate_path(path)
-                meta = self.metadata.get(path)
-
-                # Check for implicit directory (exists because it has files beneath it)
-                is_implicit_dir = meta is None and self.metadata.is_implicit_directory(path)
-
-                if meta is None and not is_implicit_dir:
-                    results[path] = {"success": False, "error": "File not found"}
-                    continue
-
-                # Check if this is a directory (explicit or implicit)
-                is_dir = is_implicit_dir or (meta and meta.mime_type == "inode/directory")
-
-                if is_dir:
-                    # Use rmdir for directories
-                    self._rmdir_internal(
-                        path, recursive=recursive, context=context, is_implicit=is_implicit_dir
-                    )
-                else:
-                    # Use delete for files
-                    self.delete(path, context=context)
-
-                results[path] = {"success": True}
-            except Exception as e:
-                results[path] = {"success": False, "error": str(e)}
-
-        return results
+    # delete_bulk → moved to NexusFSBulkMixin (Issue #2272)
 
     def _rmdir_internal(
         self,
         path: str,
         recursive: bool = False,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
         is_implicit: bool | None = None,
     ) -> None:
         """Internal rmdir implementation without RPC decoration.
@@ -4233,7 +2933,7 @@ class NexusFSCoreMixin:
             raise PermissionError(f"Cannot remove read-only directory: {path}")
 
         # Check write permission
-        self._check_permission(path, Permission.WRITE, context)
+        self._permission_checker.check(path, Permission.WRITE, context)
 
         # Check if path exists (explicit or implicit)
         meta = self.metadata.get(path)
@@ -4283,41 +2983,12 @@ class NexusFSCoreMixin:
         if not is_implicit:
             self.metadata.delete(path)
 
-    @rpc_expose(description="Rename/move multiple files")
-    def rename_bulk(
-        self,
-        renames: list[tuple[str, str]],
-        context: OperationContext | None = None,
-    ) -> dict[str, dict]:
-        """
-        Rename/move multiple files in a single operation.
+        # Issue #2175: Publish dir_delete event (parity with rmdir)
+        self._publish_file_event(
+            event_type=FileEventType.DIR_DELETE,
+            path=path,
+            zone_id=zone_id,
+            agent_id=agent_id,
+        )
 
-        Each rename is processed independently - failures on one don't affect others.
-        This is a metadata-only operation (instant, regardless of file size).
-
-        Args:
-            renames: List of (old_path, new_path) tuples
-            context: Optional operation context for permission checks
-
-        Returns:
-            Dictionary mapping each old_path to its result:
-                {"success": True, "new_path": "..."} or {"success": False, "error": "..."}
-
-        Example:
-            >>> results = nx.rename_bulk([
-            ...     ('/old1.txt', '/new1.txt'),
-            ...     ('/old2.txt', '/new2.txt'),
-            ... ])
-            >>> for old_path, result in results.items():
-            ...     if result['success']:
-            ...         print(f"Renamed {old_path} -> {result['new_path']}")
-        """
-        results = {}
-        for old_path, new_path in renames:
-            try:
-                self.rename(old_path, new_path, context=context)
-                results[old_path] = {"success": True, "new_path": new_path}
-            except Exception as e:
-                results[old_path] = {"success": False, "error": str(e)}
-
-        return results
+    # rename_bulk → moved to NexusFSBulkMixin (Issue #2272)

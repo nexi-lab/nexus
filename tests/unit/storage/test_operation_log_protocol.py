@@ -3,8 +3,6 @@
 Verifies that OperationLogger structurally conforms to OperationLogProtocol.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 from nexus.services.protocols.operation_log import OperationLogProtocol

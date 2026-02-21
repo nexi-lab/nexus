@@ -12,25 +12,23 @@ Write performance: callers should use ``asyncio.create_task()`` to
 fire-and-forget audit writes so they never block the hot path.
 """
 
-from __future__ import annotations
-
 import hashlib
 import json
 import logging
 import math
-from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import desc, event, func, select
-from sqlalchemy.orm import Session
 
 from nexus.storage.models.exchange_audit_log import ExchangeAuditLogModel
+
+if TYPE_CHECKING:
+    from nexus.storage.record_store import RecordStoreABC
 from nexus.storage.query_mixin import AppendOnlyQueryMixin
 
 logger = logging.getLogger(__name__)
-
 
 # ---------------------------------------------------------------------------
 # Immutability guards (Decision #3)
@@ -141,11 +139,11 @@ class ExchangeAuditLogger:
     """Append-only exchange transaction logger with query capabilities.
 
     Args:
-        session_factory: Callable that returns a fresh SQLAlchemy Session.
+        record_store: RecordStoreABC instance providing session factory.
     """
 
-    def __init__(self, session_factory: Callable[[], Session]) -> None:
-        self._session_factory = session_factory
+    def __init__(self, record_store: "RecordStoreABC") -> None:
+        self._session_factory = record_store.session_factory
         self._query = AppendOnlyQueryMixin(
             model_class=ExchangeAuditLogModel,
             id_column_name="id",

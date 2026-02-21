@@ -9,8 +9,6 @@ Covers:
 - PythonAction sandbox requirement
 """
 
-from __future__ import annotations
-
 import os
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -80,7 +78,7 @@ class TestAdminEndpointRoleEnforcement:
 
     def test_non_admin_gets_403_on_hotspot_stats(self) -> None:
         """Authenticated non-admin user is rejected with 403."""
-        from nexus.server.api.v1.routers.admin import router
+        from nexus.server.api.v2.routers.governance import router
         from nexus.server.dependencies import require_admin
 
         app = FastAPI()
@@ -95,13 +93,13 @@ class TestAdminEndpointRoleEnforcement:
         app.dependency_overrides[require_admin] = _non_admin_override
 
         client = TestClient(app)
-        resp = client.get("/api/v1/admin/hotspot-stats")
+        resp = client.get("/api/v2/governance/hotspot-stats")
         assert resp.status_code == 403
 
     def test_admin_gets_200_on_hotspot_stats(self) -> None:
         """Admin user can access admin endpoints."""
-        from nexus.server.api.v1.dependencies import get_nexus_fs
-        from nexus.server.api.v1.routers.admin import router
+        from nexus.server.api.v2.dependencies import get_nexus_fs
+        from nexus.server.api.v2.routers.governance import router
         from nexus.server.dependencies import require_admin
 
         app = FastAPI()
@@ -117,12 +115,12 @@ class TestAdminEndpointRoleEnforcement:
         app.dependency_overrides[get_nexus_fs] = lambda: mock_nexus_fs
 
         client = TestClient(app)
-        resp = client.get("/api/v1/admin/hotspot-stats")
+        resp = client.get("/api/v2/governance/hotspot-stats")
         assert resp.status_code == 503  # No permission enforcer, but auth passed
 
     def test_unauthenticated_gets_401(self) -> None:
         """Unauthenticated request gets 401 (from require_auth chain)."""
-        from nexus.server.api.v1.routers.admin import router
+        from nexus.server.api.v2.routers.governance import router
         from nexus.server.dependencies import require_admin
 
         app = FastAPI()
@@ -136,7 +134,7 @@ class TestAdminEndpointRoleEnforcement:
         app.dependency_overrides[require_admin] = _unauth_override
 
         client = TestClient(app)
-        resp = client.get("/api/v1/admin/hotspot-stats")
+        resp = client.get("/api/v2/governance/hotspot-stats")
         assert resp.status_code == 401
 
 
@@ -295,7 +293,7 @@ class TestWebhookActionErrorSanitization:
 
             # Also mock the SSRF validator to allow the URL
             with patch(
-                "nexus.server.security.url_validator.validate_outbound_url",
+                "nexus.bricks.workflows.actions.validate_outbound_url",
                 return_value="http://example.com/webhook",
             ):
                 result = await action.execute(context)

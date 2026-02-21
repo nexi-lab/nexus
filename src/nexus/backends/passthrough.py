@@ -17,8 +17,6 @@ can use OS-native APIs (inotify on Linux, ReadDirectoryChangesW on Windows)
 to detect changes without polling.
 """
 
-from __future__ import annotations
-
 import contextlib
 import logging
 import os
@@ -32,12 +30,13 @@ from typing import TYPE_CHECKING
 
 from nexus.backends.backend import Backend
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
-from nexus.core.exceptions import BackendError
+from nexus.contracts.exceptions import BackendError
 from nexus.core.hash_fast import hash_content
-from nexus.core.response import HandlerResponse
+from nexus.core.protocols.capabilities import ConnectorCapability
+from nexus.lib.response import HandlerResponse
 
 if TYPE_CHECKING:
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +83,13 @@ class PassthroughBackend(Backend):
         >>> # Write content - stores in CAS, creates pointer
         >>> content_hash = backend.write_content(b"hello").unwrap()
     """
+
+    _CAPABILITIES = frozenset(
+        {
+            ConnectorCapability.PASSTHROUGH,
+            ConnectorCapability.ROOT_PATH,
+        }
+    )
 
     CONNECTION_ARGS: dict[str, ConnectionArg] = {
         "base_path": ConnectionArg(
@@ -256,7 +262,7 @@ class PassthroughBackend(Backend):
     def write_content(
         self,
         content: bytes,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[str]:
         """Write content to CAS and create/update pointer if virtual_path in context."""
         start_time = time.perf_counter()
@@ -321,7 +327,7 @@ class PassthroughBackend(Backend):
     def read_content(
         self,
         content_hash: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[bytes]:
         """Read content from CAS by hash (or via pointer if hash is empty)."""
         start_time = time.perf_counter()
@@ -392,7 +398,7 @@ class PassthroughBackend(Backend):
     def delete_content(
         self,
         content_hash: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[None]:
         """Delete pointer (CAS cleanup deferred to GC)."""
         start_time = time.perf_counter()
@@ -420,7 +426,7 @@ class PassthroughBackend(Backend):
     def content_exists(
         self,
         content_hash: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[bool]:
         """Check if content exists in CAS."""
         start_time = time.perf_counter()
@@ -436,7 +442,7 @@ class PassthroughBackend(Backend):
     def get_content_size(
         self,
         content_hash: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[int]:
         """Get content size in bytes."""
         start_time = time.perf_counter()
@@ -469,7 +475,7 @@ class PassthroughBackend(Backend):
     def get_ref_count(
         self,
         content_hash: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[int]:
         """Get reference count (returns 1 if exists, 0 otherwise)."""
         start_time = time.perf_counter()
@@ -489,7 +495,7 @@ class PassthroughBackend(Backend):
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[None]:
         """Create a directory in the pointers layer."""
         start_time = time.perf_counter()
@@ -540,7 +546,7 @@ class PassthroughBackend(Backend):
         self,
         path: str,
         recursive: bool = False,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[None]:
         """Remove a directory from the pointers layer."""
         import shutil
@@ -589,7 +595,7 @@ class PassthroughBackend(Backend):
     def is_directory(
         self,
         path: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[bool]:
         """Check if path is a directory."""
         start_time = time.perf_counter()
@@ -605,7 +611,7 @@ class PassthroughBackend(Backend):
     def list_dir(
         self,
         path: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> list[str]:
         """List directory contents."""
         dir_path = self._get_pointer_path(path)

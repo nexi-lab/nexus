@@ -3,15 +3,13 @@
 Extracted from fastapi_server.py (#1602).
 """
 
-from __future__ import annotations
-
 import logging
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 
-from nexus.core.exceptions import NexusFileNotFoundError, NexusPermissionError
-from nexus.raft.zone_manager import ROOT_ZONE_ID
+from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.exceptions import NexusFileNotFoundError, NexusPermissionError
 from nexus.server.streaming import _verify_stream_token
 
 logger = logging.getLogger(__name__)
@@ -45,7 +43,7 @@ async def stream_file(
     try:
         full_path = f"/{path}"
 
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
         from nexus.server.fastapi_server import to_thread_with_timeout
 
         context = OperationContext(

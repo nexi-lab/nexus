@@ -1,7 +1,5 @@
 """Shared fixtures for unit tests."""
 
-from __future__ import annotations
-
 import platform
 import sys
 import time
@@ -152,3 +150,17 @@ def isolated_db(tmp_path, monkeypatch):
 
         with suppress(Exception):  # Best effort cleanup
             db_path.unlink()
+
+
+@pytest.fixture
+def record_store():
+    """Shared RecordStoreABC fixture for unit tests.
+
+    Provides an in-memory SQLite-backed RecordStoreABC with all tables created.
+    Use for tests that need real SQL operations against the storage pillar.
+    """
+    from tests.helpers.in_memory_record_store import InMemoryRecordStore
+
+    store = InMemoryRecordStore()
+    yield store
+    store.close()

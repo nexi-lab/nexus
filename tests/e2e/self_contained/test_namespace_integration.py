@@ -9,18 +9,17 @@ Tests the full integration of namespace visibility with ReBAC permissions:
 Uses in-memory SQLite and synchronous PermissionEnforcer for fast, reliable testing.
 """
 
-from __future__ import annotations
-
 import time
 from typing import TYPE_CHECKING
 
 import pytest
 from sqlalchemy import create_engine
 
-from nexus.core.exceptions import NexusFileNotFoundError
-from nexus.core.permissions import OperationContext, Permission, PermissionEnforcer
-from nexus.rebac.manager import EnhancedReBACManager
-from nexus.rebac.namespace_manager import NamespaceManager
+from nexus.bricks.rebac.enforcer import PermissionEnforcer
+from nexus.bricks.rebac.manager import EnhancedReBACManager
+from nexus.bricks.rebac.namespace_manager import NamespaceManager
+from nexus.contracts.exceptions import NexusFileNotFoundError
+from nexus.contracts.types import OperationContext, Permission
 from nexus.storage.models import Base
 
 if TYPE_CHECKING:
@@ -28,7 +27,7 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture
-def engine() -> Engine:
+def engine() -> "Engine":
     """In-memory SQLite engine for tests."""
     eng = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(eng)
@@ -36,7 +35,7 @@ def engine() -> Engine:
 
 
 @pytest.fixture
-def rebac_manager(engine: Engine) -> EnhancedReBACManager:
+def rebac_manager(engine: "Engine") -> EnhancedReBACManager:
     """EnhancedReBACManager for ReBAC grants."""
     return EnhancedReBACManager(
         engine=engine,

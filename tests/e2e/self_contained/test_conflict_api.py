@@ -4,8 +4,6 @@ Tests the full HTTP request/response cycle for conflict management
 endpoints using a real ConflictLogStore backed by in-memory SQLite.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -21,14 +19,14 @@ from nexus.server.api.v2.dependencies import (
     get_conflict_log_store,
 )
 from nexus.server.api.v2.routers.conflicts import router
-from nexus.services.conflict_log_store import ConflictLogStore
-from nexus.services.conflict_resolution import (
+from nexus.storage.models import Base
+from nexus.system_services.sync.conflict_log_store import ConflictLogStore
+from nexus.system_services.sync.conflict_resolution import (
     ConflictRecord,
     ConflictStatus,
     ConflictStrategy,
     ResolutionOutcome,
 )
-from nexus.storage.models import Base
 
 # =============================================================================
 # Helpers
@@ -83,7 +81,9 @@ def store() -> ConflictLogStore:
         poolclass=StaticPool,
     )
     Base.metadata.create_all(engine)
-    return ConflictLogStore(sessionmaker(bind=engine))
+    from types import SimpleNamespace
+
+    return ConflictLogStore(SimpleNamespace(session_factory=sessionmaker(bind=engine)))
 
 
 @pytest.fixture

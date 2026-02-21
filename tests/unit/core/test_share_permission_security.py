@@ -7,8 +7,6 @@ Tests cover:
 - Permission level validation
 """
 
-from __future__ import annotations
-
 import tempfile
 from collections.abc import Generator
 from pathlib import Path
@@ -16,8 +14,8 @@ from pathlib import Path
 import pytest
 
 from nexus import LocalBackend, NexusFS
+from nexus.contracts.types import OperationContext
 from nexus.core.config import ParseConfig, PermissionConfig
-from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore

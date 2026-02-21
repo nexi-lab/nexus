@@ -6,8 +6,6 @@ Provides 3 endpoints for conflict audit and manual resolution:
 - POST /api/v2/sync/conflicts/{id}/resolve - Manually resolve conflict
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 
@@ -23,7 +21,7 @@ from nexus.server.api.v2.models import (
     ConflictResolveRequest,
     ConflictResolveResponse,
 )
-from nexus.services.conflict_resolution import ConflictStatus
+from nexus.system_services.sync.conflict_resolution import ConflictStatus
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +119,7 @@ async def resolve_conflict(
     store: Any = Depends(get_conflict_log_store),
 ) -> ConflictResolveResponse:
     """Manually resolve a pending conflict."""
-    from nexus.services.conflict_resolution import ResolutionOutcome
+    from nexus.system_services.sync.conflict_resolution import ResolutionOutcome
 
     try:
         outcome = ResolutionOutcome(request.outcome)

@@ -16,13 +16,13 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.backends.backend import AsyncBackend
 from nexus.backends.cas_blob_store import CASBlobStore
-from nexus.core.exceptions import BackendError, NexusFileNotFoundError
+from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
-from nexus.core.response import HandlerResponse, timed_response
+from nexus.lib.response import HandlerResponse, timed_response
 from nexus.storage.content_cache import ContentCache
 
 if TYPE_CHECKING:
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
 
 logger = logging.getLogger(__name__)
 

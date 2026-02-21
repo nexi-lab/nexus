@@ -142,9 +142,11 @@ class IdentityMemoryMigration:
             user_id: User ID to register.
             agent_id: Agent ID to register.
         """
-        from nexus.rebac.entity_registry import EntityRegistry
+        from types import SimpleNamespace
 
-        registry = EntityRegistry(self.session)
+        from nexus.bricks.rebac.entity_registry import EntityRegistry
+
+        registry = EntityRegistry(SimpleNamespace(session_factory=lambda: self.session))
 
         if zone_id:
             registry.register_entity("zone", zone_id)
@@ -167,9 +169,11 @@ class IdentityMemoryMigration:
 
         Analyzes existing file_paths to discover entities and register them.
         """
-        from nexus.rebac.entity_registry import EntityRegistry
+        from types import SimpleNamespace
 
-        registry = EntityRegistry(self.session)
+        from nexus.bricks.rebac.entity_registry import EntityRegistry
+
+        registry = EntityRegistry(SimpleNamespace(session_factory=lambda: self.session))
 
         try:
             # Extract zone IDs

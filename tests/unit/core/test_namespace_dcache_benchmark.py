@@ -9,15 +9,13 @@ Measures:
 Run with: uv run pytest tests/unit/core/test_namespace_dcache_benchmark.py -v -s --tb=short
 """
 
-from __future__ import annotations
-
 import statistics
 import time
 
 import pytest
 from sqlalchemy import create_engine
 
-from nexus.services.permissions.namespace_manager import NamespaceManager
+from nexus.bricks.rebac.namespace_manager import NamespaceManager
 from nexus.storage.models import Base
 
 # ---------------------------------------------------------------------------
@@ -36,7 +34,7 @@ def engine():
 @pytest.fixture
 def rebac_manager(engine):
     """Create an EnhancedReBACManager with 200 grants for benchmarking."""
-    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.bricks.rebac.manager import EnhancedReBACManager
 
     manager = EnhancedReBACManager(
         engine=engine,

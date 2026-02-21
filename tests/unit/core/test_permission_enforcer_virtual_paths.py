@@ -17,8 +17,8 @@ The fix:
 - Mount point ownership propagates to files
 """
 
-from nexus.core.permissions import OperationContext, Permission
-from nexus.rebac.enforcer import PermissionEnforcer
+from nexus.bricks.rebac.enforcer import PermissionEnforcer
+from nexus.contracts.types import OperationContext, Permission
 
 
 class MockRoute:

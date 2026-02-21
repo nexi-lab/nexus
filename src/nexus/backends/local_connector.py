@@ -19,8 +19,6 @@ Example:
     ... )
 """
 
-from __future__ import annotations
-
 import logging
 from datetime import UTC
 from pathlib import Path
@@ -33,15 +31,15 @@ from nexus.backends.registry import (
     ConnectionArg,
     register_connector,
 )
-from nexus.core.exceptions import BackendError
+from nexus.contracts.exceptions import BackendError
 from nexus.core.hash_fast import hash_content
-from nexus.core.response import HandlerResponse, timed_response
+from nexus.core.protocols.capabilities import ConnectorCapability
+from nexus.lib.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:
     from nexus.core.context import OperationContext
 
 logger = logging.getLogger(__name__)
-
 
 # Type alias for casting error responses
 _BytesResponse = HandlerResponse[bytes]
@@ -89,6 +87,15 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
         >>> backend = LocalConnectorBackend("C:/Users/user/projects")
         >>> content = backend.read_content("", context)  # Uses context.backend_path
     """
+
+    _CAPABILITIES = frozenset(
+        {
+            ConnectorCapability.VIRTUAL_FILESYSTEM,
+            ConnectorCapability.DIRECTORY_LISTING,
+            ConnectorCapability.CACHE_BULK_READ,
+            ConnectorCapability.CACHE_SYNC,
+        }
+    )
 
     @property
     def has_virtual_filesystem(self) -> bool:  # noqa: D102
@@ -231,7 +238,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
     def get_file_info(
         self,
         path: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse:
         """
         Get file metadata for delta sync change detection (Issue #1127).
@@ -299,7 +306,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
     def read_content(
         self,
         content_hash: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[bytes]:
         """Read file content with L1 caching.
 
@@ -384,7 +391,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
     def write_content(
         self,
         content: bytes,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[str]:
         """Write content directly to local path.
 
@@ -447,7 +454,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
     def list_dir(
         self,
         path: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> list[str]:
         """List directory contents.
 
@@ -472,7 +479,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
     def list_dir_detailed(
         self,
         path: str = "",
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[list[dict[str, Any]]]:
         """List directory contents with detailed metadata.
 
@@ -521,7 +528,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
     def exists(
         self,
         path: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> bool:
         """Check if path exists.
 
@@ -541,7 +548,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
     def is_dir(
         self,
         path: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> bool:
         """Check if path is a directory.
 
@@ -561,7 +568,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
     def delete(
         self,
         path: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[None]:
         """Delete file or empty directory.
 
@@ -598,7 +605,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
     def delete_content(
         self,
         content_hash: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[None]:
         """Delete content by hash - not supported for local_connector.
 
@@ -613,7 +620,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
     def content_exists(
         self,
         content_hash: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[bool]:
         """Check if content exists by hash - not supported for local_connector."""
         return HandlerResponse.ok(data=False)
@@ -622,7 +629,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
     def get_content_size(
         self,
         content_hash: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[int]:
         """Get content size by hash - not supported for local_connector."""
         return cast(
@@ -634,7 +641,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
     def get_ref_count(
         self,
         content_hash: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[int]:
         """Get reference count by hash - not supported for local_connector."""
         return HandlerResponse.ok(data=0)
@@ -645,7 +652,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[None]:
         """Create a directory.
 
@@ -677,7 +684,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
         self,
         path: str,
         recursive: bool = False,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[None]:
         """Remove a directory.
 
@@ -697,7 +704,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
     def is_directory(
         self,
         path: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[bool]:
         """Check if path is a directory."""
         return HandlerResponse.ok(data=self.is_dir(path, context))
@@ -707,7 +714,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
         self,
         old_path: str,
         new_path: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[None]:
         """Rename/move a file or directory.
 
@@ -742,7 +749,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
     def stat(
         self,
         path: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[dict[str, Any]]:
         """Get file or directory metadata.
 
@@ -784,7 +791,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
     def glob(
         self,
         pattern: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[list[str]]:
         """Find files matching a glob pattern.
 

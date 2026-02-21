@@ -12,11 +12,9 @@ Covers:
 Related: Issue #1459 (decomposition), Issue #773 (zone isolation)
 """
 
-from __future__ import annotations
-
 import pytest
 
-from nexus.services.permissions.consistency.zone_manager import (
+from nexus.bricks.rebac.consistency.zone_manager import (
     ZoneIsolationError,
     ZoneManager,
 )

@@ -8,18 +8,18 @@ Scheduling (Decision #15): every 5 minutes OR when 1000 uncovered
 records accumulate, whichever comes first.
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import logging
-from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
 
 from nexus.storage.exchange_audit_logger import ExchangeAuditLogger, _build_merkle_root
+
+if TYPE_CHECKING:
+    from nexus.storage.record_store import RecordStoreABC
 from nexus.storage.models.audit_checkpoint import AuditCheckpointModel
 from nexus.storage.models.exchange_audit_log import ExchangeAuditLogModel
 
@@ -35,12 +35,12 @@ class MerkleCheckpointTask:
     def __init__(
         self,
         *,
-        session_factory: Callable[[], Session],
+        record_store: "RecordStoreABC",
         audit_logger: ExchangeAuditLogger,
         interval_seconds: int = DEFAULT_INTERVAL_SECONDS,
         threshold: int = DEFAULT_THRESHOLD,
     ) -> None:
-        self._session_factory = session_factory
+        self._session_factory = record_store.session_factory
         self._audit_logger = audit_logger
         self._interval = interval_seconds
         self._threshold = threshold

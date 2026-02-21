@@ -4,8 +4,6 @@ These tests require a running PostgreSQL instance. Skip automatically when
 NEXUS_DATABASE_URL is not set or points to SQLite.
 """
 
-from __future__ import annotations
-
 import os
 import threading
 from typing import TYPE_CHECKING, Any
@@ -28,7 +26,7 @@ _requires_pg = pytest.mark.skipif(
 class TestConnectionPool:
     """Verify pool behavior under load, timeouts, and reconnects."""
 
-    def _make_store(self, **overrides: Any) -> SQLAlchemyRecordStore:
+    def _make_store(self, **overrides: Any) -> "SQLAlchemyRecordStore":
         from nexus.storage.record_store import SQLAlchemyRecordStore
 
         return SQLAlchemyRecordStore(

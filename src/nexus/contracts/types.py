@@ -5,13 +5,6 @@ This module has **zero** runtime imports from ``nexus.*`` --- only stdlib --- so
 bricks, services, and backends can depend on it without pulling in kernel
 internals.
 
-Backward compatibility:
-    ``from nexus.core.types import OperationContext, Permission`` still works
-    via re-exports in ``core/types.py``.
-
-    ``from nexus.core.permissions import OperationContext, Permission`` still
-    works via re-exports in ``core/permissions.py``.
-
 Types:
     - ``Permission``: IntFlag for file operation permissions (read/write/execute/traverse).
     - ``OperationContext``: Dataclass carrying auth context through filesystem operations.
@@ -19,18 +12,40 @@ Types:
     - ``extract_context_identity()``: DRY helper to extract identity from OperationContext.
 """
 
-from __future__ import annotations
-
 import logging
 import uuid
-from dataclasses import dataclass, field
-from enum import IntFlag
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field
+from enum import IntFlag, StrEnum
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from nexus.core.read_set import ReadSet
+    from nexus.storage.read_set import ReadSet
 
 logger = logging.getLogger(__name__)
+
+
+@runtime_checkable
+class VFSOperations(Protocol):
+    """Minimal sync VFS interface that extracted services depend on.
+
+    NexusFS satisfies this naturally.  Services receive it via DI so they
+    never import from ``nexus.core`` at runtime.
+    """
+
+    def mkdir(
+        self, path: str, parents: bool = False, exist_ok: bool = False, context: Any = None
+    ) -> None: ...
+
+    def write(self, path: str, content: bytes | str, context: Any = None, **kw: Any) -> Any: ...
+
+    def read(self, path: str, context: Any = None, **kw: Any) -> bytes: ...
+
+    def exists(self, path: str, context: Any = None) -> bool: ...
+
+    def list(self, path: str = "/", **kw: Any) -> list: ...
+
+    def delete(self, path: str, **kw: Any) -> None: ...
 
 
 class Permission(IntFlag):
@@ -104,7 +119,7 @@ class OperationContext:
     virtual_path: str | None = None  # Full virtual path with mount prefix (for cache keys)
 
     # Read Set Tracking for Query Dependencies (Issue #1166)
-    read_set: ReadSet | None = None
+    read_set: "ReadSet | None" = None
     track_reads: bool = False
 
     def __post_init__(self) -> None:
@@ -160,7 +175,7 @@ class OperationContext:
             access_type: Type of access (content, metadata, list, exists)
 
         Example:
-            >>> from nexus.core.read_set import enable_read_tracking
+            >>> from nexus.storage.read_set import enable_read_tracking
             >>> ctx = OperationContext(user_id="alice", groups=[], track_reads=True)
             >>> enable_read_tracking(ctx, "zone1")
             >>> ctx.record_read("file", "/inbox/a.txt", revision=10)
@@ -223,3 +238,108 @@ def extract_context_identity(context: OperationContext | None) -> ContextIdentit
         ),
         is_admin=getattr(context, "is_admin", False),
     )
+
+
+# ---------------------------------------------------------------------------
+# Transaction Protocol (moved from nexus.bricks.pay.audit_types, Issue #2129)
+# ---------------------------------------------------------------------------
+
+
+def parse_operation_context(context: OperationContext | dict | None = None) -> OperationContext:
+    """Parse a context dict or OperationContext into a canonical OperationContext.
+
+    This is the tier-neutral equivalent of ``nexus.core.context_utils.parse_context``.
+    Services in ``nexus.services.*`` should import from here to avoid depending on
+    ``nexus.core``.
+
+    Args:
+        context: Optional dict or OperationContext.
+
+    Returns:
+        OperationContext instance with sensible defaults.
+    """
+    if isinstance(context, OperationContext):
+        return context
+
+    if context is None:
+        context = {}
+
+    return OperationContext(
+        user_id=context.get("user_id", "system"),
+        groups=context.get("groups", []),
+        zone_id=context.get("zone_id"),
+        agent_id=context.get("agent_id"),
+        is_admin=context.get("is_admin", False),
+        is_system=context.get("is_system", False),
+    )
+
+
+class TransactionProtocol(StrEnum):
+    """Payment protocol used for the transaction.
+
+    Issue #1360 Phase 1: Transaction Audit Log types.
+    Stored as String columns (not PG ENUM) for forward-compatible schema evolution.
+    """
+
+    X402 = "x402"
+    ACP = "acp"
+    AP2 = "ap2"
+    INTERNAL = "internal"
+
+
+# ---------------------------------------------------------------------------
+# Sync types (moved from nexus.services.sync_service, Issue #194)
+# ---------------------------------------------------------------------------
+
+ProgressCallback = Callable[[int, str], None]
+
+
+@dataclass(frozen=True, slots=True)
+class SyncContext:
+    """Immutable value object describing a sync request."""
+
+    mount_point: str | None
+    path: str | None = None
+    recursive: bool = True
+    dry_run: bool = False
+    sync_content: bool = True
+    include_patterns: list[str] | None = None
+    exclude_patterns: list[str] | None = None
+    generate_embeddings: bool = False
+    context: OperationContext | None = None
+    progress_callback: ProgressCallback | None = None
+    full_sync: bool = False
+
+
+@dataclass
+class SyncResult:
+    """Value object describing the outcome of a sync."""
+
+    files_scanned: int = 0
+    files_created: int = 0
+    files_updated: int = 0
+    files_deleted: int = 0
+    files_skipped: int = 0
+    cache_synced: int = 0
+    cache_bytes: int = 0
+    cache_skipped: int = 0
+    embeddings_generated: int = 0
+    errors: list[str] = field(default_factory=list)
+    mounts_synced: int = 0
+    mounts_skipped: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return asdict(self)
+
+
+# ---------------------------------------------------------------------------
+# Snapshot types (moved from nexus.services.protocols.transactional_snapshot, Issue #194)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotId:
+    """Opaque identifier for a transactional snapshot."""
+
+    id: str

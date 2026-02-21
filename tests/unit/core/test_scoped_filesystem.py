@@ -3,13 +3,11 @@
 Tests path scoping/unscoping for multi-zone isolation.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, PropertyMock
 
 import pytest
 
-from nexus.core.scoped_filesystem import ScopedFilesystem
+from nexus.bricks.filesystem.scoped_filesystem import ScopedFilesystem
 
 
 @pytest.fixture
@@ -328,37 +326,6 @@ class TestDirectoryOperations:
         assert result is True
 
 
-class TestVersionOperations:
-    """Test version operation path scoping."""
-
-    def test_get_version(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
-        """Test get_version with path scoping."""
-        mock_fs.get_version.return_value = b"old content"
-        result = scoped_fs.get_version("/workspace/file.txt", 1)
-        mock_fs.get_version.assert_called_once_with(
-            "/zones/team_12/users/user_1/workspace/file.txt", 1
-        )
-        assert result == b"old content"
-
-    def test_list_versions(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
-        """Test list_versions with path scoping."""
-        mock_fs.list_versions.return_value = [
-            {"version": 1, "path": "/zones/team_12/users/user_1/workspace/file.txt"}
-        ]
-        result = scoped_fs.list_versions("/workspace/file.txt")
-        mock_fs.list_versions.assert_called_once_with(
-            "/zones/team_12/users/user_1/workspace/file.txt"
-        )
-        assert result[0]["path"] == "/workspace/file.txt"
-
-    def test_rollback(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
-        """Test rollback with path scoping."""
-        scoped_fs.rollback("/workspace/file.txt", 1)
-        mock_fs.rollback.assert_called_once_with(
-            "/zones/team_12/users/user_1/workspace/file.txt", 1, None
-        )
-
-
 class TestWorkspaceOperations:
     """Test workspace operation path scoping."""
 
@@ -396,32 +363,6 @@ class TestWorkspaceOperations:
             "/zones/team_12/users/user_1/workspace", None, None
         )
         assert result["workspace_path"] == "/workspace"
-
-
-class TestMountOperations:
-    """Test mount operation path scoping."""
-
-    def test_add_mount(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
-        """Test add_mount with path scoping."""
-        mock_fs.add_mount.return_value = "mount-123"
-        result = scoped_fs.add_mount("/external/gcs", "gcs", {"bucket": "my-bucket"})
-        mock_fs.add_mount.assert_called_once_with(
-            mount_point="/zones/team_12/users/user_1/external/gcs",
-            backend_type="gcs",
-            backend_config={"bucket": "my-bucket"},
-            priority=0,
-            readonly=False,
-            io_profile="balanced",
-        )
-        assert result == "mount-123"
-
-    def test_list_mounts(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
-        """Test list_mounts unscopes paths."""
-        mock_fs.list_mounts.return_value = [
-            {"mount_point": "/zones/team_12/users/user_1/external/gcs"}
-        ]
-        result = scoped_fs.list_mounts()
-        assert result[0]["mount_point"] == "/external/gcs"
 
 
 class TestSandboxOperations:

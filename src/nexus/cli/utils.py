@@ -1,7 +1,5 @@
 """CLI utilities - Common helpers for Nexus CLI commands."""
 
-from __future__ import annotations
-
 import os
 import sys
 from pathlib import Path
@@ -13,7 +11,7 @@ from rich.console import Console
 import nexus
 from nexus import NexusFilesystem
 from nexus.config import load_config
-from nexus.core.exceptions import NexusError, NexusFileNotFoundError, ValidationError
+from nexus.contracts.exceptions import NexusError, NexusFileNotFoundError, ValidationError
 
 console = Console()
 
@@ -293,7 +291,9 @@ def get_filesystem(
 
 
 def create_backend_from_config(
-    backend_type: str, config: dict[str, Any], session_factory: Any = None
+    backend_type: str,
+    config: dict[str, Any],
+    record_store: Any = None,
 ) -> Any:
     """Create backend instance from type and config dict.
 
@@ -302,7 +302,7 @@ def create_backend_from_config(
     Args:
         backend_type: Backend type (local, gcs, s3, gdrive, etc.)
         config: Backend-specific configuration dictionary
-        session_factory: Optional SQLAlchemy session factory for caching support.
+        record_store: Optional RecordStoreABC for caching support.
             Required for connector backends (gcs_connector, s3_connector) to enable
             content caching.
 
@@ -318,7 +318,7 @@ def create_backend_from_config(
     """
     from nexus.backends.factory import BackendFactory
 
-    return BackendFactory.create(backend_type, config, session_factory=session_factory)
+    return BackendFactory.create(backend_type, config, record_store=record_store)
 
 
 def get_default_filesystem() -> NexusFilesystem:
@@ -549,9 +549,9 @@ def handle_error(e: Exception) -> None:
     - 3: Permission denied
     """
     # Import exception types here to avoid circular imports
-    from nexus.core.exceptions import AccessDeniedError, NexusPermissionError
+    from nexus.contracts.exceptions import AccessDeniedError, NexusPermissionError
 
-    if isinstance(e, (PermissionError, AccessDeniedError, NexusPermissionError)):
+    if isinstance(e, PermissionError | AccessDeniedError | NexusPermissionError):
         console.print(f"[red]Permission Denied:[/red] {e}")
         sys.exit(3)  # Exit code 3 for permission errors
     elif isinstance(e, NexusFileNotFoundError):

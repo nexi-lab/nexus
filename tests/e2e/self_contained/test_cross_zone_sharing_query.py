@@ -4,8 +4,6 @@ Tests the _get_cross_zone_shared_paths() method on SearchService which queries
 rebac_tuples for files shared across zone boundaries.
 """
 
-from __future__ import annotations
-
 import sqlite3
 import tempfile
 from collections.abc import Generator
@@ -123,7 +121,7 @@ def _make_search_service(rebac_manager: FakeReBACManager | None = None) -> Any:
     with tempfile.TemporaryDirectory() as tmpdir:
         metadata_store = RaftMetadataStore.embedded(str(Path(tmpdir) / "meta"), zone_id="root")
 
-        from nexus.services.search_service import SearchService
+        from nexus.services.search.search_service import SearchService
 
         svc = SearchService(
             metadata_store=metadata_store,

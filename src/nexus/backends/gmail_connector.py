@@ -42,10 +42,7 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.backends.backend import Backend
 from nexus.backends.cache_mixin import IMMUTABLE_VERSION, CacheConnectorMixin
-from nexus.backends.gmail_connector_utils import fetch_emails_batch, list_emails_by_folder
-from nexus.backends.oauth_mixin import OAuthConnectorMixin
-from nexus.backends.registry import ArgType, ConnectionArg, register_connector
-from nexus.connectors.base import (
+from nexus.backends.connectors.base import (
     CheckpointMixin,
     ConfirmLevel,
     OpTraits,
@@ -54,9 +51,13 @@ from nexus.connectors.base import (
     TraitBasedMixin,
     ValidatedMixin,
 )
-from nexus.connectors.gmail.errors import ERROR_REGISTRY
-from nexus.core.exceptions import BackendError
-from nexus.core.response import HandlerResponse, timed_response
+from nexus.backends.connectors.gmail.errors import ERROR_REGISTRY
+from nexus.backends.gmail_connector_utils import fetch_emails_batch, list_emails_by_folder
+from nexus.backends.oauth_mixin import OAuthConnectorMixin
+from nexus.backends.registry import ArgType, ConnectionArg, register_connector
+from nexus.contracts.exceptions import BackendError
+from nexus.core.protocols.capabilities import OAUTH_CONNECTOR_CAPABILITIES, ConnectorCapability
+from nexus.lib.response import HandlerResponse, timed_response
 
 try:
     import yaml
@@ -69,7 +70,8 @@ logging.getLogger("googleapiclient.discovery_cache").setLevel(logging.ERROR)
 if TYPE_CHECKING:
     from googleapiclient.discovery import Resource
 
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
+    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +122,14 @@ class GmailConnectorBackend(
     - Rate limited by Gmail API quotas
     - Emails are stored as YAML files (not editable)
     """
+
+    _CAPABILITIES = OAUTH_CONNECTOR_CAPABILITIES | frozenset(
+        {
+            ConnectorCapability.CACHE_BULK_READ,
+            ConnectorCapability.CACHE_SYNC,
+            ConnectorCapability.SKILL_DOC,
+        }
+    )
 
     # Gmail system labels to expose as folders (in priority order)
     # Each email appears in exactly ONE folder based on priority
@@ -199,7 +209,7 @@ class GmailConnectorBackend(
         token_manager_db: str,
         user_email: str | None = None,
         provider: str = "gmail",
-        session_factory: Any = None,
+        record_store: "RecordStoreABC | None" = None,
         max_message_per_label: int = 200,
         metadata_store: Any = None,
     ):
@@ -211,7 +221,7 @@ class GmailConnectorBackend(
             user_email: Optional user email for OAuth lookup. If None, uses authenticated
                        user from OperationContext (recommended for multi-user scenarios)
             provider: OAuth provider name from config (default: "gmail")
-            session_factory: SQLAlchemy session factory for content caching (optional).
+            record_store: Optional RecordStoreABC instance for content caching.
                            If provided, enables persistent caching for fast grep/search.
             max_message_per_label: Maximum number of messages to fetch per label (default: 200).
                                   Set to None for unlimited. Useful for testing with small datasets.
@@ -223,10 +233,11 @@ class GmailConnectorBackend(
             For multi-user production, leave user_email=None to auto-detect from context.
             This ensures each user accesses their own Gmail.
         """
+        super().__init__()
         self._init_oauth(token_manager_db, user_email=user_email, provider=provider)
 
         # Store session factory for caching (CacheConnectorMixin)
-        self.session_factory = session_factory
+        self.session_factory = record_store.session_factory if record_store else None
 
         # Store max messages per label (for testing with small datasets)
         self.max_message_per_label = max_message_per_label
@@ -248,7 +259,11 @@ class GmailConnectorBackend(
         logger = logging.getLogger(__name__)
 
         try:
-            from nexus.auth.oauth.factory import OAuthProviderFactory
+            import importlib as _il
+
+            OAuthProviderFactory = _il.import_module(
+                "nexus.bricks.auth.oauth.factory"
+            ).OAuthProviderFactory
 
             # Create factory (loads from oauth.yaml config)
             factory = OAuthProviderFactory()
@@ -302,7 +317,7 @@ class GmailConnectorBackend(
         try:
             # Load static SKILL.md from package resources
             skill_md_content = (
-                resources.files("nexus.connectors.gmail")
+                resources.files("nexus.backends.connectors.gmail")
                 .joinpath("SKILL.md")
                 .read_text(encoding="utf-8")
             )
@@ -388,7 +403,7 @@ class GmailConnectorBackend(
             )
 
         # Get valid access token from TokenManager (auto-refreshes if expired)
-        from nexus.core.sync_bridge import run_sync
+        from nexus.lib.sync_bridge import run_sync
 
         try:
             # Default to 'default' zone if not specified to match mount configurations

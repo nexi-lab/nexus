@@ -3,10 +3,9 @@
 Issue #1246 Phase 3: Verifies buffering, flushing, retry, and metrics.
 """
 
-from __future__ import annotations
-
 import time
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -14,9 +13,9 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from nexus.core.metadata import FileMetadata
+from nexus.contracts.metadata import FileMetadata
 from nexus.storage.models import Base, FilePathModel, OperationLogModel
-from nexus.storage.write_buffer import EventType, WriteBuffer, WriteEvent
+from nexus.storage.write_buffer import EventType, Urgency, WriteBuffer, WriteEvent
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -61,6 +60,12 @@ def session_factory(engine):
     return factory
 
 
+@pytest.fixture
+def record_store(session_factory):
+    """Wrap session_factory in a SimpleNamespace to mimic RecordStoreABC."""
+    return SimpleNamespace(session_factory=session_factory)
+
+
 # ---------------------------------------------------------------------------
 # WriteEvent tests
 # ---------------------------------------------------------------------------
@@ -90,15 +95,15 @@ class TestWriteEvent:
 class TestBufferLifecycle:
     """Tests for start/stop and basic buffering."""
 
-    def test_enqueue_increments_count(self, session_factory) -> None:
+    def test_enqueue_increments_count(self, record_store) -> None:
         """Enqueuing events should increase pending count."""
-        buf = WriteBuffer(session_factory, flush_interval_ms=10000)
+        buf = WriteBuffer(record_store, flush_interval_ms=10000)
         buf.enqueue_write(_make_metadata(), is_new=True, path="/test/file.txt")
         assert buf.pending_count == 1
 
-    def test_enqueue_multiple(self, session_factory) -> None:
+    def test_enqueue_multiple(self, record_store) -> None:
         """Multiple enqueues should accumulate."""
-        buf = WriteBuffer(session_factory, flush_interval_ms=10000)
+        buf = WriteBuffer(record_store, flush_interval_ms=10000)
         for i in range(5):
             buf.enqueue_write(
                 _make_metadata(path=f"/test/file{i}.txt"),
@@ -107,9 +112,9 @@ class TestBufferLifecycle:
             )
         assert buf.pending_count == 5
 
-    def test_stop_drains_buffer(self, session_factory) -> None:
+    def test_stop_drains_buffer(self, record_store) -> None:
         """Stopping the buffer should flush all remaining events."""
-        buf = WriteBuffer(session_factory, flush_interval_ms=10000)
+        buf = WriteBuffer(record_store, flush_interval_ms=10000)
         buf.start()
 
         for i in range(3):
@@ -124,9 +129,9 @@ class TestBufferLifecycle:
         assert buf.pending_count == 0
         assert buf.metrics["total_flushed"] == 3
 
-    def test_metrics_tracking(self, session_factory) -> None:
+    def test_metrics_tracking(self, record_store) -> None:
         """Metrics should accurately track enqueue/flush counts."""
-        buf = WriteBuffer(session_factory, flush_interval_ms=10000)
+        buf = WriteBuffer(record_store, flush_interval_ms=10000)
         buf.start()
 
         buf.enqueue_write(_make_metadata(), is_new=True, path="/test/file.txt")
@@ -147,10 +152,10 @@ class TestBufferLifecycle:
 class TestFlushBehavior:
     """Tests for periodic and threshold-based flushing."""
 
-    def test_flush_on_threshold(self, session_factory) -> None:
+    def test_flush_on_threshold(self, record_store) -> None:
         """Buffer should auto-flush when max_buffer_size is reached."""
         buf = WriteBuffer(
-            session_factory,
+            record_store,
             flush_interval_ms=10000,  # Long interval
             max_buffer_size=3,  # Low threshold
         )
@@ -169,9 +174,9 @@ class TestFlushBehavior:
 
         assert buf.metrics["total_flushed"] == 3
 
-    def test_flush_creates_db_records(self, session_factory) -> None:
+    def test_flush_creates_db_records(self, record_store, session_factory) -> None:
         """Flushed events should create actual DB records."""
-        buf = WriteBuffer(session_factory, flush_interval_ms=10000)
+        buf = WriteBuffer(record_store, flush_interval_ms=10000)
         buf.start()
 
         buf.enqueue_write(
@@ -204,9 +209,9 @@ class TestFlushBehavior:
             )
             assert len(ops) == 1
 
-    def test_flush_handles_delete_events(self, session_factory) -> None:
+    def test_flush_handles_delete_events(self, record_store, session_factory) -> None:
         """Delete events should create audit log and soft-delete."""
-        buf = WriteBuffer(session_factory, flush_interval_ms=10000)
+        buf = WriteBuffer(record_store, flush_interval_ms=10000)
         buf.start()
 
         # First create
@@ -218,7 +223,7 @@ class TestFlushBehavior:
         buf.stop(timeout=5.0)
 
         # Then delete
-        buf2 = WriteBuffer(session_factory, flush_interval_ms=10000)
+        buf2 = WriteBuffer(record_store, flush_interval_ms=10000)
         buf2.start()
         buf2.enqueue_delete(path="/test/to_delete.txt", zone_id="root")
         buf2.stop(timeout=5.0)
@@ -229,9 +234,9 @@ class TestFlushBehavior:
             ).scalar_one()
             assert fp.deleted_at is not None
 
-    def test_flush_handles_rename_events(self, session_factory) -> None:
+    def test_flush_handles_rename_events(self, record_store, session_factory) -> None:
         """Rename events should create audit log."""
-        buf = WriteBuffer(session_factory, flush_interval_ms=10000)
+        buf = WriteBuffer(record_store, flush_interval_ms=10000)
         buf.start()
 
         buf.enqueue_rename(
@@ -262,10 +267,10 @@ class TestFlushBehavior:
 class TestRetryBehavior:
     """Tests for retry on flush failure."""
 
-    def test_retry_on_transient_failure(self, session_factory) -> None:
+    def test_retry_on_transient_failure(self, record_store) -> None:
         """Buffer should retry on transient failures."""
         buf = WriteBuffer(
-            session_factory,
+            record_store,
             flush_interval_ms=10000,
             max_retries=3,
         )
@@ -279,10 +284,10 @@ class TestRetryBehavior:
         # Should have flushed successfully
         assert buf.metrics["total_failed"] == 0
 
-    def test_events_dropped_after_max_retries(self, session_factory) -> None:
+    def test_events_dropped_after_max_retries(self, record_store) -> None:
         """After max_retries, events should be dropped and counted."""
         buf = WriteBuffer(
-            session_factory,
+            record_store,
             flush_interval_ms=10000,
             max_retries=2,
         )
@@ -312,9 +317,9 @@ class TestRetryBehavior:
 class TestEnhancedMetrics:
     """Tests for the new timing, retry, and per-type metrics."""
 
-    def test_metrics_includes_timing_fields(self, session_factory) -> None:
+    def test_metrics_includes_timing_fields(self, record_store) -> None:
         """Metrics dict should include all new timing/batch fields."""
-        buf = WriteBuffer(session_factory, flush_interval_ms=10000)
+        buf = WriteBuffer(record_store, flush_interval_ms=10000)
         buf.start()
 
         buf.enqueue_write(_make_metadata(), is_new=True, path="/test/file.txt")
@@ -330,9 +335,9 @@ class TestEnhancedMetrics:
         assert metrics["flush_duration_sum"] > 0
         assert metrics["flush_batch_size_sum"] == 1
 
-    def test_enqueued_by_type_tracking(self, session_factory) -> None:
-        """Per-type counters should track write, delete, and rename separately."""
-        buf = WriteBuffer(session_factory, flush_interval_ms=10000)
+    def test_enqueued_by_type_tracking(self, record_store) -> None:
+        """Per-type counters should track all event types separately."""
+        buf = WriteBuffer(record_store, flush_interval_ms=10000)
 
         buf.enqueue_write(_make_metadata(path="/a.txt"), is_new=True, path="/a.txt")
         buf.enqueue_write(_make_metadata(path="/b.txt"), is_new=True, path="/b.txt")
@@ -340,7 +345,9 @@ class TestEnhancedMetrics:
         buf.enqueue_rename(old_path="/d.txt", new_path="/e.txt")
 
         by_type = buf.metrics["enqueued_by_type"]
-        assert by_type == {"write": 2, "delete": 1, "rename": 1}
+        assert by_type["write"] == 2
+        assert by_type["delete"] == 1
+        assert by_type["rename"] == 1
 
     def test_retry_counter_increments(self, session_factory) -> None:
         """Total retries should increment on transient flush failure."""
@@ -354,9 +361,183 @@ class TestEnhancedMetrics:
                 raise RuntimeError("Transient failure")
             return real_factory()
 
-        buf = WriteBuffer(flaky_factory, flush_interval_ms=10000, max_retries=3)
+        flaky_record_store = SimpleNamespace(session_factory=flaky_factory)
+        buf = WriteBuffer(flaky_record_store, flush_interval_ms=10000, max_retries=3)
         buf.enqueue_write(_make_metadata(), is_new=True, path="/retry.txt")
         buf._flush_buffer()
 
         assert buf.metrics["total_retries"] >= 1
         assert buf.metrics["total_flushed"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Urgency tests (Issue #2426)
+# ---------------------------------------------------------------------------
+
+
+class TestUrgency:
+    """Tests for per-event urgency support."""
+
+    def test_urgency_default_is_normal(self) -> None:
+        """WriteEvent without urgency should default to NORMAL."""
+        event = WriteEvent(event_type=EventType.WRITE, path="/test")
+        assert event.urgency == Urgency.NORMAL
+
+    def test_high_urgency_triggers_immediate_flush(self, record_store) -> None:
+        """HIGH urgency event should trigger flush_event immediately."""
+        buf = WriteBuffer(
+            record_store,
+            flush_interval_ms=10000,  # Very long interval
+            max_buffer_size=1000,  # Very high threshold
+        )
+        buf.start()
+
+        # Enqueue a HIGH urgency write
+        buf.enqueue_write(
+            _make_metadata(),
+            is_new=True,
+            path="/test/urgent.txt",
+            urgency=Urgency.HIGH,
+        )
+
+        # Give flush thread time to process (should flush quickly due to HIGH)
+        time.sleep(0.3)
+        buf.stop(timeout=5.0)
+
+        assert buf.metrics["total_flushed"] == 1
+
+    def test_normal_urgency_respects_threshold(self, record_store) -> None:
+        """NORMAL events should only flush at threshold or interval."""
+        buf = WriteBuffer(
+            record_store,
+            flush_interval_ms=10000,  # Very long interval
+            max_buffer_size=1000,  # Very high threshold
+        )
+        # Don't start — no background thread; check buffer accumulates
+        buf.enqueue_write(
+            _make_metadata(),
+            is_new=True,
+            path="/test/normal.txt",
+            urgency=Urgency.NORMAL,
+        )
+
+        # Should NOT have triggered a flush (no threshold reached)
+        assert buf.pending_count == 1
+
+    def test_mkdir_rmdir_metrics_tracking(self, record_store) -> None:
+        """mkdir/rmdir events should appear in enqueued_by_type metrics."""
+        buf = WriteBuffer(record_store, flush_interval_ms=10000)
+
+        buf.enqueue_mkdir(path="/test/dir1", zone_id="root")
+        buf.enqueue_mkdir(path="/test/dir2", zone_id="root")
+        buf.enqueue_rmdir(path="/test/dir1", zone_id="root")
+
+        by_type = buf.metrics["enqueued_by_type"]
+        assert by_type["mkdir"] == 2
+        assert by_type["rmdir"] == 1
+
+    def test_urgency_field_in_write_event(self) -> None:
+        """Urgency enum values should be correct."""
+        assert Urgency.HIGH.value == "high"
+        assert Urgency.NORMAL.value == "normal"
+        assert Urgency.LOW.value == "low"
+
+        # Create event with explicit urgency
+        event = WriteEvent(
+            event_type=EventType.WRITE,
+            path="/test",
+            urgency=Urgency.HIGH,
+        )
+        assert event.urgency == Urgency.HIGH
+
+
+# ---------------------------------------------------------------------------
+# mkdir/rmdir flush behavior tests (Issue #2426)
+# ---------------------------------------------------------------------------
+
+
+class TestMkdirRmdirFlush:
+    """Tests for mkdir/rmdir DB records on flush."""
+
+    def test_flush_handles_mkdir_events(self, record_store, session_factory) -> None:
+        """mkdir events should create audit log."""
+        buf = WriteBuffer(record_store, flush_interval_ms=10000)
+        buf.start()
+
+        buf.enqueue_mkdir(path="/test/newdir", zone_id="root", agent_id="agent-1")
+        buf.stop(timeout=5.0)
+
+        with session_factory() as session:
+            ops = (
+                session.execute(
+                    select(OperationLogModel).where(OperationLogModel.operation_type == "mkdir")
+                )
+                .scalars()
+                .all()
+            )
+            assert len(ops) == 1
+            assert ops[0].path == "/test/newdir"
+
+    def test_flush_handles_rmdir_events(self, record_store, session_factory) -> None:
+        """rmdir events should create audit log."""
+        buf = WriteBuffer(record_store, flush_interval_ms=10000)
+        buf.start()
+
+        buf.enqueue_rmdir(path="/test/olddir", zone_id="root", agent_id="agent-1")
+        buf.stop(timeout=5.0)
+
+        with session_factory() as session:
+            ops = (
+                session.execute(
+                    select(OperationLogModel).where(OperationLogModel.operation_type == "rmdir")
+                )
+                .scalars()
+                .all()
+            )
+            assert len(ops) == 1
+            assert ops[0].path == "/test/olddir"
+
+
+# ---------------------------------------------------------------------------
+# BufferedObserver urgency pass-through tests (Issue #2426 Phase 2)
+# ---------------------------------------------------------------------------
+
+
+class TestBufferedObserverUrgency:
+    """Tests that BufferedRecordStoreWriteObserver forwards urgency to WriteBuffer."""
+
+    def test_buffered_observer_passes_urgency_high(self, record_store) -> None:
+        """on_write(urgency="high") should enqueue with Urgency.HIGH."""
+        from nexus.storage.record_store_syncer import BufferedRecordStoreWriteObserver
+
+        obs = BufferedRecordStoreWriteObserver(record_store, flush_interval_ms=10000)
+        # Spy on enqueue_write
+        from unittest.mock import patch as _patch
+
+        with _patch.object(obs._buffer, "enqueue_write", wraps=obs._buffer.enqueue_write) as spy:
+            obs.on_write(
+                metadata=_make_metadata(),
+                is_new=True,
+                path="/test/urgent.txt",
+                urgency="high",
+            )
+            spy.assert_called_once()
+            call_kwargs = spy.call_args[1]
+            assert call_kwargs["urgency"] == Urgency.HIGH
+
+    def test_buffered_observer_default_urgency_normal(self, record_store) -> None:
+        """on_write() without urgency should enqueue with Urgency.NORMAL."""
+        from nexus.storage.record_store_syncer import BufferedRecordStoreWriteObserver
+
+        obs = BufferedRecordStoreWriteObserver(record_store, flush_interval_ms=10000)
+        from unittest.mock import patch as _patch
+
+        with _patch.object(obs._buffer, "enqueue_write", wraps=obs._buffer.enqueue_write) as spy:
+            obs.on_write(
+                metadata=_make_metadata(),
+                is_new=True,
+                path="/test/normal.txt",
+            )
+            spy.assert_called_once()
+            call_kwargs = spy.call_args[1]
+            assert call_kwargs["urgency"] == Urgency.NORMAL

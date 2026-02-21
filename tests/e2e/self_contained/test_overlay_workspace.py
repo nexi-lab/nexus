@@ -13,18 +13,15 @@ These tests use real WorkspaceManifest serialization and OverlayResolver,
 with mocked metadata store and backend for isolation.
 """
 
-from __future__ import annotations
-
+import builtins
 from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.core.metadata import FileMetadata
-from nexus.core.workspace_manifest import ManifestEntry, WorkspaceManifest
-from nexus.services.overlay_resolver import (
-    OverlayConfig,
-    OverlayResolver,
-)
+from nexus.contracts.metadata import FileMetadata
+from nexus.contracts.overlay_config import OverlayConfig
+from nexus.contracts.workspace_manifest import ManifestEntry, WorkspaceManifest
+from nexus.system_services.workspace.overlay_resolver import OverlayResolver
 
 
 class InMemoryMetadata:
@@ -53,10 +50,10 @@ class InMemoryMetadata:
 
     def list(
         self, prefix: str = "", recursive: bool = True, **kwargs: object
-    ) -> list[FileMetadata]:
+    ) -> builtins.list[FileMetadata]:
         return [meta for path, meta in self._store.items() if path.startswith(prefix)]
 
-    def delete_batch(self, paths: list[str] | tuple[str, ...]) -> None:
+    def delete_batch(self, paths: builtins.list[str] | tuple[str, ...]) -> None:
         for path in paths:
             self._store.pop(path, None)
 

@@ -5,6 +5,9 @@ This test ensures that whenever a method is decorated with @rpc_expose in the co
 implementation, it also has a corresponding client method in RemoteNexusFS.
 
 This prevents issues like #268 where methods are added to core but forgotten in remote client.
+
+Issue #2035, Follow-up 1: Also scans brick services (SkillService, SkillPackageService)
+for @rpc_expose methods, since skills RPC is now brick-native.
 """
 
 import inspect
@@ -37,6 +40,35 @@ def get_rpc_exposed_methods(cls):
     return exposed
 
 
+def get_all_rpc_exposed_methods():
+    """Get all @rpc_expose methods from NexusFS and brick services.
+
+    Issue #2035, Follow-up 1: Skills RPC methods live on brick services,
+    not on NexusFS. This scans all sources the server would scan.
+    """
+    exposed = get_rpc_exposed_methods(NexusFS)
+
+    # Brick services that expose RPC methods directly
+    _brick_classes: list[type] = []
+    try:
+        from nexus.bricks.skills.service import SkillService
+
+        _brick_classes.append(SkillService)
+    except ImportError:
+        pass
+    try:
+        from nexus.bricks.skills.package_service import SkillPackageService
+
+        _brick_classes.append(SkillPackageService)
+    except ImportError:
+        pass
+
+    for cls in _brick_classes:
+        exposed.update(get_rpc_exposed_methods(cls))
+
+    return exposed
+
+
 def get_remote_methods(cls):
     """Get all public methods from RemoteNexusFS.
 
@@ -65,7 +97,7 @@ def get_remote_methods(cls):
         from nexus.remote.rpc_proxy import RPCProxyBase
 
         if issubclass(cls, RPCProxyBase):
-            exposed = get_rpc_exposed_methods(NexusFS)
+            exposed = get_all_rpc_exposed_methods()
             for name, method in exposed.items():
                 if name not in methods:
                     methods[name] = method
@@ -90,8 +122,8 @@ def test_all_rpc_methods_have_remote_implementations():
         # All event methods now have remote implementations (Block 2, Issue #1106)
     }
 
-    # Get all exposed RPC methods from core
-    exposed_methods = get_rpc_exposed_methods(NexusFS)
+    # Get all exposed RPC methods from core + brick services
+    exposed_methods = get_all_rpc_exposed_methods()
 
     # Get all methods from RemoteNexusFS
     remote_methods = get_remote_methods(RemoteNexusFS)
@@ -154,7 +186,7 @@ def test_remote_methods_match_signatures():
     This is a best-effort check - signatures may differ slightly due to
     context parameters being handled server-side.
     """
-    exposed_methods = get_rpc_exposed_methods(NexusFS)
+    exposed_methods = get_all_rpc_exposed_methods()
     remote_methods = get_remote_methods(RemoteNexusFS)
 
     signature_mismatches = []
@@ -288,8 +320,56 @@ def test_all_public_methods_are_exposed_or_excluded():
         "locked",  # Async context manager - distributed lock acquisition
         # Consistency migration - server-side orchestration only (Issue #1180)
         "migrate_consistency_mode",  # Internal - SC↔EC migration orchestrator, exposed via PATCH endpoint
+        # PostMutationHook infrastructure (Issue #625) - server-side hook registration
+        "register_mutation_hook",  # Internal - registers post-mutation hooks for workflow dispatch
         # Workflow event queue - server-side background task (Issue #1522)
         "ensure_workflow_consumer",  # Internal - starts bounded workflow event queue consumer
+        # Brick service references (Issue #2035) — object instances, not methods
+        "skill_service",  # SkillService instance — RPC methods auto-discovered from brick
+        "skill_package_service",  # SkillPackageService instance — RPC methods auto-discovered from brick
+        # ABC compliance stubs (Issue #2033 LEGO decomposition)
+        # These delegate to extracted services which already have @rpc_expose.
+        # NexusFS defines them only to satisfy NexusFilesystem ABC requirements.
+        # Workspace snapshots — delegates to _workspace_rpc_service
+        "workspace_snapshot",  # ABC stub → _workspace_rpc_service.workspace_snapshot()
+        "workspace_restore",  # ABC stub → _workspace_rpc_service.workspace_restore()
+        "workspace_log",  # ABC stub → _workspace_rpc_service.workspace_log()
+        "workspace_diff",  # ABC stub → _workspace_rpc_service.workspace_diff()
+        # Workspace registry — delegates to _workspace_rpc_service
+        "register_workspace",  # ABC stub → _workspace_rpc_service.register_workspace()
+        "unregister_workspace",  # ABC stub → _workspace_rpc_service.unregister_workspace()
+        "list_workspaces",  # ABC stub → _workspace_rpc_service.list_workspaces()
+        "get_workspace_info",  # ABC stub → _workspace_rpc_service.get_workspace_info()
+        # Memory registry — delegates to _workspace_rpc_service
+        "register_memory",  # ABC stub → _workspace_rpc_service.register_memory()
+        "unregister_memory",  # ABC stub → _workspace_rpc_service.unregister_memory()
+        "get_memory_info",  # ABC stub → _workspace_rpc_service.get_memory_info()
+        # Sandbox — delegates to _sandbox_rpc_service
+        "sandbox_create",  # ABC stub → _sandbox_rpc_service.sandbox_create()
+        "sandbox_get_or_create",  # ABC stub → _sandbox_rpc_service.sandbox_get_or_create()
+        "sandbox_run",  # ABC stub → _sandbox_rpc_service.sandbox_run()
+        "sandbox_pause",  # ABC stub → _sandbox_rpc_service.sandbox_pause()
+        "sandbox_resume",  # ABC stub → _sandbox_rpc_service.sandbox_resume()
+        "sandbox_stop",  # ABC stub → _sandbox_rpc_service.sandbox_stop()
+        "sandbox_list",  # ABC stub → _sandbox_rpc_service.sandbox_list()
+        "sandbox_status",  # ABC stub → _sandbox_rpc_service.sandbox_status()
+        "sandbox_connect",  # ABC stub → _sandbox_rpc_service.sandbox_connect()
+        "sandbox_disconnect",  # ABC stub → _sandbox_rpc_service.sandbox_disconnect()
+        # Mount — delegates to _mount_core_service
+        "add_mount",  # ABC stub → _mount_core_service.add_mount()
+        "remove_mount",  # ABC stub → _mount_core_service.remove_mount()
+        "list_mounts",  # ABC stub → _mount_core_service.list_mounts()
+        "get_mount",  # ABC stub → _mount_core_service.get_mount()
+        # Search/list — delegates to search_service
+        "list",  # ABC stub → overrides NexusFSCoreMixin.list()
+        "glob",  # ABC stub → search_service.glob()
+        "grep",  # ABC stub → search_service.grep()
+        # ReBAC sync delegation stubs (Issue #2033) — delegates to rebac_service
+        "rebac_create",  # ABC stub → rebac_service.rebac_create_sync()
+        "rebac_check",  # ABC stub → rebac_service.rebac_check_sync()
+        "rebac_check_batch",  # ABC stub → rebac_service.rebac_check_batch_sync()
+        "rebac_delete",  # ABC stub → rebac_service.rebac_delete_sync()
+        "rebac_list_tuples",  # ABC stub → rebac_service.rebac_list_tuples_sync()
     }
 
     # Get all public methods
@@ -341,7 +421,7 @@ def test_all_public_methods_are_exposed_or_excluded():
                 "",
                 "1. Add @rpc_expose decorator to the method (RECOMMENDED):",
                 "   ```python",
-                "   from nexus.core.rpc_decorator import rpc_expose",
+                "   from nexus.lib.rpc_decorator import rpc_expose",
                 "",
                 "   @rpc_expose(description='Your description')",
                 "   def your_method(self, ...):",
@@ -379,14 +459,14 @@ def test_no_exposed_method_starts_with_underscore():
     This ensures that even if a method has _rpc_name set to something
     starting with '_', it won't bypass the discovery filter.
     """
-    exposed_methods = get_rpc_exposed_methods(NexusFS)
+    exposed_methods = get_all_rpc_exposed_methods()
     private_methods = [name for name in exposed_methods if name.startswith("_")]
     assert not private_methods, f"Exposed methods must not start with '_': {private_methods}"
 
 
 def test_list_all_exposed_methods():
     """List all @rpc_expose methods for documentation purposes."""
-    exposed_methods = get_rpc_exposed_methods(NexusFS)
+    exposed_methods = get_all_rpc_exposed_methods()
 
     print(f"\n{'=' * 60}")
     print(f"All @rpc_expose methods ({len(exposed_methods)} total):")
@@ -403,8 +483,6 @@ def test_list_all_exposed_methods():
         "Batch/Import/Export": [
             "write_batch",
             "batch_get_content_ids",
-            "export_metadata",
-            "import_metadata",
         ],
         "Other": [],
     }

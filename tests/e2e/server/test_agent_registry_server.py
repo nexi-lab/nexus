@@ -5,29 +5,24 @@ Tests the HTTP delegation endpoint with real DelegationService + AgentRegistry
 as the single registration path. No mocks for core services.
 """
 
-from __future__ import annotations
-
 from typing import Any
 from unittest.mock import patch
 
 import pytest
 from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from nexus.rebac.entity_registry import EntityRegistry
-from nexus.rebac.manager import EnhancedReBACManager
+from nexus.bricks.delegation.models import DelegationMode
+from nexus.bricks.delegation.service import DelegationService
+from nexus.bricks.rebac.entity_registry import EntityRegistry
+from nexus.bricks.rebac.manager import EnhancedReBACManager
 from nexus.server.api.v2.routers.delegation import (
     DelegateRequest,
     DelegateResponse,
     _handle_delegation_error,
 )
 from nexus.services.agents.agent_registry import AgentRegistry
-from nexus.services.delegation.models import DelegationMode
-from nexus.services.delegation.service import DelegationService
-from nexus.storage.models import Base
+from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
 # ---------------------------------------------------------------------------
 # Fixtures: real services
@@ -35,30 +30,32 @@ from nexus.storage.models import Base
 
 
 @pytest.fixture()
-def engine():
-    eng = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(eng)
-    return eng
+def record_store():
+    """Shared in-memory RecordStore for all components."""
+    store = InMemoryRecordStore()
+    yield store
+    store.close()
 
 
 @pytest.fixture()
-def session_factory(engine):
-    return sessionmaker(bind=engine, expire_on_commit=False)
+def engine(record_store):
+    return record_store.engine
 
 
 @pytest.fixture()
-def entity_registry(session_factory):
-    return EntityRegistry(session_factory)
+def session_factory(record_store):
+    return record_store.session_factory
 
 
 @pytest.fixture()
-def agent_registry(session_factory, entity_registry):
+def entity_registry(record_store):
+    return EntityRegistry(record_store)
+
+
+@pytest.fixture()
+def agent_registry(record_store, entity_registry):
     return AgentRegistry(
-        session_factory=session_factory,
+        record_store=record_store,
         entity_registry=entity_registry,
     )
 
@@ -71,9 +68,9 @@ def rebac_manager(engine):
 
 
 @pytest.fixture()
-def delegation_service(session_factory, rebac_manager, entity_registry, agent_registry):
+def delegation_service(record_store, rebac_manager, entity_registry, agent_registry):
     return DelegationService(
-        session_factory=session_factory,
+        record_store=record_store,
         rebac_manager=rebac_manager,
         entity_registry=entity_registry,
         agent_registry=agent_registry,

@@ -4,13 +4,11 @@ Wire up real SearchService + RaftMetadataStore + OperationContext
 to verify zone-scoped listing with permission filtering.
 """
 
-from __future__ import annotations
-
 import tempfile
 from pathlib import Path
 from typing import Any
 
-from nexus.core.metadata import FileMetadata
+from nexus.contracts.metadata import FileMetadata
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 # ---------------------------------------------------------------------------
@@ -38,7 +36,7 @@ def _make_search_service(
     enforce_permissions: bool = False,
 ) -> Any:
     """Create a SearchService backed by the given store."""
-    from nexus.services.search_service import SearchService
+    from nexus.services.search.search_service import SearchService
 
     return SearchService(
         metadata_store=store,

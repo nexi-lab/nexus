@@ -4,29 +4,28 @@ Tests: ensure_main_branch, create_branch, list_branches, get_branch,
        get_current_branch, delete_branch, commit, checkout, log, diff.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
-from nexus.core.exceptions import (
+from nexus.contracts.exceptions import (
     BranchExistsError,
     BranchNotFoundError,
     BranchProtectedError,
     BranchStateError,
 )
-from nexus.services.context_branch import (
+from nexus.storage.models import WorkspaceSnapshotModel
+from nexus.storage.models._base import Base
+from nexus.storage.models.context_branch import ContextBranchModel
+from nexus.system_services.workspace.context_branch import (
     DEFAULT_BRANCH,
     ContextBranchService,
     _slugify,
 )
-from nexus.storage.models import WorkspaceSnapshotModel
-from nexus.storage.models._base import Base
-from nexus.storage.models.context_branch import ContextBranchModel
 
 
 @pytest.fixture
@@ -85,11 +84,16 @@ def mock_workspace_manager():
 
 
 @pytest.fixture
-def service(mock_workspace_manager, session_factory):
+def record_store(session_factory):
+    return SimpleNamespace(session_factory=session_factory)
+
+
+@pytest.fixture
+def service(mock_workspace_manager, record_store):
     """ContextBranchService with mocked WM and real DB."""
     return ContextBranchService(
         workspace_manager=mock_workspace_manager,
-        session_factory=session_factory,
+        record_store=record_store,
         rebac_manager=None,  # No ReBAC for unit tests (allows all)
         default_zone_id="test-zone",
         default_agent_id="agent-1",
@@ -184,7 +188,7 @@ class TestCreateBranch:
             service.create_branch("/ws", "new", from_branch="ghost")
 
     def test_from_nonexistent_snapshot_raises(self, service, session_factory):
-        from nexus.core.exceptions import NexusFileNotFoundError
+        from nexus.contracts.exceptions import NexusFileNotFoundError
 
         with pytest.raises(NexusFileNotFoundError):
             service.create_branch("/ws", "new", from_snapshot_id="nonexistent")

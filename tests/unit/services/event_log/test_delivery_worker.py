@@ -7,8 +7,6 @@ Tests cover the new features added to the delivery worker:
 - Error classification and retry tracking
 """
 
-from __future__ import annotations
-
 import asyncio
 import tempfile
 import uuid
@@ -19,7 +17,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.core.event_bus import FileEvent
+from nexus.constants import ROOT_ZONE_ID
+from nexus.services.event_subsystem.types import FileEvent
 from nexus.storage.models import OperationLogModel
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
@@ -41,7 +40,7 @@ def _insert_undelivered(
     session_factory,
     path: str = "/test.txt",
     operation_type: str = "write",
-    zone_id: str = "default",
+    zone_id: str = ROOT_ZONE_ID,
     agent_id: str | None = None,
     new_path: str | None = None,
     sequence_number: int | None = None,
@@ -76,7 +75,7 @@ class TestRunAsync:
 
     def test_run_async_without_loop(self) -> None:
         """_run_async should create a temporary loop when none is running."""
-        from nexus.services.event_log.delivery_worker import _run_async
+        from nexus.services.event_subsystem.log.delivery import _run_async
 
         async def simple_coro():
             return 42
@@ -86,7 +85,7 @@ class TestRunAsync:
 
     def test_run_async_with_loop(self) -> None:
         """_run_async should use run_coroutine_threadsafe with an existing loop."""
-        from nexus.services.event_log.delivery_worker import _run_async
+        from nexus.services.event_subsystem.log.delivery import _run_async
 
         loop = asyncio.new_event_loop()
 
@@ -117,8 +116,8 @@ class TestExporterRegistryIntegration:
     """Test EventDeliveryWorker with ExporterRegistry wired in."""
 
     def test_dispatch_calls_exporter_registry(self, record_store: SQLAlchemyRecordStore) -> None:
-        from nexus.services.event_log.delivery_worker import EventDeliveryWorker
-        from nexus.services.event_log.exporter_registry import ExporterRegistry
+        from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
+        from nexus.services.event_subsystem.log.exporter_registry import ExporterRegistry
 
         _insert_undelivered(record_store.session_factory)
 
@@ -127,7 +126,7 @@ class TestExporterRegistryIntegration:
         mock_registry.dispatch_batch = AsyncMock(return_value={})
 
         worker = EventDeliveryWorker(
-            record_store.session_factory,
+            record_store,
             exporter_registry=mock_registry,
         )
         count = worker._poll_and_dispatch()
@@ -141,8 +140,8 @@ class TestExporterRegistryIntegration:
         assert isinstance(events[0], FileEvent)
 
     def test_exporter_failure_routes_to_dlq(self, record_store: SQLAlchemyRecordStore) -> None:
-        from nexus.services.event_log.delivery_worker import EventDeliveryWorker
-        from nexus.services.event_log.exporter_registry import ExporterRegistry
+        from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
+        from nexus.services.event_subsystem.log.exporter_registry import ExporterRegistry
 
         _insert_undelivered(record_store.session_factory)
 
@@ -156,7 +155,7 @@ class TestExporterRegistryIntegration:
         mock_registry.dispatch_batch = AsyncMock(side_effect=mock_dispatch)
 
         worker = EventDeliveryWorker(
-            record_store.session_factory,
+            record_store,
             exporter_registry=mock_registry,
         )
         worker._poll_and_dispatch()
@@ -165,11 +164,11 @@ class TestExporterRegistryIntegration:
         assert worker.metrics["total_dlq"] == 1
 
     def test_no_exporter_registry_skips_export(self, record_store: SQLAlchemyRecordStore) -> None:
-        from nexus.services.event_log.delivery_worker import EventDeliveryWorker
+        from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
 
         _insert_undelivered(record_store.session_factory)
 
-        worker = EventDeliveryWorker(record_store.session_factory)
+        worker = EventDeliveryWorker(record_store)
         count = worker._poll_and_dispatch()
 
         # Should still work without registry
@@ -186,7 +185,7 @@ class TestDLQRouting:
     """Test DLQ routing after exhausting retries."""
 
     def test_routes_to_dlq_after_max_retries(self, record_store: SQLAlchemyRecordStore) -> None:
-        from nexus.services.event_log.delivery_worker import EventDeliveryWorker
+        from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
 
         _insert_undelivered(record_store.session_factory)
 
@@ -194,7 +193,7 @@ class TestDLQRouting:
         mock_bus.publish = AsyncMock(side_effect=ConnectionError("down"))
 
         worker = EventDeliveryWorker(
-            record_store.session_factory,
+            record_store,
             event_bus=mock_bus,
             max_retries=2,
         )
@@ -208,7 +207,7 @@ class TestDLQRouting:
         assert worker.metrics["total_dlq"] == 1
 
     def test_retry_count_clears_on_success(self, record_store: SQLAlchemyRecordStore) -> None:
-        from nexus.services.event_log.delivery_worker import EventDeliveryWorker
+        from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
 
         _insert_undelivered(record_store.session_factory)
 
@@ -225,7 +224,7 @@ class TestDLQRouting:
         mock_bus.publish = AsyncMock(side_effect=sometimes_fail)
 
         worker = EventDeliveryWorker(
-            record_store.session_factory,
+            record_store,
             event_bus=mock_bus,
             max_retries=3,
         )

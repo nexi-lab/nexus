@@ -93,7 +93,7 @@ backend = GoogleDriveConnectorBackend(
 nx = NexusFS(backend=backend)
 
 # Write file (with user context)
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 
 context = OperationContext(
     user_id="alice@example.com",  # User's email
@@ -280,8 +280,8 @@ context_b = OperationContext(user_id="alice@other.com", zone_id="org_other")
 ### Common Errors
 
 ```python
-from nexus.core.exceptions import BackendError, NexusFileNotFoundError
-from nexus.core.exceptions import AuthenticationError
+from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
+from nexus.contracts.exceptions import AuthenticationError
 
 try:
     content = await nx.read("/file.txt", context=context)
@@ -436,7 +436,7 @@ nexus oauth setup-gdrive \
 from nexus import NexusFS
 from nexus.backends import GoogleDriveConnectorBackend
 from nexus.server.auth import TokenManager
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 
 # Setup
 token_manager = TokenManager(db_path="~/.nexus/nexus.db")

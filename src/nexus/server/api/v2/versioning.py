@@ -10,8 +10,6 @@ Provides:
 Issue #995: API versioning strategy for breaking changes.
 """
 
-from __future__ import annotations
-
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -26,7 +24,6 @@ logger = logging.getLogger(__name__)
 
 # Current API version — bump on breaking changes.
 API_VERSION = "2.0"
-
 
 # ---------------------------------------------------------------------------
 # Router registry
@@ -50,7 +47,7 @@ class RouterEntry:
         endpoint_count: Informational count for logging.
     """
 
-    router: APIRouter
+    router: "APIRouter"
     name: str
     prefix: str | None = None
     deprecated: str | None = None
@@ -77,7 +74,7 @@ class RouterRegistry:
 
 def build_v2_registry(
     *,
-    async_nexus_fs_getter: object | None = None,
+    nexus_fs_getter: object | None = None,
     chunked_upload_service_getter: object | None = None,
 ) -> RouterRegistry:
     """Import all v2 routers and return a populated registry.
@@ -86,7 +83,7 @@ def build_v2_registry(
     module doesn't prevent the rest from loading.
 
     Args:
-        async_nexus_fs_getter: Optional callable returning the async FS
+        nexus_fs_getter: Optional callable returning the NexusFS
             instance (used by the async_files factory router).
     """
     registry = RouterRegistry()
@@ -127,13 +124,19 @@ def build_v2_registry(
     except ImportError as e:
         logger.warning("Failed to import ACE v2 routes: %s", e)
 
-    # ---- Events replay router (Issue #1139) ----
+    # ---- Events replay router (Issue #1139, #2056) ----
     try:
-        from nexus.server.api.v2.routers.events_replay import router as events_replay_router
+        from nexus.server.api.v2.routers.events_replay import (
+            router as events_replay_router,
+        )
+        from nexus.server.api.v2.routers.events_replay import (
+            watch_router,
+        )
 
         registry.add(
-            RouterEntry(router=events_replay_router, name="events_replay", endpoint_count=2)
+            RouterEntry(router=events_replay_router, name="events_replay", endpoint_count=3)
         )
+        registry.add(RouterEntry(router=watch_router, name="watch", endpoint_count=1))
     except ImportError as e:
         logger.warning("Failed to import Events replay routes: %s", e)
 
@@ -157,7 +160,7 @@ def build_v2_registry(
     try:
         from nexus.server.api.v2.routers.async_files import create_async_files_router
 
-        async_files_router = create_async_files_router(get_fs=async_nexus_fs_getter)
+        async_files_router = create_async_files_router(get_fs=nexus_fs_getter)
         registry.add(
             RouterEntry(
                 router=async_files_router,
@@ -254,15 +257,23 @@ def build_v2_registry(
         registry.add(
             RouterEntry(router=bricks_health_router, name="bricks_health", endpoint_count=1)
         )
-        registry.add(RouterEntry(router=bricks_router, name="bricks", endpoint_count=3))
+        registry.add(RouterEntry(router=bricks_router, name="bricks", endpoint_count=5))
     except ImportError as e:
         logger.warning("Failed to import Bricks routes: %s", e)
+
+    # ---- Connector discovery router (Issue #2069) ----
+    try:
+        from nexus.server.api.v2.routers.connectors import router as connectors_router
+
+        registry.add(RouterEntry(router=connectors_router, name="connectors", endpoint_count=2))
+    except ImportError as e:
+        logger.warning("Failed to import Connectors routes: %s", e)
 
     # ---- Batch operations router (Issue #1242) ----
     try:
         from nexus.server.api.v2.routers.batch import create_batch_router
 
-        batch_router = create_batch_router(get_fs=async_nexus_fs_getter)
+        batch_router = create_batch_router(get_fs=nexus_fs_getter)
         registry.add(
             RouterEntry(
                 router=batch_router,
@@ -274,13 +285,98 @@ def build_v2_registry(
     except ImportError as e:
         logger.warning("Failed to import Batch routes: %s", e)
 
+    # ---- Eviction router (Issue #2170) ----
+    try:
+        from nexus.server.api.v2.routers.eviction import router as eviction_router
+
+        registry.add(RouterEntry(router=eviction_router, name="eviction", endpoint_count=1))
+    except ImportError as e:
+        logger.warning("Failed to import Eviction routes: %s", e)
+
+    # ---- Agent spec/status router (Issue #2169) ----
+    try:
+        from nexus.server.api.v2.routers.agent_status import router as agent_status_router
+
+        registry.add(RouterEntry(router=agent_status_router, name="agent_status", endpoint_count=3))
+    except ImportError as e:
+        logger.warning("Failed to import Agent status routes: %s", e)
+
     # ---- Governance router (Issue #1359) — admin auth required ----
     try:
         from nexus.server.api.v2.routers.governance import router as governance_router
 
-        registry.add(RouterEntry(router=governance_router, name="governance", endpoint_count=14))
+        registry.add(RouterEntry(router=governance_router, name="governance", endpoint_count=16))
     except ImportError as e:
         logger.warning("Failed to import Governance routes: %s", e)
+
+    # ---- Locks router (Issue #2056 — ported from v1) ----
+    try:
+        from nexus.server.api.v2.routers.locks import router as locks_router
+
+        registry.add(RouterEntry(router=locks_router, name="locks", endpoint_count=4))
+    except ImportError as e:
+        logger.warning("Failed to import Locks routes: %s", e)
+
+    # ---- Subscriptions router (Issue #2056 — ported from v1) ----
+    try:
+        from nexus.server.api.v2.routers.subscriptions import router as subscriptions_router
+
+        registry.add(
+            RouterEntry(router=subscriptions_router, name="subscriptions", endpoint_count=4)
+        )
+    except ImportError as e:
+        logger.warning("Failed to import Subscriptions routes: %s", e)
+
+    # ---- Identity router (Issue #2056 — ported from v1) ----
+    try:
+        from nexus.server.api.v2.routers.identity import router as identity_router
+
+        registry.add(RouterEntry(router=identity_router, name="identity", endpoint_count=2))
+    except ImportError as e:
+        logger.warning("Failed to import Identity routes: %s", e)
+
+    # ---- Credentials router (Issue #1753 — Verifiable Credentials) ----
+    try:
+        from nexus.server.api.v2.routers.credentials import router as credentials_router
+
+        registry.add(RouterEntry(router=credentials_router, name="credentials", endpoint_count=6))
+    except ImportError as e:
+        logger.warning("Failed to import Credentials routes: %s", e)
+
+    # ---- Access Manifests router (Issue #1754) ----
+    try:
+        from nexus.server.api.v2.routers.access_manifests import (
+            router as access_manifests_router,
+        )
+
+        registry.add(
+            RouterEntry(router=access_manifests_router, name="access_manifests", endpoint_count=5)
+        )
+    except ImportError as e:
+        logger.warning("Failed to import Access Manifests routes: %s", e)
+    # ---- Search router (Issue #2056 — ported from v1) ----
+    try:
+        from nexus.server.api.v2.routers.search import router as search_router
+
+        registry.add(RouterEntry(router=search_router, name="search", endpoint_count=5))
+    except ImportError as e:
+        logger.warning("Failed to import Search routes: %s", e)
+
+    # ---- Graph router (Issue #2056 — ported from v1) ----
+    try:
+        from nexus.server.api.v2.routers.graph import router as graph_router
+
+        registry.add(RouterEntry(router=graph_router, name="graph", endpoint_count=4))
+    except ImportError as e:
+        logger.warning("Failed to import Graph routes: %s", e)
+
+    # ---- Cache router (Issue #2056 — ported from v1) ----
+    try:
+        from nexus.server.api.v2.routers.cache import router as cache_router
+
+        registry.add(RouterEntry(router=cache_router, name="cache", endpoint_count=3))
+    except ImportError as e:
+        logger.warning("Failed to import Cache routes: %s", e)
 
     # ---- x402 protocol router (Issue #1206) ----
     try:
@@ -297,7 +393,7 @@ def build_v2_registry(
 
 
 def register_v2_routers(
-    app: FastAPI,
+    app: "FastAPI",
     registry: RouterRegistry,
 ) -> None:
     """Mount every router in *registry* onto *app*.

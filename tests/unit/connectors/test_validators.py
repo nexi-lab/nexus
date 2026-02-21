@@ -5,8 +5,6 @@ These tests lock down current behavior so the refactoring can be
 validated against them.
 """
 
-from __future__ import annotations
-
 import re
 
 import pytest
@@ -16,7 +14,6 @@ EMAIL_PATTERN = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
 
 # Current ISO 8601 pattern from calendar/schemas.py
 ISO8601_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}([+-]\d{2}:\d{2}|Z)$")
-
 
 # ---------------------------------------------------------------------------
 # Email validation

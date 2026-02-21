@@ -8,8 +8,6 @@ Provides efficient SQL view-based queries for work item processing:
 - Work ordered by priority
 """
 
-from __future__ import annotations
-
 import builtins
 import json
 from typing import Any
@@ -17,7 +15,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.core.exceptions import MetadataError
+from nexus.contracts.exceptions import MetadataError
 
 
 class WorkQueryBuilder:

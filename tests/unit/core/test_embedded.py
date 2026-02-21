@@ -9,8 +9,8 @@ import pytest
 from freezegun import freeze_time
 
 from nexus import LocalBackend, NexusFS
+from nexus.contracts.exceptions import InvalidPathError, NexusFileNotFoundError
 from nexus.core.config import ParseConfig, PermissionConfig
-from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore

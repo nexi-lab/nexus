@@ -1,7 +1,5 @@
 """Shared version utility for observability modules."""
 
-from __future__ import annotations
-
 
 def get_nexus_version() -> str:
     """Get the installed nexus-ai-fs package version.

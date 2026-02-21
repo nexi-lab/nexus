@@ -5,27 +5,25 @@ process → dead_letter. Uses InMemoryVFS to test components working
 together without kernel dependencies.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 import pytest
 
-from nexus.ipc.conventions import (
+from nexus.bricks.ipc.conventions import (
     dead_letter_path,
     inbox_path,
     outbox_path,
     processed_path,
 )
-from nexus.ipc.delivery import MessageProcessor, MessageSender
-from nexus.ipc.discovery import AgentDiscovery
-from nexus.ipc.envelope import MessageEnvelope, MessageType
-from nexus.ipc.exceptions import InboxFullError
-from nexus.ipc.provisioning import AgentProvisioner
-from nexus.ipc.sweep import TTLSweeper
+from nexus.bricks.ipc.delivery import MessageProcessor, MessageSender
+from nexus.bricks.ipc.discovery import AgentDiscovery
+from nexus.bricks.ipc.envelope import MessageEnvelope, MessageType
+from nexus.bricks.ipc.exceptions import InboxFullError
+from nexus.bricks.ipc.provisioning import AgentProvisioner
+from nexus.bricks.ipc.sweep import TTLSweeper
 
 # Import fakes from unit tests
-from tests.unit.ipc.fakes import InMemoryEventPublisher, InMemoryVFS
+from tests.unit.bricks.ipc.fakes import InMemoryEventPublisher, InMemoryVFS
 
 ZONE = "integration-zone"
 
@@ -276,7 +274,7 @@ class TestDeadLetterAndTTLSweep:
             payload={},
         )
         # Manually write to bypass backpressure check
-        from nexus.ipc.conventions import message_path_in_inbox
+        from nexus.bricks.ipc.conventions import message_path_in_inbox
 
         msg_path = message_path_in_inbox("agent:bob", env.id, env.timestamp)
         await vfs.write(msg_path, env.to_bytes(), ZONE)

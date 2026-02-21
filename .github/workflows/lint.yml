@@ -46,6 +46,13 @@ jobs:
         run: |
           uv run ruff format --check .
 
+      - name: Cache mypy
+        uses: actions/cache@v4
+        with:
+          path: .mypy_cache
+          key: mypy-${{ runner.os }}-${{ hashFiles('src/**/*.py') }}
+          restore-keys: mypy-${{ runner.os }}-
+
       - name: Run mypy type checking
         run: |
           uv run mypy src/nexus
@@ -58,90 +65,66 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up Python (for PyO3 crates)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python dev headers
+        run: sudo apt-get update && sudo apt-get install -y python3-dev
+
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: rustfmt, clippy
 
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "rust-lint"
+          workspaces: |
+            rust/nexus_tasks
+            rust/nexus_core
+            rust/nexus_pyo3
+            rust/nexus_raft
+            rust/nexus_wal
+
       - name: Install protobuf compiler
         run: sudo apt-get install -y protobuf-compiler
 
-      - name: Check Rust formatting (nexus_tasks)
+      - name: Check Rust formatting
         run: |
-          cd rust/nexus_tasks
-          cargo fmt --check
+          for crate in nexus_tasks nexus_core nexus_pyo3 nexus_raft nexus_wal; do
+            echo "::group::fmt $crate"
+            cd rust/$crate && cargo fmt --check && cd ../..
+            echo "::endgroup::"
+          done
 
-      - name: Check Rust formatting (nexus_core)
+      - name: Run Clippy
         run: |
-          cd rust/nexus_core
-          cargo fmt --check
+          for crate in nexus_tasks nexus_core nexus_pyo3 nexus_wal; do
+            echo "::group::clippy $crate"
+            cd rust/$crate && cargo clippy -- -D warnings && cd ../..
+            echo "::endgroup::"
+          done
+          echo "::group::clippy nexus_raft (all-features)"
+          cd rust/nexus_raft && cargo clippy --all-features -- -D warnings && cd ../..
+          echo "::endgroup::"
 
-      - name: Check Rust formatting (nexus_pyo3)
+      - name: Run Rust tests
+        env:
+          PYO3_PYTHON: python3
         run: |
-          cd rust/nexus_pyo3
-          cargo fmt --check
-
-      - name: Check Rust formatting (nexus_raft)
-        run: |
-          cd rust/nexus_raft
-          cargo fmt --check
-
-      - name: Check Rust formatting (nexus_wal)
-        run: |
-          cd rust/nexus_wal
-          cargo fmt --check
-
-      - name: Run Clippy (nexus_tasks)
-        run: |
-          cd rust/nexus_tasks
-          cargo clippy -- -D warnings
-
-      - name: Run Clippy (nexus_core)
-        run: |
-          cd rust/nexus_core
-          cargo clippy -- -D warnings
-
-      - name: Run Clippy (nexus_pyo3)
-        run: |
-          cd rust/nexus_pyo3
-          cargo clippy -- -D warnings
-
-      - name: Run Clippy (nexus_raft)
-        run: |
-          cd rust/nexus_raft
-          cargo clippy --all-features -- -D warnings
-
-      - name: Run Clippy (nexus_wal)
-        run: |
-          cd rust/nexus_wal
-          cargo clippy -- -D warnings
-
-      - name: Run Rust tests (nexus_tasks)
-        run: |
-          cd rust/nexus_tasks
-          cargo test
-
-      - name: Run Rust tests (nexus_core)
-        run: |
-          cd rust/nexus_core
-          cargo test
-
-      - name: Run Rust tests (nexus_pyo3)
-        run: |
-          cd rust/nexus_pyo3
-          cargo test
+          for crate in nexus_tasks nexus_core nexus_pyo3 nexus_wal; do
+            echo "::group::test $crate"
+            cd rust/$crate && cargo test && cd ../..
+            echo "::endgroup::"
+          done
+          echo "::group::test nexus_raft (all-features)"
+          cd rust/nexus_raft && cargo test --all-features && cd ../..
+          echo "::endgroup::"
 
       - name: Verify WASM compilation (nexus_core)
         run: |
           rustup target add wasm32-unknown-unknown
           cargo check --target wasm32-unknown-unknown -p nexus_core
-
-      - name: Run Rust tests (nexus_raft)
-        run: |
-          cd rust/nexus_raft
-          cargo test --all-features
-
-      - name: Run Rust tests (nexus_wal)
-        run: |
-          cd rust/nexus_wal
-          cargo test

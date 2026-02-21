@@ -91,7 +91,7 @@ def check_permissions_bulk(
             logger.warning(f"Rust permission check failed, falling back to Python: {e}")
 
     # Fallback to Python implementation
-    from nexus.core.rebac import check_permissions_python
+    from nexus.bricks.rebac.domain import check_permissions_python
     return check_permissions_python(checks, tuples, namespace_configs)
 
 

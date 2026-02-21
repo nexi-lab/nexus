@@ -1,4 +1,4 @@
-"""Benchmark: WriteBuffer vs sync RecordStoreSyncer on real PostgreSQL.
+"""Benchmark: WriteBuffer vs sync RecordStoreWriteObserver on real PostgreSQL.
 
 Issue #1246 — Verify that the WriteBuffer actually delivers latency savings
 when writing to PostgreSQL (network I/O is the bottleneck, not SQLite).
@@ -10,8 +10,6 @@ Requirements:
 Usage:
     PYTHONPATH=src python3.13 tests/benchmarks/bench_write_buffer_pg.py
 """
-
-from __future__ import annotations
 
 import statistics
 import time
@@ -84,14 +82,18 @@ class FakeMetadata:
         self.owner_id = None
 
 
-# ── Benchmark: Synchronous RecordStoreSyncer ────────────────────────────
+# ── Benchmark: Synchronous RecordStoreWriteObserver ──────────────────────
 
 
 def bench_sync(engine, session_factory, n: int) -> dict:
     """Benchmark sync writes (one DB round-trip per write)."""
-    from nexus.storage.record_store_syncer import RecordStoreSyncer
+    from unittest.mock import MagicMock
 
-    syncer = RecordStoreSyncer(session_factory)
+    from nexus.storage.record_store_syncer import RecordStoreWriteObserver
+
+    mock_record_store = MagicMock()
+    mock_record_store.session_factory = session_factory
+    syncer = RecordStoreWriteObserver(mock_record_store)
 
     latencies = []
     for i in range(n):
@@ -129,10 +131,14 @@ def bench_buffered(
     engine, session_factory, n: int, flush_interval_ms: int = 50, max_buffer_size: int = 50
 ) -> dict:
     """Benchmark buffered writes (hot path = enqueue only, flush in background)."""
-    from nexus.storage.record_store_syncer import BufferedRecordStoreSyncer
+    from unittest.mock import MagicMock
 
-    syncer = BufferedRecordStoreSyncer(
-        session_factory,
+    from nexus.storage.record_store_syncer import BufferedRecordStoreWriteObserver
+
+    mock_record_store = MagicMock()
+    mock_record_store.session_factory = session_factory
+    syncer = BufferedRecordStoreWriteObserver(
+        mock_record_store,
         flush_interval_ms=flush_interval_ms,
         max_buffer_size=max_buffer_size,
     )

@@ -13,8 +13,6 @@ Usage:
         REGISTRY.register(WriteBufferCollector(write_observer))
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any
 
 from prometheus_client.core import GaugeMetricFamily
@@ -32,11 +30,11 @@ class WriteBufferCollector:
     def __init__(self, write_observer: Any) -> None:
         self._wo = write_observer
 
-    def describe(self) -> Iterable[GaugeMetricFamily]:
+    def describe(self) -> "Iterable[GaugeMetricFamily]":
         """Return empty -- dynamic collector convention."""
         return []
 
-    def collect(self) -> Iterable[GaugeMetricFamily]:
+    def collect(self) -> "Iterable[GaugeMetricFamily]":
         """Yield metric families from the WriteBuffer's metrics dict."""
         m = self._wo.metrics
 
@@ -49,8 +47,8 @@ class WriteBufferCollector:
             labels=["event_type"],
         )
         enqueued_by_type: dict[str, int] = m.get("enqueued_by_type", {})
-        # Always emit all three labels so tests can find them
-        for event_type in ("write", "delete", "rename"):
+        # Emit all five event types so tests can find them
+        for event_type in ("write", "delete", "rename", "mkdir", "rmdir"):
             enqueued_family.add_metric([event_type], float(enqueued_by_type.get(event_type, 0)))
         yield enqueued_family
 

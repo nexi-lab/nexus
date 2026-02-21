@@ -17,8 +17,8 @@ import pytest
 from freezegun import freeze_time
 from sqlalchemy import create_engine
 
-from nexus.core.rebac import Entity, NamespaceConfig
-from nexus.rebac.manager import ReBACManager
+from nexus.bricks.rebac.domain import Entity, NamespaceConfig
+from nexus.bricks.rebac.manager import ReBACManager
 from nexus.storage.models import Base
 
 
@@ -837,130 +837,10 @@ def test_group_based_file_permissions_issue_338(rebac_manager):
     assert result is True, "Alice should still have write permission (still in group)"
 
 
-def test_dynamic_viewer_column_config(rebac_manager):
-    """Test dynamic_viewer relation with column-level permissions.
-
-    Tests:
-    - Creating dynamic_viewer relationship with column_config
-    - Storing column configuration in conditions field
-    - Retrieving column configuration from tuple
-    - Auto-calculating visible_columns
-    """
-    # Create dynamic_viewer relationship with column config
-    column_config = {
-        "hidden_columns": ["password", "ssn"],
-        "aggregations": {"age": "mean", "salary": "sum"},
-        "visible_columns": ["name", "email"],
-    }
-
-    tuple_id = rebac_manager.rebac_write(
-        subject=("agent", "alice"),
-        relation="dynamic_viewer",
-        object=("file", "/data/users.csv"),
-        conditions={"type": "dynamic_viewer", "column_config": column_config},
-    ).tuple_id
-
-    assert tuple_id is not None, "Should create dynamic_viewer tuple"
-
-    # Verify the tuple was created by listing
-    from nexus.core.nexus_fs import NexusFS
-
-    # Create a minimal mock that has the required attributes
-    class MockNexusFS:
-        def __init__(self, rebac_manager):
-            self._rebac_manager = rebac_manager
-            self._enforce_permissions = False
-
-        _require_rebac = NexusFS._require_rebac  # type: ignore[assignment]
-        rebac_create = NexusFS.rebac_create
-        rebac_check = NexusFS.rebac_check
-        rebac_list_tuples = NexusFS.rebac_list_tuples
-        rebac_delete = NexusFS.rebac_delete
-        get_dynamic_viewer_config = NexusFS.get_dynamic_viewer_config
-        apply_dynamic_viewer_filter = NexusFS.apply_dynamic_viewer_filter
-        read_with_dynamic_viewer = NexusFS.read_with_dynamic_viewer
-
-    mock_fs = MockNexusFS(rebac_manager)
-    tuples = mock_fs.rebac_list_tuples(
-        subject=("agent", "alice"), relation="dynamic_viewer", object=("file", "/data/users.csv")
-    )
-
-    assert len(tuples) == 1, "Should find the dynamic_viewer tuple"
-    assert tuples[0]["relation"] == "dynamic_viewer"
-
-    # Verify column config can be retrieved
-    config = mock_fs.get_dynamic_viewer_config(
-        subject=("agent", "alice"), file_path="/data/users.csv"
-    )
-
-    assert config is not None, "Should retrieve column config"
-    assert config["hidden_columns"] == ["password", "ssn"]
-    assert config["aggregations"] == {"age": "mean", "salary": "sum"}
-    assert config["visible_columns"] == ["name", "email"]
+# Dynamic viewer tests removed — get_dynamic_viewer_config now lives
+# in ReBACService (served via register_service).
 
 
-def test_dynamic_viewer_aggregation_single_value(rebac_manager):
-    """Test that aggregations must be single values, not lists."""
-    column_config = {
-        "hidden_columns": ["password"],
-        "aggregations": {"age": "mean", "salary": "max"},
-        "visible_columns": [],  # Auto-calculate
-    }
-
-    tuple_id = rebac_manager.rebac_write(
-        subject=("agent", "bob"),
-        relation="dynamic_viewer",
-        object=("file", "/data/employees.csv"),
-        conditions={"type": "dynamic_viewer", "column_config": column_config},
-    ).tuple_id
-
-    assert tuple_id is not None
-
-    # Verify retrieval via NexusFS delegation method bound to mock
-    from nexus.core.nexus_fs import NexusFS
-
-    class MockNexusFS:
-        def __init__(self, rebac_manager):
-            self._rebac_manager = rebac_manager
-            self._enforce_permissions = False
-
-        _require_rebac = NexusFS._require_rebac
-        rebac_list_tuples = NexusFS.rebac_list_tuples
-        get_dynamic_viewer_config = NexusFS.get_dynamic_viewer_config
-
-    mock_fs = MockNexusFS(rebac_manager)
-    config = mock_fs.get_dynamic_viewer_config(
-        subject=("agent", "bob"), file_path="/data/employees.csv"
-    )
-
-    assert config is not None
-    assert config["aggregations"]["age"] == "mean"
-    assert config["aggregations"]["salary"] == "max"
-    assert config["visible_columns"] == []  # Empty means auto-calculate
-
-
-def test_dynamic_viewer_no_config_returns_none(rebac_manager):
-    """Test that get_dynamic_viewer_config returns None when no config exists."""
-    from nexus.core.nexus_fs import NexusFS
-
-    class MockNexusFS:
-        def __init__(self, rebac_manager):
-            self._rebac_manager = rebac_manager
-            self._enforce_permissions = False
-
-        _require_rebac = NexusFS._require_rebac
-        rebac_list_tuples = NexusFS.rebac_list_tuples
-        get_dynamic_viewer_config = NexusFS.get_dynamic_viewer_config
-
-    mock_fs = MockNexusFS(rebac_manager)
-    config = mock_fs.get_dynamic_viewer_config(
-        subject=("agent", "charlie"), file_path="/data/nonexistent.csv"
-    )
-
-    assert config is None, "Should return None when no dynamic_viewer config exists"
-
-
-# ============================================================================
 # Tests for rebac_list_objects (Issue #291)
 # ============================================================================
 
@@ -968,7 +848,7 @@ def test_dynamic_viewer_no_config_returns_none(rebac_manager):
 @pytest.fixture
 def enhanced_rebac_manager(engine):
     """Create an EnhancedReBACManager for testing rebac_list_objects."""
-    from nexus.rebac.manager import EnhancedReBACManager
+    from nexus.bricks.rebac.manager import EnhancedReBACManager
 
     manager = EnhancedReBACManager(
         engine=engine,

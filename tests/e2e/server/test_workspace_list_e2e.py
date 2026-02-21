@@ -10,8 +10,6 @@ Verifies:
 - Unauthenticated list_workspaces is rejected (401)
 """
 
-from __future__ import annotations
-
 import os
 import shutil
 import signal

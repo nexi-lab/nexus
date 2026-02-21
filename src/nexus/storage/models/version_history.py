@@ -3,8 +3,6 @@
 Issue #1246 Phase 4: Extracted from monolithic models.py.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 from sqlalchemy import (
@@ -95,7 +93,7 @@ class VersionHistoryModel(Base):
 
     def validate(self) -> None:
         """Validate version history model before database operations."""
-        from nexus.core.exceptions import ValidationError
+        from nexus.contracts.exceptions import ValidationError
 
         valid_types = ["file", "memory", "skill"]
         if self.resource_type not in valid_types:

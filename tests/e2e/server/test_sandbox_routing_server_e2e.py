@@ -14,11 +14,10 @@ AsyncMock Docker/E2B to simulate the production server environment
 without needing external Docker daemon or E2B API keys.
 """
 
-from __future__ import annotations
-
 import logging
 import statistics
 import time
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -65,6 +64,11 @@ def session_factory(engine):
 
 
 @pytest.fixture
+def record_store(session_factory):
+    return SimpleNamespace(session_factory=session_factory)
+
+
+@pytest.fixture
 def mock_docker() -> SandboxProvider:
     """Mock Docker provider that tracks calls."""
     mock = AsyncMock(spec=SandboxProvider)
@@ -99,7 +103,7 @@ def mock_e2b() -> SandboxProvider:
 
 
 @pytest.fixture
-def server_stack(session_factory, mock_docker, mock_e2b):
+def server_stack(record_store, mock_docker, mock_e2b):
     """Simulate server startup: SandboxManager + Router (mirrors fastapi_server.py).
 
     This replicates the exact wiring from:
@@ -107,7 +111,7 @@ def server_stack(session_factory, mock_docker, mock_e2b):
       src/nexus/core/nexus_fs.py lines 6140-6153
     """
     # Step 1: Create SandboxManager (same as server)
-    mgr = SandboxManager(session_factory=session_factory)
+    mgr = SandboxManager(record_store=record_store)
 
     # Step 2: Manually register providers (server does this via env vars)
     monty = MontySandboxProvider(resource_profile="standard", enable_type_checking=False)

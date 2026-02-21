@@ -4,15 +4,14 @@ Tests all write/update/delete paths and verifies field mapping
 from FileMetadata (proto) to FilePathModel (SQLAlchemy).
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from nexus.core.metadata import DT_DIR, DT_REG, FileMetadata
+from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.metadata import DT_DIR, DT_REG, FileMetadata
 from nexus.storage.models import Base, FilePathModel, VersionHistoryModel
 from nexus.storage.version_recorder import VersionRecorder
 
@@ -230,7 +229,7 @@ class TestRecordCreate:
         assert fp.backend_id == "local"
 
     def test_defaults_zone_to_default(self, session: Session) -> None:
-        """When zone_id is None, should default to 'default'."""
+        """When zone_id is None, should default to ROOT_ZONE_ID ('root')."""
         metadata = _make_metadata(zone_id=None)
         recorder = VersionRecorder(session)
         recorder.record_write(metadata, is_new=True)
@@ -240,7 +239,7 @@ class TestRecordCreate:
             select(FilePathModel).where(FilePathModel.virtual_path == "/test/file.txt")
         ).scalar_one()
 
-        assert fp.zone_id == "default"
+        assert fp.zone_id == ROOT_ZONE_ID
 
 
 # ---------------------------------------------------------------------------

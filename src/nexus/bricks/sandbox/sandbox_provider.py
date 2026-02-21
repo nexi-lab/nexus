@@ -4,8 +4,6 @@ Provides a unified interface for managing sandboxes across different providers
 (E2B, Docker, Modal, etc.). Each provider implements create/run/pause/resume/destroy.
 """
 
-from __future__ import annotations
-
 import re
 import urllib.parse
 from abc import ABC, abstractmethod
@@ -15,7 +13,6 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nexus.bricks.sandbox.security_profile import SandboxSecurityProfile
-    from nexus.validation.models import ValidationResult
 
 # Validation patterns for shell-safe inputs
 _MOUNT_PATH_PATTERN = re.compile(r"^/[a-zA-Z0-9/_\-.]+$")
@@ -116,7 +113,7 @@ class CodeExecutionResult:
     stderr: str
     exit_code: int
     execution_time: float  # Seconds
-    validations: list[ValidationResult] | None = None
+    validations: list[Any] | None = None
 
 
 @dataclass
@@ -144,7 +141,7 @@ class SandboxProvider(ABC):
         template_id: str | None = None,
         timeout_minutes: int = 10,
         metadata: dict[str, Any] | None = None,
-        security_profile: SandboxSecurityProfile | None = None,
+        security_profile: "SandboxSecurityProfile | None" = None,
     ) -> str:
         """Create a new sandbox.
 

@@ -8,8 +8,6 @@ methods not in the registry.
 Issue #1289: Protocol + RPC Proxy pattern.
 """
 
-from __future__ import annotations
-
 import inspect
 import logging
 from typing import Any
@@ -63,16 +61,16 @@ class RPCProxyBase:
 
     @classmethod
     def _get_param_names(cls, method_name: str) -> list[str]:
-        """Get parameter names for a method from the NexusFilesystem ABC.
+        """Get parameter names for a method from the NexusFilesystemABC ABC.
 
         Uses inspect.signature to extract parameter names, caching results
         for performance. Falls back to empty list for non-ABC methods.
         """
         if method_name not in cls._param_name_cache:
             # Lazy import to avoid circular dependency
-            from nexus.core.filesystem import NexusFilesystem
+            from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
 
-            abc_method = getattr(NexusFilesystem, method_name, None)
+            abc_method = getattr(NexusFilesystemABC, method_name, None)
             if abc_method and callable(abc_method):
                 try:
                     sig = inspect.signature(abc_method)

@@ -4,12 +4,16 @@ Provides background cleanup tasks for session management and expired resources.
 """
 
 import asyncio
+import contextlib
 import logging
 from datetime import timedelta
 from typing import Any
 
-from nexus.services.sessions import cleanup_expired_sessions, cleanup_inactive_sessions
 from nexus.storage.version_gc import VersionGCSettings, VersionHistoryGC
+from nexus.system_services.lifecycle.sessions import (
+    cleanup_expired_sessions,
+    cleanup_inactive_sessions,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -162,8 +166,10 @@ async def tiger_cache_queue_task(
 
 
 async def version_gc_task(
-    session_factory: Any,
+    record_store: Any,
     config: VersionGCSettings | None = None,
+    *,
+    is_postgresql: bool = False,
 ) -> None:
     """Background task: Garbage collect old version history (Issue #974).
 
@@ -174,13 +180,14 @@ async def version_gc_task(
     Always preserves the latest version for each resource.
 
     Args:
-        session_factory: SQLAlchemy session factory
+        record_store: RecordStoreABC instance for database access.
         config: GC configuration (uses VersionGCSettings.from_env() if None)
+        is_postgresql: Whether the database is PostgreSQL (config-time flag).
 
     Examples:
         >>> # Start version GC task in server
         >>> config = VersionGCSettings(retention_days=30, max_versions_per_resource=100)
-        >>> asyncio.create_task(version_gc_task(SessionLocal, config))
+        >>> asyncio.create_task(version_gc_task(record_store, config))
     """
     config = config or VersionGCSettings.from_env()
     interval_seconds = config.run_interval_hours * 3600
@@ -193,7 +200,7 @@ async def version_gc_task(
     # Wait for server to fully start
     await asyncio.sleep(10)
 
-    gc = VersionHistoryGC(session_factory)
+    gc = VersionHistoryGC(record_store, is_postgresql=is_postgresql)
 
     while True:
         if config.enabled:
@@ -334,17 +341,85 @@ async def stale_agent_detection_task(
             logger.exception("[HEARTBEAT] Failed to detect stale agents")
 
 
+async def agent_eviction_task(
+    eviction_manager: Any,
+    interval_seconds: int = 300,
+) -> None:
+    """Periodically run eviction cycle under resource pressure (Issues #2170, #2171).
+
+    Uses event-driven wakeup: sleeps for interval_seconds OR wakes immediately
+    when eviction_manager.trigger_immediate_cycle() is called (e.g. for
+    premium agent preemption). Matches BrickReconciler pattern.
+
+    Args:
+        eviction_manager: EvictionManager instance with run_cycle() + urgent_event
+        interval_seconds: How often to check for eviction (default: 300)
+    """
+    while True:
+        # Wait for interval OR immediate trigger (Issue #2171)
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(
+                eviction_manager.urgent_event.wait(),
+                timeout=interval_seconds,
+            )
+
+        try:
+            result = await eviction_manager.run_cycle()
+            if result.evicted > 0:
+                logger.info(
+                    "[EVICTION] Evicted %d agents | reason=%s | post_pressure=%s | skipped=%d",
+                    result.evicted,
+                    result.reason,
+                    result.post_pressure,
+                    result.skipped,
+                )
+        except Exception:
+            logger.exception("[EVICTION] Eviction cycle failed")
+
+
+async def checkpoint_cleanup_task(
+    agent_registry: Any,
+    interval_seconds: int = 3600,
+    max_age_seconds: int = 86400,
+) -> None:
+    """Periodically clean up stale checkpoint data from SUSPENDED agents.
+
+    Args:
+        agent_registry: AgentRegistry with cleanup_stale_checkpoints() method.
+        interval_seconds: How often to run cleanup (default: 3600).
+        max_age_seconds: Maximum checkpoint age before removal (default: 86400).
+    """
+    while True:
+        await asyncio.sleep(interval_seconds)
+        try:
+            cleaned = await asyncio.to_thread(
+                agent_registry.cleanup_stale_checkpoints,
+                max_age_seconds=max_age_seconds,
+            )
+            if cleaned > 0:
+                logger.info(
+                    "[EVICTION] Cleaned %d stale checkpoints (max_age=%ds)",
+                    cleaned,
+                    max_age_seconds,
+                )
+        except Exception:
+            logger.exception("[EVICTION] Checkpoint cleanup failed")
+
+
 def start_background_tasks(
-    session_factory: Any,
+    record_store: Any,
     sandbox_manager: Any | None = None,
     agent_registry: Any | None = None,
+    *,
+    is_postgresql: bool = False,
 ) -> list:
     """Start all background tasks.
 
     Args:
-        session_factory: SQLAlchemy session factory
+        record_store: RecordStoreABC instance for database access.
         sandbox_manager: Optional SandboxManager for sandbox cleanup (Issue #372)
         agent_registry: Optional AgentRegistry for heartbeat flush (Issue #1240)
+        is_postgresql: Whether the database is PostgreSQL (config-time flag).
 
     Returns:
         List of asyncio tasks
@@ -352,13 +427,13 @@ def start_background_tasks(
     Examples:
         >>> # In server startup
         >>> from nexus.server.background_tasks import start_background_tasks
-        >>> tasks = start_background_tasks(SessionLocal, sandbox_mgr, agent_registry)
+        >>> tasks = start_background_tasks(record_store, sandbox_mgr, agent_registry)
         >>> # Tasks run in background
     """
     tasks = [
-        asyncio.create_task(session_cleanup_task(session_factory)),
+        asyncio.create_task(session_cleanup_task(record_store.session_factory)),
         # Uncomment to enable inactive session cleanup:
-        # asyncio.create_task(inactive_session_cleanup_task(session_factory)),
+        # asyncio.create_task(inactive_session_cleanup_task(record_store.session_factory)),
     ]
 
     # Add sandbox cleanup if manager provided (Issue #372)
@@ -368,7 +443,11 @@ def start_background_tasks(
     # Add version history GC (Issue #974)
     gc_config = VersionGCSettings.from_env()
     if gc_config.enabled:
-        tasks.append(asyncio.create_task(version_gc_task(session_factory, gc_config)))
+        tasks.append(
+            asyncio.create_task(
+                version_gc_task(record_store, gc_config, is_postgresql=is_postgresql)
+            )
+        )
 
     # Add agent heartbeat flush and stale detection (Issue #1240)
     if agent_registry is not None:

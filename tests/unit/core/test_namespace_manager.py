@@ -11,20 +11,19 @@ Tests cover:
 - PermissionEnforcer integration: admin bypass, namespace check, ReBAC check
 """
 
-from __future__ import annotations
-
 import threading
 from unittest.mock import patch
 
 import pytest
 from sqlalchemy import create_engine
 
-from nexus.core.permissions import OperationContext, Permission, PermissionEnforcer
-from nexus.rebac.namespace_manager import (
+from nexus.bricks.rebac.enforcer import PermissionEnforcer
+from nexus.bricks.rebac.namespace_manager import (
     MountEntry,
     NamespaceManager,
     build_mount_entries,
 )
+from nexus.contracts.types import OperationContext, Permission
 from nexus.storage.models import Base
 
 # ---------------------------------------------------------------------------
@@ -43,7 +42,7 @@ def engine():
 @pytest.fixture
 def enhanced_rebac_manager(engine):
     """Create an EnhancedReBACManager for testing."""
-    from nexus.rebac.manager import EnhancedReBACManager
+    from nexus.bricks.rebac.manager import EnhancedReBACManager
 
     manager = EnhancedReBACManager(
         engine=engine,
@@ -519,7 +518,7 @@ class TestPermissionEnforcerNamespaceIntegration:
 
     def test_unmounted_path_raises_not_found(self, enhanced_rebac_manager, namespace_manager):
         """Non-admin subject accessing unmounted path gets NexusFileNotFoundError (404)."""
-        from nexus.core.exceptions import NexusFileNotFoundError
+        from nexus.contracts.exceptions import NexusFileNotFoundError
 
         enforcer = PermissionEnforcer(
             rebac_manager=enhanced_rebac_manager,
@@ -631,7 +630,7 @@ class TestNamespaceManagerDualPath:
     @pytest.fixture(params=[True, False], ids=["rust", "python"])
     def ns_manager_dual(self, request, enhanced_rebac_manager):
         """NamespaceManager with RUST_AVAILABLE patched to True or False."""
-        with patch("nexus.rebac.utils.fast.RUST_AVAILABLE", request.param):
+        with patch("nexus.bricks.rebac.utils.fast.RUST_AVAILABLE", request.param):
             ns = NamespaceManager(
                 rebac_manager=enhanced_rebac_manager,
                 revision_window=100,
@@ -769,7 +768,7 @@ class TestNamespaceEdgeCases:
         self, enhanced_rebac_manager, namespace_manager
     ):
         """PermissionEnforcer raises NexusFileNotFoundError for invisible paths."""
-        from nexus.core.exceptions import NexusFileNotFoundError
+        from nexus.contracts.exceptions import NexusFileNotFoundError
 
         enforcer = PermissionEnforcer(
             rebac_manager=enhanced_rebac_manager,

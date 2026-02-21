@@ -8,26 +8,30 @@ Auth caching uses CacheStoreABC (the CacheStore pillar) per
 KERNEL-ARCHITECTURE.md §2 — accessed via ``app_state.auth_cache_store``.
 """
 
-from __future__ import annotations
-
+import asyncio
 import hashlib
 import hmac
 import json
 import logging
 import os
+import random
 from typing import TYPE_CHECKING, Any
 
 from fastapi import Depends, Header, HTTPException, Request
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.server.token_utils import parse_sk_token
 
 if TYPE_CHECKING:
-    from nexus.core.cache_store import CacheStoreABC
+    from nexus.contracts.cache_store import CacheStoreABC
 
 logger = logging.getLogger(__name__)
 
 # Auth cache TTL: 15 minutes (900 seconds) - balances performance vs permission freshness
 _AUTH_CACHE_TTL = 900
+
+# Singleflight: at most one in-flight provider auth call per unique token (Issue #15)
+_auth_inflight: dict[str, asyncio.Future[dict[str, Any] | None]] = {}
 
 
 def _auth_cache_key(token: str) -> str:
@@ -35,7 +39,9 @@ def _auth_cache_key(token: str) -> str:
     return f"auth:cache:{hashlib.sha256(token.encode()).hexdigest()[:32]}"
 
 
-async def _get_cached_auth(cache_store: CacheStoreABC | None, token: str) -> dict[str, Any] | None:
+async def _get_cached_auth(
+    cache_store: "CacheStoreABC | None", token: str
+) -> dict[str, Any] | None:
     """Get cached auth result if valid via CacheStoreABC."""
     if cache_store is None:
         return None
@@ -47,7 +53,7 @@ async def _get_cached_auth(cache_store: CacheStoreABC | None, token: str) -> dic
 
 
 async def _set_cached_auth(
-    cache_store: CacheStoreABC | None, token: str, result: dict[str, Any]
+    cache_store: "CacheStoreABC | None", token: str, result: dict[str, Any]
 ) -> None:
     """Cache auth result with TTL via CacheStoreABC."""
     if cache_store is None:
@@ -55,7 +61,7 @@ async def _set_cached_auth(
     await cache_store.set(_auth_cache_key(token), json.dumps(result).encode(), ttl=_AUTH_CACHE_TTL)
 
 
-async def _reset_auth_cache(cache_store: CacheStoreABC | None) -> None:
+async def _reset_auth_cache(cache_store: "CacheStoreABC | None") -> None:
     """Reset the auth cache. Used by tests for isolation."""
     if cache_store is None:
         return
@@ -167,37 +173,62 @@ async def resolve_auth(
             cached_result["_auth_cached"] = True
             return cached_result
 
-        # Cache miss - call provider
-        _auth_start = _time.time()
-        result = await _state.auth_provider.authenticate(token)
-        _auth_elapsed = (_time.time() - _auth_start) * 1000
-        if _auth_elapsed > 10:  # Log if auth takes >10ms
-            logger.info(f"[AUTH-TIMING] provider auth took {_auth_elapsed:.1f}ms (cache miss)")
-        if result is None:
-            return None
-        auth_result = {
-            "authenticated": result.authenticated,
-            "is_admin": result.is_admin,
-            "subject_type": result.subject_type,
-            "subject_id": result.subject_id,
-            "zone_id": result.zone_id,
-            "inherit_permissions": result.inherit_permissions
-            if hasattr(result, "inherit_permissions")
-            else True,
-            "metadata": result.metadata if hasattr(result, "metadata") else {},
-            "agent_generation": getattr(result, "agent_generation", None),  # Issue #1445: from JWT
-            "x_agent_id": x_agent_id,
-            "_auth_time_ms": _auth_elapsed,  # Pass to RPC for logging
-            "_auth_cached": False,
-        }
-        # Cache a copy without per-request fields (x_agent_id, timing)
-        cache_entry = {
-            k: v
-            for k, v in auth_result.items()
-            if k not in ("x_agent_id", "_auth_time_ms", "_auth_cached")
-        }
-        await _set_cached_auth(_auth_cache, token, cache_entry)
-        return auth_result
+        # Singleflight: deduplicate concurrent provider calls (Issue #15)
+        _flight_key = _auth_cache_key(token)
+        if _flight_key in _auth_inflight:
+            base = await _auth_inflight[_flight_key]
+            if base is None:
+                return None
+            coalesced = dict(base)
+            coalesced["x_agent_id"] = x_agent_id
+            coalesced["_auth_time_ms"] = 0.0
+            coalesced["_auth_cached"] = True
+            return coalesced
+
+        _fut: asyncio.Future[dict[str, Any] | None] = asyncio.get_running_loop().create_future()
+        _fut.add_done_callback(lambda f: f.exception() if not f.cancelled() else None)
+        _auth_inflight[_flight_key] = _fut
+        try:
+            _auth_start = _time.time()
+            result = await _state.auth_provider.authenticate(token)
+            _auth_elapsed = (_time.time() - _auth_start) * 1000
+            if _auth_elapsed > 10:  # Log if auth takes >10ms
+                logger.info(f"[AUTH-TIMING] provider auth took {_auth_elapsed:.1f}ms (cache miss)")
+            if result is None:
+                # Issue #16: random delay on auth failure to mitigate timing side-channel.
+                # Delay BEFORE set_result so singleflight waiters also experience it.
+                await asyncio.sleep(random.uniform(0.001, 0.005))
+                _fut.set_result(None)
+                return None
+            auth_result = {
+                "authenticated": result.authenticated,
+                "is_admin": result.is_admin,
+                "subject_type": result.subject_type,
+                "subject_id": result.subject_id,
+                "zone_id": result.zone_id,
+                "inherit_permissions": result.inherit_permissions
+                if hasattr(result, "inherit_permissions")
+                else True,
+                "metadata": result.metadata if hasattr(result, "metadata") else {},
+                "agent_generation": getattr(result, "agent_generation", None),
+                "x_agent_id": x_agent_id,
+                "_auth_time_ms": _auth_elapsed,
+                "_auth_cached": False,
+            }
+            # Cache a copy without per-request fields (x_agent_id, timing)
+            cache_entry = {
+                k: v
+                for k, v in auth_result.items()
+                if k not in ("x_agent_id", "_auth_time_ms", "_auth_cached")
+            }
+            await _set_cached_auth(_auth_cache, token, cache_entry)
+            _fut.set_result(cache_entry)
+            return auth_result
+        except BaseException as exc:
+            _fut.set_exception(exc)
+            raise
+        finally:
+            _auth_inflight.pop(_flight_key, None)
 
     # Fall back to static API key (constant-time comparison to prevent timing attacks)
     if _state.api_key:
@@ -274,11 +305,11 @@ def get_operation_context(auth_result: dict[str, Any]) -> Any:
     Returns:
         OperationContext for filesystem operations
     """
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
 
     subject_type = auth_result.get("subject_type") or "user"
     subject_id = auth_result.get("subject_id") or "anonymous"
-    zone_id = auth_result.get("zone_id") or "root"
+    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
     is_admin = auth_result.get("is_admin", False)
     agent_id = auth_result.get("x_agent_id")
     user_id = subject_id
@@ -295,7 +326,7 @@ def get_operation_context(auth_result: dict[str, Any]) -> Any:
     # Admin capabilities
     admin_capabilities = set()
     if is_admin:
-        from nexus.rebac.permissions_enhanced import AdminCapability
+        from nexus.bricks.rebac.permissions_enhanced import AdminCapability
 
         admin_capabilities = {
             AdminCapability.READ_ALL,

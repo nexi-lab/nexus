@@ -9,8 +9,6 @@ Uses multi-key StaticAPIKeyAuth for proper per-user identity, and the sync
 RPC endpoint (/api/nfs/) which doesn't require AsyncNexusFS (database_url).
 """
 
-from __future__ import annotations
-
 import base64
 import os
 import shutil
@@ -42,7 +40,6 @@ BOB_API_KEY = "sk-bob-l3-e2e"
 for _key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
     os.environ.pop(_key, None)
 os.environ["NO_PROXY"] = "*"
-
 
 # === Helpers ===
 
@@ -148,7 +145,7 @@ def _build_startup_script(port: int, data_dir: str) -> str:
         logging.basicConfig(level=logging.INFO)
         sys.path.insert(0, os.getenv("PYTHONPATH", ""))
 
-        from nexus.auth.providers.static_key import StaticAPIKeyAuth
+        from nexus.bricks.auth.providers.static_key import StaticAPIKeyAuth
         from nexus.cli import main as cli_main
 
         # Multi-key auth config
@@ -185,7 +182,7 @@ def _build_startup_script(port: int, data_dir: str) -> str:
         factory.create_auth_provider = _patched
 
         # Disable namespace cache for deterministic tests
-        import nexus.rebac.namespace_manager as ns_mod
+        import nexus.bricks.rebac.namespace_manager as ns_mod
         _OrigNS = ns_mod.NamespaceManager
         class _NoCacheNS(_OrigNS):
             def __init__(self, **kwargs):

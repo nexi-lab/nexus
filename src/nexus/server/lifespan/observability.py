@@ -4,54 +4,92 @@ Issue #2072: Consolidate observability init/shutdown into unified registry.
 Replaces 6 inline _startup_* / 3 shutdown_* calls with a single registry.
 """
 
-from __future__ import annotations
-
+import importlib
 import logging
 import os
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 from nexus.server.observability.registry import ObservabilityRegistry
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
+    from nexus.server.lifespan.services_container import LifespanServices
+
 logger = logging.getLogger(__name__)
 
-_registry: ObservabilityRegistry | None = None
+# Declarative registration table: (name, module_path, setup_function, shutdown_function)
+_OBSERVABILITY_PROVIDERS: list[tuple[str, str, str, str]] = [
+    ("logging", "nexus.server.logging_config", "configure_logging", "shutdown_logging"),
+    ("otel-tracing", "nexus.server.telemetry", "setup_telemetry", "shutdown_telemetry"),
+    ("sentry", "nexus.server.sentry", "setup_sentry", "shutdown_sentry"),
+    ("pyroscope", "nexus.server.profiling", "setup_profiling", "shutdown_profiling"),
+    ("prometheus", "nexus.server.metrics", "setup_prometheus", "shutdown_prometheus"),
+]
 
 
-def create_registry() -> ObservabilityRegistry:
+def _make_start(mod: str, fn: str) -> Callable[..., None]:
+    """Factory for lazy-import start functions (avoids closure-over-loop-variable bugs)."""
+
+    def _start(**kwargs: Any) -> None:
+        module = importlib.import_module(mod)
+        getattr(module, fn)(**kwargs)
+
+    return _start
+
+
+def _make_stop(mod: str, fn: str) -> Callable[[], None]:
+    """Factory for lazy-import stop functions (avoids closure-over-loop-variable bugs)."""
+
+    def _stop() -> None:
+        module = importlib.import_module(mod)
+        getattr(module, fn)()
+
+    return _stop
+
+
+def create_registry(*, write_observer: Any = None) -> ObservabilityRegistry:
     """Create and populate the observability registry.
 
     Registration order = startup order (dependencies first).
+
+    Args:
+        write_observer: Optional WriteBuffer instance for WriteBufferComponent.
     """
-    from nexus.server.observability.components import (
-        LoggingComponent,
-        OTelTracingComponent,
-        PrometheusComponent,
-        PyroscopeComponent,
-        SentryComponent,
-    )
+    from nexus.server.observability.components import FunctionPairComponent, WriteBufferComponent
 
     registry = ObservabilityRegistry()
-
     env = os.environ.get("NEXUS_ENV", "dev")
-    registry.register("logging", LoggingComponent(env=env), required=False)
-    registry.register("otel-tracing", OTelTracingComponent(), required=False)
-    registry.register("sentry", SentryComponent(), required=False)
-    registry.register("pyroscope", PyroscopeComponent(), required=False)
-    registry.register("prometheus", PrometheusComponent(), required=False)
+
+    for comp_name, module_path, setup_fn_name, shutdown_fn_name in _OBSERVABILITY_PROVIDERS:
+        start_kwargs: dict[str, Any] = {"env": env} if comp_name == "logging" else {}
+        registry.register(
+            comp_name,
+            FunctionPairComponent(
+                comp_name,
+                start_fn=_make_start(module_path, setup_fn_name),
+                stop_fn=_make_stop(module_path, shutdown_fn_name),
+                start_kwargs=start_kwargs,
+            ),
+            required=False,
+        )
+
+    # WriteBuffer (Issue #1370) — managed shutdown, started by factory
+    if write_observer is not None:
+        registry.register("write-buffer", WriteBufferComponent(write_observer), required=False)
+
     # QueryObserver registered later after factory creates the subsystem
 
     return registry
 
 
-async def startup_observability(app: FastAPI) -> None:
+async def startup_observability(app: "FastAPI", svc: "LifespanServices") -> None:
     """Initialize all observability subsystems via the registry."""
-    global _registry
-    _registry = create_registry()
-    statuses = await _registry.start_all()
-    app.state.observability_registry = _registry
+    write_observer = svc.write_observer
+    registry = create_registry(write_observer=write_observer)
+    statuses = await registry.start_all()
+    app.state.observability_registry = registry
 
     # Log startup summary
     started = [s.name for s in statuses if s.started]
@@ -62,21 +100,11 @@ async def startup_observability(app: FastAPI) -> None:
         logger.info("Observability components skipped: %s", ", ".join(failed))
 
     logger.info("Starting FastAPI Nexus server...")
-    _startup_thread_pool(app)
 
 
-async def shutdown_observability() -> None:
+async def shutdown_observability(app: "FastAPI", _svc: "LifespanServices") -> None:
     """Shutdown all observability components via the registry."""
-    global _registry
-    if _registry:
-        await _registry.shutdown_all()
-        _registry = None
-
-
-def _startup_thread_pool(app: FastAPI) -> None:
-    """Configure thread pool size (Issue #932)."""
-    from anyio import to_thread
-
-    limiter = to_thread.current_default_thread_limiter()
-    limiter.total_tokens = app.state.thread_pool_size
-    logger.info("Thread pool size set to %d", limiter.total_tokens)
+    registry = app.state.observability_registry
+    if registry:
+        await registry.shutdown_all()
+        app.state.observability_registry = None

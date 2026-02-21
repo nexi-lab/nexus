@@ -3,13 +3,11 @@
 TDD: Tests written first per Decision 10.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.services.permissions.object_type_mapper import ObjectTypeMapper
+from nexus.bricks.rebac.object_type_mapper import ObjectTypeMapper
 
 
 @pytest.fixture
@@ -33,7 +31,7 @@ class TestGetObjectType:
     def test_fallback_on_exception(self, mapper: ObjectTypeMapper) -> None:
         """If backend.get_object_type raises, fall back to 'file'."""
         backend = MagicMock()
-        backend.get_object_type.side_effect = Exception("boom")
+        backend.get_object_type.side_effect = AttributeError("boom")
         assert mapper.get_object_type(backend, "broken/path") == "file"
 
 
@@ -65,7 +63,7 @@ class TestGetObjectId:
     def test_non_file_fallback_on_exception(self, mapper: ObjectTypeMapper) -> None:
         """If backend.get_object_id raises for non-file, fall back to virtual_path."""
         backend = MagicMock()
-        backend.get_object_id.side_effect = Exception("boom")
+        backend.get_object_id.side_effect = AttributeError("boom")
         result = mapper.get_object_id(
             backend,
             backend_path="broken",

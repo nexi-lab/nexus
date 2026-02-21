@@ -13,8 +13,6 @@ Performance Considerations:
 - Background task cleanup on disconnect
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import time
@@ -25,9 +23,9 @@ from typing import TYPE_CHECKING, Any
 from fastapi import WebSocket, WebSocketDisconnect
 
 if TYPE_CHECKING:
-    from nexus.core.event_bus import FileEvent
-    from nexus.core.reactive_subscriptions import ReactiveSubscriptionManager
-    from nexus.services.event_bus.protocol import EventBusProtocol
+    from nexus.services.event_subsystem.bus.protocol import EventBusProtocol
+    from nexus.services.event_subsystem.subscriptions import ReactiveSubscriptionManager
+    from nexus.services.event_subsystem.types import FileEvent
 
 logger = logging.getLogger(__name__)
 
@@ -88,8 +86,8 @@ class WebSocketManager:
 
     def __init__(
         self,
-        event_bus: EventBusProtocol | None = None,
-        reactive_manager: ReactiveSubscriptionManager | None = None,
+        event_bus: "EventBusProtocol | None" = None,
+        reactive_manager: "ReactiveSubscriptionManager | None" = None,
     ) -> None:
         """Initialize the WebSocket manager.
 
@@ -314,11 +312,17 @@ class WebSocketManager:
             # Update subscription filters
             if "event_types" in data:
                 conn_info.event_types = data["event_types"]
-            await self._send_to_connection(conn_info, {"type": "subscribed"})
+            # Echo back patterns and event_types for client confirmation
+            response: dict[str, Any] = {"type": "subscribed"}
+            if "patterns" in data:
+                response["patterns"] = data["patterns"]
+            if "event_types" in data:
+                response["event_types"] = data["event_types"]
+            await self._send_to_connection(conn_info, response)
         else:
             logger.debug(f"Unknown message type from {connection_id}: {msg_type}")
 
-    async def broadcast_to_zone(self, zone_id: str, event: FileEvent) -> int:
+    async def broadcast_to_zone(self, zone_id: str, event: "FileEvent") -> int:
         """Broadcast an event to all connections for a zone.
 
         Uses ReactiveSubscriptionManager to send batch_update messages (#1170)
@@ -344,7 +348,7 @@ class WebSocketManager:
     async def _broadcast_batch(
         self,
         connections: dict[str, ConnectionInfo],
-        event: FileEvent,
+        event: "FileEvent",
     ) -> int:
         """Send batch_update messages with subscriptions grouped per connection.
 

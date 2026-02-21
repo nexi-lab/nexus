@@ -1,7 +1,5 @@
 """Metadata operations: getattr, readdir."""
 
-from __future__ import annotations
-
 import logging
 import stat
 import time
@@ -9,15 +7,13 @@ from typing import TYPE_CHECKING, Any, cast
 
 from fuse import FuseOSError
 
-from nexus.core.filters import is_os_metadata_file
-from nexus.core.virtual_views import should_add_virtual_views
+from nexus.fuse.filters import is_os_metadata_file
 from nexus.fuse.ops._shared import (
     FUSESharedContext,
     build_dir_attrs,
     cache_file_attrs_from_list,
     check_namespace_visible,
     dir_cache_key,
-    get_file_content,
     get_metadata,
     parse_virtual_path_for_fuse,
     resolve_owner_group_to_uid_gid,
@@ -25,11 +21,16 @@ from nexus.fuse.ops._shared import (
     stat_size_fallback,
     try_rust,
 )
+from nexus.lib.virtual_views import should_add_virtual_views
 
 if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
+
+# --- getattr size-estimation constants (Issue #1568) ---
+_VIRTUAL_VIEW_DEFAULT_SIZE = 10 * 1024 * 1024  # 10 MiB safe over-report
+_PARSED_SIZE_MULTIPLIER = 4  # Raw size × 4 estimates parsed output
 
 
 class MetadataHandler:
@@ -38,7 +39,7 @@ class MetadataHandler:
     def __init__(self, ctx: FUSESharedContext) -> None:
         self._ctx = ctx
 
-    def getattr(self, path: str, fh: int | None = None) -> dict[str, Any]:  # noqa: ARG002
+    def getattr(self, path: str, _fh: int | None = None) -> dict[str, Any]:
         """Get file attributes."""
         ctx = self._ctx
         start_time = time.time()
@@ -138,13 +139,54 @@ class MetadataHandler:
         }
 
     def _resolve_file_size(self, path: str, metadata: Any, view_type: str | None) -> int:
-        """Resolve file size from metadata, stat, or content fetch."""
+        """Resolve file size for getattr without reading the full file.
+
+        For virtual views (parsed .md/.txt), uses a 5-tier estimation strategy
+        that avoids the expensive full-file read + parse that previously happened
+        on every getattr call (Issue #1568).
+
+        Over-reporting st_size is safe: FUSE read() returns EOF naturally when
+        actual content is shorter than the reported size.
+
+        Tiers (virtual views only):
+            1. Parsed cache size — exact, O(1)
+            2. Raw content cache size × multiplier — estimate, O(1)
+            3. Metadata size × multiplier — estimate, O(1)
+            4. stat() RPC size × multiplier — lightweight RPC
+            5. Constant default (10 MiB) — no I/O at all
+        """
         ctx = self._ctx
 
         if view_type and view_type != "raw":
-            content = get_file_content(ctx, path, view_type)
-            return len(content)
+            # Tier 1: exact size from parsed cache
+            parsed_size = ctx.cache.get_parsed_size(path, view_type)
+            if parsed_size is not None:
+                return parsed_size
 
+            # Tier 2: estimate from raw content cache
+            raw_content = ctx.cache.get_content(path)
+            if raw_content is not None and len(raw_content) > 0:
+                return len(raw_content) * _PARSED_SIZE_MULTIPLIER
+
+            # Tier 3: estimate from metadata (already fetched by caller)
+            if metadata:
+                meta_size = (
+                    metadata.get("size")
+                    if isinstance(metadata, dict)
+                    else getattr(metadata, "size", 0)
+                )
+                if meta_size and meta_size > 0:
+                    return cast("int", meta_size) * _PARSED_SIZE_MULTIPLIER
+
+            # Tier 4: estimate from stat() RPC
+            stat_size = stat_size_fallback(ctx, path)
+            if stat_size > 0:
+                return stat_size * _PARSED_SIZE_MULTIPLIER
+
+            # Tier 5: safe constant default
+            return _VIRTUAL_VIEW_DEFAULT_SIZE
+
+        # Raw file path — use metadata or stat directly (no multiplier)
         if metadata:
             meta_size = (
                 metadata.get("size") if isinstance(metadata, dict) else getattr(metadata, "size", 0)
@@ -155,7 +197,7 @@ class MetadataHandler:
 
         return stat_size_fallback(ctx, path)
 
-    def readdir(self, path: str, fh: int | None = None) -> list[str]:  # noqa: ARG002
+    def readdir(self, path: str, _fh: int | None = None) -> list[str]:
         """Read directory contents."""
         ctx = self._ctx
         start_time = time.time()

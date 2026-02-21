@@ -6,18 +6,16 @@ Tests are skipped if the _nexus_wal Rust extension is not compiled.
 Issue #1397
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 
 import pytest
 
-from nexus.core.event_bus import FileEvent, FileEventType
-from nexus.services.event_log import EventLogConfig
+from nexus.services.event_subsystem.log import EventLogConfig
+from nexus.services.event_subsystem.types import FileEvent, FileEventType
 
 # Skip entire module if Rust extension unavailable
 try:
-    from nexus.services.event_log.wal_backend import WALEventLog, is_available
+    from nexus.services.event_subsystem.log.wal import WALEventLog, is_available
 
     if not is_available():
         pytest.skip("_nexus_wal extension not available", allow_module_level=True)
@@ -46,7 +44,7 @@ def config(wal_dir: Path) -> EventLogConfig:
 
 
 @pytest.fixture()
-def wal(config: EventLogConfig) -> WALEventLog:
+def wal(config: EventLogConfig) -> "WALEventLog":
     log = WALEventLog(config)
     yield log  # type: ignore[misc]
     # Ensure cleanup
@@ -58,19 +56,19 @@ def wal(config: EventLogConfig) -> WALEventLog:
 
 class TestAppend:
     @pytest.mark.asyncio()
-    async def test_append_single(self, wal: WALEventLog) -> None:
+    async def test_append_single(self, wal: "WALEventLog") -> None:
         event = _make_event()
         seq = await wal.append(event)
         assert seq == 1
 
     @pytest.mark.asyncio()
-    async def test_append_returns_sequential(self, wal: WALEventLog) -> None:
+    async def test_append_returns_sequential(self, wal: "WALEventLog") -> None:
         for i in range(1, 11):
             seq = await wal.append(_make_event(path=f"/file-{i}.txt"))
             assert seq == i
 
     @pytest.mark.asyncio()
-    async def test_append_batch(self, wal: WALEventLog) -> None:
+    async def test_append_batch(self, wal: "WALEventLog") -> None:
         events = [_make_event(path=f"/batch-{i}.txt") for i in range(10)]
         seqs = await wal.append_batch(events)
         assert seqs == list(range(1, 11))
@@ -78,7 +76,7 @@ class TestAppend:
 
 class TestReadFrom:
     @pytest.mark.asyncio()
-    async def test_read_all(self, wal: WALEventLog) -> None:
+    async def test_read_all(self, wal: "WALEventLog") -> None:
         for i in range(5):
             await wal.append(_make_event(path=f"/f{i}.txt"))
 
@@ -88,7 +86,7 @@ class TestReadFrom:
         assert events[4].path == "/f4.txt"
 
     @pytest.mark.asyncio()
-    async def test_read_from_middle(self, wal: WALEventLog) -> None:
+    async def test_read_from_middle(self, wal: "WALEventLog") -> None:
         for i in range(10):
             await wal.append(_make_event(path=f"/f{i}.txt"))
 
@@ -97,7 +95,7 @@ class TestReadFrom:
         assert events[0].path == "/f5.txt"
 
     @pytest.mark.asyncio()
-    async def test_read_with_zone_filter(self, wal: WALEventLog) -> None:
+    async def test_read_with_zone_filter(self, wal: "WALEventLog") -> None:
         await wal.append(_make_event(zone_id="zone-a"))
         await wal.append(_make_event(zone_id="zone-b"))
         await wal.append(_make_event(zone_id="zone-a"))
@@ -108,7 +106,7 @@ class TestReadFrom:
         assert all(e.zone_id == "zone-a" for e in events)
 
     @pytest.mark.asyncio()
-    async def test_read_empty_wal(self, wal: WALEventLog) -> None:
+    async def test_read_empty_wal(self, wal: "WALEventLog") -> None:
         events = await wal.read_from(1, limit=100)
         assert events == []
 
@@ -135,18 +133,18 @@ class TestTruncate:
 
 class TestSyncAndClose:
     @pytest.mark.asyncio()
-    async def test_sync_no_error(self, wal: WALEventLog) -> None:
+    async def test_sync_no_error(self, wal: "WALEventLog") -> None:
         await wal.append(_make_event())
         await wal.sync()
 
     @pytest.mark.asyncio()
-    async def test_close(self, wal: WALEventLog) -> None:
+    async def test_close(self, wal: "WALEventLog") -> None:
         await wal.append(_make_event())
         await wal.close()
         assert not await wal.health_check()
 
     @pytest.mark.asyncio()
-    async def test_health_check_open(self, wal: WALEventLog) -> None:
+    async def test_health_check_open(self, wal: "WALEventLog") -> None:
         assert await wal.health_check()
 
 
@@ -162,7 +160,7 @@ class TestContextManager:
 
 class TestCurrentSequence:
     @pytest.mark.asyncio()
-    async def test_current_sequence(self, wal: WALEventLog) -> None:
+    async def test_current_sequence(self, wal: "WALEventLog") -> None:
         assert wal.current_sequence() == 0
         await wal.append(_make_event())
         assert wal.current_sequence() == 1
@@ -172,7 +170,7 @@ class TestCurrentSequence:
 
 class TestEdgeCases:
     @pytest.mark.asyncio()
-    async def test_large_payload(self, wal: WALEventLog) -> None:
+    async def test_large_payload(self, wal: "WALEventLog") -> None:
         """~1MB payload should work."""
         big_path = "/big/" + "x" * (1024 * 1024)
         event = _make_event(path=big_path)
@@ -184,7 +182,7 @@ class TestEdgeCases:
         assert events[0].path == big_path
 
     @pytest.mark.asyncio()
-    async def test_empty_zone_id(self, wal: WALEventLog) -> None:
+    async def test_empty_zone_id(self, wal: "WALEventLog") -> None:
         """Events with no zone_id should use empty string."""
         event = FileEvent(type=FileEventType.FILE_WRITE, path="/test.txt", zone_id=None)
         seq = await wal.append(event)
@@ -209,7 +207,7 @@ class TestEdgeCases:
             await wal2.close()
 
     @pytest.mark.asyncio()
-    async def test_event_roundtrip_preserves_fields(self, wal: WALEventLog) -> None:
+    async def test_event_roundtrip_preserves_fields(self, wal: "WALEventLog") -> None:
         """All FileEvent fields should survive serialization roundtrip."""
         original = FileEvent(
             type=FileEventType.FILE_RENAME,

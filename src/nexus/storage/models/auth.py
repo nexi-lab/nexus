@@ -3,8 +3,6 @@
 Issue #1286: Extracted from monolithic __init__.py.
 """
 
-from __future__ import annotations
-
 import json
 import uuid
 from datetime import UTC, datetime
@@ -13,7 +11,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from nexus.core.exceptions import ValidationError
+from nexus.contracts.exceptions import ValidationError
 from nexus.storage.models._base import Base, uuid_pk
 
 if TYPE_CHECKING:
@@ -65,7 +63,7 @@ class UserModel(Base):
     )
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
 
-    oauth_accounts: Mapped[list[UserOAuthAccountModel]] = relationship(
+    oauth_accounts: "Mapped[list[UserOAuthAccountModel]]" = relationship(
         "UserOAuthAccountModel", back_populates="user", cascade="all, delete-orphan"
     )
 
@@ -297,7 +295,8 @@ class ZoneModel(Base):
 
     settings: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    is_active: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    phase: Mapped[str] = mapped_column(String(12), default="Active", nullable=False)
+    finalizers: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
 
     created_at: Mapped[datetime] = mapped_column(
@@ -312,11 +311,22 @@ class ZoneModel(Base):
 
     __table_args__ = (
         Index("idx_zones_name", "name"),
-        Index("idx_zones_active", "is_active"),
+        Index("idx_zones_phase", "phase"),
     )
 
     @property
-    def parsed_settings(self) -> ZoneSettings:
+    def is_active(self) -> bool:
+        """Backward-compatible property: Active phase means active."""
+        return self.phase == "Active"
+
+    @property
+    def parsed_finalizers(self) -> list[str]:
+        """Parse finalizers JSON into a list of finalizer keys."""
+        result: list[str] = json.loads(self.finalizers)
+        return result
+
+    @property
+    def parsed_settings(self) -> "ZoneSettings":
         """Parse settings JSON into a ZoneSettings Pydantic model."""
         from nexus.storage.zone_settings import ZoneSettings
 
@@ -327,7 +337,7 @@ class ZoneModel(Base):
     def __repr__(self) -> str:
         return (
             f"<ZoneModel(zone_id={self.zone_id}, name={self.name}, "
-            f"domain={self.domain}, is_active={self.is_active})>"
+            f"domain={self.domain}, phase={self.phase})>"
         )
 
 

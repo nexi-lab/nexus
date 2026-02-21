@@ -8,8 +8,6 @@ Run with:
     pytest tests/e2e/test_read_set_cache_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import base64
 from typing import Any
 
@@ -92,7 +90,7 @@ class TestReadSetCacheE2E:
         _read(test_app, "/stats-test/file.txt")
 
         # Check cache stats endpoint
-        resp = test_app.get("/api/cache/stats")
+        resp = test_app.get("/api/v2/cache/stats")
         assert resp.status_code == 200
         stats = resp.json()
 

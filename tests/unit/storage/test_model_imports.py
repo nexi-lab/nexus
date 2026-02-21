@@ -105,6 +105,7 @@ EXPECTED_MODELS = [
     "PendingOperationModel",
     # Identity
     "AgentKeyModel",
+    "AgentCredentialModel",
     # Permissions
     "AdminBypassAuditModel",
     # A2A
@@ -116,6 +117,9 @@ EXPECTED_MODELS = [
     "SnapshotEntryModel",
     # Context Branching (Issue #1315)
     "ContextBranchModel",
+    # Credentials & Access Manifests (Issues #1753, #1754)
+    "AgentCredentialModel",
+    "AccessManifestModel",
 ]
 
 

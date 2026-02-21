@@ -13,23 +13,22 @@ Run with:
     pytest tests/e2e/test_auth_security_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from starlette.testclient import TestClient
 
-from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
 from nexus.backends.local import LocalBackend
+from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
+from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
-from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
 from nexus.raft import _HAS_METASTORE
 from nexus.storage.models import Base
@@ -43,7 +42,6 @@ pytestmark = [
         reason="Requires native _nexus_raft module (maturin develop)",
     ),
 ]
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -155,7 +153,7 @@ def _make_app_with_db_auth(
 
     from nexus.server.fastapi_server import create_app
 
-    auth_provider = DatabaseAPIKeyAuth(session_factory)
+    auth_provider = DatabaseAPIKeyAuth(SimpleNamespace(session_factory=session_factory))
     db_url = f"sqlite:///{tmp_path / 'records_open.db'}"
     return create_app(
         nexus_fs=nexus_fs,
@@ -571,8 +569,8 @@ class TestStaleSessionDetection:
 
     def test_stale_jwt_rejected_by_permission_enforcer(self, nexus_fs_enforced: NexusFS):
         """Agent JWT with outdated generation is rejected during permission check."""
-        from nexus.core.exceptions import StaleSessionError
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.exceptions import StaleSessionError
+        from nexus.contracts.types import OperationContext
 
         nx = nexus_fs_enforced
 
@@ -626,7 +624,7 @@ class TestStaleSessionDetection:
 
     def test_current_jwt_generation_passes(self, nexus_fs_enforced: NexusFS):
         """Agent JWT with current generation is NOT rejected."""
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         nx = nexus_fs_enforced
 
@@ -675,8 +673,8 @@ class TestStaleSessionDetection:
 
     def test_deleted_agent_jwt_rejected(self, nexus_fs_enforced: NexusFS):
         """Agent deleted from registry but JWT still valid should be rejected."""
-        from nexus.core.exceptions import StaleSessionError
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.exceptions import StaleSessionError
+        from nexus.contracts.types import OperationContext
 
         nx = nexus_fs_enforced
 
@@ -715,7 +713,7 @@ class TestStaleSessionDetection:
 
     def test_jwt_roundtrip_with_agent_generation(self):
         """Full JWT roundtrip: create_token → authenticate → auth_result has generation."""
-        from nexus.auth.providers.local import LocalAuth
+        from nexus.bricks.auth.providers.local import LocalAuth
 
         auth = LocalAuth(jwt_secret="e2e-test-secret", token_expiry=3600)
 

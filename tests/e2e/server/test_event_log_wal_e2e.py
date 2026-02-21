@@ -6,8 +6,6 @@ and verifies WAL segment files are created on disk.
 Issue #1397
 """
 
-from __future__ import annotations
-
 import base64
 import os
 import subprocess

@@ -11,8 +11,6 @@ server stack, including:
 Issue #940: Full async migration for MetastoreABC and NexusFS.
 """
 
-from __future__ import annotations
-
 import os
 import shutil
 import signal

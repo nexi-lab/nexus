@@ -7,33 +7,28 @@ Each test covers one enrichment step in isolation, ensuring behavioral equivalen
 after extraction.
 """
 
-from __future__ import annotations
-
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
 from nexus.backends.local import LocalBackend
-from nexus.rebac.entity_registry import EntityRegistry
-from nexus.services.memory.memory_api import Memory
-from nexus.storage.models import Base
+from nexus.bricks.memory.service import Memory
+from nexus.bricks.rebac.entity_registry import EntityRegistry
+from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
 
 @pytest.fixture
-def engine():
-    """Create in-memory SQLite database for testing."""
-    engine = create_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine)
-    return engine
+def record_store():
+    """Create in-memory RecordStore for testing."""
+    store = InMemoryRecordStore()
+    yield store
+    store.close()
 
 
 @pytest.fixture
-def session(engine):
+def session(record_store):
     """Create database session."""
-    session_cls = sessionmaker(bind=engine)
-    session = session_cls()
+    session = record_store.session_factory()
     yield session
     session.close()
 
@@ -45,9 +40,9 @@ def backend(tmp_path):
 
 
 @pytest.fixture
-def entity_registry(session):
+def entity_registry(record_store):
     """Create and populate entity registry."""
-    registry = EntityRegistry(session)
+    registry = EntityRegistry(record_store)
     registry.register_entity("zone", "acme")
     registry.register_entity("user", "alice", parent_type="zone", parent_id="acme")
     registry.register_entity("agent", "agent1", parent_type="user", parent_id="alice")
@@ -101,7 +96,7 @@ class TestEntityExtraction:
         wrapped in try/except like all other enrichment steps.
         """
         with patch(
-            "nexus.rebac.entity_extractor.EntityExtractor.extract",
+            "nexus.bricks.rebac.entity_extractor.EntityExtractor.extract",
             side_effect=RuntimeError("NER engine crashed"),
         ):
             memory_id = memory_api.store(
@@ -178,7 +173,7 @@ class TestStabilityClassification:
     def test_classification_failure_non_fatal(self, memory_api):
         """Classification failure should not prevent memory storage."""
         with patch(
-            "nexus.services.memory.stability_classifier.TemporalStabilityClassifier.classify",
+            "nexus.bricks.memory.stability_classifier.TemporalStabilityClassifier.classify",
             side_effect=RuntimeError("Classifier exploded"),
         ):
             memory_id = memory_api.store(

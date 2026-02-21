@@ -10,8 +10,6 @@ Covers:
 Related: Issue #1459 (decomposition), P0-1 (consistency levels)
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest
@@ -113,14 +111,14 @@ class TestIncrementVersionTokenPostgres:
     def test_postgresql_first_version_returns_v1(self):
         engine, _ = self._make_pg_engine([{"current_version": 1}])
 
-        token = increment_version_token(engine, zone_id="root")
+        token = increment_version_token(engine, zone_id="root", is_postgresql=True)
 
         assert token == "v1"
 
     def test_postgresql_returns_v1_when_fetchone_returns_none(self):
         engine, _ = self._make_pg_engine([None])
 
-        token = increment_version_token(engine, zone_id="root")
+        token = increment_version_token(engine, zone_id="root", is_postgresql=True)
 
         assert token == "v1"
 
@@ -130,8 +128,8 @@ class TestIncrementVersionTokenPostgres:
         engine1, _ = self._make_pg_engine([{"current_version": 5}])
         engine2, _ = self._make_pg_engine([{"current_version": 6}])
 
-        t1 = increment_version_token(engine1, zone_id="zone_a")
-        t2 = increment_version_token(engine2, zone_id="zone_a")
+        t1 = increment_version_token(engine1, zone_id="zone_a", is_postgresql=True)
+        t2 = increment_version_token(engine2, zone_id="zone_a", is_postgresql=True)
 
         assert t1 == "v5"
         assert t2 == "v6"
@@ -139,7 +137,7 @@ class TestIncrementVersionTokenPostgres:
     def test_postgresql_executes_upsert_sql(self):
         engine, mock_conn = self._make_pg_engine([{"current_version": 42}])
 
-        token = increment_version_token(engine, zone_id="org_acme")
+        token = increment_version_token(engine, zone_id="org_acme", is_postgresql=True)
 
         assert token == "v42"
         # Verify execute was called (the SQL is compiled by SQLAlchemy)
@@ -148,7 +146,7 @@ class TestIncrementVersionTokenPostgres:
     def test_postgresql_passes_zone_id_param(self):
         engine, mock_conn = self._make_pg_engine([{"current_version": 1}])
 
-        increment_version_token(engine, zone_id="my_zone")
+        increment_version_token(engine, zone_id="my_zone", is_postgresql=True)
 
         # Verify execute was called with a compiled statement
         assert mock_conn.execute.call_count == 1

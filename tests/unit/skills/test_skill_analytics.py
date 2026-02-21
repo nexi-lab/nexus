@@ -4,7 +4,7 @@ from datetime import datetime
 
 import pytest
 
-from nexus.skills.analytics import (
+from nexus.bricks.skills.analytics import (
     SkillAnalytics,
     SkillAnalyticsTracker,
     SkillUsageRecord,
@@ -24,9 +24,11 @@ async def test_track_usage() -> None:
     )
 
     assert usage_id is not None
-    assert len(tracker._in_memory_records) == 1
 
-    record = tracker._in_memory_records[0]
+    records = await tracker._all_records()
+    assert len(records) == 1
+
+    record = records[0]
     assert record.skill_name == "test-skill"
     assert record.agent_id == "alice"
     assert record.execution_time == 1.5
@@ -48,7 +50,8 @@ async def test_track_usage_failure() -> None:
 
     assert usage_id is not None
 
-    record = tracker._in_memory_records[0]
+    records = await tracker._all_records()
+    record = records[0]
     assert record.success is False
     assert record.error_message == "Test error"
 
@@ -160,7 +163,7 @@ async def test_get_dashboard_metrics_zone_filter() -> None:
 @pytest.mark.asyncio
 async def test_usage_record_validation() -> None:
     """Test usage record validation."""
-    from nexus.skills.exceptions import SkillValidationError
+    from nexus.bricks.skills.exceptions import SkillValidationError
 
     # Valid record
     record = SkillUsageRecord(

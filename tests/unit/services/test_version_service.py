@@ -5,13 +5,11 @@ Tests are organized by functionality and cover success paths, error paths,
 edge cases, and permission enforcement.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.services.version_service import VersionService
+from nexus.services.versioning.version_service import VersionService
 
 
 class TestVersionServiceInit:
@@ -67,7 +65,7 @@ class TestVersionServiceGetVersion:
     @pytest.mark.asyncio
     async def test_get_version_not_found_without_session_factory(self, service, operation_context):
         """Test that get_version raises NexusFileNotFoundError when no session_factory."""
-        from nexus.core.exceptions import NexusFileNotFoundError
+        from nexus.contracts.exceptions import NexusFileNotFoundError
 
         # Without session_factory, version_meta is None → NexusFileNotFoundError
         with pytest.raises(NexusFileNotFoundError):

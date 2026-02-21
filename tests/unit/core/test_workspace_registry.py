@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nexus.services.workspace.workspace_registry import (
+from nexus.bricks.workspace.workspace_registry import (
     MemoryConfig,
     WorkspaceConfig,
     WorkspaceRegistry,
@@ -112,14 +112,16 @@ class TestWorkspaceRegistry:
     """Test WorkspaceRegistry functionality."""
 
     @pytest.fixture
-    def mock_session_factory(self) -> MagicMock:
-        """Create mock session factory to avoid real DB initialization."""
+    def mock_record_store(self) -> MagicMock:
+        """Create mock record_store with session_factory to avoid real DB initialization."""
         mock_session = MagicMock()
         mock_session.query.return_value.all.return_value = []
         mock_session.__enter__ = lambda self: mock_session
         mock_session.__exit__ = lambda self, *args: None
         factory = MagicMock(return_value=mock_session)
-        return factory
+        mock_rs = MagicMock()
+        mock_rs.session_factory = factory
+        return mock_rs
 
     @pytest.fixture
     def mock_metadata(self) -> MagicMock:
@@ -127,20 +129,18 @@ class TestWorkspaceRegistry:
         return MagicMock()
 
     @pytest.fixture
-    def registry(
-        self, mock_metadata: MagicMock, mock_session_factory: MagicMock
-    ) -> WorkspaceRegistry:
+    def registry(self, mock_metadata: MagicMock, mock_record_store: MagicMock) -> WorkspaceRegistry:
         """Create registry instance with mocked metadata."""
-        with patch("nexus.services.workspace.workspace_registry.WorkspaceRegistry._load_from_db"):
-            reg = WorkspaceRegistry(mock_metadata, session_factory=mock_session_factory)
+        with patch("nexus.bricks.workspace.workspace_registry.WorkspaceRegistry._load_from_db"):
+            reg = WorkspaceRegistry(mock_metadata, record_store=mock_record_store)
             reg._workspaces = {}
             reg._memories = {}
             return reg
 
-    def test_init(self, mock_metadata: MagicMock, mock_session_factory: MagicMock) -> None:
+    def test_init(self, mock_metadata: MagicMock, mock_record_store: MagicMock) -> None:
         """Test registry initialization."""
-        with patch("nexus.services.workspace.workspace_registry.WorkspaceRegistry._load_from_db"):
-            registry = WorkspaceRegistry(mock_metadata, session_factory=mock_session_factory)
+        with patch("nexus.bricks.workspace.workspace_registry.WorkspaceRegistry._load_from_db"):
+            registry = WorkspaceRegistry(mock_metadata, record_store=mock_record_store)
             assert registry.metadata == mock_metadata
             assert registry.rebac_manager is None
 

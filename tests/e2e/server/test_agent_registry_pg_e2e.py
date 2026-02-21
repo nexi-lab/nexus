@@ -15,8 +15,6 @@ Run with:
     pytest tests/e2e/test_agent_registry_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import os
 import signal
 import socket
@@ -32,13 +30,14 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
-from nexus.services.agents.agent_record import AgentState
+from nexus.contracts.agent_types import AgentState
 from nexus.services.agents.agent_registry import (
     AgentRegistry,
     InvalidTransitionError,
     StaleAgentError,
 )
 from nexus.storage.models import Base
+from nexus.storage.record_store import SQLAlchemyRecordStore
 
 # PostgreSQL connection for E2E tests
 POSTGRES_URL = os.getenv(
@@ -107,9 +106,17 @@ def pg_session_factory(pg_engine):
 
 
 @pytest.fixture
-def pg_registry(pg_session_factory):
+def pg_record_store(pg_engine):
+    """Create a RecordStore backed by PostgreSQL (no table creation, pg_engine already did it)."""
+    store = SQLAlchemyRecordStore(db_url=POSTGRES_URL, create_tables=False)
+    yield store
+    store.close()
+
+
+@pytest.fixture
+def pg_registry(pg_record_store, pg_session_factory):
     """Create an AgentRegistry backed by PostgreSQL."""
-    registry = AgentRegistry(session_factory=pg_session_factory, flush_interval=1)
+    registry = AgentRegistry(record_store=pg_record_store, flush_interval=1)
     yield registry
 
     # Cleanup: remove test agents
@@ -613,8 +620,8 @@ class TestNamespaceE2E:
 
     def test_namespace_manager_with_postgres(self, pg_engine):
         """NamespaceManager works with PostgreSQL-backed ReBAC."""
-        from nexus.rebac.manager import EnhancedReBACManager
-        from nexus.rebac.namespace_manager import NamespaceManager
+        from nexus.bricks.rebac.manager import EnhancedReBACManager
+        from nexus.bricks.rebac.namespace_manager import NamespaceManager
 
         rebac = EnhancedReBACManager(engine=pg_engine, cache_ttl_seconds=5, max_depth=10)
         tuple_ids: list[str] = []

@@ -5,15 +5,13 @@ All async service methods are tested via asyncio.run() to avoid
 pytest-asyncio dependency.
 """
 
-from __future__ import annotations
-
 import asyncio
 from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.core.permissions import OperationContext
-from nexus.services.mount_service import MountService
+from nexus.contracts.types import OperationContext
+from nexus.services.mount.mount_service import MountService
 
 # =============================================================================
 # Fixtures
@@ -162,11 +160,11 @@ class TestListMounts:
 
         mock_router.list_mounts.return_value = [mount_a, mount_b]
 
-        # Only allow /mnt/allowed
+        # Only allow /mnt/allowed (Issue #2033: via rebac_service.rebac_check_sync)
         def check_permission(subject, permission, object, zone_id=None):
             return object[1] == "/mnt/allowed"
 
-        mock_nexus_fs.rebac_check.side_effect = check_permission
+        mock_nexus_fs.rebac_service.rebac_check_sync.side_effect = check_permission
 
         result = asyncio.run(mount_service.list_mounts(context=operation_context))
 
@@ -362,27 +360,39 @@ class TestSavedMounts:
 
 
 class TestSyncMountDelegation:
-    """Tests for sync_mount delegation to NexusFS."""
+    """Tests for sync_mount delegation to sync_service."""
 
-    def test_sync_mount_delegates_to_nexus_fs(self, mount_service, mock_nexus_fs):
-        """sync_mount delegates to nexus_fs.sync_mount."""
-        mock_nexus_fs.sync_mount.return_value = {"files_synced": 10}
+    def test_sync_mount_delegates_to_sync_service(
+        self, mock_router, mock_mount_manager, mock_nexus_fs
+    ):
+        """sync_mount delegates to _sync_service.sync_mount."""
+        mock_sync_service = MagicMock()
+        mock_result = MagicMock()
+        mock_result.to_dict.return_value = {"files_synced": 10}
+        mock_sync_service.sync_mount.return_value = mock_result
+
+        service = MountService(
+            router=mock_router,
+            mount_manager=mock_mount_manager,
+            nexus_fs=mock_nexus_fs,
+            sync_service=mock_sync_service,
+        )
 
         result = asyncio.run(
-            mount_service.sync_mount(
+            service.sync_mount(
                 mount_point="/mnt/test",
                 recursive=True,
             )
         )
 
         assert result == {"files_synced": 10}
-        mock_nexus_fs.sync_mount.assert_called_once()
+        mock_sync_service.sync_mount.assert_called_once()
 
-    def test_sync_mount_requires_nexus_fs(self, mock_router):
-        """sync_mount raises RuntimeError without nexus_fs."""
-        service = MountService(router=mock_router, nexus_fs=None)
+    def test_sync_mount_requires_sync_service(self, mock_router):
+        """sync_mount raises RuntimeError without sync_service."""
+        service = MountService(router=mock_router, sync_service=None)
 
-        with pytest.raises(RuntimeError, match="requires NexusFS integration"):
+        with pytest.raises(RuntimeError, match="sync_mount requires sync_service"):
             asyncio.run(service.sync_mount(mount_point="/mnt/test"))
 
 
@@ -398,8 +408,9 @@ class TestGrantMountOwnerPermission:
         """Owner permission is granted when context has a user."""
         mount_service._grant_mount_owner_permission("/mnt/test", operation_context)
 
-        mock_nexus_fs.rebac_add_tuple.assert_called_once()
-        call_kwargs = mock_nexus_fs.rebac_add_tuple.call_args
+        # Issue #2033: MountService now uses rebac_service.rebac_create_sync
+        mock_nexus_fs.rebac_service.rebac_create_sync.assert_called_once()
+        call_kwargs = mock_nexus_fs.rebac_service.rebac_create_sync.call_args
         assert call_kwargs.kwargs["relation"] == "direct_owner"
 
     def test_skips_permission_without_context(self, mount_service, mock_nexus_fs):
@@ -419,8 +430,8 @@ class TestGrantMountOwnerPermission:
         # Should not raise
         mount_service._grant_mount_owner_permission("/mnt/test", operation_context)
 
-        # Permission grant should still be attempted
-        mock_nexus_fs.rebac_add_tuple.assert_called_once()
+        # Permission grant should still be attempted (Issue #2033: via rebac_service)
+        mock_nexus_fs.rebac_service.rebac_create_sync.assert_called_once()
 
 
 # =============================================================================

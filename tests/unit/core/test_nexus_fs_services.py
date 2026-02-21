@@ -1,15 +1,16 @@
-"""Test NexusFS service composition (Phase 2)."""
+"""Test NexusFS service composition (Phase 2).
 
-from __future__ import annotations
+Issue #643: Services are now created by factory._boot_wired_services(),
+not by NexusFS.__init__. Tests use create_nexus_fs() factory entry point.
+"""
 
 from pathlib import Path
 
 import pytest
 
 from nexus.backends.local import LocalBackend
-from nexus.core.config import KernelServices, PermissionConfig
+from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
-from nexus.services.version_service import VersionService
 
 try:
     from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -23,24 +24,23 @@ pytestmark = pytest.mark.skipif(not _raft_available, reason="Raft metastore not 
 
 
 def _make_fs(tmp_path: Path, *, enforce_permissions: bool = True) -> NexusFS:
-    """Create NexusFS with VersionService injected (mimics factory)."""
+    """Create NexusFS via factory (includes two-phase wired services)."""
+    from nexus.factory import create_nexus_fs
+    from nexus.storage.record_store import SQLAlchemyRecordStore
+
     backend_path = tmp_path / "storage"
     backend_path.mkdir(exist_ok=True)
     db_path = tmp_path / "metadata"
 
     backend = LocalBackend(str(backend_path))
     metadata_store = RaftMetadataStore.embedded(str(db_path))
-    # VersionService is created by factory; for unit tests we inject it manually
-    version_service = VersionService(
-        metadata_store=metadata_store,
-        cas_store=backend,
-        enforce_permissions=False,
-    )
-    return NexusFS(
+    record_store = SQLAlchemyRecordStore(db_path=str(tmp_path / "nexus.db"))
+
+    return create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
+        record_store=record_store,
         permissions=PermissionConfig(enforce=enforce_permissions),
-        kernel_services=KernelServices(version_service=version_service),
     )
 
 
@@ -90,8 +90,8 @@ class TestNexusFSServiceComposition:
         assert fs.mount_service.router == fs.router
         assert fs.mount_service.mount_manager == fs.mount_manager
 
-        # Services that take nexus_fs should have it
-        assert fs.mcp_service.nexus_fs == fs
+        # Services that take filesystem should have it
+        assert fs.mcp_service._filesystem == fs
         assert fs.llm_service.nexus_fs == fs
         # SkillService is directly instantiated
         assert fs.skill_service is not None
@@ -107,37 +107,9 @@ class TestNexusFSServiceComposition:
         assert fs.events_service._backend == fs.backend
 
     def test_version_service_delegation(self, tmp_path: Path):
-        """Test that VersionService delegation methods work correctly."""
+        """Test that VersionService is available on NexusFS."""
         fs = _make_fs(tmp_path, enforce_permissions=False)
 
-        # Verify sync methods exist (with @rpc_expose, wrap async methods)
-        assert hasattr(fs, "get_version")
-        assert hasattr(fs, "list_versions")
-        assert hasattr(fs, "rollback")
-        assert hasattr(fs, "diff_versions")
-
-        # Verify async delegation methods exist (with "a" prefix)
-        assert hasattr(fs, "aget_version")
-        assert hasattr(fs, "alist_versions")
-        assert hasattr(fs, "arollback")
-        assert hasattr(fs, "adiff_versions")
-
-        # Verify async methods are coroutine functions
-        import inspect
-
-        assert inspect.iscoroutinefunction(fs.aget_version)
-        assert inspect.iscoroutinefunction(fs.alist_versions)
-        assert inspect.iscoroutinefunction(fs.arollback)
-        assert inspect.iscoroutinefunction(fs.adiff_versions)
-
-        # Verify sync methods are NOT coroutine functions (they wrap async)
-        assert not inspect.iscoroutinefunction(fs.get_version)
-        assert not inspect.iscoroutinefunction(fs.list_versions)
-        assert not inspect.iscoroutinefunction(fs.rollback)
-        assert not inspect.iscoroutinefunction(fs.diff_versions)
-
-        # Verify sync methods have @rpc_expose decorator
-        assert hasattr(fs.get_version, "_rpc_exposed")
-        assert hasattr(fs.list_versions, "_rpc_exposed")
-        assert hasattr(fs.rollback, "_rpc_exposed")
-        assert hasattr(fs.diff_versions, "_rpc_exposed")
+        # Verify version_service exists and is not None
+        assert hasattr(fs, "version_service"), "VersionService not instantiated"
+        assert fs.version_service is not None

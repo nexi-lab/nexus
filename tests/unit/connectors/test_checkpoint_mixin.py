@@ -1,8 +1,6 @@
 """Regression test for CheckpointMixin shared-dict bug (#7-A)."""
 
-from __future__ import annotations
-
-from nexus.connectors.base import CheckpointMixin, OpTraits, Reversibility
+from nexus.backends.connectors.base import CheckpointMixin, OpTraits, Reversibility
 
 
 class FakeCheckpointConnector(CheckpointMixin):

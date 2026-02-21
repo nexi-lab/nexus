@@ -25,8 +25,6 @@ References:
     - Issue #1589: Extract HeartbeatBuffer from AgentRegistry (SRP)
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import types
@@ -39,17 +37,27 @@ import sqlalchemy as sa
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
-from nexus.services.agents.agent_record import (
+from nexus.contracts.agent_types import (
     AgentRecord,
+    AgentResources,
+    AgentResourceUsage,
+    AgentSpec,
     AgentState,
+    AgentStatus,
+    QoSClass,
+    derive_phase,
     is_new_session,
     validate_transition,
 )
+from nexus.contracts.qos import EVICTION_ORDER, AgentQoS
 from nexus.services.agents.heartbeat_buffer import HeartbeatBuffer
 from nexus.storage.models import AgentRecordModel
 
 if TYPE_CHECKING:
-    from sqlalchemy.orm import Session, sessionmaker
+    from sqlalchemy.orm import Session
+
+    from nexus.contracts.agent_types import AgentCondition
+    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +111,7 @@ class AgentRegistry:
     Database operations use session-per-operation pattern (no held sessions).
 
     Args:
-        session_factory: SQLAlchemy sessionmaker for database access.
+        record_store: RecordStoreABC providing database access.
         entity_registry: Optional EntityRegistry for backward compatibility bridge.
         flush_interval: Seconds between heartbeat buffer flushes (default: 60).
         max_buffer_size: Hard cap on heartbeat buffer entries (default: 50_000).
@@ -111,12 +119,12 @@ class AgentRegistry:
 
     def __init__(
         self,
-        session_factory: sessionmaker[Session],
+        record_store: "RecordStoreABC",
         entity_registry: Any = None,
         flush_interval: int = 60,
         max_buffer_size: int = 50_000,
     ) -> None:
-        self._session_factory = session_factory
+        self._session_factory = record_store.session_factory
         self._entity_registry = entity_registry
         # Heartbeat buffer composed via DI (Issue #1589)
         self._heartbeat_buffer = HeartbeatBuffer(
@@ -126,7 +134,7 @@ class AgentRegistry:
         )
 
     @contextmanager
-    def _get_session(self) -> Generator[Session, None, None]:
+    def _get_session(self) -> "Generator[Session, None, None]":
         """Create a session from the factory with auto-commit/rollback."""
         session = self._session_factory()
         try:
@@ -147,6 +155,7 @@ class AgentRegistry:
         metadata: dict[str, Any] | None = None,
         capabilities: list[str] | None = None,
         context_manifest: list[dict[str, Any]] | None = None,
+        qos: AgentQoS | None = None,
     ) -> AgentRecord:
         """Register a new agent. Returns existing record if agent_id already exists.
 
@@ -163,6 +172,8 @@ class AgentRegistry:
                 (e.g. ["search", "analyze", "code"]). Stored in metadata.
             context_manifest: Optional list of context source dicts for
                 deterministic pre-execution (Issue #1341/1427).
+            qos: Optional QoS assignment (Issue #2171). Defaults to
+                standard scheduling and eviction class.
 
         Returns:
             AgentRecord snapshot of the registered agent.
@@ -179,6 +190,11 @@ class AgentRegistry:
         if capabilities:
             metadata = dict(metadata) if metadata else {}
             metadata["capabilities"] = list(capabilities)
+
+        # Store QoS in metadata (Issue #2171)
+        agent_qos = qos if qos is not None else AgentQoS()
+        metadata = dict(metadata) if metadata else {}
+        metadata["qos"] = agent_qos.to_dict()
 
         with self._get_session() as session:
             # Check for existing
@@ -199,7 +215,8 @@ class AgentRegistry:
                 state=AgentState.UNKNOWN.value,
                 generation=0,
                 last_heartbeat=None,
-                agent_metadata=json.dumps(metadata) if metadata else None,
+                agent_metadata=json.dumps(metadata),
+                eviction_priority=EVICTION_ORDER.get(agent_qos.eviction_class, 1),
                 context_manifest=json.dumps(context_manifest) if context_manifest else None,
                 created_at=now,
                 updated_at=now,
@@ -264,7 +281,7 @@ class AgentRegistry:
     def transition(
         self,
         agent_id: str,
-        target_state: AgentState,
+        target_state: AgentState | str,
         expected_generation: int | None = None,
     ) -> AgentRecord:
         """Transition an agent to a new state with optimistic locking.
@@ -278,7 +295,7 @@ class AgentRegistry:
 
         Args:
             agent_id: Agent identifier.
-            target_state: Desired target state.
+            target_state: Desired target state (AgentState enum or string value).
             expected_generation: Expected generation for optimistic locking.
                 If None, locking check is skipped (state CAS still applies).
 
@@ -290,6 +307,9 @@ class AgentRegistry:
             InvalidTransitionError: If transition is not allowed.
             StaleAgentError: If expected_generation doesn't match (concurrent modification).
         """
+        if isinstance(target_state, str):
+            target_state = AgentState(target_state)
+
         with self._get_session() as session:
             model = session.execute(
                 select(AgentRecordModel).where(AgentRecordModel.agent_id == agent_id)
@@ -344,6 +364,10 @@ class AgentRegistry:
             metadata_dict = _safe_json_loads(model.agent_metadata, "agent_metadata", agent_id)
             manifest_list = _safe_json_loads(model.context_manifest, "context_manifest", agent_id)
 
+            # Deserialize QoS from metadata (Issue #2171)
+            qos_data = metadata_dict.get("qos")
+            agent_qos = AgentQoS.from_dict(qos_data) if isinstance(qos_data, dict) else AgentQoS()
+
             record = AgentRecord(
                 agent_id=model.agent_id,
                 owner_id=model.owner_id,
@@ -356,6 +380,7 @@ class AgentRegistry:
                 created_at=model.created_at,
                 updated_at=now,
                 context_manifest=tuple(manifest_list),
+                qos=agent_qos,
             )
 
         logger.debug(
@@ -384,16 +409,13 @@ class AgentRegistry:
         is flushed to DB when the flush_interval elapses. This reduces write
         amplification from frequent heartbeats.
 
+        No existence check — the buffer is flushed via UPDATE which silently
+        skips non-existent agents (0 rows affected). This avoids a DB read
+        on every heartbeat call (Issue #2170, fix 6A).
+
         Args:
             agent_id: Agent identifier.
-
-        Raises:
-            ValueError: If agent not found.
         """
-        record = self.get(agent_id)
-        if record is None:
-            raise ValueError(f"Agent '{agent_id}' not found")
-
         self._heartbeat_buffer.record(agent_id)
 
     def flush_heartbeats(self) -> int:
@@ -626,6 +648,397 @@ class AgentRegistry:
 
         return records
 
+    def list_eviction_candidates(self, batch_size: int = 10) -> list[AgentRecord]:
+        """Return CONNECTED agents ordered for eviction, limited to batch_size.
+
+        Orders by eviction_priority ASC (spot=0 first, premium=2 last), then
+        by last_heartbeat ASC NULLS FIRST within each QoS tier (Issue #2171).
+
+        Excludes agents with recent buffer heartbeats via SQL NOT IN clause
+        and applies SQL LIMIT to avoid O(N) ORM hydration.
+
+        Args:
+            batch_size: Maximum number of candidates to return.
+
+        Returns:
+            List of AgentRecord snapshots ordered for eviction.
+        """
+        # Get all buffered agent IDs (any buffered heartbeat = recently active)
+        buffered_ids = self._heartbeat_buffer.recently_heartbeated(datetime(1970, 1, 1, tzinfo=UTC))
+
+        with self._get_session() as session:
+            stmt = (
+                select(AgentRecordModel)
+                .where(AgentRecordModel.state == AgentState.CONNECTED.value)
+                .order_by(
+                    AgentRecordModel.eviction_priority.asc(),
+                    AgentRecordModel.last_heartbeat.asc().nullsfirst(),
+                )
+            )
+            # Push buffer exclusion into SQL to avoid hydrating excluded rows
+            if buffered_ids:
+                stmt = stmt.where(AgentRecordModel.agent_id.not_in(list(buffered_ids)))
+            stmt = stmt.limit(batch_size)
+
+            models = list(session.execute(stmt).scalars().all())
+            records = [self._model_to_record(m) for m in models]
+
+        return records
+
+    def count_connected_agents(self) -> int:
+        """Return the count of CONNECTED agents.
+
+        Lightweight SELECT COUNT(*) for agent cap checks — avoids
+        hydrating full ORM models.
+
+        Returns:
+            Number of agents in CONNECTED state.
+        """
+        with self._get_session() as session:
+            stmt = (
+                select(sa.func.count())
+                .select_from(AgentRecordModel)
+                .where(AgentRecordModel.state == AgentState.CONNECTED.value)
+            )
+            result: int = session.execute(stmt).scalar_one()
+            return result
+
+    def checkpoint(self, agent_id: str, checkpoint_data: dict[str, Any]) -> None:
+        """Save checkpoint data to agent_metadata['_nexus_checkpoint'] before eviction.
+
+        Stores checkpoint in the existing agent_metadata JSON column under
+        the '_nexus_checkpoint' key to avoid collision with user metadata.
+
+        Args:
+            agent_id: Agent identifier.
+            checkpoint_data: Arbitrary checkpoint data to preserve.
+
+        Raises:
+            ValueError: If agent not found.
+        """
+        with self._get_session() as session:
+            model = session.execute(
+                select(AgentRecordModel).where(AgentRecordModel.agent_id == agent_id)
+            ).scalar_one_or_none()
+
+            if model is None:
+                raise ValueError(f"Agent '{agent_id}' not found")
+
+            metadata = _safe_json_loads(model.agent_metadata, "agent_metadata", agent_id)
+            metadata["_nexus_checkpoint"] = checkpoint_data
+
+            now = datetime.now(UTC)
+            stmt = (
+                update(AgentRecordModel)
+                .where(AgentRecordModel.agent_id == agent_id)
+                .values(agent_metadata=json.dumps(metadata), updated_at=now)
+            )
+            session.execute(stmt)
+            session.flush()
+
+    def restore_checkpoint(self, agent_id: str) -> dict[str, Any] | None:
+        """Load and clear checkpoint data on reactivation.
+
+        Returns the saved checkpoint data and removes it from metadata to
+        avoid stale data on subsequent restores.
+
+        Args:
+            agent_id: Agent identifier.
+
+        Returns:
+            Checkpoint data dict, or None if no checkpoint exists.
+
+        Raises:
+            ValueError: If agent not found.
+        """
+        with self._get_session() as session:
+            model = session.execute(
+                select(AgentRecordModel).where(AgentRecordModel.agent_id == agent_id)
+            ).scalar_one_or_none()
+
+            if model is None:
+                raise ValueError(f"Agent '{agent_id}' not found")
+
+            metadata = _safe_json_loads(model.agent_metadata, "agent_metadata", agent_id)
+            checkpoint_data = metadata.pop("_nexus_checkpoint", None)
+
+            if checkpoint_data is not None:
+                now = datetime.now(UTC)
+                stmt = (
+                    update(AgentRecordModel)
+                    .where(AgentRecordModel.agent_id == agent_id)
+                    .values(agent_metadata=json.dumps(metadata), updated_at=now)
+                )
+                session.execute(stmt)
+                session.flush()
+
+            return checkpoint_data  # type: ignore[no-any-return]
+
+    def batch_checkpoint(self, checkpoints: dict[str, dict[str, Any]]) -> int:
+        """Batch-write checkpoints for multiple agents.
+
+        Uses a single SELECT ... WHERE agent_id IN (...) to fetch all models,
+        then individual UPDATEs within the same session (avoids N+1 SELECTs).
+
+        Note: We use N individual UPDATEs (not a single bulk UPDATE) because
+        each agent's metadata JSON must be merged individually. A single
+        executemany would require identical SET shapes, but each agent may have
+        different existing metadata. The single-session approach keeps this
+        within one transaction and one DB round-trip for the SELECT.
+
+        Args:
+            checkpoints: Mapping of agent_id -> checkpoint_data.
+
+        Returns:
+            Number of checkpoints successfully written.
+        """
+        if not checkpoints:
+            return 0
+
+        agent_ids = list(checkpoints.keys())
+        written = 0
+        with self._get_session() as session:
+            # Single batch fetch instead of N individual SELECTs
+            stmt = select(AgentRecordModel).where(AgentRecordModel.agent_id.in_(agent_ids))
+            models = {m.agent_id: m for m in session.execute(stmt).scalars().all()}
+
+            now = datetime.now(UTC)
+            for agent_id, checkpoint_data in checkpoints.items():
+                model = models.get(agent_id)
+                if model is None:
+                    continue
+
+                metadata = _safe_json_loads(model.agent_metadata, "agent_metadata", agent_id)
+                metadata["_nexus_checkpoint"] = checkpoint_data
+
+                upd = (
+                    update(AgentRecordModel)
+                    .where(AgentRecordModel.agent_id == agent_id)
+                    .values(agent_metadata=json.dumps(metadata), updated_at=now)
+                )
+                session.execute(upd)
+                written += 1
+
+            session.flush()
+
+        return written
+
+    def cleanup_stale_checkpoints(self, max_age_seconds: int = 86400) -> int:
+        """Remove stale checkpoint data from SUSPENDED agents.
+
+        Scans SUSPENDED agents with _nexus_checkpoint data and removes
+        checkpoints older than max_age_seconds. This prevents unbounded
+        growth of checkpoint data for agents that never reconnect.
+
+        Args:
+            max_age_seconds: Maximum checkpoint age in seconds before removal.
+
+        Returns:
+            Number of stale checkpoints cleaned up.
+        """
+        import time
+
+        cleaned = 0
+        cutoff = time.time() - max_age_seconds
+
+        with self._get_session() as session:
+            stmt = select(AgentRecordModel).where(
+                AgentRecordModel.state == AgentState.SUSPENDED.value,
+            )
+            models = list(session.execute(stmt).scalars().all())
+
+            now = datetime.now(UTC)
+            for model in models:
+                metadata = _safe_json_loads(model.agent_metadata, "agent_metadata", model.agent_id)
+                checkpoint = metadata.get("_nexus_checkpoint")
+                if checkpoint is None:
+                    continue
+
+                evicted_at = checkpoint.get("evicted_at", 0)
+                if evicted_at < cutoff:
+                    del metadata["_nexus_checkpoint"]
+                    upd = (
+                        update(AgentRecordModel)
+                        .where(AgentRecordModel.agent_id == model.agent_id)
+                        .values(agent_metadata=json.dumps(metadata), updated_at=now)
+                    )
+                    session.execute(upd)
+                    cleaned += 1
+
+            session.flush()
+
+        if cleaned > 0:
+            logger.info(
+                "[AGENT-REG] Cleaned up %d stale checkpoints (max_age=%ds)",
+                cleaned,
+                max_age_seconds,
+            )
+        return cleaned
+
+    # ------------------------------------------------------------------
+    # Spec / Status methods (Issue #2169)
+    # ------------------------------------------------------------------
+
+    def set_spec(self, agent_id: str, spec: AgentSpec) -> AgentSpec:
+        """Store an AgentSpec for an agent, serialized as JSON.
+
+        Increments the spec_generation on each call to enable drift detection.
+        Returns the stored spec with updated generation (no re-read needed).
+
+        Performance: 2 queries total (SELECT for existence + generation, UPDATE).
+
+        Args:
+            agent_id: Agent identifier.
+            spec: Desired state specification.
+
+        Returns:
+            The stored AgentSpec with updated spec_generation.
+
+        Raises:
+            ValueError: If agent not found.
+        """
+        spec_dict = self._spec_to_dict(spec)
+
+        with self._get_session() as session:
+            row = session.execute(
+                select(AgentRecordModel.agent_id, AgentRecordModel.agent_spec).where(
+                    AgentRecordModel.agent_id == agent_id
+                )
+            ).one_or_none()
+
+            if row is None:
+                raise ValueError(f"Agent '{agent_id}' not found")
+
+            # Load existing spec to determine next generation
+            existing_spec = self._parse_spec_json(row.agent_spec, agent_id)
+            next_gen = (existing_spec.spec_generation + 1) if existing_spec else 1
+            spec_dict["spec_generation"] = next_gen
+
+            now = datetime.now(UTC)
+            spec_json = json.dumps(spec_dict)
+            stmt = (
+                update(AgentRecordModel)
+                .where(AgentRecordModel.agent_id == agent_id)
+                .values(agent_spec=spec_json, updated_at=now)
+            )
+            session.execute(stmt)
+            session.flush()
+
+        logger.debug("[AGENT-REG] Set spec for agent %s (gen %d)", agent_id, next_gen)
+        # Return the spec from known values — no re-read needed
+        stored = self._parse_spec_json(spec_json, agent_id)
+        assert stored is not None  # noqa: S101 — we just wrote valid JSON
+        return stored
+
+    def get_spec(self, agent_id: str) -> AgentSpec | None:
+        """Retrieve the stored AgentSpec for an agent.
+
+        Args:
+            agent_id: Agent identifier.
+
+        Returns:
+            AgentSpec if stored, None if agent has no spec or doesn't exist.
+        """
+        with self._get_session() as session:
+            model = session.execute(
+                select(AgentRecordModel).where(AgentRecordModel.agent_id == agent_id)
+            ).scalar_one_or_none()
+
+            if model is None:
+                return None
+
+            return self._parse_spec_json(model.agent_spec, agent_id)
+
+    def get_status(self, agent_id: str) -> AgentStatus | None:
+        """Compute the current AgentStatus for an agent.
+
+        Status is derived on read from the agent record, heartbeat buffer,
+        and stored spec. Single DB query + in-memory computation.
+
+        Args:
+            agent_id: Agent identifier.
+
+        Returns:
+            Computed AgentStatus, or None if agent doesn't exist.
+        """
+        with self._get_session() as session:
+            model = session.execute(
+                select(AgentRecordModel).where(AgentRecordModel.agent_id == agent_id)
+            ).scalar_one_or_none()
+
+            if model is None:
+                return None
+
+            state = AgentState(model.state)
+            spec = self._parse_spec_json(model.agent_spec, agent_id)
+
+            # Determine observed_generation from spec
+            observed_gen = spec.spec_generation if spec else 0
+
+            # Check heartbeat buffer for latest heartbeat
+            last_hb = self._heartbeat_buffer.get_latest(agent_id)
+            if last_hb is None:
+                last_hb = model.last_heartbeat
+
+            # Build conditions (empty for now — future extensions add conditions)
+            conditions: tuple[AgentCondition, ...] = ()
+
+            phase = derive_phase(state, conditions)
+
+            return AgentStatus(
+                phase=phase,
+                observed_generation=observed_gen,
+                conditions=conditions,
+                resource_usage=AgentResourceUsage(),
+                last_heartbeat=last_hb,
+                last_activity=model.updated_at,
+                inbox_depth=0,
+                context_usage_pct=0.0,
+            )
+
+    @staticmethod
+    def _spec_to_dict(spec: AgentSpec) -> dict[str, Any]:
+        """Serialize an AgentSpec to a JSON-safe dict."""
+        return {
+            "agent_type": spec.agent_type,
+            "capabilities": sorted(spec.capabilities),
+            "resource_requests": {
+                "token_budget": spec.resource_requests.token_budget,
+                "token_request": spec.resource_requests.token_request,
+                "storage_limit_mb": spec.resource_requests.storage_limit_mb,
+                "context_limit": spec.resource_requests.context_limit,
+            },
+            "resource_limits": {
+                "token_budget": spec.resource_limits.token_budget,
+                "token_request": spec.resource_limits.token_request,
+                "storage_limit_mb": spec.resource_limits.storage_limit_mb,
+                "context_limit": spec.resource_limits.context_limit,
+            },
+            "qos_class": str(spec.qos_class),
+            "zone_affinity": spec.zone_affinity,
+            "spec_generation": spec.spec_generation,
+        }
+
+    @staticmethod
+    def _parse_spec_json(raw: str | None, agent_id: str) -> AgentSpec | None:
+        """Deserialize an AgentSpec from a JSON text column."""
+        if not raw:
+            return None
+        try:
+            data = json.loads(raw)
+            return AgentSpec(
+                agent_type=data.get("agent_type", ""),
+                capabilities=frozenset(data.get("capabilities", [])),
+                resource_requests=AgentResources(**data.get("resource_requests", {})),
+                resource_limits=AgentResources(**data.get("resource_limits", {})),
+                qos_class=QoSClass(data.get("qos_class", "standard")),
+                zone_affinity=data.get("zone_affinity"),
+                spec_generation=data.get("spec_generation", 1),
+            )
+        except (json.JSONDecodeError, TypeError, ValueError, KeyError):
+            logger.warning("[AGENT-REG] Corrupt agent_spec for agent %s", agent_id)
+            return None
+
     @staticmethod
     def _model_to_record(model: AgentRecordModel) -> AgentRecord:
         """Convert ORM model to frozen dataclass.
@@ -641,6 +1054,10 @@ class AgentRegistry:
         metadata = _safe_json_loads(model.agent_metadata, "agent_metadata", model.agent_id)
         manifest_list = _safe_json_loads(model.context_manifest, "context_manifest", model.agent_id)
 
+        # Deserialize QoS from metadata (Issue #2171)
+        qos_data = metadata.get("qos")
+        agent_qos = AgentQoS.from_dict(qos_data) if isinstance(qos_data, dict) else AgentQoS()
+
         return AgentRecord(
             agent_id=model.agent_id,
             owner_id=model.owner_id,
@@ -653,4 +1070,5 @@ class AgentRegistry:
             created_at=model.created_at,
             updated_at=model.updated_at,
             context_manifest=tuple(manifest_list),
+            qos=agent_qos,
         )

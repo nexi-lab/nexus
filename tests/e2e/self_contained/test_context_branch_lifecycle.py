@@ -8,21 +8,20 @@ Tests full workflows with real DB + mocked CAS:
 - Cross-session continuity (branch persists across service instances)
 """
 
-from __future__ import annotations
-
 import hashlib
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
-from nexus.core.response import HandlerResponse
-from nexus.core.workspace_manifest import ManifestEntry, WorkspaceManifest
-from nexus.services.context_branch import ContextBranchService
+from nexus.contracts.workspace_manifest import ManifestEntry, WorkspaceManifest
+from nexus.lib.response import HandlerResponse
 from nexus.storage.models._base import Base
 from nexus.storage.models.filesystem import WorkspaceSnapshotModel
+from nexus.system_services.workspace.context_branch import ContextBranchService
 
 
 @pytest.fixture
@@ -163,10 +162,15 @@ def fake_wm(session_factory, cas):
 
 
 @pytest.fixture
-def service(fake_wm, session_factory):
+def record_store(session_factory):
+    return SimpleNamespace(session_factory=session_factory)
+
+
+@pytest.fixture
+def service(fake_wm, record_store):
     return ContextBranchService(
         workspace_manager=fake_wm,
-        session_factory=session_factory,
+        record_store=record_store,
         rebac_manager=None,
         default_zone_id="z1",
     )
@@ -313,7 +317,7 @@ class TestCrossSessionContinuity:
         # Session 1: Create branch and commit
         svc1 = ContextBranchService(
             workspace_manager=fake_wm,
-            session_factory=session_factory,
+            record_store=SimpleNamespace(session_factory=session_factory),
             rebac_manager=None,
             default_zone_id="z1",
         )
@@ -325,7 +329,7 @@ class TestCrossSessionContinuity:
         # Session 2: New service instance sees the branch
         svc2 = ContextBranchService(
             workspace_manager=fake_wm,
-            session_factory=session_factory,
+            record_store=SimpleNamespace(session_factory=session_factory),
             rebac_manager=None,
             default_zone_id="z1",
         )
@@ -370,7 +374,7 @@ class TestFinishExploreValidation:
             service.finish_explore("/ws", "branch", outcome="rebase")
 
     def test_finish_nonexistent_branch_raises(self, service):
-        from nexus.core.exceptions import BranchNotFoundError
+        from nexus.contracts.exceptions import BranchNotFoundError
 
         with pytest.raises(BranchNotFoundError):
             service.finish_explore("/ws", "ghost", outcome="merge")

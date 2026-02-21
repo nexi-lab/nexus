@@ -4,16 +4,14 @@ Validates that the DedupWorkQueue correctly coalesces rapid events
 when wired into the EventsService cache invalidation pipeline.
 """
 
-from __future__ import annotations
-
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.core.event_bus import FileEvent, FileEventType
-from nexus.services.dedup_work_queue import DedupWorkQueue
-from nexus.services.events_service import EventsService
+from nexus.services.event_subsystem.types import FileEvent, FileEventType
+from nexus.system_services.lifecycle.dedup_work_queue import DedupWorkQueue
+from nexus.system_services.lifecycle.events_service import EventsService
 
 
 def _make_event(

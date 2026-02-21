@@ -18,8 +18,6 @@ References:
     - SimpleMem Paper: https://arxiv.org/abs/2601.02553 (recursive consolidation)
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from dataclasses import dataclass, field
@@ -29,6 +27,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.services.ace.affinity import (
     AffinityConfig,
     MemoryVector,
@@ -94,9 +93,9 @@ class HierarchicalMemoryManager:
 
     def __init__(
         self,
-        consolidation_engine: ConsolidationEngine,
+        consolidation_engine: "ConsolidationEngine",
         session: Session,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
     ):
         """Initialize the hierarchical memory manager.
 
@@ -574,11 +573,11 @@ class HierarchicalMemoryManager:
 
 # Synchronous wrapper for non-async contexts
 def build_hierarchy(
-    consolidation_engine: ConsolidationEngine,
+    consolidation_engine: "ConsolidationEngine",
     session: Session,
     memories: list[MemoryModel] | None = None,
     memory_ids: list[str] | None = None,
-    zone_id: str = "root",
+    zone_id: str = ROOT_ZONE_ID,
     **kwargs: Any,
 ) -> HierarchyResult:
     """Synchronous wrapper for build_hierarchy_async.
@@ -594,7 +593,7 @@ def build_hierarchy(
     Returns:
         HierarchyResult with hierarchy data
     """
-    from nexus.core.sync_bridge import run_sync
+    from nexus.lib.sync_bridge import run_sync
 
     manager = HierarchicalMemoryManager(consolidation_engine, session, zone_id)
     return run_sync(

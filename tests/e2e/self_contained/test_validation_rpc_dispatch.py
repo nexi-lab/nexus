@@ -5,22 +5,20 @@ pipeline: protocol params class, method exposure, and parameter parsing.
 No Docker or live server required.
 """
 
-from __future__ import annotations
-
 import dataclasses
 
 import pytest
 
-from nexus.server.protocol import METHOD_PARAMS, SandboxValidateParams
-from nexus.validation.models import (
+from nexus.bricks.parsers.validation.models import (
     ValidationError,
     ValidationResult,
     ValidatorConfig,
 )
-from nexus.validation.script_builder import (
+from nexus.bricks.parsers.validation.script_builder import (
     build_simple_validation_script,
     parse_simple_script_output,
 )
+from nexus.server.protocol import METHOD_PARAMS, SandboxValidateParams
 
 
 class TestSandboxValidateProtocol:
@@ -175,7 +173,7 @@ class TestPerformanceCharacteristics:
 
     def test_config_caching(self):
         """Config loader caches by key — second load is instant."""
-        from nexus.validation.config import ValidatorConfigLoader
+        from nexus.bricks.parsers.validation.config import ValidatorConfigLoader
 
         loader = ValidatorConfigLoader()
         yaml = "validators:\n  - name: ruff\n    command: ruff check .\n"
@@ -191,8 +189,8 @@ class TestPerformanceCharacteristics:
         """Detection uses exactly one ls command."""
         from unittest.mock import AsyncMock
 
+        from nexus.bricks.parsers.validation.detector import detect_project_validators
         from nexus.bricks.sandbox.sandbox_provider import CodeExecutionResult
-        from nexus.validation.detector import detect_project_validators
 
         provider = AsyncMock()
         provider.run_code = AsyncMock(

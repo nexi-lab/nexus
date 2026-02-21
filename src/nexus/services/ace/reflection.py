@@ -1,7 +1,5 @@
 """Reflection system for analyzing trajectories and extracting learnings."""
 
-from __future__ import annotations
-
 import json
 import uuid
 from datetime import UTC, datetime
@@ -9,7 +7,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from nexus.llm.message import Message, MessageRole
+from nexus.contracts.llm_types import Message, MessageRole
 from nexus.services.ace.trajectory import TrajectoryManager
 from nexus.services.protocols.llm_provider import LLMProviderProtocol
 from nexus.storage.models import MemoryModel
@@ -439,6 +437,6 @@ Provide your analysis as valid JSON only, no additional commentary.
         Returns:
             Reflection results
         """
-        from nexus.core.sync_bridge import run_sync
+        from nexus.lib.sync_bridge import run_sync
 
         return run_sync(self.reflect_async(trajectory_id, context, reflection_prompt))

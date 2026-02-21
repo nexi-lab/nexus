@@ -7,8 +7,6 @@ Preserves the full public API for backward compatibility with all
 Part of: #506, #510 (cache layer epic), #1628 (SRP refactor)
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -21,7 +19,7 @@ from nexus.backends.cache_models import (
     CacheEntry,
     SyncResult,
 )
-from nexus.core.permissions import OperationContext
+from nexus.contracts.types import OperationContext
 
 if TYPE_CHECKING:
     from nexus_fast import L1MetadataCache
@@ -78,12 +76,12 @@ class CacheConnectorMixin:
     # L1 Metadata Cache (Rust) — class-level, shared across all connectors
     # =========================================================================
 
-    _l1_cache: L1MetadataCache | None = None
+    _l1_cache: "L1MetadataCache | None" = None
     _l1_max_entries: int = 100_000
     _l1_default_ttl: int = 300
 
     @classmethod
-    def _get_l1_cache(cls) -> L1MetadataCache | None:
+    def _get_l1_cache(cls) -> "L1MetadataCache | None":
         """Get or create the shared L1 metadata cache (Rust-based)."""
         if cls._l1_cache is None:
             try:
@@ -137,7 +135,7 @@ class CacheConnectorMixin:
     # =========================================================================
 
     @property
-    def _cache_service(self) -> _CacheServiceType:
+    def _cache_service(self) -> "_CacheServiceType":
         """Lazy-create CacheService on first access."""
         if not hasattr(self, "_cache_service_instance"):
             from nexus.backends.backend_io import BackendIOService
@@ -166,15 +164,15 @@ class CacheConnectorMixin:
         """Get the cache key path from context."""
         return self._cache_service.get_cache_path(context)
 
-    def _get_db_session(self) -> Session:
+    def _get_db_session(self) -> "Session":
         """Get database session."""
         return self._cache_service.get_db_session()
 
-    def _get_path_id(self, path: str, session: Session) -> str | None:
+    def _get_path_id(self, path: str, session: "Session") -> str | None:
         """Get path_id for a virtual path."""
         return self._cache_service.get_path_id(path, session)
 
-    def _get_path_ids_bulk(self, paths: list[str], session: Session) -> dict[str, str]:
+    def _get_path_ids_bulk(self, paths: list[str], session: "Session") -> dict[str, str]:
         """Get path_ids for multiple virtual paths in a single query."""
         return self._cache_service.get_path_ids_bulk(paths, session)
 

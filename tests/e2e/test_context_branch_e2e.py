@@ -9,27 +9,26 @@ with real SQLite DB and CAS backend. Validates:
 - Code review fixes (C1, C2, C3, H1-H6)
 """
 
-from __future__ import annotations
-
 import hashlib
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from nexus.core.exceptions import (
+from nexus.contracts.exceptions import (
     BranchConflictError,
     BranchProtectedError,
     BranchStateError,
     NexusPermissionError,
 )
-from nexus.core.response import HandlerResponse
-from nexus.core.workspace_manifest import ManifestEntry, WorkspaceManifest
-from nexus.services.context_branch import ContextBranchService
+from nexus.contracts.workspace_manifest import ManifestEntry, WorkspaceManifest
+from nexus.lib.response import HandlerResponse
 from nexus.storage.models._base import Base
 from nexus.storage.models.filesystem import WorkspaceSnapshotModel
+from nexus.system_services.workspace.context_branch import ContextBranchService
 
 # ---------------------------------------------------------------------------
 # Fixtures — real DB + CAS
@@ -182,10 +181,15 @@ def fake_wm(session_factory, cas):
 
 
 @pytest.fixture
-def service(fake_wm, session_factory):
+def record_store(session_factory):
+    return SimpleNamespace(session_factory=session_factory)
+
+
+@pytest.fixture
+def service(fake_wm, record_store):
     return ContextBranchService(
         workspace_manager=fake_wm,
-        session_factory=session_factory,
+        record_store=record_store,
         rebac_manager=None,
         default_zone_id="z1",
     )
@@ -290,7 +294,7 @@ class TestE2EPermissionEnforcement:
         rebac.rebac_check.return_value = False
         return ContextBranchService(
             workspace_manager=fake_wm,
-            session_factory=session_factory,
+            record_store=SimpleNamespace(session_factory=session_factory),
             rebac_manager=rebac,
             default_zone_id="z1",
             default_agent_id="agent-1",
@@ -559,7 +563,7 @@ class TestE2ECrossSessionContinuity:
         # Service instance 1: create exploration
         svc1 = ContextBranchService(
             workspace_manager=fake_wm,
-            session_factory=session_factory,
+            record_store=SimpleNamespace(session_factory=session_factory),
             rebac_manager=None,
             default_zone_id="z1",
         )
@@ -570,7 +574,7 @@ class TestE2ECrossSessionContinuity:
         # Service instance 2: continue the work
         svc2 = ContextBranchService(
             workspace_manager=fake_wm,
-            session_factory=session_factory,
+            record_store=SimpleNamespace(session_factory=session_factory),
             rebac_manager=None,
             default_zone_id="z1",
         )
@@ -585,7 +589,7 @@ class TestE2ECrossSessionContinuity:
         # Service instance 3: finish the exploration
         svc3 = ContextBranchService(
             workspace_manager=fake_wm,
-            session_factory=session_factory,
+            record_store=SimpleNamespace(session_factory=session_factory),
             rebac_manager=None,
             default_zone_id="z1",
         )
@@ -615,3 +619,81 @@ class TestE2EProtectedBranches:
         # Try to discard main via finish_explore
         with pytest.raises(BranchProtectedError):
             service.finish_explore(ws, "main", outcome="discard")
+
+
+# ===========================================================================
+# Namespace Fork Integration (Issue #1273)
+# ===========================================================================
+
+
+class TestE2ENamespaceForkIntegration:
+    """E2E tests verifying namespace fork alongside context branching."""
+
+    @pytest.fixture
+    def mock_namespace_manager(self):
+        mgr = MagicMock()
+        mgr.get_mount_table.return_value = [
+            SimpleNamespace(virtual_path="/workspace/alpha"),
+            SimpleNamespace(virtual_path="/workspace/beta"),
+        ]
+        return mgr
+
+    @pytest.fixture
+    def fork_service(self, mock_namespace_manager):
+        from nexus.system_services.namespace.namespace_fork_service import (
+            AgentNamespaceForkService,
+        )
+
+        return AgentNamespaceForkService(namespace_manager=mock_namespace_manager)
+
+    def test_fork_during_explore(self, fork_service):
+        """Fork namespace when starting exploration."""
+        from nexus.contracts.namespace_fork_types import ForkMode
+
+        info = fork_service.fork("explore-agent", mode=ForkMode.COPY)
+        assert info.mount_count == 2
+        ns = fork_service.get_fork(info.fork_id)
+        assert ns.get("/workspace/alpha") is not None
+
+    def test_merge_on_finish(self, fork_service):
+        """Merge namespace fork when finishing exploration with merge outcome."""
+        info = fork_service.fork("explore-agent")
+        ns = fork_service.get_fork(info.fork_id)
+        ns.put(
+            "/workspace/gamma",
+            SimpleNamespace(virtual_path="/workspace/gamma"),
+        )
+        result = fork_service.merge(info.fork_id, strategy="source-wins")
+        assert result.merged is True
+        assert result.entries_added == 1
+
+    def test_discard_on_finish(self, fork_service):
+        """Discard namespace fork when finishing exploration with discard outcome."""
+        info = fork_service.fork("explore-agent")
+        fork_service.discard(info.fork_id)
+        from nexus.contracts.exceptions import NamespaceForkNotFoundError
+
+        with pytest.raises(NamespaceForkNotFoundError):
+            fork_service.get_fork(info.fork_id)
+
+    def test_fork_isolation_across_agents(self, fork_service):
+        """Two agents' forks don't interfere."""
+        info1 = fork_service.fork("agent-a")
+        info2 = fork_service.fork("agent-b")
+        ns1 = fork_service.get_fork(info1.fork_id)
+        ns2 = fork_service.get_fork(info2.fork_id)
+        ns1.put("/workspace/only-a", SimpleNamespace(virtual_path="/workspace/only-a"))
+        assert ns2.get("/workspace/only-a") is None
+
+    def test_graceful_degradation(self):
+        """Fork service operations fail gracefully when namespace manager is broken."""
+        broken_mgr = MagicMock()
+        broken_mgr.get_mount_table.side_effect = RuntimeError("DB down")
+
+        from nexus.system_services.namespace.namespace_fork_service import (
+            AgentNamespaceForkService,
+        )
+
+        svc = AgentNamespaceForkService(namespace_manager=broken_mgr)
+        with pytest.raises(RuntimeError, match="DB down"):
+            svc.fork("agent-x")

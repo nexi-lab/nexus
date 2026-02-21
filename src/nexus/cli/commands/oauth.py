@@ -17,19 +17,26 @@ Examples:
     nexus oauth test google alice@example.com
 """
 
-from __future__ import annotations
-
 import asyncio
+import importlib as _il
 import os
 import sys
+from typing import TYPE_CHECKING
 
 import click
 from rich.console import Console
 from rich.table import Table
 
-from nexus.auth.oauth.providers.x import XOAuthProvider
 from nexus.cli.utils import console
-from nexus.server.auth.token_manager import TokenManager
+from nexus.constants import ROOT_ZONE_ID
+
+# Brick imports via importlib to avoid cli→bricks tier violation
+if TYPE_CHECKING:
+    from nexus.bricks.auth.oauth.providers.x import XOAuthProvider
+    from nexus.bricks.auth.oauth.token_manager import TokenManager
+else:
+    XOAuthProvider = _il.import_module("nexus.bricks.auth.oauth.providers.x").XOAuthProvider
+    TokenManager = _il.import_module("nexus.bricks.auth.oauth.token_manager").TokenManager
 
 # Rich console for output
 _console = Console()
@@ -45,7 +52,9 @@ def get_token_manager(db_path: str | None = None) -> TokenManager:
         TokenManager instance
     """
     # Check for database URL in environment (for Postgres/MySQL)
-    db_url = os.getenv("NEXUS_DATABASE_URL")
+    from nexus.lib.env import get_database_url
+
+    db_url = get_database_url()
 
     if db_url:
         # Use database URL (Postgres, MySQL, etc.)
@@ -178,7 +187,7 @@ def revoke_credential(
     manager = get_token_manager(db_path)
 
     async def _revoke() -> None:
-        success = await manager.revoke_credential(provider, user_email, zone_id or "root")
+        success = await manager.revoke_credential(provider, user_email, zone_id or ROOT_ZONE_ID)
 
         if success:
             console.print(f"[green]✓[/green] Revoked credential: {provider}:{user_email}")
@@ -230,7 +239,7 @@ def test_credential(
     async def _test() -> None:
         try:
             # Try to get a valid token (will auto-refresh if needed)
-            token = await manager.get_valid_token(provider, user_email, zone_id or "root")
+            token = await manager.get_valid_token(provider, user_email, zone_id or ROOT_ZONE_ID)
 
             console.print("[green]✓[/green] Credential is valid")
             console.print(f"[dim]Token length: {len(token)} chars[/dim]")
@@ -314,7 +323,9 @@ def setup_gdrive(
         nexus oauth setup-gdrive --user-email "alice@example.com"
     """
 
-    from nexus.auth.oauth.providers.google import GoogleOAuthProvider
+    GoogleOAuthProvider = _il.import_module(
+        "nexus.bricks.auth.oauth.providers.google"
+    ).GoogleOAuthProvider
 
     # Validate that credentials are provided (either via options or environment)
     if not client_id:
@@ -375,8 +386,8 @@ def setup_gdrive(
         cred_id = await manager.store_credential(
             provider="google",
             user_email=user_email,
-            credential=credential,  # type: ignore[arg-type]
-            zone_id=zone_id or "root",
+            credential=credential,
+            zone_id=zone_id or ROOT_ZONE_ID,
             created_by=user_email,
         )
         manager.close()
@@ -537,8 +548,8 @@ def setup_x(
         cred_id = await manager.store_credential(
             provider="twitter",
             user_email=user_email,
-            credential=credential,  # type: ignore[arg-type]
-            zone_id=zone_id or "root",
+            credential=credential,
+            zone_id=zone_id or ROOT_ZONE_ID,
             created_by=user_email,
         )
         manager.close()

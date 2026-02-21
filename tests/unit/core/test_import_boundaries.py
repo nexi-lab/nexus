@@ -11,8 +11,6 @@ Tier hierarchy (Liedtke minimality):
     - services/ must NOT import from server/ (except via protocols)
 """
 
-from __future__ import annotations
-
 import ast
 from pathlib import Path
 
@@ -106,11 +104,8 @@ class TestKernelTopLevelImports:
 
     # Pre-existing violations that are tracked for cleanup (Issue #1519)
     KNOWN_CORE_SERVICES_IMPORTS = {
-        "core/async_bridge.py",  # async_rebac_manager (TYPE_CHECKING)
-        "core/async_nexus_fs.py",  # async_permissions (TYPE_CHECKING)
         "core/config.py",  # NamespaceManagerProtocol, namespace_manager (TYPE_CHECKING)
         "core/nexus_fs.py",  # memory_api, entity_registry (TYPE_CHECKING)
-        "core/permissions.py",  # PermissionEnforcer re-export (TYPE_CHECKING)
     }
 
     def test_no_top_level_services_imports_in_core_modules(self):
@@ -140,12 +135,6 @@ class TestKernelTopLevelImports:
 class TestServicesDoNotImportServer:
     """Verify services/ modules don't import from server/ (except via protocols)."""
 
-    # Known exceptions: lazy imports for backward compat that are being cleaned up
-    KNOWN_EXCEPTIONS = {
-        # These are in the process of being migrated (Issue #1519)
-        "services/oauth_service.py",
-    }
-
     def test_no_top_level_server_imports_in_services(self):
         """Services should not have top-level imports from server/."""
         services_dir = NEXUS_ROOT / "services"
@@ -153,9 +142,6 @@ class TestServicesDoNotImportServer:
 
         for py_file in _get_python_files_recursive(services_dir):
             rel = str(py_file.relative_to(NEXUS_ROOT))
-            if rel in self.KNOWN_EXCEPTIONS:
-                continue
-
             for module, lineno, _kind in _collect_top_level_imports(py_file):
                 if module.startswith("nexus.server"):
                     violations.append(f"{rel}:{lineno} top-level imports {module}")
@@ -168,15 +154,15 @@ class TestServicesDoNotImportServer:
 class TestRPCTypesInCore:
     """Verify RPC types are importable from core (Issue #1519, 1A)."""
 
-    def test_rpc_types_importable_from_core(self):
-        from nexus.core.rpc_types import RPCErrorCode, RPCRequest, RPCResponse
+    def test_rpc_types_importable_from_contracts(self):
+        from nexus.contracts.rpc_types import RPCErrorCode, RPCRequest, RPCResponse
 
         assert RPCErrorCode.PARSE_ERROR.value == -32700
         assert RPCRequest().jsonrpc == "2.0"
         assert RPCResponse.success(1, "ok").result == "ok"
 
     def test_rpc_types_re_exported_from_server_protocol(self):
-        from nexus.core.rpc_types import RPCErrorCode as CoreCode
+        from nexus.contracts.rpc_types import RPCErrorCode as CoreCode
         from nexus.server.protocol import RPCErrorCode as ServerCode
 
         assert CoreCode is ServerCode
@@ -196,7 +182,7 @@ class TestFourStoragePillars:
         ("nexus.core.metastore", "MetastoreABC"),
         ("nexus.backends.backend", "Backend"),
         ("nexus.storage.record_store", "RecordStoreABC"),
-        ("nexus.core.cache_store", "CacheStoreABC"),
+        ("nexus.contracts.cache_store", "CacheStoreABC"),
     ]
 
     @pytest.mark.parametrize(
@@ -269,33 +255,23 @@ class TestConfigDoesNotImportServer:
             f"  - {v}" for v in violations
         )
 
-    def test_auth_config_importable_from_package_level(self):
-        """OAuthConfig should be importable from nexus.auth_config (not server/)."""
-        from nexus.auth_config import OAuthConfig, OAuthProviderConfig
+    def test_auth_config_canonical_import(self):
+        """OAuthConfig canonical path is nexus.bricks.auth.oauth.config (#2281)."""
+        from nexus.bricks.auth.oauth.config import OAuthConfig, OAuthProviderConfig
 
         assert OAuthConfig is not None
         assert OAuthProviderConfig is not None
 
-    def test_auth_config_re_exported_from_server(self):
-        """Backward-compat: server.auth.oauth_config re-exports from nexus.auth_config."""
-        from nexus.auth_config import OAuthConfig as PkgConfig
-        from nexus.server.auth.oauth_config import OAuthConfig as ServerConfig
 
-        assert PkgConfig is ServerConfig
+class TestZoneHelpersInLib:
+    """Verify zone helpers are importable from lib/ (Issue #1519, 3A)."""
 
-
-class TestZoneHelpersInCore:
-    """Verify zone helpers are importable from core (Issue #1519, 3A)."""
-
-    def test_zone_helpers_importable_from_core(self):
-        from nexus.core.zone_helpers import zone_group_id
+    def test_zone_helpers_importable_from_lib(self):
+        from nexus.lib.zone_helpers import zone_group_id
 
         assert zone_group_id("acme") == "zone-acme"
 
-    def test_zone_helpers_available_in_server(self):
-        """Both core and server layers provide is_zone_admin (separate implementations OK)."""
-        from nexus.core.zone_helpers import is_zone_admin as CoreFn
-        from nexus.server.auth.user_helpers import is_zone_admin as ServerFn
+    def test_zone_helpers_callable(self):
+        from nexus.lib.zone_helpers import is_zone_admin
 
-        assert callable(CoreFn)
-        assert callable(ServerFn)
+        assert callable(is_zone_admin)

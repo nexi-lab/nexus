@@ -203,7 +203,7 @@ def test_list_channels(connector):
         return False
 
     try:
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         # Create context
         user_email = os.getenv("SLACK_USER_EMAIL", "test@example.com")
@@ -255,7 +255,7 @@ def test_read_messages(connector):
         return False
 
     try:
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         # Create context
         user_email = os.getenv("SLACK_USER_EMAIL", "test@example.com")
@@ -329,7 +329,7 @@ def test_post_message(connector):
         return True
 
     try:
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         # Create context
         user_email = os.getenv("SLACK_USER_EMAIL", "test@example.com")

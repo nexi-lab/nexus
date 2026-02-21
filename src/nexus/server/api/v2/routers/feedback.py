@@ -8,8 +8,6 @@ Provides 5 endpoints for feedback management:
 - POST /api/v2/feedback/relearn          - Mark for relearning
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 
@@ -31,7 +29,6 @@ from nexus.server.api.v2.models import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/feedback", tags=["feedback"])
-
 
 # =============================================================================
 # Endpoints
@@ -123,7 +120,7 @@ async def mark_for_relearning(
     try:
         feedback_manager.mark_for_relearning(
             trajectory_id=request.trajectory_id,
-            _reason=request.reason,
+            reason=request.reason,
             priority=request.priority,
         )
 

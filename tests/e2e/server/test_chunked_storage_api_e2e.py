@@ -7,8 +7,6 @@ Run with:
     pytest tests/e2e/test_chunked_storage_api_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import base64
 import os
 

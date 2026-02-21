@@ -7,11 +7,9 @@ and security validation to eliminate DRY violations across the codebase
 All functions are pure and return immutable results (tuples).
 """
 
-from __future__ import annotations
-
 import re
 
-from nexus.core.exceptions import InvalidPathError
+from nexus.contracts.exceptions import InvalidPathError
 
 # Pre-compiled regex for normalizing consecutive slashes
 _MULTI_SLASH = re.compile(r"/+")

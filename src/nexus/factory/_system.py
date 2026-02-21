@@ -1,0 +1,650 @@
+"""Boot Tier 1 (SYSTEM) — critical + degradable services.
+
+Issue #2193: Absorbs 11 former-kernel services per Liedtke's test.
+Issue #2440: Demote ReBAC from critical to degradable (Null Object fallback).
+
+Two severity classes:
+
+**Critical** (single try/except → BootError):
+    write_observer — the only critical system service.
+
+**Degradable** (per-service try/except → WARNING + NoOp/None):
+    rebac_manager, audit_store, entity_registry, permission_enforcer
+    (NoOp fallback on failure), dir_visibility_cache, hierarchy_manager,
+    deferred_permission_buffer, workspace_registry, mount_manager,
+    workspace_manager, plus all original system services.
+"""
+
+import logging
+import time
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from nexus.contracts.write_observer import WriteObserverProtocol
+    from nexus.services.protocols.rebac import ReBACBrickProtocol
+
+from nexus.factory._boot_context import _BootContext
+from nexus.factory._helpers import _make_gate
+
+logger = logging.getLogger(__name__)
+
+
+def _boot_system_services(
+    ctx: _BootContext,
+    brick_on: Callable[[str], bool] | None = None,
+) -> dict[str, Any]:
+    """Boot Tier 1 (SYSTEM) — critical + degradable services.
+
+    1. **Critical section** — creates write observer.  A single
+       try/except raises ``BootError`` if it fails.
+
+    2. **Degradable ReBAC section** (Issue #2440) — creates ReBAC
+       manager, audit store, entity registry, permission enforcer.
+       On failure or when ``_on("permissions")`` is False, NoOp stubs are
+       injected so the system boots without permission enforcement.
+
+    3. **Degradable former-kernel section** — creates dir visibility
+       cache, hierarchy manager, deferred permission buffer, workspace
+       services.  Per-service try/except logs WARNING and sets None.
+
+    4. **Original system services** — agent registry, namespace,
+       observability, resiliency, lifecycle management.  Same degraded
+       pattern as before.
+
+    Args:
+        ctx: Boot context with shared dependencies.
+        brick_on: Callable ``(name: str) -> bool`` for profile-based gating.
+            When None, all services are enabled (backward-compatible default).
+
+    Returns:
+        Dict with all system service entries (some degradable ones may be None).
+    """
+    t0 = time.perf_counter()
+    _on = _make_gate(brick_on)
+
+    # =====================================================================
+    # CRITICAL SECTION (BootError on failure) — write_observer only
+    # =====================================================================
+    from nexus.contracts.exceptions import BootError
+
+    try:
+        import os
+
+        write_observer: WriteObserverProtocol | None = None
+        use_buffer = ctx.enable_write_buffer
+        if use_buffer is None:
+            env_val = os.environ.get("NEXUS_ENABLE_WRITE_BUFFER", "").lower()
+            if env_val in ("true", "1", "yes"):
+                use_buffer = True
+            elif env_val in ("false", "0", "no"):
+                use_buffer = False
+            else:
+                use_buffer = ctx.db_url.startswith(("postgres", "postgresql"))
+
+        if use_buffer:
+            from nexus.storage.record_store_syncer import BufferedRecordStoreWriteObserver
+
+            _st = ctx.profile_tuning.storage
+            write_observer = BufferedRecordStoreWriteObserver(
+                ctx.record_store,
+                strict_mode=ctx.audit.strict_mode,
+                flush_interval_ms=_st.write_buffer_flush_ms,
+                max_buffer_size=_st.write_buffer_max_size,
+            )
+        else:
+            from nexus.storage.record_store_syncer import RecordStoreWriteObserver
+
+            write_observer = RecordStoreWriteObserver(
+                ctx.record_store,
+                strict_mode=ctx.audit.strict_mode,
+            )
+
+        logger.debug("[BOOT:SYSTEM] Critical service created: write_observer")
+
+    except BootError:
+        raise
+    except Exception as exc:
+        logger.critical("[BOOT:SYSTEM] Critical service failure: %s", exc)
+        raise BootError(str(exc), tier="system-critical") from exc
+
+    # =====================================================================
+    # DEGRADABLE REBAC SECTION (NoOp fallback on failure) — Issue #2440
+    # Per NEXUS-LEGO-ARCHITECTURE §5.2: ReBAC can fail independently.
+    # =====================================================================
+    from nexus.contracts.noop_rebac import (
+        NoOpAuditStore,
+        NoOpEntityRegistry,
+        NoOpPermissionEnforcer,
+        NoOpReBACManager,
+    )
+
+    # Config-time dialect flag (KERNEL-ARCHITECTURE §7)
+    _is_pg = not ctx.db_url.startswith("sqlite")
+
+    rebac_manager: Any
+    audit_store: Any
+    entity_registry: Any
+    permission_enforcer: Any
+
+    if _on("permissions"):
+        try:
+            from nexus.bricks.rebac.manager import ReBACManager
+
+            rebac_manager = ReBACManager(
+                engine=ctx.engine,
+                cache_ttl_seconds=ctx.cache_ttl_seconds or 300,
+                max_depth=10,
+                enforce_zone_isolation=ctx.perm.enforce_zone_isolation,
+                enable_graph_limits=True,
+                enable_tiger_cache=ctx.perm.enable_tiger_cache,
+                read_engine=ctx.read_engine,
+                is_postgresql=_is_pg,
+            )
+
+            from nexus.bricks.rebac.permissions_enhanced import AuditStore
+
+            audit_store = AuditStore(engine=ctx.engine, is_postgresql=_is_pg)
+
+            from nexus.bricks.rebac.entity_registry import EntityRegistry
+
+            entity_registry = EntityRegistry(ctx.record_store)
+
+            from nexus.bricks.rebac.enforcer import PermissionEnforcer
+
+            permission_enforcer = PermissionEnforcer(
+                metadata_store=ctx.metadata_store,
+                rebac_manager=rebac_manager,
+                allow_admin_bypass=ctx.perm.allow_admin_bypass,
+                allow_system_bypass=True,
+                audit_store=audit_store,
+                admin_bypass_paths=[],
+                router=ctx.router,
+                entity_registry=entity_registry,
+            )
+
+            logger.debug(
+                "[BOOT:SYSTEM] ReBAC services created: rebac_manager, audit_store, "
+                "entity_registry, permission_enforcer"
+            )
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] ReBAC unavailable, using NoOp: %s", exc)
+            rebac_manager = NoOpReBACManager()
+            audit_store = NoOpAuditStore()
+            entity_registry = NoOpEntityRegistry()
+            permission_enforcer = NoOpPermissionEnforcer()
+    else:
+        logger.debug("[BOOT:SYSTEM] ReBAC disabled by profile, using NoOp")
+        rebac_manager = NoOpReBACManager()
+        audit_store = NoOpAuditStore()
+        entity_registry = NoOpEntityRegistry()
+        permission_enforcer = NoOpPermissionEnforcer()
+
+    # =====================================================================
+    # DEGRADABLE FORMER-KERNEL SECTION (WARNING + None) — Issue #2193
+    # =====================================================================
+
+    # --- Directory Visibility Cache ---
+    dir_visibility_cache: Any = None
+    try:
+        from nexus.bricks.rebac.cache.visibility import DirectoryVisibilityCache
+
+        dir_visibility_cache = DirectoryVisibilityCache(
+            tiger_cache=getattr(rebac_manager, "_tiger_cache", None),
+            ttl=ctx.cache_ttl_seconds or 300,
+            max_entries=10000,
+        )
+
+        # Wire: rebac invalidation -> dir visibility cache
+        rebac_manager.register_dir_visibility_invalidator(
+            "nexusfs",
+            lambda zone_id, path: dir_visibility_cache.invalidate_for_resource(path, zone_id),
+        )
+        logger.debug("[BOOT:SYSTEM] DirectoryVisibilityCache created")
+    except Exception as exc:
+        logger.warning("[BOOT:SYSTEM] DirectoryVisibilityCache unavailable: %s", exc)
+
+    # --- Hierarchy Manager ---
+    hierarchy_manager: Any = None
+    try:
+        from nexus.bricks.rebac.hierarchy_manager import HierarchyManager
+
+        hierarchy_manager = HierarchyManager(
+            rebac_manager=rebac_manager,
+            enable_inheritance=ctx.perm.inherit,
+        )
+        logger.debug("[BOOT:SYSTEM] HierarchyManager created")
+    except Exception as exc:
+        logger.warning("[BOOT:SYSTEM] HierarchyManager unavailable: %s", exc)
+
+    # --- Deferred Permission Buffer (constructed, NOT started) ---
+    deferred_permission_buffer: Any = None
+    if ctx.perm.enable_deferred:
+        try:
+            from nexus.bricks.rebac.deferred_permission_buffer import DeferredPermissionBuffer
+
+            deferred_permission_buffer = DeferredPermissionBuffer(
+                rebac_manager=rebac_manager,
+                hierarchy_manager=hierarchy_manager,
+                flush_interval_sec=ctx.perm.deferred_flush_interval,
+            )
+            logger.debug("[BOOT:SYSTEM] DeferredPermissionBuffer created")
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] DeferredPermissionBuffer unavailable: %s", exc)
+
+    # --- Workspace Registry ---
+    workspace_registry: Any = None
+    try:
+        from nexus.bricks.workspace.workspace_registry import WorkspaceRegistry
+
+        workspace_registry = WorkspaceRegistry(
+            metadata=ctx.metadata_store,
+            rebac_manager=rebac_manager,
+            record_store=ctx.record_store,
+        )
+        logger.debug("[BOOT:SYSTEM] WorkspaceRegistry created")
+    except Exception as exc:
+        logger.warning("[BOOT:SYSTEM] WorkspaceRegistry unavailable: %s", exc)
+
+    # --- Mount Manager ---
+    mount_manager: Any = None
+    try:
+        from nexus.services.mount.mount_manager import MountManager
+
+        mount_manager = MountManager(ctx.record_store)
+        logger.debug("[BOOT:SYSTEM] MountManager created")
+    except Exception as exc:
+        logger.warning("[BOOT:SYSTEM] MountManager unavailable: %s", exc)
+
+    # --- Workspace Manager ---
+    workspace_manager: Any = None
+    try:
+        from nexus.system_services.workspace.workspace_manager import WorkspaceManager
+
+        workspace_manager = WorkspaceManager(
+            metadata=ctx.metadata_store,
+            backend=ctx.backend,
+            rebac_manager=cast("ReBACBrickProtocol", rebac_manager),
+            zone_id=ctx.zone_id,
+            agent_id=ctx.agent_id,
+            record_store=ctx.record_store,
+        )
+        logger.debug("[BOOT:SYSTEM] WorkspaceManager created")
+    except Exception as exc:
+        logger.warning("[BOOT:SYSTEM] WorkspaceManager unavailable: %s", exc)
+
+    # =====================================================================
+    # ORIGINAL SYSTEM SERVICES (all degradable)
+    # =====================================================================
+
+    # --- AgentStateEmitter (Issue #2360: created early for DI into AsyncAgentRegistry) ---
+    state_emitter: Any = None
+    try:
+        from nexus.services.scheduler.events import AgentStateEmitter
+    except ImportError:
+        pass  # Expected in lite/edge profiles without scheduler
+    else:
+        try:
+            state_emitter = AgentStateEmitter()
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] AgentStateEmitter unavailable: %s", exc)
+
+    # --- Agent Registry (Issue #1502) ---
+    agent_registry: Any = None
+    async_agent_registry: Any = None
+    if _on("agent_registry") and ctx.record_store is not None:
+        try:
+            from nexus.services.agents.agent_registry import AgentRegistry
+            from nexus.services.agents.async_agent_registry import AsyncAgentRegistry
+
+            agent_registry = AgentRegistry(
+                record_store=ctx.record_store,
+                entity_registry=entity_registry,
+                flush_interval=ctx.profile_tuning.background_task.heartbeat_flush_interval,
+            )
+            async_agent_registry = AsyncAgentRegistry(agent_registry, state_emitter=state_emitter)
+            logger.debug("[BOOT:SYSTEM] AgentRegistry + AsyncAgentRegistry created")
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] AgentRegistry unavailable: %s", exc)
+
+    if not _on("agent_registry"):
+        logger.debug("[BOOT:SYSTEM] AgentRegistry disabled by profile")
+
+    # --- Eviction Manager (Issues #2170, #2171) ---
+    eviction_manager: Any = None
+    if agent_registry is not None:
+        try:
+            from nexus.services.agents.eviction_manager import EvictionManager
+            from nexus.services.agents.eviction_policy import QoSEvictionPolicy
+            from nexus.services.agents.resource_monitor import ResourceMonitor
+
+            eviction_tuning = ctx.profile_tuning.eviction
+            resource_monitor = ResourceMonitor(tuning=eviction_tuning)
+            eviction_policy = QoSEvictionPolicy()
+            eviction_manager = EvictionManager(
+                registry=agent_registry,
+                monitor=resource_monitor,
+                policy=eviction_policy,
+                tuning=eviction_tuning,
+            )
+            logger.debug("[BOOT:SYSTEM] EvictionManager created (QoS-aware)")
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] EvictionManager unavailable: %s", exc)
+
+    # --- Namespace Manager (Issue #1502) ---
+    namespace_manager: Any = None
+    async_namespace_manager: Any = None
+    if not _on("namespace"):
+        logger.debug("[BOOT:SYSTEM] NamespaceManager disabled by profile")
+    else:
+        try:
+            from nexus.bricks.rebac.async_namespace_manager import AsyncNamespaceManager
+            from nexus.bricks.rebac.namespace_factory import (
+                create_namespace_manager as _create_ns_manager,
+            )
+
+            namespace_manager = _create_ns_manager(
+                rebac_manager=rebac_manager,
+                record_store=ctx.record_store,
+            )
+            async_namespace_manager = AsyncNamespaceManager(namespace_manager)
+            logger.debug("[BOOT:SYSTEM] NamespaceManager + AsyncNamespaceManager created")
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] NamespaceManager unavailable: %s", exc)
+
+    # --- Async VFS Router (Issue #1502) ---
+    async_vfs_router: Any = None
+    try:
+        from nexus.services.routing.async_router import AsyncVFSRouter
+
+        async_vfs_router = AsyncVFSRouter(ctx.router)
+        logger.debug("[BOOT:SYSTEM] AsyncVFSRouter created")
+    except Exception as exc:
+        logger.warning("[BOOT:SYSTEM] AsyncVFSRouter unavailable: %s", exc)
+
+    # --- Event Delivery Worker (Issue #1241, constructed, NOT started) ---
+    delivery_worker = None
+    if not _on("eventlog"):
+        logger.debug("[BOOT:SYSTEM] EventDeliveryWorker disabled by profile")
+    elif ctx.db_url.startswith(("postgres", "postgresql")):
+        try:
+            from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
+
+            delivery_worker = EventDeliveryWorker(
+                record_store=ctx.record_store,
+                poll_interval_ms=200,
+                batch_size=50,
+                use_row_locking=True,
+            )
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] EventDeliveryWorker unavailable: %s", exc)
+
+    # --- Observability Subsystem (Issue #1301) ---
+    observability_subsystem: Any = None
+    if not _on("observability"):
+        logger.debug("[BOOT:SYSTEM] ObservabilitySubsystem disabled by profile")
+    else:
+        try:
+            from nexus.core.config import ObservabilityConfig
+            from nexus.services.subsystems.observability_subsystem import ObservabilitySubsystem
+
+            # Instrument both primary and replica pools (Issue #725)
+            obs_engines = [ctx.engine]
+            if ctx.record_store.has_read_replica:
+                obs_engines.append(ctx.read_engine)
+            observability_subsystem = ObservabilitySubsystem(
+                config=ObservabilityConfig(),
+                engines=obs_engines,
+            )
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] ObservabilitySubsystem unavailable: %s", exc)
+
+    # --- Resiliency Subsystem (Issue #1366) ---
+    resiliency_manager: Any = None
+    if not _on("resiliency"):
+        logger.debug("[BOOT:SYSTEM] ResiliencyManager disabled by profile")
+    else:
+        try:
+            from nexus.lib.resiliency import (
+                ResiliencyConfig,
+                ResiliencyManager,
+                set_default_manager,
+            )
+
+            resiliency_config = ResiliencyConfig.from_dict(ctx.resiliency_raw)
+            resiliency_manager = ResiliencyManager(config=resiliency_config)
+            set_default_manager(resiliency_manager)
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] ResiliencyManager unavailable: %s", exc)
+
+    # --- Context Branch Service (Issue #1315) ---
+    context_branch_service: Any = None
+    try:
+        from nexus.system_services.workspace.context_branch import ContextBranchService
+
+        context_branch_service = ContextBranchService(
+            workspace_manager=workspace_manager,
+            record_store=ctx.record_store,
+            rebac_manager=cast("ReBACBrickProtocol", rebac_manager),
+            default_zone_id=ctx.zone_id,
+            default_agent_id=ctx.agent_id,
+        )
+        logger.debug("[BOOT:SYSTEM] ContextBranchService created")
+    except Exception as exc:
+        logger.warning("[BOOT:SYSTEM] ContextBranchService unavailable: %s", exc)
+
+    # --- Namespace Fork Service (Issue #1273) ---
+    namespace_fork_service: Any = None
+    if namespace_manager is not None:
+        try:
+            from nexus.system_services.namespace.namespace_fork_service import (
+                AgentNamespaceForkService,
+            )
+
+            namespace_fork_service = AgentNamespaceForkService(
+                namespace_manager=namespace_manager,
+            )
+            logger.debug("[BOOT:SYSTEM] AgentNamespaceForkService created")
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] AgentNamespaceForkService unavailable: %s", exc)
+
+    # --- Hook Engine chain: PluginHooks → AsyncHookEngine → ScopedHookEngine (Issue #1257) ---
+    scoped_hook_engine: Any = None
+    try:
+        from nexus.plugins.async_hooks import AsyncHookEngine
+        from nexus.plugins.hooks import PluginHooks
+        from nexus.system_services.lifecycle.hook_engine import ScopedHookEngine
+
+        plugin_hooks = PluginHooks()
+        async_hook_engine = AsyncHookEngine(inner=plugin_hooks)
+        scoped_hook_engine = ScopedHookEngine(inner=async_hook_engine)
+        logger.debug("[BOOT:SYSTEM] ScopedHookEngine created")
+    except Exception as exc:
+        logger.warning("[BOOT:SYSTEM] ScopedHookEngine unavailable: %s", exc)
+
+    # --- Brick Lifecycle Manager (Issue #1704) ---
+    brick_lifecycle_manager: Any = None
+    try:
+        from nexus.system_services.lifecycle.brick_lifecycle import BrickLifecycleManager
+
+        brick_lifecycle_manager = BrickLifecycleManager(hook_engine=scoped_hook_engine)
+        logger.debug(
+            "[BOOT:SYSTEM] BrickLifecycleManager created (hook_engine=%s)",
+            "enabled" if scoped_hook_engine else "disabled",
+        )
+    except Exception as exc:
+        logger.warning("[BOOT:SYSTEM] BrickLifecycleManager unavailable: %s", exc)
+
+    # --- Brick Reconciler (Issue #2060) ---
+    brick_reconciler: Any = None
+    if brick_lifecycle_manager is not None:
+        try:
+            from nexus.system_services.lifecycle.brick_reconciler import BrickReconciler
+
+            brick_reconciler = BrickReconciler(lifecycle_manager=brick_lifecycle_manager)
+            logger.debug("[BOOT:SYSTEM] BrickReconciler created")
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] BrickReconciler unavailable: %s", exc)
+
+    # --- Tiger Cache Manager (Issue #2133: injected via factory) ---
+    tiger_cache_manager: Any = None
+    try:
+        from nexus.bricks.rebac.tiger_cache_manager import TigerCacheManager
+
+        tiger_cache_manager = TigerCacheManager(
+            rebac_manager=rebac_manager,
+            metadata_store=ctx.metadata_store,
+            default_zone_id=ctx.zone_id or "root",
+        )
+        tiger_cache_manager.initialize()
+        logger.debug("[BOOT:SYSTEM] TigerCacheManager created")
+    except Exception as exc:
+        logger.warning("[BOOT:SYSTEM] TigerCacheManager unavailable: %s", exc)
+
+    # --- Zone Lifecycle Service (Issue #2061) ---
+    zone_lifecycle: Any = None
+    session_factory = getattr(ctx.record_store, "session_factory", None)
+    if session_factory is not None:
+        try:
+            from nexus.services.zone_lifecycle import ZoneLifecycleService
+
+            zone_lifecycle = ZoneLifecycleService(session_factory=session_factory)
+
+            # Register session-based finalizers (available at boot).
+            # Cache, Mount, and BrickDrain finalizers are registered in
+            # create_nexus_fs() after _boot_wired_services() (Issue #2070).
+            try:
+                from nexus.services.zone_finalizers import (
+                    ReBACZoneFinalizer,
+                    SearchZoneFinalizer,
+                )
+
+                zone_lifecycle.register_finalizer(SearchZoneFinalizer(session_factory))
+                # ReBAC finalizer (MUST run last — phase="sequential")
+                zone_lifecycle.register_finalizer(
+                    ReBACZoneFinalizer(session_factory), phase="sequential"
+                )
+            except Exception as exc:
+                logger.warning("[BOOT:SYSTEM] Zone finalizer registration failed: %s", exc)
+
+            logger.debug("[BOOT:SYSTEM] ZoneLifecycleService created")
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] ZoneLifecycleService unavailable: %s", exc)
+
+    # --- Event Log WAL (Issue #2195) ---
+    event_log: Any = None
+    if _on("eventlog"):
+        try:
+            import os
+            from pathlib import Path
+            from typing import Literal
+
+            from nexus.services.event_subsystem.log import EventLogConfig, create_event_log
+
+            _wal_dir: str = (
+                ctx.wal_dir
+                if ctx.wal_dir is not None
+                else os.getenv("NEXUS_WAL_DIR", ".nexus-data/wal")
+            )
+            _sync_mode: str = (
+                ctx.wal_sync_mode
+                if ctx.wal_sync_mode is not None
+                else os.getenv("NEXUS_WAL_SYNC_MODE", "every")
+            )
+            _seg_size = ctx.wal_segment_size or int(
+                os.getenv("NEXUS_WAL_SEGMENT_SIZE", str(4 * 1024 * 1024))
+            )
+
+            _el_config = EventLogConfig(
+                wal_dir=Path(_wal_dir),
+                segment_size_bytes=_seg_size,
+                sync_mode=cast(Literal["every", "none"], _sync_mode),
+            )
+            event_log = create_event_log(_el_config)
+            logger.debug("[BOOT:SYSTEM] EventLog WAL created (wal_dir=%s)", _wal_dir)
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] EventLog unavailable: %s", exc)
+    else:
+        logger.debug("[BOOT:SYSTEM] EventLog disabled by profile")
+
+    # --- Scheduler Service (Issue #2195, #2360: promoted to always-started) ---
+    # state_emitter already created above (before AgentRegistry) for DI.
+    scheduler_service: Any = None
+    try:
+        from nexus.services.scheduler.policies.fair_share import FairShareCounter
+        from nexus.services.scheduler.queue import TaskQueue
+        from nexus.services.scheduler.service import SchedulerService
+
+        scheduler_service = SchedulerService(
+            queue=TaskQueue(),
+            db_pool=None,
+            credits_service=None,
+            state_emitter=state_emitter,
+            fair_share=FairShareCounter(),
+            use_hrrn=True,
+        )
+        logger.debug("[BOOT:SYSTEM] SchedulerService created (two-phase, pool=deferred)")
+    except Exception as exc:
+        logger.warning(
+            "[BOOT:SYSTEM] SchedulerService unavailable, falling back to InMemoryScheduler: %s",
+            exc,
+        )
+        try:
+            from nexus.services.protocols.scheduler import InMemoryScheduler
+
+            scheduler_service = InMemoryScheduler()
+        except Exception:
+            # nexus.services namespace unavailable (e.g., nats not installed)
+            pass
+
+    # =====================================================================
+    # Assemble result
+    # =====================================================================
+
+    result = {
+        # Former-kernel critical
+        "rebac_manager": rebac_manager,
+        "audit_store": audit_store,
+        "entity_registry": entity_registry,
+        "permission_enforcer": permission_enforcer,
+        "write_observer": write_observer,
+        # Former-kernel degradable
+        "dir_visibility_cache": dir_visibility_cache,
+        "hierarchy_manager": hierarchy_manager,
+        "deferred_permission_buffer": deferred_permission_buffer,
+        "workspace_registry": workspace_registry,
+        "mount_manager": mount_manager,
+        "workspace_manager": workspace_manager,
+        "tiger_cache_manager": tiger_cache_manager,
+        # Original system services
+        "agent_registry": agent_registry,
+        "async_agent_registry": async_agent_registry,
+        "namespace_manager": namespace_manager,
+        "async_namespace_manager": async_namespace_manager,
+        "async_vfs_router": async_vfs_router,
+        "delivery_worker": delivery_worker,
+        "observability_subsystem": observability_subsystem,
+        "resiliency_manager": resiliency_manager,
+        "context_branch_service": context_branch_service,
+        "namespace_fork_service": namespace_fork_service,
+        "brick_lifecycle_manager": brick_lifecycle_manager,
+        "brick_reconciler": brick_reconciler,
+        "scoped_hook_engine": scoped_hook_engine,
+        "eviction_manager": eviction_manager,
+        "zone_lifecycle": zone_lifecycle,
+        # Issue #2195, #2360: EventLog + Scheduler (always-started)
+        "event_log": event_log,
+        "scheduler_service": scheduler_service,
+        "scheduler_state_emitter": state_emitter,
+    }
+
+    elapsed = time.perf_counter() - t0
+    active = sum(1 for v in result.values() if v is not None)
+    logger.info(
+        "[BOOT:SYSTEM] %d/%d services ready (%.3fs, profile gating=%s)",
+        active,
+        len(result),
+        elapsed,
+        "active" if brick_on is not None else "off",
+    )
+    return result

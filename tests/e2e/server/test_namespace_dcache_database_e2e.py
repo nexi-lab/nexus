@@ -22,8 +22,6 @@ Run with:
     pytest tests/e2e/test_namespace_dcache_database_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import os
 import shutil
 import signal
@@ -59,7 +57,6 @@ if str(_src_path) not in sys.path:
 for _key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
     os.environ.pop(_key, None)
 os.environ["NO_PROXY"] = "*"
-
 
 # === Helpers ===
 
@@ -185,7 +182,7 @@ def _preseed_database(db_url: str) -> dict[str, str]:
     Returns dict mapping role names to raw API keys:
         {"admin": "sk-...", "alice": "sk-...", "bob": "sk-..."}
     """
-    from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+    from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
     from nexus.storage.models import Base
 
     engine = create_engine(db_url, echo=False, pool_pre_ping=True)

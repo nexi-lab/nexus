@@ -4,7 +4,13 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from nexus.skills.audit import AuditAction, AuditLogEntry, SkillAuditLogger
+from nexus.bricks.skills.audit import (
+    AuditAction,
+    AuditLogEntry,
+    SkillAuditLogger,
+    _audit_key,
+    _serialize_entry,
+)
 
 
 @pytest.mark.asyncio
@@ -20,9 +26,11 @@ async def test_log_audit_entry() -> None:
     )
 
     assert audit_id is not None
-    assert len(audit._in_memory_logs) == 1
 
-    entry = audit._in_memory_logs[0]
+    entries = await audit._all_entries()
+    assert len(entries) == 1
+
+    entry = entries[0]
     assert entry.skill_name == "test-skill"
     assert entry.action == AuditAction.EXECUTED
     assert entry.agent_id == "alice"
@@ -40,10 +48,11 @@ async def test_log_different_actions() -> None:
     await audit.log("skill1", AuditAction.PUBLISHED, agent_id="alice")
     await audit.log("skill2", AuditAction.EXECUTED, agent_id="charlie")
 
-    assert len(audit._in_memory_logs) == 4
+    entries = await audit._all_entries()
+    assert len(entries) == 4
 
     # Verify action types
-    actions = [entry.action for entry in audit._in_memory_logs]
+    actions = [entry.action for entry in entries]
     assert AuditAction.CREATED in actions
     assert AuditAction.FORKED in actions
     assert AuditAction.PUBLISHED in actions
@@ -112,8 +121,6 @@ async def test_query_logs_by_time_range() -> None:
     two_days_ago = now - timedelta(days=2)
 
     # Manually create entries with specific timestamps for testing
-    from nexus.skills.audit import AuditLogEntry
-
     entry1 = AuditLogEntry(
         audit_id="1",
         skill_name="skill1",
@@ -123,7 +130,7 @@ async def test_query_logs_by_time_range() -> None:
         details=None,
         timestamp=two_days_ago,
     )
-    audit._in_memory_logs.append(entry1)
+    await audit._cache.set(_audit_key(entry1.audit_id), _serialize_entry(entry1))
 
     entry2 = AuditLogEntry(
         audit_id="2",
@@ -134,7 +141,7 @@ async def test_query_logs_by_time_range() -> None:
         details=None,
         timestamp=yesterday,
     )
-    audit._in_memory_logs.append(entry2)
+    await audit._cache.set(_audit_key(entry2.audit_id), _serialize_entry(entry2))
 
     entry3 = AuditLogEntry(
         audit_id="3",
@@ -145,7 +152,7 @@ async def test_query_logs_by_time_range() -> None:
         details=None,
         timestamp=now,
     )
-    audit._in_memory_logs.append(entry3)
+    await audit._cache.set(_audit_key(entry3.audit_id), _serialize_entry(entry3))
 
     # Query for logs since yesterday
     logs = await audit.query_logs(start_time=yesterday - timedelta(hours=1))
@@ -261,9 +268,7 @@ async def test_generate_compliance_report_with_time_range() -> None:
     now = datetime.utcnow()
     yesterday = now - timedelta(days=1)
 
-    # Create entries with specific timestamps
-    from nexus.skills.audit import AuditLogEntry
-
+    # Create entries with specific timestamps via cache
     old_entry = AuditLogEntry(
         audit_id="1",
         skill_name="skill1",
@@ -273,7 +278,7 @@ async def test_generate_compliance_report_with_time_range() -> None:
         details=None,
         timestamp=yesterday - timedelta(days=1),
     )
-    audit._in_memory_logs.append(old_entry)
+    await audit._cache.set(_audit_key(old_entry.audit_id), _serialize_entry(old_entry))
 
     recent_entry = AuditLogEntry(
         audit_id="2",
@@ -284,7 +289,7 @@ async def test_generate_compliance_report_with_time_range() -> None:
         details=None,
         timestamp=now,
     )
-    audit._in_memory_logs.append(recent_entry)
+    await audit._cache.set(_audit_key(recent_entry.audit_id), _serialize_entry(recent_entry))
 
     # Generate report for last 24 hours
     report = await audit.generate_compliance_report(zone_id="zone1", start_time=yesterday)
@@ -298,7 +303,7 @@ async def test_audit_log_entry_validation() -> None:
     """Test audit log entry validation."""
     from datetime import datetime
 
-    from nexus.skills.exceptions import SkillValidationError
+    from nexus.bricks.skills.exceptions import SkillValidationError
 
     # Valid entry
     entry = AuditLogEntry(

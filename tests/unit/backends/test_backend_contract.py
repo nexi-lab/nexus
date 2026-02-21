@@ -1,7 +1,5 @@
 """Backend contract tests -- parametrized across MockBackend and LocalBackend (Issue #1601)."""
 
-from __future__ import annotations
-
 import hashlib
 from typing import Any
 
@@ -13,7 +11,7 @@ from nexus.core.protocols.connector import (
     ContentStoreProtocol,
     DirectoryOpsProtocol,
 )
-from nexus.core.response import HandlerResponse
+from nexus.lib.response import HandlerResponse
 
 
 class _MockBackend(Backend):

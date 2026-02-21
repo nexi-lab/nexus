@@ -1,14 +1,12 @@
 """Self-contained E2E tests for batch endpoint (Issue #1242).
 
-Uses FastAPI TestClient with mock AsyncNexusFS — no Rust extension needed.
+Uses FastAPI TestClient with mock NexusFS — no Rust extension needed.
 Validates full router wiring, sequential execution, and performance.
 """
 
-from __future__ import annotations
-
 import time
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi import FastAPI
@@ -17,9 +15,9 @@ from fastapi.testclient import TestClient
 from nexus.server.api.v2.routers.batch import create_batch_router
 
 
-def _make_mock_fs() -> AsyncMock:
-    """Create a mock AsyncNexusFS with realistic behaviors."""
-    fs = AsyncMock()
+def _make_mock_fs() -> MagicMock:
+    """Create a mock NexusFS with realistic behaviors."""
+    fs = MagicMock()
     # Simulate realistic read latency
     fs.read.return_value = b"hello world content here"
     fs.write.return_value = {
@@ -31,7 +29,7 @@ def _make_mock_fs() -> AsyncMock:
     }
     fs.delete.return_value = {"deleted": True, "path": "/test.txt"}
     fs.exists.return_value = True
-    fs.list_dir.return_value = ["file1.txt", "file2.txt", "dir/"]
+    fs.list.return_value = ["/file1.txt", "/file2.txt", "/dir/"]
     fs.mkdir.return_value = None
 
     meta = MagicMock()
@@ -57,15 +55,15 @@ def _make_mock_context() -> MagicMock:
 
 
 @pytest.fixture()
-def mock_fs() -> AsyncMock:
+def mock_fs() -> MagicMock:
     return _make_mock_fs()
 
 
 @pytest.fixture()
-def client(mock_fs: AsyncMock) -> TestClient:
+def client(mock_fs: MagicMock) -> TestClient:
     app = FastAPI()
     router = create_batch_router(
-        async_fs=mock_fs,
+        nexus_fs=mock_fs,
         get_context_override=lambda: _make_mock_context(),
     )
     app.include_router(router, prefix="/api/v2")
@@ -102,11 +100,11 @@ class TestBatchSelfContainedE2E:
                 f"Op {i} ({data['results'][i]}) expected {expected}"
             )
 
-    def test_sequential_write_then_read(self, client: TestClient, mock_fs: AsyncMock) -> None:
+    def test_sequential_write_then_read(self, client: TestClient, mock_fs: MagicMock) -> None:
         """Write then read in single batch verifies sequential execution."""
         execution_order: list[str] = []
 
-        async def tracking_write(*args: Any, **kwargs: Any) -> dict:
+        def tracking_write(*args: Any, **kwargs: Any) -> dict:
             execution_order.append("write")
             return {
                 "etag": "new",
@@ -116,7 +114,7 @@ class TestBatchSelfContainedE2E:
                 "path": "/data.txt",
             }
 
-        async def tracking_read(*args: Any, **kwargs: Any) -> bytes:
+        def tracking_read(*args: Any, **kwargs: Any) -> bytes:
             execution_order.append("read")
             return b"hello"
 
@@ -135,9 +133,9 @@ class TestBatchSelfContainedE2E:
         assert response.status_code == 200
         assert execution_order == ["write", "read"]
 
-    def test_stop_on_error_cascading(self, client: TestClient, mock_fs: AsyncMock) -> None:
+    def test_stop_on_error_cascading(self, client: TestClient, mock_fs: MagicMock) -> None:
         """stop_on_error cascades 424 to all remaining operations."""
-        from nexus.core.exceptions import NexusFileNotFoundError
+        from nexus.contracts.exceptions import NexusFileNotFoundError
 
         mock_fs.read.side_effect = NexusFileNotFoundError(path="/missing.txt")
 
@@ -160,13 +158,13 @@ class TestBatchSelfContainedE2E:
         assert data["results"][2]["status"] == 424
         assert data["results"][3]["status"] == 424
 
-    def test_partial_failure_continues(self, client: TestClient, mock_fs: AsyncMock) -> None:
+    def test_partial_failure_continues(self, client: TestClient, mock_fs: MagicMock) -> None:
         """Partial failure without stop_on_error continues processing."""
-        from nexus.core.exceptions import NexusPermissionError
+        from nexus.contracts.exceptions import NexusPermissionError
 
         call_count = 0
 
-        async def permission_gated_read(path: str, **kwargs: Any) -> bytes:
+        def permission_gated_read(path: str, **kwargs: Any) -> bytes:
             nonlocal call_count
             call_count += 1
             if call_count == 2:

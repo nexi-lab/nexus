@@ -7,8 +7,6 @@ This module contains:
 - Shared helper functions (standalone, taking ctx: FUSESharedContext)
 """
 
-from __future__ import annotations
-
 import errno
 import functools
 import logging
@@ -23,22 +21,22 @@ from typing import TYPE_CHECKING, Any, NoReturn, cast
 from cachetools import TTLCache as _TTLCache
 from fuse import FuseOSError
 
-from nexus.core.exceptions import (
+from nexus.contracts.exceptions import (
     NexusFileNotFoundError,
     NexusPermissionError,
     RemoteConnectionError,
     RemoteFilesystemError,
     RemoteTimeoutError,
 )
-from nexus.core.virtual_views import parse_virtual_path
 from nexus.fuse.cache import FUSECacheManager
+from nexus.lib.virtual_views import parse_virtual_path
 
 if TYPE_CHECKING:
-    from nexus.core.filesystem import NexusFilesystem
-    from nexus.core.permissions import OperationContext
+    from nexus.bricks.rebac.namespace_manager import NamespaceManager
+    from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
+    from nexus.contracts.types import OperationContext
     from nexus.fuse.mount import MountMode
     from nexus.fuse.ops._events import FUSEEventDispatcher
-    from nexus.rebac.namespace_manager import NamespaceManager
 
 # Import readahead for sequential read optimization (Issue #1073)
 try:
@@ -59,7 +57,6 @@ except ImportError:
     LocalDiskCache = None  # type: ignore[misc,assignment]
 
 logger = logging.getLogger(__name__)
-
 
 # ============================================================
 # Data types
@@ -82,7 +79,7 @@ class MetadataObj:
     is_directory: bool | None = None
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> MetadataObj:
+    def from_dict(cls, d: dict[str, Any]) -> "MetadataObj":
         return cls(
             path=d.get("path"),
             size=d.get("size"),
@@ -107,24 +104,24 @@ class FUSESharedContext:
     module-level helper functions.
     """
 
-    nexus_fs: NexusFilesystem
-    mode: MountMode
-    context: OperationContext | None
-    namespace_manager: NamespaceManager | None
+    nexus_fs: "NexusFilesystemABC"
+    mode: "MountMode"
+    context: "OperationContext | None"
+    namespace_manager: "NamespaceManager | None"
     cache: FUSECacheManager
     local_disk_cache: Any | None  # LocalDiskCache | None
     readahead: Any | None  # ReadaheadManager | None
     rust_client: Any | None
     use_rust: bool
-    events: FUSEEventDispatcher
+    events: "FUSEEventDispatcher"
     cache_config: dict[str, Any]
 
     # Mutable state (shared across handlers, protected by locks)
     fd_counter: int = 0
     open_files: dict[int, dict[str, Any]] = field(default_factory=dict)
-    files_lock: threading.RLock = field(default_factory=threading.RLock)
+    files_lock: "threading.RLock" = field(default_factory=threading.RLock)
     dir_cache: _TTLCache = field(default_factory=lambda: _TTLCache(maxsize=1024, ttl=5))
-    dir_cache_lock: threading.RLock = field(default_factory=threading.RLock)
+    dir_cache_lock: "threading.RLock" = field(default_factory=threading.RLock)
 
 
 # ============================================================
@@ -323,8 +320,10 @@ def get_file_content(
 
     # In text mode, try to parse
     if ctx.mode.value == "text" or (ctx.mode.value == "smart" and view_type):
-        from nexus.core.virtual_views import get_parsed_content
-        from nexus.parsers import create_default_parse_fn
+        import importlib as _il
+
+        create_default_parse_fn = _il.import_module("nexus.bricks.parsers").create_default_parse_fn
+        from nexus.lib.virtual_views import get_parsed_content
 
         if not hasattr(ctx, "_parse_fn"):
             ctx._parse_fn = create_default_parse_fn()  # type: ignore[attr-defined]
@@ -568,7 +567,10 @@ def resolve_io_profile(ctx: FUSESharedContext, path: str) -> str:
     if not ctx._io_profile_loaded:  # type: ignore[attr-defined]
         ctx._io_profile_loaded = True  # type: ignore[attr-defined]
         try:
-            mounts = ctx.nexus_fs.list_mounts()
+            mount_svc = cast(Any, ctx.nexus_fs).mount_service
+            from nexus.lib.sync_bridge import run_sync as _run_sync
+
+            mounts = _run_sync(mount_svc.list_mounts())
             ctx._io_profile_mounts = sorted(  # type: ignore[attr-defined]
                 [(m["mount_point"], m.get("io_profile", "balanced")) for m in mounts],
                 key=lambda x: len(x[0]),

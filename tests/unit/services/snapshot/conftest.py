@@ -1,14 +1,13 @@
 """Shared fixtures for snapshot service tests (Issue #1752)."""
 
-from __future__ import annotations
-
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.services.snapshot.registry import TransactionRegistry
-from nexus.services.snapshot.service import TransactionalSnapshotService
+from nexus.bricks.snapshot.registry import TransactionRegistry
+from nexus.bricks.snapshot.service import TransactionalSnapshotService
+from nexus.contracts.metadata import FileMetadata
 
 
 class FakeSession:
@@ -18,7 +17,7 @@ class FakeSession:
         self._store: dict[str, Any] = store if store is not None else {}
         self._pending: list[Any] = []
 
-    def __enter__(self) -> FakeSession:
+    def __enter__(self) -> "FakeSession":
         return self
 
     def __exit__(self, *args: object) -> None:
@@ -57,7 +56,7 @@ class FakeResult:
     def __init__(self, items: list[Any]) -> None:
         self._items = items
 
-    def scalars(self) -> FakeResult:
+    def scalars(self) -> "FakeResult":
         return self
 
     def all(self) -> list[Any]:
@@ -90,6 +89,14 @@ def mock_session_factory() -> MagicMock:
 
 
 @pytest.fixture
+def mock_record_store(mock_session_factory: MagicMock) -> MagicMock:
+    """Mock RecordStoreABC wrapping the session factory."""
+    rs = MagicMock()
+    rs.session_factory = mock_session_factory
+    return rs
+
+
+@pytest.fixture
 def registry() -> TransactionRegistry:
     """Fresh TransactionRegistry instance."""
     return TransactionRegistry()
@@ -97,13 +104,14 @@ def registry() -> TransactionRegistry:
 
 @pytest.fixture
 def snapshot_service(
-    mock_session_factory: MagicMock,
+    mock_record_store: MagicMock,
     mock_cas_store: MagicMock,
     mock_metadata_store: MagicMock,
 ) -> TransactionalSnapshotService:
     """TransactionalSnapshotService with mocked dependencies."""
     return TransactionalSnapshotService(
-        session_factory=mock_session_factory,
+        record_store=mock_record_store,
         cas_store=mock_cas_store,
         metadata_store=mock_metadata_store,
+        metadata_factory=FileMetadata,
     )

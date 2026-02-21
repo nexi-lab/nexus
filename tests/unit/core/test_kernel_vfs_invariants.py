@@ -8,8 +8,6 @@ Invariants proven:
   5. Read-only namespaces reject writes, accept reads
 """
 
-from __future__ import annotations
-
 import tempfile
 
 from hypothesis import example, given, settings

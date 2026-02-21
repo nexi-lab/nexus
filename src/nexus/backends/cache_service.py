@@ -13,8 +13,6 @@ Bug fixes applied:
 Part of: #1628 (Split CacheConnectorMixin into focused units)
 """
 
-from __future__ import annotations
-
 import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
@@ -28,10 +26,11 @@ from nexus.backends.cache_models import (
     CachedReadResult,
     CacheEntry,
 )
-from nexus.core.exceptions import ConflictError
+from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.exceptions import ConflictError
+from nexus.contracts.types import OperationContext
 from nexus.core.hash_fast import hash_content
-from nexus.core.permissions import OperationContext
-from nexus.storage.file_cache import get_file_cache
+from nexus.storage.file_cache import FileContentCache
 from nexus.storage.models import FilePathModel
 
 if TYPE_CHECKING:
@@ -61,15 +60,26 @@ class CacheService:
     def __init__(
         self,
         connector: Any,
-        l1_cache: L1MetadataCache | None = None,
-        backend_io: BackendIOService | None = None,
+        l1_cache: "L1MetadataCache | None" = None,
+        backend_io: "BackendIOService | None" = None,
+        file_cache: FileContentCache | None = None,
     ) -> None:
         self._connector = connector
         self._l1_cache = l1_cache
         self._backend_io = backend_io
+        self._file_cache = file_cache
 
     @property
-    def backend_io(self) -> BackendIOService:
+    def file_cache(self) -> FileContentCache:
+        """Get the injected FileContentCache (lazy-create if not provided)."""
+        if self._file_cache is None:
+            import os
+
+            self._file_cache = FileContentCache(os.getenv("NEXUS_DATA_DIR", "./nexus-data"))
+        return self._file_cache
+
+    @property
+    def backend_io(self) -> "BackendIOService":
         """Lazy-initialize BackendIOService."""
         if self._backend_io is None:
             from nexus.backends.backend_io import BackendIOService
@@ -83,7 +93,7 @@ class CacheService:
 
     def _get_cache_zone(self) -> str:
         """Get cache zone from connector (consolidates 3 duplicated getattr calls)."""
-        return getattr(self._connector, "zone_id", None) or "root"
+        return getattr(self._connector, "zone_id", None) or ROOT_ZONE_ID
 
     def _get_cache_ttl(self) -> int:
         """Get cache TTL from connector (consolidates 3 duplicated getattr calls)."""
@@ -187,7 +197,7 @@ class CacheService:
             return context.backend_path
         return None
 
-    def get_db_session(self) -> Session:
+    def get_db_session(self) -> "Session":
         """Get database session from connector."""
         connector = self._connector
         if hasattr(connector, "session_factory") and connector.session_factory is not None:
@@ -198,7 +208,7 @@ class CacheService:
             return cast("Session", connector._db_session)
         raise RuntimeError("No database session available for caching")
 
-    def get_path_id(self, path: str, session: Session) -> str | None:
+    def get_path_id(self, path: str, session: "Session") -> str | None:
         """Get path_id for a virtual path."""
         stmt = select(FilePathModel.path_id).where(
             FilePathModel.virtual_path == path,
@@ -208,7 +218,7 @@ class CacheService:
         row: str | None = result.scalar_one_or_none()
         return row
 
-    def get_path_ids_bulk(self, paths: list[str], session: Session) -> dict[str, str]:
+    def get_path_ids_bulk(self, paths: list[str], session: "Session") -> dict[str, str]:
         """Get path_ids for multiple virtual paths in a single query."""
         if not paths:
             return {}
@@ -257,7 +267,7 @@ class CacheService:
             logger.debug("[CACHE] L2 SKIP (l1_only mode): %s", path)
             return None
 
-        file_cache = get_file_cache()
+        file_cache = self.file_cache
         cache_zone = self._get_cache_zone()
         meta = file_cache.read_meta(cache_zone, path)
 
@@ -338,7 +348,7 @@ class CacheService:
             return results
 
         # L2: Disk-based lookup for remaining paths
-        file_cache = get_file_cache()
+        file_cache = self.file_cache
         cache_zone = self._get_cache_zone()
 
         meta_entries = file_cache.read_meta_bulk(cache_zone, paths_needing_l2)
@@ -428,7 +438,7 @@ class CacheService:
         content_hash = hash_content(content)
         original_size = len(content)
         now = datetime.now(UTC)
-        cache_zone = zone_id or "root"
+        cache_zone = zone_id or ROOT_ZONE_ID
 
         # Determine text content
         if content_text is None:
@@ -448,7 +458,7 @@ class CacheService:
         has_l2 = self.has_l2_caching()
 
         if has_l2:
-            file_cache = get_file_cache()
+            file_cache = self.file_cache
 
             path_id = ""
             session = self.get_db_session()
@@ -555,7 +565,7 @@ class CacheService:
 
         now = datetime.now(UTC)
         l1_cache = self._l1_cache
-        file_cache = get_file_cache()
+        file_cache = self.file_cache
 
         session = self.get_db_session()
         path_id_map: dict[str, str] = {}
@@ -593,7 +603,7 @@ class CacheService:
 
                 cached_size = len(content_text) if content_text else 0
 
-                cache_zone = entry_zone_id or "root"
+                cache_zone = entry_zone_id or ROOT_ZONE_ID
                 if original_size <= MAX_CACHE_FILE_SIZE:
                     try:
                         file_cache.write(cache_zone, path, content, text_content=content_text)
@@ -703,7 +713,7 @@ class CacheService:
         instead of `f"cache_entry:{path}"` which never matched.
         """
         memory_cache = self._l1_cache
-        file_cache = get_file_cache()
+        file_cache = self.file_cache
         cache_zone = self._get_cache_zone()
 
         if path:

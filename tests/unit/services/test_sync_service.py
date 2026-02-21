@@ -3,16 +3,14 @@
 Tests metadata and content synchronization from connector backends.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.core.permissions import OperationContext
-from nexus.services.change_log_store import ChangeLogEntry
-from nexus.services.sync_service import (
+from nexus.contracts.types import OperationContext
+from nexus.system_services.sync.change_log_store import ChangeLogEntry
+from nexus.system_services.sync.sync_service import (
     SyncContext,
     SyncResult,
     SyncService,
@@ -132,7 +130,7 @@ class TestSyncServiceInit:
         """SyncService initializes a ChangeLogStore."""
         service = SyncService(gateway=mock_gateway)
         assert service._change_log is not None
-        assert service._change_log._session_factory is mock_gateway.session_factory
+        assert service._change_log._session_factory is mock_gateway.record_store.session_factory
 
 
 # =============================================================================

@@ -6,8 +6,6 @@ with tenacity, freeing thread pool slots during backoff sleep.
 Does NOT depend on pytest-asyncio — uses explicit event loop helper.
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 import os
@@ -17,7 +15,7 @@ from unittest.mock import patch
 import pytest
 
 from nexus.backends.async_local import AsyncLocalBackend
-from nexus.core.exceptions import BackendError
+from nexus.contracts.exceptions import BackendError
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -8,15 +8,13 @@ For actual search operations, use the standard search APIs with the
 appropriate embedding provider configured via MobileSearchConfig.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from nexus.search.mobile_config import (
+from nexus.bricks.search.mobile_config import (
     DeviceTier,
     detect_device_tier,
     get_config_for_tier,
@@ -26,7 +24,6 @@ from nexus.server.dependencies import require_auth
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/mobile", tags=["mobile"], dependencies=[Depends(require_auth)])
-
 
 # =============================================================================
 # Request/Response Models
@@ -164,7 +161,7 @@ async def download_models(request: ModelDownloadRequest) -> ModelDownloadRespons
         )
 
     try:
-        from nexus.search.mobile_providers import download_models_for_tier
+        from nexus.bricks.search.mobile_providers import download_models_for_tier
 
         results = await download_models_for_tier(tier.value)
 

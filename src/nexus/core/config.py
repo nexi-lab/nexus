@@ -19,8 +19,6 @@ Service container hierarchy (matches NEXUS-LEGO-ARCHITECTURE §2):
     BrickServices   — Tier 2: optional, silent on failure, hot-swappable
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -28,8 +26,12 @@ from nexus.constants import DEFAULT_NATS_URL
 
 if TYPE_CHECKING:
     from nexus.bricks.workflows.protocol import WorkflowProtocol
-    from nexus.core.cache_invalidation import CacheInvalidationObserver
+    from nexus.contracts.write_observer import WriteObserverProtocol
+    from nexus.services.protocols.entity_registry import EntityRegistryProtocol
     from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
+    from nexus.services.protocols.permission_enforcer import PermissionEnforcerProtocol
+    from nexus.services.protocols.rebac import ReBACBrickProtocol
+    from nexus.services.protocols.workspace_manager import WorkspaceManagerProtocol
 
 # ---------------------------------------------------------------------------
 # Config dataclasses (frozen — immutable, use dataclasses.replace() to copy)
@@ -59,7 +61,7 @@ class CacheConfig:
 class PermissionConfig:
     """Permission enforcement configuration.
 
-    Controls ReBAC permission checks, zone isolation, audit logging,
+    Controls ReBAC permission checks, zone isolation,
     Tiger Cache, and deferred permission batching.
     """
 
@@ -67,10 +69,32 @@ class PermissionConfig:
     inherit: bool = True
     allow_admin_bypass: bool = False
     enforce_zone_isolation: bool = True
-    audit_strict_mode: bool = True
     enable_tiger_cache: bool = True
     enable_deferred: bool = True
     deferred_flush_interval: float = 0.05
+
+
+@dataclass(frozen=True)
+class AuditConfig:
+    """Audit trail error-policy configuration (Issue #2152).
+
+    Controls what happens when audit logging (RecordStore sync) fails
+    during write operations. This is a P0 compliance concern — separate
+    from permission enforcement (PermissionConfig).
+
+    P0 COMPLIANCE: SOX, HIPAA, GDPR, PCI DSS require complete audit
+    trails. ``strict_mode=True`` (default) ensures writes fail if audit
+    logging fails, preventing silent audit gaps.
+
+    Note on buffered observers: ``strict_mode`` is enforced by the
+    synchronous ``RecordStoreWriteObserver``. The async
+    ``BufferedRecordStoreWriteObserver`` enqueues events into a
+    ``WriteBuffer`` where the enqueue path cannot fail; actual error
+    handling (retry + drop) is managed by the ``WriteBuffer`` background
+    flush thread, not by ``strict_mode``.
+    """
+
+    strict_mode: bool = True
 
 
 @dataclass(frozen=True)
@@ -111,51 +135,29 @@ class ParseConfig:
 
 
 # ---------------------------------------------------------------------------
-# KernelServices — Tier 0: boot-fatal kernel mechanisms
+# KernelServices — Tier 0: Storage Pillar validation
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class KernelServices:
-    """Tier 0 (KERNEL) — mandatory services that are fatal on failure.
+    """Tier 0 (KERNEL) — Storage Pillar handles only.
 
-    Contains only kernel-level mechanisms: VFS routing, permissions,
-    workspace management, sync/versioning, and cache invalidation.
+    Per NEXUS-LEGO-ARCHITECTURE §2 and Liedtke's microkernel test, only
+    VFS routing and Metastore belong in the kernel.  Both are injected as
+    constructor arguments; this container simply carries the router handle.
 
-    Created by ``nexus.factory._boot_kernel_services()`` and injected
-    into the NexusFS kernel constructor.
+    All former kernel services (ReBAC, permissions, workspace, write-sync)
+    have been moved to ``SystemServices`` (Issue #2193) where they are
+    classified as *critical* (BootError on failure) or *degradable*
+    (WARNING + None on failure).
 
     Frozen — all wiring must happen at construction time in factory.py.
     Use ``dataclasses.replace()`` to create modified copies if needed.
-
-    Issue #2034: Slimmed from ~40 fields to 15 kernel-only fields.
-    System and brick services moved to SystemServices / BrickServices.
     """
 
-    # VFS routing
+    # VFS routing — the only kernel-level mechanism
     router: Any = None
-
-    # ReBAC permission subsystem
-    rebac_manager: Any = None
-    dir_visibility_cache: Any = None
-    audit_store: Any = None
-    entity_registry: Any = None
-    permission_enforcer: Any = None
-    hierarchy_manager: Any = None
-    deferred_permission_buffer: Any = None
-
-    # Workspace subsystem
-    workspace_registry: Any = None
-    mount_manager: Any = None
-    workspace_manager: Any = None
-
-    # Sync / versioning
-    write_observer: Any = None
-    version_service: Any = None
-    overlay_resolver: Any = None
-
-    # Cache invalidation (Issue #1169 / #1519)
-    cache_observer: CacheInvalidationObserver | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -165,27 +167,85 @@ class KernelServices:
 
 @dataclass(frozen=True)
 class SystemServices:
-    """Tier 1 (SYSTEM) — critical, always-started, degraded-mode on failure.
+    """Tier 1 (SYSTEM) — critical + degradable services.
 
-    Contains services that the kernel needs for agent identity, namespace
-    visibility, event delivery, observability, and lifecycle management.
-    System fails gracefully if these are unavailable (logs WARNING, sets None).
+    Contains two severity classes (Issue #2193, #2440):
+
+    **Critical** (BootError on failure):
+        write_observer — the only critical system service.
+
+    **Degradable — ReBAC** (NoOp fallback on failure, Issue #2440):
+        rebac_manager, audit_store, entity_registry, permission_enforcer.
+        When ReBAC is disabled or fails to init, NoOp stubs are injected
+        so the system boots without permission enforcement.
+
+    **Degradable** (WARNING + None on failure):
+        dir_visibility_cache, hierarchy_manager, deferred_permission_buffer,
+        workspace_registry, mount_manager, workspace_manager, and all
+        remaining system services (agent registry, namespace, observability,
+        resiliency, lifecycle management).
 
     Created by ``nexus.factory._boot_system_services()``.
 
     Issue #2034: Extracted from the monolithic KernelServices.
+    Issue #2193: Absorbed former Tier 0 services per Liedtke's test.
+    Issue #2440: Demoted ReBAC from critical to degradable (Null Object).
     """
+
+    # =================================================================
+    # CRITICAL services (BootError on failure)
+    # =================================================================
+
+    # Write sync — critical
+    write_observer: "WriteObserverProtocol | None" = None
+
+    # =================================================================
+    # DEGRADABLE — ReBAC (NoOp fallback, Issue #2440)
+    # =================================================================
+
+    # ReBAC permission subsystem (Issue #2133: typed with Protocols)
+    rebac_manager: "ReBACBrickProtocol | None" = None
+    audit_store: Any = None
+    entity_registry: "EntityRegistryProtocol | None" = None
+    permission_enforcer: "PermissionEnforcerProtocol | None" = None
+
+    # =================================================================
+    # DEGRADABLE services (WARNING + None on failure)
+    # =================================================================
+
+    # ReBAC caching / hierarchy — degradable
+    dir_visibility_cache: Any = None
+    hierarchy_manager: Any = None
+    deferred_permission_buffer: Any = None
+
+    # Workspace subsystem — degradable
+    workspace_registry: Any = None
+    mount_manager: Any = None
+    workspace_manager: "WorkspaceManagerProtocol | None" = None
+
+    # VFS hook pipeline (Issue #2033 Phase 5) — degradable
+    hook_pipeline: Any = None
+
+    # Tiger Cache manager (Issue #2133: injected via factory)
+    tiger_cache_manager: Any = None
+
+    # =================================================================
+    # Original system services (all degradable)
+    # =================================================================
 
     # Agent identity (Issue #1502)
     agent_registry: Any = None
     async_agent_registry: Any = None
 
     # Namespace visibility (Issue #1502)
-    namespace_manager: NamespaceManagerProtocol | None = None
+    namespace_manager: "NamespaceManagerProtocol | None" = None
     async_namespace_manager: Any = None
 
     # Workspace branching (Issue #1315)
     context_branch_service: Any = None
+
+    # Namespace forking for speculative execution (Issue #1273)
+    namespace_fork_service: Any = None
 
     # Hook engine chain (Issue #1257)
     scoped_hook_engine: Any = None
@@ -201,6 +261,22 @@ class SystemServices:
 
     # Resiliency policies (Issue #1366)
     resiliency_manager: Any = None
+
+    # Agent eviction under resource pressure (Issue #2170)
+    eviction_manager: Any = None
+
+    # Brick reconciler — drift detection and self-healing (Issue #2060)
+    brick_reconciler: Any = None
+
+    # Zone lifecycle — ordered zone deprovisioning (Issue #2061)
+    zone_lifecycle: Any = None
+
+    # Event Log WAL — append-only audit trail (Issue #1397, #2195)
+    event_log: Any = None
+
+    # Scheduler service — fair-share task scheduling (Issue #1212, #2195, #2360)
+    scheduler_service: Any = None
+    scheduler_state_emitter: Any = None
 
 
 # ---------------------------------------------------------------------------
@@ -223,7 +299,7 @@ class BrickServices:
     # Infrastructure bricks
     event_bus: Any = None
     lock_manager: Any = None
-    workflow_engine: WorkflowProtocol | None = None
+    workflow_engine: "WorkflowProtocol | None" = None
     rebac_circuit_breaker: Any = None
 
     # Feature bricks
@@ -235,10 +311,92 @@ class BrickServices:
     snapshot_service: Any = None  # SNAPSHOT brick (Issue #1752)
     task_queue_service: Any = None  # TASK_QUEUE brick (Issue #655)
 
+    # --- Cache Brick (Issue #1524) ---
+    cache_brick: Any = None  # CacheBrick — owns all cache domain services
+
     # --- IPC Brick (Issue #1727, LEGO §8) ---
     ipc_storage_driver: Any = None  # IPCStorageDriver (RecordStore or VFS)
     ipc_vfs_driver: Any = None  # IPCVFSDriver (Backend mounted at /agents)
     ipc_provisioner: Any = None  # AgentProvisioner
+
+    # --- Sandbox Brick (Issue #1307) ---
+    agent_event_log: Any = None  # AgentEventLog (sandbox lifecycle audit)
+
+    # --- Skills Brick (Issue #2035) ---
+    skill_service: Any = None  # SkillService (protocol-based)
+    skill_package_service: Any = None  # SkillPackageService
+
+    # --- Delegation & Reputation Bricks (Issue #2131) ---
+    delegation_service: Any = None  # DELEGATION brick
+    reputation_service: Any = None  # REPUTATION brick
+
+    # --- Version Brick (Issue #2034: moved from KernelServices) ---
+    version_service: Any = None  # VersionService (file history, rollback, diff)
+
+    # --- Memory Brick (Issue #2177) ---
+    memory_router: Any = None  # MemoryViewRouter singleton
+    memory_permission: Any = None  # MemoryPermissionProtocol adapter
+
+    # --- Factory-created bricks (Issue #2134: moved from NexusFS flat params) ---
+    parse_fn: Any = None  # Callable for parsing files (ParsersBrick)
+    content_cache: Any = None  # ContentCache instance
+    parser_registry: Any = None  # ParserRegistry (file format detection)
+    provider_registry: Any = None  # ProviderRegistry (parsing providers)
+    vfs_lock_manager: Any = None  # VFS lock manager (fine-grained file locks)
+
+    # --- Governance Brick (Issue #2129) ---
+    governance_anomaly_service: Any = None
+    governance_collusion_service: Any = None
+    governance_graph_service: Any = None
+    governance_response_service: Any = None
+
+
+# ---------------------------------------------------------------------------
+# WiredServices — Tier 2b: services needing NexusFS reference
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class WiredServices:
+    """Tier 2b (WIRED) — services requiring NexusFS reference.
+
+    Created by ``nexus.factory._wired._boot_wired_services()`` and bound
+    to NexusFS via ``_bind_wired_services()``.
+
+    Issue #2133: Replaces ``dict[str, Any]`` return type in wiring layer.
+    """
+
+    rebac_service: Any = None
+    mount_service: Any = None
+    gateway: Any = None
+    mount_core_service: Any = None
+    sync_service: Any = None
+    sync_job_service: Any = None
+    mount_persist_service: Any = None
+    mcp_service: Any = None
+    llm_service: Any = None
+    llm_subsystem: Any = None
+    oauth_service: Any = None
+    skill_service: Any = None
+    skill_package_service: Any = None
+    search_service: Any = None
+    share_link_service: Any = None
+    events_service: Any = None
+    task_queue_service: Any = None
+
+    # Versioning services (Issue #882: session-managed facades)
+    time_travel_service: Any = None
+    operations_service: Any = None
+
+    # RPC services (Issue #2133: migrated from service_wiring.py)
+    workspace_rpc_service: Any = None
+    agent_rpc_service: Any = None
+    user_provisioning_service: Any = None
+    sandbox_rpc_service: Any = None
+    metadata_export_service: Any = None
+    ace_rpc_service: Any = None
+    descendant_checker: Any = None
+    memory_provider: Any = None
 
 
 # ---------------------------------------------------------------------------

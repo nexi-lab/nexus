@@ -13,16 +13,11 @@ Validates:
 - No performance regressions
 """
 
-from __future__ import annotations
-
 import logging
 import statistics
 import time
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 # Skip if pydantic-monty not installed
 try:
@@ -39,12 +34,11 @@ pytestmark = [
 from nexus.bricks.sandbox.auth_service import SandboxAuthService  # noqa: E402
 from nexus.bricks.sandbox.sandbox_manager import SandboxManager  # noqa: E402
 from nexus.bricks.sandbox.sandbox_monty_provider import MontySandboxProvider  # noqa: E402
-from nexus.services.agents.agent_record import AgentState  # noqa: E402
+from nexus.contracts.agent_types import AgentState  # noqa: E402
 from nexus.services.agents.agent_registry import AgentRegistry  # noqa: E402
-from nexus.storage.models import Base  # noqa: E402
+from tests.helpers.in_memory_record_store import InMemoryRecordStore  # noqa: E402
 
 logger = logging.getLogger(__name__)
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -52,26 +46,22 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.fixture
-def engine():
-    """In-memory SQLite DB."""
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine)
-    return engine
+def record_store():
+    """Shared in-memory RecordStore for all components."""
+    store = InMemoryRecordStore()
+    yield store
+    store.close()
 
 
 @pytest.fixture
-def session_factory(engine):
-    return sessionmaker(bind=engine, expire_on_commit=False)
+def session_factory(record_store):
+    return record_store.session_factory
 
 
 @pytest.fixture
-def agent_registry(session_factory) -> AgentRegistry:
+def agent_registry(record_store) -> AgentRegistry:
     """Real AgentRegistry with a test agent."""
-    registry = AgentRegistry(session_factory=session_factory)
+    registry = AgentRegistry(record_store=record_store)
     # Register a test agent
     registry.register(
         agent_id="user-1,TestAgent",
@@ -82,9 +72,9 @@ def agent_registry(session_factory) -> AgentRegistry:
 
 
 @pytest.fixture
-def sandbox_manager(session_factory) -> SandboxManager:
+def sandbox_manager(record_store) -> SandboxManager:
     """SandboxManager with Monty provider."""
-    mgr = SandboxManager(session_factory=session_factory)
+    mgr = SandboxManager(record_store=record_store)
     mgr.providers["monty"] = MontySandboxProvider(
         resource_profile="standard",
         enable_type_checking=False,

@@ -3,15 +3,13 @@
 Uses ``ProcessPoolExecutor`` (``force_process=True``) for portability.
 """
 
-from __future__ import annotations
-
 import tempfile
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from nexus.isolation import IsolatedBackend, IsolationConfig
+from nexus.bricks.sandbox.isolation import IsolatedBackend, IsolationConfig
 
 _MOD = "tests.e2e.self_contained.isolation_helpers"
 _CLS = "MockBackend"

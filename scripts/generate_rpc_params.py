@@ -95,12 +95,15 @@ MODULES_TO_SCAN: list[str] = [
     "nexus.services.share_link_service",
     "nexus.services.version_service",
     "nexus.services.events_service",
-    "nexus.services.llm_service",
-    "nexus.services.mcp_service",
+    "nexus.bricks.llm.llm_service",
+    "nexus.bricks.mcp.mcp_service",
     "nexus.services.mount_service",
     "nexus.services.oauth_service",
-    "nexus.services.rebac_service",
+    "nexus.bricks.rebac.rebac_service",
     "nexus.services.skill_service",
+    # Brick services with @rpc_expose (Issue #2035, Follow-up 1)
+    "nexus.skills.service",
+    "nexus.skills.package_service",
 ]
 
 # Types that signal "operation context" — parameters with these types are

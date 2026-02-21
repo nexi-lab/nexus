@@ -1,0 +1,240 @@
+"""Access Manifests API v2 router (Issue #1754).
+
+Provides manifest lifecycle endpoints:
+- POST /api/v2/access-manifests           — Create manifest (generates ReBAC tuples)
+- GET  /api/v2/access-manifests/{id}      — Get manifest
+- GET  /api/v2/access-manifests           — List manifests (paginated)
+- POST /api/v2/access-manifests/{id}/evaluate — Evaluate tool permission
+- POST /api/v2/access-manifests/{id}/revoke   — Revoke (deletes ReBAC tuples)
+
+Pattern: Follows identity.py router (Depends on app.state, require_auth).
+"""
+
+import asyncio
+import logging
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field
+
+from nexus.server.dependencies import require_auth
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/v2/access-manifests", tags=["access_manifests"])
+
+# =============================================================================
+# Request/Response Models
+# =============================================================================
+
+
+class ManifestEntryRequest(BaseModel):
+    """Single rule in a manifest."""
+
+    tool_pattern: str = Field(..., description="Glob pattern for tool names")
+    permission: str = Field(..., description="'allow' or 'deny'")
+    max_calls_per_minute: int | None = Field(None, description="Optional rate limit")
+
+
+class CreateManifestRequest(BaseModel):
+    """Request to create an access manifest."""
+
+    agent_id: str = Field(..., description="Agent this manifest applies to")
+    name: str = Field(..., description="Human-readable name")
+    entries: list[ManifestEntryRequest] = Field(
+        ..., description="Ordered access rules (first-match-wins)"
+    )
+    zone_id: str = Field("root", description="Zone scope")
+    created_by: str = Field("", description="Creator identifier")
+    valid_hours: int = Field(720, description="Validity period in hours", ge=1, le=8760)
+    credential_id: str | None = Field(None, description="Optional backing VC")
+
+
+class EvaluateRequest(BaseModel):
+    """Request to evaluate tool permission."""
+
+    tool_name: str = Field(..., description="Tool name to evaluate")
+
+
+# =============================================================================
+# Dependencies
+# =============================================================================
+
+
+def _get_manifest_service(request: Request) -> Any:
+    """Get AccessManifestService from app.state brick_services or auto-discovery."""
+    # Check brick_services first (auto-discovered)
+    brick_svc = getattr(request.app.state, "brick_services", None)
+    if brick_svc is not None:
+        svc = getattr(brick_svc, "access_manifest_service", None)
+        if svc is not None:
+            return svc
+
+    # Fallback: check direct app.state
+    svc = getattr(request.app.state, "access_manifest_service", None)
+    if svc is None:
+        raise HTTPException(status_code=503, detail="Access manifest service not available")
+    return svc
+
+
+# =============================================================================
+# Endpoints
+# =============================================================================
+
+
+@router.post("")
+async def create_manifest(
+    body: CreateManifestRequest,
+    _auth_result: dict[str, Any] = Depends(require_auth),
+    manifest_service: Any = Depends(_get_manifest_service),
+) -> dict:
+    """Create a new access manifest with ReBAC tuple generation."""
+    from nexus.contracts.access_manifest_types import ManifestEntry, ToolPermission
+
+    entries = tuple(
+        ManifestEntry(
+            tool_pattern=e.tool_pattern,
+            permission=ToolPermission(e.permission),
+            max_calls_per_minute=e.max_calls_per_minute,
+        )
+        for e in body.entries
+    )
+
+    manifest = await asyncio.to_thread(
+        manifest_service.create_manifest,
+        agent_id=body.agent_id,
+        name=body.name,
+        entries=entries,
+        zone_id=body.zone_id,
+        created_by=body.created_by,
+        valid_hours=body.valid_hours,
+        credential_id=body.credential_id,
+    )
+
+    return {
+        "manifest_id": manifest.id,
+        "agent_id": manifest.agent_id,
+        "zone_id": manifest.zone_id,
+        "name": manifest.name,
+        "entries": [
+            {
+                "tool_pattern": e.tool_pattern,
+                "permission": e.permission,
+                "max_calls_per_minute": e.max_calls_per_minute,
+            }
+            for e in manifest.entries
+        ],
+        "status": manifest.status,
+        "valid_from": manifest.valid_from,
+        "valid_until": manifest.valid_until,
+    }
+
+
+@router.get("/{manifest_id}")
+async def get_manifest(
+    manifest_id: str,
+    _auth_result: dict[str, Any] = Depends(require_auth),
+    manifest_service: Any = Depends(_get_manifest_service),
+) -> dict:
+    """Get a single manifest by ID."""
+    manifest = await asyncio.to_thread(manifest_service.get_manifest, manifest_id)
+    if manifest is None:
+        raise HTTPException(status_code=404, detail="Manifest not found")
+
+    return {
+        "manifest_id": manifest.id,
+        "agent_id": manifest.agent_id,
+        "zone_id": manifest.zone_id,
+        "name": manifest.name,
+        "entries": [
+            {
+                "tool_pattern": e.tool_pattern,
+                "permission": e.permission,
+                "max_calls_per_minute": e.max_calls_per_minute,
+            }
+            for e in manifest.entries
+        ],
+        "status": manifest.status,
+        "valid_from": manifest.valid_from,
+        "valid_until": manifest.valid_until,
+    }
+
+
+@router.get("")
+async def list_manifests(
+    agent_id: str | None = None,
+    zone_id: str | None = None,
+    active_only: bool = False,
+    offset: int = 0,
+    limit: int = 50,
+    _auth_result: dict[str, Any] = Depends(require_auth),
+    manifest_service: Any = Depends(_get_manifest_service),
+) -> dict:
+    """List manifests with optional filters (paginated)."""
+    manifests = await asyncio.to_thread(
+        manifest_service.list_manifests,
+        agent_id=agent_id,
+        zone_id=zone_id,
+        active_only=active_only,
+        offset=offset,
+        limit=limit,
+    )
+
+    return {
+        "manifests": [
+            {
+                "manifest_id": m.id,
+                "agent_id": m.agent_id,
+                "zone_id": m.zone_id,
+                "name": m.name,
+                "status": m.status,
+                "valid_from": m.valid_from,
+                "valid_until": m.valid_until,
+            }
+            for m in manifests
+        ],
+        "offset": offset,
+        "limit": limit,
+        "count": len(manifests),
+    }
+
+
+@router.post("/{manifest_id}/evaluate")
+async def evaluate_tool(
+    manifest_id: str,
+    body: EvaluateRequest,
+    _auth_result: dict[str, Any] = Depends(require_auth),
+    manifest_service: Any = Depends(_get_manifest_service),
+) -> dict:
+    """Evaluate whether a tool is allowed for a manifest's agent."""
+    manifest = await asyncio.to_thread(manifest_service.get_manifest, manifest_id)
+    if manifest is None:
+        raise HTTPException(status_code=404, detail="Manifest not found")
+
+    permission = await asyncio.to_thread(
+        manifest_service.evaluate,
+        manifest.agent_id,
+        body.tool_name,
+        manifest.zone_id,
+    )
+
+    return {
+        "tool_name": body.tool_name,
+        "permission": permission,
+        "agent_id": manifest.agent_id,
+        "manifest_id": manifest_id,
+    }
+
+
+@router.post("/{manifest_id}/revoke")
+async def revoke_manifest(
+    manifest_id: str,
+    _auth_result: dict[str, Any] = Depends(require_auth),
+    manifest_service: Any = Depends(_get_manifest_service),
+) -> dict:
+    """Revoke a manifest and delete its ReBAC tuples."""
+    revoked = await asyncio.to_thread(manifest_service.revoke_manifest, manifest_id)
+    if not revoked:
+        raise HTTPException(status_code=404, detail="Manifest not found")
+
+    return {"manifest_id": manifest_id, "status": "revoked"}

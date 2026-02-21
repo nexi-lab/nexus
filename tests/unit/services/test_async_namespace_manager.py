@@ -1,16 +1,14 @@
 """Tests for AsyncNamespaceManager wrapper (Issue #1440)."""
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.rebac.async_namespace_manager import (
+from nexus.bricks.rebac.async_namespace_manager import (
     AsyncNamespaceManager,
     _to_namespace_mount,
 )
-from nexus.rebac.namespace_manager import MountEntry, NamespaceMount
+from nexus.bricks.rebac.namespace_manager import MountEntry, NamespaceMount
 from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
 from tests.unit.core.protocols.test_conformance import assert_protocol_conformance
 

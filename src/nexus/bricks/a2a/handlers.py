@@ -5,8 +5,6 @@ imports.  Extracted from ``router.py`` for testability and separation
 of concerns (Decision 1 / #1585).
 """
 
-from __future__ import annotations
-
 from collections.abc import Awaitable, Callable
 from typing import Any
 

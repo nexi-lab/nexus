@@ -8,10 +8,7 @@ Tests the local disk cache layer for FUSE operations including:
 - Block-level storage for large files
 """
 
-from __future__ import annotations
-
 import hashlib
-import os
 import tempfile
 import time
 from pathlib import Path
@@ -21,9 +18,6 @@ import pytest
 from nexus.storage.local_disk_cache import (
     CacheEntry,
     LocalDiskCache,
-    close_local_disk_cache,
-    get_local_disk_cache,
-    set_local_disk_cache,
 )
 
 
@@ -365,44 +359,6 @@ class TestStatistics:
         stats = cache.get_stats()
         assert stats["size_bytes"] == 3000
         assert stats["entries"] == 2
-
-
-class TestGlobalInstance:
-    """Test global cache instance management."""
-
-    def test_get_global_cache(self, cache_dir):
-        """Test getting global cache instance."""
-        # Clear any existing global cache
-        close_local_disk_cache()
-
-        # Set environment variable
-        os.environ["NEXUS_LOCAL_CACHE_DIR"] = cache_dir
-        os.environ["NEXUS_LOCAL_CACHE_SIZE_GB"] = "0.01"
-
-        try:
-            cache = get_local_disk_cache()
-            assert cache is not None
-            assert cache.cache_dir == Path(cache_dir)
-
-            # Should return same instance
-            cache2 = get_local_disk_cache()
-            assert cache is cache2
-
-        finally:
-            close_local_disk_cache()
-            os.environ.pop("NEXUS_LOCAL_CACHE_DIR", None)
-            os.environ.pop("NEXUS_LOCAL_CACHE_SIZE_GB", None)
-
-    def test_set_global_cache(self, cache):
-        """Test setting global cache instance."""
-        close_local_disk_cache()
-
-        set_local_disk_cache(cache)
-
-        global_cache = get_local_disk_cache()
-        assert global_cache is cache
-
-        close_local_disk_cache()
 
 
 class TestEdgeCases:

@@ -27,8 +27,6 @@ Performance expectations:
 - Cache miss detection: O(1) via Bloom filter
 """
 
-from __future__ import annotations
-
 import contextlib
 import logging
 import os
@@ -737,61 +735,3 @@ class LocalDiskCache:
         """Close cache and save metadata."""
         self.save_metadata()
         logger.info("LocalDiskCache closed")
-
-
-# =========================================================================
-# Global instance management
-# =========================================================================
-
-_default_cache: LocalDiskCache | None = None
-_cache_lock = threading.Lock()
-
-
-def get_local_disk_cache(
-    cache_dir: str | Path | None = None,
-    max_size_gb: float | None = None,
-) -> LocalDiskCache:
-    """Get or create the global LocalDiskCache instance.
-
-    Args:
-        cache_dir: Cache directory (only used on first call)
-        max_size_gb: Max size in GB (only used on first call)
-
-    Returns:
-        LocalDiskCache instance
-    """
-    global _default_cache
-
-    if _default_cache is None:
-        with _cache_lock:
-            if _default_cache is None:
-                # Read from environment if not specified
-                if cache_dir is None:
-                    cache_dir = os.getenv("NEXUS_LOCAL_CACHE_DIR")
-                if max_size_gb is None:
-                    max_size_gb = float(
-                        os.getenv("NEXUS_LOCAL_CACHE_SIZE_GB", str(DEFAULT_MAX_SIZE_GB))
-                    )
-
-                _default_cache = LocalDiskCache(
-                    cache_dir=cache_dir,
-                    max_size_gb=max_size_gb,
-                )
-
-    return _default_cache
-
-
-def set_local_disk_cache(cache: LocalDiskCache | None) -> None:
-    """Set the global LocalDiskCache instance."""
-    global _default_cache
-    with _cache_lock:
-        _default_cache = cache
-
-
-def close_local_disk_cache() -> None:
-    """Close and clear the global LocalDiskCache instance."""
-    global _default_cache
-    with _cache_lock:
-        if _default_cache is not None:
-            _default_cache.close()
-            _default_cache = None

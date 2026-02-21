@@ -7,20 +7,15 @@ Verifies the full pipeline:
     register agent → create sandbox → verify state transitions → verify events
 """
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from nexus.bricks.sandbox.auth_service import SandboxAuthService
 from nexus.bricks.sandbox.events import AgentEventLog
-from nexus.services.agents.agent_record import AgentState
+from nexus.contracts.agent_types import AgentState
 from nexus.services.agents.agent_registry import AgentRegistry, InvalidTransitionError
-from nexus.storage.models import Base
+from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -28,32 +23,28 @@ from nexus.storage.models import Base
 
 
 @pytest.fixture
-def engine():
-    """Create in-memory SQLite database with all tables."""
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine)
-    return engine
+def record_store():
+    """Shared in-memory RecordStore for all components."""
+    store = InMemoryRecordStore()
+    yield store
+    store.close()
 
 
 @pytest.fixture
-def session_factory(engine):
-    return sessionmaker(bind=engine, expire_on_commit=False)
+def session_factory(record_store):
+    return record_store.session_factory
 
 
 @pytest.fixture
-def agent_registry(session_factory):
+def agent_registry(record_store):
     """Real AgentRegistry backed by in-memory SQLite."""
-    return AgentRegistry(session_factory=session_factory)
+    return AgentRegistry(record_store=record_store)
 
 
 @pytest.fixture
-def event_log(session_factory):
+def event_log(record_store):
     """Real AgentEventLog backed by in-memory SQLite."""
-    return AgentEventLog(session_factory=session_factory)
+    return AgentEventLog(record_store=record_store)
 
 
 @pytest.fixture

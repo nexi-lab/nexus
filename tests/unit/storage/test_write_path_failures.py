@@ -1,12 +1,9 @@
 """Failure injection tests for the write path.
 
 Tests what happens when Raft succeeds but PostgreSQL fails,
-and verifies audit_strict_mode behavior for single and batch writes.
+and verifies AuditConfig.strict_mode behavior for single and batch writes.
 """
 
-from __future__ import annotations
-
-import contextlib
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
@@ -14,9 +11,11 @@ import pytest
 from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import sessionmaker
 
-from nexus.core.metadata import DT_DIR, DT_REG, FileMetadata
+from nexus.contracts.exceptions import AuditLogError
+from nexus.contracts.metadata import DT_DIR, DT_REG, FileMetadata
 from nexus.storage.models import Base, FilePathModel
-from nexus.storage.record_store_syncer import RecordStoreSyncer
+from nexus.storage.record_store import RecordStoreABC
+from nexus.storage.record_store_syncer import RecordStoreWriteObserver
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -76,24 +75,31 @@ def session_factory(engine):
     return factory
 
 
+@pytest.fixture
+def record_store(session_factory):
+    mock_rs = MagicMock(spec=RecordStoreABC)
+    mock_rs.session_factory = session_factory
+    return mock_rs
+
+
 # ---------------------------------------------------------------------------
-# Test: RecordStoreSyncer raises on failure (caller decides policy)
+# Test: RecordStoreWriteObserver raises AuditLogError on failure (strict mode)
 # ---------------------------------------------------------------------------
 
 
 class TestSyncerRaisesOnFailure:
-    """RecordStoreSyncer should raise exceptions — caller (kernel) decides policy."""
+    """RecordStoreWriteObserver raises AuditLogError in strict_mode (default)."""
 
-    def test_on_write_propagates_db_error(self, session_factory) -> None:
+    def test_on_write_propagates_db_error(self, record_store) -> None:
         """Database errors in on_write should propagate to caller."""
-        syncer = RecordStoreSyncer(session_factory=session_factory)
+        syncer = RecordStoreWriteObserver(record_store=record_store)
 
         with (
             patch(
                 "nexus.storage.operation_logger.OperationLogger.log_operation",
                 side_effect=RuntimeError("Connection refused"),
             ),
-            pytest.raises(RuntimeError, match="Connection refused"),
+            pytest.raises(AuditLogError),
         ):
             syncer.on_write(
                 metadata=_make_metadata(),
@@ -101,16 +107,16 @@ class TestSyncerRaisesOnFailure:
                 path="/test/file.txt",
             )
 
-    def test_on_write_propagates_version_recorder_error(self, session_factory) -> None:
+    def test_on_write_propagates_version_recorder_error(self, record_store) -> None:
         """VersionRecorder errors in on_write should propagate to caller."""
-        syncer = RecordStoreSyncer(session_factory=session_factory)
+        syncer = RecordStoreWriteObserver(record_store=record_store)
 
         with (
             patch(
                 "nexus.storage.version_recorder.VersionRecorder.record_write",
                 side_effect=ValueError("FK constraint violation"),
             ),
-            pytest.raises(ValueError, match="FK constraint violation"),
+            pytest.raises(AuditLogError),
         ):
             syncer.on_write(
                 metadata=_make_metadata(),
@@ -118,100 +124,55 @@ class TestSyncerRaisesOnFailure:
                 path="/test/file.txt",
             )
 
-    def test_on_delete_propagates_error(self, session_factory) -> None:
+    def test_on_delete_propagates_error(self, record_store) -> None:
         """Errors in on_delete should propagate to caller."""
-        syncer = RecordStoreSyncer(session_factory=session_factory)
+        syncer = RecordStoreWriteObserver(record_store=record_store)
 
         with (
             patch(
                 "nexus.storage.operation_logger.OperationLogger.log_operation",
                 side_effect=RuntimeError("Timeout"),
             ),
-            pytest.raises(RuntimeError, match="Timeout"),
+            pytest.raises(AuditLogError),
         ):
             syncer.on_delete(path="/test/file.txt")
 
 
 # ---------------------------------------------------------------------------
-# Test: Batch write error handling (currently uses contextlib.suppress!)
+# Test: Batch write error handling (Issue #2152: observer owns error policy)
 # ---------------------------------------------------------------------------
 
 
 class TestBatchWriteErrorHandling:
-    """Tests that document the CURRENT batch error handling behavior.
+    """Tests for batch write error handling (Issue #2152).
 
-    IMPORTANT: Issue #1246 Phase 2 (Issue 6A) will change this behavior.
-    These tests document the current (broken) behavior and will be updated
-    when the fix is implemented.
+    Issue #2152: Kernel is a pure caller — observer errors propagate directly.
+    No contextlib.suppress or try/except wrapper in the kernel.
     """
 
-    def test_batch_observer_currently_suppresses_errors(self) -> None:
-        """DOCUMENTS CURRENT BEHAVIOR: batch write observer errors are silenced.
-
-        This is the bug identified in Issue 6 of the #1246 review.
-        nexus_fs_core.py:2488 uses contextlib.suppress(Exception).
-        """
-        # Simulate what the kernel does for batch writes:
+    def test_batch_observer_error_propagates(self) -> None:
+        """Observer errors in batch writes propagate directly (no suppression)."""
         write_observer = MagicMock()
         write_observer.on_write_batch.side_effect = RuntimeError("PG down")
 
-        # Current kernel code (nexus_fs_core.py:2488):
-        with contextlib.suppress(Exception):
+        # Kernel calls observer directly — error propagates
+        with pytest.raises(RuntimeError, match="PG down"):
             write_observer.on_write_batch(
                 [(_make_metadata(), True)],
                 zone_id="root",
             )
 
-        # Error was silently suppressed — this is the bug
-        write_observer.on_write_batch.assert_called_once()
-
-    def test_single_write_strict_mode_raises(self) -> None:
-        """Single writes in audit_strict_mode should raise AuditLogError.
-
-        This tests the kernel's error handling (nexus_fs_core.py:1828-1840).
-        """
-        # We test the policy logic without importing the full NexusFS kernel
+    def test_single_write_observer_error_propagates(self) -> None:
+        """Observer errors propagate — kernel has no try/except wrapper (#2152)."""
         write_observer = MagicMock()
         write_observer.on_write.side_effect = RuntimeError("DB connection lost")
-        audit_strict_mode = True
 
-        metadata = _make_metadata()
-
-        with pytest.raises(RuntimeError):
-            # Simulate kernel write path
-            try:
-                write_observer.on_write(
-                    metadata=metadata,
-                    is_new=True,
-                    path="/test/file.txt",
-                )
-            except Exception:
-                if audit_strict_mode:
-                    raise  # Should re-raise
-                # else: log warning and continue
-
-    def test_single_write_non_strict_mode_continues(self) -> None:
-        """Single writes with audit_strict_mode=False should log warning, not raise."""
-        write_observer = MagicMock()
-        write_observer.on_write.side_effect = RuntimeError("DB connection lost")
-        audit_strict_mode = False
-
-        metadata = _make_metadata()
-        error_logged = False
-
-        try:
+        with pytest.raises(RuntimeError, match="DB connection lost"):
             write_observer.on_write(
-                metadata=metadata,
+                metadata=_make_metadata(),
                 is_new=True,
                 path="/test/file.txt",
             )
-        except Exception:
-            if audit_strict_mode:
-                raise
-            else:
-                error_logged = True  # Would be logger.critical() in real code
-
-        assert error_logged is True
 
 
 # ---------------------------------------------------------------------------

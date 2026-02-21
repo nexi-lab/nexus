@@ -2,14 +2,14 @@
 
 Validates:
 - BootError construction and attributes
-- _boot_kernel_services: success path, failure raises BootError, timing logged
-- _boot_system_services: success path, partial failure warns
+- _boot_kernel_services: validates Storage Pillars
+- _boot_system_services: critical (BootError) + degradable (WARNING + None)
 - _boot_brick_services: success path, failure logged at DEBUG
 - _start_background_services: .start() called, None services skipped
 - create_nexus_services: full integration, BootError propagation, log tags
-"""
 
-from __future__ import annotations
+Issue #2193: Former kernel services moved to system tier.
+"""
 
 import logging
 from typing import Any
@@ -17,8 +17,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nexus.core.deployment_profile import DeploymentProfile
-from nexus.core.exceptions import BootError, NexusError
+from nexus.contracts.deployment_profile import DeploymentProfile
+from nexus.contracts.exceptions import BootError, NexusError
 
 # ---------------------------------------------------------------------------
 # TestBootError
@@ -66,7 +66,6 @@ def _make_mock_ctx(**overrides: Any) -> Any:
         "router": MagicMock(),
         "engine": mock_engine,
         "read_engine": mock_engine,
-        "session_factory": MagicMock(),
         "perm": MagicMock(
             enforce_zone_isolation=True,
             enable_tiger_cache=True,
@@ -75,6 +74,7 @@ def _make_mock_ctx(**overrides: Any) -> Any:
             enable_deferred=False,  # disable to simplify test
             deferred_flush_interval=0.05,
         ),
+        "audit": MagicMock(strict_mode=True),
         "cache_ttl_seconds": 300,
         "dist": MagicMock(
             enable_events=False,
@@ -98,43 +98,36 @@ def _make_mock_ctx(**overrides: Any) -> Any:
 
 
 class TestBootKernelServices:
-    """Tests for _boot_kernel_services."""
+    """Tests for _boot_kernel_services (Issue #2193: validation-only)."""
 
-    def test_success_returns_all_keys(self) -> None:
+    def test_returns_empty_dict(self) -> None:
+        """Kernel tier validates Storage Pillars and returns empty dict."""
         from nexus.factory import _boot_kernel_services
 
         ctx = _make_mock_ctx()
         result = _boot_kernel_services(ctx)
 
-        expected_keys = {
-            "rebac_manager",
-            "rebac_circuit_breaker",
-            "dir_visibility_cache",
-            "audit_store",
-            "entity_registry",
-            "permission_enforcer",
-            "hierarchy_manager",
-            "deferred_permission_buffer",
-            "workspace_registry",
-            "mount_manager",
-            "workspace_manager",
-            "write_observer",
-            "version_service",
-        }
-        assert expected_keys == set(result.keys())
+        assert isinstance(result, dict)
+        assert len(result) == 0
 
-    def test_failure_raises_boot_error(self) -> None:
+    def test_failure_on_none_router(self) -> None:
+        """BootError when router is None."""
         from nexus.factory import _boot_kernel_services
 
-        ctx = _make_mock_ctx()
-        with patch(
-            "nexus.rebac.manager.EnhancedReBACManager",
-            side_effect=RuntimeError("db connection failed"),
-        ):
-            with pytest.raises(BootError) as exc_info:
-                _boot_kernel_services(ctx)
-            assert exc_info.value.tier == "kernel"
-            assert "db connection failed" in str(exc_info.value)
+        ctx = _make_mock_ctx(router=None)
+        with pytest.raises(BootError) as exc_info:
+            _boot_kernel_services(ctx)
+        assert exc_info.value.tier == "kernel"
+        assert "router" in str(exc_info.value).lower()
+
+    def test_failure_on_none_metadata_store(self) -> None:
+        """BootError when metadata_store is None."""
+        from nexus.factory import _boot_kernel_services
+
+        ctx = _make_mock_ctx(metadata_store=None)
+        with pytest.raises(BootError) as exc_info:
+            _boot_kernel_services(ctx)
+        assert exc_info.value.tier == "kernel"
 
     def test_timing_logged(self, caplog: pytest.LogCaptureFixture) -> None:
         from nexus.factory import _boot_kernel_services
@@ -144,39 +137,6 @@ class TestBootKernelServices:
             _boot_kernel_services(ctx)
         assert any("[BOOT:KERNEL]" in r.message for r in caplog.records)
 
-    def test_start_not_called_on_write_observer(self) -> None:
-        """Verify .start() is NOT called during kernel boot."""
-        from nexus.factory import _boot_kernel_services
-
-        ctx = _make_mock_ctx(enable_write_buffer=False)
-        result = _boot_kernel_services(ctx)
-        wo = result["write_observer"]
-        # RecordStoreSyncer doesn't have .start() called in kernel boot
-        # (only BufferedRecordStoreSyncer does, and only in _start_background_services)
-        assert wo is not None
-
-    def test_deferred_buffer_created_when_enabled(self) -> None:
-        from nexus.factory import _boot_kernel_services
-
-        perm = MagicMock(
-            enforce_zone_isolation=True,
-            enable_tiger_cache=True,
-            allow_admin_bypass=False,
-            inherit=True,
-            enable_deferred=True,
-            deferred_flush_interval=0.05,
-        )
-        ctx = _make_mock_ctx(perm=perm)
-        result = _boot_kernel_services(ctx)
-        assert result["deferred_permission_buffer"] is not None
-
-    def test_deferred_buffer_none_when_disabled(self) -> None:
-        from nexus.factory import _boot_kernel_services
-
-        ctx = _make_mock_ctx()  # enable_deferred=False by default
-        result = _boot_kernel_services(ctx)
-        assert result["deferred_permission_buffer"] is None
-
 
 # ---------------------------------------------------------------------------
 # TestBootSystemServices
@@ -184,18 +144,33 @@ class TestBootKernelServices:
 
 
 class TestBootSystemServices:
-    """Tests for _boot_system_services."""
+    """Tests for _boot_system_services (Issue #2193: critical + degradable)."""
 
     def test_success_returns_all_keys(self) -> None:
-        from nexus.factory import _boot_kernel_services, _boot_system_services
+        """System tier returns dict with critical + degradable + original keys."""
+        from nexus.factory import _boot_system_services
 
         ctx = _make_mock_ctx()
-        kernel = _boot_kernel_services(ctx)
-        result = _boot_system_services(ctx, kernel)
+        result = _boot_system_services(ctx)
 
         expected_keys = {
+            # Former-kernel critical
+            "rebac_manager",
+            "audit_store",
+            "entity_registry",
+            "permission_enforcer",
+            "write_observer",
+            # Former-kernel degradable
+            "dir_visibility_cache",
+            "hierarchy_manager",
+            "deferred_permission_buffer",
+            "workspace_registry",
+            "mount_manager",
+            "workspace_manager",
+            # Original system services
             "agent_registry",
             "async_agent_registry",
+            "eviction_manager",
             "namespace_manager",
             "async_namespace_manager",
             "async_vfs_router",
@@ -203,16 +178,101 @@ class TestBootSystemServices:
             "observability_subsystem",
             "resiliency_manager",
             "context_branch_service",
+            "namespace_fork_service",
             "brick_lifecycle_manager",
+            "brick_reconciler",
             "scoped_hook_engine",
+            "tiger_cache_manager",
+            "zone_lifecycle",
+            # Issue #2195, #2360: EventLog + Scheduler (always-started)
+            "event_log",
+            "scheduler_service",
+            "scheduler_state_emitter",
         }
         assert expected_keys == set(result.keys())
 
-    def test_partial_failure_warns_but_continues(self, caplog: pytest.LogCaptureFixture) -> None:
-        from nexus.factory import _boot_kernel_services, _boot_system_services
+    def test_rebac_failure_degrades_to_noop(self) -> None:
+        """Issue #2440: ReBAC failure degrades to NoOp (not BootError).
+
+        ReBAC was demoted from critical to degradable. When ReBACManager
+        init fails, NoOp stubs are injected and boot continues.
+        """
+        from nexus.contracts.noop_rebac import NoOpReBACManager
+        from nexus.factory import _boot_system_services
 
         ctx = _make_mock_ctx()
-        kernel = _boot_kernel_services(ctx)
+        with patch(
+            "nexus.bricks.rebac.manager.ReBACManager",
+            side_effect=RuntimeError("db connection failed"),
+        ):
+            result = _boot_system_services(ctx)
+        assert isinstance(result["rebac_manager"], NoOpReBACManager)
+        # Critical service (write_observer) should still work
+        assert result["write_observer"] is not None
+
+    def test_event_log_present_in_system_keys(self) -> None:
+        """Event log should be present in system service dict (Issue #2195)."""
+        from nexus.factory import _boot_system_services
+
+        ctx = _make_mock_ctx()
+        result = _boot_system_services(ctx)
+        assert "event_log" in result
+
+    def test_scheduler_service_present_in_system_keys(self) -> None:
+        """Scheduler service should be present in system service dict (Issue #2195)."""
+        from nexus.factory import _boot_system_services
+
+        ctx = _make_mock_ctx()
+        result = _boot_system_services(ctx)
+        assert "scheduler_service" in result
+
+    def test_scheduler_always_created(self) -> None:
+        """Scheduler is always created regardless of db_url (Issue #2360)."""
+        from nexus.factory import _boot_system_services
+
+        ctx = _make_mock_ctx(db_url="sqlite:///:memory:")
+        result = _boot_system_services(ctx)
+        assert result["scheduler_service"] is not None
+
+    def test_scheduler_created_with_postgresql(self) -> None:
+        """Scheduler should be created (not initialized) with PostgreSQL (Issue #2195)."""
+        from nexus.factory import _boot_system_services
+
+        ctx = _make_mock_ctx(db_url="postgresql://localhost/test")
+        result = _boot_system_services(ctx)
+        scheduler = result["scheduler_service"]
+        assert scheduler is not None
+        assert scheduler._initialized is False
+
+    def test_scheduler_fallback_on_import_error(self) -> None:
+        """Scheduler falls back to InMemoryScheduler on import error (Issue #2360)."""
+        from nexus.factory import _boot_system_services
+        from nexus.services.protocols.scheduler import InMemoryScheduler
+
+        ctx = _make_mock_ctx(db_url="postgresql://localhost/test")
+        with patch(
+            "nexus.services.scheduler.service.SchedulerService",
+            side_effect=ImportError("missing dep"),
+        ):
+            result = _boot_system_services(ctx)
+        assert isinstance(result["scheduler_service"], InMemoryScheduler)
+
+    def test_event_log_degradable_when_wal_unavailable(self) -> None:
+        """Event log should degrade gracefully when WAL is unavailable (Issue #2195)."""
+        from nexus.factory import _boot_system_services
+
+        ctx = _make_mock_ctx()
+        with patch(
+            "nexus.services.event_subsystem.log.create_event_log",
+            side_effect=RuntimeError("WAL not available"),
+        ):
+            result = _boot_system_services(ctx)
+        assert result["event_log"] is None
+
+    def test_degradable_failure_warns_but_continues(self, caplog: pytest.LogCaptureFixture) -> None:
+        from nexus.factory import _boot_system_services
+
+        ctx = _make_mock_ctx()
 
         with (
             caplog.at_level(logging.WARNING, logger="nexus.factory"),
@@ -221,13 +281,33 @@ class TestBootSystemServices:
                 side_effect=RuntimeError("agent db error"),
             ),
         ):
-            result = _boot_system_services(ctx, kernel)
+            result = _boot_system_services(ctx)
 
         # Agent registry failed, but others should still work
         assert result["agent_registry"] is None
-        # Resiliency manager should still be created
-        assert result["resiliency_manager"] is not None
+        # Critical services should still be created
+        assert result["rebac_manager"] is not None
+        assert result["permission_enforcer"] is not None
         assert any("[BOOT:SYSTEM]" in r.message for r in caplog.records)
+
+    def test_critical_and_rebac_services_are_not_none(self) -> None:
+        """Critical (write_observer) + degradable ReBAC services are non-None.
+
+        Issue #2440: ReBAC services are degradable but always get NoOp fallback.
+        """
+        from nexus.factory import _boot_system_services
+
+        ctx = _make_mock_ctx()
+        result = _boot_system_services(ctx)
+
+        for key in (
+            "rebac_manager",
+            "audit_store",
+            "entity_registry",
+            "permission_enforcer",
+            "write_observer",
+        ):
+            assert result[key] is not None, f"Service {key} should not be None"
 
 
 # ---------------------------------------------------------------------------
@@ -239,13 +319,14 @@ class TestBootBrickServices:
     """Tests for _boot_brick_services."""
 
     def test_success_returns_all_keys(self) -> None:
-        from nexus.factory import _boot_brick_services, _boot_kernel_services
+        from nexus.factory import _boot_brick_services, _boot_system_services
 
         ctx = _make_mock_ctx()
-        kernel = _boot_kernel_services(ctx)
-        result = _boot_brick_services(ctx, kernel)
+        system = _boot_system_services(ctx)
+        result = _boot_brick_services(ctx, system)
 
         expected_keys = {
+            "agent_event_log",
             "wallet_provisioner",
             "manifest_resolver",
             "manifest_metrics",
@@ -260,21 +341,151 @@ class TestBootBrickServices:
             "ipc_storage_driver",
             "ipc_vfs_driver",
             "ipc_provisioner",
+            "skill_service",
+            "skill_package_service",
+            "delegation_service",
+            "reputation_service",
+            "version_service",
+            "rebac_circuit_breaker",
+            "memory_router",
+            "memory_permission",
+            "governance_anomaly_service",
+            "governance_collusion_service",
+            "governance_graph_service",
+            "governance_response_service",
         }
         assert expected_keys == set(result.keys())
 
-    def test_failure_logged_at_debug(self, caplog: pytest.LogCaptureFixture) -> None:
-        from nexus.factory import _boot_brick_services, _boot_kernel_services
+    def test_version_service_degrades_gracefully(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Issue #2034 / 10A: VersionService failure should not crash brick boot."""
+        from nexus.factory import _boot_brick_services, _boot_system_services
 
         ctx = _make_mock_ctx()
-        kernel = _boot_kernel_services(ctx)
+        system = _boot_system_services(ctx)
+
+        with (
+            caplog.at_level(logging.DEBUG, logger="nexus.factory"),
+            patch(
+                "nexus.services.versioning.version_service.VersionService",
+                side_effect=RuntimeError("version db unavailable"),
+            ),
+        ):
+            result = _boot_brick_services(ctx, system)
+
+        # version_service key exists but is None (graceful degradation)
+        assert "version_service" in result
+        assert result["version_service"] is None
+        # Other brick services are unaffected
+        assert "wallet_provisioner" in result
+        assert any("version db unavailable" in r.message for r in caplog.records)
+
+    def test_circuit_breaker_degrades_with_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Issue #2034 / 14A: Circuit breaker failure logs WARNING, not fatal."""
+        from nexus.factory import _boot_brick_services, _boot_system_services
+
+        ctx = _make_mock_ctx()
+        system = _boot_system_services(ctx)
+
+        with (
+            caplog.at_level(logging.WARNING, logger="nexus.factory"),
+            patch(
+                "nexus.bricks.rebac.circuit_breaker.AsyncCircuitBreaker",
+                side_effect=RuntimeError("circuit breaker config error"),
+            ),
+        ):
+            result = _boot_brick_services(ctx, system)
+
+        assert "rebac_circuit_breaker" in result
+        assert result["rebac_circuit_breaker"] is None
+        assert any("circuit-breaking protection" in r.message for r in caplog.records)
+
+    def test_failure_logged_at_debug(self, caplog: pytest.LogCaptureFixture) -> None:
+        from nexus.factory import _boot_brick_services, _boot_system_services
+
+        ctx = _make_mock_ctx()
+        system = _boot_system_services(ctx)
 
         with caplog.at_level(logging.DEBUG, logger="nexus.factory"):
-            result = _boot_brick_services(ctx, kernel)
+            result = _boot_brick_services(ctx, system)
 
         # Brick services should return keys even if some are None
         assert "wallet_provisioner" in result
         assert any("[BOOT:BRICK]" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# TestSafeCreate (Issue #2193, Decision 8A/9A)
+# ---------------------------------------------------------------------------
+
+
+class TestSafeCreate:
+    """Tests for _safe_create() with severity parameter."""
+
+    def test_success_returns_instance(self) -> None:
+        """Successful creation returns the factory result."""
+        from nexus.factory import _safe_create
+
+        sentinel = object()
+        result = _safe_create("test_svc", lambda: sentinel, lambda _: True)
+        assert result is sentinel
+
+    def test_profile_gating_returns_none(self) -> None:
+        """Service disabled by profile returns None."""
+        from nexus.factory import _safe_create
+
+        result = _safe_create("test_svc", lambda: object(), lambda _: False)
+        assert result is None
+
+    def test_debug_severity_returns_none_on_error(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Default severity (debug) logs at DEBUG and returns None."""
+        from nexus.factory import _safe_create
+
+        with caplog.at_level(logging.DEBUG, logger="nexus.factory"):
+            result = _safe_create(
+                "broken_svc",
+                lambda: (_ for _ in ()).throw(RuntimeError("boom")),
+                lambda _: True,
+            )
+        assert result is None
+        assert any("broken_svc" in r.message and r.levelno == logging.DEBUG for r in caplog.records)
+
+    def test_warning_severity_returns_none_on_error(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Warning severity logs at WARNING and returns None."""
+        from nexus.factory import _safe_create
+
+        with caplog.at_level(logging.WARNING, logger="nexus.factory"):
+            result = _safe_create(
+                "degradable_svc",
+                lambda: (_ for _ in ()).throw(RuntimeError("degraded")),
+                lambda _: True,
+                severity="warning",
+            )
+        assert result is None
+        assert any(
+            "degradable_svc" in r.message and r.levelno == logging.WARNING for r in caplog.records
+        )
+
+    def test_critical_severity_raises_boot_error(self) -> None:
+        """Critical severity raises BootError instead of returning None."""
+        from nexus.factory import _safe_create
+
+        with pytest.raises(BootError) as exc_info:
+            _safe_create(
+                "critical_svc",
+                lambda: (_ for _ in ()).throw(RuntimeError("fatal")),
+                lambda _: True,
+                severity="critical",
+            )
+        assert "critical_svc" in str(exc_info.value)
+        assert "fatal" in str(exc_info.value)
+
+    def test_critical_severity_success_returns_instance(self) -> None:
+        """Critical severity with successful creation returns the instance."""
+        from nexus.factory import _safe_create
+
+        sentinel = object()
+        result = _safe_create("critical_svc", lambda: sentinel, lambda _: True, severity="critical")
+        assert result is sentinel
 
 
 # ---------------------------------------------------------------------------
@@ -283,43 +494,68 @@ class TestBootBrickServices:
 
 
 class TestStartBackgroundServices:
-    """Tests for _start_background_services."""
+    """Tests for _start_background_services (Issue #2193: system dict only)."""
 
     def test_start_called_on_deferred_buffer(self) -> None:
         from nexus.factory import _start_background_services
 
         dpb = MagicMock()
-        kernel = {"deferred_permission_buffer": dpb, "write_observer": None}
-        system = {"delivery_worker": None}
-        _start_background_services(kernel, system)
+        system = {
+            "deferred_permission_buffer": dpb,
+            "write_observer": None,
+            "delivery_worker": None,
+        }
+        _start_background_services(system)
         dpb.start.assert_called_once()
 
     def test_start_called_on_delivery_worker(self) -> None:
         from nexus.factory import _start_background_services
 
         dw = MagicMock()
-        kernel = {"deferred_permission_buffer": None, "write_observer": None}
-        system = {"delivery_worker": dw}
-        _start_background_services(kernel, system)
+        system = {"deferred_permission_buffer": None, "write_observer": None, "delivery_worker": dw}
+        _start_background_services(system)
         dw.start.assert_called_once()
 
     def test_none_services_skipped(self) -> None:
         from nexus.factory import _start_background_services
 
-        kernel = {"deferred_permission_buffer": None, "write_observer": None}
-        system = {"delivery_worker": None}
+        system = {
+            "deferred_permission_buffer": None,
+            "write_observer": None,
+            "delivery_worker": None,
+        }
         # Should not raise
-        _start_background_services(kernel, system)
+        _start_background_services(system)
 
     def test_buffered_syncer_started(self) -> None:
         from nexus.factory import _start_background_services
-        from nexus.storage.record_store_syncer import BufferedRecordStoreSyncer
+        from nexus.storage.record_store_syncer import BufferedRecordStoreWriteObserver
 
-        wo = MagicMock(spec=BufferedRecordStoreSyncer)
-        kernel = {"deferred_permission_buffer": None, "write_observer": wo}
-        system = {"delivery_worker": None}
-        _start_background_services(kernel, system)
+        wo = MagicMock(spec=BufferedRecordStoreWriteObserver)
+        system = {"deferred_permission_buffer": None, "write_observer": wo, "delivery_worker": None}
+        _start_background_services(system)
         wo.start.assert_called_once()
+
+    def test_zone_lifecycle_loads_terminating_zones(self) -> None:
+        """Issue #2061: load_terminating_zones called on startup."""
+        from nexus.factory import _start_background_services
+
+        session_mock = MagicMock()
+        sf = MagicMock()
+        sf.__enter__ = MagicMock(return_value=session_mock)
+        sf.__exit__ = MagicMock(return_value=False)
+
+        zl = MagicMock()
+        zl._session_factory = MagicMock(return_value=sf)
+
+        system = {
+            "deferred_permission_buffer": None,
+            "write_observer": None,
+            "delivery_worker": None,
+            "zone_lifecycle": zl,
+        }
+        _start_background_services(system)
+        zl.load_terminating_zones.assert_called_once_with(session_mock)
 
 
 # ---------------------------------------------------------------------------
@@ -351,11 +587,18 @@ class TestCreateNexusServicesIntegration:
         assert isinstance(kernel, KernelServices)
         assert isinstance(system, SystemServices)
         assert isinstance(brick, BrickServices)
-        assert kernel.rebac_manager is not None
-        assert kernel.permission_enforcer is not None
+        # Issue #2193: rebac_manager is now on SystemServices
+        assert system.rebac_manager is not None
+        assert system.permission_enforcer is not None
         assert brick.rebac_circuit_breaker is not None
 
-    def test_kernel_failure_propagates_boot_error(self) -> None:
+    def test_rebac_failure_degrades_to_noop_in_full_boot(self) -> None:
+        """Issue #2440: ReBAC failure during full boot degrades to NoOp.
+
+        create_nexus_services() should NOT raise BootError when ReBACManager
+        fails — it falls back to NoOp stubs.
+        """
+        from nexus.contracts.noop_rebac import NoOpReBACManager
         from nexus.factory import create_nexus_services
 
         record_store = MagicMock()
@@ -363,19 +606,18 @@ class TestCreateNexusServicesIntegration:
         record_store.session_factory = MagicMock()
         record_store.database_url = "sqlite:///:memory:"
 
-        with (
-            patch(
-                "nexus.rebac.manager.EnhancedReBACManager",
-                side_effect=RuntimeError("fatal"),
-            ),
-            pytest.raises(BootError),
+        with patch(
+            "nexus.bricks.rebac.manager.ReBACManager",
+            side_effect=RuntimeError("fatal"),
         ):
-            create_nexus_services(
+            kernel, system, brick = create_nexus_services(
                 record_store=record_store,
                 metadata_store=MagicMock(),
                 backend=MagicMock(),
                 router=MagicMock(),
             )
+        assert isinstance(system.rebac_manager, NoOpReBACManager)
+        assert system.write_observer is not None
 
     def test_boot_tags_in_log_output(self, caplog: pytest.LogCaptureFixture) -> None:
         from nexus.factory import create_nexus_services

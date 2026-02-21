@@ -4,16 +4,16 @@ Mirrors the ExchangeAuditLogger test suite pattern.
 Covers: CRUD, hash integrity, immutability, pagination, filters, verify integrity.
 """
 
-from __future__ import annotations
-
 import gc
 from datetime import UTC, datetime
+from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from nexus.storage.models._base import Base
+from nexus.storage.record_store import RecordStoreABC
 from nexus.storage.secrets_audit_logger import (
     SecretsAuditLogger,
     compute_metadata_hash,
@@ -33,8 +33,15 @@ def session_factory():
 
 
 @pytest.fixture
-def audit_logger(session_factory):
-    return SecretsAuditLogger(session_factory=session_factory)
+def record_store(session_factory):
+    mock_rs = MagicMock(spec=RecordStoreABC)
+    mock_rs.session_factory = session_factory
+    return mock_rs
+
+
+@pytest.fixture
+def audit_logger(record_store):
+    return SecretsAuditLogger(record_store=record_store)
 
 
 class TestSecretsAuditLoggerWrite:

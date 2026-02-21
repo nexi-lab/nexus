@@ -3,18 +3,16 @@
 This module now delegates to nexus.auth brick providers (Issue #1399).
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 
-from nexus.auth.constants import API_KEY_PREFIX  # noqa: F401
-from nexus.auth.providers.base import AuthProvider
-from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
-from nexus.auth.providers.discriminator import DiscriminatingAuthProvider  # noqa: F401
-from nexus.auth.providers.local import LocalAuth
-from nexus.auth.providers.oidc import MultiOIDCAuth, OIDCAuth
-from nexus.auth.providers.static_key import StaticAPIKeyAuth
+from nexus.bricks.auth.constants import API_KEY_PREFIX  # noqa: F401
+from nexus.bricks.auth.providers.base import AuthProvider
+from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
+from nexus.bricks.auth.providers.discriminator import DiscriminatingAuthProvider  # noqa: F401
+from nexus.bricks.auth.providers.local import LocalAuth
+from nexus.bricks.auth.providers.oidc import MultiOIDCAuth, OIDCAuth
+from nexus.bricks.auth.providers.static_key import StaticAPIKeyAuth
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +25,7 @@ def create_auth_provider(
     Args:
         auth_type: Authentication type ('static', 'database', 'local', 'oidc', 'multi-oidc', or None)
         auth_config: Authentication configuration (depends on auth_type)
-        **kwargs: Additional arguments passed to auth provider (e.g., session_factory)
+        **kwargs: Additional arguments passed to auth provider (e.g., record_store)
 
     Returns:
         AuthProvider instance or None if no authentication
@@ -54,11 +52,11 @@ def create_auth_provider(
         return StaticAPIKeyAuth.from_config(auth_config)
 
     elif auth_type == "database":
-        session_factory = kwargs.get("session_factory")
-        if not session_factory:
-            raise ValueError("session_factory is required for database authentication")
+        record_store = kwargs.get("record_store")
+        if not record_store:
+            raise ValueError("record_store is required for database authentication")
         logger.info("Creating DatabaseAPIKeyAuth provider")
-        return DatabaseAPIKeyAuth(session_factory)
+        return DatabaseAPIKeyAuth(record_store)
 
     elif auth_type == "local":
         if not auth_config:

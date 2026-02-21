@@ -11,8 +11,6 @@ Environment variables:
     NEXUS_VERSION_GC_BATCH_SIZE: Delete batch size (default: 1000)
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import os
@@ -24,6 +22,8 @@ from sqlalchemy import bindparam, text
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
+
+    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +98,7 @@ class VersionGCSettings:
             raise ValueError("NEXUS_VERSION_GC_BATCH_SIZE must be >= 1")
 
     @classmethod
-    def from_env(cls) -> VersionGCSettings:
+    def from_env(cls) -> "VersionGCSettings":
         """Create settings from environment variables."""
         settings = cls()
         settings.validate()
@@ -125,22 +125,24 @@ class VersionHistoryGC:
     Always preserves the latest version for each resource.
 
     Example:
-        >>> gc = VersionHistoryGC(session_factory)
+        >>> gc = VersionHistoryGC(record_store)
         >>> stats = gc.run_gc(VersionGCSettings())
         >>> print(f"Deleted {stats.total_deleted} versions")
     """
 
-    def __init__(self, session_factory: Any) -> None:
+    def __init__(self, record_store: "RecordStoreABC", *, is_postgresql: bool = False) -> None:
         """Initialize garbage collector.
 
         Args:
-            session_factory: SQLAlchemy session factory
+            record_store: RecordStoreABC instance providing session factory.
+            is_postgresql: Whether the database is PostgreSQL (config-time flag).
         """
-        self._session_factory = session_factory
+        self._session_factory = record_store.session_factory
+        self._is_postgresql = is_postgresql
 
     def run_gc(
         self,
-        config: VersionGCSettings | None = None,
+        config: "VersionGCSettings | None" = None,
         dry_run: bool = False,
         retention_days: int | None = None,
         max_versions: int | None = None,
@@ -198,7 +200,7 @@ class VersionHistoryGC:
 
     async def run_gc_async(
         self,
-        config: VersionGCSettings | None = None,
+        config: "VersionGCSettings | None" = None,
         dry_run: bool = False,
     ) -> GCStats:
         """Run garbage collection asynchronously.
@@ -235,16 +237,13 @@ class VersionHistoryGC:
         stats.duration_seconds = (datetime.now(UTC) - start_time).total_seconds()
         return stats
 
-    def _is_sqlite(self, session: Session) -> bool:
-        """Check if the database is SQLite."""
-        if session.bind is None:
-            return False
-        bind_url = getattr(session.bind, "url", None)
-        return "sqlite" in str(bind_url) if bind_url else False
+    def _is_sqlite(self) -> bool:
+        """Check if the database is SQLite (config-time, not runtime)."""
+        return not self._is_postgresql
 
     def _delete_old_versions(
         self,
-        session: Session,
+        session: "Session",
         retention_days: int,
         batch_size: int,
         dry_run: bool,
@@ -257,7 +256,7 @@ class VersionHistoryGC:
             Tuple of (deleted_count, bytes_reclaimed)
         """
         cutoff_date = datetime.now(UTC) - timedelta(days=retention_days)
-        is_sqlite = self._is_sqlite(session)
+        is_sqlite = self._is_sqlite()
 
         # SQLite-compatible query to find latest version per resource
         # Uses a subquery with GROUP BY instead of DISTINCT ON
@@ -345,14 +344,14 @@ class VersionHistoryGC:
 
     async def _delete_old_versions_async(
         self,
-        session: Session,
+        session: "Session",
         retention_days: int,
         batch_size: int,
         dry_run: bool,
     ) -> tuple[int, int]:
         """Async version that yields between batches."""
         cutoff_date = datetime.now(UTC) - timedelta(days=retention_days)
-        is_sqlite = self._is_sqlite(session)
+        is_sqlite = self._is_sqlite()
 
         # SQLite-compatible query to find latest version per resource
         if is_sqlite:
@@ -434,7 +433,7 @@ class VersionHistoryGC:
 
     def _trim_excess_versions(
         self,
-        session: Session,
+        session: "Session",
         max_versions: int,
         batch_size: int,
         dry_run: bool,
@@ -446,7 +445,7 @@ class VersionHistoryGC:
         Returns:
             Tuple of (deleted_count, bytes_reclaimed)
         """
-        _is_sqlite = self._is_sqlite(session)  # noqa: F841
+        _is_sqlite = self._is_sqlite()  # noqa: F841
 
         # SQLite doesn't support window functions in all contexts the same way,
         # but ROW_NUMBER() is supported in modern SQLite (3.25+)
@@ -511,7 +510,7 @@ class VersionHistoryGC:
 
     async def _trim_excess_versions_async(
         self,
-        session: Session,
+        session: "Session",
         max_versions: int,
         batch_size: int,
         dry_run: bool,
@@ -575,7 +574,7 @@ class VersionHistoryGC:
 
         return total_deleted, total_bytes
 
-    def _count_resources(self, session: Session) -> int:
+    def _count_resources(self, session: "Session") -> int:
         """Count unique resources in version_history."""
         # Use subquery for SQLite compatibility (doesn't support COUNT(DISTINCT tuple))
         query = text("""

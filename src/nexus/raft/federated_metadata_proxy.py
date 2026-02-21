@@ -15,16 +15,14 @@ Usage:
     fs.read("/local/file.txt")          # → stays in root zone
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Iterator, Sequence
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.metadata import FileMetadata, PaginatedResult
-from nexus.core.metastore import MetastoreABC
-from nexus.raft.zone_manager import ROOT_ZONE_ID
+from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.metadata import FileMetadata, PaginatedResult
+from nexus.core.metastore import CasResult, MetastoreABC
 
 if TYPE_CHECKING:
     from nexus.raft.zone_path_resolver import ResolvedPath, ZonePathResolver
@@ -43,8 +41,8 @@ class FederatedMetadataProxy(MetastoreABC):
 
     def __init__(
         self,
-        resolver: ZonePathResolver,
-        root_store: RaftMetadataStore,
+        resolver: "ZonePathResolver",
+        root_store: "RaftMetadataStore",
         *,
         zone_manager: Any | None = None,
     ):
@@ -63,7 +61,7 @@ class FederatedMetadataProxy(MetastoreABC):
         cls,
         zone_manager: Any,
         root_zone_id: str = ROOT_ZONE_ID,
-    ) -> FederatedMetadataProxy:
+    ) -> "FederatedMetadataProxy":
         """Create from a ZoneManager instance.
 
         Args:
@@ -85,7 +83,7 @@ class FederatedMetadataProxy(MetastoreABC):
     # Path remapping helpers
     # =========================================================================
 
-    def _resolve(self, path: str) -> ResolvedPath:
+    def _resolve(self, path: str) -> "ResolvedPath":
         return self._resolver.resolve(path)
 
     @staticmethod
@@ -114,7 +112,7 @@ class FederatedMetadataProxy(MetastoreABC):
     def _to_zone_metadata(
         self,
         metadata: FileMetadata,
-        resolved: ResolvedPath,
+        resolved: "ResolvedPath",
     ) -> FileMetadata:
         """Remap global metadata path to zone-relative path for storage."""
         if not resolved.mount_chain:
@@ -137,6 +135,17 @@ class FederatedMetadataProxy(MetastoreABC):
         zone_meta = self._to_zone_metadata(metadata, resolved)
         return resolved.store.put(zone_meta, consistency=consistency)
 
+    def put_if_version(
+        self,
+        metadata: FileMetadata,
+        expected_version: int,
+        *,
+        consistency: str = "sc",
+    ) -> CasResult:
+        resolved = self._resolve(metadata.path)
+        zone_meta = self._to_zone_metadata(metadata, resolved)
+        return resolved.store.put_if_version(zone_meta, expected_version, consistency=consistency)
+
     def is_committed(self, token: int) -> str | None:
         return self._root_store.is_committed(token)
 
@@ -150,7 +159,7 @@ class FederatedMetadataProxy(MetastoreABC):
 
     def _walk_mount_tree(
         self,
-        resolved: ResolvedPath,
+        resolved: "ResolvedPath",
         recursive: bool,
         **kwargs: Any,
     ) -> list[FileMetadata]:

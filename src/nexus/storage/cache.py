@@ -15,9 +15,9 @@ from typing import Any, cast
 
 from cachetools import LRUCache
 
+from nexus.contracts.metadata import FileMetadata
 from nexus.core._compact_generated import CompactFileMetadata
-from nexus.core.adaptive_ttl import AdaptiveTTLMixin
-from nexus.core.metadata import FileMetadata
+from nexus.lib.adaptive_ttl import AdaptiveTTLMixin
 
 
 class AdaptiveTTLCache(dict[str, tuple[Any, float]]):

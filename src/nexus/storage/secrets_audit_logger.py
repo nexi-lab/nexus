@@ -8,24 +8,22 @@ Write performance: callers should use ``asyncio.create_task()`` to
 fire-and-forget audit writes so they never block the hot path.
 """
 
-from __future__ import annotations
-
 import hashlib
 import hmac
 import json
 import logging
-from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import event, select
-from sqlalchemy.orm import Session
 
 from nexus.storage.models.secrets_audit_log import SecretsAuditLogModel
+
+if TYPE_CHECKING:
+    from nexus.storage.record_store import RecordStoreABC
 from nexus.storage.query_mixin import AppendOnlyQueryMixin
 
 logger = logging.getLogger(__name__)
-
 
 # ---------------------------------------------------------------------------
 # Immutability guards
@@ -97,11 +95,11 @@ class SecretsAuditLogger:
     """Append-only secrets audit logger with query capabilities.
 
     Args:
-        session_factory: Callable that returns a fresh SQLAlchemy Session.
+        record_store: RecordStoreABC instance providing session factory.
     """
 
-    def __init__(self, session_factory: Callable[[], Session]) -> None:
-        self._session_factory = session_factory
+    def __init__(self, record_store: "RecordStoreABC") -> None:
+        self._session_factory = record_store.session_factory
         self._query = AppendOnlyQueryMixin(
             model_class=SecretsAuditLogModel,
             id_column_name="id",

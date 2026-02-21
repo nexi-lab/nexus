@@ -12,8 +12,6 @@ Section 1: Lightweight mocked tests (no DB)
 Section 2: Full integration tests with real SpendingPolicyService + SQLite
 """
 
-from __future__ import annotations
-
 import asyncio
 from decimal import Decimal
 from typing import Any
@@ -418,8 +416,10 @@ async def async_session_factory():
 def real_policy_service(async_session_factory):
     """Create a real SpendingPolicyService backed by SQLite."""
     from nexus.bricks.pay.spending_policy_service import SpendingPolicyService
+    from nexus.storage.repositories.spending_policy import SQLAlchemySpendingPolicyRepository
 
-    return SpendingPolicyService(session_factory=async_session_factory)
+    repo = SQLAlchemySpendingPolicyRepository(session_factory=async_session_factory)
+    return SpendingPolicyService(repo=repo)
 
 
 class TestRealDBPolicyCRUD:

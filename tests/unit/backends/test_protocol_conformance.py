@@ -1,4 +1,4 @@
-"""Protocol conformance tests for storage backends (Issue #1703).
+"""Protocol conformance tests for storage backends (Issue #1703, #2362, #2367).
 
 Verifies that:
 1. Backend ABC structurally satisfies all connector protocols
@@ -6,9 +6,10 @@ Verifies that:
 3. New layered protocols (Streaming, Batch, DirListing) are satisfied
 4. OAuthCapableProtocol is satisfied by OAuth connectors
 5. Non-compliant classes are correctly rejected
+6. DelegatingBackend satisfies ConnectorProtocol (Issue #2362)
+7. SearchableConnector conformance (Issue #2367)
+8. CachingConnectorContract and CacheConfigContract conformance (Issue #2362)
 """
-
-from __future__ import annotations
 
 import hashlib
 from typing import Any
@@ -26,7 +27,7 @@ from nexus.core.protocols.connector import (
     PassthroughProtocol,
     StreamingProtocol,
 )
-from nexus.core.response import HandlerResponse
+from nexus.lib.response import HandlerResponse
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -365,3 +366,130 @@ class TestProtocolMembersSync:
             f"  In protocol but not in frozenset: {protocol_members - _CONNECTOR_PROTOCOL_MEMBERS}\n"
             f"  In frozenset but not in protocol: {_CONNECTOR_PROTOCOL_MEMBERS - protocol_members}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Test: DelegatingBackend satisfies ConnectorProtocol (Issue #2362, Decision 4B)
+# ---------------------------------------------------------------------------
+
+
+class TestDelegatingBackendConformance:
+    """DelegatingBackend wrapping a mock inner satisfies ConnectorProtocol.
+
+    This test documents the migration intent: DelegatingBackend is the
+    base for all recursive wrappers and must satisfy the same protocol
+    as the inner backend it wraps.
+    """
+
+    def test_delegating_backend_satisfies_connector_protocol(self) -> None:
+        from nexus.backends.delegating import DelegatingBackend
+
+        inner = _MockBackend()
+        wrapper = DelegatingBackend(inner)
+        assert isinstance(wrapper, ConnectorProtocol)
+
+    def test_delegating_backend_satisfies_content_store_protocol(self) -> None:
+        from nexus.backends.delegating import DelegatingBackend
+
+        inner = _MockBackend()
+        wrapper = DelegatingBackend(inner)
+        assert isinstance(wrapper, ContentStoreProtocol)
+
+    def test_delegating_backend_satisfies_directory_ops_protocol(self) -> None:
+        from nexus.backends.delegating import DelegatingBackend
+
+        inner = _MockBackend()
+        wrapper = DelegatingBackend(inner)
+        assert isinstance(wrapper, DirectoryOpsProtocol)
+
+
+# ---------------------------------------------------------------------------
+# Test: SearchableConnector conformance (Issue #2367, Decision 9A)
+# ---------------------------------------------------------------------------
+
+
+class TestSearchableConnectorConformance:
+    """SearchableConnector protocol conformance tests."""
+
+    def test_searchable_class_satisfies_protocol(self) -> None:
+        """A class with search/index/remove_from_index satisfies SearchableConnector."""
+        from nexus.core.protocols.connector import SearchableConnector
+
+        class _MockSearchable:
+            def search(
+                self, query: str, *, filters: Any = None, limit: int = 10, context: Any = None
+            ) -> list[dict[str, Any]]:
+                return []
+
+            def index(
+                self, key: str, content: str, metadata: Any = None, context: Any = None
+            ) -> None:
+                pass
+
+            def remove_from_index(self, key: str, context: Any = None) -> None:
+                pass
+
+        obj = _MockSearchable()
+        assert isinstance(obj, SearchableConnector)
+
+    def test_non_searchable_class_rejected(self) -> None:
+        """A plain backend without search methods fails SearchableConnector check."""
+        from nexus.core.protocols.connector import SearchableConnector
+
+        backend = _MockBackend()
+        assert not isinstance(backend, SearchableConnector)
+
+    def test_partial_searchable_rejected(self) -> None:
+        """A class with only search() but missing index() fails the check."""
+        from nexus.core.protocols.connector import SearchableConnector
+
+        class _PartialSearchable:
+            def search(self, query: str, **kwargs: Any) -> list[dict[str, Any]]:
+                return []
+
+        obj = _PartialSearchable()
+        assert not isinstance(obj, SearchableConnector)
+
+
+# ---------------------------------------------------------------------------
+# Test: CachingConnectorContract and CacheConfigContract (Issue #2362, Decision 12A)
+# ---------------------------------------------------------------------------
+
+
+class TestCachingContractConformance:
+    """Verify CachingConnectorContract and CacheConfigContract protocols."""
+
+    def test_caching_backend_wrapper_satisfies_caching_connector_contract(self) -> None:
+        """CachingBackendWrapper satisfies the new CachingConnectorContract."""
+        from nexus.backends.caching_backend_wrapper import CachingBackendWrapper
+        from nexus.core.protocols.caching import CachingConnectorContract
+
+        inner = _MockBackend()
+        wrapper = CachingBackendWrapper(inner=inner)
+        assert isinstance(wrapper, CachingConnectorContract)
+
+    def test_plain_backend_not_caching_connector(self) -> None:
+        """Plain Backend without get_cache_stats/clear_cache is not CachingConnectorContract."""
+        from nexus.core.protocols.caching import CachingConnectorContract
+
+        backend = _MockBackend()
+        assert not isinstance(backend, CachingConnectorContract)
+
+    def test_cache_config_contract_satisfied(self) -> None:
+        """Object with session_factory/zone_id/l1_only satisfies CacheConfigContract."""
+        from nexus.core.protocols.caching import CacheConfigContract
+
+        class _MockCacheConfig:
+            session_factory = None
+            zone_id = "root"
+            l1_only = False
+
+        obj = _MockCacheConfig()
+        assert isinstance(obj, CacheConfigContract)
+
+    def test_cache_config_contract_rejected(self) -> None:
+        """Object missing cache config attributes fails CacheConfigContract."""
+        from nexus.core.protocols.caching import CacheConfigContract
+
+        backend = _MockBackend()
+        assert not isinstance(backend, CacheConfigContract)

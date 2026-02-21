@@ -1,34 +1,23 @@
 """Tests for EntityRegistry cascade deletion (v0.5.0)."""
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
-from nexus.rebac.entity_registry import EntityRegistry
-from nexus.storage.models import Base
+from nexus.bricks.rebac.entity_registry import EntityRegistry
+from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
 
 @pytest.fixture
-def engine():
-    """Create in-memory SQLite database."""
-    engine = create_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine)
-    return engine
+def record_store():
+    """Create in-memory RecordStore for testing."""
+    store = InMemoryRecordStore()
+    yield store
+    store.close()
 
 
 @pytest.fixture
-def session(engine):
-    """Create database session."""
-    Session = sessionmaker(bind=engine)
-    session = Session()
-    yield session
-    session.close()
-
-
-@pytest.fixture
-def registry(session):
+def registry(record_store):
     """Create EntityRegistry instance."""
-    return EntityRegistry(session)
+    return EntityRegistry(record_store)
 
 
 def test_delete_entity_basic(registry):

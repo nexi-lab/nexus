@@ -1,7 +1,5 @@
 """File attribute modification operations: chmod, chown, truncate, utimens."""
 
-from __future__ import annotations
-
 import errno
 import logging
 
@@ -15,7 +13,7 @@ from nexus.fuse.ops._shared import (
 
 # Import event types
 try:
-    from nexus.core.event_bus import FileEventType
+    from nexus.core.file_events import FileEventType
 
     HAS_EVENT_BUS = True
 except ImportError:
@@ -126,6 +124,6 @@ class AttrHandler:
         if HAS_EVENT_BUS and FileEventType is not None:
             ctx.events.fire(FileEventType.FILE_WRITE, original_path, size=length)
 
-    def utimens(self, path: str, times: tuple[float, float] | None = None) -> None:  # noqa: ARG002
+    def utimens(self, _path: str, _times: tuple[float, float] | None = None) -> None:
         """Update file access and modification times (no-op)."""
         pass

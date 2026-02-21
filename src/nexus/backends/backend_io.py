@@ -10,13 +10,11 @@ Bug fixes applied:
 Part of: #1628 (Split CacheConnectorMixin into focused units)
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +49,11 @@ class BackendIOService:
             Returns (None, None, None) if parsing fails or not supported
         """
         try:
-            from nexus.parsers.markitdown_parser import MarkItDownParser
+            import importlib as _il
+
+            MarkItDownParser = _il.import_module(
+                "nexus.bricks.parsers.markitdown_parser"
+            ).MarkItDownParser
         except ImportError:
             return None, None, None
 
@@ -91,7 +93,7 @@ class BackendIOService:
     def batch_read_from_backend(
         self,
         paths: list[str],
-        contexts: dict[str, OperationContext] | None = None,
+        contexts: "dict[str, OperationContext] | None" = None,
     ) -> dict[str, bytes]:
         """Batch read content directly from backend (bypassing cache).
 
@@ -162,7 +164,7 @@ class BackendIOService:
     def read_content_from_backend(
         self,
         path: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> bytes | None:
         """Read content directly from backend (bypassing cache).
 

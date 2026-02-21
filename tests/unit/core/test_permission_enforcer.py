@@ -2,11 +2,11 @@
 
 import pytest
 
-from nexus.core.permissions import (
+from nexus.bricks.rebac.enforcer import PermissionEnforcer
+from nexus.contracts.types import (
     OperationContext,
     Permission,
 )
-from nexus.rebac.enforcer import PermissionEnforcer
 
 
 class TestOperationContext:
@@ -400,8 +400,8 @@ class TestHasAccessibleDescendantsBatch:
         assert result["/skills"] is False
         assert result["/archive"] is False
 
-    def test_decode_error_returns_all_true(self):
-        """On decode error, fallback returns True for all prefixes."""
+    def test_decode_error_returns_all_false(self):
+        """On decode error, fail-closed returns False for all prefixes (security)."""
 
         class MockTigerCache:
             def get_accessible_paths_list(self, **kwargs):
@@ -413,8 +413,8 @@ class TestHasAccessibleDescendantsBatch:
         enforcer = PermissionEnforcer(rebac_manager=MockReBACManager())
         ctx = OperationContext(user_id="alice", groups=["dev"])
         result = enforcer.has_accessible_descendants_batch(["/docs", "/skills"], ctx)
-        # Should fallback to all True on decode error
-        assert result == {"/docs": True, "/skills": True}
+        # Fail-closed: deny access on error (security-critical)
+        assert result == {"/docs": False, "/skills": False}
 
     def test_prefix_collision_workspace_old(self):
         """/workspace must NOT match /workspace-old/x (Issue #1565)."""

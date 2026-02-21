@@ -10,8 +10,6 @@ Endpoints:
 Every endpoint (except OPTIONS) validates the Tus-Resumable header.
 """
 
-from __future__ import annotations
-
 import base64
 import logging
 from typing import TYPE_CHECKING
@@ -21,7 +19,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from nexus.server.dependencies import require_auth
 
 if TYPE_CHECKING:
-    from nexus.services.chunked_upload_service import ChunkedUploadService
+    from nexus.services.upload.chunked_upload_service import ChunkedUploadService
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +87,7 @@ def create_tus_uploads_router(
     public_router = APIRouter(tags=["uploads"])
     router = APIRouter(tags=["uploads"], dependencies=[Depends(require_auth)])
 
-    def _get_service() -> ChunkedUploadService:
+    def _get_service() -> "ChunkedUploadService":
         svc: ChunkedUploadService | None = get_upload_service()  # type: ignore[operator]
         if svc is None:
             raise HTTPException(status_code=503, detail="Upload service not available")
@@ -128,7 +126,7 @@ def create_tus_uploads_router(
         _tus_resumable: str = Depends(_validate_tus_resumable),
     ) -> Response:
         """Create a new upload session (tus creation extension)."""
-        from nexus.core.exceptions import ValidationError
+        from nexus.contracts.exceptions import ValidationError
 
         service = _get_service()
 
@@ -187,7 +185,7 @@ def create_tus_uploads_router(
         _tus_resumable: str = Depends(_validate_tus_resumable),
     ) -> Response:
         """Upload a chunk of data (tus core protocol)."""
-        from nexus.core.exceptions import (
+        from nexus.contracts.exceptions import (
             UploadChecksumMismatchError,
             UploadExpiredError,
             UploadNotFoundError,
@@ -264,7 +262,7 @@ def create_tus_uploads_router(
         _tus_resumable: str = Depends(_validate_tus_resumable),
     ) -> Response:
         """Get the current offset of an upload (for resumption)."""
-        from nexus.core.exceptions import UploadExpiredError, UploadNotFoundError
+        from nexus.contracts.exceptions import UploadExpiredError, UploadNotFoundError
 
         service = _get_service()
 
@@ -294,7 +292,7 @@ def create_tus_uploads_router(
         _tus_resumable: str = Depends(_validate_tus_resumable),
     ) -> Response:
         """Terminate an upload and release resources (tus termination extension)."""
-        from nexus.core.exceptions import UploadNotFoundError
+        from nexus.contracts.exceptions import UploadNotFoundError
 
         service = _get_service()
 

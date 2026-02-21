@@ -12,22 +12,20 @@ use real OAuth tokens in CI. For full E2E testing with real
 Google API, use OAuth authentication via the integrations page.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, patch
 
 import pytest
 from pydantic import ValidationError as PydanticValidationError
 
-from nexus.backends.local import LocalBackend
-from nexus.connectors.base import ValidationError
-from nexus.connectors.gmail.schemas import (
+from nexus.backends.connectors.base import ValidationError
+from nexus.backends.connectors.gmail.schemas import (
     DraftEmailSchema,
     ReplyEmailSchema,
     SendEmailSchema,
 )
+from nexus.backends.local import LocalBackend
+from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
-from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
@@ -441,7 +439,7 @@ class TestOperationTraits:
 
     def test_send_email_traits(self, gmail_backend):
         """Test send_email has correct traits."""
-        from nexus.connectors.base import ConfirmLevel, Reversibility
+        from nexus.backends.connectors.base import ConfirmLevel, Reversibility
 
         traits = gmail_backend.get_operation_traits("send_email")
 
@@ -452,7 +450,7 @@ class TestOperationTraits:
 
     def test_reply_email_traits(self, gmail_backend):
         """Test reply_email has correct traits."""
-        from nexus.connectors.base import ConfirmLevel, Reversibility
+        from nexus.backends.connectors.base import ConfirmLevel, Reversibility
 
         traits = gmail_backend.get_operation_traits("reply_email")
 
@@ -462,7 +460,7 @@ class TestOperationTraits:
 
     def test_forward_email_traits(self, gmail_backend):
         """Test forward_email has correct traits."""
-        from nexus.connectors.base import ConfirmLevel, Reversibility
+        from nexus.backends.connectors.base import ConfirmLevel, Reversibility
 
         traits = gmail_backend.get_operation_traits("forward_email")
 
@@ -472,7 +470,7 @@ class TestOperationTraits:
 
     def test_draft_traits(self, gmail_backend):
         """Test create_draft has correct traits."""
-        from nexus.connectors.base import ConfirmLevel, Reversibility
+        from nexus.backends.connectors.base import ConfirmLevel, Reversibility
 
         traits = gmail_backend.get_operation_traits("create_draft")
 

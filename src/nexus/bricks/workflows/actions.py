@@ -23,13 +23,13 @@ from typing import Any
 import aiohttp
 
 from nexus.bricks.workflows.types import ActionResult, WorkflowContext
-from nexus.security.output_validator import validate_llm_output
-from nexus.security.prompt_sanitizer import (
+from nexus.lib.security.output_validator import validate_llm_output
+from nexus.lib.security.prompt_sanitizer import (
     detect_injection_patterns,
     sanitize_for_prompt,
     wrap_untrusted_data,
 )
-from nexus.security.url_validator import validate_outbound_url
+from nexus.lib.security.url_validator import validate_outbound_url
 
 logger = logging.getLogger(__name__)
 

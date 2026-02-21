@@ -15,21 +15,19 @@ References:
     - Issue #1274: Astraea-style state-aware scheduler
 """
 
-from __future__ import annotations
-
 import asyncio
 from typing import TYPE_CHECKING, Any
 
-from nexus.services.agents.agent_record import AgentState
+from nexus.contracts.agent_types import AgentState
 from nexus.services.protocols.agent_registry import AgentInfo
 
 if TYPE_CHECKING:
-    from nexus.bricks.scheduler.events import AgentStateEmitter
-    from nexus.services.agents.agent_record import AgentRecord
+    from nexus.contracts.agent_types import AgentRecord, AgentSpec, AgentStatus
     from nexus.services.agents.agent_registry import AgentRegistry
+    from nexus.services.scheduler.events import AgentStateEmitter
 
 
-def _to_agent_info(record: AgentRecord) -> AgentInfo:
+def _to_agent_info(record: "AgentRecord") -> AgentInfo:
     """Convert an ``AgentRecord`` to the protocol-level ``AgentInfo``.
 
     Maps the persistence-layer dataclass to the lightweight snapshot
@@ -60,9 +58,9 @@ class AsyncAgentRegistry:
 
     def __init__(
         self,
-        inner: AgentRegistry,
+        inner: "AgentRegistry",
         *,
-        state_emitter: AgentStateEmitter | None = None,
+        state_emitter: "AgentStateEmitter | None" = None,
     ) -> None:
         self._inner = inner
         self._state_emitter = state_emitter
@@ -124,7 +122,7 @@ class AsyncAgentRegistry:
 
         # Emit state change event if emitter is configured
         if self._state_emitter is not None and previous_state is not None:
-            from nexus.bricks.scheduler.events import AgentStateEvent
+            from nexus.services.scheduler.events import AgentStateEvent
 
             event = AgentStateEvent(
                 agent_id=agent_id,
@@ -146,3 +144,41 @@ class AsyncAgentRegistry:
 
     async def unregister(self, agent_id: str) -> bool:
         return await asyncio.to_thread(self._inner.unregister, agent_id)
+
+    # ------------------------------------------------------------------
+    # Spec / Status methods (Issue #2169)
+    # ------------------------------------------------------------------
+
+    async def set_spec(self, agent_id: str, spec: "AgentSpec") -> "AgentSpec":
+        """Store an AgentSpec for an agent.
+
+        Args:
+            agent_id: Agent identifier.
+            spec: Desired state specification.
+
+        Returns:
+            The stored AgentSpec with updated spec_generation.
+        """
+        return await asyncio.to_thread(self._inner.set_spec, agent_id, spec)
+
+    async def get_spec(self, agent_id: str) -> "AgentSpec | None":
+        """Retrieve the stored AgentSpec for an agent.
+
+        Args:
+            agent_id: Agent identifier.
+
+        Returns:
+            AgentSpec if stored, None otherwise.
+        """
+        return await asyncio.to_thread(self._inner.get_spec, agent_id)
+
+    async def get_status(self, agent_id: str) -> "AgentStatus | None":
+        """Compute the current AgentStatus for an agent.
+
+        Args:
+            agent_id: Agent identifier.
+
+        Returns:
+            Computed AgentStatus, or None if agent doesn't exist.
+        """
+        return await asyncio.to_thread(self._inner.get_status, agent_id)

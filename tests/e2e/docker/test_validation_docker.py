@@ -5,8 +5,6 @@ the @pytest.mark.integration marker. They are skipped automatically
 if Docker is not available.
 """
 
-from __future__ import annotations
-
 import pytest
 
 # Check Docker availability
@@ -59,8 +57,8 @@ class TestValidationDockerIntegration:
     @pytest.mark.asyncio
     async def test_run_validation_in_docker(self, docker_provider, sandbox_id):
         """Run a simple validation script in a real Docker container."""
-        from nexus.validation.models import ValidatorConfig
-        from nexus.validation.script_builder import (
+        from nexus.bricks.parsers.validation.models import ValidatorConfig
+        from nexus.bricks.parsers.validation.script_builder import (
             build_simple_validation_script,
             parse_simple_script_output,
         )
@@ -83,8 +81,8 @@ class TestValidationDockerIntegration:
     @pytest.mark.asyncio
     async def test_validation_runner_in_docker(self, docker_provider, sandbox_id):
         """Run full ValidationRunner against a real Docker sandbox."""
-        from nexus.validation.models import ValidationPipelineConfig, ValidatorConfig
-        from nexus.validation.runner import ValidationRunner
+        from nexus.bricks.parsers.validation.models import ValidationPipelineConfig, ValidatorConfig
+        from nexus.bricks.parsers.validation.runner import ValidationRunner
 
         # Use echo validators since real linters may not be installed
         config = ValidationPipelineConfig(
@@ -107,7 +105,7 @@ class TestValidationDockerIntegration:
     @pytest.mark.asyncio
     async def test_detection_in_docker(self, docker_provider, sandbox_id):
         """Test project detection in a real Docker sandbox."""
-        from nexus.validation.detector import detect_project_validators
+        from nexus.bricks.parsers.validation.detector import detect_project_validators
 
         # Empty workspace — should detect nothing
         validators = await detect_project_validators(

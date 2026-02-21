@@ -8,17 +8,16 @@ Tests that the trust gate in delegate() correctly:
 5. Is skipped when reputation_service is None
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nexus.services.delegation.errors import InsufficientTrustError
-from nexus.services.delegation.models import DelegationMode
-from nexus.services.delegation.service import DelegationService
+from nexus.bricks.delegation.errors import InsufficientTrustError
+from nexus.bricks.delegation.models import DelegationMode
+from nexus.bricks.delegation.service import DelegationService
+from nexus.constants import ROOT_ZONE_ID
 
 
 @dataclass(frozen=True)
@@ -44,7 +43,7 @@ class FakeReputationScore:
     disputed_interactions: int = 0
     global_trust_score: float | None = None
     updated_at: datetime = datetime(2025, 1, 1)
-    zone_id: str = "default"
+    zone_id: str = ROOT_ZONE_ID
 
 
 @pytest.fixture()
@@ -57,19 +56,19 @@ def mock_reputation_service():
 
 @pytest.fixture()
 def mock_deps():
-    """Mock dependencies for DelegationService (session_factory, rebac_manager)."""
-    session_factory = MagicMock()
+    """Mock dependencies for DelegationService (record_store, rebac_manager)."""
+    record_store = MagicMock()
     rebac_manager = MagicMock()
     entity_registry = MagicMock()
     agent_registry = MagicMock()
-    return session_factory, rebac_manager, entity_registry, agent_registry
+    return record_store, rebac_manager, entity_registry, agent_registry
 
 
 def _make_service(mock_deps, reputation_service=None):
     """Create DelegationService with mock dependencies."""
-    sf, rebac, entity_reg, agent_reg = mock_deps
+    rs, rebac, entity_reg, agent_reg = mock_deps
     return DelegationService(
-        session_factory=sf,
+        record_store=rs,
         rebac_manager=rebac,
         entity_registry=entity_reg,
         agent_registry=agent_reg,

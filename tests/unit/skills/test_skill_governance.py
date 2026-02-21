@@ -2,7 +2,7 @@
 
 import pytest
 
-from nexus.skills.governance import (
+from nexus.bricks.skills.governance import (
     ApprovalStatus,
     GovernanceError,
     SkillApproval,
@@ -23,9 +23,9 @@ async def test_submit_for_approval() -> None:
     )
 
     assert approval_id is not None
-    assert approval_id in gov._in_memory_approvals
 
-    approval = gov._in_memory_approvals[approval_id]
+    approval = await gov._get_approval(approval_id)
+    assert approval is not None
     assert approval.skill_name == "test-skill"
     assert approval.submitted_by == "alice"
     assert approval.status == ApprovalStatus.PENDING
@@ -57,7 +57,8 @@ async def test_approve_skill() -> None:
     # Approve
     await gov.approve_skill(approval_id, reviewed_by="bob", comments="Looks great!")
 
-    approval = gov._in_memory_approvals[approval_id]
+    approval = await gov._get_approval(approval_id)
+    assert approval is not None
     assert approval.status == ApprovalStatus.APPROVED
     assert approval.reviewed_by == "bob"
     assert approval.comments == "Looks great!"
@@ -98,7 +99,8 @@ async def test_reject_skill() -> None:
     # Reject
     await gov.reject_skill(approval_id, reviewed_by="bob", comments="Needs more documentation")
 
-    approval = gov._in_memory_approvals[approval_id]
+    approval = await gov._get_approval(approval_id)
+    assert approval is not None
     assert approval.status == ApprovalStatus.REJECTED
     assert approval.reviewed_by == "bob"
     assert approval.comments == "Needs more documentation"
@@ -225,7 +227,7 @@ async def test_approval_validation() -> None:
     """Test approval record validation."""
     from datetime import datetime
 
-    from nexus.skills.exceptions import SkillValidationError
+    from nexus.bricks.skills.exceptions import SkillValidationError
 
     # Valid approval
     approval = SkillApproval(

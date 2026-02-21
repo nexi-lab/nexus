@@ -8,14 +8,12 @@ Tests cover:
 - get_async_read_session_factory: read replica dependency (Issue #725)
 """
 
-from __future__ import annotations
-
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.cache.inmemory import InMemoryCacheStore
+from nexus.bricks.cache.inmemory import InMemoryCacheStore
 from nexus.server.dependencies import (
     _get_cached_auth,
     _reset_auth_cache,
@@ -537,57 +535,103 @@ class TestGetOperationContext:
 # get_async_read_session_factory (Issue #725)
 # ===========================================================================
 
+# TestGetAsyncReadSessionFactory removed - v1 dependencies sunset (#2056)
 
-class TestGetAsyncReadSessionFactory:
-    """Tests for the async read session factory dependency (Issue #725)."""
+# ===========================================================================
+# _get_ace_context DRY helper (#2138)
+# ===========================================================================
 
-    def test_returns_read_factory_when_available(self):
-        """Returns async_read_session_factory when configured on app.state."""
-        from nexus.server.api.v1.dependencies import get_async_read_session_factory
 
-        mock_read_factory = MagicMock()
-        request = MagicMock()
-        request.app.state.async_read_session_factory = mock_read_factory
-        request.app.state.async_session_factory = MagicMock()
+class TestGetAceContext:
+    """Tests for the _get_ace_context DRY helper in v2 dependencies."""
 
-        result = get_async_read_session_factory(request)
-        assert result is mock_read_factory
+    def _make_nexus_fs_mock(self) -> MagicMock:
+        """Build a mock NexusFS with memory.session and memory.backend."""
+        nexus_fs = MagicMock()
+        nexus_fs.memory.session = MagicMock(name="mock_session")
+        nexus_fs.memory.backend = MagicMock(name="mock_backend")
+        return nexus_fs
 
-    def test_falls_back_to_primary_when_read_not_available(self):
-        """Falls back to primary async_session_factory when read factory is None."""
-        from nexus.server.api.v1.dependencies import get_async_read_session_factory
+    def _make_auth_result(self, **overrides: Any) -> dict[str, Any]:
+        """Build a minimal auth result dict."""
+        base: dict[str, Any] = {
+            "subject_type": "user",
+            "subject_id": "alice",
+            "zone_id": "z1",
+            "is_admin": False,
+        }
+        base.update(overrides)
+        return base
 
-        mock_primary_factory = MagicMock()
-        request = MagicMock()
-        request.app.state.async_read_session_factory = None
-        request.app.state.async_session_factory = mock_primary_factory
+    def test_extracts_session_and_backend(self) -> None:
+        """ACEContext should contain session/backend from nexus_fs.memory."""
+        from nexus.server.api.v2.dependencies import _get_ace_context
 
-        result = get_async_read_session_factory(request)
-        assert result is mock_primary_factory
+        nexus_fs = self._make_nexus_fs_mock()
+        ctx = _get_ace_context(nexus_fs, self._make_auth_result())
+        assert ctx.session is nexus_fs.memory.session
+        assert ctx.backend is nexus_fs.memory.backend
 
-    def test_falls_back_when_attr_missing(self):
-        """Falls back to primary when async_read_session_factory attr is not set."""
-        from nexus.server.api.v1.dependencies import get_async_read_session_factory
+    def test_derives_user_id_from_context(self) -> None:
+        """user_id should come from OperationContext.user_id."""
+        from nexus.server.api.v2.dependencies import _get_ace_context
 
-        mock_primary_factory = MagicMock()
-        request = MagicMock()
-        # Simulate missing attr by using spec
-        request.app.state = MagicMock(spec=[])
-        request.app.state.async_session_factory = mock_primary_factory
+        ctx = _get_ace_context(
+            self._make_nexus_fs_mock(),
+            self._make_auth_result(subject_id="bob"),
+        )
+        assert ctx.user_id == "bob"
 
-        # getattr with default returns None for missing attrs
-        result = get_async_read_session_factory(request)
-        assert result is mock_primary_factory
+    def test_anonymous_fallback(self) -> None:
+        """Missing subject_id should default to 'anonymous'."""
+        from nexus.server.api.v2.dependencies import _get_ace_context
 
-    def test_raises_503_when_neither_available(self):
-        """Raises 503 when neither read nor primary factory is available."""
-        from fastapi import HTTPException
+        ctx = _get_ace_context(
+            self._make_nexus_fs_mock(),
+            self._make_auth_result(subject_id=None),
+        )
+        assert ctx.user_id == "anonymous"
 
-        from nexus.server.api.v1.dependencies import get_async_read_session_factory
+    def test_zone_id_fallback(self) -> None:
+        """Missing zone_id should default to 'root'."""
+        from nexus.server.api.v2.dependencies import _get_ace_context
 
-        request = MagicMock()
-        request.app.state = MagicMock(spec=[])
+        ctx = _get_ace_context(
+            self._make_nexus_fs_mock(),
+            self._make_auth_result(zone_id=None),
+        )
+        assert ctx.zone_id == "root"
 
-        with pytest.raises(HTTPException) as exc_info:
-            get_async_read_session_factory(request)
-        assert exc_info.value.status_code == 503
+    def test_agent_id_from_x_agent_id(self) -> None:
+        """agent_id should be set when X-Agent-ID is present."""
+        from nexus.server.api.v2.dependencies import _get_ace_context
+
+        ctx = _get_ace_context(
+            self._make_nexus_fs_mock(),
+            self._make_auth_result(x_agent_id="agent-42"),
+        )
+        assert ctx.agent_id == "agent-42"
+
+    def test_operation_context_attached(self) -> None:
+        """ACEContext.context should be a valid OperationContext."""
+        from nexus.contracts.types import OperationContext
+        from nexus.server.api.v2.dependencies import _get_ace_context
+
+        ctx = _get_ace_context(
+            self._make_nexus_fs_mock(),
+            self._make_auth_result(),
+        )
+        assert isinstance(ctx.context, OperationContext)
+        assert ctx.context.user_id == "alice"
+
+    def test_named_tuple_unpacking(self) -> None:
+        """ACEContext should support tuple unpacking for all 6 fields."""
+        from nexus.server.api.v2.dependencies import _get_ace_context
+
+        ctx = _get_ace_context(
+            self._make_nexus_fs_mock(),
+            self._make_auth_result(),
+        )
+        session, backend, user_id, agent_id, zone_id, context = ctx
+        assert user_id == "alice"
+        assert zone_id == "z1"

@@ -3,14 +3,12 @@
 Issue #1286: Extracted from monolithic __init__.py.
 """
 
-from __future__ import annotations
-
 from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from nexus.core.exceptions import ValidationError
+from nexus.contracts.exceptions import ValidationError
 from nexus.storage.models._base import Base, TimestampMixin, uuid_pk
 
 
@@ -37,7 +35,7 @@ class WorkflowModel(TimestampMixin, Base):
 
     created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    executions: Mapped[list[WorkflowExecutionModel]] = relationship(
+    executions: "Mapped[list[WorkflowExecutionModel]]" = relationship(
         "WorkflowExecutionModel", back_populates="workflow", cascade="all, delete-orphan"
     )
 

@@ -11,23 +11,22 @@ Tests all 8 edge cases identified during review:
 8. Empty workspace branching
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from nexus.core.exceptions import (
+from nexus.contracts.exceptions import (
     BranchExistsError,
     BranchProtectedError,
     BranchStateError,
 )
-from nexus.services.context_branch import ContextBranchService
 from nexus.storage.models._base import Base
 from nexus.storage.models.context_branch import ContextBranchModel
+from nexus.system_services.workspace.context_branch import ContextBranchService
 
 
 @pytest.fixture
@@ -43,7 +42,12 @@ def session_factory(engine):
 
 
 @pytest.fixture
-def service(session_factory):
+def record_store(session_factory):
+    return SimpleNamespace(session_factory=session_factory)
+
+
+@pytest.fixture
+def service(record_store):
     wm = MagicMock()
     wm.metadata = MagicMock()
     wm.backend = MagicMock()
@@ -65,7 +69,7 @@ def service(session_factory):
     }
     return ContextBranchService(
         workspace_manager=wm,
-        session_factory=session_factory,
+        record_store=record_store,
         rebac_manager=None,
         default_zone_id="z1",
     )
@@ -172,7 +176,7 @@ class TestBranchNameCollisions:
         # Zone z2 — need a separate service instance
         svc2 = ContextBranchService(
             workspace_manager=service._wm,
-            session_factory=session_factory,
+            record_store=SimpleNamespace(session_factory=session_factory),
             rebac_manager=None,
             default_zone_id="z2",
         )

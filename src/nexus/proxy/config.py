@@ -1,7 +1,5 @@
 """Proxy brick configuration."""
 
-from __future__ import annotations
-
 import dataclasses
 from dataclasses import dataclass
 from typing import Any
@@ -61,6 +59,11 @@ class ProxyBrickConfig:
     # Streaming
     stream_threshold_bytes: int = 65_536  # 64 KB
 
+    # Edge sync (Issue #1707)
+    auth_grace_period_seconds: float = 14400  # 4 hours
+    conflict_scan_enabled: bool = True
+    reconnect_health_check_url: str | None = None
+
     # ------------------------------------------------------------------
     # Named policy profiles (Issue #2073)
     # ------------------------------------------------------------------
@@ -74,7 +77,7 @@ class ProxyBrickConfig:
             raise TypeError(f"Unknown ProxyBrickConfig fields: {unknown}")
 
     @classmethod
-    def local(cls, remote_url: str, **overrides: Any) -> ProxyBrickConfig:
+    def local(cls, remote_url: str, **overrides: Any) -> "ProxyBrickConfig":
         """Low-latency LAN profile — tight timeouts, fast failure.
 
         Suitable when the remote kernel is on the same machine or local
@@ -92,7 +95,7 @@ class ProxyBrickConfig:
         return cls(remote_url=remote_url, **{**defaults, **overrides})
 
     @classmethod
-    def production(cls, remote_url: str, **overrides: Any) -> ProxyBrickConfig:
+    def production(cls, remote_url: str, **overrides: Any) -> "ProxyBrickConfig":
         """Internet production profile — conservative, standard defaults.
 
         The field defaults were originally tuned for this scenario, so
@@ -102,7 +105,7 @@ class ProxyBrickConfig:
         return cls(remote_url=remote_url, **overrides)
 
     @classmethod
-    def edge(cls, remote_url: str, **overrides: Any) -> ProxyBrickConfig:
+    def edge(cls, remote_url: str, **overrides: Any) -> "ProxyBrickConfig":
         """Edge / intermittent connectivity profile — patient retries.
 
         Suitable for edge deployments with unreliable networks where

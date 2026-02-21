@@ -13,8 +13,6 @@ Tests cover ReBAC operations:
 - Dynamic viewer functionality
 """
 
-from __future__ import annotations
-
 # Check if pandas is available (required for dynamic viewer tests)
 import importlib.util
 import tempfile
@@ -98,7 +96,7 @@ class TestGetSubjectFromContext:
 
     def test_get_subject_from_operation_context(self, nx: NexusFS) -> None:
         """Test _get_subject_from_context with OperationContext."""
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         context = OperationContext(
             user_id="charlie",

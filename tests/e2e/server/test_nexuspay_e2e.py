@@ -11,8 +11,6 @@ These tests build a standalone FastAPI app that exercises:
 5. NexusPay used as payment backend for protected endpoints
 """
 
-from __future__ import annotations
-
 import base64
 import json
 from decimal import Decimal

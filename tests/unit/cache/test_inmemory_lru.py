@@ -3,8 +3,6 @@
 Tests the max_size + LRU eviction enhancement to InMemoryCacheStore.
 """
 
-from __future__ import annotations
-
 import pytest
 
 # ---------------------------------------------------------------------------
@@ -18,7 +16,7 @@ class TestInMemoryLRU:
     @pytest.mark.asyncio
     async def test_max_size_evicts_lru(self) -> None:
         """When max_size is hit, oldest entry should be evicted."""
-        from nexus.cache.inmemory import InMemoryCacheStore
+        from nexus.bricks.cache.inmemory import InMemoryCacheStore
 
         store = InMemoryCacheStore(max_size=3)
         await store.set("a", b"1")
@@ -32,7 +30,7 @@ class TestInMemoryLRU:
     @pytest.mark.asyncio
     async def test_get_refreshes_lru_order(self) -> None:
         """Accessing a key should refresh its LRU position."""
-        from nexus.cache.inmemory import InMemoryCacheStore
+        from nexus.bricks.cache.inmemory import InMemoryCacheStore
 
         store = InMemoryCacheStore(max_size=3)
         await store.set("a", b"1")
@@ -48,7 +46,7 @@ class TestInMemoryLRU:
     @pytest.mark.asyncio
     async def test_set_existing_key_refreshes(self) -> None:
         """Overwriting an existing key should refresh its LRU position."""
-        from nexus.cache.inmemory import InMemoryCacheStore
+        from nexus.bricks.cache.inmemory import InMemoryCacheStore
 
         store = InMemoryCacheStore(max_size=3)
         await store.set("a", b"1")
@@ -64,7 +62,7 @@ class TestInMemoryLRU:
     @pytest.mark.asyncio
     async def test_max_size_zero_unlimited(self) -> None:
         """max_size=0 should mean unlimited (backward compat)."""
-        from nexus.cache.inmemory import InMemoryCacheStore
+        from nexus.bricks.cache.inmemory import InMemoryCacheStore
 
         store = InMemoryCacheStore(max_size=0)
         for i in range(1000):
@@ -76,7 +74,7 @@ class TestInMemoryLRU:
     @pytest.mark.asyncio
     async def test_default_max_size_unlimited(self) -> None:
         """Default constructor should have unlimited size (backward compat)."""
-        from nexus.cache.inmemory import InMemoryCacheStore
+        from nexus.bricks.cache.inmemory import InMemoryCacheStore
 
         store = InMemoryCacheStore()
         for i in range(100):
@@ -86,7 +84,7 @@ class TestInMemoryLRU:
     @pytest.mark.asyncio
     async def test_eviction_order_correct(self) -> None:
         """Eviction should follow strict LRU order."""
-        from nexus.cache.inmemory import InMemoryCacheStore
+        from nexus.bricks.cache.inmemory import InMemoryCacheStore
 
         store = InMemoryCacheStore(max_size=3)
         await store.set("a", b"1")
@@ -106,7 +104,7 @@ class TestInMemoryLRU:
     @pytest.mark.asyncio
     async def test_stats_track_evictions(self) -> None:
         """InMemoryCacheStore should track eviction count in stats."""
-        from nexus.cache.inmemory import InMemoryCacheStore
+        from nexus.bricks.cache.inmemory import InMemoryCacheStore
 
         store = InMemoryCacheStore(max_size=2)
         await store.set("a", b"1")
@@ -121,7 +119,7 @@ class TestInMemoryLRU:
     @pytest.mark.asyncio
     async def test_ttl_expiry_frees_slot(self) -> None:
         """Expired entries should not count toward max_size during eviction check."""
-        from nexus.cache.inmemory import InMemoryCacheStore
+        from nexus.bricks.cache.inmemory import InMemoryCacheStore
 
         store = InMemoryCacheStore(max_size=2)
         # Set with very short TTL — will expire on next access

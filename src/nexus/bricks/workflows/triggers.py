@@ -129,7 +129,7 @@ class ScheduleTrigger(BaseTrigger):
         self.cron = config.get("cron", "0 * * * *")
         self.interval_seconds = config.get("interval_seconds")
 
-    def matches(self, event_context: dict[str, Any]) -> bool:  # noqa: ARG002
+    def matches(self, _event_context: dict[str, Any]) -> bool:
         return False
 
 
@@ -150,7 +150,7 @@ class ManualTrigger(BaseTrigger):
     def __init__(self, config: dict[str, Any], *, glob_match: GlobMatchFn | None = None):
         super().__init__(TriggerType.MANUAL, config, glob_match=glob_match)
 
-    def matches(self, event_context: dict[str, Any]) -> bool:  # noqa: ARG002
+    def matches(self, _event_context: dict[str, Any]) -> bool:
         return True
 
 

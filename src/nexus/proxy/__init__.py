@@ -35,7 +35,7 @@ from nexus.proxy.errors import (
     QueueReplayError,
     RemoteCallError,
 )
-from nexus.proxy.queue_protocol import InMemoryQueue, OfflineQueueProtocol
+from nexus.proxy.queue_protocol import InMemoryQueue, OfflineQueueProtocol, QueuedOperation
 from nexus.proxy.replay_engine import ReplayEngine
 
 __all__ = [
@@ -53,6 +53,7 @@ __all__ = [
     "CircuitState",
     "InMemoryQueue",
     "OfflineQueueProtocol",
+    "QueuedOperation",
     "ReplayEngine",
     "create_proxy_brick",
 ]

@@ -3,17 +3,13 @@
 Extracted from fastapi_server.py (#1602).
 """
 
-from __future__ import annotations
-
-import hashlib
 import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
 
-from nexus.contracts.rpc_codec import decode_rpc_message, encode_rpc_message
-from nexus.core.exceptions import (
+from nexus.contracts.exceptions import (
     ConflictError,
     ConnectorError,
     DatabaseError,
@@ -23,6 +19,8 @@ from nexus.core.exceptions import (
     NexusPermissionError,
     ValidationError,
 )
+from nexus.core.hash_fast import hash_content
+from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.server.dependencies import require_auth
 from nexus.server.protocol import (
     RPCErrorCode,
@@ -193,14 +191,14 @@ def get_cache_headers(method: str, result: Any) -> dict[str, str]:
 
     if method == "read":
         if isinstance(result, bytes):
-            etag = hashlib.md5(result).hexdigest()
+            etag = hash_content(result)
             headers["ETag"] = f'"{etag}"'
             headers["Cache-Control"] = "private, max-age=60"
         elif isinstance(result, dict):
             if "etag" in result:
                 headers["ETag"] = f'"{result["etag"]}"'
             elif "content" in result and isinstance(result["content"], bytes):
-                etag = hashlib.md5(result["content"]).hexdigest()
+                etag = hash_content(result["content"])
                 headers["ETag"] = f'"{etag}"'
             if "download_url" in result:
                 headers["Cache-Control"] = "private, max-age=300"

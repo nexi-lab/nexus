@@ -11,8 +11,6 @@ For local same-box scenarios, use Metastore (PyO3 FFI) instead for better
 performance (~5μs vs ~200μs latency).
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -26,7 +24,7 @@ from grpc import aio as grpc_aio
 from nexus.raft import commands_pb2, transport_pb2, transport_pb2_grpc
 
 if TYPE_CHECKING:
-    from nexus.core.metadata import FileMetadata
+    from nexus.contracts.metadata import FileMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -180,7 +178,7 @@ class RaftClient:
             self._stub = None
             logger.debug(f"Disconnected from Raft node at {self.address}")
 
-    async def __aenter__(self) -> RaftClient:
+    async def __aenter__(self) -> "RaftClient":
         await self.connect()
         return self
 
@@ -425,7 +423,7 @@ class RaftClient:
 
     async def put_metadata(
         self,
-        metadata: FileMetadata,
+        metadata: "FileMetadata",
         zone_id: str | None = None,
     ) -> bool:
         """Store file metadata in Raft state machine.
@@ -459,7 +457,7 @@ class RaftClient:
         path: str,
         zone_id: str | None = None,
         read_from_leader: bool = False,
-    ) -> FileMetadata | None:
+    ) -> "FileMetadata | None":
         """Get file metadata from Raft state machine.
 
         Args:
@@ -493,7 +491,7 @@ class RaftClient:
         recursive: bool = True,
         limit: int = 0,
         read_from_leader: bool = False,
-    ) -> list[FileMetadata]:
+    ) -> "list[FileMetadata]":
         """List file metadata from Raft state machine.
 
         Args:
@@ -552,7 +550,7 @@ class RaftClient:
         return bool(response.success)
 
     @staticmethod
-    def _proto_to_file_metadata(proto: Any) -> FileMetadata:
+    def _proto_to_file_metadata(proto: Any) -> "FileMetadata":
         """Convert proto FileMetadata to dataclass (delegates to generated mapper)."""
         from nexus.storage._metadata_mapper_generated import MetadataMapper
 
@@ -740,10 +738,10 @@ class RaftClientPool:
     config: RaftClientConfig = field(default_factory=RaftClientConfig)
     zone_id: str | None = None
 
-    _clients: dict[str, RaftClient] = field(default_factory=dict, init=False)
+    _clients: "dict[str, RaftClient]" = field(default_factory=dict, init=False)
     _leader_address: str | None = field(default=None, init=False)
 
-    async def get_client(self) -> RaftClient:
+    async def get_client(self) -> "RaftClient":
         """Get a client, preferring the leader if known."""
         # For now, just return first available client
         # In real impl, would track leader and route accordingly
@@ -762,7 +760,7 @@ class RaftClientPool:
             await client.close()
         self._clients.clear()
 
-    async def __aenter__(self) -> RaftClientPool:
+    async def __aenter__(self) -> "RaftClientPool":
         return self
 
     async def __aexit__(

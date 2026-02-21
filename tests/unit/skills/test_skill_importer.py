@@ -6,9 +6,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.core.permissions import OperationContext
-from nexus.skills.exceptions import SkillPermissionDeniedError
-from nexus.skills.importer import SkillImporter, SkillImportError
+from nexus.bricks.skills.exceptions import SkillPermissionDeniedError
+from nexus.bricks.skills.importer import SkillImporter, SkillImportError
+from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.types import OperationContext
 
 # Mock SKILL.md content with valid YAML frontmatter
 VALID_SKILL_MD = """---
@@ -156,7 +157,7 @@ def admin_context():
         agent_id=None,
         subject_type="user",
         subject_id="admin",
-        zone_id="default",
+        zone_id=ROOT_ZONE_ID,
         groups=[],
         is_admin=True,
         is_system=False,
@@ -173,7 +174,7 @@ def user_context():
         agent_id=None,
         subject_type="user",
         subject_id="alice",
-        zone_id="default",
+        zone_id=ROOT_ZONE_ID,
         groups=[],
         is_admin=False,
         is_system=False,

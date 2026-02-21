@@ -9,11 +9,10 @@ Service-layer e2e tests that verify the complete routing pipeline:
 - Log validation via caplog
 """
 
-from __future__ import annotations
-
 import logging
 import statistics
 import time
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -61,6 +60,11 @@ def session_factory(engine):
 
 
 @pytest.fixture
+def record_store(session_factory):
+    return SimpleNamespace(session_factory=session_factory)
+
+
+@pytest.fixture
 def mock_docker() -> SandboxProvider:
     mock = AsyncMock(spec=SandboxProvider)
     mock.create.return_value = "docker-e2e-123"
@@ -93,10 +97,10 @@ def mock_e2b() -> SandboxProvider:
 
 
 @pytest.fixture
-def full_stack(session_factory, mock_docker, mock_e2b):
+def full_stack(record_store, mock_docker, mock_e2b):
     """Full SandboxManager + Router + all providers."""
     monty = MontySandboxProvider(resource_profile="standard", enable_type_checking=False)
-    mgr = SandboxManager(session_factory=session_factory)
+    mgr = SandboxManager(record_store=record_store)
     mgr.providers["monty"] = monty
     mgr.providers["docker"] = mock_docker
     mgr.providers["e2b"] = mock_e2b

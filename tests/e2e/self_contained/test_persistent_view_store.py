@@ -4,15 +4,13 @@ Tests with SQLite-backed store — verifies real SQL operations, JSON round-trip
 upsert semantics, and concurrent access patterns.
 """
 
-from __future__ import annotations
-
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from sqlalchemy import create_engine
 
-from nexus.cache.persistent_view_postgres import PostgresPersistentViewStore
 from nexus.storage.models import Base
+from nexus.storage.persistent_view_postgres import PostgresPersistentViewStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
 # ---------------------------------------------------------------------------
@@ -270,8 +268,8 @@ class TestAgentReconnection:
 
     def test_reconnection_flow(self, engine, store):
         """Full flow: build namespace → clear L2 → restore from L3."""
-        from nexus.rebac.manager import EnhancedReBACManager
-        from nexus.rebac.namespace_manager import MountEntry, NamespaceManager
+        from nexus.bricks.rebac.manager import EnhancedReBACManager
+        from nexus.bricks.rebac.namespace_manager import MountEntry, NamespaceManager
 
         rebac = EnhancedReBACManager(engine=engine, cache_ttl_seconds=300, max_depth=10)
         try:

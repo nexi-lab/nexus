@@ -1,27 +1,30 @@
-"""Unit tests for LoggingBackendWrapper (#1449).
+"""Unit tests for LoggingBackendWrapper (#1449, #2077).
 
 Tests verify:
 1. All operations produce structured debug log output
 2. Log messages contain operation name, latency, and success/failure
 3. Lifecycle events (connect/disconnect) log at INFO level
 4. Delegation passes through correctly to inner backend
+5. Exception logging (#2077, Issue 11)
+6. batch_read_content logging (#2077, Issue 7)
+7. check_connection logging (#2077, Issue 7)
 
 Uses pytest's caplog fixture for log capture.
 
 Design reference:
     - NEXUS-LEGO-ARCHITECTURE.md PART 16, Recursive Wrapping (Mechanism 2)
+    - Issue #2077: Deduplicate backend wrapper boilerplate
 """
 
-from __future__ import annotations
-
 import logging
-from unittest.mock import MagicMock, PropertyMock
+from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.backends.backend import Backend, HandlerStatusResponse
+from nexus.backends.backend import HandlerStatusResponse
 from nexus.backends.logging_wrapper import LoggingBackendWrapper
-from nexus.core.response import HandlerResponse
+from nexus.lib.response import HandlerResponse
+from tests.unit.backends.wrapper_test_helpers import make_leaf
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -31,20 +34,7 @@ from nexus.core.response import HandlerResponse
 @pytest.fixture
 def mock_inner() -> MagicMock:
     """Create a mock Backend for testing."""
-    mock = MagicMock(spec=Backend)
-    mock.name = "test-backend"
-    mock.describe.return_value = "test-backend"
-    type(mock).user_scoped = PropertyMock(return_value=False)
-    type(mock).is_connected = PropertyMock(return_value=True)
-    type(mock).thread_safe = PropertyMock(return_value=True)
-    type(mock).supports_rename = PropertyMock(return_value=False)
-    type(mock).has_virtual_filesystem = PropertyMock(return_value=False)
-    type(mock).has_root_path = PropertyMock(return_value=True)
-    type(mock).has_token_manager = PropertyMock(return_value=False)
-    type(mock).has_data_dir = PropertyMock(return_value=False)
-    type(mock).is_passthrough = PropertyMock(return_value=False)
-    type(mock).supports_parallel_mmap_read = PropertyMock(return_value=False)
-    return mock
+    return make_leaf("test-backend")
 
 
 @pytest.fixture
@@ -127,6 +117,34 @@ class TestContentOperationLogs:
 
 
 # ---------------------------------------------------------------------------
+# Batch Read Logging Tests (#2077, Issue 7)
+# ---------------------------------------------------------------------------
+
+
+class TestBatchReadLogs:
+    """batch_read_content should be logged with count and hits."""
+
+    def test_batch_read_content_logs(
+        self, logged: LoggingBackendWrapper, mock_inner: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        mock_inner.batch_read_content.return_value = {
+            "hash1": b"data1",
+            "hash2": None,
+            "hash3": b"data3",
+        }
+        with caplog.at_level(logging.DEBUG, logger="nexus.backends.logging_wrapper"):
+            results = logged.batch_read_content(["hash1", "hash2", "hash3"])
+        assert results["hash1"] == b"data1"
+        assert results["hash2"] is None
+        assert len(caplog.records) == 1
+        record = caplog.records[0]
+        assert "batch_read_content" in record.message
+        assert "count=3" in record.message
+        assert "hits=2" in record.message
+        assert "latency_ms=" in record.message
+
+
+# ---------------------------------------------------------------------------
 # Directory Operation Logging Tests
 # ---------------------------------------------------------------------------
 
@@ -183,6 +201,26 @@ class TestLifecycleLogs:
 
 
 # ---------------------------------------------------------------------------
+# Check Connection Logging Tests (#2077, Issue 7)
+# ---------------------------------------------------------------------------
+
+
+class TestCheckConnectionLogs:
+    """check_connection should be logged."""
+
+    def test_check_connection_logs(
+        self, logged: LoggingBackendWrapper, mock_inner: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        mock_inner.check_connection.return_value = HandlerStatusResponse(success=True)
+        with caplog.at_level(logging.DEBUG, logger="nexus.backends.logging_wrapper"):
+            result = logged.check_connection()
+        assert result.success
+        assert len(caplog.records) == 1
+        assert "check_connection" in caplog.records[0].message
+        assert "success=True" in caplog.records[0].message
+
+
+# ---------------------------------------------------------------------------
 # Delegation Correctness Tests
 # ---------------------------------------------------------------------------
 
@@ -215,3 +253,53 @@ class TestDelegationCorrectness:
             result = logged.read_content("missing-hash")
         assert not result.success
         assert "success=False" in caplog.records[0].message
+
+
+# ---------------------------------------------------------------------------
+# Exception Logging Tests (#2077, Issue 11)
+# ---------------------------------------------------------------------------
+
+
+class TestExceptionLogging:
+    """Exceptions from inner backend should be logged with latency before re-raising."""
+
+    def test_read_exception_logged(
+        self, logged: LoggingBackendWrapper, mock_inner: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        mock_inner.read_content.side_effect = RuntimeError("connection lost")
+        with (
+            caplog.at_level(logging.DEBUG, logger="nexus.backends.logging_wrapper"),
+            pytest.raises(RuntimeError, match="connection lost"),
+        ):
+            logged.read_content("some-hash")
+        assert len(caplog.records) == 1
+        record = caplog.records[0]
+        assert "read_content" in record.message
+        assert "error=" in record.message
+        assert "connection lost" in record.message
+        assert "latency_ms=" in record.message
+
+    def test_write_exception_logged(
+        self, logged: LoggingBackendWrapper, mock_inner: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        mock_inner.write_content.side_effect = OSError("disk full")
+        with (
+            caplog.at_level(logging.DEBUG, logger="nexus.backends.logging_wrapper"),
+            pytest.raises(OSError, match="disk full"),
+        ):
+            logged.write_content(b"data")
+        assert len(caplog.records) == 1
+        assert "error=" in caplog.records[0].message
+
+    def test_connect_exception_logged_at_info(
+        self, logged: LoggingBackendWrapper, mock_inner: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        mock_inner.connect.side_effect = ConnectionError("refused")
+        with (
+            caplog.at_level(logging.INFO, logger="nexus.backends.logging_wrapper"),
+            pytest.raises(ConnectionError, match="refused"),
+        ):
+            logged.connect()
+        assert len(caplog.records) == 1
+        assert caplog.records[0].levelno == logging.INFO
+        assert "error=" in caplog.records[0].message

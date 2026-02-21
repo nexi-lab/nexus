@@ -2,10 +2,8 @@
 
 Tests use an in-process gRPC server on an ephemeral port (port 0).
 All business logic goes through the real TaskManager with an
-InMemoryTaskStore, exercising the full gRPC transport path.
+CacheBackedTaskStore, exercising the full gRPC transport path.
 """
-
-from __future__ import annotations
 
 import grpc
 import grpc.aio

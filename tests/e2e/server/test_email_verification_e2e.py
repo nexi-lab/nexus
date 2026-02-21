@@ -19,8 +19,6 @@ Run with:
     pytest tests/e2e/test_email_verification_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import uuid
@@ -31,10 +29,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from starlette.testclient import TestClient
 
-from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
-from nexus.auth.providers.database_local import DatabaseLocalAuth
-from nexus.auth.providers.discriminator import DiscriminatingAuthProvider
 from nexus.backends.local import LocalBackend
+from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
+from nexus.bricks.auth.providers.database_local import DatabaseLocalAuth
+from nexus.bricks.auth.providers.discriminator import DiscriminatingAuthProvider
 from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
 from nexus.factory import create_nexus_fs
@@ -50,7 +48,6 @@ pytestmark = [
         reason="Requires native _nexus_raft module (maturin develop)",
     ),
 ]
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -148,7 +145,9 @@ def _env(tmp_path: Path, monkeypatch):
         jwt_secret=jwt_secret,
         token_expiry=3600,
     )
-    api_key_auth = DatabaseAPIKeyAuth(session_factory=session_factory)
+    from types import SimpleNamespace
+
+    api_key_auth = DatabaseAPIKeyAuth(record_store=SimpleNamespace(session_factory=session_factory))
     auth_provider = DiscriminatingAuthProvider(
         api_key_provider=api_key_auth,
         jwt_provider=local_auth,

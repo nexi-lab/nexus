@@ -7,8 +7,6 @@ All models use Pydantic v2 for validation, serialization, and OpenAPI
 schema generation.
 """
 
-from __future__ import annotations
-
 from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, Any, Literal
@@ -110,7 +108,6 @@ class DataPart(BaseModel):
 
 #: Discriminated union of Part types.
 Part = Annotated[TextPart | FilePart | DataPart, Field(discriminator="type")]
-
 
 # ============================================================================
 # Messages and Artifacts
@@ -303,12 +300,12 @@ class A2AResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     @classmethod
-    def success(cls, request_id: str | int, result: Any) -> A2AResponse:
+    def success(cls, request_id: str | int, result: Any) -> "A2AResponse":
         """Create a success response."""
         return cls(id=request_id, result=result)
 
     @classmethod
-    def from_error(cls, request_id: str | int | None, error: A2AErrorData) -> A2AResponse:
+    def from_error(cls, request_id: str | int | None, error: A2AErrorData) -> "A2AResponse":
         """Create an error response."""
         return cls(id=request_id, error=error)
 

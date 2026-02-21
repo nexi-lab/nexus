@@ -12,8 +12,6 @@ Run tests with:
     pytest tests/integration/test_postgres_cache.py -v
 """
 
-from __future__ import annotations
-
 import asyncio
 import os
 from collections.abc import Generator
@@ -23,7 +21,7 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
-from nexus.cache.postgres import (
+from nexus.bricks.cache.postgres import (
     PostgresPermissionCache,
     PostgresResourceMapCache,
     PostgresTigerCache,
@@ -374,8 +372,8 @@ class TestCacheFactoryPostgresFallback:
     """Verify CacheFactory returns PostgreSQL implementations when configured."""
 
     async def test_factory_postgres_fallback(self, pg_engine: Engine) -> None:
-        from nexus.cache.factory import CacheFactory
-        from nexus.cache.settings import CacheSettings
+        from nexus.bricks.cache.factory import CacheFactory
+        from nexus.bricks.cache.settings import CacheSettings
         from nexus.storage.record_store import SQLAlchemyRecordStore
 
         # Wrap engine in RecordStoreABC — CacheFactory must go through the pillar
@@ -411,9 +409,9 @@ class TestCacheFactoryPostgresFallback:
 
     async def test_factory_no_record_store_uses_null(self) -> None:
         """Without record_store or CacheStoreABC driver, factory uses NullCacheStore."""
-        from nexus.cache.factory import CacheFactory
-        from nexus.cache.settings import CacheSettings
-        from nexus.core.cache_store import NullCacheStore
+        from nexus.bricks.cache.factory import CacheFactory
+        from nexus.bricks.cache.settings import CacheSettings
+        from nexus.contracts.cache_store import NullCacheStore
 
         settings = CacheSettings(cache_backend="auto", dragonfly_url=None)
         factory = CacheFactory(settings)

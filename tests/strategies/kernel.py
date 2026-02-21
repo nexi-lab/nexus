@@ -17,10 +17,10 @@ All strategies are explicitly bounded to prevent pathological inputs:
 from hypothesis import strategies as st
 
 from nexus.contracts.types import OperationContext
-from nexus.core.read_set import AccessType, ReadSetEntry, ResourceType
 from nexus.services.protocols.agent_registry import AgentInfo
 from nexus.services.protocols.hook_engine import HookContext, HookSpec
 from nexus.services.protocols.scheduler import AgentRequest
+from nexus.storage.read_set import AccessType, ReadSetEntry, ResourceType
 
 # ---------------------------------------------------------------------------
 # Path strategies

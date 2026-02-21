@@ -274,7 +274,7 @@ class NexusFS(  # type: ignore[misc]
         self._read_set_cache = None
         metadata_cache = getattr(self.metadata, "_cache", None)
         if metadata_cache is not None and self._cache_config.enable_metadata_cache:
-            from nexus.core.read_set import ReadSetRegistry
+            from nexus.storage.read_set import ReadSetRegistry
             from nexus.storage.read_set_cache import ReadSetAwareCache
 
             self._read_set_registry = ReadSetRegistry()

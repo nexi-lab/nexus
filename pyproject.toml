@@ -897,7 +897,7 @@ ignore_imports = [
     # --- tier-neutral (contracts/lib) cross-imports ---
     "nexus.contracts -> nexus.lib.validators",
     "nexus.contracts.deployment_profile -> nexus.lib.performance_tuning",
-    "nexus.contracts.types -> nexus.core.read_set",
+    "nexus.contracts.types -> nexus.storage.read_set",
     "nexus.contracts.write_observer -> nexus.core.metadata",
     # WirableFS TYPE_CHECKING imports (cross-tier wiring contract, #2359)
     "nexus.contracts.wirable_fs -> nexus.backends.backend",

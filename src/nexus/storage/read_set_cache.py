@@ -18,7 +18,7 @@ Design decisions:
     - Uses ReadSetRegistry reverse index for O(1)+O(d) lookups (Issue 14 / Option A)
 
 See also:
-    - nexus.core.read_set: ReadSet, ReadSetRegistry infrastructure
+    - nexus.storage.read_set: ReadSet, ReadSetRegistry infrastructure
     - nexus.storage.cache: MetadataCache (wrapped by this module)
     - docs/design/NEXUS-LEGO-ARCHITECTURE.md: 4-tier architecture
 """
@@ -27,8 +27,8 @@ import logging
 import threading
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.read_set import ReadSet, ReadSetRegistry
 from nexus.storage.cache import _CACHE_MISS, MetadataCache
+from nexus.storage.read_set import ReadSet, ReadSetRegistry
 
 if TYPE_CHECKING:
     from nexus.core.metadata import FileMetadata

@@ -336,6 +336,7 @@ class TestSystemServices:
             "zone_lifecycle",
             "event_log",
             "scheduler_service",
+            "scheduler_state_emitter",
         }
         assert field_names == expected_fields, (
             f"Extra: {field_names - expected_fields}, Missing: {expected_fields - field_names}"

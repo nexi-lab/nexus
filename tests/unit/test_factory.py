@@ -185,9 +185,10 @@ class TestBootSystemServices:
             "scoped_hook_engine",
             "tiger_cache_manager",
             "zone_lifecycle",
-            # Issue #2195: EventLog + Scheduler
+            # Issue #2195, #2360: EventLog + Scheduler (always-started)
             "event_log",
             "scheduler_service",
+            "scheduler_state_emitter",
         }
         assert expected_keys == set(result.keys())
 
@@ -221,13 +222,13 @@ class TestBootSystemServices:
         result = _boot_system_services(ctx)
         assert "scheduler_service" in result
 
-    def test_scheduler_none_without_postgresql(self) -> None:
-        """Scheduler should be None when db_url is not PostgreSQL (Issue #2195)."""
+    def test_scheduler_always_created(self) -> None:
+        """Scheduler is always created regardless of db_url (Issue #2360)."""
         from nexus.factory import _boot_system_services
 
         ctx = _make_mock_ctx(db_url="sqlite:///:memory:")
         result = _boot_system_services(ctx)
-        assert result["scheduler_service"] is None
+        assert result["scheduler_service"] is not None
 
     def test_scheduler_created_with_postgresql(self) -> None:
         """Scheduler should be created (not initialized) with PostgreSQL (Issue #2195)."""
@@ -239,9 +240,10 @@ class TestBootSystemServices:
         assert scheduler is not None
         assert scheduler._initialized is False
 
-    def test_scheduler_degradable_on_import_error(self) -> None:
-        """Scheduler should degrade gracefully on import error (Issue #2195)."""
+    def test_scheduler_fallback_on_import_error(self) -> None:
+        """Scheduler falls back to InMemoryScheduler on import error (Issue #2360)."""
         from nexus.factory import _boot_system_services
+        from nexus.services.protocols.scheduler import InMemoryScheduler
 
         ctx = _make_mock_ctx(db_url="postgresql://localhost/test")
         with patch(
@@ -249,7 +251,7 @@ class TestBootSystemServices:
             side_effect=ImportError("missing dep"),
         ):
             result = _boot_system_services(ctx)
-        assert result["scheduler_service"] is None
+        assert isinstance(result["scheduler_service"], InMemoryScheduler)
 
     def test_event_log_degradable_when_wal_unavailable(self) -> None:
         """Event log should degrade gracefully when WAL is unavailable (Issue #2195)."""

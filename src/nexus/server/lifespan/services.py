@@ -73,15 +73,24 @@ async def shutdown_services(app: FastAPI, svc: LifespanServices) -> None:
         except Exception as e:
             logger.warning("Error shutting down Task Queue runner: %s", e, exc_info=True)
 
-    # Shutdown scheduler pool (Issue #1212)
-    scheduler_pool = getattr(app.state, "_scheduler_pool", None)
-    if scheduler_pool:
+    # Shutdown scheduler (Issue #1212, #2360)
+    scheduler_svc = getattr(app.state, "scheduler_service", None)
+    if scheduler_svc is not None and hasattr(scheduler_svc, "shutdown"):
         try:
-            await scheduler_pool.close()
-            logger.info("Scheduler pool closed")
+            await scheduler_svc.shutdown()
+            logger.info("Scheduler service shut down")
         except Exception as e:
-            logger.warning("Error closing scheduler pool: %s", e, exc_info=True)
-        app.state._scheduler_pool = None
+            logger.warning("Error shutting down scheduler: %s", e, exc_info=True)
+    else:
+        # Legacy fallback: close pool directly
+        scheduler_pool = getattr(app.state, "_scheduler_pool", None)
+        if scheduler_pool:
+            try:
+                await scheduler_pool.close()
+                logger.info("Scheduler pool closed")
+            except Exception as e:
+                logger.warning("Error closing scheduler pool: %s", e, exc_info=True)
+            app.state._scheduler_pool = None
 
     # Cancel agent background tasks and final flush (Issue #1240, #2170)
     heartbeat_task = getattr(app.state, "_heartbeat_task", None)
@@ -531,17 +540,34 @@ def _startup_agent_tasks(app: FastAPI, svc: LifespanServices) -> list[asyncio.Ta
 
 
 async def _startup_scheduler(app: FastAPI, svc: LifespanServices) -> None:
-    """Initialize factory-created SchedulerService with async pool (Issue #2195).
+    """Initialize factory-created SchedulerService with async pool (Issue #2195, #2360).
 
     The SchedulerService is constructed by ``factory._boot_system_services()``
     with ``db_pool=None`` (sync). This lifespan function completes the
     two-phase init: creates the asyncpg pool and calls ``scheduler.initialize(pool)``.
+
+    If the factory fell back to InMemoryScheduler (no PostgreSQL), the
+    scheduler is still registered on app.state for API access.
     """
     _nx = svc.nexus_fs
     _sys = getattr(_nx, "_system_services", None) if _nx else None
     scheduler = getattr(_sys, "scheduler_service", None) if _sys else None
 
-    if scheduler is None or not svc.database_url:
+    if scheduler is None:
+        return
+
+    # Always expose the scheduler on app.state (Issue #2360)
+    app.state.scheduler_service = scheduler
+
+    # InMemoryScheduler doesn't need PostgreSQL init
+    from nexus.services.protocols.scheduler import InMemoryScheduler
+
+    if isinstance(scheduler, InMemoryScheduler):
+        logger.info("Scheduler service started (InMemoryScheduler fallback)")
+        return
+
+    if not svc.database_url:
+        logger.debug("Scheduler skipped: no database_url")
         return
 
     try:
@@ -557,7 +583,6 @@ async def _startup_scheduler(app: FastAPI, svc: LifespanServices) -> None:
         app.state._scheduler_pool = pool
 
         await scheduler.initialize(pool)
-        app.state.scheduler_service = scheduler
 
         # Wire emitter into AsyncAgentRegistry if available
         state_emitter = getattr(scheduler, "_state_emitter", None)

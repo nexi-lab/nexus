@@ -38,8 +38,7 @@ from nexus.services.scheduler.priority import (
 from nexus.services.scheduler.queue import TaskQueue
 
 if TYPE_CHECKING:
-    from nexus.bricks.pay.credits import CreditsService
-    from nexus.services.protocols.scheduler import AgentRequest
+    from nexus.services.protocols.scheduler import AgentRequest, CreditsReservationProtocol
     from nexus.services.scheduler.events import AgentStateEmitter, AgentStateEvent
 
 logger = logging.getLogger(__name__)
@@ -58,7 +57,7 @@ class SchedulerService:
         *,
         queue: TaskQueue | None = None,
         db_pool: Any = None,
-        credits_service: CreditsService | None = None,
+        credits_service: CreditsReservationProtocol | None = None,
         state_emitter: AgentStateEmitter | None = None,
         fair_share: FairShareCounter | None = None,
         use_hrrn: bool = True,
@@ -101,6 +100,14 @@ class SchedulerService:
         self._initialized = True
         await self.sync_fair_share()
         logger.info("SchedulerService initialized (pool connected, fair-share synced)")
+
+    async def shutdown(self) -> None:
+        """Close the asyncpg pool and mark as uninitialized."""
+        if self._pool is not None:
+            await self._pool.close()
+            self._pool = None
+            self._initialized = False
+            logger.info("SchedulerService shutdown (pool closed)")
 
     # =========================================================================
     # SchedulerProtocol — 8 methods

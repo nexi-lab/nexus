@@ -20,7 +20,7 @@ from nexus.contracts.types import (
     OperationContext,
     Permission,
 )
-from nexus.core.read_set import enable_read_tracking
+from nexus.storage.read_set import enable_read_tracking
 
 # ---------------------------------------------------------------------------
 # OperationContext creation and validation

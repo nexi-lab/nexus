@@ -14,7 +14,7 @@ Example:
     >>> from nexus.system_services.lifecycle.reactive_subscriptions import (
     ...     ReactiveSubscriptionManager, Subscription,
     ... )
-    >>> from nexus.core.read_set import ReadSet, ReadSetRegistry
+    >>> from nexus.storage.read_set import ReadSet, ReadSetRegistry
     >>>
     >>> registry = ReadSetRegistry()
     >>> manager = ReactiveSubscriptionManager(registry=registry)
@@ -35,11 +35,11 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.read_set import ReadSetRegistry
+from nexus.storage.read_set import ReadSetRegistry
 
 if TYPE_CHECKING:
-    from nexus.core.read_set import ReadSet
     from nexus.services.event_subsystem.types import FileEvent
+    from nexus.storage.read_set import ReadSet
 
 logger = logging.getLogger(__name__)
 

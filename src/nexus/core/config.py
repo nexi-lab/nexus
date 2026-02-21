@@ -204,10 +204,10 @@ class SystemServices:
     # =================================================================
 
     # ReBAC permission subsystem (Issue #2133: typed with Protocols)
-    rebac_manager: ReBACBrickProtocol | None = None
+    rebac_manager: "ReBACBrickProtocol | None" = None
     audit_store: Any = None
-    entity_registry: EntityRegistryProtocol | None = None
-    permission_enforcer: PermissionEnforcerProtocol | None = None
+    entity_registry: "EntityRegistryProtocol | None" = None
+    permission_enforcer: "PermissionEnforcerProtocol | None" = None
 
     # =================================================================
     # DEGRADABLE services (WARNING + None on failure)

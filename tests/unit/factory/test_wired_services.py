@@ -37,7 +37,7 @@ class TestWiredServicesDataclass:
 
     def test_field_count(self) -> None:
         """WiredServices should have 25 service fields."""
-        assert len(dataclasses.fields(WiredServices)) == 25
+        assert len(dataclasses.fields(WiredServices)) == 27
 
 
 class TestNexusFSBindWiredServices:

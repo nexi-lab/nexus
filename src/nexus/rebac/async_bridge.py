@@ -8,7 +8,7 @@ allowing the sync server to benefit from async database pooling and
 non-blocking I/O.
 
 Usage:
-    from nexus.core.async_bridge import AsyncReBACBridge
+    from nexus.rebac.async_bridge import AsyncReBACBridge
 
     # Initialize once at server startup (prefer injecting engine via DI)
     bridge = AsyncReBACBridge(database_url, engine=record_store.engine)

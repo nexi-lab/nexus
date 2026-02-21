@@ -3,9 +3,8 @@
 All protocols are @runtime_checkable for duck-typed conformance.
 No imports from nexus.core, nexus.storage, or nexus.server.
 
-Note: ``MetadataStoreProtocol`` and ``NexusOperationsProtocol`` now live
-in ``nexus.services.protocols.workflow`` (they are service-tier contracts,
-not brick-specific).  Re-exported here for backward compatibility.
+``MetadataStoreProtocol`` and ``NexusOperationsProtocol`` live in
+``nexus.contracts.workflow_types`` (tier-neutral).
 """
 
 from __future__ import annotations
@@ -13,12 +12,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
-from nexus.services.protocols.workflow import (
+from nexus.contracts.workflow_types import (
     MetadataStoreProtocol,
     NexusOperationsProtocol,
 )
 
-# Re-export so existing callers keep working.
 __all__ = ["MetadataStoreProtocol", "NexusOperationsProtocol"]
 
 # ---------------------------------------------------------------------------

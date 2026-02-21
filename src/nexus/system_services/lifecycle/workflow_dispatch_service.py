@@ -25,9 +25,9 @@ from typing import TYPE_CHECKING, Any
 from nexus.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
+    from nexus.bricks.workflows.protocol import WorkflowProtocol
     from nexus.core.pipe_manager import PipeManager
     from nexus.lib.mutation_hooks import MutationEvent
-    from nexus.workflows.protocol import WorkflowProtocol
 
 logger = logging.getLogger(__name__)
 

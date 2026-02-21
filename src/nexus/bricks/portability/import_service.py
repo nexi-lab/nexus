@@ -108,7 +108,7 @@ class ZoneImportService:
         """
         result = ImportResult(started_at=datetime.now(UTC))
 
-        logger.info(f"Starting import from {options.bundle_path}")
+        logger.info("Starting import from %s", options.bundle_path)
 
         if not options.bundle_path.exists():
             result.add_error(
@@ -139,7 +139,9 @@ class ZoneImportService:
                 if options.target_zone_id:
                     result.zone_remapped = True
                     logger.info(
-                        f"Remapping zone: {manifest.source_zone_id} -> {options.target_zone_id}"
+                        "Remapping zone: %s -> %s",
+                        manifest.source_zone_id,
+                        options.target_zone_id,
                     )
 
                 # Phase 1: Import file metadata and content
@@ -161,7 +163,7 @@ class ZoneImportService:
                     )
 
         except Exception as e:
-            logger.exception(f"Import failed: {e}")
+            logger.exception("Import failed: %s", e)
             result.add_error(
                 path=str(options.bundle_path),
                 error_type="exception",
@@ -171,9 +173,11 @@ class ZoneImportService:
         result.completed_at = datetime.now(UTC)
 
         logger.info(
-            f"Import complete: {result.files_created} created, "
-            f"{result.files_updated} updated, {result.files_skipped} skipped, "
-            f"{result.files_failed} failed"
+            "Import complete: %d created, %d updated, %d skipped, %d failed",
+            result.files_created,
+            result.files_updated,
+            result.files_skipped,
+            result.files_failed,
         )
 
         return result
@@ -215,7 +219,7 @@ class ZoneImportService:
                     progress_callback(idx, manifest_file_count, "files")
 
             except Exception as e:
-                logger.warning(f"Failed to import {record.virtual_path}: {e}")
+                logger.warning("Failed to import %s: %s", record.virtual_path, e)
                 result.add_error(
                     path=record.virtual_path,
                     error_type="import",
@@ -263,7 +267,7 @@ class ZoneImportService:
         if existing is not None:
             # Handle conflict
             if options.conflict_mode == ConflictMode.SKIP:
-                logger.debug(f"Skipping existing file: {remapped_path}")
+                logger.debug("Skipping existing file: %s", remapped_path)
                 result.files_skipped += 1
                 return
 
@@ -277,7 +281,7 @@ class ZoneImportService:
                     and record.updated_at
                     and existing.modified_at >= record.updated_at
                 ):
-                    logger.debug(f"Skipping older file: {remapped_path}")
+                    logger.debug("Skipping older file: %s", remapped_path)
                     result.files_skipped += 1
                     return
                 # Fall through to overwrite with newer content
@@ -305,7 +309,7 @@ class ZoneImportService:
                     result.content_blobs_imported += 1
                 else:
                     logger.warning(
-                        f"Content blob not found for {remapped_path}: {record.content_hash}"
+                        "Content blob not found for %s: %s", remapped_path, record.content_hash
                     )
                     result.add_warning(
                         f"Content blob not found: {record.content_hash} for {remapped_path}"
@@ -349,10 +353,10 @@ class ZoneImportService:
                 else:
                     result.files_created += 1
 
-                logger.debug(f"Imported {remapped_path}: etag={write_result.get('etag', 'N/A')}")
+                logger.debug("Imported %s: etag=%s", remapped_path, write_result.get("etag", "N/A"))
 
             except Exception as e:
-                logger.warning(f"Failed to write {remapped_path}: {e}")
+                logger.warning("Failed to write %s: %s", remapped_path, e)
                 result.add_error(
                     path=remapped_path,
                     error_type="write",
@@ -416,7 +420,7 @@ class ZoneImportService:
                 result.files_created += 1
 
         except Exception as e:
-            logger.warning(f"Failed to import metadata for {path}: {e}")
+            logger.warning("Failed to import metadata for %s: %s", path, e)
             result.add_error(
                 path=path,
                 error_type="metadata",
@@ -447,7 +451,7 @@ class ZoneImportService:
             if updated_at:
                 set_fn(path, "modified_at", updated_at.isoformat())
         except Exception as e:
-            logger.warning(f"Failed to update timestamps for {path}: {e}")
+            logger.warning("Failed to update timestamps for %s: %s", path, e)
 
     @staticmethod
     def validate_permission_graph(
@@ -541,7 +545,7 @@ class ZoneImportService:
         if validation_errors:
             for err in validation_errors:
                 result.add_warning(f"Permission validation: {err}")
-            logger.warning(f"Permission graph validation found {len(validation_errors)} issues")
+            logger.warning("Permission graph validation found %d issues", len(validation_errors))
 
         idx = 0
         for perm_record in records:
@@ -575,12 +579,16 @@ class ZoneImportService:
                 result.permissions_imported += 1
 
                 logger.debug(
-                    f"Imported permission: {perm_record.subject_type}:{subject_id} "
-                    f"{perm_record.relation} {perm_record.object_type}:{object_id}"
+                    "Imported permission: %s:%s %s %s:%s",
+                    perm_record.subject_type,
+                    subject_id,
+                    perm_record.relation,
+                    perm_record.object_type,
+                    object_id,
                 )
 
             except Exception as e:
-                logger.warning(f"Failed to import permission: {e}")
+                logger.warning("Failed to import permission: %s", e)
                 result.permissions_skipped += 1
 
             # Progress callback

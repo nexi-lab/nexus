@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
-    from nexus.core.config import DistributedConfig, PermissionConfig
+    from nexus.core.config import AuditConfig, DistributedConfig, PermissionConfig
     from nexus.core.metastore import MetastoreABC
     from nexus.core.router import PathRouter
     from nexus.lib.performance_tuning import ProfileTuning
@@ -31,6 +31,7 @@ class _BootContext:
     engine: Any
     read_engine: Any  # Read replica engine (Issue #725); same as engine when no replica
     perm: PermissionConfig
+    audit: AuditConfig
     cache_ttl_seconds: int | None
     dist: DistributedConfig
     zone_id: str | None

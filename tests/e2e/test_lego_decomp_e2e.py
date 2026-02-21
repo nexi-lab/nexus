@@ -27,6 +27,7 @@ import pytest
 
 from nexus.contracts.types import OperationContext
 from nexus.core.config import (
+    AuditConfig,
     DistributedConfig,
     MemoryConfig,
     ParseConfig,
@@ -97,10 +98,10 @@ def _create_factory_nexus_fs(
         is_admin=is_admin,
         permissions=PermissionConfig(
             enforce=enforce_permissions,
-            audit_strict_mode=False,
             enforce_zone_isolation=False,
             enable_tiger_cache=enable_tiger_cache,
         ),
+        audit=AuditConfig(strict_mode=False),
         parsing=ParseConfig(auto_parse=False),
         distributed=DistributedConfig(
             enable_events=False,

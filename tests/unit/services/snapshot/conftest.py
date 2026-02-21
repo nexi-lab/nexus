@@ -7,6 +7,7 @@ import pytest
 
 from nexus.bricks.snapshot.registry import TransactionRegistry
 from nexus.bricks.snapshot.service import TransactionalSnapshotService
+from nexus.contracts.metadata import FileMetadata
 
 
 class FakeSession:
@@ -112,4 +113,5 @@ def snapshot_service(
         record_store=mock_record_store,
         cas_store=mock_cas_store,
         metadata_store=mock_metadata_store,
+        metadata_factory=FileMetadata,
     )

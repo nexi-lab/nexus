@@ -9,10 +9,7 @@ import os
 import sys
 import threading
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from nexus.core.metastore import MetastoreABC
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +24,7 @@ class TigerCacheManager:
     def __init__(
         self,
         rebac_manager: Any,
-        metadata_store: "MetastoreABC",
+        metadata_store: Any,
         default_zone_id: str,
         process_queue_fn: Callable | None = None,
         warm_cache_fn: Callable | None = None,

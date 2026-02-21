@@ -180,9 +180,10 @@ class TestBootSystemServices:
         assert isinstance(result, dict)
         assert set(result.keys()) == EXPECTED_SYSTEM_KEYS
 
-    def test_critical_services_are_not_none(self) -> None:
-        """All 5 critical services must be non-None on success.
+    def test_critical_and_rebac_services_are_not_none(self) -> None:
+        """Critical (write_observer) + degradable ReBAC services must be non-None.
 
+        Issue #2440: ReBAC services are degradable but always get NoOp fallback.
         deferred_permission_buffer is degradable and may be None.
         """
         ctx = _make_boot_context()
@@ -195,21 +196,36 @@ class TestBootSystemServices:
             "permission_enforcer",
             "write_observer",
         ):
-            assert result[key] is not None, f"Critical service {key} should not be None"
+            assert result[key] is not None, f"Service {key} should not be None"
 
-    def test_critical_failure_raises_boot_error(self) -> None:
-        """When a critical service (rebac_manager) fails, BootError is raised."""
+    def test_rebac_failure_degrades_to_noop(self) -> None:
+        """Issue #2440: ReBAC failure degrades to NoOp (not BootError).
+
+        ReBAC was demoted from critical to degradable. When ReBACManager
+        init fails, NoOp stubs are injected and boot continues.
+        """
+        from nexus.contracts.noop_rebac import (
+            NoOpAuditStore,
+            NoOpEntityRegistry,
+            NoOpPermissionEnforcer,
+            NoOpReBACManager,
+        )
+
         ctx = _make_boot_context()
 
         with patch(
-            "nexus.bricks.rebac.manager.EnhancedReBACManager.__init__",
+            "nexus.bricks.rebac.manager.ReBACManager",
             side_effect=RuntimeError("bad engine"),
         ):
-            with pytest.raises(BootError) as exc_info:
-                _boot_system_services(ctx)
+            result = _boot_system_services(ctx)
 
-            assert "system-critical" in exc_info.value.tier
-            assert "bad engine" in str(exc_info.value)
+        # ReBAC services should be NoOp, not None
+        assert isinstance(result["rebac_manager"], NoOpReBACManager)
+        assert isinstance(result["audit_store"], NoOpAuditStore)
+        assert isinstance(result["entity_registry"], NoOpEntityRegistry)
+        assert isinstance(result["permission_enforcer"], NoOpPermissionEnforcer)
+        # Critical service (write_observer) should still work
+        assert result["write_observer"] is not None
 
     def test_system_services_values_are_not_none(self) -> None:
         """All system service values except nullable keys are non-None.

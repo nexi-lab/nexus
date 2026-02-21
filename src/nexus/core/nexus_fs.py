@@ -17,6 +17,7 @@ from nexus.lib.mutation_hooks import MutationOp
 if TYPE_CHECKING:
     from nexus.bricks.rebac.entity_registry import EntityRegistry
     from nexus.services.memory.memory_api import Memory
+
 from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
 from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
 from nexus.contracts.metadata import FileMetadata
@@ -298,7 +299,7 @@ class NexusFS(  # type: ignore[misc]
         if _injected_tcm is not None:
             self._tiger_cache_manager = _injected_tcm
         else:
-            from nexus.services.tiger_cache_manager import TigerCacheManager
+            from nexus.bricks.rebac.tiger_cache_manager import TigerCacheManager
 
             self._tiger_cache_manager = TigerCacheManager(
                 rebac_manager=self._rebac_manager,
@@ -447,215 +448,6 @@ class NexusFS(  # type: ignore[misc]
     def memory(self) -> Any:
         """Get Memory API instance (lazy init on first access)."""
         return self._memory_provider.get_or_create()
-
-    def _init_performance_optimizations(self) -> None:
-        """Initialize performance optimizations for permission checks.
-
-        This method:
-        1. Syncs tiger_resource_map from existing metadata (Issue #934)
-        2. Grants TRAVERSE permission on implicit directories (enables O(1) stat)
-        3. Warms the Tiger Cache for faster subsequent permission checks
-        4. Starts background worker for Tiger Cache queue processing
-
-        Called automatically during __init__. Can be called manually to refresh.
-        """
-        import logging
-        import os
-
-        logger = logging.getLogger(__name__)
-
-        # Check if optimizations are enabled (default: True)
-        # Set NEXUS_DISABLE_PERF_OPTIMIZATIONS=true to disable
-        if os.getenv("NEXUS_DISABLE_PERF_OPTIMIZATIONS", "false").lower() in ("true", "1", "yes"):
-            logger.debug("Performance optimizations disabled via environment variable")
-            return
-
-        try:
-            # 1. Sync tiger_resource_map from existing metadata (Issue #934)
-            # This MUST happen BEFORE cache warming so Tiger Cache can find resources
-            # Fixes chicken-and-egg: resources only added during check_access(),
-            # but check_access() returns cache miss because map is empty
-            if os.getenv("NEXUS_SYNC_TIGER_RESOURCE_MAP", "true").lower() in (
-                "true",
-                "1",
-                "yes",
-            ):
-                synced = self._sync_resource_map_from_metadata()
-                if synced > 0:
-                    logger.info(f"Synced {synced} resources to Tiger resource map")
-
-            # 2. TRAVERSE on implicit directories is now AUTOMATIC
-            # The permission check auto-allows TRAVERSE for any implicit directory
-            # when the user is authenticated. No manual grants needed!
-            # See: permissions.py _check_rebac() TRAVERSE handling
-
-            # 3. Warm Tiger Cache (optional, can be slow for large systems)
-            # Only warm if explicitly enabled via environment variable
-            if os.getenv("NEXUS_WARM_TIGER_CACHE", "false").lower() in (
-                "true",
-                "1",
-                "yes",
-            ) and hasattr(self, "warm_tiger_cache"):
-                entries = self.warm_tiger_cache(zone_id=self._default_context.zone_id)
-                if entries > 0:
-                    logger.info(f"Warmed Tiger Cache with {entries} entries")
-
-            # 4. Start Tiger Cache background worker
-            # This processes permission change queue to keep Tiger Cache up-to-date
-            self._start_tiger_cache_worker()
-
-        except Exception as e:
-            # Don't fail initialization if optimizations fail
-            logger.warning(f"Failed to initialize performance optimizations: {e}")
-
-    def _sync_resource_map_from_metadata(self) -> int:
-        """Populate tiger_resource_map from existing metadata.
-
-        Issue #934: Enables Tiger Cache to work for pre-existing files by
-        ensuring all files have integer IDs in the resource map.
-
-        This fixes the chicken-and-egg problem where:
-        - Tiger Cache needs resource IDs to check access
-        - Resource IDs were only created during permission checks
-        - Permission checks returned cache miss → never populated
-
-        Returns:
-            Number of resources synced to the map
-
-        Performance:
-            ~5 seconds for 6,000 files (one-time startup cost)
-
-        Environment:
-            NEXUS_SYNC_TIGER_RESOURCE_MAP: Set to "false" to disable (default: true)
-        """
-        import logging
-
-        logger = logging.getLogger(__name__)
-
-        # Check if Tiger Cache is available
-        if not hasattr(self, "_rebac_manager"):
-            logger.debug("No ReBAC manager - skipping resource map sync")
-            return 0
-
-        tiger_cache = getattr(self._rebac_manager, "_tiger_cache", None)
-        if not tiger_cache:
-            logger.debug("Tiger Cache disabled - skipping resource map sync")
-            return 0
-
-        resource_map = getattr(tiger_cache, "_resource_map", None)
-        if not resource_map:
-            logger.debug("No resource map in Tiger Cache - skipping sync")
-            return 0
-
-        try:
-            # Stream files from metadata store instead of materializing full list
-            count = 0
-            log_interval = 1000
-
-            for meta in self.metadata.list_iter("/", recursive=True):
-                # Register resource in the map (idempotent operation)
-                # Note: zone_id removed from resource map (Issue #xyz)
-                resource_map.get_or_create_int_id(
-                    resource_type="file",
-                    resource_id=meta.path,
-                )
-                count += 1
-
-                # Log progress for large datasets
-                if count % log_interval == 0:
-                    logger.debug(f"Tiger resource map sync progress: {count} resources...")
-
-            logger.info(f"Tiger resource map sync complete: {count} resources")
-            return count
-
-        except Exception as e:
-            logger.warning(f"Failed to sync resource map from metadata: {e}")
-            return 0
-
-    def _start_tiger_cache_worker(self) -> None:
-        """Start background thread for Tiger Cache queue processing.
-
-        NOTE: With write-through implemented, automatic queue processing is
-        DISABLED by default. Write-through handles grants/revokes immediately.
-
-        Queue processing is only needed for:
-        - Cold start cache warming (use warm_tiger_cache() explicitly)
-        - Bulk migrations
-        - Group permission inheritance changes
-
-        To enable automatic queue processing, set:
-            NEXUS_ENABLE_TIGER_WORKER=true
-        """
-        import logging
-        import os
-        import threading
-
-        logger = logging.getLogger(__name__)
-
-        # Queue processor is DISABLED by default (write-through handles normal ops)
-        # Enable explicitly with NEXUS_ENABLE_TIGER_WORKER=true
-        if os.getenv("NEXUS_ENABLE_TIGER_WORKER", "false").lower() not in ("true", "1", "yes"):
-            logger.debug("Tiger Cache queue worker disabled (write-through handles grants)")
-            return
-
-        # Don't start if already running
-        worker_thread = getattr(self, "_tiger_worker_thread", None)
-        if worker_thread is not None and worker_thread.is_alive():
-            return
-
-        # Worker interval in seconds (default: 1 second)
-        interval = float(os.getenv("NEXUS_TIGER_WORKER_INTERVAL", "1.0"))
-
-        # Shutdown flag
-        self._tiger_worker_stop = threading.Event()
-
-        def worker_loop() -> None:
-            """Background worker loop for Tiger Cache queue processing.
-
-            NOTE: With write-through implemented, this worker is mainly for legacy
-            queue entries. New permission grants are handled immediately by
-            persist_single_grant() in rebac_write.
-            """
-            while not self._tiger_worker_stop.is_set():
-                try:
-                    if hasattr(self, "process_tiger_cache_queue"):
-                        # Process only 1 entry at a time to avoid blocking
-                        # Each entry can take 10-40 seconds due to _compute_accessible_resources
-                        processed = self.process_tiger_cache_queue(batch_size=1)
-                        if processed > 0:
-                            logger.debug(f"Tiger Cache worker processed {processed} updates")
-                except Exception as e:
-                    logger.warning(f"Tiger Cache worker error: {e}")
-
-                # Sleep longer since write-through handles new grants
-                # This worker is just for legacy queue cleanup
-                self._tiger_worker_stop.wait(timeout=interval * 10)
-
-            logger.debug("Tiger Cache worker stopped")
-
-        # Start worker thread
-        self._tiger_worker_thread = threading.Thread(
-            target=worker_loop,
-            name="tiger-cache-worker",
-            daemon=True,  # Daemon thread - exits when main program exits
-        )
-        self._tiger_worker_thread.start()
-        logger.debug(f"Tiger Cache worker started (interval={interval}s)")
-
-    def stop_tiger_cache_worker(self) -> None:
-        """Stop the Tiger Cache background worker.
-
-        Call this during graceful shutdown to stop the worker thread.
-        """
-        if hasattr(self, "_tiger_worker_stop"):
-            self._tiger_worker_stop.set()
-        if hasattr(self, "_tiger_worker_thread") and self._tiger_worker_thread is not None:
-            # Wait longer in test environments (check if pytest is running)
-            import sys
-
-            is_test = "pytest" in sys.modules
-            timeout = 15.0 if is_test else 5.0
-            self._tiger_worker_thread.join(timeout=timeout)
 
     def _load_custom_parsers(self, parser_configs: list[dict[str, Any]]) -> None:
         """
@@ -1546,7 +1338,12 @@ class NexusFS(  # type: ignore[misc]
         "arebac_explain": ("rebac_service", "rebac_explain"),
         "arebac_list_tuples": ("rebac_service", "rebac_list_tuples"),
         "aget_namespace": ("rebac_service", "get_namespace"),
-        # ReBACService sync methods with _sync suffix (Issue #2033)
+        # ReBACService sync methods with _sync suffix (Issue #2033, #2440)
+        "rebac_create": ("rebac_service", "rebac_create_sync"),
+        "rebac_check": ("rebac_service", "rebac_check_sync"),
+        "rebac_check_batch": ("rebac_service", "rebac_check_batch_sync"),
+        "rebac_delete": ("rebac_service", "rebac_delete_sync"),
+        "rebac_list_tuples": ("rebac_service", "rebac_list_tuples_sync"),
         "rebac_expand": ("rebac_service", "rebac_expand_sync"),
         "rebac_explain": ("rebac_service", "rebac_explain_sync"),
         "share_with_user": ("rebac_service", "share_with_user_sync"),
@@ -2126,12 +1923,12 @@ class NexusFS(  # type: ignore[misc]
         if self._record_store is not None:
             self._record_store.close()
 
-        # Close ReBACManager to release database connection
-        if hasattr(self, "_rebac_manager") and self._rebac_manager is not None:
+        # Close ReBACManager to release database connection (NoOp.close() is safe)
+        if self._rebac_manager is not None:
             self._rebac_manager.close()
 
-        # Close AuditStore to release database connection
-        if hasattr(self, "_audit_store") and self._audit_store is not None:
+        # Close AuditStore to release database connection (NoOp.close() is safe)
+        if self._audit_store is not None:
             self._audit_store.close()
 
         # Close TokenManager to release database connection
@@ -2150,72 +1947,6 @@ class NexusFS(  # type: ignore[misc]
                     logger.debug("Failed to close backend token manager: %s", e)
 
     # ------------------------------------------------------------------
-    # ReBAC delegation stubs (Issue #2033)
-    # These delegate to rebac_service which now owns the business logic.
-    # Kept on NexusFS for backward-compatibility with tests and CLI.
+    # ReBAC delegation stubs DELETED (Issue #2440)
+    # Consumers should call nx.rebac_service.rebac_*_sync() directly.
     # ------------------------------------------------------------------
-
-    def rebac_create(
-        self,
-        subject: tuple[str, str],
-        relation: str,
-        object: tuple[str, str],
-        expires_at: Any = None,
-        zone_id: str | None = None,
-        context: Any = None,
-        column_config: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Create a relationship tuple — delegates to rebac_service."""
-        return self.rebac_service.rebac_create_sync(
-            subject=subject,
-            relation=relation,
-            object=object,
-            expires_at=expires_at,
-            zone_id=zone_id,
-            context=context,
-            column_config=column_config,
-        )
-
-    def rebac_check(
-        self,
-        subject: tuple[str, str],
-        permission: str,
-        object: tuple[str, str],
-        zone_id: str | None = None,
-        context: Any = None,
-    ) -> bool:
-        """Check a permission — delegates to rebac_service."""
-        return self.rebac_service.rebac_check_sync(
-            subject=subject,
-            permission=permission,
-            object=object,
-            zone_id=zone_id,
-            context=context,
-        )
-
-    def rebac_check_batch(
-        self,
-        checks: builtins.list[tuple[tuple[str, str], str, tuple[str, str]]],
-    ) -> builtins.list[bool]:
-        """Batch check permissions — delegates to rebac_service."""
-        return self.rebac_service.rebac_check_batch_sync(checks=checks)
-
-    def rebac_delete(self, tuple_id: str) -> bool:
-        """Delete a relationship tuple — delegates to rebac_service."""
-        return self.rebac_service.rebac_delete_sync(tuple_id)
-
-    def rebac_list_tuples(
-        self,
-        subject: tuple[str, str] | None = None,
-        relation: str | None = None,
-        object: tuple[str, str] | None = None,
-        relation_in: builtins.list[str] | None = None,
-        **_kw: Any,
-    ) -> builtins.list[dict[str, Any]]:
-        """List relationship tuples — delegates to rebac_service."""
-        return self.rebac_service.rebac_list_tuples_sync(
-            subject=subject,
-            relation=relation,
-            object=object,
-            relation_in=relation_in,
-        )

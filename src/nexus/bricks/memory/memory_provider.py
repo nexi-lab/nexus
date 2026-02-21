@@ -136,7 +136,9 @@ class MemoryProvider:
         Mirrors the original ``NexusFS._ensure_entity_registry`` logic.
         """
         if self._entity_registry is None:
-            from nexus.bricks.rebac.entity_registry import EntityRegistry
+            import importlib as _il
 
+            _rebac = _il.import_module("nexus.bricks.rebac.entity_registry")
+            EntityRegistry = _rebac.EntityRegistry
             self._entity_registry = EntityRegistry(self._session_factory)
         return self._entity_registry

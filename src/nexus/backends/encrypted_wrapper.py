@@ -45,6 +45,7 @@ from typing import TYPE_CHECKING
 from cryptography.hazmat.primitives.ciphers.aead import AESGCMSIV
 
 from nexus.backends.delegating import DelegatingBackend
+from nexus.backends.wrapper_headers import ENCRYPTED_HEADER as _ENCRYPTED_HEADER
 from nexus.backends.wrapper_metrics import WrapperMetrics
 
 if TYPE_CHECKING:
@@ -52,9 +53,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Magic header to identify encrypted content (for passthrough detection).
-# "NEXE" + version byte (1).
-_ENCRYPTED_HEADER = b"NEXE\x01"
 _HEADER_LEN = len(_ENCRYPTED_HEADER)
 
 

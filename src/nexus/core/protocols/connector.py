@@ -1,4 +1,4 @@
-"""Storage connector protocol interfaces (Issue #1601, #1703).
+"""Storage connector protocol interfaces (Issue #1601, #1703, #2367).
 
 Defines the Storage Brick boundary as composable protocols:
 
@@ -10,6 +10,7 @@ Defines the Storage Brick boundary as composable protocols:
 - ``StreamingProtocol`` — Memory-efficient large file I/O (stream/range)
 - ``BatchContentProtocol`` — Bulk content read optimization
 - ``DirectoryListingProtocol`` — Extended directory listing + file metadata
+- ``SearchableConnector`` — Thin search capability for searchable connectors
 
 Design decisions:
     - Protocol for brick interfaces, ABC for internal implementations (§11.3)
@@ -34,6 +35,52 @@ if TYPE_CHECKING:
     from nexus.backends.backend import FileInfo, HandlerStatusResponse
     from nexus.contracts.types import OperationContext
     from nexus.lib.response import HandlerResponse
+
+# ---------------------------------------------------------------------------
+# SearchableConnector (Issue #2367)
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class SearchableConnector(Protocol):
+    """Thin search capability for connectors that support content/metadata search.
+
+    Heavy search logic stays in the Search brick. This protocol just
+    advertises "I support search" at the connector level, enabling the
+    Search brick to discover searchable connectors via isinstance().
+
+    References:
+        - NEXUS-LEGO-ARCHITECTURE.md §2.3, §4.3
+        - Issue #2367: Extract SearchableConnector sub-protocol
+    """
+
+    def search(
+        self,
+        query: str,
+        *,
+        filters: dict[str, Any] | None = None,
+        limit: int = 10,
+        context: OperationContext | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    def index(
+        self,
+        key: str,
+        content: str,
+        metadata: dict[str, Any] | None = None,
+        context: OperationContext | None = None,
+    ) -> None: ...
+
+    def remove_from_index(
+        self,
+        key: str,
+        context: OperationContext | None = None,
+    ) -> None: ...
+
+
+# ---------------------------------------------------------------------------
+# ContentStoreProtocol (Issue #1601)
+# ---------------------------------------------------------------------------
 
 
 @runtime_checkable

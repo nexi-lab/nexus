@@ -11,7 +11,6 @@ Provides all semantic search functionality:
 
 from __future__ import annotations
 
-import asyncio
 import builtins
 import contextlib
 import logging
@@ -23,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from nexus.bricks.search.indexing_service import IndexingService
+    from nexus.bricks.search.pipeline_indexer import PipelineIndexer
     from nexus.bricks.search.query_service import QueryService
 
 
@@ -73,6 +73,7 @@ class SemanticSearchMixin:
     _query_service: QueryService | None
     _indexing_service: IndexingService | None
     _indexing_pipeline: Any  # IndexingPipeline | None
+    _pipeline_indexer: PipelineIndexer | None
     _record_store: Any
     _gw_session_factory: Any
     _gw_backend: Any
@@ -290,7 +291,9 @@ class SemanticSearchMixin:
             return {}
 
         # Fallback: pipeline-based bulk indexing (RPC path without nx)
-        return await self._pipeline_index_documents(path, recursive)
+        if self._pipeline_indexer is not None:
+            return await self._pipeline_indexer.index_path(path, recursive)
+        return {}
 
     @rpc_expose(description="Get semantic search indexing statistics")
     async def semantic_search_stats(self) -> dict[str, Any]:
@@ -410,72 +413,18 @@ class SemanticSearchMixin:
         # No file_reader available in RPC path — IndexingService not created.
         self._indexing_service = None
 
-    # =========================================================================
-    # Helper Methods
-    # =========================================================================
+        # PipelineIndexer for RPC bulk indexing (Issue #2075)
+        if self._gw_session_factory is not None:
+            from nexus.bricks.search.pipeline_indexer import PipelineIndexer
 
-    async def _pipeline_index_documents(
-        self,
-        path: str,
-        recursive: bool,
-    ) -> dict[str, int]:
-        """Index documents using IndexingPipeline directly (RPC path)."""
-        from sqlalchemy import select
+            self._pipeline_indexer = PipelineIndexer(
+                pipeline=self._indexing_pipeline,
+                session_factory=self._gw_session_factory,
+                metadata=self.metadata,
+                file_reader=self._read,
+                file_lister=self.list,
+            )
+        else:
+            self._pipeline_indexer = None
 
-        from nexus.storage.models import FilePathModel
-
-        files_to_index: list[str] = []
-        try:
-            await asyncio.to_thread(self._read, path)
-            files_to_index = [path]
-        except Exception:
-            file_list = await asyncio.to_thread(self.list, path, recursive)
-            if hasattr(file_list, "items"):
-                file_list = file_list.items
-            for item in file_list:
-                file_path = item if isinstance(item, str) else item.get("path", "")
-                if file_path and not file_path.endswith("/"):
-                    files_to_index.append(file_path)
-
-        if not files_to_index:
-            return {}
-
-        if self._gw_session_factory is None:
-            logger.warning("session_factory not provided, cannot index documents")
-            return {}
-
-        def _prepare_documents_sync() -> list[tuple[str, str, str]]:
-            docs: list[tuple[str, str, str]] = []
-            with self._gw_session_factory() as session:
-                for fp in files_to_index:
-                    try:
-                        content = self.metadata.get_searchable_text(fp)
-                        if content is None:
-                            content_raw = self._read(fp)
-                            if isinstance(content_raw, bytes):
-                                content = content_raw.decode("utf-8", errors="ignore")
-                            else:
-                                content = str(content_raw)
-                        stmt = select(FilePathModel).where(
-                            FilePathModel.virtual_path == fp,
-                            FilePathModel.deleted_at.is_(None),
-                        )
-                        result = session.execute(stmt)
-                        file_model = result.scalar_one_or_none()
-                        if file_model and content:
-                            docs.append((fp, content, file_model.path_id))
-                    except Exception as e:
-                        logger.warning("Failed to prepare %s for indexing: %s", fp, e)
-            return docs
-
-        documents = await asyncio.to_thread(_prepare_documents_sync)
-        if not documents:
-            return {}
-
-        pipeline = getattr(self, "_indexing_pipeline", None)
-        if pipeline is None:
-            logger.warning("No indexing pipeline configured")
-            return {}
-
-        idx_results = await pipeline.index_documents(documents)
-        return {r.path: r.chunks_indexed for r in idx_results}
+    # _pipeline_index_documents has been extracted to PipelineIndexer (Issue #2075)

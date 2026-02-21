@@ -3,8 +3,6 @@
 Provides a test server and authentication tokens for schemathesis tests.
 """
 
-from __future__ import annotations
-
 import os
 from pathlib import Path
 

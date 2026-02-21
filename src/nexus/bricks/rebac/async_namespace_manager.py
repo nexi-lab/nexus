@@ -9,8 +9,6 @@ References:
     - Issue #1383: Define 6 kernel protocol interfaces
 """
 
-from __future__ import annotations
-
 import asyncio
 from typing import TYPE_CHECKING
 
@@ -21,7 +19,7 @@ if TYPE_CHECKING:
 
 
 def _to_namespace_mount(
-    entry: MountEntry,
+    entry: "MountEntry",
     subject: tuple[str, str],
     zone_id: str | None,
 ) -> NamespaceMount:
@@ -46,7 +44,7 @@ class AsyncNamespaceManager:
     ``to_thread`` for consistency (cache operations under lock).
     """
 
-    def __init__(self, inner: NamespaceManager) -> None:
+    def __init__(self, inner: "NamespaceManager") -> None:
         self._inner = inner
 
     async def is_visible(

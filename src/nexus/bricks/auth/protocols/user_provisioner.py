@@ -7,8 +7,6 @@ from server/auth/auth_routes.py (circular), we inject this protocol.
 Issue #2281: Extract Auth/OAuth brick from server/auth.
 """
 
-from __future__ import annotations
-
 from typing import Any, Protocol, runtime_checkable
 
 

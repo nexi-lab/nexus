@@ -3,8 +3,6 @@
 Issue #1360: Exchange audit log query & export API.
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 from nexus.server.api.v2.models.base import ApiModel

@@ -4,8 +4,6 @@ Verifies that PluginHooks.execute() respects per-invocation timeout
 to prevent misbehaving hooks from hanging the system.
 """
 
-from __future__ import annotations
-
 import asyncio
 from typing import Any
 

@@ -8,8 +8,6 @@ Tier 1 auto-mediation with forward-compatible data model. State machine:
 All other transitions are invalid and raise InvalidTransitionError.
 """
 
-from __future__ import annotations
-
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, ClassVar
@@ -48,7 +46,7 @@ class DisputeService(SessionMixin):
 
     def __init__(
         self,
-        record_store: RecordStoreABC,
+        record_store: "RecordStoreABC",
     ) -> None:
         self._session_factory = record_store.session_factory
 
@@ -240,7 +238,7 @@ class DisputeService(SessionMixin):
 
     def _transition(
         self,
-        session: Session,
+        session: "Session",
         dispute_id: str,
         new_status: str,
     ) -> DisputeModel:

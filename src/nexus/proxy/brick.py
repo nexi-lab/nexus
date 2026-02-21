@@ -5,8 +5,6 @@ When the remote is unreachable, operations are queued to a WAL-backed
 offline queue and replayed automatically when connectivity resumes.
 """
 
-from __future__ import annotations
-
 import asyncio
 import base64
 import contextlib
@@ -59,7 +57,7 @@ class ProxyBrick:
         config: ProxyBrickConfig,
         *,
         transport: HttpTransport | None = None,
-        queue: OfflineQueueProtocol | None = None,
+        queue: "OfflineQueueProtocol | None" = None,
     ) -> None:
         self._config = config
         self._transport = transport or HttpTransport(config)
@@ -80,7 +78,7 @@ class ProxyBrick:
     # Async context manager
     # ------------------------------------------------------------------
 
-    async def __aenter__(self) -> ProxyBrick:
+    async def __aenter__(self) -> "ProxyBrick":
         await self.start()
         return self
 
@@ -199,7 +197,7 @@ class ProxyBrick:
         return self._circuit.state
 
     @property
-    def edge_sync_manager(self) -> EdgeSyncManager | None:
+    def edge_sync_manager(self) -> "EdgeSyncManager | None":
         """The edge sync manager, if initialized."""
         return self._edge_sync
 

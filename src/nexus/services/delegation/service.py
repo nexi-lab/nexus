@@ -21,8 +21,6 @@ On failure at step 2+: unregister agent (no key exists, safe to retry).
     - DelegationScope serialization
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import uuid
@@ -77,12 +75,12 @@ class DelegationService:
 
     def __init__(
         self,
-        record_store: RecordStoreABC,
-        rebac_manager: ReBACManager,
-        namespace_manager: NamespaceManager | None = None,
-        entity_registry: EntityRegistry | None = None,
-        agent_registry: AgentRegistry | None = None,
-        reputation_service: ReputationService | None = None,
+        record_store: "RecordStoreABC",
+        rebac_manager: "ReBACManager",
+        namespace_manager: "NamespaceManager | None" = None,
+        entity_registry: "EntityRegistry | None" = None,
+        agent_registry: "AgentRegistry | None" = None,
+        reputation_service: "ReputationService | None" = None,
     ) -> None:
         self._session_factory = record_store.session_factory
         self._rebac_manager = rebac_manager

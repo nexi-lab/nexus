@@ -7,8 +7,6 @@ Tiger resource map cleanup, and cache invalidation.
 Related: Issue #2179 (decomposition), Issue #590 (batch UPDATE)
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime

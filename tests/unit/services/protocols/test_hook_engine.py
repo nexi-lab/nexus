@@ -1,7 +1,5 @@
 """Tests for HookEngineProtocol and hook data models (Issue #1383, #1257)."""
 
-from __future__ import annotations
-
 import dataclasses
 
 import pytest

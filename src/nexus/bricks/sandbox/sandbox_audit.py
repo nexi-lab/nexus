@@ -7,8 +7,6 @@ extra fields for log aggregation and alerting.
 Issue #1000: Enhance agent sandboxing with network isolation.
 """
 
-from __future__ import annotations
-
 import logging
 import sys
 from typing import TYPE_CHECKING, Any
@@ -37,7 +35,7 @@ class SandboxAuditLogger:
     def log_creation(
         self,
         sandbox_id: str,
-        profile: SandboxSecurityProfile,
+        profile: "SandboxSecurityProfile",
         agent_id: str | None = None,
     ) -> None:
         """Log sandbox creation with security profile details.
@@ -152,7 +150,7 @@ class SandboxAuditLogger:
     @staticmethod
     def _creation_extra(
         sandbox_id: str,
-        profile: SandboxSecurityProfile,
+        profile: "SandboxSecurityProfile",
         agent_id: str | None,
     ) -> dict[str, Any]:
         """Build structured extra dict for creation events."""

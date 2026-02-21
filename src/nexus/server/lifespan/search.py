@@ -3,8 +3,6 @@
 Extracted from fastapi_server.py (#1602).
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import logging
@@ -19,7 +17,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-async def startup_search(app: FastAPI, svc: LifespanServices) -> list[asyncio.Task]:
+async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.Task]:
     """Initialize search daemon and return background tasks."""
     search_daemon_enabled = os.getenv("NEXUS_SEARCH_DAEMON", "").lower() in (
         "true",

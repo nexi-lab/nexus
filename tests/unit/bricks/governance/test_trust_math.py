@@ -4,8 +4,6 @@ Issue #2129 §9A: Tests for eigentrust, build_local_trust_matrix,
 detect_sybil_cluster, and _row_normalize.
 """
 
-from __future__ import annotations
-
 import numpy as np
 import pytest
 from scipy import sparse

@@ -11,8 +11,6 @@ Extracted from PermissionEnforcer to enable reuse across
 _check_rebac_batched() and filter_list() code paths.
 """
 
-from __future__ import annotations
-
 import logging
 import os
 from typing import TYPE_CHECKING, Any
@@ -36,11 +34,11 @@ class PermissionCacheCoordinator:
 
     def __init__(
         self,
-        rebac_manager: ReBACManager | None = None,
+        rebac_manager: "ReBACManager | None" = None,
         *,
-        boundary_cache: PermissionBoundaryCache | None = None,
+        boundary_cache: "PermissionBoundaryCache | None" = None,
         enable_boundary_cache: bool = True,
-        hotspot_detector: HotspotDetector | None = None,
+        hotspot_detector: "HotspotDetector | None" = None,
         enable_hotspot_tracking: bool = True,
         bitmap_completeness_ttl: float = 3600.0,
         bitmap_completeness_maxsize: int = 4096,
@@ -50,7 +48,7 @@ class PermissionCacheCoordinator:
         self._rebac_manager = rebac_manager
 
         # Issue #922: Permission boundary cache
-        self._boundary_cache: PermissionBoundaryCache | None = None
+        self._boundary_cache: "PermissionBoundaryCache | None" = None
         if boundary_cache is not None:
             self._boundary_cache = boundary_cache
         elif enable_boundary_cache:
@@ -61,7 +59,7 @@ class PermissionCacheCoordinator:
             self._boundary_cache = PermissionBoundaryCache()
 
         # Issue #921: Hotspot detection
-        self._hotspot_detector: HotspotDetector | None = None
+        self._hotspot_detector: "HotspotDetector | None" = None
         if hotspot_detector is not None:
             self._hotspot_detector = hotspot_detector
         elif enable_hotspot_tracking:
@@ -82,11 +80,11 @@ class PermissionCacheCoordinator:
         )
 
     @property
-    def boundary_cache(self) -> PermissionBoundaryCache | None:
+    def boundary_cache(self) -> "PermissionBoundaryCache | None":
         return self._boundary_cache
 
     @property
-    def hotspot_detector(self) -> HotspotDetector | None:
+    def hotspot_detector(self) -> "HotspotDetector | None":
         return self._hotspot_detector
 
     # =========================================================================

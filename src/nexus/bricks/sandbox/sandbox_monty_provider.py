@@ -13,8 +13,6 @@ Design decisions (see Issue #1316 plan review):
     - #16B: Resource limits per security profile tier
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import time
@@ -55,7 +53,6 @@ except ImportError:
     MONTY_AVAILABLE = False
     logger.info("pydantic-monty not installed. MontySandboxProvider unavailable.")
 
-
 # ---------------------------------------------------------------------------
 # Resource limit profiles — tied to security profile tiers (Decision #16B)
 # ---------------------------------------------------------------------------
@@ -74,7 +71,7 @@ class MontyResourceProfile:
     max_recursion_depth: int
     gc_interval: int = 1000
 
-    def to_resource_limits(self) -> ResourceLimits:
+    def to_resource_limits(self) -> "ResourceLimits":
         """Convert to pydantic_monty.ResourceLimits."""
         return ResourceLimits(
             max_duration_secs=self.max_duration_secs,
@@ -108,7 +105,6 @@ MONTY_RESOURCE_PROFILES: dict[str, MontyResourceProfile] = {
 }
 
 DEFAULT_RESOURCE_PROFILE = MONTY_RESOURCE_PROFILES["standard"]
-
 
 # ---------------------------------------------------------------------------
 # Internal state tracking
@@ -482,9 +478,9 @@ class MontySandboxProvider(SandboxProvider):
 
     def _run_iterative(
         self,
-        monty: Monty,
+        monty: "Monty",
         instance: _MontyInstance,
-        limits: ResourceLimits,
+        limits: "ResourceLimits",
         print_callback: Callable[[str, str], None],
     ) -> Any:
         """Run Monty in iterative mode with host function dispatch.

@@ -7,8 +7,6 @@ ORM models — keeping the auth brick storage-agnostic.
 Issue #2436: Move auth/ to bricks/auth/ with Protocol DI.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from datetime import datetime
 

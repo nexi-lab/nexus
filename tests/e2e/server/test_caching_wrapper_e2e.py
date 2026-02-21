@@ -10,8 +10,6 @@ Uses create_nexus_fs with CachingBackendWrapper-wrapped backend and
 in-process NexusFS for deterministic, fast e2e testing.
 """
 
-from __future__ import annotations
-
 import time
 import uuid
 from pathlib import Path

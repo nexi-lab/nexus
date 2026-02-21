@@ -1,7 +1,5 @@
 """Work queue commands - query and manage work items."""
 
-from __future__ import annotations
-
 import sys
 
 import click

@@ -10,8 +10,6 @@ Provides manifest lifecycle endpoints:
 Pattern: Follows identity.py router (Depends on app.state, require_auth).
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from typing import Any
@@ -24,7 +22,6 @@ from nexus.server.dependencies import require_auth
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/access-manifests", tags=["access_manifests"])
-
 
 # =============================================================================
 # Request/Response Models

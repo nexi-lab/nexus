@@ -7,8 +7,6 @@ On reconnect, forces token refresh before any data operations.
 Issue #1707: Edge split-brain resilience.
 """
 
-from __future__ import annotations
-
 import logging
 import time
 from typing import TYPE_CHECKING, Any
@@ -32,7 +30,7 @@ class AuthCacheManager:
 
     def __init__(
         self,
-        auth_cache: AuthCache,
+        auth_cache: "AuthCache",
         grace_period_seconds: float = 14400,  # 4 hours
     ) -> None:
         self._auth_cache = auth_cache

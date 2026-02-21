@@ -13,8 +13,6 @@ Cache key layout::
     a2a:task:{zone_id}:{task_id}  →  JSON { task, agent_id, created_at }
 """
 
-from __future__ import annotations
-
 import json
 from datetime import UTC, datetime
 from typing import Any, Protocol, runtime_checkable

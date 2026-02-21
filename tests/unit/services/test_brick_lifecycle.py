@@ -3,8 +3,6 @@
 TDD: Tests written FIRST, implementation follows.
 """
 
-from __future__ import annotations
-
 import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -109,7 +107,6 @@ class TestBrickRegistration:
 # ---------------------------------------------------------------------------
 # State machine transition matrix (parametrized)
 # ---------------------------------------------------------------------------
-
 
 # Valid transitions: (from_state, event, expected_state)
 VALID_TRANSITIONS = [
@@ -725,7 +722,6 @@ class BrickLifecycleStateMachine(RuleBasedStateMachine):
 
 TestBrickLifecycleHypothesis = BrickLifecycleStateMachine.TestCase
 TestBrickLifecycleHypothesis.settings = settings(max_examples=50, stateful_step_count=20)
-
 
 # ---------------------------------------------------------------------------
 # Remount tests (Issue #2363)

@@ -17,8 +17,6 @@ Example:
     >>> connections = await manager.list_connections()
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import os
@@ -77,7 +75,7 @@ class MCPConnection:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> MCPConnection:
+    def from_dict(cls, data: dict[str, Any]) -> "MCPConnection":
         """Create from dictionary."""
         return cls(
             provider=data["provider"],
@@ -110,7 +108,7 @@ class MCPConnectionManager:
 
     def __init__(
         self,
-        filesystem: NexusFilesystem | None = None,
+        filesystem: "NexusFilesystem | None" = None,
         registry: MCPProviderRegistry | None = None,
         klavis_api_key: str | None = None,
     ):
@@ -164,7 +162,7 @@ class MCPConnectionManager:
         except Exception as e:
             logger.warning(f"Failed to load connections: {e}")
 
-    def _save_connection(self, conn: MCPConnection) -> None:
+    def _save_connection(self, conn: "MCPConnection") -> None:
         """Save a connection to storage."""
         try:
             if self.filesystem:
@@ -203,7 +201,7 @@ class MCPConnectionManager:
         scopes: list[str] | None = None,
         callback_port: int = 3000,
         open_browser: bool = True,
-    ) -> MCPConnection:
+    ) -> "MCPConnection":
         """Connect to an MCP provider.
 
         This is the unified entry point - it automatically handles
@@ -241,7 +239,7 @@ class MCPConnectionManager:
         _scopes: list[str] | None,
         callback_port: int,
         open_browser: bool,
-    ) -> MCPConnection:
+    ) -> "MCPConnection":
         """Connect via Klavis (hosted OAuth + hosted MCP)."""
         if not self.klavis:
             raise MCPConnectionError(
@@ -316,7 +314,7 @@ class MCPConnectionManager:
         _scopes: list[str] | None,
         _callback_port: int,
         _open_browser: bool,
-    ) -> MCPConnection:
+    ) -> "MCPConnection":
         """Connect via local OAuth + local/stdio MCP."""
         if not config.oauth:
             raise MCPConnectionError(f"Provider {config.name} has no OAuth configuration")
@@ -449,7 +447,7 @@ class MCPConnectionManager:
         logger.info(f"Disconnected from {provider}")
         return True
 
-    def list_connections(self, user_id: str | None = None) -> list[MCPConnection]:
+    def list_connections(self, user_id: str | None = None) -> "list[MCPConnection]":
         """List all connections.
 
         Args:
@@ -465,7 +463,7 @@ class MCPConnectionManager:
 
         return connections
 
-    def get_connection(self, provider: str, user_id: str) -> MCPConnection | None:
+    def get_connection(self, provider: str, user_id: str) -> "MCPConnection | None":
         """Get a specific connection.
 
         Args:

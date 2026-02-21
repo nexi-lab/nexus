@@ -10,8 +10,6 @@ Provides endpoints for task scheduling with hybrid priority:
 Related: Issue #1212, #1274
 """
 
-from __future__ import annotations
-
 import logging
 from datetime import datetime
 from typing import Any
@@ -27,7 +25,6 @@ router = APIRouter(prefix="/api/v2/scheduler", tags=["scheduler"])
 
 VALID_PRIORITIES = frozenset(TIER_ALIASES.keys())
 VALID_REQUEST_STATES = frozenset(s.value for s in RequestState)
-
 
 # =============================================================================
 # Pydantic Models

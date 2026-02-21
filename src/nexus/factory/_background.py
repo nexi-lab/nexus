@@ -1,7 +1,5 @@
 """Start background threads after all tiers are constructed."""
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 

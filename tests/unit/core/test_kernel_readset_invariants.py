@@ -9,8 +9,6 @@ Invariants proven:
      when direct path match has older revision
 """
 
-from __future__ import annotations
-
 from hypothesis import example, given, settings
 from hypothesis import strategies as st
 

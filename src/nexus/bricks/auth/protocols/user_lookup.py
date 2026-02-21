@@ -6,8 +6,6 @@ Auth brick can be tested with pure in-memory implementations.
 Issue #2281: Extract Auth/OAuth brick from server/auth.
 """
 
-from __future__ import annotations
-
 from typing import Protocol, runtime_checkable
 
 from nexus.bricks.auth.types import UserInfo

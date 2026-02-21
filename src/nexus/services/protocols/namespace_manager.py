@@ -15,8 +15,6 @@ References:
     - Issue #1383: Define 6 kernel protocol interfaces
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -44,6 +42,6 @@ class NamespaceManagerProtocol(Protocol):
         subject: tuple[str, str],
         *,
         zone_id: str | None = None,
-    ) -> list[NamespaceMount]: ...
+    ) -> "list[NamespaceMount]": ...
 
     async def invalidate(self, subject: tuple[str, str]) -> None: ...

@@ -1,7 +1,5 @@
 """Tests for NamespaceManagerProtocol and NamespaceMount (Issue #1383)."""
 
-from __future__ import annotations
-
 import dataclasses
 
 import pytest

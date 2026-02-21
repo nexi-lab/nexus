@@ -1,7 +1,5 @@
 """Tests for ResiliencyConfig.from_dict() — Issue #2180."""
 
-from __future__ import annotations
-
 from nexus.lib.resiliency import (
     CircuitBreakerPolicy,
     ResiliencyConfig,

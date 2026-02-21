@@ -1,7 +1,5 @@
 """Tests for cancellation handling (src/nexus/llm/cancellation.py)."""
 
-from __future__ import annotations
-
 from nexus.bricks.llm.cancellation import (
     AsyncCancellationToken,
     CancellationToken,

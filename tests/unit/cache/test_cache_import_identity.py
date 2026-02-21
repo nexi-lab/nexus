@@ -5,8 +5,6 @@ resolve to the exact same class objects. Shim files have been deleted — there
 is now a single canonical path: nexus.contracts.cache_store.
 """
 
-from __future__ import annotations
-
 
 class TestCacheStoreABCIdentity:
     """CacheStoreABC must be the same object via contracts and core.protocols."""

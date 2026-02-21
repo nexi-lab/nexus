@@ -17,8 +17,6 @@ Ledger update (record_spending):
 Default behavior: open by default (no policy = allow all transactions).
 """
 
-from __future__ import annotations
-
 import logging
 import time
 from collections import deque
@@ -58,7 +56,7 @@ class SpendingPolicyService:
 
     def __init__(
         self,
-        repo: SpendingPolicyRepository,
+        repo: "SpendingPolicyRepository",
         *,
         cache_ttl: float = _CACHE_TTL,
         max_cache_entries: int = 4096,

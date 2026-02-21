@@ -12,8 +12,6 @@ Three-way merge algorithm:
     5. Strategy 'fail' raises on conflict; 'source-wins' picks left.
 """
 
-from __future__ import annotations
-
 from typing import TypeVar
 
 V = TypeVar("V")

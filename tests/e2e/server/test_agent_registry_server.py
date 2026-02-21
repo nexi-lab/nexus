@@ -5,8 +5,6 @@ Tests the HTTP delegation endpoint with real DelegationService + AgentRegistry
 as the single registration path. No mocks for core services.
 """
 
-from __future__ import annotations
-
 from typing import Any
 from unittest.mock import patch
 

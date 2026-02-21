@@ -12,8 +12,6 @@ Tests cover:
 - _build_checkpoint produces correct data
 """
 
-from __future__ import annotations
-
 import types
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock

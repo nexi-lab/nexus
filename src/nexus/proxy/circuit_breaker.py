@@ -3,8 +3,6 @@
 States: CLOSED -> OPEN -> HALF_OPEN -> CLOSED (on success) or OPEN (on failure).
 """
 
-from __future__ import annotations
-
 import asyncio
 import time
 

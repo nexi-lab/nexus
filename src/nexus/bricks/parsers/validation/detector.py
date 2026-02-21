@@ -4,8 +4,6 @@ Detects which validators to run based on project files present in
 the workspace. Uses a single batch `ls` command for efficiency.
 """
 
-from __future__ import annotations
-
 import logging
 import shlex
 from typing import TYPE_CHECKING
@@ -38,7 +36,7 @@ _ALL_MARKER_FILES: frozenset[str] = frozenset(
 
 async def detect_project_validators(
     sandbox_id: str,
-    provider: SandboxProvider,
+    provider: "SandboxProvider",
     workspace_path: str = "/workspace",
 ) -> list[str]:
     """Detect applicable validators by checking workspace files.

@@ -12,8 +12,6 @@ use real OAuth tokens in CI. For full E2E testing with real
 Google API, use the manual test script in scripts/test_gcalendar.py.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, patch
 
 import pytest

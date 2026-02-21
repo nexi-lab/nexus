@@ -6,8 +6,6 @@ pressure levels used by the EvictionManager to trigger eviction cycles.
 Gracefully degrades to NORMAL if psutil is not installed.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from typing import TYPE_CHECKING
@@ -41,7 +39,7 @@ class ResourceMonitor:
         tuning: EvictionTuning with watermark thresholds.
     """
 
-    def __init__(self, tuning: EvictionTuning) -> None:
+    def __init__(self, tuning: "EvictionTuning") -> None:
         self._high_watermark = tuning.memory_high_watermark_pct
         self._low_watermark = tuning.memory_low_watermark_pct
 

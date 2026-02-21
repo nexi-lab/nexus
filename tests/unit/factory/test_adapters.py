@@ -1,7 +1,5 @@
 """Tests for factory adapters — Issue #2180."""
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, patch
 
 import pytest

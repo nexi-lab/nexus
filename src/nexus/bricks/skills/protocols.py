@@ -18,8 +18,6 @@ Verification:
 - Contract test verifies NexusFilesystem ABC satisfies this protocol
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from nexus.services.protocols.filesystem import NexusFilesystem
@@ -52,7 +50,7 @@ class SkillRegistryProtocol(Protocol):
         name: str,
         context: Any = None,
         load_dependencies: bool = False,
-    ) -> Skill:
+    ) -> "Skill":
         """Get a skill by name (loads full content on-demand).
 
         Raises:
@@ -74,11 +72,11 @@ class SkillRegistryProtocol(Protocol):
         self,
         tier: str | None = None,
         include_metadata: bool = False,
-    ) -> list[str] | list[SkillMetadata]:
+    ) -> "list[str] | list[SkillMetadata]":
         """List available skills from the discovered index."""
         ...
 
-    def get_metadata(self, name: str) -> SkillMetadata:
+    def get_metadata(self, name: str) -> "SkillMetadata":
         """Get skill metadata without loading full content.
 
         Raises:

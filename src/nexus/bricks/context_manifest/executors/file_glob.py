@@ -11,8 +11,6 @@ Performance:
     - Blocking I/O runs in thread pool to avoid blocking the event loop.
 """
 
-from __future__ import annotations
-
 import asyncio
 import glob as glob_module
 import logging

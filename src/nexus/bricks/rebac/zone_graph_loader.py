@@ -6,8 +6,6 @@ and the in-memory LRU zone graph cache from ReBACManager.
 Related: Issue #2179 (decomposition), Issue #1459 (LRU capping)
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 import time
@@ -46,7 +44,7 @@ class ZoneGraphLoader:
         create_cursor: Callable[[Any], Any],
         fix_sql: Callable[[str], str],
         get_namespace_configs_for_rust: Callable[[], dict[str, Any]],
-        leopard_facade: LeopardFacade,
+        leopard_facade: "LeopardFacade",
         cache_ttl: int = 300,
         max_zones: int = 100,
     ) -> None:
@@ -69,7 +67,7 @@ class ZoneGraphLoader:
     def fetch_tuples_for_rust(
         self,
         zone_id: str,
-        subject: Entity | None = None,
+        subject: "Entity | None" = None,
     ) -> list[dict[str, Any]]:
         """Fetch ReBAC tuples for Rust permission computation with caching.
 
@@ -201,7 +199,7 @@ class ZoneGraphLoader:
     def _fetch_cross_zone_shares(
         self,
         zone_id: str,
-        subject: Entity,
+        subject: "Entity",
     ) -> list[dict[str, Any]]:
         with self._connection(readonly=True) as conn:
             cursor = self._create_cursor(conn)

@@ -3,8 +3,6 @@
 Issue #1286, Decision 12: Automated alembic check test.
 """
 
-from __future__ import annotations
-
 import subprocess
 import sys
 

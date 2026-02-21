@@ -22,8 +22,6 @@ Example:
     ```
 """
 
-from __future__ import annotations
-
 import builtins
 import logging
 from typing import TYPE_CHECKING, Any
@@ -54,7 +52,7 @@ class NexusFSGateway:
     - Session: session_factory property
     """
 
-    def __init__(self, fs: NexusFS):
+    def __init__(self, fs: "NexusFS"):
         """Initialize gateway with NexusFS instance.
 
         Args:
@@ -72,7 +70,7 @@ class NexusFSGateway:
         *,
         parents: bool = False,
         exist_ok: bool = False,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> None:
         """Create directory at path.
 
@@ -89,7 +87,7 @@ class NexusFSGateway:
         path: str,
         content: bytes | str,
         *,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> None:
         """Write content to file.
 
@@ -106,7 +104,7 @@ class NexusFSGateway:
         self,
         path: str,
         *,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> bytes | str:
         """Read content from file.
 
@@ -128,7 +126,7 @@ class NexusFSGateway:
         self,
         path: str,
         *,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> builtins.list[str]:
         """List directory contents.
 
@@ -149,7 +147,7 @@ class NexusFSGateway:
         self,
         path: str,
         *,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> bool:
         """Check if path exists.
 
@@ -166,7 +164,7 @@ class NexusFSGateway:
     # Metadata Operations
     # =========================================================================
 
-    def metadata_get(self, path: str) -> FileMetadata | None:
+    def metadata_get(self, path: str) -> "FileMetadata | None":
         """Get metadata for path.
 
         Args:
@@ -179,7 +177,7 @@ class NexusFSGateway:
             return self._fs.metadata.get(path)
         return None
 
-    def metadata_put(self, meta: FileMetadata) -> None:
+    def metadata_put(self, meta: "FileMetadata") -> None:
         """Store metadata.
 
         Args:
@@ -188,7 +186,7 @@ class NexusFSGateway:
         if hasattr(self._fs.metadata, "put"):
             self._fs.metadata.put(meta)
 
-    def metadata_list(self, prefix: str, recursive: bool = False) -> builtins.list[FileMetadata]:
+    def metadata_list(self, prefix: str, recursive: bool = False) -> "builtins.list[FileMetadata]":
         """List metadata entries under prefix.
 
         Args:
@@ -252,7 +250,7 @@ class NexusFSGateway:
         relation: str,
         object: tuple[str, str],
         zone_id: str | None = None,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any] | None:
         """Create ReBAC permission tuple.
 
@@ -437,7 +435,7 @@ class NexusFSGateway:
     # =========================================================================
 
     @property
-    def router(self) -> PathRouter:
+    def router(self) -> "PathRouter":
         """Get the path router.
 
         Returns:
@@ -554,7 +552,7 @@ class NexusFSGateway:
         self,
         path: str,
         *,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
         return_metadata: bool = False,
     ) -> bytes | str | dict[str, Any]:
         """Read file content with optional metadata return.
@@ -576,7 +574,7 @@ class NexusFSGateway:
         self,
         paths: builtins.list[str],
         *,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
         return_metadata: bool = False,
         skip_errors: bool = True,
     ) -> dict[str, bytes | dict[str, Any] | None]:
@@ -600,7 +598,7 @@ class NexusFSGateway:
 
     def get_routing_params(
         self,
-        context: OperationContext | None,
+        context: "OperationContext | None",
     ) -> tuple[str | None, str | None, bool]:
         """Extract zone_id, agent_id, is_admin from operation context.
 
@@ -615,8 +613,8 @@ class NexusFSGateway:
     def has_descendant_access(
         self,
         path: str,
-        permission: Permission,
-        context: OperationContext | None,
+        permission: "Permission",
+        context: "OperationContext | None",
     ) -> bool:
         """Check if user has access to any descendant of path.
 
@@ -650,7 +648,7 @@ class NexusFSGateway:
 
     def record_read_if_tracking(
         self,
-        context: OperationContext | None,
+        context: "OperationContext | None",
         resource_type: str,
         resource_id: str,
         access_type: str = "content",

@@ -21,8 +21,6 @@ References:
     - QMD: https://github.com/tobi/qmd
 """
 
-from __future__ import annotations
-
 import asyncio
 import hashlib
 import logging
@@ -535,7 +533,7 @@ class CachedQueryExpander(QueryExpander):
     def __init__(
         self,
         expander: QueryExpander,
-        cache: CacheStoreABC,
+        cache: "CacheStoreABC",
         ttl: int = 3600,
         key_prefix: str = "qexp",
     ) -> None:
@@ -777,7 +775,7 @@ async def create_cached_query_expander(
     provider: str = "openrouter",
     model: str | None = None,
     api_key: str | None = None,
-    cache_store: CacheStoreABC | None = None,
+    cache_store: "CacheStoreABC | None" = None,
     cache_ttl: int = 3600,
     config: QueryExpansionConfig | None = None,
 ) -> QueryExpander:

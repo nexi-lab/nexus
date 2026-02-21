@@ -1,7 +1,5 @@
 """WalletProvisioner — sync TigerBeetle wallet creation for agent registration."""
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 

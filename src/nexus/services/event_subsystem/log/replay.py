@@ -6,8 +6,6 @@ plus an async generator for SSE streaming with poll-based tail.
 Shares filter logic with OperationLogger._apply_filters() where possible.
 """
 
-from __future__ import annotations
-
 import base64
 import json
 import logging
@@ -98,7 +96,7 @@ def _record_from_row(row: Any) -> EventRecord:
 class EventReplayService:
     """Service for replaying and streaming historical events from operation_log."""
 
-    def __init__(self, record_store: RecordStoreABC) -> None:
+    def __init__(self, record_store: "RecordStoreABC") -> None:
         self._session_factory = record_store.session_factory
 
     def replay(

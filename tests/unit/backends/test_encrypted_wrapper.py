@@ -19,8 +19,6 @@ Design reference:
     - Issue #2077: Deduplicate backend wrapper boilerplate
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.contracts.describable import Describable

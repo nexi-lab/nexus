@@ -8,8 +8,6 @@ Part of the L3 cache layer:
     → ReBAC rebuild (5-50ms)
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, Index, Integer, String, Text, UniqueConstraint

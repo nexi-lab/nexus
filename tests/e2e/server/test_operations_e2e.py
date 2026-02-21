@@ -10,8 +10,6 @@ Both tests run with:
 Tests both admin and unauthenticated access.
 """
 
-from __future__ import annotations
-
 import os
 import signal
 import socket

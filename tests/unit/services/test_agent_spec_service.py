@@ -9,8 +9,6 @@ Tests cover:
 6. Async wrappers delegate correctly
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest

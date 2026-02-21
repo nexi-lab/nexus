@@ -12,8 +12,6 @@ Covers:
 - Revoke non-existent credential
 """
 
-from __future__ import annotations
-
 import asyncio
 import gc
 import platform

@@ -9,8 +9,6 @@ References:
 - https://neon.com/docs/ai/ai-vector-search-optimization
 """
 
-from __future__ import annotations
-
 import re
 from dataclasses import dataclass
 from enum import Enum
@@ -62,12 +60,12 @@ class HNSWConfig:
     max_parallel_workers: int = 2
 
     # Presets for different scales (initialized after class definition)
-    SMALL_SCALE: ClassVar[HNSWConfig]
-    MEDIUM_SCALE: ClassVar[HNSWConfig]
-    LARGE_SCALE: ClassVar[HNSWConfig]
+    SMALL_SCALE: "ClassVar[HNSWConfig]"
+    MEDIUM_SCALE: "ClassVar[HNSWConfig]"
+    LARGE_SCALE: "ClassVar[HNSWConfig]"
 
     @classmethod
-    def for_dataset_size(cls, vector_count: int) -> HNSWConfig:
+    def for_dataset_size(cls, vector_count: int) -> "HNSWConfig":
         """Get optimal HNSW configuration based on dataset size.
 
         Args:
@@ -91,7 +89,7 @@ class HNSWConfig:
             return cls.large_scale()
 
     @classmethod
-    def small_scale(cls) -> HNSWConfig:
+    def small_scale(cls) -> "HNSWConfig":
         """Configuration for <100K vectors.
 
         Optimized for fast builds and low memory usage.
@@ -106,7 +104,7 @@ class HNSWConfig:
         )
 
     @classmethod
-    def medium_scale(cls) -> HNSWConfig:
+    def medium_scale(cls) -> "HNSWConfig":
         """Configuration for 100K-1M vectors.
 
         Balanced for good recall and reasonable build times.
@@ -121,7 +119,7 @@ class HNSWConfig:
         )
 
     @classmethod
-    def large_scale(cls) -> HNSWConfig:
+    def large_scale(cls) -> "HNSWConfig":
         """Configuration for >1M vectors.
 
         Optimized for high recall at scale.
@@ -187,7 +185,7 @@ class HNSWConfig:
             f"WITH (m = {m}, ef_construction = {ef})"
         )
 
-    def apply_search_settings(self, session: Session) -> None:
+    def apply_search_settings(self, session: "Session") -> None:
         """Apply search settings to a SQLAlchemy session.
 
         Args:
@@ -197,7 +195,7 @@ class HNSWConfig:
 
         session.execute(text("SET LOCAL hnsw.ef_search = :val"), {"val": self.ef_search})
 
-    def apply_build_settings(self, session: Session) -> None:
+    def apply_build_settings(self, session: "Session") -> None:
         """Apply index build settings to a SQLAlchemy session.
 
         Args:
@@ -212,7 +210,7 @@ class HNSWConfig:
         )
 
 
-def get_vector_count(session: Session, table: str = "document_chunks") -> int:
+def get_vector_count(session: "Session", table: str = "document_chunks") -> int:
     """Get the count of vectors in a table.
 
     Args:
@@ -235,7 +233,7 @@ def get_vector_count(session: Session, table: str = "document_chunks") -> int:
         return 0
 
 
-def get_recommended_config(session: Session) -> HNSWConfig:
+def get_recommended_config(session: "Session") -> "HNSWConfig":
     """Get recommended HNSW config based on current dataset.
 
     Args:

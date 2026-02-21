@@ -1,7 +1,5 @@
 """Unit tests for A2A <-> IPC message adapters."""
 
-from __future__ import annotations
-
 from nexus.bricks.a2a.messaging_adapters import (
     a2a_message_to_envelope,
     envelope_to_a2a_message,

@@ -9,8 +9,6 @@ with mock auth. Validates:
 - Error handling: missing inbox, invalid message type, self-send
 """
 
-from __future__ import annotations
-
 import time
 from typing import Any
 
@@ -36,7 +34,6 @@ ZONE = "test-zone"
 # so the dependency-override key matches the key FastAPI recorded when
 # the router decorators were evaluated.
 _REQUIRE_AUTH = _get_require_auth()
-
 
 # ---------------------------------------------------------------------------
 # Auth helpers

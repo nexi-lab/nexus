@@ -10,8 +10,6 @@ Batch optimization:
 - Default batch size optimized per provider for best throughput
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import os
@@ -498,7 +496,7 @@ class CachedEmbeddingProvider(EmbeddingProvider):
     def __init__(
         self,
         provider: EmbeddingProvider,
-        cache: EmbeddingCacheProtocol,
+        cache: "EmbeddingCacheProtocol",
     ):
         """Initialize cached embedding provider.
 
@@ -507,7 +505,7 @@ class CachedEmbeddingProvider(EmbeddingProvider):
             cache: EmbeddingCacheProtocol instance (any driver)
         """
         self._provider = provider
-        self._cache: EmbeddingCacheProtocol = cache
+        self._cache: "EmbeddingCacheProtocol" = cache
         self._model_name = self._get_model_name()
 
     def _get_model_name(self) -> str:
@@ -659,7 +657,7 @@ async def create_cached_embedding_provider(
     api_key: str | None = None,
     cache_url: str | None = None,
     cache_ttl: int = 86400,
-    embedding_cache: EmbeddingCacheProtocol | None = None,
+    embedding_cache: "EmbeddingCacheProtocol | None" = None,
 ) -> EmbeddingProvider:
     """Create an embedding provider with caching enabled.
 

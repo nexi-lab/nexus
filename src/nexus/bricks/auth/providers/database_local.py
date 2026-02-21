@@ -4,8 +4,6 @@ Extends LocalAuth to store users in the database (UserModel).
 Supports registration, login, password management, and profile updates.
 """
 
-from __future__ import annotations
-
 import logging
 import uuid
 from datetime import datetime
@@ -357,7 +355,7 @@ class DatabaseLocalAuth(LocalAuth):
         return True
 
     @classmethod
-    def from_config(cls, config: dict[str, Any]) -> DatabaseLocalAuth:
+    def from_config(cls, config: dict[str, Any]) -> "DatabaseLocalAuth":
         """Create from configuration dictionary."""
         return cls(
             session_factory=config["session_factory"],

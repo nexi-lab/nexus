@@ -11,8 +11,6 @@ FastAPI auto-dispatches them to a threadpool. This prevents blocking
 the asyncio event loop during synchronous SQLAlchemy I/O.
 """
 
-from __future__ import annotations
-
 import csv
 import io
 import json

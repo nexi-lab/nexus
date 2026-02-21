@@ -11,8 +11,6 @@ References:
     - kubernetes/kubernetes pkg/controller/controller_utils.go
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 import time

@@ -12,8 +12,6 @@ Tests cover:
 - Zero nexus.core imports (brick isolation)
 """
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock, MagicMock
 
 from nexus.bricks.cache.base import (

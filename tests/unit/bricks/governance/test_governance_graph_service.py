@@ -4,8 +4,6 @@ Tests constraint cache behavior, cache invalidation logic,
 and the edge_model_to_domain converter.
 """
 
-from __future__ import annotations
-
 import time
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
@@ -176,13 +174,13 @@ class TestEdgeModelToDomain:
 class _FakeAsyncSession:
     """Fake async session for response service tests."""
 
-    async def __aenter__(self) -> _FakeAsyncSession:
+    async def __aenter__(self) -> "_FakeAsyncSession":
         return self
 
     async def __aexit__(self, *args: object) -> None:
         pass
 
-    def begin(self) -> _FakeAsyncSession:
+    def begin(self) -> "_FakeAsyncSession":
         return self
 
     def add(self, model: object) -> None:

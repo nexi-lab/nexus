@@ -4,8 +4,6 @@ Handles OAuth-based user login (distinct from backend integrations).
 Accepts any provider via DI: ``dict[str, OAuthProviderProtocol]``.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import secrets
@@ -49,7 +47,7 @@ class OAuthUserAuth:
         jwt_secret: str | None = None,
         token_expiry: int = 3600,
         oauth_crypto: OAuthCrypto | None = None,
-        user_provisioner: UserProvisionerProtocol | None = None,
+        user_provisioner: "UserProvisionerProtocol | None" = None,
     ) -> None:
         self.session_factory = session_factory
         self.providers = providers

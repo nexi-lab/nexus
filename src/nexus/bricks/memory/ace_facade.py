@@ -16,8 +16,6 @@ Usage:
     ace.feedback.add_feedback(traj_id, "monitoring", score=0.8)
 """
 
-from __future__ import annotations
-
 import importlib
 import logging
 from typing import Any

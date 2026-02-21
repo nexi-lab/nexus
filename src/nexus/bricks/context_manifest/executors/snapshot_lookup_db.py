@@ -10,8 +10,6 @@ to ``nexus.storage.repositories.snapshot_lookup`` (Issue #2189).
 Re-exported here for backward compatibility.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable

@@ -10,8 +10,6 @@ Or to run a quick single test:
     OPENROUTER_API_KEY=sk-or-... python tests/e2e/test_query_expansion_e2e.py
 """
 
-from __future__ import annotations
-
 import asyncio
 import os
 import sys

@@ -5,8 +5,6 @@ search(), index(), remove_from_index(). Covers edge cases like empty queries,
 no results, filters, and limit=0.
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 # ---------------------------------------------------------------------------

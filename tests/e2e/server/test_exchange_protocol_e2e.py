@@ -7,14 +7,11 @@ Tests the following against a real running Nexus server:
 4. Non-admin user access patterns
 """
 
-from __future__ import annotations
-
 import httpx
 
 # Auth header for the default static API key used in conftest.py
 AUTH_HEADERS = {"Authorization": "Bearer test-e2e-api-key-12345"}
 PROTOCOL_HEADERS = {**AUTH_HEADERS, "Nexus-Protocol-Version": "2026.1"}
-
 
 # ---------------------------------------------------------------------------
 # Error handler tests — verify structured error responses

@@ -11,8 +11,6 @@ References:
     - docs/architecture/KERNEL-ARCHITECTURE.md §3
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import uuid

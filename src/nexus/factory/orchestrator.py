@@ -1,7 +1,5 @@
 """Factory orchestrator — create_nexus_services, create_nexus_fs."""
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any, cast
 
@@ -26,21 +24,21 @@ logger = logging.getLogger(__name__)
 
 
 def create_nexus_services(
-    record_store: RecordStoreABC,
-    metadata_store: MetastoreABC,
-    backend: Backend,
-    router: PathRouter,
+    record_store: "RecordStoreABC",
+    metadata_store: "MetastoreABC",
+    backend: "Backend",
+    router: "PathRouter",
     *,
-    permissions: PermissionConfig | None = None,
-    audit: AuditConfig | None = None,
-    cache: CacheConfig | None = None,
-    distributed: DistributedConfig | None = None,
+    permissions: "PermissionConfig | None" = None,
+    audit: "AuditConfig | None" = None,
+    cache: "CacheConfig | None" = None,
+    distributed: "DistributedConfig | None" = None,
     zone_id: str | None = None,
     agent_id: str | None = None,
     enable_write_buffer: bool | None = None,
     resiliency_raw: dict[str, Any] | None = None,
     enabled_bricks: frozenset[str] | None = None,
-) -> tuple[KernelServices, SystemServices, BrickServices]:
+) -> "tuple[KernelServices, SystemServices, BrickServices]":
     """Create default services for NexusFS dependency injection.
 
     Orchestrates 3-tier boot sequence:
@@ -245,28 +243,28 @@ def create_nexus_services(
 
 
 def create_nexus_fs(
-    backend: Backend,
-    metadata_store: MetastoreABC,
-    record_store: RecordStoreABC | None = None,
+    backend: "Backend",
+    metadata_store: "MetastoreABC",
+    record_store: "RecordStoreABC | None" = None,
     *,
     cache_store: Any = None,
     is_admin: bool = False,
     custom_namespaces: list[Any] | None = None,
-    cache: CacheConfig | None = None,
-    permissions: PermissionConfig | None = None,
-    audit: AuditConfig | None = None,
-    distributed: DistributedConfig | None = None,
+    cache: "CacheConfig | None" = None,
+    permissions: "PermissionConfig | None" = None,
+    audit: "AuditConfig | None" = None,
+    distributed: "DistributedConfig | None" = None,
     memory: Any = None,
     parsing: Any = None,
-    kernel_services: KernelServices | None = None,
-    system_services: SystemServices | None = None,
-    brick_services: BrickServices | None = None,
+    kernel_services: "KernelServices | None" = None,
+    system_services: "SystemServices | None" = None,
+    brick_services: "BrickServices | None" = None,
     enable_write_buffer: bool | None = None,
     enabled_bricks: frozenset[str] | None = None,
     zone_id: str | None = None,
     agent_id: str | None = None,
-    workflow_engine: WorkflowProtocol | None = None,
-) -> NexusFS:
+    workflow_engine: "WorkflowProtocol | None" = None,
+) -> "NexusFS":
     """Create NexusFS with default services — the recommended entry point.
 
     Args:

@@ -6,8 +6,6 @@ when the real FastAPI application is wired with a WriteBuffer-enabled NexusFS.
 Uses an in-process TestClient (no subprocess) for speed and determinism.
 """
 
-from __future__ import annotations
-
 import os
 import time
 

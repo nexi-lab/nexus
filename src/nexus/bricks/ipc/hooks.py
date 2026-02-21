@@ -7,8 +7,6 @@ Enables true "filesystem-as-IPC" where ANY write to `/agents/{agent_id}/inbox/`
 automatically triggers message delivery.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -27,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 async def inbox_write_hook(
     context: HookContext,
-    processor_registry: MessageProcessorRegistry,
+    processor_registry: "MessageProcessorRegistry",
 ) -> HookResult:
     """POST_WRITE hook handler for inbox writes.
 
@@ -80,7 +78,7 @@ async def inbox_write_hook(
 
 async def register_ipc_hooks(
     hook_engine: Any,
-    processor_registry: MessageProcessorRegistry,
+    processor_registry: "MessageProcessorRegistry",
 ) -> None:
     """Register IPC hooks with the HookEngine.
 

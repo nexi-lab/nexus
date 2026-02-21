@@ -5,8 +5,6 @@ Manifests reference optional VC credentials and track ReBAC tuple IDs
 for clean revocation.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, Index, String, Text

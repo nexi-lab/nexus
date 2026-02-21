@@ -4,8 +4,6 @@ Issue #1519, 10A: Tests governance constraint checks, exception propagation,
 delegation to inner protocol, and fire-and-forget anomaly analysis.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock, patch
 

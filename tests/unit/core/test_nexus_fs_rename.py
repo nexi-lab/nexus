@@ -7,8 +7,6 @@ Tests cover:
 - Metadata failures after backend rename
 """
 
-from __future__ import annotations
-
 import pytest
 
 from tests.conftest import make_test_nexus

@@ -5,8 +5,6 @@ Provides 2 endpoints for curation:
 - POST /api/v2/curate/bulk - Bulk curation from trajectories
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 from fastapi import APIRouter, Depends
@@ -20,7 +18,6 @@ from nexus.server.api.v2.models import (
 )
 
 router = APIRouter(prefix="/api/v2/curate", tags=["curation"])
-
 
 # =============================================================================
 # Endpoints

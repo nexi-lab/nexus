@@ -4,8 +4,6 @@ Brick-local copy of the essential run_sync() function (Issue #2177).
 Avoids importing nexus.lib.sync_bridge for brick isolation.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import threading

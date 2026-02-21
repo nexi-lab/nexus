@@ -15,8 +15,6 @@ All operations use true async I/O for better concurrency.
 All operations pass user context for permission enforcement.
 """
 
-from __future__ import annotations
-
 import base64
 import logging
 from typing import TYPE_CHECKING, Any, cast
@@ -36,7 +34,6 @@ if TYPE_CHECKING:
     from nexus.core.async_nexus_fs import AsyncNexusFS
 
 logger = logging.getLogger(__name__)
-
 
 # =============================================================================
 # Request/Response Models
@@ -122,7 +119,7 @@ class BatchReadRequest(BaseModel):
 
 
 def create_async_files_router(
-    async_fs: AsyncNexusFS | None = None,
+    async_fs: "AsyncNexusFS | None" = None,
     get_fs: Any | None = None,
 ) -> APIRouter:
     """
@@ -145,7 +142,7 @@ def create_async_files_router(
     # Import auth dependencies from main server
     from nexus.server.dependencies import get_auth_result, get_operation_context
 
-    async def _get_fs() -> AsyncNexusFS:
+    async def _get_fs() -> "AsyncNexusFS":
         """Get AsyncNexusFS, supporting both direct and lazy modes."""
         if async_fs is not None:
             return async_fs

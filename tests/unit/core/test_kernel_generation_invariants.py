@@ -6,8 +6,6 @@ Invariants proven:
   3. AgentInfo is immutable (frozen dataclass)
 """
 
-from __future__ import annotations
-
 from hypothesis import given
 from hypothesis import strategies as st
 

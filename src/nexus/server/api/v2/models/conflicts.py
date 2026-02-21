@@ -1,7 +1,5 @@
 """Conflict request/response models for API v2 (Issue #1130)."""
 
-from __future__ import annotations
-
 from typing import Literal
 
 from pydantic import Field

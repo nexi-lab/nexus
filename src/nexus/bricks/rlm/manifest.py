@@ -4,8 +4,6 @@ Extends :class:`~nexus.contracts.brick_manifest.BrickManifest` with
 RLM-specific configuration.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 
 from nexus.contracts.brick_manifest import BrickManifest

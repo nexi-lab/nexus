@@ -3,8 +3,6 @@
 Tests the max_size + LRU eviction enhancement to InMemoryCacheStore.
 """
 
-from __future__ import annotations
-
 import pytest
 
 # ---------------------------------------------------------------------------

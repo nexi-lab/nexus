@@ -4,8 +4,6 @@ Tests the export/import workflow with enforce_permissions=True to ensure
 the portability module works correctly with the permission system.
 """
 
-from __future__ import annotations
-
 import tempfile
 from pathlib import Path
 

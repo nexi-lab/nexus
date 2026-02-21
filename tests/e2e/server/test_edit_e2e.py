@@ -14,8 +14,6 @@ Run with:
     pytest tests/e2e/test_edit_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import base64
 import uuid
 

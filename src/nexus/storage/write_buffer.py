@@ -29,8 +29,6 @@ Usage:
     buffer.stop()
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 import time
@@ -111,7 +109,7 @@ class WriteBuffer:
 
     def __init__(
         self,
-        record_store: RecordStoreABC,
+        record_store: "RecordStoreABC",
         *,
         flush_interval_ms: int = 100,
         max_buffer_size: int = 100,

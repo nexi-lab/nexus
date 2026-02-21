@@ -16,8 +16,6 @@ Migrated from getattr() dispatch in #1631.
 Completed by: #2152 (Move audit_strict_mode to dedicated AuditConfig)
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -35,7 +33,7 @@ class WriteObserverProtocol(Protocol):
 
     def on_write(
         self,
-        metadata: FileMetadata,
+        metadata: "FileMetadata",
         *,
         is_new: bool,
         path: str,
@@ -50,7 +48,7 @@ class WriteObserverProtocol(Protocol):
 
     def on_write_batch(
         self,
-        items: list[tuple[FileMetadata, bool]],
+        items: "list[tuple[FileMetadata, bool]]",
         *,
         zone_id: str | None = ...,
         agent_id: str | None = ...,

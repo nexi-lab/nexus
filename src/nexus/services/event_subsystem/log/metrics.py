@@ -3,8 +3,6 @@
 Centralizes metric definitions for exporters, DLQ, replay, and SSE.
 """
 
-from __future__ import annotations
-
 from prometheus_client import Counter, Gauge, Histogram
 
 # ---- Export metrics ----------------------------------------------------------

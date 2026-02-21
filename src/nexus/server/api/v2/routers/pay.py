@@ -13,8 +13,6 @@ Provides 8 endpoints for agent payment operations:
 Related: Issue #1209
 """
 
-from __future__ import annotations
-
 import logging
 from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any

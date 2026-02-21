@@ -14,15 +14,12 @@ Contains:
   - DT_REG, DT_DIR, DT_MOUNT, DT_PIPE: Directory entry type constants
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nexus.core._compact_generated import CompactFileMetadata
-
 
 # DirEntryType (from proto/nexus/core/metadata.proto)
 DT_REG = 0
@@ -134,7 +131,7 @@ class FileMetadata:
         if self.version < 1:
             raise ValidationError(f"version must be >= 1, got {self.version}", path=self.path)
 
-    def to_compact(self) -> CompactFileMetadata:
+    def to_compact(self) -> "CompactFileMetadata":
         """Convert to memory-efficient CompactFileMetadata.
 
         Uses string interning to deduplicate path/hash strings across instances.
@@ -148,7 +145,7 @@ class FileMetadata:
         return CompactFileMetadata.from_file_metadata(self)
 
     @classmethod
-    def from_compact(cls, compact: CompactFileMetadata) -> FileMetadata:
+    def from_compact(cls, compact: "CompactFileMetadata") -> "FileMetadata":
         """Create FileMetadata from CompactFileMetadata.
 
         Resolves interned string IDs back to full strings.

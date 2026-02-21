@@ -31,8 +31,6 @@ Usage:
     nx = NexusFS(metastore=metastore, record_store=record_store)
 """
 
-from __future__ import annotations
-
 import logging
 import os
 import threading
@@ -79,7 +77,7 @@ class RecordStoreABC(ABC):
 
     @property
     @abstractmethod
-    def session_factory(self) -> sessionmaker[Session]:
+    def session_factory(self) -> "sessionmaker[Session]":
         """Session factory (sessionmaker) for creating database sessions (primary/write)."""
         ...
 
@@ -129,7 +127,7 @@ class RecordStoreABC(ABC):
         return False
 
     @contextmanager
-    def session(self) -> Generator[Session, None, None]:
+    def session(self) -> "Generator[Session, None, None]":
         """Transactional session scope with Nexus error translation.
 
         Delegates to session_scope() for commit/rollback/close + error mapping.
@@ -140,7 +138,7 @@ class RecordStoreABC(ABC):
             yield sess
 
     @contextmanager
-    def read_session(self) -> Generator[Session, None, None]:
+    def read_session(self) -> "Generator[Session, None, None]":
         """Read-only session using read replica (falls back to primary).
 
         Uses read_session_factory when a read replica is configured.
@@ -261,7 +259,7 @@ class SQLAlchemyRecordStore(RecordStoreABC):
 
             @event.listens_for(self._engine, "connect")
             def set_sqlite_pragma(
-                dbapi_connection: DBAPIConnection, _connection_record: ConnectionPoolEntry
+                dbapi_connection: "DBAPIConnection", _connection_record: "ConnectionPoolEntry"
             ) -> None:
                 cursor = dbapi_connection.cursor()
                 cursor.execute("PRAGMA journal_mode=WAL")

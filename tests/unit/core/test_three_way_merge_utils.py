@@ -4,8 +4,6 @@ Tests the generic three_way_merge_dicts() function and _compute_dict_changes()
 helper in nexus.lib.merge_utils.
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.lib.merge_utils import _compute_dict_changes, three_way_merge_dicts

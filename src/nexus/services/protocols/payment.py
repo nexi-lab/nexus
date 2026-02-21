@@ -14,8 +14,6 @@ References:
     - Issue #2286: Protocol types moved here from bricks/pay/protocol.py
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
@@ -23,7 +21,6 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from nexus.contracts.types import TransactionProtocol
-
 
 # =============================================================================
 # Protocol Data Classes
@@ -46,7 +43,7 @@ class ProtocolTransferRequest:
 class ProtocolTransferResult:
     """Immutable result from a protocol transfer."""
 
-    protocol: TransactionProtocol
+    protocol: "TransactionProtocol"
     tx_id: str
     amount: Decimal
     from_agent: str
@@ -72,7 +69,7 @@ class PaymentProtocol(Protocol):
     """
 
     @property
-    def protocol_name(self) -> TransactionProtocol: ...
+    def protocol_name(self) -> "TransactionProtocol": ...
 
     def can_handle(self, to: str, metadata: dict[str, Any] | None = None) -> bool: ...
 

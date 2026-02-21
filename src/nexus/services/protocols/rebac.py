@@ -12,8 +12,6 @@ invalidate_zone_graph_cache(), close(), richer rebac_write/rebac_delete/rebac_ch
 signatures with consistency and cross-zone parameters.
 """
 
-from __future__ import annotations
-
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
@@ -41,7 +39,7 @@ class ReBACBrickProtocol(Protocol):
         object: tuple[str, str],
         context: dict[str, Any] | None = None,
         zone_id: str | None = None,
-        consistency: ConsistencyLevel | ConsistencyRequirement | None = None,
+        consistency: "ConsistencyLevel | ConsistencyRequirement | None" = None,
     ) -> bool: ...
 
     def rebac_write(
@@ -54,9 +52,9 @@ class ReBACBrickProtocol(Protocol):
         zone_id: str | None = None,
         subject_zone_id: str | None = None,
         object_zone_id: str | None = None,
-    ) -> WriteResult: ...
+    ) -> "WriteResult": ...
 
-    def rebac_delete(self, tuple_id: str | WriteResult) -> bool: ...
+    def rebac_delete(self, tuple_id: "str | WriteResult") -> bool: ...
 
     def rebac_expand(
         self,
@@ -71,7 +69,7 @@ class ReBACBrickProtocol(Protocol):
         self,
         checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
         zone_id: str,
-        consistency: ConsistencyLevel = ...,
+        consistency: "ConsistencyLevel" = ...,
     ) -> dict[tuple[tuple[str, str], str, tuple[str, str]], bool]: ...
 
     def rebac_list_objects(

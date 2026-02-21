@@ -3,8 +3,6 @@
 Issue #1286: Extracted from monolithic __init__.py.
 """
 
-from __future__ import annotations
-
 from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
@@ -37,7 +35,7 @@ class WorkflowModel(TimestampMixin, Base):
 
     created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    executions: Mapped[list[WorkflowExecutionModel]] = relationship(
+    executions: "Mapped[list[WorkflowExecutionModel]]" = relationship(
         "WorkflowExecutionModel", back_populates="workflow", cascade="all, delete-orphan"
     )
 

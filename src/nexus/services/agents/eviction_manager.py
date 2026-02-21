@@ -14,8 +14,6 @@ Issue #2171 additions:
 - trigger_immediate_cycle() for agent-level preemption.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import time
@@ -70,10 +68,10 @@ class EvictionManager:
 
     def __init__(
         self,
-        registry: AgentRegistry,
-        monitor: ResourceMonitor,
-        policy: EvictionPolicy,
-        tuning: EvictionTuning,
+        registry: "AgentRegistry",
+        monitor: "ResourceMonitor",
+        policy: "EvictionPolicy",
+        tuning: "EvictionTuning",
     ) -> None:
         self._registry = registry
         self._monitor = monitor
@@ -225,7 +223,7 @@ class EvictionManager:
             return EvictionResult(evicted=0, reason=EvictionReason.CHECKPOINT_TIMEOUT)
 
         # 6. Transition concurrently to SUSPENDED (semaphore-bounded, CAS-safe)
-        async def _transition_one(agent: AgentRecord) -> bool:
+        async def _transition_one(agent: "AgentRecord") -> bool:
             async with self._transition_semaphore:
                 try:
                     await asyncio.to_thread(
@@ -327,7 +325,7 @@ class EvictionManager:
         return elapsed < self._tuning.eviction_cooldown_seconds
 
     @staticmethod
-    def _build_checkpoint(agent: AgentRecord) -> dict[str, Any]:
+    def _build_checkpoint(agent: "AgentRecord") -> dict[str, Any]:
         """Build checkpoint data for an agent before eviction.
 
         Captures the essential state needed to restore the agent on

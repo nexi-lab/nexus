@@ -4,8 +4,6 @@ Tests that io_profile propagates through the PathRouter → RouteResult pipeline
 and that MountConfigModel round-trips io_profile through the database.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest

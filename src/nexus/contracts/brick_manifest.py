@@ -14,8 +14,6 @@ Tier-neutral: no imports from ``nexus.core``, ``nexus.services``,
 Issue #1386 — BrickManifest dataclass for self-describing bricks.
 """
 
-from __future__ import annotations
-
 import importlib
 import importlib.util
 import logging

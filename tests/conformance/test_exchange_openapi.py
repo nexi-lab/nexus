@@ -16,8 +16,6 @@ Usage:
   uv run pytest tests/conformance/test_exchange_openapi.py -v -o "addopts="
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 from typing import Any
 

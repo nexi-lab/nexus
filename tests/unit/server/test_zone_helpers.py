@@ -6,8 +6,6 @@ TDD Red Phase: These tests expose bugs in the current implementation:
 3. user_belongs_to_zone accesses private _connection() instead of Protocol methods
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any

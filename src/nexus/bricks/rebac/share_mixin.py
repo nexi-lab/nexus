@@ -10,8 +10,6 @@ This mixin provides privacy, sharing, dynamic viewer, and Tiger cache methods:
 Extracted from: rebac_service.py (2,291 lines -> ~1,810 remaining)
 """
 
-from __future__ import annotations
-
 import logging
 from datetime import datetime
 from typing import Any

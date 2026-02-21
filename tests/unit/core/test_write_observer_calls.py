@@ -13,8 +13,6 @@ Phase 1.3 of #1246/#1330 consolidation plan.
 Issue #2152: Observer owns error policy — kernel is a pure caller (no try/except).
 """
 
-from __future__ import annotations
-
 import tempfile
 from collections.abc import Generator
 from pathlib import Path

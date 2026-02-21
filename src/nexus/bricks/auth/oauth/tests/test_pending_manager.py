@@ -1,7 +1,5 @@
 """Tests for PendingOAuthManager with TTLCache."""
 
-from __future__ import annotations
-
 import time
 
 from nexus.bricks.auth.oauth.pending import PendingOAuthManager

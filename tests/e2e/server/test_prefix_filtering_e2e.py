@@ -7,8 +7,6 @@ files can be created via RPC, and the health endpoint works.
 Run: python -m pytest tests/e2e/server/test_prefix_filtering_e2e.py -x -v --timeout=60
 """
 
-from __future__ import annotations
-
 import os
 import signal
 import socket

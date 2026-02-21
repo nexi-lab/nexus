@@ -23,8 +23,6 @@ References:
     - Issue #2360: Promote scheduler to always-started system service
 """
 
-from __future__ import annotations
-
 import logging
 import uuid
 from dataclasses import dataclass, field

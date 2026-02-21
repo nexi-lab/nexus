@@ -16,8 +16,6 @@ Example:
     ```
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -80,7 +78,7 @@ class TaskQueueService:
         self._engine: TaskEngine | None = None
         self._runner: Any = None  # AsyncTaskRunner, set by lifespan
 
-    def _get_engine(self) -> TaskEngine:
+    def _get_engine(self) -> "TaskEngine":
         """Get or create TaskEngine (lazy init).
 
         Returns:
@@ -96,7 +94,7 @@ class TaskQueueService:
             logger.info(f"TaskEngine initialized at {self._db_path}")
         return self._engine
 
-    def get_engine(self) -> TaskEngine:
+    def get_engine(self) -> "TaskEngine":
         """Public accessor for TaskEngine (used by AsyncTaskRunner).
 
         Returns:

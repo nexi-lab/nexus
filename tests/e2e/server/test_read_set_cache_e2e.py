@@ -8,8 +8,6 @@ Run with:
     pytest tests/e2e/test_read_set_cache_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import base64
 from typing import Any
 

@@ -6,8 +6,6 @@ against a real SQLite backend.
 Issue #1139: Event Replay.
 """
 
-from __future__ import annotations
-
 import uuid
 from collections.abc import Generator
 from datetime import UTC, datetime

@@ -7,8 +7,6 @@ to webhook subscriptions. The implementation lives in
 Storage Affinity: DT_PIPE (Metastore ring buffer) + WorkflowEngine (RecordStore).
 """
 
-from __future__ import annotations
-
 from typing import Any, Protocol, runtime_checkable
 
 

@@ -5,8 +5,6 @@ registered skills.  The card is built once and cached as pre-serialized
 JSON bytes for zero-copy responses.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from typing import Any

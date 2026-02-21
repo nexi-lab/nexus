@@ -25,8 +25,6 @@ Design reference:
     - Issue #2077: Deduplicate backend wrapper boilerplate
 """
 
-from __future__ import annotations
-
 import logging
 import time
 from collections.abc import Callable
@@ -58,7 +56,7 @@ class LoggingBackendWrapper(DelegatingBackend):
         - INFO: lifecycle events (connect, disconnect)
     """
 
-    def __init__(self, inner: Backend) -> None:
+    def __init__(self, inner: "Backend") -> None:
         super().__init__(inner)
 
     # === Chain Introspection ===
@@ -90,8 +88,8 @@ class LoggingBackendWrapper(DelegatingBackend):
     # === Content Operations (with logging) ===
 
     def read_content(
-        self, content_hash: str, context: OperationContext | None = None
-    ) -> HandlerResponse[bytes]:
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> "HandlerResponse[bytes]":
         response, elapsed_ms = self._timed(
             "read_content",
             lambda: self._inner.read_content(content_hash, context=context),
@@ -105,8 +103,8 @@ class LoggingBackendWrapper(DelegatingBackend):
         return response
 
     def write_content(
-        self, content: bytes, context: OperationContext | None = None
-    ) -> HandlerResponse[str]:
+        self, content: bytes, context: "OperationContext | None" = None
+    ) -> "HandlerResponse[str]":
         response, elapsed_ms = self._timed(
             "write_content",
             lambda: self._inner.write_content(content, context=context),
@@ -121,8 +119,8 @@ class LoggingBackendWrapper(DelegatingBackend):
         return response
 
     def delete_content(
-        self, content_hash: str, context: OperationContext | None = None
-    ) -> HandlerResponse[None]:
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> "HandlerResponse[None]":
         response, elapsed_ms = self._timed(
             "delete_content",
             lambda: self._inner.delete_content(content_hash, context=context),
@@ -136,8 +134,8 @@ class LoggingBackendWrapper(DelegatingBackend):
         return response
 
     def content_exists(
-        self, content_hash: str, context: OperationContext | None = None
-    ) -> HandlerResponse[bool]:
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> "HandlerResponse[bool]":
         response, elapsed_ms = self._timed(
             "content_exists",
             lambda: self._inner.content_exists(content_hash, context=context),
@@ -153,9 +151,9 @@ class LoggingBackendWrapper(DelegatingBackend):
     def batch_read_content(
         self,
         content_hashes: list[str],
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
         *,
-        contexts: dict[str, OperationContext] | None = None,
+        contexts: "dict[str, OperationContext] | None" = None,
     ) -> dict[str, bytes | None]:
         results, elapsed_ms = self._timed(
             "batch_read_content",
@@ -179,8 +177,8 @@ class LoggingBackendWrapper(DelegatingBackend):
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: OperationContext | None = None,
-    ) -> HandlerResponse[None]:
+        context: "OperationContext | None" = None,
+    ) -> "HandlerResponse[None]":
         response, elapsed_ms = self._timed(
             "mkdir",
             lambda: self._inner.mkdir(path, parents=parents, exist_ok=exist_ok, context=context),
@@ -197,8 +195,8 @@ class LoggingBackendWrapper(DelegatingBackend):
         self,
         path: str,
         recursive: bool = False,
-        context: OperationContext | None = None,
-    ) -> HandlerResponse[None]:
+        context: "OperationContext | None" = None,
+    ) -> "HandlerResponse[None]":
         response, elapsed_ms = self._timed(
             "rmdir",
             lambda: self._inner.rmdir(path, recursive=recursive, context=context),
@@ -214,7 +212,7 @@ class LoggingBackendWrapper(DelegatingBackend):
 
     # === Connection Lifecycle (INFO level) ===
 
-    def connect(self, context: OperationContext | None = None) -> HandlerStatusResponse:
+    def connect(self, context: "OperationContext | None" = None) -> "HandlerStatusResponse":
         response, elapsed_ms = self._timed(
             "connect", lambda: self._inner.connect(context=context), logging.INFO
         )
@@ -226,7 +224,7 @@ class LoggingBackendWrapper(DelegatingBackend):
         )
         return response
 
-    def disconnect(self, context: OperationContext | None = None) -> None:
+    def disconnect(self, context: "OperationContext | None" = None) -> None:
         _, elapsed_ms = self._timed(
             "disconnect", lambda: self._inner.disconnect(context=context), logging.INFO
         )
@@ -236,7 +234,9 @@ class LoggingBackendWrapper(DelegatingBackend):
             elapsed_ms,
         )
 
-    def check_connection(self, context: OperationContext | None = None) -> HandlerStatusResponse:
+    def check_connection(
+        self, context: "OperationContext | None" = None
+    ) -> "HandlerStatusResponse":
         response, elapsed_ms = self._timed(
             "check_connection",
             lambda: self._inner.check_connection(context=context),

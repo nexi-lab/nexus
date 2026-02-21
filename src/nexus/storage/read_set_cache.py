@@ -23,8 +23,6 @@ See also:
     - docs/design/NEXUS-LEGO-ARCHITECTURE.md: 4-tier architecture
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 from typing import TYPE_CHECKING, Any
@@ -113,7 +111,7 @@ class ReadSetAwareCache:
     def put_path(
         self,
         path: str,
-        metadata: FileMetadata | None,
+        metadata: "FileMetadata | None",
         read_set: ReadSet | None = None,
         zone_revision: int = 0,
     ) -> None:

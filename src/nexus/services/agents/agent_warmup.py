@@ -20,8 +20,6 @@ Edge cases handled:
     - Concurrent warmup → optimistic locking via expected_generation
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import time
@@ -62,7 +60,7 @@ class AgentWarmupService:
 
     def __init__(
         self,
-        agent_registry: AgentRegistry,
+        agent_registry: "AgentRegistry",
         namespace_manager: Any | None = None,
         enabled_bricks: frozenset[str] | None = None,
         cache_store: Any | None = None,

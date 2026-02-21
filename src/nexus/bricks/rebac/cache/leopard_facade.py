@@ -7,8 +7,6 @@ and update-on-write/delete.
 Related: Issue #2179 (decomposition), Issue #692 (Leopard index)
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -36,8 +34,8 @@ class LeopardFacade:
 
     def __init__(
         self,
-        leopard: LeopardIndex | None,
-        engine: Engine,
+        leopard: "LeopardIndex | None",
+        engine: "Engine",
         is_postgresql: bool = False,
     ) -> None:
         self._leopard = leopard
@@ -256,6 +254,6 @@ class LeopardFacade:
         return self._leopard is not None
 
     @property
-    def index(self) -> LeopardIndex | None:
+    def index(self) -> "LeopardIndex | None":
         """Return the underlying LeopardIndex (or None)."""
         return self._leopard

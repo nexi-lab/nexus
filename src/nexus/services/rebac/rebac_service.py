@@ -15,8 +15,6 @@ Security Note: This service handles all permission and access control logic.
 Changes require security review before deployment.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from collections.abc import Callable
@@ -89,10 +87,10 @@ class ReBACService(ReBACShareMixin):
 
     def __init__(
         self,
-        rebac_manager: ReBACManager | None,
+        rebac_manager: "ReBACManager | None",
         enforce_permissions: bool = True,
         enable_audit_logging: bool = True,
-        circuit_breaker: AsyncCircuitBreaker | None = None,
+        circuit_breaker: "AsyncCircuitBreaker | None" = None,
         file_reader: Callable | None = None,
         permission_enforcer: Any = None,
     ):

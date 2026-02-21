@@ -4,8 +4,6 @@ This test suite covers all tools, resources, prompts, and server creation scenar
 for the Nexus MCP server implementation.
 """
 
-from __future__ import annotations
-
 import json
 from unittest.mock import Mock, patch
 

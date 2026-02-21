@@ -8,14 +8,11 @@ References:
     - Issue #1383: Define 6 kernel protocol interfaces
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from nexus.core.protocols.connector import ConnectorProtocol
-
 
 @dataclass(frozen=True, slots=True)
 class ResolvedPath:
@@ -38,7 +35,6 @@ class ResolvedPath:
     readonly: bool
     zone_id: str | None
 
-
 @dataclass(frozen=True, slots=True)
 class MountInfo:
     """Describes a registered mount point.
@@ -55,7 +51,6 @@ class MountInfo:
     mount_point: str
     priority: int
     readonly: bool
-
 
 @runtime_checkable
 class VFSRouterProtocol(Protocol):
@@ -77,7 +72,7 @@ class VFSRouterProtocol(Protocol):
     async def add_mount(
         self,
         mount_point: str,
-        backend: ConnectorProtocol,
+        backend: "ConnectorProtocol",
         *,
         priority: int = 0,
         readonly: bool = False,

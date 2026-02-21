@@ -5,8 +5,6 @@ that should not be stored or displayed in Nexus.  Lives in ``nexus.fuse``
 because only FUSE handlers use it.
 """
 
-from __future__ import annotations
-
 import fnmatch
 from typing import Any
 

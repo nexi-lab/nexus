@@ -6,8 +6,6 @@ under ~700 LOC. Handles .skill (ZIP) package operations.
 Uses the same narrow protocol dependencies as SkillService.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -37,9 +35,9 @@ class SkillPackageService:
 
     def __init__(
         self,
-        fs: SkillFilesystemProtocol,
-        perms: SkillPermissionProtocol,
-        skill_service: SkillService,
+        fs: "SkillFilesystemProtocol",
+        perms: "SkillPermissionProtocol",
+        skill_service: "SkillService",
     ):
         self._fs = fs
         self._perms = perms

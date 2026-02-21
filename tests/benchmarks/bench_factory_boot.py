@@ -13,8 +13,6 @@ Issue #2193: Kernel tier is now validation-only (empty dict). Former-kernel
 services moved to system tier.
 """
 
-from __future__ import annotations
-
 import time
 from typing import Any
 from unittest.mock import MagicMock, PropertyMock

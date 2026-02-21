@@ -7,8 +7,6 @@ are causally ordered or truly concurrent.
 Issue #1707: Edge split-brain resilience.
 """
 
-from __future__ import annotations
-
 import json
 from dataclasses import dataclass, field
 from enum import Enum
@@ -36,13 +34,13 @@ class VectorClock:
         """Defensive copy to prevent external mutation of the frozen clock."""
         object.__setattr__(self, "counters", dict(self.counters))
 
-    def increment(self, node_id: str) -> VectorClock:
+    def increment(self, node_id: str) -> "VectorClock":
         """Return a new VectorClock with the given node's counter incremented."""
         new_counters = dict(self.counters)
         new_counters[node_id] = new_counters.get(node_id, 0) + 1
         return VectorClock(counters=new_counters)
 
-    def merge(self, other: VectorClock) -> VectorClock:
+    def merge(self, other: "VectorClock") -> "VectorClock":
         """Return a new VectorClock that is the pointwise max of both clocks."""
         all_nodes = set(self.counters) | set(other.counters)
         merged = {
@@ -50,7 +48,7 @@ class VectorClock:
         }
         return VectorClock(counters=merged)
 
-    def compare(self, other: VectorClock) -> CausalOrder:
+    def compare(self, other: "VectorClock") -> CausalOrder:
         """Compare this clock with another.
 
         Returns:
@@ -87,7 +85,7 @@ class VectorClock:
         return json.dumps(self.counters, sort_keys=True)
 
     @classmethod
-    def from_json(cls, data: str) -> VectorClock:
+    def from_json(cls, data: str) -> "VectorClock":
         """Deserialize from JSON string."""
         counters = json.loads(data)
         if not isinstance(counters, dict):

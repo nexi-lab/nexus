@@ -12,8 +12,6 @@ References:
     - Issue #2036: Extract search module into search brick
 """
 
-from __future__ import annotations
-
 from typing import Protocol, runtime_checkable
 
 

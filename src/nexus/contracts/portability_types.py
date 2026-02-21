@@ -4,8 +4,6 @@ Defines the narrow NexusFS surface the portability brick needs,
 avoiding direct imports from nexus.core.
 """
 
-from __future__ import annotations
-
 from typing import Any, Protocol, runtime_checkable
 
 

@@ -12,8 +12,6 @@ Usage with pytest:
         assert nexus_fs.read(path) == b"hello"
 """
 
-from __future__ import annotations
-
 # === Unicode filename edge cases ===
 # Covers CJK, emoji, RTL, combining characters, and mixed scripts.
 

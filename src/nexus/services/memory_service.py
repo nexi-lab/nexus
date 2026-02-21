@@ -12,8 +12,6 @@ RPC methods are decorated with ``@rpc_expose`` so they are auto-discovered
 by ``_discover_exposed_methods()`` when passed as an additional source.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -58,7 +56,7 @@ class MemoryService:
 
     def __init__(
         self,
-        memory_factory: Callable[..., Any],
+        memory_factory: "Callable[..., Any]",
         session_factory: Any,
         backend: Any,
         default_context: OperationContext,

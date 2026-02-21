@@ -6,8 +6,6 @@ Validates:
 3. create_reply helper method
 """
 
-from __future__ import annotations
-
 import asyncio
 
 import pytest

@@ -8,8 +8,6 @@ Tests cover:
 - RoutedQuery serialization
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.bricks.search.query_router import QueryRouter, RoutedQuery, RoutingConfig

@@ -6,8 +6,6 @@ Provides 3 endpoints for conflict audit and manual resolution:
 - POST /api/v2/sync/conflicts/{id}/resolve - Manually resolve conflict
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 

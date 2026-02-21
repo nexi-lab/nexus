@@ -8,8 +8,6 @@ Tests cover:
 - get_async_read_session_factory: read replica dependency (Issue #725)
 """
 
-from __future__ import annotations
-
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -537,9 +535,7 @@ class TestGetOperationContext:
 # get_async_read_session_factory (Issue #725)
 # ===========================================================================
 
-
 # TestGetAsyncReadSessionFactory removed - v1 dependencies sunset (#2056)
-
 
 # ===========================================================================
 # _get_ace_context DRY helper (#2138)

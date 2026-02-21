@@ -10,8 +10,6 @@ Tests cover:
 - Snapshot tests: FULL profile matches previous hardcoded defaults
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.contracts.deployment_profile import DeploymentProfile

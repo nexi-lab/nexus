@@ -9,8 +9,6 @@ Provides:
 Both replay and list share the EventReplayService for consistent filtering.
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import json

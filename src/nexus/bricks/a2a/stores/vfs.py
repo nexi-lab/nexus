@@ -13,8 +13,6 @@ reading file contents.  The same pattern is used by the IPC
 ``TTLSweeper``.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import re
@@ -68,7 +66,7 @@ class VFSTaskStore:
 
     def __init__(
         self,
-        storage: IPCStorageDriver,
+        storage: "IPCStorageDriver",
         max_cache_size: int = _DEFAULT_MAX_CACHE_SIZE,
     ) -> None:
         self._storage = storage

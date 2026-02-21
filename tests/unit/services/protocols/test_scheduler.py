@@ -1,8 +1,6 @@
 """Tests for SchedulerProtocol, AgentRequest, InMemoryScheduler,
 CreditsReservationProtocol, and classify_agent_request (Issues #1383, #2360)."""
 
-from __future__ import annotations
-
 import dataclasses
 from decimal import Decimal
 

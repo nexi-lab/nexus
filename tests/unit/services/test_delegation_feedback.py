@@ -9,8 +9,6 @@ Tests that complete_delegation() correctly:
 6. Raises on already-completed delegation
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, patch
 
 import pytest

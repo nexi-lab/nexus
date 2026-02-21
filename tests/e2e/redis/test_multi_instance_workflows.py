@@ -23,8 +23,6 @@ Architecture Notes (Raft Zone Migration):
 Related: Issue #1106 Block 2, Issue #1159 (Raft Consensus Zones)
 """
 
-from __future__ import annotations
-
 import asyncio
 import os
 import sys
@@ -48,7 +46,6 @@ pytestmark = [
         reason="File watching only supported on Linux and Windows",
     ),
 ]
-
 
 # =============================================================================
 # Fixtures

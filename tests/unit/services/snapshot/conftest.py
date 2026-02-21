@@ -1,7 +1,5 @@
 """Shared fixtures for snapshot service tests (Issue #1752)."""
 
-from __future__ import annotations
-
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -18,7 +16,7 @@ class FakeSession:
         self._store: dict[str, Any] = store if store is not None else {}
         self._pending: list[Any] = []
 
-    def __enter__(self) -> FakeSession:
+    def __enter__(self) -> "FakeSession":
         return self
 
     def __exit__(self, *args: object) -> None:
@@ -57,7 +55,7 @@ class FakeResult:
     def __init__(self, items: list[Any]) -> None:
         self._items = items
 
-    def scalars(self) -> FakeResult:
+    def scalars(self) -> "FakeResult":
         return self
 
     def all(self) -> list[Any]:

@@ -14,8 +14,6 @@ with Python fallback when nexus_fast is unavailable.
 Related: NEXUS-LEGO-ARCHITECTURE.md (minimal kernel, maximal bricks)
 """
 
-from __future__ import annotations
-
 from nexus.bricks.search.primitives.glob_fast import glob_match  # noqa: F401
 
 # Re-export primitives for public API

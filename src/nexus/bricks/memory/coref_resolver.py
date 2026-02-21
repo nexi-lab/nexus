@@ -15,8 +15,6 @@ Example:
     "She called him yesterday" -> "Alice called John yesterday"
 """
 
-from __future__ import annotations
-
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -37,7 +35,7 @@ class LLMProviderProtocol(Protocol):
     TODO(#2124): Extract to nexus.llm.protocols when LLM module is brick-extracted.
     """
 
-    def complete(self, messages: Sequence[Any]) -> Any:
+    def complete(self, messages: "Sequence[Any]") -> Any:
         """Synchronous completion. Returns response with .content attribute."""
         ...
 

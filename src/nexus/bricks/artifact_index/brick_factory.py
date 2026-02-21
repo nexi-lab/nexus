@@ -10,8 +10,6 @@ Cross-brick imports are avoided by accepting pre-built factories from
 the boot layer (``_boot_dependent_bricks``).
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Callable
 from typing import Any

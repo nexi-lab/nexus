@@ -10,8 +10,6 @@ This verifies:
 Issue #940: Full async migration for MetastoreABC and NexusFS.
 """
 
-from __future__ import annotations
-
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from unittest.mock import MagicMock

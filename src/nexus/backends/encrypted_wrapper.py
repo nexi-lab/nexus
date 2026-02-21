@@ -36,8 +36,6 @@ Design reference:
     - Issue #2077: Deduplicate backend wrapper boilerplate
 """
 
-from __future__ import annotations
-
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -54,7 +52,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _HEADER_LEN = len(_ENCRYPTED_HEADER)
-
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -116,7 +113,7 @@ class EncryptedStorage(DelegatingBackend):
     # same key → identical ciphertext, preserving CAS dedup.
     _ZERO_NONCE = b"\x00" * 12
 
-    def __init__(self, inner: Backend, config: EncryptedStorageConfig) -> None:
+    def __init__(self, inner: "Backend", config: EncryptedStorageConfig) -> None:
         super().__init__(inner)
         self._config = config
         self._cipher = AESGCMSIV(config.key)

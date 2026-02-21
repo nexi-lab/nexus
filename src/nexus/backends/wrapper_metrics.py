@@ -21,8 +21,6 @@ Design reference:
     - Issue #1705: EncryptedStorage + CompressedStorage recursive wrappers
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 from typing import Any

@@ -14,8 +14,6 @@ Example:
         content = await fs.read("/path/to/file")
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import time
@@ -41,9 +39,9 @@ class AsyncPermissionEnforcer:
 
     def __init__(
         self,
-        rebac_manager: AsyncReBACManager | None = None,
+        rebac_manager: "AsyncReBACManager | None" = None,
         backends: dict[str, Any] | None = None,
-        namespace_manager: NamespaceManager | None = None,
+        namespace_manager: "NamespaceManager | None" = None,
         agent_registry: Any = None,
     ):
         """Initialize async permission enforcer.

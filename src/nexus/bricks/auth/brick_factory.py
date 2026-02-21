@@ -4,8 +4,6 @@ Provides the ``api_key_creator`` class reference used by kernel-tier
 services (AgentService, UserProvisioning) to create API keys.
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 BRICK_NAME: str | None = None  # No deployment profile gate (always enabled)

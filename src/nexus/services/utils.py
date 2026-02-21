@@ -5,8 +5,6 @@ Provides ``@run_sync`` decorator to replace the repetitive
 pattern used across 16 service files (76 occurrences).
 """
 
-from __future__ import annotations
-
 import asyncio
 from collections.abc import Callable, Coroutine
 from functools import wraps

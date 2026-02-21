@@ -28,8 +28,6 @@ Usage:
     resp = wrapper.read_content(content_hash)
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from dataclasses import dataclass
@@ -47,7 +45,6 @@ if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
 
 logger = logging.getLogger(__name__)
-
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -116,7 +113,7 @@ class CachingBackendWrapper(DelegatingBackend):
         self,
         inner: Backend,
         config: CacheWrapperConfig | None = None,
-        cache_store: CacheStoreABC | None = None,
+        cache_store: "CacheStoreABC | None" = None,
     ) -> None:
         super().__init__(inner)
         self._config = config or CacheWrapperConfig()
@@ -158,7 +155,7 @@ class CachingBackendWrapper(DelegatingBackend):
 
     @timed_response
     def read_content(
-        self, content_hash: str, context: OperationContext | None = None
+        self, content_hash: str, context: "OperationContext | None" = None
     ) -> HandlerResponse[bytes]:
         """Read content with L1 → inner backend fallback.
 
@@ -189,7 +186,7 @@ class CachingBackendWrapper(DelegatingBackend):
 
     @timed_response
     def write_content(
-        self, content: bytes, context: OperationContext | None = None
+        self, content: bytes, context: "OperationContext | None" = None
     ) -> HandlerResponse[str]:
         """Write content to inner backend, then handle cache based on strategy."""
         response = self._inner.write_content(content, context=context)
@@ -214,7 +211,7 @@ class CachingBackendWrapper(DelegatingBackend):
 
     @timed_response
     def delete_content(
-        self, content_hash: str, context: OperationContext | None = None
+        self, content_hash: str, context: "OperationContext | None" = None
     ) -> HandlerResponse[None]:
         """Delete from inner backend and invalidate caches."""
         response = self._inner.delete_content(content_hash, context=context)
@@ -223,7 +220,7 @@ class CachingBackendWrapper(DelegatingBackend):
 
     @timed_response
     def content_exists(
-        self, content_hash: str, context: OperationContext | None = None
+        self, content_hash: str, context: "OperationContext | None" = None
     ) -> HandlerResponse[bool]:
         """Always delegate to inner backend — source of truth for existence."""
         return self._inner.content_exists(content_hash, context=context)
@@ -231,9 +228,9 @@ class CachingBackendWrapper(DelegatingBackend):
     def batch_read_content(
         self,
         content_hashes: list[str],
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
         *,
-        contexts: dict[str, OperationContext] | None = None,
+        contexts: "dict[str, OperationContext] | None" = None,
     ) -> dict[str, bytes | None]:
         """Batch read with L1 cache for already-cached items.
 

@@ -15,8 +15,6 @@ Trade-offs:
 Related: Issue #692
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 import time
@@ -244,7 +242,7 @@ class LeopardIndex:
 
     def __init__(
         self,
-        engine: Engine,
+        engine: "Engine",
         cache_enabled: bool = True,
         cache_max_size: int = 100_000,
         *,
@@ -273,7 +271,7 @@ class LeopardIndex:
         member_type: str,
         member_id: str,
         zone_id: str,
-        conn: Connection | None = None,
+        conn: "Connection | None" = None,
     ) -> set[tuple[str, str]]:
         """Get all groups a member transitively belongs to.
 
@@ -314,7 +312,7 @@ class LeopardIndex:
         member_type: str,
         member_id: str,
         zone_id: str,
-        conn: Connection | None = None,
+        conn: "Connection | None" = None,
     ) -> set[tuple[str, str]]:
         """Fetch transitive groups from database.
 
@@ -345,7 +343,7 @@ class LeopardIndex:
 
         groups: set[tuple[str, str]] = set()
 
-        def execute_query(connection: Connection) -> None:
+        def execute_query(connection: "Connection") -> None:
             result = connection.execute(query, params)
             for row in result:
                 groups.add((row.group_type, row.group_id))
@@ -365,7 +363,7 @@ class LeopardIndex:
         group_type: str,
         group_id: str,
         zone_id: str,
-        conn: Connection | None = None,
+        conn: "Connection | None" = None,
     ) -> int:
         """Update transitive closure when a membership is added.
 
@@ -389,7 +387,7 @@ class LeopardIndex:
 
         entries_added = 0
 
-        def do_update(connection: Connection) -> int:
+        def do_update(connection: "Connection") -> int:
             nonlocal entries_added
 
             # 1. Get all ancestors of the target group (including the group itself)
@@ -478,7 +476,7 @@ class LeopardIndex:
         group_type: str,
         group_id: str,
         zone_id: str,
-        conn: Connection | None = None,
+        conn: "Connection | None" = None,
     ) -> int:
         """Update transitive closure when a membership is removed.
 
@@ -502,7 +500,7 @@ class LeopardIndex:
 
         entries_removed = 0
 
-        def do_update(connection: Connection) -> int:
+        def do_update(connection: "Connection") -> int:
             nonlocal entries_removed
 
             # Invalidate cache for the group that lost a member
@@ -545,7 +543,7 @@ class LeopardIndex:
 
     def _recompute_member_closure(
         self,
-        conn: Connection,
+        conn: "Connection",
         member_type: str,
         member_id: str,
         zone_id: str,
@@ -651,7 +649,7 @@ class LeopardIndex:
 
     def _bulk_upsert_closure(
         self,
-        conn: Connection,
+        conn: "Connection",
         entries: list[dict[str, Any]],
     ) -> int:
         """Bulk upsert closure entries.
@@ -694,7 +692,7 @@ class LeopardIndex:
 
         return count
 
-    def rebuild_closure_for_zone(self, zone_id: str, conn: Connection | None = None) -> int:
+    def rebuild_closure_for_zone(self, zone_id: str, conn: "Connection | None" = None) -> int:
         """Rebuild entire closure table for a zone.
 
         Useful for:
@@ -713,7 +711,7 @@ class LeopardIndex:
 
         now_sql = self._now_sql
 
-        def do_rebuild(connection: Connection) -> int:
+        def do_rebuild(connection: "Connection") -> int:
             # 1. Delete all existing closure entries for zone
             delete_query = text("""
                 DELETE FROM rebac_group_closure

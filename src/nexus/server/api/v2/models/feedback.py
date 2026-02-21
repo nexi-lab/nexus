@@ -1,7 +1,5 @@
 """Feedback request/response models for API v2."""
 
-from __future__ import annotations
-
 from typing import Any, Literal
 
 from pydantic import Field

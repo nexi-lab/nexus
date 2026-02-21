@@ -5,8 +5,6 @@ Providers only override ``_build_exchange_params()``, ``_build_refresh_params()`
 ``get_authorization_url()``, ``revoke_token()``, and ``validate_token()``.
 """
 
-from __future__ import annotations
-
 import dataclasses
 import logging
 from abc import ABC, abstractmethod

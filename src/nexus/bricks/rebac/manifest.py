@@ -4,8 +4,6 @@ Extends :class:`~nexus.contracts.brick_manifest.BrickManifest` with
 ReBAC-specific configuration and module declarations.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 
 from nexus.contracts.brick_manifest import BrickManifest

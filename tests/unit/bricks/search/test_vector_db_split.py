@@ -7,14 +7,11 @@ These are characterization tests — they document current behavior
 before the vector_db split refactoring.
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 if TYPE_CHECKING:
     from nexus.bricks.search.vector_db import VectorDatabase
-
 
 # =============================================================================
 # VectorDatabase construction and init
@@ -197,7 +194,7 @@ class TestRunSync:
     """Test the _run_sync() instance method for sync/async bridging."""
 
     @staticmethod
-    def _make_vdb() -> VectorDatabase:
+    def _make_vdb() -> "VectorDatabase":
         """Create a minimal VectorDatabase with a mock engine."""
         from unittest.mock import MagicMock
 

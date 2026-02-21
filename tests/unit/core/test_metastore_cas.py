@@ -4,8 +4,6 @@ Tests the CasResult dataclass, ABC default fallback, and
 InMemoryMetastore atomic CAS semantics.
 """
 
-from __future__ import annotations
-
 import threading
 
 from nexus.core.metadata import FileMetadata

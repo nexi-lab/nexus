@@ -13,8 +13,6 @@ structure for probabilistic set-membership testing on the client side.
 The protocol simply makes the dependency explicit and injectable.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any, Protocol, runtime_checkable
 

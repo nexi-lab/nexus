@@ -10,8 +10,6 @@ Requires:
 Skip with: pytest -m "not docker"
 """
 
-from __future__ import annotations
-
 import logging
 
 import pytest
@@ -34,7 +32,6 @@ pytestmark = [
     pytest.mark.integration,
 ]
 
-
 from nexus.bricks.sandbox.security_profile import SandboxSecurityProfile  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -45,7 +42,7 @@ ALPINE_IMAGE = "alpine:3.19"
 
 
 async def _run_in_container(
-    client: docker.DockerClient,
+    client: "docker.DockerClient",
     profile: SandboxSecurityProfile,
     command: str,
     timeout: int = 10,
@@ -78,7 +75,7 @@ async def _run_in_container(
 
 
 @pytest.fixture(scope="module")
-def docker_client() -> docker.DockerClient:
+def docker_client() -> "docker.DockerClient":
     """Docker client for integration tests."""
     client = docker.from_env()
     # Ensure Alpine image is available
@@ -104,7 +101,7 @@ class TestStrictProfileEnforcement:
 
     @pytest.mark.asyncio
     async def test_network_is_disabled(
-        self, docker_client: docker.DockerClient, profile: SandboxSecurityProfile
+        self, docker_client: "docker.DockerClient", profile: SandboxSecurityProfile
     ) -> None:
         """Strict container cannot reach the internet."""
         exit_code, output = await _run_in_container(
@@ -116,7 +113,7 @@ class TestStrictProfileEnforcement:
 
     @pytest.mark.asyncio
     async def test_root_filesystem_is_readonly(
-        self, docker_client: docker.DockerClient, profile: SandboxSecurityProfile
+        self, docker_client: "docker.DockerClient", profile: SandboxSecurityProfile
     ) -> None:
         """Strict container has read-only root filesystem."""
         exit_code, output = await _run_in_container(
@@ -128,7 +125,7 @@ class TestStrictProfileEnforcement:
 
     @pytest.mark.asyncio
     async def test_tmp_is_writable(
-        self, docker_client: docker.DockerClient, profile: SandboxSecurityProfile
+        self, docker_client: "docker.DockerClient", profile: SandboxSecurityProfile
     ) -> None:
         """Strict container can write to /tmp (tmpfs mount)."""
         exit_code, output = await _run_in_container(
@@ -141,7 +138,7 @@ class TestStrictProfileEnforcement:
 
     @pytest.mark.asyncio
     async def test_capabilities_dropped(
-        self, docker_client: docker.DockerClient, profile: SandboxSecurityProfile
+        self, docker_client: "docker.DockerClient", profile: SandboxSecurityProfile
     ) -> None:
         """Strict container has all capabilities dropped."""
         # Try to use chown (requires CAP_CHOWN which should be dropped)
@@ -167,7 +164,7 @@ class TestStandardProfileEnforcement:
 
     @pytest.mark.asyncio
     async def test_network_is_disabled(
-        self, docker_client: docker.DockerClient, profile: SandboxSecurityProfile
+        self, docker_client: "docker.DockerClient", profile: SandboxSecurityProfile
     ) -> None:
         """Standard container cannot reach the internet (network=none)."""
         exit_code, output = await _run_in_container(
@@ -179,7 +176,7 @@ class TestStandardProfileEnforcement:
 
     @pytest.mark.asyncio
     async def test_root_filesystem_is_readonly(
-        self, docker_client: docker.DockerClient, profile: SandboxSecurityProfile
+        self, docker_client: "docker.DockerClient", profile: SandboxSecurityProfile
     ) -> None:
         """Standard container has read-only root filesystem."""
         exit_code, output = await _run_in_container(
@@ -191,7 +188,7 @@ class TestStandardProfileEnforcement:
 
     @pytest.mark.asyncio
     async def test_all_caps_dropped_except_sys_admin(
-        self, docker_client: docker.DockerClient, profile: SandboxSecurityProfile
+        self, docker_client: "docker.DockerClient", profile: SandboxSecurityProfile
     ) -> None:
         """Standard drops ALL caps, adds back only SYS_ADMIN for FUSE."""
         kwargs = profile.to_docker_kwargs()
@@ -213,7 +210,7 @@ class TestPermissiveProfileEnforcement:
 
     @pytest.mark.asyncio
     async def test_network_is_available(
-        self, docker_client: docker.DockerClient, profile: SandboxSecurityProfile
+        self, docker_client: "docker.DockerClient", profile: SandboxSecurityProfile
     ) -> None:
         """Permissive container CAN reach the internet (bridge network)."""
         exit_code, output = await _run_in_container(
@@ -226,7 +223,7 @@ class TestPermissiveProfileEnforcement:
 
     @pytest.mark.asyncio
     async def test_root_filesystem_is_writable(
-        self, docker_client: docker.DockerClient, profile: SandboxSecurityProfile
+        self, docker_client: "docker.DockerClient", profile: SandboxSecurityProfile
     ) -> None:
         """Permissive container has writable root filesystem."""
         exit_code, output = await _run_in_container(
@@ -248,7 +245,7 @@ class TestDockerInspectVerification:
 
     @pytest.mark.asyncio
     async def test_strict_inspect_shows_correct_settings(
-        self, docker_client: docker.DockerClient
+        self, docker_client: "docker.DockerClient"
     ) -> None:
         """Verify docker inspect confirms strict security settings."""
         profile = SandboxSecurityProfile.strict()
@@ -294,7 +291,7 @@ class TestDockerInspectVerification:
 
     @pytest.mark.asyncio
     async def test_standard_inspect_shows_sys_admin_only(
-        self, docker_client: docker.DockerClient
+        self, docker_client: "docker.DockerClient"
     ) -> None:
         """Verify standard profile drops ALL caps and adds back only SYS_ADMIN."""
         profile = SandboxSecurityProfile.standard()
@@ -340,7 +337,7 @@ class TestResourceLimitEnforcement:
     """Verify resource limits are actually enforced."""
 
     @pytest.mark.asyncio
-    async def test_memory_limit_enforced(self, docker_client: docker.DockerClient) -> None:
+    async def test_memory_limit_enforced(self, docker_client: "docker.DockerClient") -> None:
         """Strict container cannot allocate more than 256MB."""
         profile = SandboxSecurityProfile.strict()
         # Try to allocate 512MB in a 256MB container — should fail or be killed
@@ -355,7 +352,7 @@ class TestResourceLimitEnforcement:
         assert exit_code != 0 or "MEM_LIMITED" in output or "Killed" in output
 
     @pytest.mark.asyncio
-    async def test_pids_limit_enforced(self, docker_client: docker.DockerClient) -> None:
+    async def test_pids_limit_enforced(self, docker_client: "docker.DockerClient") -> None:
         """Strict container cannot fork more than pids_limit processes."""
         profile = SandboxSecurityProfile.strict()
         # Try to create many processes (more than 128 pids_limit)

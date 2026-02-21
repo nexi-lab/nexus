@@ -1,7 +1,5 @@
 """Unit tests for BrickManifest base class (Issue #1386)."""
 
-from __future__ import annotations
-
 import logging
 from dataclasses import FrozenInstanceError, dataclass, field
 

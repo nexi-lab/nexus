@@ -1,7 +1,5 @@
 """Tests for MarkItDownParser — document-to-markdown conversion (Issue #1523)."""
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest

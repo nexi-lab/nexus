@@ -4,8 +4,6 @@ Issue #1286: Extracted from monolithic __init__.py.
 Issue #1271: Added DelegationRecordModel for agent delegation.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, Index, Integer, SmallInteger, String, Text

@@ -5,8 +5,6 @@ Branches are metadata-only pointers — no data duplication.
 Uses optimistic concurrency via pointer_version counter.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 from sqlalchemy import Boolean, DateTime, Index, Integer, String, Text, UniqueConstraint

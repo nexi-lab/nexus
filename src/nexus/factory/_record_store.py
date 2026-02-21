@@ -1,7 +1,5 @@
 """Record store factory — create_record_store with Cloud SQL support."""
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING
 
@@ -18,7 +16,7 @@ def create_record_store(
     create_tables: bool = True,
     pool_size: int | None = None,
     max_overflow: int | None = None,
-) -> RecordStoreABC:
+) -> "RecordStoreABC":
     """Create a RecordStore with Cloud SQL and read replica support auto-detected from env.
 
     When the ``CLOUD_SQL_INSTANCE`` environment variable is set, the

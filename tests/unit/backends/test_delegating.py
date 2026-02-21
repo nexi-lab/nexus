@@ -15,8 +15,6 @@ Design reference:
     - Issue #2077: Deduplicate backend wrapper boilerplate
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest

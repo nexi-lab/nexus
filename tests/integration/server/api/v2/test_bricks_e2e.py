@@ -10,8 +10,6 @@ with mock brick instances. Validates:
 - Drift detection and brick reset (Issue #2060)
 """
 
-from __future__ import annotations
-
 import logging
 import time
 from unittest.mock import AsyncMock, MagicMock

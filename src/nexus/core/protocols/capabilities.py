@@ -17,10 +17,7 @@ References:
     - NEXUS-LEGO-ARCHITECTURE.md §5.6 (layered protocols)
 """
 
-from __future__ import annotations
-
 from enum import StrEnum
-
 
 class ConnectorCapability(StrEnum):
     """Enumeration of all capabilities a connector backend can support.
@@ -94,11 +91,9 @@ class ConnectorCapability(StrEnum):
     MULTIPART_UPLOAD = "multipart_upload"
     """Backend supports multipart/chunked uploads."""
 
-
 # --- Capability-to-Protocol mapping ---
 # Used for registration-time validation: if a backend claims a capability
 # that maps to a Protocol, we verify the class has the required methods.
-
 
 def _build_capability_protocols() -> dict[ConnectorCapability, type]:
     """Build mapping lazily to avoid circular imports."""
@@ -118,7 +113,6 @@ def _build_capability_protocols() -> dict[ConnectorCapability, type]:
         ConnectorCapability.PASSTHROUGH: PassthroughProtocol,
     }
 
-
 def get_capability_protocols() -> dict[ConnectorCapability, type]:
     """Get the capability-to-Protocol mapping.
 
@@ -127,7 +121,6 @@ def get_capability_protocols() -> dict[ConnectorCapability, type]:
         Only capabilities that have a corresponding Protocol are included.
     """
     return _build_capability_protocols()
-
 
 # --- Convenience frozensets ---
 

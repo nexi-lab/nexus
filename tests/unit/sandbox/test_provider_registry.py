@@ -3,8 +3,6 @@
 Tests provider discovery, lazy initialization, and availability checks.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest

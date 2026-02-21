@@ -7,8 +7,6 @@ for agent lifecycle events.
 Issue #2189: Extracted from bricks/sandbox/events.py.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import uuid
@@ -37,11 +35,11 @@ class SQLAlchemyAgentEventLog:
         record_store: RecordStoreABC providing database access.
     """
 
-    def __init__(self, record_store: RecordStoreABC) -> None:
+    def __init__(self, record_store: "RecordStoreABC") -> None:
         self._session_factory = record_store.session_factory
 
     @contextmanager
-    def _get_session(self) -> Generator[Session, None, None]:
+    def _get_session(self) -> "Generator[Session, None, None]":
         """Create a session with auto-commit/rollback."""
         session = self._session_factory()
         try:

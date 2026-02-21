@@ -1,7 +1,5 @@
 """File attribute modification operations: chmod, chown, truncate, utimens."""
 
-from __future__ import annotations
-
 import errno
 import logging
 

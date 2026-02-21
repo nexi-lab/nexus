@@ -6,8 +6,6 @@ Provides:
 - Zone role checks: is_zone_owner, is_zone_admin, can_invite_to_zone
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 from nexus.lib.zone import DEFAULT_ZONE, normalize_zone_id  # noqa: F401

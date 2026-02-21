@@ -6,8 +6,6 @@ that profile_tuning values flow correctly from ProfileTuning slices
 through to service constructors.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest

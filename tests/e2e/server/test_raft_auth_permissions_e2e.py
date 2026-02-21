@@ -667,7 +667,7 @@ class TestLockApiAuth:
 
     def _get_lock_manager_available(self, admin_client: httpx.Client) -> bool:
         """Check if lock manager is available."""
-        resp = admin_client.get("/api/locks")
+        resp = admin_client.get("/api/v2/locks")
         return resp.status_code != 503
 
     def test_admin_acquire_and_release_lock(self, admin_client: httpx.Client) -> None:
@@ -679,14 +679,14 @@ class TestLockApiAuth:
 
         # Acquire
         resp = admin_client.post(
-            "/api/locks",
+            "/api/v2/locks",
             json={"path": path, "timeout": 5, "ttl": 30},
         )
         assert resp.status_code == 201, f"Acquire failed: {resp.text}"
         lock_id = resp.json()["lock_id"]
 
         # Release
-        resp = admin_client.delete(f"/api/locks{path}?lock_id={lock_id}")
+        resp = admin_client.delete(f"/api/v2/locks{path}?lock_id={lock_id}")
         assert resp.status_code == 200
 
     def test_unauthenticated_lock_rejected(self, db_auth_server: dict[str, Any]) -> None:
@@ -694,7 +694,7 @@ class TestLockApiAuth:
         client = httpx.Client(base_url=db_auth_server["base_url"], timeout=30.0, trust_env=False)
         try:
             resp = client.post(
-                "/api/locks",
+                "/api/v2/locks",
                 json={"path": "/test/noauth.txt", "timeout": 1, "ttl": 10},
             )
             assert resp.status_code in (401, 403), f"Expected auth error: {resp.status_code}"
@@ -710,7 +710,7 @@ class TestLockApiAuth:
 
         # Acquire
         resp = admin_client.post(
-            "/api/locks",
+            "/api/v2/locks",
             json={"path": path, "timeout": 5, "ttl": 60},
         )
         if resp.status_code != 201:
@@ -719,7 +719,7 @@ class TestLockApiAuth:
         lock_id = resp.json()["lock_id"]
 
         # Force release (admin only)
-        resp = admin_client.delete(f"/api/locks{path}?lock_id={lock_id}&force=true")
+        resp = admin_client.delete(f"/api/v2/locks{path}?lock_id={lock_id}&force=true")
         assert resp.status_code == 200
 
     def test_write_with_lock_via_rpc(self, admin_client: httpx.Client) -> None:
@@ -808,13 +808,13 @@ class TestLockApiAuth:
         path = f"/test/status_{uuid.uuid4().hex[:8]}.txt"
 
         # Not locked initially
-        resp = admin_client.get(f"/api/locks{path}")
+        resp = admin_client.get(f"/api/v2/locks{path}")
         assert resp.status_code == 200
         assert resp.json()["locked"] is False
 
         # Acquire
         resp = admin_client.post(
-            "/api/locks",
+            "/api/v2/locks",
             json={"path": path, "timeout": 5, "ttl": 30},
         )
         if resp.status_code != 201:
@@ -822,9 +822,9 @@ class TestLockApiAuth:
         lock_id = resp.json()["lock_id"]
 
         # Should be locked
-        resp = admin_client.get(f"/api/locks{path}")
+        resp = admin_client.get(f"/api/v2/locks{path}")
         assert resp.status_code == 200
         assert resp.json()["locked"] is True
 
         # Cleanup
-        admin_client.delete(f"/api/locks{path}?lock_id={lock_id}")
+        admin_client.delete(f"/api/v2/locks{path}?lock_id={lock_id}")

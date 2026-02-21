@@ -41,7 +41,7 @@ def _boot_system_services(
 
     2. **Degradable ReBAC section** (Issue #2440) — creates ReBAC
        manager, audit store, entity registry, permission enforcer.
-       On failure or when ``_on("rebac")`` is False, NoOp stubs are
+       On failure or when ``_on("permissions")`` is False, NoOp stubs are
        injected so the system boots without permission enforcement.
 
     3. **Degradable former-kernel section** — creates dir visibility
@@ -127,7 +127,7 @@ def _boot_system_services(
     entity_registry: Any
     permission_enforcer: Any
 
-    if _on("rebac"):
+    if _on("permissions"):
         try:
             from nexus.bricks.rebac.manager import ReBACManager
 

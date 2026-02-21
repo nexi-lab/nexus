@@ -253,19 +253,20 @@ class TestBootDemotion:
     """Verify factory boots with NoOp when ReBAC is disabled/fails."""
 
     def test_boot_with_rebac_disabled(self) -> None:
-        """_make_gate returns False for 'rebac' → NoOp stubs selected.
+        """_make_gate returns False for 'permissions' → NoOp stubs selected.
 
         We test the gate logic + import path rather than the full boot
         (which requires DB, record store, etc.).
         """
         from nexus.factory._helpers import _make_gate
 
-        # Simulate brick_on returning False for 'rebac'
-        gate = _make_gate(lambda name: name != "rebac")
-        assert gate("rebac") is False
+        # Simulate brick_on returning False for 'permissions'
+        # (canonical brick name per deployment_profile.py BRICK_PERMISSIONS)
+        gate = _make_gate(lambda name: name != "permissions")
+        assert gate("permissions") is False
         assert gate("write_observer") is True
 
-        # When gate("rebac") is False, factory code selects NoOp stubs.
+        # When gate("permissions") is False, factory code selects NoOp stubs.
         # We verify the stubs are importable from the canonical location.
         from nexus.contracts.noop_rebac import (
             NoOpAuditStore as _A,

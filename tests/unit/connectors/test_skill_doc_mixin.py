@@ -8,7 +8,7 @@ test_schema_generator.py which tests SkillDocGenerator directly.
 import pytest
 from pydantic import BaseModel
 
-from nexus.connectors.base import (
+from nexus.backends.connectors.base import (
     ConfirmLevel,
     ErrorDef,
     OpTraits,

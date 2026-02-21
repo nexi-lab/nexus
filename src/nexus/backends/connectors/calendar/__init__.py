@@ -5,8 +5,8 @@ This module provides:
 - Error registry with self-correcting messages
 """
 
-from nexus.connectors.calendar.errors import ERROR_REGISTRY
-from nexus.connectors.calendar.schemas import (
+from nexus.backends.connectors.calendar.errors import ERROR_REGISTRY
+from nexus.backends.connectors.calendar.schemas import (
     Attendee,
     CreateEventSchema,
     DeleteEventSchema,

@@ -17,10 +17,10 @@ import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from nexus.portability.bundle import BundleReader
-from nexus.portability.models import (
+from nexus.bricks.portability.bundle import BundleReader
+from nexus.bricks.portability.models import (
     ConflictMode,
     ContentMode,
     FileRecord,
@@ -30,8 +30,8 @@ from nexus.portability.models import (
 )
 
 if TYPE_CHECKING:
+    from nexus.contracts.portability_types import PortabilityFSProtocol
     from nexus.contracts.types import OperationContext
-    from nexus.core.nexus_fs import NexusFS
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +59,7 @@ class ZoneImportService:
     """Service for importing zone data from .nexus bundles.
 
     Example usage:
-        from nexus.portability import ZoneImportService, ZoneImportOptions
+        from nexus.bricks.portability import ZoneImportService, ZoneImportOptions
 
         service = ZoneImportService(nexus_fs)
         options = ZoneImportOptions(
@@ -73,14 +73,19 @@ class ZoneImportService:
 
     def __init__(
         self,
-        nexus_fs: NexusFS,
+        nexus_fs: PortabilityFSProtocol,
+        *,
+        file_metadata_class: type[Any] | None = None,
     ):
         """Initialize the import service.
 
         Args:
-            nexus_fs: NexusFS instance with metadata store and backend access
+            nexus_fs: NexusFS-compatible instance with metadata store and backend access
+            file_metadata_class: FileMetadata class for metadata-only imports (DI).
+                                 If None, metadata-only imports are skipped.
         """
         self.nexus_fs = nexus_fs
+        self._file_metadata_class = file_metadata_class
 
     def import_zone(
         self,
@@ -385,9 +390,12 @@ class ZoneImportService:
         try:
             # For metadata-only import, we need to create a metadata entry
             # without actual content. This is useful for catalog-style imports.
-            from nexus.core.metadata import FileMetadata
+            if self._file_metadata_class is None:
+                logger.warning("No file_metadata_class injected, skipping metadata-only import")
+                result.files_skipped += 1
+                return
 
-            metadata = FileMetadata(
+            metadata = self._file_metadata_class(
                 path=path,
                 backend_name=record.backend_id,
                 physical_path=record.physical_path,
@@ -585,7 +593,7 @@ class ZoneImportService:
 
 
 def import_zone_bundle(
-    nexus_fs: NexusFS,
+    nexus_fs: PortabilityFSProtocol,
     bundle_path: Path,
     target_zone_id: str | None = None,
     conflict_mode: ConflictMode = ConflictMode.SKIP,

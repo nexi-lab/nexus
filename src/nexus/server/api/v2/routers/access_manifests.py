@@ -16,7 +16,7 @@ import asyncio
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from nexus.server.dependencies import require_auth
@@ -64,7 +64,7 @@ class EvaluateRequest(BaseModel):
 # =============================================================================
 
 
-def _get_manifest_service(request: Any) -> Any:
+def _get_manifest_service(request: Request) -> Any:
     """Get AccessManifestService from app.state brick_services or auto-discovery."""
     # Check brick_services first (auto-discovered)
     brick_svc = getattr(request.app.state, "brick_services", None)

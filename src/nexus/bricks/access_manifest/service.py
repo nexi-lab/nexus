@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -23,8 +24,10 @@ from nexus.contracts.access_manifest_types import (
     ToolPermission,
 )
 from nexus.contracts.credential_types import CredentialStatus
-from nexus.mcp.profiles import TOOL_PATH_PREFIX
 from nexus.storage.models.access_manifest import AccessManifestModel
+
+# Inlined from nexus.mcp.profiles to avoid cross-brick import (LEGO compliance)
+TOOL_PATH_PREFIX = "/tools/"
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -43,27 +46,31 @@ logger = logging.getLogger(__name__)
 
 
 class _TTLCache:
-    """Minimal TTL cache for manifest entries."""
+    """Minimal thread-safe TTL cache for manifest entries."""
 
     def __init__(self, ttl_seconds: int = 60) -> None:
         self._ttl = ttl_seconds
+        self._lock = threading.Lock()
         self._data: dict[tuple[str, str], tuple[float, tuple[ManifestEntry, ...]]] = {}
 
     def get(self, key: tuple[str, str]) -> tuple[ManifestEntry, ...] | None:
-        item = self._data.get(key)
-        if item is None:
-            return None
-        ts, entries = item
-        if datetime.now(UTC).timestamp() - ts > self._ttl:
-            del self._data[key]
-            return None
-        return entries
+        with self._lock:
+            item = self._data.get(key)
+            if item is None:
+                return None
+            ts, entries = item
+            if datetime.now(UTC).timestamp() - ts > self._ttl:
+                del self._data[key]
+                return None
+            return entries
 
     def set(self, key: tuple[str, str], entries: tuple[ManifestEntry, ...]) -> None:
-        self._data[key] = (datetime.now(UTC).timestamp(), entries)
+        with self._lock:
+            self._data[key] = (datetime.now(UTC).timestamp(), entries)
 
     def invalidate(self, key: tuple[str, str]) -> None:
-        self._data.pop(key, None)
+        with self._lock:
+            self._data.pop(key, None)
 
 
 # ---------------------------------------------------------------------------

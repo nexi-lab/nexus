@@ -4,8 +4,6 @@ Verifies that the VFS storage driver correctly delegates all operations
 to the underlying VFSOperations instance.
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.ipc.storage.vfs_driver import VFSStorageDriver

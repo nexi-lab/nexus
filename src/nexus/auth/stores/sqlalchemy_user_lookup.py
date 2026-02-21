@@ -7,8 +7,6 @@ SQLAlchemy sessions to callers.
 Issue #2281: Extract Auth/OAuth brick from server/auth.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 

@@ -4,8 +4,6 @@ Extracted from ``nexus.server.fastapi_server._initialize_oauth_provider`` (#2049
 to reduce the size of the monolithic server module.
 """
 
-from __future__ import annotations
-
 import logging
 import os
 from typing import TYPE_CHECKING, Any
@@ -18,7 +16,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def initialize_oauth_provider(nexus_fs: NexusFS, auth_provider: Any) -> None:
+def initialize_oauth_provider(nexus_fs: "NexusFS", auth_provider: Any) -> None:
     """Initialize OAuth provider if Google OAuth credentials are available.
 
     Args:

@@ -5,8 +5,6 @@ discriminator (avoids cross-brick imports per LEGO architecture).
 Truncates at ``max_content_bytes`` with a logged warning.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from typing import Any

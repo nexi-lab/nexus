@@ -18,8 +18,6 @@ References:
     - Issue #2064: Mutating/validating phases with failure policies
 """
 
-from __future__ import annotations
-
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -49,7 +47,6 @@ POST_UNMOUNT: str = "post_unmount"
 # Artifact lifecycle phases (Issue #1861)
 POST_ARTIFACT_CREATE: str = "post_artifact_create"
 POST_ARTIFACT_UPDATE: str = "post_artifact_update"
-
 
 # ---------------------------------------------------------------------------
 # Enums (Issue #2064)

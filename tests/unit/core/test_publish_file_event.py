@@ -7,8 +7,6 @@ Tests cover Issue #2175: Wire EventBus into kernel mutation hot path.
 - Factory EventLog WAL wiring
 """
 
-from __future__ import annotations
-
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 

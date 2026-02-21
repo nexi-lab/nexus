@@ -10,8 +10,6 @@ Design decisions:
 - 5 strategic indexes (2 composite B-tree, 2 BRIN, 1 unique).
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, Index, Numeric, String

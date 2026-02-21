@@ -1,7 +1,5 @@
 """Unit tests for ``nexus.lib.circuit_breaker`` — shared CB base (Issue #2125)."""
 
-from __future__ import annotations
-
 import asyncio
 from unittest.mock import patch
 

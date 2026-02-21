@@ -9,8 +9,6 @@ Ported from v1 with improvements:
 - Pydantic request model for warmup endpoint
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 
@@ -22,7 +20,6 @@ from nexus.server.dependencies import require_auth
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/cache", tags=["cache"])
-
 
 # =============================================================================
 # Request Models

@@ -23,8 +23,6 @@ Example:
         await nx.skills_create("my-skill", "A skill", template="basic")
 """
 
-from __future__ import annotations
-
 import builtins
 import logging
 import time
@@ -71,7 +69,6 @@ from .client import (
 )
 
 logger = logging.getLogger(__name__)
-
 
 # ============================================================
 # Async domain method map — includes async-only domains
@@ -173,7 +170,7 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
             fp_rate=negative_cache_fp_rate,
         )
 
-    async def __aenter__(self) -> AsyncRemoteNexusFS:
+    async def __aenter__(self) -> "AsyncRemoteNexusFS":
         await self._ensure_initialized()
         return self
 
@@ -210,13 +207,13 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
     # ============================================================
 
     @cached_property
-    def skills(self) -> AsyncSkillsClient:
+    def skills(self) -> "AsyncSkillsClient":
         from nexus.remote.domain.skills import AsyncSkillsClient as _AsyncSkillsClient
 
         return _AsyncSkillsClient(self._call_rpc)
 
     @cached_property
-    def sandbox(self) -> AsyncSandboxClient:
+    def sandbox(self) -> "AsyncSandboxClient":
         from nexus.remote.domain.sandbox import AsyncSandboxClient as _AsyncSandboxClient
 
         return _AsyncSandboxClient(
@@ -226,19 +223,19 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         )
 
     @cached_property
-    def oauth(self) -> AsyncOAuthClient:
+    def oauth(self) -> "AsyncOAuthClient":
         from nexus.remote.domain.oauth import AsyncOAuthClient as _AsyncOAuthClient
 
         return _AsyncOAuthClient(self._call_rpc)
 
     @cached_property
-    def mcp(self) -> AsyncMCPClient:
+    def mcp(self) -> "AsyncMCPClient":
         from nexus.remote.domain.mcp import AsyncMCPClient as _AsyncMCPClient
 
         return _AsyncMCPClient(self._call_rpc)
 
     @cached_property
-    def share_links(self) -> AsyncShareLinksClient:
+    def share_links(self) -> "AsyncShareLinksClient":
         from nexus.remote.domain.share_links import (
             AsyncShareLinksClient as _AsyncShareLinksClient,
         )
@@ -246,25 +243,25 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         return _AsyncShareLinksClient(self._call_rpc)
 
     @cached_property
-    def memory(self) -> AsyncMemoryClient:
+    def memory(self) -> "AsyncMemoryClient":
         from nexus.remote.domain.memory import AsyncMemoryClient as _AsyncMemoryClient
 
         return _AsyncMemoryClient(self._call_rpc)
 
     @cached_property
-    def admin(self) -> AsyncAdminClient:
+    def admin(self) -> "AsyncAdminClient":
         from nexus.remote.domain.admin import AsyncAdminClient as _AsyncAdminClient
 
         return _AsyncAdminClient(self._call_rpc)
 
     @cached_property
-    def ace(self) -> AsyncACEClient:
+    def ace(self) -> "AsyncACEClient":
         from nexus.remote.domain.ace import AsyncACEClient as _AsyncACEClient
 
         return _AsyncACEClient(self._call_rpc)
 
     @cached_property
-    def llm(self) -> AsyncLLMClient:
+    def llm(self) -> "AsyncLLMClient":
         from nexus.remote.domain.llm import AsyncLLMClient as _AsyncLLMClient
 
         return _AsyncLLMClient(self._get_llm_service)

@@ -5,8 +5,6 @@ gets identical coverage.  Restored from #1699 prune and extended for
 §17.6 convergence (agent-scoped paths + MessageEnvelope format).
 """
 
-from __future__ import annotations
-
 import asyncio
 from datetime import UTC, datetime
 from typing import Any

@@ -9,8 +9,6 @@ Tests cover:
 - EvictionContext construction
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.contracts.agent_types import EvictionReason

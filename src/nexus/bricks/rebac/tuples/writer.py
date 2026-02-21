@@ -8,8 +8,6 @@ across Leopard, Tiger, L1, boundary, and directory subsystems.
 Related: Issue #2179 (decomposition), Issue #773 (zone-id tracking)
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import uuid

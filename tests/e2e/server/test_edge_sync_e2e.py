@@ -10,8 +10,6 @@ Tests the full reconnection flow including:
 Issue #1707: Edge split-brain resilience.
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 import logging

@@ -6,8 +6,6 @@ Hierarchy:
     TransactionNotActiveError  - Operation targets non-active transaction
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -17,7 +15,7 @@ if TYPE_CHECKING:
 class TransactionConflictError(Exception):
     """Raised when commit detects conflicting writes."""
 
-    def __init__(self, conflicts: list[ConflictInfo]) -> None:
+    def __init__(self, conflicts: "list[ConflictInfo]") -> None:
         self.conflicts = conflicts
         paths = ", ".join(c.path for c in conflicts)
         super().__init__(f"Conflict detected on {len(conflicts)} path(s): {paths}")

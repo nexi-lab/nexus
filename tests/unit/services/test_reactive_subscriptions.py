@@ -4,8 +4,6 @@ Tests the Subscription dataclass, ReactiveSubscriptionManager class,
 find_affected_connections, cleanup sweep, and stats.
 """
 
-from __future__ import annotations
-
 import time
 
 import pytest

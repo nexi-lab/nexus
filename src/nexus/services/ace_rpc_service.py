@@ -6,8 +6,6 @@ No dependency on NexusFS.
 Issue #2033 — Phase 3 of LEGO microkernel decomposition.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any, Literal
 

@@ -15,8 +15,6 @@ Example:
     "Task X blocks Task Y" -> (Task X, BLOCKS, Task Y, 0.90)
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import re

@@ -1,7 +1,5 @@
 """Tests for OAuth brick types (frozen credential, masked repr, serialization)."""
 
-from __future__ import annotations
-
 import dataclasses
 from datetime import UTC, datetime, timedelta
 

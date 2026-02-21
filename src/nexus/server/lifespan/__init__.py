@@ -9,8 +9,6 @@ Each initializer function:
 - Returns a list of ``asyncio.Task`` references that must be cancelled on shutdown
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from collections.abc import AsyncIterator
@@ -25,7 +23,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _compute_features_info(app: FastAPI, svc: LifespanServices) -> None:
+def _compute_features_info(app: "FastAPI", svc: LifespanServices) -> None:
     """Compute and store features_info on app.state (Issue #1389).
 
     Called once at startup. The result is immutable and served by
@@ -94,7 +92,7 @@ def _compute_features_info(app: FastAPI, svc: LifespanServices) -> None:
     )
 
 
-def _wire_query_observer(_app: FastAPI, svc: LifespanServices) -> None:
+def _wire_query_observer(_app: "FastAPI", svc: LifespanServices) -> None:
     """Register QueryObserverComponent into the observability registry.
 
     Called after startup_services so observability_subsystem is available.
@@ -117,7 +115,7 @@ def _wire_query_observer(_app: FastAPI, svc: LifespanServices) -> None:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
     """Application lifespan manager.
 
     Calls domain-specific initializers during startup and tears them

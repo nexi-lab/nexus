@@ -5,8 +5,6 @@ by bundling edges + node IDs + optional pre-built graph into a single
 frozen dataclass.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -22,4 +20,4 @@ class GovernanceSnapshot:
 
     edges: list[GovernanceEdge]
     node_ids: list[str]
-    graph: nx.DiGraph | None = field(default=None, compare=False)
+    graph: "nx.DiGraph | None" = field(default=None, compare=False)

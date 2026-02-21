@@ -22,8 +22,6 @@ Run with:
     pytest tests/e2e/test_namespace_dcache_database_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import os
 import shutil
 import signal
@@ -59,7 +57,6 @@ if str(_src_path) not in sys.path:
 for _key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
     os.environ.pop(_key, None)
 os.environ["NO_PROXY"] = "*"
-
 
 # === Helpers ===
 

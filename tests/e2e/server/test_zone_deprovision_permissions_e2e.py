@@ -11,8 +11,6 @@ Tests the full zone lifecycle with actual permission enforcement:
 Issue #2061: Zone Finalizer Protocol for Ordered Cleanup.
 """
 
-from __future__ import annotations
-
 import tempfile
 from pathlib import Path
 

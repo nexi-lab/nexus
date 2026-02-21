@@ -9,8 +9,6 @@ Uses multi-key StaticAPIKeyAuth for proper per-user identity, and the sync
 RPC endpoint (/api/nfs/) which doesn't require AsyncNexusFS (database_url).
 """
 
-from __future__ import annotations
-
 import base64
 import os
 import shutil
@@ -42,7 +40,6 @@ BOB_API_KEY = "sk-bob-l3-e2e"
 for _key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
     os.environ.pop(_key, None)
 os.environ["NO_PROXY"] = "*"
-
 
 # === Helpers ===
 

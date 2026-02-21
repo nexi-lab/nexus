@@ -17,8 +17,6 @@ Examples:
     nexus oauth test google alice@example.com
 """
 
-from __future__ import annotations
-
 import asyncio
 import os
 import sys

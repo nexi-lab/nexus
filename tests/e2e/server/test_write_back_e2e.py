@@ -12,8 +12,6 @@ Tests the full round-trip:
 Uses: in-process WriteBackService, real SQLite, real LocalConnectorBackend.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock

@@ -8,8 +8,6 @@ Validates:
 - DI-based ZoektClient injection (Issue #2188)
 """
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock, patch
 
 import pytest

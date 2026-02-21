@@ -9,8 +9,6 @@ Service-layer e2e tests that verify the complete routing pipeline:
 - Log validation via caplog
 """
 
-from __future__ import annotations
-
 import logging
 import statistics
 import time

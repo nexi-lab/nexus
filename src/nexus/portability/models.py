@@ -33,8 +33,6 @@ References:
 - Epic #1161: Zone Data Portability
 """
 
-from __future__ import annotations
-
 import builtins
 import hashlib
 import json

@@ -3,8 +3,6 @@
 Tests metadata and content synchronization from connector backends.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 

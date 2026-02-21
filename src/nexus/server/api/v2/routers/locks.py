@@ -13,8 +13,6 @@ Ported from v1 with improvements:
 - fence_token returned directly from acquire (no extra get_lock_info call)
 """
 
-from __future__ import annotations
-
 import logging
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -37,7 +35,6 @@ from nexus.server.dependencies import require_auth
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/locks", tags=["locks"])
-
 
 # =============================================================================
 # Dependencies

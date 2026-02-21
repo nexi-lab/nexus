@@ -1,7 +1,5 @@
 """Tests for nexus.parsers.utils — shared extract_structure & create_chunks."""
 
-from __future__ import annotations
-
 from nexus.parsers.utils import create_chunks, extract_structure
 
 

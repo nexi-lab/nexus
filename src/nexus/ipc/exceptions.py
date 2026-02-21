@@ -4,8 +4,6 @@ All exceptions inherit from IPCError so callers can catch the
 entire family with a single except clause.
 """
 
-from __future__ import annotations
-
 from enum import StrEnum
 
 

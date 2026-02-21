@@ -3,8 +3,6 @@
 Extracted from fastapi_server.py (#1602).
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from typing import TYPE_CHECKING
@@ -17,7 +15,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-async def startup_uploads(app: FastAPI, svc: LifespanServices) -> list[asyncio.Task]:
+async def startup_uploads(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.Task]:
     """Initialize chunked upload service and return background tasks."""
     bg_tasks: list[asyncio.Task] = []
 

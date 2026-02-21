@@ -8,8 +8,6 @@ Requires LocalRaft (Rust extension). Skipped if unavailable.
 Run with: .venv/bin/python3.12 -m pytest tests/integration/test_range_requests.py -v
 """
 
-from __future__ import annotations
-
 import base64
 from collections.abc import AsyncGenerator
 from pathlib import Path

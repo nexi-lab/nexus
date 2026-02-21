@@ -1,7 +1,5 @@
 """Unit tests for NatsHotPathAdapter (#11)."""
 
-from __future__ import annotations
-
 from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, MagicMock
 

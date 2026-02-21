@@ -9,8 +9,6 @@ Should run as a **concurrent** finalizer since brick drain/finalize is
 independent of the SQL-based cleanup finalizers.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING
 
@@ -23,7 +21,7 @@ if TYPE_CHECKING:
 class BrickDrainFinalizer:
     """Finalizer that drains and finalizes bricks for a deprovisioning zone."""
 
-    def __init__(self, brick_lifecycle_manager: BrickLifecycleManager) -> None:
+    def __init__(self, brick_lifecycle_manager: "BrickLifecycleManager") -> None:
         self._blm = brick_lifecycle_manager
 
     @property

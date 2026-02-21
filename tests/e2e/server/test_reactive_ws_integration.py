@@ -3,8 +3,6 @@
 Tests the full flow: register subscription -> event occurs -> WS receives/doesn't.
 """
 
-from __future__ import annotations
-
 from typing import cast
 
 import pytest

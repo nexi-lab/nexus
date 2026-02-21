@@ -13,8 +13,6 @@ Run with:
     pytest tests/e2e/server/test_rebac_latency_e2e.py -v -s
 """
 
-from __future__ import annotations
-
 import os
 import shutil
 import signal
@@ -40,7 +38,6 @@ SERVER_STARTUP_TIMEOUT = 30
 for _key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
     os.environ.pop(_key, None)
 os.environ["NO_PROXY"] = "*"
-
 
 # ---------------------------------------------------------------------------
 # Helpers

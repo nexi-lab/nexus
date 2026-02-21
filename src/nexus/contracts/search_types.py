@@ -13,8 +13,6 @@ Issue #929: Adaptive algorithm selection for search operations.
 Issue #1499: Shared query analysis patterns for query routing and expansion.
 """
 
-from __future__ import annotations
-
 from enum import StrEnum
 
 __all__ = [

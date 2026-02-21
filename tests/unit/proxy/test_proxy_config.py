@@ -4,8 +4,6 @@ Policy profile tests (TDD RED) are written for the not-yet-existing
 .local(), .production(), .edge() class methods (Issue #2073).
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.proxy.config import ProxyBrickConfig

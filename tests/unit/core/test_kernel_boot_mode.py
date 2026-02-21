@@ -6,8 +6,6 @@ with only the storage brick, no system services, and working file ops.
 Profile hierarchy: kernel < embedded < lite < full <= cloud
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING
 
 import pytest
@@ -90,7 +88,7 @@ class TestKernelProfileBricks:
 class TestKernelBootViaFactory:
     """Factory creates bare kernel when record_store is None (KERNEL path)."""
 
-    def test_create_nexus_fs_no_record_store(self, tmp_path: Path) -> None:
+    def test_create_nexus_fs_no_record_store(self, tmp_path: "Path") -> None:
         from nexus.backends.local import LocalBackend
         from nexus.factory.orchestrator import create_nexus_fs
         from tests.helpers.in_memory_metadata_store import InMemoryMetastore
@@ -109,7 +107,7 @@ class TestKernelBootViaFactory:
         assert nx._rebac_manager is None
         assert nx._permission_enforcer is None
 
-    def test_kernel_mode_nexus_has_router(self, tmp_path: Path) -> None:
+    def test_kernel_mode_nexus_has_router(self, tmp_path: "Path") -> None:
         from nexus.backends.local import LocalBackend
         from nexus.factory.orchestrator import create_nexus_fs
         from tests.helpers.in_memory_metadata_store import InMemoryMetastore
@@ -135,29 +133,29 @@ class TestKernelFileOperations:
     """File operations work in kernel-only mode (no system services)."""
 
     @pytest.fixture()
-    def kernel_nx(self, tmp_path: Path) -> NexusFS:
+    def kernel_nx(self, tmp_path: "Path") -> "NexusFS":
         from tests.conftest import make_test_nexus
 
         return make_test_nexus(tmp_path)
 
-    def test_write_and_read(self, kernel_nx: NexusFS) -> None:
+    def test_write_and_read(self, kernel_nx: "NexusFS") -> None:
         kernel_nx.write("/test.txt", b"hello kernel")
         data = kernel_nx.read("/test.txt")
         assert data == b"hello kernel"
 
-    def test_exists_true(self, kernel_nx: NexusFS) -> None:
+    def test_exists_true(self, kernel_nx: "NexusFS") -> None:
         kernel_nx.write("/exists_check.txt", b"data")
         assert kernel_nx.exists("/exists_check.txt") is True
 
-    def test_exists_false(self, kernel_nx: NexusFS) -> None:
+    def test_exists_false(self, kernel_nx: "NexusFS") -> None:
         assert kernel_nx.exists("/nonexistent.txt") is False
 
-    def test_delete(self, kernel_nx: NexusFS) -> None:
+    def test_delete(self, kernel_nx: "NexusFS") -> None:
         kernel_nx.write("/to_delete.txt", b"bye")
         kernel_nx.delete("/to_delete.txt")
         assert kernel_nx.exists("/to_delete.txt") is False
 
-    def test_list_directory(self, kernel_nx: NexusFS) -> None:
+    def test_list_directory(self, kernel_nx: "NexusFS") -> None:
         kernel_nx.write("/dir/a.txt", b"a")
         kernel_nx.write("/dir/b.txt", b"b")
         listing = kernel_nx.list("/dir")
@@ -319,7 +317,7 @@ class TestKernelIntegrationViaConnect:
     """Integration: nexus.connect() with profile=kernel boots bare kernel."""
 
     def test_connect_kernel_profile_creates_nexusfs(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: "Path", monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """connect() with profile=kernel gives a functional NexusFS."""
         from nexus.backends.local import LocalBackend
@@ -358,7 +356,7 @@ class TestKernelIntegrationViaConnect:
         assert nx.exists("/hello.txt") is False
 
     def test_kernel_factory_enabled_bricks_logged(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+        self, tmp_path: "Path", monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
         """Factory logs exactly 1 enabled brick for KERNEL profile."""
         import logging
@@ -387,7 +385,7 @@ class TestKernelIntegrationViaConnect:
 
         assert nx is not None
 
-    def test_kernel_profile_no_write_observer(self, tmp_path: Path) -> None:
+    def test_kernel_profile_no_write_observer(self, tmp_path: "Path") -> None:
         """KERNEL mode has no write observer (no record store to sync)."""
         from nexus.backends.local import LocalBackend
         from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_bricks
@@ -406,7 +404,7 @@ class TestKernelIntegrationViaConnect:
 
         assert nx._write_observer is None
 
-    def test_kernel_profile_no_workflow_engine(self, tmp_path: Path) -> None:
+    def test_kernel_profile_no_workflow_engine(self, tmp_path: "Path") -> None:
         """KERNEL mode has no workflow engine."""
         from nexus.backends.local import LocalBackend
         from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_bricks

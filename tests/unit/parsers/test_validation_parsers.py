@@ -8,8 +8,6 @@ Tests parse_output() for each validator with:
 - Edge cases (missing fields, non-dict items)
 """
 
-from __future__ import annotations
-
 import json
 
 import pytest

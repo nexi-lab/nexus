@@ -3,8 +3,6 @@
 Extracted from fastapi_server.py (#1602).
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import os
@@ -19,7 +17,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-async def startup_services(app: FastAPI, svc: LifespanServices) -> list[asyncio.Task]:
+async def startup_services(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.Task]:
     """Initialize application services and return background tasks.
 
     Covers:
@@ -53,7 +51,7 @@ async def startup_services(app: FastAPI, svc: LifespanServices) -> list[asyncio.
     return bg_tasks
 
 
-async def shutdown_services(app: FastAPI, svc: LifespanServices) -> None:
+async def shutdown_services(app: "FastAPI", svc: "LifespanServices") -> None:
     """Shutdown services in reverse order."""
     # Issue #625: Stop workflow dispatch consumer
     wds = app.state.workflow_dispatch
@@ -160,7 +158,7 @@ async def shutdown_services(app: FastAPI, svc: LifespanServices) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _startup_agent_registry(app: FastAPI, svc: LifespanServices) -> None:
+def _startup_agent_registry(app: "FastAPI", svc: "LifespanServices") -> None:
     """Initialize AgentRegistry for agent lifecycle tracking (Issue #1240)."""
     if svc.nexus_fs and svc.session_factory:
         try:
@@ -215,7 +213,7 @@ def _startup_agent_registry(app: FastAPI, svc: LifespanServices) -> None:
         app.state.async_agent_registry = None
 
 
-def _startup_key_service(app: FastAPI, svc: LifespanServices) -> None:
+def _startup_key_service(app: "FastAPI", svc: "LifespanServices") -> None:
     """Initialize KeyService for agent identity (Issue #1355)."""
     if svc.nexus_fs and svc.session_factory:
         try:
@@ -254,7 +252,7 @@ def _startup_key_service(app: FastAPI, svc: LifespanServices) -> None:
         app.state.key_service = None
 
 
-def _startup_reputation_delegation_from_bricks(app: FastAPI, svc: LifespanServices) -> None:
+def _startup_reputation_delegation_from_bricks(app: "FastAPI", svc: "LifespanServices") -> None:
     """Expose ReputationService and DelegationService from factory brick_dict (Issue #2131).
 
     These services are now created in ``factory._boot_brick_services()`` and
@@ -283,7 +281,7 @@ def _startup_reputation_delegation_from_bricks(app: FastAPI, svc: LifespanServic
         logger.info("[DELEGATION] DelegationService wired from brick_dict")
 
 
-def _startup_governance(app: FastAPI, svc: LifespanServices) -> None:
+def _startup_governance(app: "FastAPI", svc: "LifespanServices") -> None:
     """Expose governance brick services from factory BrickServices (Issue #2129).
 
     Governance services are created in ``factory._boot_brick_services()`` and
@@ -311,7 +309,7 @@ def _startup_governance(app: FastAPI, svc: LifespanServices) -> None:
         logger.info("[GOV] Governance services wired from brick_dict")
 
 
-def _startup_sandbox_auth(app: FastAPI, svc: LifespanServices) -> None:
+def _startup_sandbox_auth(app: "FastAPI", svc: "LifespanServices") -> None:
     """Initialize SandboxAuthService for authenticated sandbox creation (Issue #1307)."""
     if svc.nexus_fs and not app.state.agent_registry:
         logger.info(
@@ -393,7 +391,7 @@ def _startup_sandbox_auth(app: FastAPI, svc: LifespanServices) -> None:
         )
 
 
-def _startup_transactional_snapshot(app: FastAPI, svc: LifespanServices) -> None:
+def _startup_transactional_snapshot(app: "FastAPI", svc: "LifespanServices") -> None:
     """Expose TransactionalSnapshotService on app.state for REST API (Issue #1752)."""
     snap_svc = svc.snapshot_service
     app.state.transactional_snapshot_service = snap_svc
@@ -403,7 +401,7 @@ def _startup_transactional_snapshot(app: FastAPI, svc: LifespanServices) -> None
         logger.debug("[SNAPSHOT] TransactionalSnapshotService not available")
 
 
-def _startup_rlm_service(app: FastAPI, svc: LifespanServices) -> None:
+def _startup_rlm_service(app: "FastAPI", svc: "LifespanServices") -> None:
     """Initialize RLM inference service (Issue #1306).
 
     Requires SandboxAuthService (for SandboxManager) and an LLM provider.
@@ -439,7 +437,7 @@ def _startup_rlm_service(app: FastAPI, svc: LifespanServices) -> None:
         logger.warning("[RLM] Failed to initialize RLMInferenceService: %s", e, exc_info=True)
 
 
-def _startup_agent_tasks(app: FastAPI, svc: LifespanServices) -> list[asyncio.Task]:
+def _startup_agent_tasks(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.Task]:
     """Start agent heartbeat and stale detection background tasks (Issue #1240)."""
     if not app.state.agent_registry:
         return []
@@ -530,7 +528,7 @@ def _startup_agent_tasks(app: FastAPI, svc: LifespanServices) -> list[asyncio.Ta
     return tasks
 
 
-async def _startup_scheduler(app: FastAPI, svc: LifespanServices) -> None:
+async def _startup_scheduler(app: "FastAPI", svc: "LifespanServices") -> None:
     """Initialize factory-created SchedulerService with async pool (Issue #2195, #2360).
 
     The SchedulerService is constructed by ``factory._boot_system_services()``
@@ -605,7 +603,7 @@ async def _startup_scheduler(app: FastAPI, svc: LifespanServices) -> None:
         logger.warning("Failed to initialize Scheduler: %s", e, exc_info=True)
 
 
-def _startup_task_queue(app: FastAPI, svc: LifespanServices) -> asyncio.Task | None:
+def _startup_task_queue(app: "FastAPI", svc: "LifespanServices") -> asyncio.Task | None:
     """Start Task Queue Engine background worker (Issue #574)."""
     if not svc.nexus_fs:
         return None
@@ -634,7 +632,7 @@ def _startup_task_queue(app: FastAPI, svc: LifespanServices) -> asyncio.Task | N
     return None
 
 
-async def _startup_workflow_engine(app: FastAPI, svc: LifespanServices) -> None:
+async def _startup_workflow_engine(app: "FastAPI", svc: "LifespanServices") -> None:
     """Load workflows from persistent storage (Issue #1522)."""
     if not svc.nexus_fs:
         return

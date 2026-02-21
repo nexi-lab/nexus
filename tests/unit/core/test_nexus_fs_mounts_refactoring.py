@@ -4,8 +4,6 @@ Tests cover the refactoring improvements:
 - _matches_patterns(): Pattern matching helper
 """
 
-from __future__ import annotations
-
 import tempfile
 from collections.abc import Generator
 from pathlib import Path

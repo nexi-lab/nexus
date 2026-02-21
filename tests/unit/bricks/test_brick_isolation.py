@@ -5,8 +5,6 @@ import time. Bricks must be self-contained with no dependencies on
 nexus.core.nexus_fs, nexus.core.nexus_fs_core, or other bricks.
 """
 
-from __future__ import annotations
-
 import importlib
 import sys
 

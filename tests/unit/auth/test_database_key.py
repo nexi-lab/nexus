@@ -6,8 +6,6 @@ Covers:
 - Issue 14A: Single UPDATE statement optimization
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch

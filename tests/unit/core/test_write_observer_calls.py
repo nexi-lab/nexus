@@ -13,8 +13,6 @@ Phase 1.3 of #1246/#1330 consolidation plan.
 Issue #1631: Error handling tests for _handle_observer_error (strict + non-strict).
 """
 
-from __future__ import annotations
-
 import tempfile
 from collections.abc import Generator
 from pathlib import Path

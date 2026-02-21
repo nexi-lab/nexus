@@ -17,8 +17,6 @@ Usage::
 Issue #1366.
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import logging
@@ -119,7 +117,7 @@ class ResiliencyConfig:
     targets: dict[str, TargetBinding] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, raw: dict[str, Any] | None) -> ResiliencyConfig:
+    def from_dict(cls, raw: dict[str, Any] | None) -> "ResiliencyConfig":
         """Convert raw YAML dict → frozen ``ResiliencyConfig`` dataclasses.
 
         Returns default config when *raw* is None or empty.  Falls back to
@@ -244,7 +242,7 @@ class AsyncCircuitBreaker:
 
     # -- context manager -----------------------------------------------------
 
-    async def __aenter__(self) -> AsyncCircuitBreaker:
+    async def __aenter__(self) -> "AsyncCircuitBreaker":
         state = self.current_state
 
         if state is CircuitState.CLOSED:
@@ -344,15 +342,15 @@ class AsyncCircuitBreaker:
 class ResiliencyManager:
     """Singleton-style manager that owns circuit breaker instances and config."""
 
-    def __init__(self, config: ResiliencyConfig) -> None:
+    def __init__(self, config: "ResiliencyConfig") -> None:
         self._config = config
-        self._breakers: dict[str, AsyncCircuitBreaker] = {}
+        self._breakers: "dict[str, AsyncCircuitBreaker]" = {}
 
     @property
-    def config(self) -> ResiliencyConfig:
+    def config(self) -> "ResiliencyConfig":
         return self._config
 
-    def get_breaker(self, name: str) -> AsyncCircuitBreaker:
+    def get_breaker(self, name: str) -> "AsyncCircuitBreaker":
         """Get or create a circuit breaker by policy name (idempotent)."""
         if name in self._breakers:
             return self._breakers[name]

@@ -10,8 +10,6 @@ Usage:
     .venv/bin/python -m pytest tests/e2e/test_backfill_live_server.py -v --tb=short -p no:xdist -o "addopts=" --log-cli-level=INFO
 """
 
-from __future__ import annotations
-
 import logging
 import os
 

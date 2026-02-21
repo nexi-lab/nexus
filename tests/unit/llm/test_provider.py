@@ -4,8 +4,6 @@ All litellm calls are mocked at the boundary to test provider behavior
 without network access.
 """
 
-from __future__ import annotations
-
 import asyncio
 from collections.abc import AsyncIterator
 from typing import Any

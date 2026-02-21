@@ -9,8 +9,6 @@ References:
     - Issue #2359: Moved from core/protocols/ to services/protocols/ (service tier)
 """
 
-from __future__ import annotations
-
 from typing import Any, Protocol, runtime_checkable
 
 

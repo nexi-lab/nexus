@@ -12,8 +12,6 @@ Reuses patterns from:
     - ``services/brick_reconciler.py`` (backoff, jitter)
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 import logging

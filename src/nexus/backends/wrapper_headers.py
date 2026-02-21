@@ -12,8 +12,6 @@ Usage:
     MY_HEADER = register_header("my_wrapper", b"NEXM\\x01")
 """
 
-from __future__ import annotations
-
 WRAPPER_HEADERS: dict[str, bytes] = {}
 
 

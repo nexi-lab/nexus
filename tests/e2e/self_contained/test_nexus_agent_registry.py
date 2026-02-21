@@ -5,8 +5,6 @@ EntityRegistry (bridge) consistently. Validates the single-source-of-truth
 consolidation after deleting agents.py.
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.bricks.rebac.entity_registry import EntityRegistry

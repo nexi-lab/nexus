@@ -4,8 +4,6 @@ Validates that search brick components satisfy their declared protocols
 via ``isinstance()`` checks (structural subtyping with ``@runtime_checkable``).
 """
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest

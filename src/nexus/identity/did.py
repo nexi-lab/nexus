@@ -20,8 +20,6 @@ References:
     - Multicodec: https://github.com/multiformats/multicodec
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey

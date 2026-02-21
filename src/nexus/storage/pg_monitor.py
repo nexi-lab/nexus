@@ -19,8 +19,6 @@ Usage:
     missing_fk_indexes = monitor.find_missing_fk_indexes()
 """
 
-from __future__ import annotations
-
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -114,7 +112,7 @@ class PgMonitor:
     Based on Supabase Postgres Best Practices guide.
     """
 
-    def __init__(self, session: Session):
+    def __init__(self, session: "Session"):
         """Initialize the monitor with a SQLAlchemy session.
 
         Args:

@@ -4,8 +4,6 @@ Deduplicated from MarkItDownParser, MarkItDownProvider, and LlamaParseProvider
 (Issue #5A).
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 from nexus.parsers.types import TextChunk

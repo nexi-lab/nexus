@@ -3,8 +3,6 @@
 Validates that the discovery module works in isolation — no kernel needed.
 """
 
-from __future__ import annotations
-
 from nexus.bricks.discovery.discovery_tools import (
     DISCOVERY_TOOLS,
     get_tool_details,

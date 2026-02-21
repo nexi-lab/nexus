@@ -8,8 +8,6 @@ Defines the core domain objects for agent delegation:
 Follows AgentRecord pattern: frozen dataclass + SQLAlchemy model separation.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal

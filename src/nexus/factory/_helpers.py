@@ -1,13 +1,10 @@
 """Factory helpers — _safe_create, _make_gate, _resolve_tasks_db_path, brick registration."""
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Callable
 from typing import Any
 
 logger = logging.getLogger(__name__)
-
 
 # ---------------------------------------------------------------------------
 # Profile gating helper (Issue #2193: DRY for _on() closure)

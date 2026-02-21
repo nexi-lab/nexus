@@ -7,8 +7,6 @@ Includes temporal query operators (Issue #1023) for time-based filtering
 inspired by SimpleMem (arXiv:2601.02553).
 """
 
-from __future__ import annotations
-
 import builtins
 import logging
 from collections.abc import Callable

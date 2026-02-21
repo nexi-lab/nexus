@@ -3,8 +3,6 @@
 Issue #1286: Extracted from monolithic __init__.py.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 from sqlalchemy import (
@@ -72,7 +70,7 @@ class TrajectoryModel(Base):
     session_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    parent_trajectory: Mapped[TrajectoryModel | None] = relationship(
+    parent_trajectory: "Mapped[TrajectoryModel | None]" = relationship(
         "TrajectoryModel", remote_side=[trajectory_id], foreign_keys=[parent_trajectory_id]
     )
 

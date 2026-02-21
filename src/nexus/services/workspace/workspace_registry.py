@@ -11,8 +11,6 @@ Key Concepts:
 - Permissions: Handled separately via ReBAC
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from dataclasses import dataclass, field
@@ -122,9 +120,9 @@ class WorkspaceRegistry:
 
     def __init__(
         self,
-        metadata: MetastoreABC,
+        metadata: "MetastoreABC",
         rebac_manager: Any | None = None,  # v0.5.0: For auto-granting ownership
-        record_store: RecordStoreABC | None = None,
+        record_store: "RecordStoreABC | None" = None,
     ):
         """Initialize workspace registry.
 

@@ -1,7 +1,5 @@
 """Unit tests for AuthCache with invalidation and singleflight (Decision #15)."""
 
-from __future__ import annotations
-
 import asyncio
 import time
 

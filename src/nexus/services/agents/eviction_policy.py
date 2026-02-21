@@ -7,8 +7,6 @@ under resource pressure. Includes:
   preemption filtering for agent-level preemption scenarios.
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from nexus.contracts.qos import EVICTION_ORDER, EvictionContext
@@ -28,10 +26,10 @@ class EvictionPolicy(Protocol):
 
     def select_candidates(
         self,
-        agents: list[AgentRecord],
+        agents: "list[AgentRecord]",
         batch_size: int,
         context: EvictionContext | None = None,
-    ) -> list[AgentRecord]:
+    ) -> "list[AgentRecord]":
         """Select which agents to evict from the candidates list.
 
         Args:
@@ -55,10 +53,10 @@ class LRUEvictionPolicy:
 
     def select_candidates(
         self,
-        agents: list[AgentRecord],
+        agents: "list[AgentRecord]",
         batch_size: int,
         context: EvictionContext | None = None,  # noqa: ARG002
-    ) -> list[AgentRecord]:
+    ) -> "list[AgentRecord]":
         """Select least-recently-used agents for eviction.
 
         Args:
@@ -85,10 +83,10 @@ class QoSEvictionPolicy:
 
     def select_candidates(
         self,
-        agents: list[AgentRecord],
+        agents: "list[AgentRecord]",
         batch_size: int,
         context: EvictionContext | None = None,
-    ) -> list[AgentRecord]:
+    ) -> "list[AgentRecord]":
         """Select agents for eviction with QoS-aware ordering.
 
         Args:

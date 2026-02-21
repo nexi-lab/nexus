@@ -10,8 +10,6 @@ Ported from v1 with improvements:
 - Generic error messages (don't leak internal exceptions)
 """
 
-from __future__ import annotations
-
 import asyncio
 import base64
 import logging
@@ -25,7 +23,6 @@ from nexus.server.dependencies import require_auth
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/agents", tags=["identity"])
-
 
 # =============================================================================
 # Request Models

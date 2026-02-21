@@ -17,8 +17,6 @@ References:
 Tier-neutral utility — like Linux ``lib/string.c``. Zero nexus dependencies.
 """
 
-from __future__ import annotations
-
 import threading
 from typing import TYPE_CHECKING
 
@@ -125,7 +123,7 @@ class PathInterner:
         with self._lock:
             return len(self._ids)
 
-    def __iter__(self) -> Iterator[str]:
+    def __iter__(self) -> "Iterator[str]":
         """Iterate over all interned paths."""
         with self._lock:
             # Return a copy to avoid issues with concurrent modification

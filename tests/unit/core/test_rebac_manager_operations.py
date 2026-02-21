@@ -18,8 +18,6 @@ Note: Uses `direct_owner` relation which grants `read` permission in the
 default ReBAC namespace configuration.
 """
 
-from __future__ import annotations
-
 import tempfile
 import uuid
 from collections.abc import Generator

@@ -8,8 +8,6 @@ Manages the lifecycle of chunked upload sessions:
 - Per-session locking for concurrent chunk uploads
 """
 
-from __future__ import annotations
-
 import asyncio
 import base64
 import hashlib
@@ -17,7 +15,7 @@ import logging
 import uuid
 import zlib
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import (
@@ -93,9 +91,9 @@ class ChunkedUploadService:
 
     def __init__(
         self,
-        record_store: RecordStoreABC,
-        backend: ConnectorProtocol,
-        metadata_store: MetastoreABC | None = None,
+        record_store: "RecordStoreABC",
+        backend: "ConnectorProtocol",
+        metadata_store: "MetastoreABC | None" = None,
         config: ChunkedUploadConfig | None = None,
     ):
         self._session_factory = record_store.session_factory
@@ -164,7 +162,7 @@ class ChunkedUploadService:
             backend_upload_id: str | None = None
             backend_name: str | None = None
             if self._supports_multipart():
-                mixin: MultipartUploadMixin = self._backend  # type: ignore[assignment]
+                mixin = cast("MultipartUploadMixin", self._backend)
                 backend_upload_id = await asyncio.to_thread(
                     mixin.init_multipart,
                     target_path,
@@ -351,7 +349,7 @@ class ChunkedUploadService:
         # Abort backend multipart if active
         if session.backend_upload_id and self._supports_multipart():
             try:
-                mixin: MultipartUploadMixin = self._backend  # type: ignore[assignment]
+                mixin = cast("MultipartUploadMixin", self._backend)
                 await asyncio.to_thread(
                     mixin.abort_multipart,
                     session.target_path,
@@ -574,7 +572,7 @@ class ChunkedUploadService:
             Part info dict with at least "etag" and "part_number".
         """
         if self._supports_multipart() and session.backend_upload_id:
-            mixin: MultipartUploadMixin = self._backend  # type: ignore[assignment]
+            mixin = cast("MultipartUploadMixin", self._backend)
             return await asyncio.to_thread(
                 mixin.upload_part,
                 session.target_path,
@@ -615,7 +613,7 @@ class ChunkedUploadService:
         content_hash: str
 
         if self._supports_multipart() and session.backend_upload_id:
-            mixin: MultipartUploadMixin = self._backend  # type: ignore[assignment]
+            mixin = cast("MultipartUploadMixin", self._backend)
             content_hash = await asyncio.to_thread(
                 mixin.complete_multipart,
                 session.target_path,
@@ -687,7 +685,7 @@ class ChunkedUploadService:
         # Abort backend multipart if active
         if session.backend_upload_id and self._supports_multipart():
             try:
-                mixin: MultipartUploadMixin = self._backend  # type: ignore[assignment]
+                mixin = cast("MultipartUploadMixin", self._backend)
                 await asyncio.to_thread(
                     mixin.abort_multipart,
                     session.target_path,

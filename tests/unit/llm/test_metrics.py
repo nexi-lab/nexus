@@ -1,7 +1,5 @@
 """Tests for LLM metrics tracking (src/nexus/llm/metrics.py)."""
 
-from __future__ import annotations
-
 from nexus.llm.metrics import LLMMetrics, ResponseLatency, TokenUsage
 
 

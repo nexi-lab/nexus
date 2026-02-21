@@ -13,8 +13,6 @@ flow works end-to-end:
 This is the same code path used by fastapi_server.py when permissions are enabled.
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.bricks.rebac.manager import EnhancedReBACManager

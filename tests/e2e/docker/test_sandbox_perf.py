@@ -6,8 +6,6 @@ latency to sandbox creation, profile resolution, or input validation.
 Requires: Docker daemon running locally.
 """
 
-from __future__ import annotations
-
 import statistics
 import time
 

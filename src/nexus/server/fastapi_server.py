@@ -22,8 +22,6 @@ Example:
     run_server(app, host="0.0.0.0", port=2026)
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import os
@@ -146,9 +144,7 @@ async def to_thread_with_timeout(
 # Set once during ``create_app()``.
 _fastapi_app: FastAPI | None = None
 
-
 # Lifespan is now managed by the modular lifespan/ package (Issue #2049).
-
 
 # ============================================================================
 # Application Factory
@@ -156,7 +152,7 @@ _fastapi_app: FastAPI | None = None
 
 
 def create_app(
-    nexus_fs: NexusFS,
+    nexus_fs: "NexusFS",
     api_key: str | None = None,
     auth_provider: Any = None,
     database_url: str | None = None,
@@ -836,7 +832,7 @@ def run_server(
 
 
 def run_server_from_config(
-    nexus_fs: NexusFS,
+    nexus_fs: "NexusFS",
     host: str = "0.0.0.0",
     port: int = 2026,
     api_key: str | None = None,

@@ -11,8 +11,6 @@ Each strategy receives remaining paths and returns (allowed, remaining).
 The chain short-circuits once all paths are resolved.
 """
 
-from __future__ import annotations
-
 import logging
 import os
 from collections import defaultdict
@@ -34,9 +32,9 @@ class FilterContext:
     paths: list[str]
     subject: tuple[str, str]
     zone_id: str
-    context: OperationContext
-    cache: PermissionCacheCoordinator
-    rebac_manager: ReBACManager
+    context: "OperationContext"
+    cache: "PermissionCacheCoordinator"
+    rebac_manager: "ReBACManager"
     router: Any = None
 
 

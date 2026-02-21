@@ -13,8 +13,6 @@ References:
     - JuiceFS: --prefetch for read patterns
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import threading
@@ -270,7 +268,7 @@ class HotspotDetector:
 
     def get_prefetch_candidates(
         self,
-        tiger_cache: TigerCache,
+        tiger_cache: "TigerCache",
         cache_ttl: int = 300,
     ) -> list[HotspotEntry]:
         """Get hot entries that should be prefetched before expiry.
@@ -371,8 +369,8 @@ class HotspotPrefetcher:
     def __init__(
         self,
         detector: HotspotDetector,
-        tiger_cache: TigerCache,
-        tiger_updater: TigerCacheUpdater,
+        tiger_cache: "TigerCache",
+        tiger_updater: "TigerCacheUpdater",
         config: HotspotConfig | None = None,
     ):
         """Initialize hotspot prefetcher.
@@ -491,8 +489,8 @@ class HotspotPrefetcher:
 
 async def hotspot_prefetch_task(
     detector: HotspotDetector,
-    tiger_cache: TigerCache,
-    tiger_updater: TigerCacheUpdater,
+    tiger_cache: "TigerCache",
+    tiger_updater: "TigerCacheUpdater",
     config: HotspotConfig | None = None,
 ) -> None:
     """Background task: Run hotspot prefetcher (Issue #921).

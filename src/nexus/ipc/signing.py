@@ -10,8 +10,6 @@ Classes:
     VerifyResult: Frozen result of a verification attempt.
 """
 
-from __future__ import annotations
-
 import base64
 import logging
 from dataclasses import dataclass

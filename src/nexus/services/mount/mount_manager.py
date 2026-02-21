@@ -10,8 +10,6 @@ Supports:
 - Removing mount configurations
 """
 
-from __future__ import annotations
-
 import json
 import uuid
 from datetime import UTC, datetime
@@ -56,7 +54,7 @@ class MountManager:
         >>> manager.remove_mount("/personal/alice")
     """
 
-    def __init__(self, record_store: RecordStoreABC) -> None:
+    def __init__(self, record_store: "RecordStoreABC") -> None:
         """Initialize mount manager.
 
         Args:

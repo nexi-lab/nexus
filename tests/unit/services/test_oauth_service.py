@@ -13,8 +13,6 @@ Covers:
 - _check_credential_ownership permission enforcement
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any

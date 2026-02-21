@@ -12,8 +12,6 @@ API Groups:
 - Runner: get_prompt_context / load skill content on-demand
 """
 
-from __future__ import annotations
-
 import logging
 import re
 import threading
@@ -72,8 +70,8 @@ class SkillService:
 
     def __init__(
         self,
-        fs: SkillFilesystemProtocol,
-        perms: SkillPermissionProtocol,
+        fs: "SkillFilesystemProtocol",
+        perms: "SkillPermissionProtocol",
         create_system_context: Callable[..., Any] | None = None,
     ):
         """Initialize skill service with narrow protocol dependencies.

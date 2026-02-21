@@ -5,8 +5,6 @@ Service-layer concern: citation extraction depends on document-reading
 orchestration, not on the LLM brick itself.
 """
 
-from __future__ import annotations
-
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -60,7 +58,7 @@ class DocumentReadResult:
     @classmethod
     def from_cached(
         cls, cached_response: str, chunks: list[dict] | None = None
-    ) -> DocumentReadResult:
+    ) -> "DocumentReadResult":
         """Create result from cached response.
 
         Args:

@@ -11,8 +11,6 @@ Verifies that:
 8. CachingConnectorContract and CacheConfigContract conformance (Issue #2362)
 """
 
-from __future__ import annotations
-
 import hashlib
 from typing import Any
 

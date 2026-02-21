@@ -34,8 +34,6 @@ Example (RaftClient - remote):
         await client.put_metadata(file_metadata)
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 

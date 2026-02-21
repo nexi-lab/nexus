@@ -4,8 +4,6 @@ Wraps ``httpx.AsyncClient`` with connection pooling, HTTP/2, and
 per-call retry via ``tenacity``.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import time

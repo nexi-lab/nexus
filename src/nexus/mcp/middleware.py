@@ -25,8 +25,6 @@ References:
     - Kong: tool filtering at gateway level
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 from collections.abc import Sequence
@@ -65,7 +63,7 @@ class ToolNamespaceMiddleware(Middleware):
 
     def __init__(
         self,
-        rebac_manager: ReBACManager,
+        rebac_manager: "ReBACManager",
         zone_id: str | None = None,
         cache_maxsize: int = 10_000,
         cache_ttl: int = 300,
@@ -96,8 +94,8 @@ class ToolNamespaceMiddleware(Middleware):
 
     async def on_list_tools(
         self,
-        context: MiddlewareContext[mt.ListToolsRequest],
-        call_next: CallNext[mt.ListToolsRequest, Sequence[Tool]],
+        context: "MiddlewareContext[mt.ListToolsRequest]",
+        call_next: "CallNext[mt.ListToolsRequest, Sequence[Tool]]",
     ) -> Sequence[Tool]:
         """Filter tools/list response to only include visible tools."""
         all_tools = await call_next(context)
@@ -129,8 +127,8 @@ class ToolNamespaceMiddleware(Middleware):
 
     async def on_call_tool(
         self,
-        context: MiddlewareContext[mt.CallToolRequestParams],
-        call_next: CallNext[mt.CallToolRequestParams, ToolResult],
+        context: "MiddlewareContext[mt.CallToolRequestParams]",
+        call_next: "CallNext[mt.CallToolRequestParams, ToolResult]",
     ) -> ToolResult:
         """Validate tool invocation — reject invisible tools."""
         if not self._enabled:

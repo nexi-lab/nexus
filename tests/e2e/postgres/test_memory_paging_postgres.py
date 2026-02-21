@@ -14,8 +14,6 @@ Run:
     pytest tests/integration/test_memory_paging_postgres.py -v
 """
 
-from __future__ import annotations
-
 import shutil
 import tempfile
 from typing import Any

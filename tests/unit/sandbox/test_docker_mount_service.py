@@ -4,8 +4,6 @@ Tests mount pipeline phases, verification strategies, and unmount.
 Uses mocked Docker container exec_run to simulate different scenarios.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest

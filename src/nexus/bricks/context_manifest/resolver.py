@@ -16,8 +16,6 @@ References:
     - Stripe Minions: https://stripe.dev/blog/minions-stripes-one-shot-end-to-end-coding-agents
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 import logging
@@ -39,7 +37,6 @@ from nexus.bricks.context_manifest.models import (
 from nexus.bricks.context_manifest.template import resolve_template
 
 logger = logging.getLogger(__name__)
-
 
 # ===========================================================================
 # SourceExecutor Protocol
@@ -142,7 +139,7 @@ class ManifestResolver:
         self._max_resolve_seconds = max_resolve_seconds
         self._metrics = metrics_observer
 
-    def with_executors(self, extra: dict[str, SourceExecutor]) -> ManifestResolver:
+    def with_executors(self, extra: dict[str, SourceExecutor]) -> "ManifestResolver":
         """Return a new resolver with additional executors merged in.
 
         Existing executors are preserved; *extra* executors override on conflict.

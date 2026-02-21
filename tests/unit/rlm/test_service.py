@@ -10,8 +10,6 @@ Tests verify:
 - Cleanup on completion
 """
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest

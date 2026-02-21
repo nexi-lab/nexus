@@ -10,8 +10,6 @@ Tests the full server-level flow:
 Run: pytest tests/e2e/test_identity_e2e.py -v
 """
 
-from __future__ import annotations
-
 import base64
 import shutil
 import tempfile

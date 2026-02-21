@@ -12,8 +12,6 @@ Endpoints:
     POST /api/v2/bricks/{name}/unregister — Unregister an unmounted brick (terminal)
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 
@@ -29,7 +27,6 @@ health_router = APIRouter(prefix="/api/v2/bricks", tags=["bricks"])
 
 # Admin router for lifecycle management — requires admin auth
 router = APIRouter(prefix="/api/v2/bricks", tags=["bricks"], dependencies=[Depends(require_admin)])
-
 
 # ---------------------------------------------------------------------------
 # Response models
@@ -146,7 +143,6 @@ def _get_reconciler(request: Request) -> Any:
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
-
 
 # NOTE: /drift must be registered BEFORE /{name} to avoid path parameter capture.
 

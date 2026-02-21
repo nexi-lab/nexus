@@ -10,8 +10,6 @@ This module covers critical security properties:
 - Read set tracking for cache invalidation
 """
 
-from __future__ import annotations
-
 import uuid
 from unittest.mock import MagicMock
 

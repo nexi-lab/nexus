@@ -7,8 +7,6 @@ fallback logic and env-var names live in exactly one place.
 Related: Issue #629 (scattered env reads not factory-centralized)
 """
 
-from __future__ import annotations
-
 import os
 
 

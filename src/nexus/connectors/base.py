@@ -9,8 +9,6 @@ This module provides opt-in mixins that connectors can use to add:
 Each connector configures these mixins via class attributes.
 """
 
-from __future__ import annotations
-
 import logging
 import posixpath
 from dataclasses import dataclass, field
@@ -28,7 +26,6 @@ if TYPE_CHECKING:
     from nexus.connectors.schema_generator import SkillDocGenerator
 
 logger = logging.getLogger(__name__)
-
 
 # =============================================================================
 # Enums & Data Classes
@@ -207,10 +204,10 @@ class SkillDocMixin:
     NESTED_EXAMPLES: dict[str, list[str]] = {}  # Nested field examples for SKILL.md
     FIELD_EXAMPLES: dict[str, str] = {}  # Field-specific examples for SKILL.md
 
-    _skill_registry: SkillRegistryProtocol | None = None
+    _skill_registry: "SkillRegistryProtocol | None" = None
     _mount_path: str | None = None  # Set during mount
-    _cached_doc_generator: SkillDocGenerator | None = None
-    _cached_error_formatter: SkillErrorFormatter | None = None
+    _cached_doc_generator: "SkillDocGenerator | None" = None
+    _cached_error_formatter: "SkillErrorFormatter | None" = None
 
     @property
     def skill_md_path(self) -> str:
@@ -219,7 +216,7 @@ class SkillDocMixin:
             return posixpath.join(self._mount_path.rstrip("/"), self.SKILL_DIR, "SKILL.md")
         return "/.skill/SKILL.md"  # Default fallback
 
-    def set_skill_registry(self, registry: SkillRegistryProtocol) -> None:
+    def set_skill_registry(self, registry: "SkillRegistryProtocol") -> None:
         """Set the skill registry for this connector."""
         self._skill_registry = registry
 
@@ -232,7 +229,7 @@ class SkillDocMixin:
         self._cached_doc_generator = None
         self._cached_error_formatter = None
 
-    def _get_doc_generator(self) -> SkillDocGenerator:
+    def _get_doc_generator(self) -> "SkillDocGenerator":
         """Get or create the cached SkillDocGenerator."""
         if self._cached_doc_generator is None:
             from nexus.connectors.schema_generator import SkillDocGenerator
@@ -249,7 +246,7 @@ class SkillDocMixin:
             )
         return self._cached_doc_generator
 
-    def _get_error_formatter(self) -> SkillErrorFormatter:
+    def _get_error_formatter(self) -> "SkillErrorFormatter":
         """Get or create the cached SkillErrorFormatter."""
         if self._cached_error_formatter is None:
             from nexus.connectors.error_formatter import SkillErrorFormatter

@@ -7,8 +7,6 @@ Verifies:
 - Frozen dataclasses are immutable
 """
 
-from __future__ import annotations
-
 from dataclasses import FrozenInstanceError
 from unittest.mock import MagicMock
 

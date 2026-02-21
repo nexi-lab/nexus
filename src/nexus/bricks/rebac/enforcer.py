@@ -5,8 +5,6 @@ Issue #1847 — the enforcer is a brick-level component that belongs with the
 ReBAC manager, not in the services tier).
 """
 
-from __future__ import annotations
-
 import logging
 import os
 import time
@@ -111,22 +109,22 @@ class PermissionEnforcer:
         self,
         metadata_store: Any = None,
         acl_store: Any | None = None,  # Deprecated, kept for backward compatibility
-        rebac_manager: ReBACManager | None = None,
+        rebac_manager: "ReBACManager | None" = None,
         entity_registry: Any = None,  # Entity registry (reserved for future use)
         router: Any = None,  # PathRouter for backend object type resolution
         # P0-4: Enhanced features
         allow_admin_bypass: bool = False,  # P0-4: Kill-switch DEFAULT OFF for production security
         allow_system_bypass: bool = True,  # P0-4: System bypass still enabled (for service operations)
-        audit_store: AuditStore | None = None,  # P0-4: Audit logging
+        audit_store: "AuditStore | None" = None,  # P0-4: Audit logging
         admin_bypass_paths: list[str] | None = None,  # P0-4: Scoped bypass (allowlist)
         # Issue #922: Permission boundary cache for O(1) inheritance checks
-        boundary_cache: PermissionBoundaryCache | None = None,
+        boundary_cache: "PermissionBoundaryCache | None" = None,
         enable_boundary_cache: bool = True,
         # Issue #921: Hotspot detection for proactive cache prefetching
-        hotspot_detector: HotspotDetector | None = None,
+        hotspot_detector: "HotspotDetector | None" = None,
         enable_hotspot_tracking: bool = True,
         # Issue #1239: Per-subject namespace visibility (Agent OS Phase 0)
-        namespace_manager: NamespaceManager | None = None,
+        namespace_manager: "NamespaceManager | None" = None,
         # Issue #1240: Agent registry for stale-session detection (Agent OS Phase 1)
         agent_registry: Any = None,
     ):
@@ -926,7 +924,7 @@ class PermissionEnforcer:
             self._boundary_cache.clear()
 
     @property
-    def hotspot_detector(self) -> HotspotDetector | None:
+    def hotspot_detector(self) -> "HotspotDetector | None":
         """Get the hotspot detector instance (Issue #921).
 
         Returns:

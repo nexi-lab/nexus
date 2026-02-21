@@ -6,8 +6,6 @@ Entity extraction is optional — gracefully degrades when NER is
 unavailable (logs + skips).
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Callable
 from typing import Any

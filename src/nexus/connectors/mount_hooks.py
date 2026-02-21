@@ -14,10 +14,8 @@ Usage:
     >>> on_mount(calendar_backend, "/mnt/calendar", filesystem=nx)
 """
 
-from __future__ import annotations
-
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from nexus.core.protocols.capabilities import ConnectorCapability
 
@@ -29,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 def on_mount(
-    backend: ConnectorProtocol,
+    backend: "ConnectorProtocol",
     mount_path: str,
     filesystem: Any = None,
     skill_registry: Any = None,
@@ -66,7 +64,7 @@ def on_mount(
 
     # Check if backend declares SKILL_DOC capability (Issue #2069)
     if backend.has_capability(ConnectorCapability.SKILL_DOC):
-        skill_mixin: SkillDocMixin = backend  # type: ignore
+        skill_mixin = cast("SkillDocMixin", backend)
 
         # Set mount path on the mixin
         if hasattr(skill_mixin, "set_mount_path"):

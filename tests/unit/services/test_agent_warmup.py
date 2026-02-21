@@ -10,8 +10,6 @@ Covers:
 - Integration: warmup → status phase check
 """
 
-from __future__ import annotations
-
 import asyncio
 from datetime import timedelta
 

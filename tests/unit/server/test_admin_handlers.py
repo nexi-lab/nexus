@@ -5,8 +5,6 @@ Tests require_admin, require_database_auth, format_api_key_response,
 and all 5 handle_admin_* functions.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import SimpleNamespace

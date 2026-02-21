@@ -4,8 +4,6 @@ Tests that all frozen dataclasses are immutable, enum values are correct,
 and default field factories work properly.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 import pytest

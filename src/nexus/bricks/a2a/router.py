@@ -11,8 +11,6 @@ wrapping).  Business logic lives in ``handlers.py`` and
 ``streaming.py``.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from collections.abc import Awaitable, Callable

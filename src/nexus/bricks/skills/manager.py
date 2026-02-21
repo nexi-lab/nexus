@@ -1,7 +1,5 @@
 """Skill lifecycle management: create, fork, publish, and versioning."""
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from datetime import UTC, datetime
@@ -67,8 +65,8 @@ class SkillManager:
         self,
         filesystem: NexusFilesystem | None = None,
         registry: SkillRegistry | None = None,
-        rebac_manager: ReBACBrickProtocol | None = None,
-        governance: SkillGovernance | None = None,
+        rebac_manager: "ReBACBrickProtocol | None" = None,
+        governance: "SkillGovernance | None" = None,
     ):
         """Initialize skill manager.
 
@@ -128,7 +126,7 @@ class SkillManager:
         owner_id: str,
         tier: str,
         zone_id: str | None = None,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> None:
         """Create ReBAC permission tuples for a skill based on tier.
 
@@ -207,7 +205,7 @@ class SkillManager:
         creator_id: str | None = None,
         creator_type: str = "agent",
         zone_id: str | None = None,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
         **kwargs: str,
     ) -> str:
         """Create a new skill from a template.
@@ -359,7 +357,7 @@ class SkillManager:
         version: str = "1.0.0",
         source_url: str | None = None,
         metadata: dict[str, Any] | None = None,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> str:
         """Create a new skill from content (e.g., from web scraping).
 

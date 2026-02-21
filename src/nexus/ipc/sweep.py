@@ -4,8 +4,6 @@ Background task that periodically scans all agent inboxes for expired
 messages and moves them to dead_letter/.
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import logging

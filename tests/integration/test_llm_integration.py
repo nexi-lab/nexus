@@ -9,8 +9,6 @@ Verifies:
 - Cross-module wiring (search → context_builder, ace → protocol)
 """
 
-from __future__ import annotations
-
 import importlib
 
 import pytest

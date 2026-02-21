@@ -3,8 +3,6 @@
 Replaces the hand-rolled TTL dict with a bounded, thread-safe TTL cache.
 """
 
-from __future__ import annotations
-
 import secrets
 from typing import Any
 

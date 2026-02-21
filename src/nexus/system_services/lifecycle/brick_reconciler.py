@@ -18,8 +18,6 @@ References:
     - Issue #2059: Self-Healing Brick Reconciler Protocol
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import logging

@@ -3,8 +3,6 @@
 Parses JSON-lines output from `cargo clippy --message-format json`.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import shlex

@@ -1,7 +1,5 @@
 """Unit tests for DiscriminatingAuthProvider token routing (Decision #10)."""
 
-from __future__ import annotations
-
 import base64
 import json
 

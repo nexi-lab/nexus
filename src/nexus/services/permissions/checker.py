@@ -12,8 +12,6 @@ Lives in services/permissions/ because it depends on rebac (a brick)
 at runtime. Wired into NexusFS via factory/orchestrator.py DI.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -64,7 +62,7 @@ class PermissionChecker:
         path: str,
         permission: Permission,
         context: OperationContext | None = None,
-        file_metadata: FileMetadata | None = None,
+        file_metadata: "FileMetadata | None" = None,
     ) -> None:
         """Check whether the requested operation is permitted.
 

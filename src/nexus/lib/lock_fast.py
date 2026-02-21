@@ -9,8 +9,6 @@ Fallback chain:
     2. Python ``PythonVFSLockManager`` (threading-based) — ~500ns-1us
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 import time

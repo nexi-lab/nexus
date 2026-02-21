@@ -4,8 +4,6 @@ Extracts the repeated ``contextlib.suppress(json.JSONDecodeError, TypeError)``
 + ``json.loads()`` pattern used 6+ times across governance services.
 """
 
-from __future__ import annotations
-
 import contextlib
 import json
 

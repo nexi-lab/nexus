@@ -5,8 +5,6 @@ Iterates mounts for the zone and delegates cleanup to
 directory index, hierarchy tuples, and permission tuples.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -19,7 +17,7 @@ logger = logging.getLogger(__name__)
 class MountZoneFinalizer:
     """Finalizer that removes all mount points belonging to a zone."""
 
-    def __init__(self, mount_service: MountCoreService | Any) -> None:
+    def __init__(self, mount_service: "MountCoreService | Any") -> None:
         self._mount_service = mount_service
 
     @property

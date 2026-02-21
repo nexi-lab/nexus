@@ -12,8 +12,6 @@ ARCHITECTURAL DECISION (KERNEL-ARCHITECTURE.md §3):
     existing ``@rpc_expose`` methods continue to work identically.
 """
 
-from __future__ import annotations
-
 import contextlib
 import json
 import logging
@@ -28,7 +26,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
-
 
 # ---------------------------------------------------------------------------
 # Standalone context helpers (no NexusFS dependency)
@@ -99,7 +96,7 @@ class AgentService:
         entity_registry: Any | None = None,
         rebac_manager: Any | None = None,
         key_service: Any | None = None,
-        wallet_provisioner: Callable | None = None,
+        wallet_provisioner: "Callable | None" = None,
         api_key_creator: Any | None = None,
         record_store: Any | None = None,
     ) -> None:

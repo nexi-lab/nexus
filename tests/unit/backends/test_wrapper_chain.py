@@ -13,8 +13,6 @@ Design reference:
     - Issue #2362: ConnectorProtocol wrapping chains
 """
 
-from __future__ import annotations
-
 import time
 
 from tests.unit.backends.wrapper_test_helpers import make_storage_mock

@@ -5,8 +5,6 @@ per NEXUS-LEGO-ARCHITECTURE.md. They act as living documentation — if a future
 refactor accidentally moves a file, these tests will catch it.
 """
 
-from __future__ import annotations
-
 import importlib
 
 

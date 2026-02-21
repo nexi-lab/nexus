@@ -10,8 +10,6 @@ Uses the `cryptography` library (already a dependency) for all operations.
 No additional crypto dependencies required.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Protocol
 

@@ -6,8 +6,6 @@ Tests the complete stack:
 - Memory store via RPC
 """
 
-from __future__ import annotations
-
 import uuid
 
 import httpx

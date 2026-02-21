@@ -13,8 +13,6 @@ All methods delegate single-file operations to the kernel (NexusFSCoreMixin)
 and batch cross-cutting concerns (permissions, metadata lookups).
 """
 
-from __future__ import annotations
-
 import logging
 import time
 from datetime import UTC, datetime
@@ -67,16 +65,16 @@ class NexusFSBulkMixin:
         from nexus.core.metastore import MetastoreABC
         from nexus.core.protocols.permission_enforcer import PermissionEnforcerProtocol
 
-        metadata: MetastoreABC
-        backend: Backend
-        router: PathRouter
+        metadata: "MetastoreABC"
+        backend: "Backend"
+        router: "PathRouter"
         auto_parse: bool
-        _default_context: OperationContext
+        _default_context: "OperationContext"
         _enforce_permissions: bool
-        _permission_enforcer: PermissionEnforcerProtocol | None
+        _permission_enforcer: "PermissionEnforcerProtocol | None"
         _permission_checker: Any
-        _write_observer: WriteObserverProtocol | None
-        _hook_pipeline: VFSHookPipeline | None
+        _write_observer: "WriteObserverProtocol | None"
+        _hook_pipeline: "VFSHookPipeline | None"
         _audit_strict_mode: bool
 
         @property
@@ -89,16 +87,18 @@ class NexusFSBulkMixin:
             self,
             path: str,
             permission: Permission,
-            context: OperationContext | None,
+            context: "OperationContext | None",
             file_metadata: FileMetadata | None = None,
         ) -> None: ...
         def _get_routing_params(
-            self, context: OperationContext | dict[Any, Any] | None
+            self, context: "OperationContext | dict[Any, Any] | None"
         ) -> tuple[str | None, str | None, bool]: ...
         def _get_created_by(
-            self, context: OperationContext | dict[Any, Any] | None
+            self, context: "OperationContext | dict[Any, Any] | None"
         ) -> str | None: ...
-        def _check_zone_writable(self, context: OperationContext | dict | None = None) -> None: ...
+        def _check_zone_writable(
+            self, context: "OperationContext | dict | None" = None
+        ) -> None: ...
         def _fire_post_mutation_hooks(
             self,
             op: MutationOp,
@@ -119,21 +119,23 @@ class NexusFSBulkMixin:
         def _handle_observer_error(
             self, operation: str, op_path: str, error: Exception
         ) -> None: ...
-        def _get_zone_id(self, context: OperationContext | None) -> str: ...
+        def _get_zone_id(self, context: "OperationContext | None") -> str: ...
         def _has_descendant_access(
-            self, path: str, permission: Permission, context: OperationContext
+            self, path: str, permission: Permission, context: "OperationContext"
         ) -> bool: ...
-        def exists(self, path: str, context: OperationContext | None = None) -> bool: ...
-        def delete(self, path: str, context: OperationContext | None = None) -> dict[str, Any]: ...
-        def rename(
-            self, old_path: str, new_path: str, context: OperationContext | None = None
+        def exists(self, path: str, context: "OperationContext | None" = None) -> bool: ...
+        def delete(
+            self, path: str, context: "OperationContext | None" = None
         ) -> dict[str, Any]: ...
-        def is_directory(self, path: str, context: OperationContext | None = None) -> bool: ...
+        def rename(
+            self, old_path: str, new_path: str, context: "OperationContext | None" = None
+        ) -> dict[str, Any]: ...
+        def is_directory(self, path: str, context: "OperationContext | None" = None) -> bool: ...
         def _rmdir_internal(
             self,
             path: str,
             recursive: bool = False,
-            context: OperationContext | None = None,
+            context: "OperationContext | None" = None,
             is_implicit: bool | None = None,
         ) -> None: ...
 
@@ -191,7 +193,7 @@ class NexusFSBulkMixin:
     def read_bulk(
         self,
         paths: list[str],
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
         return_metadata: bool = False,
         skip_errors: bool = True,
     ) -> dict[str, bytes | dict[str, Any] | None]:
@@ -544,7 +546,7 @@ class NexusFSBulkMixin:
 
     @rpc_expose(description="Write multiple files in a single transaction")
     def write_batch(
-        self, files: list[tuple[str, bytes]], context: OperationContext | None = None
+        self, files: list[tuple[str, bytes]], context: "OperationContext | None" = None
     ) -> list[dict[str, Any]]:
         """Write multiple files in a single transaction for improved performance.
 
@@ -828,7 +830,7 @@ class NexusFSBulkMixin:
     def stat_bulk(
         self,
         paths: list[str],
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
         skip_errors: bool = True,
     ) -> dict[str, dict[str, Any] | None]:
         """Get metadata for multiple files in a single RPC call.
@@ -950,7 +952,7 @@ class NexusFSBulkMixin:
         self,
         paths: list[str],
         recursive: bool = False,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, dict]:
         """Delete multiple files or directories in a single operation.
 
@@ -1003,7 +1005,7 @@ class NexusFSBulkMixin:
 
     @rpc_expose(description="Check existence of multiple paths in single call")
     def exists_batch(
-        self, paths: list[str], context: OperationContext | None = None
+        self, paths: list[str], context: "OperationContext | None" = None
     ) -> dict[str, bool]:
         """Check existence of multiple paths in a single call (Issue #859).
 
@@ -1029,7 +1031,7 @@ class NexusFSBulkMixin:
 
     @rpc_expose(description="Get metadata for multiple paths in single call")
     def metadata_batch(
-        self, paths: list[str], context: OperationContext | None = None
+        self, paths: list[str], context: "OperationContext | None" = None
     ) -> dict[str, dict[str, Any] | None]:
         """Get metadata for multiple paths in a single call (Issue #859).
 
@@ -1102,7 +1104,7 @@ class NexusFSBulkMixin:
     def rename_bulk(
         self,
         renames: list[tuple[str, str]],
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, dict]:
         """Rename/move multiple files in a single operation.
 

@@ -20,8 +20,6 @@ Example:
     >>> scopes = mappings.get_required_scopes("gmail")
 """
 
-from __future__ import annotations
-
 import logging
 import os
 from dataclasses import dataclass, field
@@ -44,7 +42,7 @@ class OAuthProviderMapping:
     mcp_scopes: dict[str, list[str]] = field(default_factory=dict)  # Required scopes per MCP
 
     @classmethod
-    def from_dict(cls, name: str, data: dict[str, Any]) -> OAuthProviderMapping:
+    def from_dict(cls, name: str, data: dict[str, Any]) -> "OAuthProviderMapping":
         """Create from dictionary."""
         return cls(
             name=name,
@@ -62,7 +60,7 @@ class OAuthKlavisMappings:
     for Klavis MCP servers instead of doing a separate OAuth flow.
     """
 
-    def __init__(self, providers: dict[str, OAuthProviderMapping] | None = None):
+    def __init__(self, providers: "dict[str, OAuthProviderMapping] | None" = None):
         """Initialize mappings.
 
         Args:
@@ -89,7 +87,7 @@ class OAuthKlavisMappings:
                 self._local_to_oauth[local_provider] = name
 
     @classmethod
-    def from_yaml(cls, path: str | Path) -> OAuthKlavisMappings:
+    def from_yaml(cls, path: str | Path) -> "OAuthKlavisMappings":
         """Load mappings from YAML file.
 
         Args:
@@ -113,7 +111,7 @@ class OAuthKlavisMappings:
         return cls(providers=providers)
 
     @classmethod
-    def load_default(cls) -> OAuthKlavisMappings:
+    def load_default(cls) -> "OAuthKlavisMappings":
         """Load default mappings.
 
         Searches for oauth-klavis-mappings.yaml in:
@@ -153,7 +151,7 @@ class OAuthKlavisMappings:
         return cls.with_builtin_defaults()
 
     @classmethod
-    def with_builtin_defaults(cls) -> OAuthKlavisMappings:
+    def with_builtin_defaults(cls) -> "OAuthKlavisMappings":
         """Create mappings with built-in defaults.
 
         Returns:
@@ -292,7 +290,7 @@ class OAuthKlavisMappings:
         """
         return list(self._providers.keys())
 
-    def get_mapping(self, oauth_provider: str) -> OAuthProviderMapping | None:
+    def get_mapping(self, oauth_provider: str) -> "OAuthProviderMapping | None":
         """Get mapping for an OAuth provider.
 
         Args:

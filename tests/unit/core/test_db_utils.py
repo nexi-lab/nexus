@@ -1,7 +1,5 @@
 """Tests for nexus.core.db_utils (Issue #2195)."""
 
-from __future__ import annotations
-
 from nexus.core.db_utils import sqlalchemy_url_to_asyncpg_dsn
 
 

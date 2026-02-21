@@ -12,8 +12,6 @@ private attributes.
 3. Documentation for the 60+ fields currently set across create_app()
 """
 
-from __future__ import annotations
-
 import logging
 from dataclasses import MISSING, dataclass, field, fields
 from typing import TYPE_CHECKING, Any
@@ -144,7 +142,7 @@ class NexusAppState:
     # These are managed by lifespan and not part of public API
 
 
-def init_app_state(app: FastAPI, nexus_fs: Any = None, **overrides: Any) -> None:
+def init_app_state(app: "FastAPI", nexus_fs: Any = None, **overrides: Any) -> None:
     """Initialize all app.state fields from NexusAppState defaults.
 
     Replaces 60+ lines of ``app.state.x = None`` in ``create_app()``.
@@ -180,7 +178,7 @@ def init_app_state(app: FastAPI, nexus_fs: Any = None, **overrides: Any) -> None
         _flatten_nexus_fs(app, nexus_fs)
 
 
-def _flatten_nexus_fs(app: FastAPI, nexus_fs: Any) -> None:
+def _flatten_nexus_fs(app: "FastAPI", nexus_fs: Any) -> None:
     """Flatten NexusFS private attrs onto app.state for typed access."""
     # Direct NexusFS attrs
     app.state.system_services = getattr(nexus_fs, "_system_services", None)

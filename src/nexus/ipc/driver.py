@@ -16,8 +16,6 @@ Issue: #1243, #370
 Architecture: KERNEL-ARCHITECTURE.md
 """
 
-from __future__ import annotations
-
 import asyncio
 import hashlib
 import logging
@@ -54,7 +52,7 @@ class IPCVFSDriver:
 
     def __init__(
         self,
-        storage: IPCStorageDriver,
+        storage: "IPCStorageDriver",
         *,
         zone_id: str,
         event_publisher: Any | None = None,
@@ -130,13 +128,13 @@ class IPCVFSDriver:
 
     # === Connection (no-op for IPC) ===
 
-    def connect(self, context: OperationContext | None = None) -> HandlerStatusResponse:
+    def connect(self, context: "OperationContext | None" = None) -> HandlerStatusResponse:
         return HandlerStatusResponse(success=True, details={"backend": "ipc"})
 
-    def disconnect(self, context: OperationContext | None = None) -> None:
+    def disconnect(self, context: "OperationContext | None" = None) -> None:
         self.close()
 
-    def check_connection(self, context: OperationContext | None = None) -> HandlerStatusResponse:
+    def check_connection(self, context: "OperationContext | None" = None) -> HandlerStatusResponse:
         return HandlerStatusResponse(success=True, details={"backend": "ipc"})
 
     # === Content Operations (path-oriented virtual FS) ===
@@ -145,7 +143,7 @@ class IPCVFSDriver:
     def write_content(
         self,
         content: bytes,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[str]:
         """Write content and return a hash.
 
@@ -162,7 +160,7 @@ class IPCVFSDriver:
         self,
         path: str,
         content: bytes,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[str]:
         """Write content to a specific VFS path.
 
@@ -181,7 +179,7 @@ class IPCVFSDriver:
     def read_content(
         self,
         content_hash: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[bytes]:
         """Read content by path (virtual filesystem mode).
 
@@ -204,7 +202,7 @@ class IPCVFSDriver:
     def delete_content(
         self,
         content_hash: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[None]:
         """Delete content — IPC never hard-deletes (moves to dead_letter)."""
         return HandlerResponse.ok(data=None, backend_name="ipc")
@@ -213,7 +211,7 @@ class IPCVFSDriver:
     def content_exists(
         self,
         content_hash: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[bool]:
         """Check if a path exists (virtual FS mode)."""
         path = content_hash
@@ -224,7 +222,7 @@ class IPCVFSDriver:
     def get_content_size(
         self,
         content_hash: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[int]:
         """Get file size by reading the content (no separate size API)."""
         path = content_hash
@@ -244,7 +242,7 @@ class IPCVFSDriver:
     def get_ref_count(
         self,
         content_hash: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[int]:
         """Reference count — always 1 for path-based storage."""
         return HandlerResponse.ok(data=1, backend_name="ipc")
@@ -257,7 +255,7 @@ class IPCVFSDriver:
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[None]:
         """Create a directory in IPC storage."""
         self._run_async(self._storage.mkdir(path, self._zone_id))
@@ -268,7 +266,7 @@ class IPCVFSDriver:
         self,
         path: str,
         recursive: bool = False,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[None]:
         """Remove directory — not supported for IPC (audit preservation)."""
         return HandlerResponse.error(
@@ -283,7 +281,7 @@ class IPCVFSDriver:
     def is_directory(
         self,
         path: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[bool]:
         """Check if a path is a directory in IPC storage."""
         try:
@@ -299,7 +297,7 @@ class IPCVFSDriver:
     def list_dir(
         self,
         path: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> list[str]:
         """List directory contents."""
         result: list[str] = self._run_async(self._storage.list_dir(path, self._zone_id))

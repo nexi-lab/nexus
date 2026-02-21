@@ -24,8 +24,6 @@ Example:
     ```
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -58,7 +56,7 @@ class MountCoreService:
 
     def __init__(
         self,
-        gateway: NexusFSGateway,
+        gateway: "NexusFSGateway",
         persist_service: Any = None,
         rmdir_fn: Any = None,
         token_manager_fn: Any = None,
@@ -88,7 +86,7 @@ class MountCoreService:
         priority: int = 0,
         readonly: bool = False,
         io_profile: str = "balanced",
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> str:
         """Add a dynamic backend mount.
 
@@ -148,7 +146,7 @@ class MountCoreService:
     def remove_mount(
         self,
         mount_point: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Remove a backend mount.
 
@@ -238,7 +236,7 @@ class MountCoreService:
 
     def list_mounts(
         self,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> list[dict[str, Any]]:
         """List all active mounts with permission filtering.
 
@@ -275,7 +273,7 @@ class MountCoreService:
     def get_mount(
         self,
         mount_point: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any] | None:
         """Get details about a specific mount.
 
@@ -378,7 +376,7 @@ class MountCoreService:
         self,
         mount_point: str,
         backend_type: str,
-        context: OperationContext | None,
+        context: "OperationContext | None",
     ) -> None:
         """Setup mount point with directory, permissions, and skill.
 
@@ -406,7 +404,7 @@ class MountCoreService:
     def _grant_owner_permission(
         self,
         mount_point: str,
-        context: OperationContext | None,
+        context: "OperationContext | None",
     ) -> None:
         """Grant direct_owner permission to mount creator.
 
@@ -444,7 +442,7 @@ class MountCoreService:
         self,
         mount_point: str,
         backend_type: str,
-        context: OperationContext | None,
+        context: "OperationContext | None",
     ) -> bool:
         """Generate SKILL.md for connector mount.
 
@@ -500,7 +498,7 @@ class MountCoreService:
         self,
         path: str,
         permission: str,
-        context: OperationContext | None,
+        context: "OperationContext | None",
     ) -> bool:
         """Check if user has permission on path.
 
@@ -512,7 +510,7 @@ class MountCoreService:
     def _check_mount_permission(
         self,
         mount_point: str,
-        context: OperationContext | None,
+        context: "OperationContext | None",
     ) -> bool:
         """Check if user has read permission on mount.
 
@@ -535,7 +533,7 @@ class MountCoreService:
         revoke_oauth: bool = False,
         provider: str | None = None,
         user_email: str | None = None,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Delete a connector completely with bundled operations.
 

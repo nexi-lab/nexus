@@ -31,8 +31,6 @@ Usage:
             logger.error(f"System error: {e}", exc_info=True)
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 

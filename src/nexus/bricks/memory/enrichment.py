@@ -15,8 +15,6 @@ Usage:
     # result.embedding_json, result.entities_json, etc.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from dataclasses import dataclass

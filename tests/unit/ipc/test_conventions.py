@@ -1,7 +1,5 @@
 """Unit tests for path conventions."""
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 from nexus.ipc.conventions import (

@@ -4,8 +4,6 @@ Issue #2129 §10A: Tests for TTL expiry, cache size limit,
 reverse invalidation, and periodic sweep.
 """
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from nexus.bricks.governance.governance_graph_service import GovernanceGraphService

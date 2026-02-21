@@ -1,7 +1,5 @@
 """Tests for citation extraction (src/nexus/services/llm_citation.py)."""
 
-from __future__ import annotations
-
 from nexus.services.llm_citation import Citation, CitationExtractor, DocumentReadResult
 
 

@@ -5,8 +5,6 @@ the @pytest.mark.integration marker. They are skipped automatically
 if Docker is not available.
 """
 
-from __future__ import annotations
-
 import pytest
 
 # Check Docker availability

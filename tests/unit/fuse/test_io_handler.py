@@ -1,7 +1,5 @@
 """Tests for open, read, write, release I/O operations."""
 
-from __future__ import annotations
-
 import errno
 import os
 from typing import Any

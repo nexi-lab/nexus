@@ -1,7 +1,5 @@
 """Boot context dataclass — carries shared deps between tier functions."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -24,21 +22,21 @@ class _BootContext:
     immutable snapshot of the boot-time configuration.
     """
 
-    record_store: RecordStoreABC
-    metadata_store: MetastoreABC
-    backend: Backend
-    router: PathRouter
+    record_store: "RecordStoreABC"
+    metadata_store: "MetastoreABC"
+    backend: "Backend"
+    router: "PathRouter"
     engine: Any
     read_engine: Any  # Read replica engine (Issue #725); same as engine when no replica
-    perm: PermissionConfig
+    perm: "PermissionConfig"
     cache_ttl_seconds: int | None
-    dist: DistributedConfig
+    dist: "DistributedConfig"
     zone_id: str | None
     agent_id: str | None
     enable_write_buffer: bool | None
     resiliency_raw: dict[str, Any] | None
     db_url: str
-    profile_tuning: ProfileTuning
+    profile_tuning: "ProfileTuning"
 
     # WAL config for EventLog (Issue #2195)
     wal_dir: str | None = None

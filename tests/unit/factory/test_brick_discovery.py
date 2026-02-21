@@ -1,7 +1,5 @@
 """Tests for brick auto-discovery — Issue #2180."""
 
-from __future__ import annotations
-
 from nexus.factory._bricks import _discover_brick_factories
 
 

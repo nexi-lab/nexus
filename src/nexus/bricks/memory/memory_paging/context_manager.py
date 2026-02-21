@@ -6,8 +6,6 @@ when capacity is exceeded. Uses hybrid LRU + importance scoring for eviction.
 Thread-safe: All public methods are guarded by a threading.Lock.
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 from collections import deque
@@ -114,7 +112,7 @@ class ContextManager:
         self._importance_cache: dict[str, float] = {}
 
     @property
-    def buffer(self) -> list[MemoryModel]:
+    def buffer(self) -> "list[MemoryModel]":
         """Thread-safe snapshot of the buffer (returns a copy)."""
         with self._lock:
             return list(self._buffer)
@@ -125,7 +123,7 @@ class ContextManager:
         with self._lock:
             return dict(self._access_times)
 
-    def add(self, memory: MemoryModel) -> list[MemoryModel]:
+    def add(self, memory: "MemoryModel") -> "list[MemoryModel]":
         """Add memory to main context, evicting if needed.
 
         Args:
@@ -172,7 +170,7 @@ class ContextManager:
 
             return evicted
 
-    def get(self, memory_id: str) -> MemoryModel | None:
+    def get(self, memory_id: str) -> "MemoryModel | None":
         """Get memory from context (updates LRU timestamp).
 
         Args:
@@ -213,7 +211,7 @@ class ContextManager:
             self._buffer_ids = new_ids
             return True
 
-    def get_all(self) -> list[MemoryModel]:
+    def get_all(self) -> "list[MemoryModel]":
         """Get all memories in context (most recent first)."""
         with self._lock:
             return list(reversed(self._buffer))
@@ -228,7 +226,7 @@ class ContextManager:
         with self._lock:
             return len(self._buffer) >= self.max_items
 
-    def clear(self) -> list[MemoryModel]:
+    def clear(self) -> "list[MemoryModel]":
         """Clear all memories from context.
 
         Returns:
@@ -243,7 +241,7 @@ class ContextManager:
             self._importance_cache.clear()
             return memories
 
-    def warm_up(self, session: Session, zone_id: str, limit: int | None = None) -> int:
+    def warm_up(self, session: "Session", zone_id: str, limit: int | None = None) -> int:
         """Load recent memories from DB into the in-memory FIFO buffer.
 
         Called during initialization to restore context from persisted state.
@@ -292,7 +290,7 @@ class ContextManager:
         )
         return loaded_count
 
-    def _add_batch(self, memories: list[MemoryModel]) -> int:
+    def _add_batch(self, memories: "list[MemoryModel]") -> int:
         """Add multiple memories under a single lock acquisition.
 
         Does not trigger eviction -- intended for warm-up where memories
@@ -333,7 +331,7 @@ class ContextManager:
 
         return loaded
 
-    def _evict_to_recall_locked(self, evict_count: int | None = None) -> list[MemoryModel]:
+    def _evict_to_recall_locked(self, evict_count: int | None = None) -> "list[MemoryModel]":
         """Evict memories using hybrid LRU + importance scoring.
 
         MUST be called with self._lock held.

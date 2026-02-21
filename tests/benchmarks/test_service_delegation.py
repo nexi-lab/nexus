@@ -10,8 +10,6 @@ Measures the cost of NexusFS → service delegation patterns:
 Run with: pytest tests/benchmarks/test_service_delegation.py -v --benchmark-only
 """
 
-from __future__ import annotations
-
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 

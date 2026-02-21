@@ -7,8 +7,6 @@ These functions depend on a ReBAC manager instance and are therefore
 part of the server composition layer (not a standalone brick).
 """
 
-from __future__ import annotations
-
 import contextlib
 from typing import Any
 

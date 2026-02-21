@@ -14,8 +14,6 @@ Example usage:
     >>> parse_fn = brick.create_parse_fn()
 """
 
-from __future__ import annotations
-
 from collections.abc import Callable
 
 from nexus.parsers.base import Parser

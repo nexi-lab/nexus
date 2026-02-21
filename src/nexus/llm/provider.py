@@ -1,7 +1,5 @@
 """Base LLM provider interface and implementation using litellm."""
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import copy
@@ -336,7 +334,7 @@ class LLMProvider(ABC):
         self._token_count_cache.clear()
 
     @classmethod
-    def from_config(cls, config: LLMConfig) -> LLMProvider:
+    def from_config(cls, config: LLMConfig) -> "LLMProvider":
         """Create a provider from config.
 
         Args:

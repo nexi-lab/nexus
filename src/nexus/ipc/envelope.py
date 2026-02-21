@@ -8,8 +8,6 @@ doc), while Python code uses ``sender`` and ``recipient`` to avoid
 clashing with the ``from`` keyword.
 """
 
-from __future__ import annotations
-
 import json
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -118,7 +116,7 @@ class MessageEnvelope(BaseModel):
         payload: dict[str, Any],
         *,
         ttl_seconds: int | None = None,
-    ) -> MessageEnvelope:
+    ) -> "MessageEnvelope":
         """Create a reply envelope for this message.
 
         Swaps sender/recipient, sets type=RESPONSE, and links via correlation_id.
@@ -164,7 +162,7 @@ class MessageEnvelope(BaseModel):
         return self.model_dump_json(by_alias=True).encode("utf-8")
 
     @classmethod
-    def from_bytes(cls, data: bytes) -> MessageEnvelope:
+    def from_bytes(cls, data: bytes) -> "MessageEnvelope":
         """Deserialize from JSON bytes read from VFS.
 
         Raises:

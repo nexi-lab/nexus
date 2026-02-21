@@ -12,8 +12,6 @@ before embedding, reducing storage costs and improving retrieval quality.
 Based on SimpleMem paper (arXiv:2601.02553).
 """
 
-from __future__ import annotations
-
 import logging
 import math
 import re
@@ -746,7 +744,7 @@ class EntropyAwareChunker:
         self,
         redundancy_threshold: float = 0.35,
         alpha: float = 0.5,
-        embedding_provider: EmbeddingProvider | None = None,
+        embedding_provider: "EmbeddingProvider | None" = None,
         base_chunker: DocumentChunker | None = None,
         history_window: int = 5,
     ):

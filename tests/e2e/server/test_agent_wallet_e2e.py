@@ -13,8 +13,6 @@ Run with:
     pytest tests/e2e/test_agent_wallet_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import os
 import signal
 import socket
@@ -96,7 +94,6 @@ skip_no_tigerbeetle = pytest.mark.skipif(
     not _tigerbeetle_available(),
     reason=f"TigerBeetle not available at {TIGERBEETLE_ADDRESS}",
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

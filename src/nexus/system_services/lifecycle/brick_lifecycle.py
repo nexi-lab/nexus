@@ -20,8 +20,6 @@ References:
     - Issue #1704: Brick lifecycle manager
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import time
@@ -62,7 +60,6 @@ logger = logging.getLogger(__name__)
 # Default timeout for brick.start() in seconds
 DEFAULT_START_TIMEOUT: float = 5.0
 
-
 # ---------------------------------------------------------------------------
 # OTel tracing — zero-overhead when telemetry is not enabled
 # Shared implementation in nexus.services._tracing
@@ -70,7 +67,6 @@ DEFAULT_START_TIMEOUT: float = 5.0
 
 _get_tracer, _lifecycle_span = lazy_tracer("nexus.brick_lifecycle")
 _record_span_result = record_span_result
-
 
 # ---------------------------------------------------------------------------
 # Exceptions
@@ -116,7 +112,6 @@ _TRANSITIONS: dict[tuple[BrickState, str], BrickState] = {
     (BrickState.UNMOUNTED, EVENT_FAILED): BrickState.FAILED,  # Issue #2363: error during unregister
     (BrickState.FAILED, EVENT_RESET): BrickState.REGISTERED,  # Issue #2060: 7A
 }
-
 
 # ---------------------------------------------------------------------------
 # Internal mutable brick entry (not exposed outside this module)

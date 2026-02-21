@@ -14,8 +14,6 @@ References:
     - Issue #2131: Extract delegation into nexus/bricks/delegation
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -45,7 +43,7 @@ class DelegationProtocol(Protocol):
         coordinator_owner_id: str,
         worker_id: str,
         worker_name: str,
-        delegation_mode: DelegationMode | Any,
+        delegation_mode: "DelegationMode | Any",
         zone_id: str | None = None,
         scope_prefix: str | None = None,
         remove_grants: list[str] | None = None,
@@ -54,9 +52,9 @@ class DelegationProtocol(Protocol):
         ttl_seconds: int | None = None,
         intent: str = "",
         can_sub_delegate: bool = False,
-        scope: DelegationScope | None = None,
+        scope: "DelegationScope | None" = None,
         min_trust_score: float = 0.0,
-    ) -> DelegationResult | Any:
+    ) -> "DelegationResult | Any":
         """Create a delegated worker agent with narrowed permissions.
 
         Args:
@@ -98,8 +96,8 @@ class DelegationProtocol(Protocol):
         *,
         limit: int = 50,
         offset: int = 0,
-        status_filter: DelegationStatus | None = None,
-    ) -> tuple[list[DelegationRecord | Any], int]:
+        status_filter: "DelegationStatus | None" = None,
+    ) -> "tuple[list[DelegationRecord | Any], int]":
         """List all delegations created by a coordinator agent.
 
         Args:
@@ -113,7 +111,7 @@ class DelegationProtocol(Protocol):
         """
         ...
 
-    def get_delegation_by_id(self, delegation_id: str) -> DelegationRecord | Any | None:
+    def get_delegation_by_id(self, delegation_id: str) -> "DelegationRecord | Any | None":
         """Get delegation record by delegation_id.
 
         Args:
@@ -124,7 +122,7 @@ class DelegationProtocol(Protocol):
         """
         ...
 
-    def get_delegation(self, agent_id: str) -> DelegationRecord | Any | None:
+    def get_delegation(self, agent_id: str) -> "DelegationRecord | Any | None":
         """Get delegation record for a worker agent.
 
         Args:
@@ -135,7 +133,7 @@ class DelegationProtocol(Protocol):
         """
         ...
 
-    def get_delegation_chain(self, delegation_id: str) -> list[DelegationRecord | Any]:
+    def get_delegation_chain(self, delegation_id: str) -> "list[DelegationRecord | Any]":
         """Trace delegation chain from child to root.
 
         Args:
@@ -149,9 +147,9 @@ class DelegationProtocol(Protocol):
     def complete_delegation(
         self,
         delegation_id: str,
-        outcome: DelegationOutcome | Any,
+        outcome: "DelegationOutcome | Any",
         quality_score: float | None = None,
-    ) -> DelegationRecord | Any:
+    ) -> "DelegationRecord | Any":
         """Complete a delegation and submit feedback to the reputation system.
 
         Args:

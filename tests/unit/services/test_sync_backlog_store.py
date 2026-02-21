@@ -6,8 +6,6 @@ TTL/cap expiry, and graceful degradation without a database.
 Issue #2132: Previously 0% test coverage.
 """
 
-from __future__ import annotations
-
 import time
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace

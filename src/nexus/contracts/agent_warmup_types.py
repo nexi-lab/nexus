@@ -14,8 +14,6 @@ Design:
     - Optional steps log failures but continue
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any

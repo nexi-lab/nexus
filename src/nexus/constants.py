@@ -6,8 +6,6 @@ All defaults can be overridden via environment variables or configuration.
 Related: Issue #1462 (code hygiene — stale TODOs, redundant imports, hardcoded URLs)
 """
 
-from __future__ import annotations
-
 # =============================================================================
 # Server Defaults
 # =============================================================================

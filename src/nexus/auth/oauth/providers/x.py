@@ -4,8 +4,6 @@ Uses PKCE (Proof Key for Code Exchange) for enhanced security.
 ``client_secret`` is optional for public clients.
 """
 
-from __future__ import annotations
-
 import base64
 import dataclasses
 import hashlib

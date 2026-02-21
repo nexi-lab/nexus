@@ -15,15 +15,12 @@ References:
     - docs/architecture/KERNEL-ARCHITECTURE.md §3
 """
 
-from __future__ import annotations
-
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
-
 
 # =============================================================================
 # Low-level Store Protocol
@@ -90,7 +87,7 @@ class LockInfo:
     path: str
     mode: Literal["mutex", "semaphore"]
     max_holders: int
-    holders: list[HolderInfo]
+    holders: "list[HolderInfo]"
     fence_token: int
 
 

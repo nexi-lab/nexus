@@ -4,8 +4,6 @@ Coordinates detection, script building, execution, and result parsing
 into a single pipeline that runs all applicable validators.
 """
 
-from __future__ import annotations
-
 import logging
 import re
 import shlex
@@ -79,7 +77,7 @@ class ValidationRunner:
     async def validate(
         self,
         sandbox_id: str,
-        provider: SandboxProvider,
+        provider: "SandboxProvider",
         workspace_path: str = "/workspace",
         config: ValidationPipelineConfig | None = None,
     ) -> list[ValidationResult]:
@@ -180,7 +178,7 @@ class ValidationRunner:
     async def _resolve_configs(
         self,
         sandbox_id: str,
-        provider: SandboxProvider,
+        provider: "SandboxProvider",
         workspace_path: str,
         explicit_config: ValidationPipelineConfig | None,
     ) -> list[ValidatorConfig]:

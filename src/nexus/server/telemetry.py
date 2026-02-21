@@ -31,8 +31,6 @@ Example with SigNoz:
     OTEL_EXPORTER_OTLP_ENDPOINT=http://signoz:4317
 """
 
-from __future__ import annotations
-
 import logging
 import os
 from typing import TYPE_CHECKING
@@ -46,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 # Global state
 _initialized = False
-_tracer: Tracer | None = None
+_tracer: "Tracer | None" = None
 
 
 def is_telemetry_enabled() -> bool:
@@ -252,7 +250,7 @@ def instrument_fastapi_app(app: object) -> bool:
         return False
 
 
-def get_tracer(name: str | None = None) -> Tracer | None:
+def get_tracer(name: str | None = None) -> "Tracer | None":
     """Get a tracer for creating custom spans.
 
     Args:

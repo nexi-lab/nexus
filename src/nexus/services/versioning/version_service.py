@@ -10,8 +10,6 @@ Phase 2: Core Refactoring (Issue #988, Task 2.5)
 Extracted from: nexus_fs_versions.py (300 lines)
 """
 
-from __future__ import annotations
-
 import asyncio
 import builtins
 import difflib
@@ -88,13 +86,13 @@ class VersionService:
 
     def __init__(
         self,
-        metadata_store: MetastoreABC,
+        metadata_store: "MetastoreABC",
         cas_store: Any,  # Backend with read_content method
-        permission_enforcer: AsyncPermissionEnforcer | None = None,
-        router: PathRouter | None = None,
-        rebac_manager: ReBACBrickProtocol | None = None,
+        permission_enforcer: "AsyncPermissionEnforcer | None" = None,
+        router: "PathRouter | None" = None,
+        rebac_manager: "ReBACBrickProtocol | None" = None,
         enforce_permissions: bool = True,
-        record_store: RecordStoreABC | None = None,
+        record_store: "RecordStoreABC | None" = None,
     ):
         """Initialize version service.
 
@@ -126,7 +124,7 @@ class VersionService:
         self,
         path: str,
         version: int,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> bytes:
         """Get a specific version of a file.
 
@@ -214,7 +212,7 @@ class VersionService:
     async def list_versions(
         self,
         path: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> builtins.list[dict[str, Any]]:
         """List all versions of a file.
 
@@ -278,7 +276,7 @@ class VersionService:
         self,
         path: str,
         version: int,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> None:
         """Rollback file to a previous version.
 
@@ -356,7 +354,7 @@ class VersionService:
         v1: int,
         v2: int,
         mode: str = "metadata",
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any] | str:
         """Compare two versions of a file.
 
@@ -472,7 +470,7 @@ class VersionService:
     # Helper Methods
     # =========================================================================
 
-    async def _check_read_permission(self, path: str, context: OperationContext | None) -> None:
+    async def _check_read_permission(self, path: str, context: "OperationContext | None") -> None:
         """Check if user has read permission for path.
 
         Args:
@@ -504,7 +502,7 @@ class VersionService:
         if not has_permission:
             raise PermissionError(f"User '{context.user_id}' lacks READ permission for: {path}")
 
-    async def _check_write_permission(self, path: str, context: OperationContext | None) -> None:
+    async def _check_write_permission(self, path: str, context: "OperationContext | None") -> None:
         """Check if user has write permission for path.
 
         Args:

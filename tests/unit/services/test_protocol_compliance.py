@@ -19,8 +19,6 @@ Usage::
 Parameterized tests for all 8 domain protocols are included below.
 """
 
-from __future__ import annotations
-
 import inspect
 
 import pytest

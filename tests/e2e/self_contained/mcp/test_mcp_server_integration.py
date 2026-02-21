@@ -4,8 +4,6 @@ These tests use actual NexusFS instances with LocalBackend to test
 end-to-end workflows and real component interactions.
 """
 
-from __future__ import annotations
-
 import json
 
 import pytest

@@ -9,8 +9,6 @@ Uses asyncio.TaskGroup for structured concurrency (Issue #1274).
 Related: Issue #1212, #1274
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import logging
@@ -40,7 +38,7 @@ class TaskDispatcher:
 
     def __init__(
         self,
-        scheduler_service: SchedulerService,
+        scheduler_service: "SchedulerService",
         poll_interval: int = 30,
         *,
         record_store: Any | None = None,

@@ -9,8 +9,6 @@ Each parametrized case is a ``(old_module, new_module, name)`` triple.
 The test asserts ``getattr(old_mod, name) is getattr(new_mod, name)``.
 """
 
-from __future__ import annotations
-
 import importlib
 import warnings
 

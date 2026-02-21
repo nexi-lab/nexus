@@ -12,8 +12,6 @@ focused service. Handles:
 Uses poll-based mount waiting instead of hardcoded sleep (Issue #2051 #14).
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import shlex

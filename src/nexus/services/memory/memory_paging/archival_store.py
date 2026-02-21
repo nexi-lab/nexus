@@ -6,8 +6,6 @@ Optimized for knowledge queries: "What do I know about X?", "Find similar to Y"
 Thread-safe: Each operation creates its own session from the session factory.
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Callable
 from datetime import datetime
@@ -22,7 +20,6 @@ if TYPE_CHECKING:
     from nexus.storage.models import MemoryModel
 
 logger = logging.getLogger(__name__)
-
 
 # Max memories to load for Python-side similarity search.
 # Prevents O(n) full-table scan when pgvector is unavailable.
@@ -45,7 +42,7 @@ class ArchivalStore:
 
     def __init__(
         self,
-        session_factory: Callable[[], Session],
+        session_factory: "Callable[[], Session]",
         zone_id: str = ROOT_ZONE_ID,
         namespace: str = "archival",
         vector_db: Any = None,
@@ -63,7 +60,7 @@ class ArchivalStore:
         self.namespace = namespace
         self._vector_db = vector_db
 
-    def store(self, memory: MemoryModel, trigger_consolidation: bool = True) -> None:
+    def store(self, memory: "MemoryModel", trigger_consolidation: bool = True) -> None:
         """Store memory in archival tier.
 
         Merges the (possibly detached) memory into a fresh session, updates
@@ -99,7 +96,7 @@ class ArchivalStore:
         threshold: float = 0.7,
         limit: int = 10,
         prefer_abstracts: bool = False,  # noqa: ARG002 - Future use with consolidation
-    ) -> list[tuple[MemoryModel, float]]:
+    ) -> "list[tuple[MemoryModel, float]]":
         """Search archival using semantic similarity.
 
         Args:
@@ -148,10 +145,10 @@ class ArchivalStore:
     def _simple_similarity_search(
         self,
         query_embedding: list[float],
-        memories: list[MemoryModel],
+        memories: "list[MemoryModel]",
         threshold: float,
         limit: int,
-    ) -> list[tuple[MemoryModel, float]]:
+    ) -> "list[tuple[MemoryModel, float]]":
         """Simple similarity search without hierarchy.
 
         Args:
@@ -201,7 +198,7 @@ class ArchivalStore:
         query_embedding: list[float],
         threshold: float,
         limit: int,
-    ) -> list[tuple[MemoryModel, float]]:
+    ) -> "list[tuple[MemoryModel, float]]":
         """Database-accelerated vector search on memories table.
 
         Uses pgvector (<=> operator) for PostgreSQL.
@@ -290,7 +287,7 @@ class ArchivalStore:
         finally:
             session.close()
 
-    def get_by_namespace(self, sub_namespace: str) -> list[MemoryModel]:
+    def get_by_namespace(self, sub_namespace: str) -> "list[MemoryModel]":
         """Get all memories in a specific archival sub-namespace.
 
         Args:

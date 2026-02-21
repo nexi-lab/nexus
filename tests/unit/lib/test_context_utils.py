@@ -7,8 +7,6 @@ Tests cover utility functions for extracting and resolving context information:
 - resolve_skill_base_path: Determine skill base path based on context
 """
 
-from __future__ import annotations
-
 from unittest.mock import Mock
 
 import pytest

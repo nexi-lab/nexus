@@ -4,8 +4,6 @@ Written BEFORE extracting shared error codes to base_errors.py (Issue #2086).
 Locks down the validation behavior so extraction can be verified.
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.connectors.base import (

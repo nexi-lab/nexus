@@ -4,8 +4,6 @@ Tests that the snapshot service is correctly called from the write path
 when a transaction is active.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 

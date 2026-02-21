@@ -10,8 +10,6 @@ Usage:
     state_mgr.invalidate("mem_123", invalid_at="2026-01-15")
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime

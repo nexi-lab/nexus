@@ -8,8 +8,6 @@ methods not in the registry.
 Issue #1289: Protocol + RPC Proxy pattern.
 """
 
-from __future__ import annotations
-
 import inspect
 import logging
 from typing import Any

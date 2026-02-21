@@ -19,8 +19,6 @@ Architecture:
 Issue #1246: BufferedRecordStoreWriteObserver implements Decision 13A (write-behind buffer).
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -44,7 +42,7 @@ class RecordStoreWriteObserver:
 
     def __init__(
         self,
-        record_store: RecordStoreABC,
+        record_store: "RecordStoreABC",
         *,
         strict_mode: bool = True,
     ) -> None:
@@ -79,7 +77,7 @@ class RecordStoreWriteObserver:
 
     def on_write(
         self,
-        metadata: FileMetadata,
+        metadata: "FileMetadata",
         *,
         is_new: bool,
         path: str,
@@ -110,7 +108,7 @@ class RecordStoreWriteObserver:
 
     def on_write_batch(
         self,
-        items: list[tuple[FileMetadata, bool]],
+        items: "list[tuple[FileMetadata, bool]]",
         *,
         zone_id: str | None = None,
         agent_id: str | None = None,
@@ -267,7 +265,7 @@ class BufferedRecordStoreWriteObserver:
 
     def __init__(
         self,
-        record_store: RecordStoreABC,
+        record_store: "RecordStoreABC",
         *,
         strict_mode: bool = True,
         flush_interval_ms: int = 100,
@@ -299,7 +297,7 @@ class BufferedRecordStoreWriteObserver:
 
     def on_write(
         self,
-        metadata: FileMetadata,
+        metadata: "FileMetadata",
         *,
         is_new: bool,
         path: str,
@@ -321,7 +319,7 @@ class BufferedRecordStoreWriteObserver:
 
     def on_write_batch(
         self,
-        items: list[tuple[FileMetadata, bool]],
+        items: "list[tuple[FileMetadata, bool]]",
         *,
         zone_id: str | None = None,
         agent_id: str | None = None,

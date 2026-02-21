@@ -6,8 +6,6 @@ This module contains server-related CLI commands for:
 - Starting the Nexus RPC server
 """
 
-from __future__ import annotations
-
 import logging
 import sys
 import time

@@ -10,8 +10,6 @@ Same pattern as the former ``PGEventLog`` (removed in Issue #1241).
 Issue: #1243, #1469
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, cast
@@ -52,7 +50,7 @@ class RecordStoreStorageDriver:
         record_store: RecordStoreABC for database access.
     """
 
-    def __init__(self, record_store: RecordStoreABC) -> None:
+    def __init__(self, record_store: "RecordStoreABC") -> None:
         self._session_factory = record_store.session_factory
 
     async def read(self, path: str, zone_id: str) -> bytes:

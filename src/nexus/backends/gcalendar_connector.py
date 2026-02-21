@@ -28,8 +28,6 @@ Authentication:
     - Automatic refresh when expired
 """
 
-from __future__ import annotations
-
 import logging
 from contextlib import suppress
 from datetime import UTC, datetime
@@ -248,7 +246,7 @@ send_notifications: true
         token_manager_db: str,
         user_email: str | None = None,
         provider: str = "gcalendar",
-        record_store: RecordStoreABC | None = None,
+        record_store: "RecordStoreABC | None" = None,
         max_events_per_calendar: int = 250,
         metadata_store: Any = None,
     ):
@@ -320,7 +318,7 @@ send_notifications: true
     # OAuth / Service
     # =========================================================================
 
-    def _get_calendar_service(self, context: OperationContext | None = None) -> Resource:
+    def _get_calendar_service(self, context: "OperationContext | None" = None) -> "Resource":
         """Get Google Calendar service with user's OAuth credentials.
 
         Args:
@@ -464,7 +462,7 @@ send_notifications: true
 
     @timed_response
     def read_content(
-        self, content_hash: str, context: OperationContext | None = None
+        self, content_hash: str, context: "OperationContext | None" = None
     ) -> HandlerResponse[bytes]:
         """Read event content from cache or Google Calendar API.
 
@@ -543,7 +541,7 @@ send_notifications: true
 
     @timed_response
     def write_content(
-        self, content: bytes, context: OperationContext | None = None
+        self, content: bytes, context: "OperationContext | None" = None
     ) -> HandlerResponse[str]:
         """Write event content - handles create and update.
 
@@ -601,7 +599,7 @@ send_notifications: true
         )
 
     def _create_event(
-        self, calendar_id: str, data: dict[str, Any], context: OperationContext | None
+        self, calendar_id: str, data: dict[str, Any], context: "OperationContext | None"
     ) -> str:
         """Create a new calendar event.
 
@@ -658,7 +656,7 @@ send_notifications: true
         calendar_id: str,
         event_id: str,
         data: dict[str, Any],
-        context: OperationContext | None,
+        context: "OperationContext | None",
     ) -> str:
         """Update an existing calendar event.
 
@@ -723,7 +721,7 @@ send_notifications: true
 
     @timed_response
     def delete_content(
-        self, content_hash: str, context: OperationContext | None = None
+        self, content_hash: str, context: "OperationContext | None" = None
     ) -> HandlerResponse[None]:
         """Delete a calendar event.
 
@@ -862,7 +860,7 @@ send_notifications: true
 
     @timed_response
     def content_exists(
-        self, content_hash: str, context: OperationContext | None = None
+        self, content_hash: str, context: "OperationContext | None" = None
     ) -> HandlerResponse[bool]:
         """Check if event exists."""
         _ = content_hash  # Unused for connector backends
@@ -881,7 +879,7 @@ send_notifications: true
 
     @timed_response
     def get_content_size(
-        self, content_hash: str, context: OperationContext | None = None
+        self, content_hash: str, context: "OperationContext | None" = None
     ) -> HandlerResponse[int]:
         """Get event content size."""
         if not context:
@@ -899,13 +897,13 @@ send_notifications: true
 
     @timed_response
     def get_ref_count(
-        self, content_hash: str, context: OperationContext | None = None
+        self, content_hash: str, context: "OperationContext | None" = None
     ) -> HandlerResponse[int]:
         """Get reference count (always 1 for connector backends)."""
         _, _ = content_hash, context  # Unused
         return HandlerResponse.ok(data=1, backend_name="gcalendar")
 
-    def get_version(self, path: str, context: OperationContext | None = None) -> str | None:
+    def get_version(self, path: str, context: "OperationContext | None" = None) -> str | None:
         """Get version for a calendar event file."""
         try:
             if context and hasattr(context, "backend_path") and context.backend_path:
@@ -928,7 +926,7 @@ send_notifications: true
 
     @timed_response
     def is_directory(
-        self, path: str, context: OperationContext | None = None
+        self, path: str, context: "OperationContext | None" = None
     ) -> HandlerResponse[bool]:
         """Check if path is a directory."""
         _ = context  # Unused
@@ -942,7 +940,7 @@ send_notifications: true
         # Calendar IDs (single part) are directories, event files are not
         return HandlerResponse.ok(data=len(parts) == 1, backend_name="gcalendar")
 
-    def list_dir(self, path: str, context: OperationContext | None = None) -> list[str]:
+    def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:
         """List directory contents.
 
         Args:
@@ -961,7 +959,7 @@ send_notifications: true
         # Calendar directory - list events
         return self._list_events(path, context)
 
-    def _list_calendars(self, context: OperationContext | None) -> list[str]:
+    def _list_calendars(self, context: "OperationContext | None") -> list[str]:
         """List available calendars."""
         try:
             service = self._get_calendar_service(context)
@@ -986,7 +984,7 @@ send_notifications: true
         except Exception as e:
             raise BackendError(f"Failed to list calendars: {e}", backend="gcalendar") from e
 
-    def _list_events(self, calendar_id: str, context: OperationContext | None) -> list[str]:
+    def _list_events(self, calendar_id: str, context: "OperationContext | None") -> list[str]:
         """List events in a calendar."""
         try:
             service = self._get_calendar_service(context)
@@ -1027,7 +1025,7 @@ send_notifications: true
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[None]:
         """Create directory (not supported - calendars are created via Google)."""
         _, _, _, _ = path, parents, exist_ok, context  # Unused
@@ -1041,7 +1039,7 @@ send_notifications: true
         self,
         path: str,
         recursive: bool = False,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[None]:
         """Remove directory (not supported)."""
         _, _, _ = path, recursive, context  # Unused

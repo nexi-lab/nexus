@@ -26,8 +26,6 @@ Architecture Decisions:
 Reference: arXiv:2512.24601 (Zhang, Kraska, Khattab — MIT OASYS Lab)
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import re
@@ -82,7 +80,6 @@ Your task is to answer a question by programmatically analyzing data stored in N
 - You can make multiple iterations — take your time to reason carefully.
 - If you need more information, search for it or read more files.
 """
-
 
 # ---------------------------------------------------------------------------
 # Utility functions

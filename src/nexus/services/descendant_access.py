@@ -7,8 +7,6 @@ Extracted from ``nexus.core.nexus_fs._has_descendant_access`` and
 ``_has_descendant_access_bulk`` as part of the NexusFS slim-down (#2033).
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -47,8 +45,8 @@ class DescendantAccessChecker:
     def has_access(
         self,
         path: str,
-        permission: Permission,
-        context: OperationContext,
+        permission: "Permission",
+        context: "OperationContext",
     ) -> bool:
         """Check if user has access to *path* OR any of its descendants.
 
@@ -312,8 +310,8 @@ class DescendantAccessChecker:
     def has_access_bulk(
         self,
         paths: list[str],
-        permission: Permission,
-        context: OperationContext,
+        permission: "Permission",
+        context: "OperationContext",
     ) -> dict[str, bool]:
         """Check if user has access to any descendant for multiple paths in bulk.
 

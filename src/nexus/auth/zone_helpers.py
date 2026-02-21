@@ -4,8 +4,6 @@ Moved from server/auth/zone_helpers.py. Pure functions for zone
 validation, creation, and email domain classification.
 """
 
-from __future__ import annotations
-
 import re
 
 from sqlalchemy.orm import Session

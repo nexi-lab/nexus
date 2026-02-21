@@ -7,8 +7,6 @@ Provides REST access to the IPC subsystem:
     POST /api/v2/ipc/provision/{agent_id}   — Provision IPC directories for an agent
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 
@@ -21,7 +19,6 @@ from nexus.ipc.conventions import validate_agent_id
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/ipc", tags=["ipc"])
-
 
 # ---------------------------------------------------------------------------
 # Lazy imports (avoid circular imports with fastapi_server)

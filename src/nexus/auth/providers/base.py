@@ -3,8 +3,6 @@
 Re-exports AuthResult from nexus.auth.types for backward compatibility.
 """
 
-from __future__ import annotations
-
 from abc import ABC, abstractmethod
 
 from nexus.auth.types import AuthResult

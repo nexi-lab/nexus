@@ -8,8 +8,6 @@ Rewritten for Issue #1469: driver now uses RecordStoreABC session_factory
 instead of raw asyncpg.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest

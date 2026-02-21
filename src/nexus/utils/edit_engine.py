@@ -24,8 +24,6 @@ References:
 - https://fabianhertwig.com/blog/coding-assistants-file-edits/
 """
 
-from __future__ import annotations
-
 import difflib
 import re
 from dataclasses import dataclass, field

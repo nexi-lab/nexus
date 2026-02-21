@@ -7,15 +7,12 @@ surfaces (alongside VFS and MCP).
 See: https://a2a-protocol.org/latest/specification/
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from fastapi import APIRouter
 
     from nexus.bricks.a2a.task_manager import TaskManager
-
 
 __all__ = ["create_a2a_router"]
 
@@ -29,7 +26,7 @@ def create_a2a_router(
     auth_fn: Any = None,
     data_dir: str | None = None,
     hook_engine: Any = None,
-) -> tuple[APIRouter, TaskManager]:
+) -> "tuple[APIRouter, TaskManager]":
     """Create the A2A protocol FastAPI router.
 
     Args:

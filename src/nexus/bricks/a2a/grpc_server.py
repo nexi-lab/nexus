@@ -5,8 +5,6 @@ logic to the existing ``TaskManager``.  The gRPC transport runs on a
 separate port and is config-gated (``NEXUS_A2A_GRPC_PORT``).
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import AsyncIterator
 from typing import Any

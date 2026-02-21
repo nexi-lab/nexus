@@ -4,8 +4,6 @@ Declares the LLM brick's metadata and provides verify_imports()
 for validating required and optional modules at startup.
 """
 
-from __future__ import annotations
-
 import importlib
 import logging
 from dataclasses import dataclass, field

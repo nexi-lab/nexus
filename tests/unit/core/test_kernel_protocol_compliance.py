@@ -8,8 +8,6 @@ in services/protocols/).
 Remaining test: WiredServices frozen dataclass validation.
 """
 
-from __future__ import annotations
-
 import pytest
 
 

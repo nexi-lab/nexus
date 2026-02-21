@@ -1,7 +1,5 @@
 """Skill audit logging and compliance tracking."""
 
-from __future__ import annotations
-
 import dataclasses
 import json
 import logging
@@ -120,7 +118,7 @@ class SkillAuditLogger:
         ...     print(f"{log.action.value} by {log.agent_id} at {log.timestamp}")
     """
 
-    def __init__(self, cache_store: CacheStoreABC | None = None) -> None:
+    def __init__(self, cache_store: "CacheStoreABC | None" = None) -> None:
         """Initialize audit logger.
 
         Args:

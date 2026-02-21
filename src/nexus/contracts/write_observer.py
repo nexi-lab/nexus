@@ -13,8 +13,6 @@ Migrated from getattr() dispatch in #1631.
 Tracked by: #55 (Move _audit_strict_mode from kernel to observer)
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -32,7 +30,7 @@ class WriteObserverProtocol(Protocol):
 
     def on_write(
         self,
-        metadata: FileMetadata,
+        metadata: "FileMetadata",
         *,
         is_new: bool,
         path: str,
@@ -46,7 +44,7 @@ class WriteObserverProtocol(Protocol):
 
     def on_write_batch(
         self,
-        items: list[tuple[FileMetadata, bool]],
+        items: "list[tuple[FileMetadata, bool]]",
         *,
         zone_id: str | None = ...,
         agent_id: str | None = ...,

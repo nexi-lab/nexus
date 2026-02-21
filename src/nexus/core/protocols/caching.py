@@ -19,11 +19,8 @@ References:
     - docs/design/cache-layer.md
 """
 
-from __future__ import annotations
-
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol, runtime_checkable
-
 
 @runtime_checkable
 class CacheConfigContract(Protocol):
@@ -43,7 +40,6 @@ class CacheConfigContract(Protocol):
     zone_id: str | None
     l1_only: bool
 
-
 @runtime_checkable
 class CachingConnectorContract(Protocol):
     """Wrapping-chain cache capability protocol.
@@ -62,7 +58,6 @@ class CachingConnectorContract(Protocol):
     def clear_cache(self) -> None: ...
 
     def describe(self) -> str: ...
-
 
 @runtime_checkable
 class TigerCacheProtocol(Protocol):
@@ -114,7 +109,6 @@ class TigerCacheProtocol(Protocol):
     async def health_check(self) -> bool:
         """Check if the cache backend is healthy."""
         ...
-
 
 @runtime_checkable
 class EmbeddingCacheProtocol(Protocol):

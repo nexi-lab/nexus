@@ -4,8 +4,6 @@ These tests run against an actual nexus serve process with authentication enable
 Includes tests for both Raft-backed and Redis-backed lock managers.
 """
 
-from __future__ import annotations
-
 import os
 import time
 

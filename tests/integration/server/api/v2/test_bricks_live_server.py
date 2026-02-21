@@ -13,8 +13,6 @@ This validates:
 - Drift detection and reset through live stack (Issue #2060)
 """
 
-from __future__ import annotations
-
 import logging
 import time
 from unittest.mock import AsyncMock, MagicMock

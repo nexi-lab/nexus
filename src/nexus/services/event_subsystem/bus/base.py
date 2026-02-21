@@ -1,7 +1,5 @@
 """EventBusBase — shared ABC for all event bus backends."""
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from abc import ABC, abstractmethod
@@ -41,7 +39,7 @@ class EventBusBase(ABC):
 
     def __init__(
         self,
-        record_store: RecordStoreABC | None = None,
+        record_store: "RecordStoreABC | None" = None,
         node_id: str | None = None,
     ) -> None:
         self._session_factory = record_store.session_factory if record_store else None

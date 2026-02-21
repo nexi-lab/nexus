@@ -10,8 +10,6 @@ References:
     - Issue #2359: Moved from core/protocols/ to contracts/ (cross-tier)
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -34,15 +32,15 @@ class WirableFS(Protocol):
     """
 
     @property
-    def metadata(self) -> MetastoreABC: ...
+    def metadata(self) -> "MetastoreABC": ...
 
     @property
-    def backend(self) -> Backend: ...
+    def backend(self) -> "Backend": ...
 
     def read(self, path: str, **kwargs: Any) -> bytes: ...
 
     _enforce_permissions: bool
-    _permission_enforcer: PermissionEnforcerProtocol | None
-    _record_store: RecordStoreABC | None
-    _default_context: OperationContext | None
+    _permission_enforcer: "PermissionEnforcerProtocol | None"
+    _record_store: "RecordStoreABC | None"
+    _default_context: "OperationContext | None"
     _config: Any

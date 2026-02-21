@@ -7,8 +7,6 @@ The adapter detects search-mode fallback (hybrid → keyword when no
 embeddings are available) and exposes the actual mode used.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any, Protocol, runtime_checkable
 

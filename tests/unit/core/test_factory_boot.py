@@ -11,8 +11,6 @@ Covers:
 Issue #2193: Former kernel services moved to system tier.
 """
 
-from __future__ import annotations
-
 import dataclasses
 from unittest.mock import MagicMock, patch
 

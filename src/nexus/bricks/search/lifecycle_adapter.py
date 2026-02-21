@@ -13,8 +13,6 @@ Zoekt lifecycle is an internal detail of the daemon and is NOT exposed
 to the lifecycle manager (Decision #3).
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -24,7 +22,7 @@ if TYPE_CHECKING:
 class SearchBrickLifecycleAdapter:
     """Adapts SearchDaemon to BrickLifecycleProtocol."""
 
-    def __init__(self, daemon: SearchDaemon) -> None:
+    def __init__(self, daemon: "SearchDaemon") -> None:
         self._daemon: Any = daemon
 
     async def start(self) -> None:

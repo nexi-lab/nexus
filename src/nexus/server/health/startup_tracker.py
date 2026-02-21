@@ -5,8 +5,6 @@ completed.  Used by the ``/healthz/*`` probe endpoints to distinguish
 between "process alive", "can serve traffic", and "fully booted".
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 import time

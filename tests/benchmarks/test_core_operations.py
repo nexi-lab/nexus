@@ -6,8 +6,6 @@ These benchmarks identify Python hotspots for potential Rust acceleration.
 See issue #570 for context.
 """
 
-from __future__ import annotations
-
 import hashlib
 
 import pytest

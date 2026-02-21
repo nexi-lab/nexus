@@ -1,7 +1,5 @@
 """IsolatedPool — executor lifecycle, submission, and health management."""
 
-from __future__ import annotations
-
 import logging
 import threading
 from concurrent.futures import Executor, Future

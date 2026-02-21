@@ -14,8 +14,6 @@ Design principles:
 Issue #1039: Graph storage layer for entities and relationships
 """
 
-from __future__ import annotations
-
 import contextlib
 import json
 import logging
@@ -47,7 +45,6 @@ if TYPE_CHECKING:
     from nexus.bricks.search.embeddings import EmbeddingProvider
     from nexus.storage.record_store import RecordStoreABC
 
-
 # =============================================================================
 # Data Classes
 # =============================================================================
@@ -69,7 +66,7 @@ class Entity:
     updated_at: datetime | None = None
 
     @classmethod
-    def from_model(cls, model: EntityModel) -> Entity:
+    def from_model(cls, model: EntityModel) -> "Entity":
         """Create Entity from SQLAlchemy model."""
         aliases = []
         if model.aliases:
@@ -125,8 +122,8 @@ class Relationship:
     metadata: dict[str, Any] = field(default_factory=dict)
     created_at: datetime | None = None
     # Optionally populated entity details
-    source_entity: Entity | None = None
-    target_entity: Entity | None = None
+    source_entity: "Entity | None" = None
+    target_entity: "Entity | None" = None
 
     @classmethod
     def from_model(
@@ -134,7 +131,7 @@ class Relationship:
         model: RelationshipModel,
         source: EntityModel | None = None,
         target: EntityModel | None = None,
-    ) -> Relationship:
+    ) -> "Relationship":
         """Create Relationship from SQLAlchemy model."""
         metadata = {}
         if model.metadata_json:
@@ -171,7 +168,7 @@ class EntityMention:
     created_at: datetime | None = None
 
     @classmethod
-    def from_model(cls, model: EntityMentionModel) -> EntityMention:
+    def from_model(cls, model: EntityMentionModel) -> "EntityMention":
         """Create EntityMention from SQLAlchemy model."""
         return cls(
             mention_id=model.mention_id,
@@ -190,8 +187,8 @@ class EntityMention:
 class Graph:
     """Represents a subgraph with entities and relationships."""
 
-    entities: list[Entity] = field(default_factory=list)
-    relationships: list[Relationship] = field(default_factory=list)
+    entities: "list[Entity]" = field(default_factory=list)
+    relationships: "list[Relationship]" = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -224,7 +221,7 @@ class Graph:
 class NeighborResult:
     """Result of N-hop neighbor traversal."""
 
-    entity: Entity
+    entity: "Entity"
     depth: int
     path: list[str]  # Entity IDs in the path from source
 
@@ -260,11 +257,11 @@ class GraphStore:
 
     def __init__(
         self,
-        record_store: RecordStoreABC,
-        session: AsyncSession,
+        record_store: "RecordStoreABC",
+        session: "AsyncSession",
         *,
         zone_id: str = "root",
-        embedding_provider: EmbeddingProvider | None = None,
+        embedding_provider: "EmbeddingProvider | None" = None,
         merge_threshold: float = 0.85,
         confidence_threshold: float = 0.75,
     ):
@@ -389,7 +386,7 @@ class GraphStore:
                 return existing.entity_id, False
             raise
 
-    async def get_entity(self, entity_id: str) -> Entity | None:
+    async def get_entity(self, entity_id: str) -> "Entity | None":
         """Get an entity by ID."""
         stmt = select(EntityModel).where(
             and_(
@@ -401,7 +398,7 @@ class GraphStore:
         model = result.scalar_one_or_none()
         return Entity.from_model(model) if model else None
 
-    async def get_entities_batch(self, entity_ids: list[str]) -> list[Entity]:
+    async def get_entities_batch(self, entity_ids: list[str]) -> "list[Entity]":
         """Get multiple entities by ID in a single query.
 
         More efficient than calling get_entity() in a loop.
@@ -429,7 +426,7 @@ class GraphStore:
         name: str,
         entity_type: str | None = None,
         fuzzy: bool = False,
-    ) -> Entity | None:
+    ) -> "Entity | None":
         """Find an entity by name.
 
         Args:
@@ -465,7 +462,7 @@ class GraphStore:
         entity_type: str | None = None,
         limit: int = 10,
         threshold: float = 0.85,
-    ) -> list[tuple[Entity, float]]:
+    ) -> "list[tuple[Entity, float]]":
         """Find entities by embedding similarity.
 
         Uses pgvector cosine distance for PostgreSQL, or brute-force
@@ -554,7 +551,7 @@ class GraphStore:
         entity_type: str | None = None,
         limit: int = 100,
         offset: int = 0,
-    ) -> list[Entity]:
+    ) -> "list[Entity]":
         """List entities with optional type filtering."""
         stmt = select(EntityModel).where(EntityModel.zone_id == self.zone_id)
 
@@ -632,7 +629,7 @@ class GraphStore:
                 return existing.relationship_id, False
             raise
 
-    async def get_relationship(self, relationship_id: str) -> Relationship | None:
+    async def get_relationship(self, relationship_id: str) -> "Relationship | None":
         """Get a relationship by ID."""
         stmt = select(RelationshipModel).where(
             and_(
@@ -650,7 +647,7 @@ class GraphStore:
         direction: str = "both",
         rel_types: list[str] | None = None,
         min_confidence: float | None = None,
-    ) -> list[Relationship]:
+    ) -> "list[Relationship]":
         """Get relationships for an entity.
 
         Args:
@@ -744,7 +741,7 @@ class GraphStore:
         self,
         entity_id: str,
         limit: int = 100,
-    ) -> list[EntityMention]:
+    ) -> "list[EntityMention]":
         """Get all mentions of an entity."""
         stmt = (
             select(EntityMentionModel)
@@ -755,7 +752,7 @@ class GraphStore:
         result = await self.session.execute(stmt)
         return [EntityMention.from_model(m) for m in result.scalars().all()]
 
-    async def get_entities_in_chunk(self, chunk_id: str) -> list[Entity]:
+    async def get_entities_in_chunk(self, chunk_id: str) -> "list[Entity]":
         """Get all entities mentioned in a document chunk."""
         stmt = (
             select(EntityModel)
@@ -765,7 +762,7 @@ class GraphStore:
         result = await self.session.execute(stmt)
         return [Entity.from_model(m) for m in result.scalars().all()]
 
-    async def get_entities_in_memory(self, memory_id: str) -> list[Entity]:
+    async def get_entities_in_memory(self, memory_id: str) -> "list[Entity]":
         """Get all entities mentioned in a memory."""
         stmt = (
             select(EntityModel)
@@ -1037,7 +1034,7 @@ class GraphStore:
         self,
         name: str,
         entity_type: str | None = None,
-    ) -> Entity | None:
+    ) -> "Entity | None":
         """Find entity by exact canonical name match."""
         stmt = select(EntityModel).where(
             and_(
@@ -1057,7 +1054,7 @@ class GraphStore:
         source_entity_id: str,
         target_entity_id: str,
         relationship_type: str,
-    ) -> Relationship | None:
+    ) -> "Relationship | None":
         """Find existing relationship by source, target, and type."""
         stmt = select(RelationshipModel).where(
             and_(
@@ -1130,7 +1127,7 @@ class GraphStore:
         entity_type: str | None,
         limit: int,
         threshold: float,
-    ) -> list[tuple[Entity, float]]:
+    ) -> "list[tuple[Entity, float]]":
         """Find similar entities using pgvector cosine distance."""
         # Build the query using raw SQL for pgvector operations
         embedding_json = json.dumps(embedding)
@@ -1186,7 +1183,7 @@ class GraphStore:
         entity_type: str | None,
         limit: int,
         threshold: float,
-    ) -> list[tuple[Entity, float]]:
+    ) -> "list[tuple[Entity, float]]":
         """Find similar entities using brute-force cosine similarity (for SQLite)."""
         import math
 

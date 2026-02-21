@@ -6,8 +6,6 @@ Phase 4 of Issue #2033 (Strangler Fig decomposition):
   - TigerCacheRenameHook   — bitmap updates on file/directory move (was _update_tiger_cache_on_move)
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 from collections.abc import Callable
@@ -19,7 +17,6 @@ if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
-
 
 # ---------------------------------------------------------------------------
 # Phase 4.4 — Dynamic viewer column filter (post-read)

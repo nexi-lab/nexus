@@ -5,8 +5,6 @@ deactivate, invalidate, revalidate, and batch operations — before the
 Memory service gets moved to the brick structure.
 """
 
-from __future__ import annotations
-
 import importlib
 from datetime import UTC, datetime
 from types import SimpleNamespace

@@ -14,8 +14,6 @@ Usage:
     uv run pytest tests/e2e/test_mcp_tool_namespace_e2e.py -v --tb=short -p no:xdist -o "addopts=" --log-cli-level=INFO
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import time

@@ -1,7 +1,5 @@
 """Tests for RLM types and error hierarchy."""
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.constants import ROOT_ZONE_ID

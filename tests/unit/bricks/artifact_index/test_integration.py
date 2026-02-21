@@ -4,8 +4,6 @@ Validates the full chain: fire hook → dispatch to handler → extract
 content → call adapter.index().
 """
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest

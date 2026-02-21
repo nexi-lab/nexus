@@ -4,8 +4,6 @@ Provides a unified interface for managing sandboxes across different providers
 (E2B, Docker, Modal, etc.). Each provider implements create/run/pause/resume/destroy.
 """
 
-from __future__ import annotations
-
 import re
 import urllib.parse
 from abc import ABC, abstractmethod
@@ -143,7 +141,7 @@ class SandboxProvider(ABC):
         template_id: str | None = None,
         timeout_minutes: int = 10,
         metadata: dict[str, Any] | None = None,
-        security_profile: SandboxSecurityProfile | None = None,
+        security_profile: "SandboxSecurityProfile | None" = None,
     ) -> str:
         """Create a new sandbox.
 

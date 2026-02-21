@@ -5,8 +5,6 @@ concerns (Decision 1 / #1585).  Contains the SSE event loop,
 streaming send/subscribe handlers, and SSE response factory.
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 import logging

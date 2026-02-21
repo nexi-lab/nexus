@@ -7,8 +7,6 @@ Provides endpoints for coordinator-initiated agent delegation:
 - GET    /api/v2/agents/delegate/{id}/chain    — Trace delegation chain
 """
 
-from __future__ import annotations
-
 import logging
 from datetime import datetime
 from typing import Any

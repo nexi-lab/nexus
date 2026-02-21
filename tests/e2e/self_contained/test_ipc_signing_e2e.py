@@ -13,8 +13,6 @@ Uses real SQLite-backed RecordStore + KeyService (no mocks),
 InMemoryVFS for IPC storage (no external FS needed).
 """
 
-from __future__ import annotations
-
 import shutil
 import tempfile
 import time

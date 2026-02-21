@@ -1,7 +1,5 @@
 """Metadata-export service factory — create_metadata_export_service for server-layer RPC."""
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 

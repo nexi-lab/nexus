@@ -8,8 +8,6 @@ Dependencies are injected via constructor so the manager is testable in isolatio
 Issue #1707: Edge split-brain resilience.
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import logging
@@ -62,11 +60,11 @@ class EdgeSyncManager:
     def __init__(
         self,
         *,
-        queue: OfflineQueueProtocol,
-        transport: HttpTransport,
-        circuit: AsyncCircuitBreaker,
-        auth_manager: AuthCacheManager | None = None,
-        conflict_detector: ConflictDetector | None = None,
+        queue: "OfflineQueueProtocol",
+        transport: "HttpTransport",
+        circuit: "AsyncCircuitBreaker",
+        auth_manager: "AuthCacheManager | None" = None,
+        conflict_detector: "ConflictDetector | None" = None,
         health_check_url: str | None = None,
         node_id: str = "edge",
         replay_wake: Callable[[], None] | None = None,

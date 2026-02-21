@@ -4,8 +4,6 @@ Tests both the Rust-accelerated and pure-Python implementations to verify
 identical semantics.
 """
 
-from __future__ import annotations
-
 import threading
 import time
 

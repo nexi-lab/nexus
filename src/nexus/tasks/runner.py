@@ -5,8 +5,6 @@ from the Rust-backed TaskEngine. Workers use exponential backoff polling
 (100ms -> 2s) and reset on successful claim.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from collections.abc import Callable, Coroutine

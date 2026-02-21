@@ -4,8 +4,6 @@ Tests the GET /api/v2/connectors and GET /api/v2/connectors/{name}/capabilities
 endpoints using FastAPI TestClient with a mocked ConnectorRegistry.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, patch
 
 from fastapi import FastAPI

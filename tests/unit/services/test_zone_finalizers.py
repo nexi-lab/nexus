@@ -7,8 +7,6 @@ Tests each concrete zone finalizer in isolation:
 - ReBACZoneFinalizer: bulk tuple deletion
 """
 
-from __future__ import annotations
-
 from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock
 

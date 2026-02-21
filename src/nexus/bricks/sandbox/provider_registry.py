@@ -8,8 +8,6 @@ Supports both eager registration (provider already created) and lazy
 registration (factory callable invoked on first use).
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Callable
 

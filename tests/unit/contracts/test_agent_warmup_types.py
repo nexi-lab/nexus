@@ -7,8 +7,6 @@ Verifies:
 4. STANDARD_WARMUP sequence structure
 """
 
-from __future__ import annotations
-
 import dataclasses
 from datetime import timedelta
 

@@ -11,8 +11,6 @@ Usage:
         start: ISODateTimeStr
 """
 
-from __future__ import annotations
-
 import re
 from typing import Annotated
 
@@ -72,7 +70,6 @@ EmailListRequired = Annotated[
     Field(min_length=1),
     BeforeValidator(_validate_email_list_required),
 ]
-
 
 # ---------------------------------------------------------------------------
 # Datetime validators

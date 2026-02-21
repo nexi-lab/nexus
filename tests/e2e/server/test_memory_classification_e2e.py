@@ -9,8 +9,6 @@ following the pattern from test_memory_paging_fastapi_e2e.py.
 Run with: python -m pytest tests/e2e/test_memory_classification_e2e.py -v
 """
 
-from __future__ import annotations
-
 import shutil
 import tempfile
 from collections.abc import Sequence

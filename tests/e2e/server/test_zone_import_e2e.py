@@ -7,8 +7,6 @@ Tests the complete import workflow including:
 - Dry run mode
 """
 
-from __future__ import annotations
-
 import tempfile
 from pathlib import Path
 

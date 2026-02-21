@@ -8,8 +8,6 @@ MessageProcessor: reads messages from an agent's inbox, invokes a handler,
     dead_letter on failure). Supports EventBus push with poll fallback.
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import json
@@ -105,7 +103,7 @@ class MessageSender:
         hot_publisher: HotPathPublisher | None = None,
         delivery_mode: DeliveryMode = DeliveryMode.COLD_ONLY,
         max_cold_concurrency: int = DEFAULT_MAX_COLD_CONCURRENCY,
-        signer: MessageSigner | None = None,
+        signer: "MessageSigner | None" = None,
     ) -> None:
         self._storage = storage
         self._publisher = event_publisher
@@ -371,11 +369,11 @@ class MessageProcessor:
         handler: MessageHandler,
         *,
         zone_id: str,
-        cache_store: CacheStoreABC | None = None,
+        cache_store: "CacheStoreABC | None" = None,
         dedup_ttl_seconds: int = 3600,
         hot_subscriber: HotPathSubscriber | None = None,
         max_handler_concurrency: int = DEFAULT_MAX_HANDLER_CONCURRENCY,
-        verifier: MessageVerifier | None = None,
+        verifier: "MessageVerifier | None" = None,
         signing_mode: SigningMode = SigningMode.OFF,
         max_retries: int = 3,
         retry_delays: tuple[float, ...] = (1.0, 2.0, 4.0),

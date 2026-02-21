@@ -16,8 +16,6 @@ Plus custom structural tests:
 9. Fast single-head pre-check (no alembic_runner needed)
 """
 
-from __future__ import annotations
-
 import importlib
 import importlib.util
 import pkgutil
@@ -41,7 +39,6 @@ from sqlalchemy import inspect as sa_inspect
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent
 _VERSIONS_DIR = _PROJECT_ROOT / "alembic" / "versions"
 _ALEMBIC_INI = str(_PROJECT_ROOT / "alembic" / "alembic.ini")
-
 
 # --- Fast pre-checks (no alembic_runner, no DB needed) ---
 

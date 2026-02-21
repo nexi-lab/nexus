@@ -5,8 +5,6 @@ Calls ``BrickLifecycleManager.mount_all()`` during server startup and
 lifecycle manager are absent.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import time
@@ -20,7 +18,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-async def startup_bricks(_app: FastAPI, svc: LifespanServices) -> list[asyncio.Task[None]]:
+async def startup_bricks(_app: "FastAPI", svc: "LifespanServices") -> list[asyncio.Task[None]]:
     """Mount all registered bricks via BrickLifecycleManager."""
     if svc.nexus_fs is None:
         return []
@@ -54,7 +52,7 @@ async def startup_bricks(_app: FastAPI, svc: LifespanServices) -> list[asyncio.T
     return []
 
 
-async def shutdown_bricks(_app: FastAPI, svc: LifespanServices) -> None:
+async def shutdown_bricks(_app: "FastAPI", svc: "LifespanServices") -> None:
     """Unmount all active bricks in reverse-DAG order."""
     if svc.nexus_fs is None:
         return

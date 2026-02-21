@@ -1,7 +1,5 @@
 """Auto-discoverable brick factory for DelegationService (Issue #2180)."""
 
-from __future__ import annotations
-
 from typing import Any
 
 BRICK_NAME: str | None = None  # No deployment profile gate (always enabled)

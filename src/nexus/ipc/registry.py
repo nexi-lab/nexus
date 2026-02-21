@@ -6,8 +6,6 @@ Enables POST_WRITE hooks to trigger the correct processor for each agent.
 Architecture: Tier 3 System Service per NEXUS-LEGO-ARCHITECTURE.md §2.4.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from typing import TYPE_CHECKING
@@ -38,7 +36,7 @@ class MessageProcessorRegistry:
         self._processors: dict[str, MessageProcessor] = {}
         self._lock = asyncio.Lock()
 
-    async def register(self, agent_id: str, processor: MessageProcessor) -> None:
+    async def register(self, agent_id: str, processor: "MessageProcessor") -> None:
         """Register a MessageProcessor for an agent.
 
         If a processor already exists for this agent_id, it is stopped
@@ -91,7 +89,7 @@ class MessageProcessorRegistry:
             logger.debug("Unregistered processor for agent %s", agent_id)
             return True
 
-    def get(self, agent_id: str) -> MessageProcessor | None:
+    def get(self, agent_id: str) -> "MessageProcessor | None":
         """Get the MessageProcessor for an agent (no lock needed for read).
 
         Args:

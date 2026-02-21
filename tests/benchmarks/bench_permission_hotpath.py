@@ -12,8 +12,6 @@ Run with:
     PYTHONPATH=src python -m pytest tests/benchmarks/bench_permission_hotpath.py -v
 """
 
-from __future__ import annotations
-
 import statistics
 import time
 from typing import Any
@@ -34,7 +32,6 @@ BENCH_ITERATIONS = 2_000
 
 PERMISSION = "read"
 RESOURCE_TYPE = "file"
-
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -4,8 +4,6 @@ Extracted from fastapi_server.py (#1602). Admin handlers accept both
 ``nexus_fs`` and ``auth_provider`` as explicit parameters.
 """
 
-from __future__ import annotations
-
 import logging
 from datetime import UTC, datetime
 from typing import Any

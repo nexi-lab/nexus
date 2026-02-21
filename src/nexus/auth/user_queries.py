@@ -4,8 +4,6 @@ Extracted from server/auth/database_local.py (lines 1-70).
 These are stateless query functions that only depend on SQLAlchemy.
 """
 
-from __future__ import annotations
-
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 

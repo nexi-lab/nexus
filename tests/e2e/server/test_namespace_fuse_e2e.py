@@ -11,8 +11,6 @@ This test uses the same server fixture pattern as test_namespace_permissions_e2e
 but focuses on agent identity (X-Agent-ID header) rather than user identity.
 """
 
-from __future__ import annotations
-
 import os
 import shutil
 import signal

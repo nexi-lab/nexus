@@ -12,8 +12,6 @@ Usage::
     validate_outbound_url("http://10.0.0.1/internal")      # raises ValueError
 """
 
-from __future__ import annotations
-
 import ipaddress
 import logging
 import socket

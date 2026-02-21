@@ -16,8 +16,6 @@ Design decisions:
     - Metrics as class attributes (Decision 16A)
 """
 
-from __future__ import annotations
-
 import asyncio
 import time
 from collections import deque

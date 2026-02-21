@@ -7,8 +7,6 @@ to avoid database dependencies.
 Requires: networkx (available on Python 3.13)
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 

@@ -8,8 +8,6 @@ correctly when wired through the full dependency injection pipeline.
 No Raft required — uses InMemoryMetadata implementing MetastoreABC.
 """
 
-from __future__ import annotations
-
 from collections.abc import Sequence
 from typing import Any
 

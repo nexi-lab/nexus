@@ -15,8 +15,6 @@ Run with:
     uv run pytest tests/e2e/test_lego_decomp_e2e.py -v --override-ini="addopts=" -x
 """
 
-from __future__ import annotations
-
 import base64
 import json
 import uuid
@@ -60,7 +58,6 @@ def _pg_available() -> bool:
 pytestmark.append(
     pytest.mark.skipif(not _pg_available(), reason="PostgreSQL not available at localhost:5433")
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures — factory-wired NexusFS + PostgreSQL + FastAPI

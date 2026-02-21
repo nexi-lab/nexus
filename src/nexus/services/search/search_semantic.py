@@ -9,8 +9,6 @@ Provides all semantic search functionality:
 - Initialization of embedding providers
 """
 
-from __future__ import annotations
-
 import asyncio
 import builtins
 import contextlib
@@ -60,8 +58,8 @@ class SemanticSearchMixin:
             )
 
     # Type hints for attributes provided by SearchService.__init__
-    _query_service: QueryService | None
-    _indexing_service: IndexingService | None
+    _query_service: "QueryService | None"
+    _indexing_service: "IndexingService | None"
     _indexing_pipeline: Any  # IndexingPipeline | None
     _async_search: Any  # kept for backward compat during migration
     _semantic_search: Any  # kept for backward compat during migration

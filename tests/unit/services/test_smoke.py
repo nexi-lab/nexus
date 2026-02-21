@@ -4,8 +4,6 @@ Quick validation that services can be instantiated and basic methods work.
 Not comprehensive - just enough to catch major bugs before integration.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest

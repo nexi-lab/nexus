@@ -22,8 +22,6 @@ Architecture::
 NOTE: L2 async write-behind is a follow-up (Decision #14).
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -231,10 +229,10 @@ class CacheBrick:
     def create_caching_wrapper(
         self,
         inner: Any,
-        config: CacheWrapperConfig | None = None,
+        config: "CacheWrapperConfig | None" = None,
         *,
         enable_logging: bool = False,
-    ) -> CachingBackendWrapper:
+    ) -> "CachingBackendWrapper":
         """Create a CachingBackendWrapper for the given backend.
 
         Args:

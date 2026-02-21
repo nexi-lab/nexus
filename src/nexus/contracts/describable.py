@@ -16,8 +16,6 @@ Design reference:
     - Issue #2359: Moved from core/protocols/ to contracts/ (cross-tier)
 """
 
-from __future__ import annotations
-
 from typing import Protocol, runtime_checkable
 
 

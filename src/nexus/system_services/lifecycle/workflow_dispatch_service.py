@@ -14,8 +14,6 @@ DI dependencies (no god-object access):
     - enable_workflows: Feature flag from DistributedConfig
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import json
@@ -45,8 +43,8 @@ class WorkflowDispatchService:
     def __init__(
         self,
         *,
-        pipe_manager: PipeManager | None,
-        workflow_engine: WorkflowProtocol | None,
+        pipe_manager: "PipeManager | None",
+        workflow_engine: "WorkflowProtocol | None",
         subscription_manager: Any = None,
         enable_workflows: bool = True,
     ) -> None:
@@ -69,7 +67,7 @@ class WorkflowDispatchService:
     # PostMutationHook — called by kernel's _fire_post_mutation_hooks
     # ------------------------------------------------------------------
 
-    def on_mutation(self, event: MutationEvent) -> None:
+    def on_mutation(self, event: "MutationEvent") -> None:
         """Translate kernel MutationEvent into workflow fire + webhook broadcast."""
         from nexus.lib.mutation_hooks import MutationOp
 

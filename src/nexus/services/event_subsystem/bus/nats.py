@@ -11,8 +11,6 @@ Issue #1331: Replace Dragonfly pub/sub with NATS JetStream.
 Keep Dragonfly for caching only.
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 import logging
@@ -83,7 +81,7 @@ class NatsEventBus(EventBusBase):
     def __init__(
         self,
         nats_url: str = DEFAULT_NATS_URL,
-        record_store: RecordStoreABC | None = None,
+        record_store: "RecordStoreABC | None" = None,
         node_id: str | None = None,
         max_reconnect_attempts: int = -1,
         reconnect_time_wait: float = 2.0,
@@ -346,14 +344,14 @@ class NatsEventBus(EventBusBase):
                 logger.debug("NATS cleanup failed: %s", e)
 
     @staticmethod
-    def _make_ack_fn(msg: Msg) -> Any:
+    def _make_ack_fn(msg: "Msg") -> Any:
         async def _ack() -> None:
             await msg.ack()
 
         return _ack
 
     @staticmethod
-    def _make_nack_fn(msg: Msg) -> Any:
+    def _make_nack_fn(msg: "Msg") -> Any:
         async def _nack(delay: float | None = None) -> None:
             if delay is not None:
                 await msg.nak(delay=delay)
@@ -363,7 +361,7 @@ class NatsEventBus(EventBusBase):
         return _nack
 
     @staticmethod
-    def _make_in_progress_fn(msg: Msg) -> Any:
+    def _make_in_progress_fn(msg: "Msg") -> Any:
         async def _in_progress() -> None:
             await msg.in_progress()
 

@@ -221,7 +221,6 @@ class NexusFS(  # type: ignore[misc]
 
         # Lazy-init sentinels
         self._token_manager = None
-        self._semantic_search = None
         self._memory_api: Memory | None = None
         self._memory_config: dict[str, str | None] = {
             "zone_id": None,
@@ -442,11 +441,6 @@ class NexusFS(  # type: ignore[misc]
         Set dynamically by server lifespan; may be None if no LLM configured.
         """
         return getattr(self, "_llm_provider", None)
-
-    @property
-    def semantic_search_engine(self) -> Any | None:
-        """Public accessor for the semantic search engine instance."""
-        return self._semantic_search
 
     @property
     def memory(self) -> Any:
@@ -2101,11 +2095,6 @@ class NexusFS(  # type: ignore[misc]
             cache_url=cache_url,
             embedding_cache_ttl=embedding_cache_ttl,
         )
-        # Keep backward-compat reference on NexusFS
-        self._semantic_search = self.search_service._semantic_search  # type: ignore[assignment]
-        # Wire search engine into LLMService (Issue #684: DI instead of kernel access)
-        if hasattr(self, "llm_service") and self._semantic_search is not None:
-            self.llm_service._semantic_search_engine = self._semantic_search
 
     def close(self) -> None:
         """Close the filesystem and release resources."""

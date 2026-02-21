@@ -270,15 +270,12 @@ class VoyageAIEmbeddingProvider(EmbeddingProvider):
         Returns:
             List of embeddings
         """
-        # Voyage AI client is sync, so we run it in executor to not block
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            None,
-            lambda: self.client.embed(
-                texts,
-                model=self.model,
-                input_type="document",  # Optimize for document embedding
-            ),
+        # Voyage AI client is sync, so we run it in a thread to not block
+        result = await asyncio.to_thread(
+            self.client.embed,
+            texts,
+            model=self.model,
+            input_type="document",  # Optimize for document embedding
         )
         return cast(list[list[float]], result.embeddings)
 
@@ -303,14 +300,11 @@ class VoyageAIEmbeddingProvider(EmbeddingProvider):
         Returns:
             Embedding vector
         """
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            None,
-            lambda: self.client.embed(
-                [text],
-                model=self.model,
-                input_type="query",  # Optimize for query embedding
-            ),
+        result = await asyncio.to_thread(
+            self.client.embed,
+            [text],
+            model=self.model,
+            input_type="query",  # Optimize for query embedding
         )
         return cast(list[float], result.embeddings[0])
 
@@ -447,9 +441,8 @@ class FastEmbedProvider(EmbeddingProvider):
         Returns:
             List of embeddings
         """
-        # FastEmbed is sync and CPU-bound, run in executor
-        loop = asyncio.get_event_loop()
-        embeddings = await loop.run_in_executor(None, lambda: list(self.model.embed(texts)))
+        # FastEmbed is sync and CPU-bound, run in thread
+        embeddings = await asyncio.to_thread(lambda: list(self.model.embed(texts)))
         return [e.tolist() for e in embeddings]
 
     async def embed_text(self, text: str) -> list[float]:

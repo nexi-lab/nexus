@@ -109,7 +109,6 @@ class NexusFS(  # type: ignore[misc]
         self._memory_recall_max_age_hours = memory.recall_max_age_hours
         self._enforce_permissions = permissions.enforce
         self._enforce_zone_isolation = permissions.enforce_zone_isolation
-        self._audit_strict_mode = permissions.audit_strict_mode
         self.allow_admin_bypass = permissions.allow_admin_bypass
         self.auto_parse = parsing.auto_parse
         self.is_admin = is_admin
@@ -1039,17 +1038,14 @@ class NexusFS(  # type: ignore[misc]
                 logger.warning(f"Failed to grant direct_owner permission for {path}: {e}")
 
         # Issue #625: Observer + hook coverage for mkdir
-        # Issue #1631: Direct typed dispatch with error handling.
+        # Issue #1631: Direct typed dispatch — observer owns error policy (#2152).
         new_revision = self._increment_zone_revision()
         if (obs := self._write_observer) is not None:
-            try:
-                obs.on_mkdir(
-                    path=path,
-                    zone_id=ctx.zone_id,
-                    agent_id=ctx.agent_id,
-                )
-            except Exception as e:
-                self._handle_observer_error("mkdir", path, e)
+            obs.on_mkdir(
+                path=path,
+                zone_id=ctx.zone_id,
+                agent_id=ctx.agent_id,
+            )
         self._fire_post_mutation_hooks(
             MutationOp.MKDIR,
             path,
@@ -1204,18 +1200,15 @@ class NexusFS(  # type: ignore[misc]
                 logger.debug("Failed to clean up directory index for %s: %s", path, e)
 
         # Issue #625: Observer + hook coverage for rmdir
-        # Issue #1631: Direct typed dispatch with error handling.
+        # Issue #1631: Direct typed dispatch — observer owns error policy (#2152).
         new_revision = self._increment_zone_revision()
         if (obs := self._write_observer) is not None:
-            try:
-                obs.on_rmdir(
-                    path=path,
-                    zone_id=ctx.zone_id,
-                    agent_id=ctx.agent_id,
-                    recursive=recursive,
-                )
-            except Exception as e:
-                self._handle_observer_error("rmdir", path, e)
+            obs.on_rmdir(
+                path=path,
+                zone_id=ctx.zone_id,
+                agent_id=ctx.agent_id,
+                recursive=recursive,
+            )
         self._fire_post_mutation_hooks(
             MutationOp.RMDIR,
             path,

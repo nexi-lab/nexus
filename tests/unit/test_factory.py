@@ -75,8 +75,8 @@ def _make_mock_ctx(**overrides: Any) -> Any:
             inherit=True,
             enable_deferred=False,  # disable to simplify test
             deferred_flush_interval=0.05,
-            audit_strict_mode=True,
         ),
+        "audit": MagicMock(strict_mode=True),
         "cache_ttl_seconds": 300,
         "dist": MagicMock(
             enable_events=False,

@@ -485,7 +485,7 @@ class LockTimeout(NexusError):
 
 
 class AuditLogError(NexusError):
-    """Raised when audit logging fails and audit_strict_mode is enabled.
+    """Raised when audit logging fails and AuditConfig.strict_mode is enabled.
 
     This is an unexpected error - indicates critical infrastructure failure
     that requires immediate investigation. P0 COMPLIANCE issue.
@@ -493,12 +493,12 @@ class AuditLogError(NexusError):
     P0 COMPLIANCE: This exception prevents operations from succeeding without
     proper audit trail, ensuring compliance with SOX, HIPAA, GDPR, PCI DSS.
 
-    When audit_strict_mode=True (default):
+    When AuditConfig(strict_mode=True) (default):
     - Write operations FAIL if audit logging fails
     - Ensures complete audit trail for compliance
     - Prevents silent audit gaps
 
-    When audit_strict_mode=False:
+    When AuditConfig(strict_mode=False):
     - Write operations SUCCEED even if audit logging fails
     - Failure is logged at CRITICAL level
     - Use only in high-availability scenarios where availability > auditability

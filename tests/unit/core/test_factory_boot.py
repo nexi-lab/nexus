@@ -21,6 +21,7 @@ import pytest
 from nexus.contracts.deployment_profile import DeploymentProfile
 from nexus.contracts.exceptions import BootError
 from nexus.core.config import (
+    AuditConfig,
     BrickServices,
     DistributedConfig,
     KernelServices,
@@ -116,6 +117,7 @@ def _make_boot_context(**overrides: object) -> _BootContext:
         "engine": record_store.engine,
         "read_engine": record_store.read_engine,
         "perm": PermissionConfig(enforce=False, enable_deferred=False, enable_tiger_cache=False),
+        "audit": AuditConfig(strict_mode=False),
         "cache_ttl_seconds": 300,
         "dist": DistributedConfig(
             enable_events=False,

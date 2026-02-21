@@ -2,15 +2,18 @@
 
 Defines the contract for write observers injected into NexusFS kernel.
 The kernel calls observer methods directly via typed Protocol dispatch.
-Observers own their error policy (#55). The kernel has a defensive
-safety net (_handle_observer_error) for any errors that escape.
+Observers own their error policy entirely (#55, #2152) — the kernel
+is a pure caller with no try/except wrapper around observer calls.
 
 Current implementations:
-- RecordStoreWriteObserver: synchronous audit trail + versioning (strict_mode)
-- BufferedRecordStoreWriteObserver: async via WriteBuffer (fire-and-forget)
+- RecordStoreWriteObserver: synchronous audit trail + versioning (strict_mode
+  from AuditConfig controls raise-on-failure vs log-and-continue)
+- BufferedRecordStoreWriteObserver: async via WriteBuffer (fire-and-forget;
+  strict_mode is accepted but enqueue path cannot fail — see AuditConfig
+  docstring for the semantic gap discussion)
 
 Migrated from getattr() dispatch in #1631.
-Tracked by: #55 (Move _audit_strict_mode from kernel to observer)
+Completed by: #2152 (Move audit_strict_mode to dedicated AuditConfig)
 """
 
 from __future__ import annotations

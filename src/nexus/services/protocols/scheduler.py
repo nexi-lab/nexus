@@ -1,22 +1,33 @@
-"""Scheduler service protocol (Issue #1383, #1274).
+"""Scheduler service protocol (Issue #1383, #1274, #2360).
 
 Defines the contract for agent work-request scheduling.
-``InMemoryScheduler`` is provided as a test stub.
+``InMemoryScheduler`` is provided as a lightweight fallback for
+deployments without PostgreSQL (edge/lite profiles).
+
+Also defines ``CreditsReservationProtocol`` — the narrow interface
+the scheduler uses for credit-based priority boosting, decoupling
+the system service tier from the pay brick (LEGO §3.3).
 
 Storage Affinity: **CacheStore** — ephemeral work queue (Dragonfly sorted set).
 
 References:
     - docs/architecture/KERNEL-ARCHITECTURE.md §3
     - docs/architecture/data-storage-matrix.md (Four Pillars)
+    - docs/design/NEXUS-LEGO-ARCHITECTURE.md §2.4, §4.2
     - Issue #1383: Define 6 kernel protocol interfaces
     - Issue #1274: Astraea-style state-aware scheduler
+    - Issue #2360: Promote scheduler to always-started system service
 """
 
 from __future__ import annotations
 
+import logging
 import uuid
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any, Protocol, runtime_checkable
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,14 +90,74 @@ class SchedulerProtocol(Protocol):
 
 
 # ---------------------------------------------------------------------------
-# InMemoryScheduler — test / development stub
+# CreditsReservationProtocol — narrow interface for pay brick decoupling
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class CreditsReservationProtocol(Protocol):
+    """Narrow credit-reservation interface used by the scheduler.
+
+    Decouples SchedulerService (system service) from CreditsService (pay brick)
+    per LEGO §3.3: "A brick MUST NOT import from other bricks."
+
+    Only the two methods the scheduler actually uses are exposed:
+    ``reserve()`` for priority-boost escrow and ``release_reservation()``
+    for cancellation refunds.
+    """
+
+    async def reserve(
+        self,
+        agent_id: str,
+        amount: Decimal,
+        timeout_seconds: int = 300,
+        *,
+        zone_id: str = "",
+    ) -> str:
+        """Reserve credits for a priority boost.
+
+        Returns:
+            Reservation ID string.
+        """
+        ...
+
+    async def release_reservation(self, reservation_id: str) -> None:
+        """Void a pending reservation (full refund)."""
+        ...
+
+
+class NullCreditsReservation:
+    """No-op credits stub for deployments without the pay brick.
+
+    Structurally satisfies ``CreditsReservationProtocol``.
+    All operations succeed silently with placeholder values.
+    """
+
+    async def reserve(
+        self,
+        agent_id: str,  # noqa: ARG002
+        amount: Decimal,  # noqa: ARG002
+        timeout_seconds: int = 300,  # noqa: ARG002
+        *,
+        zone_id: str = "",  # noqa: ARG002
+    ) -> str:
+        return "null-reservation"
+
+    async def release_reservation(self, reservation_id: str) -> None:  # noqa: ARG002
+        pass
+
+
+# ---------------------------------------------------------------------------
+# InMemoryScheduler — lightweight fallback for non-PostgreSQL deployments
 # ---------------------------------------------------------------------------
 
 
 class InMemoryScheduler:
     """Priority-aware scheduler backed by a sorted list.
 
-    Intended for testing and development only — not production-grade.
+    Used as a lightweight fallback for deployments without PostgreSQL
+    (edge/lite profiles) and for testing.  Tasks are NOT persisted —
+    they will be lost on restart.
 
     Scheduling policy:
       - Higher ``priority`` values are scheduled first.
@@ -98,6 +169,9 @@ class InMemoryScheduler:
         self._seq: int = 0
         self._completed: dict[str, dict[str, Any]] = {}
         self._task_map: dict[str, AgentRequest] = {}
+        logger.warning(
+            "[SCHEDULER] Using InMemoryScheduler fallback — tasks will NOT persist across restarts"
+        )
 
     async def submit(self, request: AgentRequest) -> str:
         import heapq
@@ -178,4 +252,34 @@ class InMemoryScheduler:
 
     async def metrics(self, *, zone_id: str | None = None) -> dict[str, Any]:
         count = await self.pending_count(zone_id=zone_id)
-        return {"pending_count": count, "completed_count": len(self._completed)}
+        return {
+            "pending_count": count,
+            "completed_count": len(self._completed),
+            "queue_by_class": [],
+            "fair_share": {},
+            "use_hrrn": False,
+        }
+
+    # -----------------------------------------------------------------------
+    # Lifecycle — no-ops for InMemoryScheduler
+    # -----------------------------------------------------------------------
+
+    async def initialize(self, dsn: str = "", **kwargs: Any) -> None:  # noqa: ARG002
+        """No-op — in-memory scheduler requires no external resources."""
+
+    async def shutdown(self) -> None:
+        """Clear all queues on shutdown."""
+        self._pending.clear()
+        self._completed.clear()
+        self._task_map.clear()
+
+    async def sync_fair_share(self) -> None:
+        """No-op — in-memory scheduler has no persistent fair-share state."""
+
+    async def run_aging_sweep(self) -> int:
+        """No-op — in-memory scheduler has no aging mechanism."""
+        return 0
+
+    async def run_starvation_promotion(self, threshold_seconds: float = 300.0) -> int:  # noqa: ARG002
+        """No-op — in-memory scheduler has no starvation promotion."""
+        return 0

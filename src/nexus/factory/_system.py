@@ -510,28 +510,44 @@ def _boot_system_services(
     else:
         logger.debug("[BOOT:SYSTEM] EventLog disabled by profile")
 
-    # --- Scheduler Service (Issue #2195, two-phase) ---
+    # --- Scheduler Service (Issue #2195, #2360: promoted to always-started) ---
     scheduler_service: Any = None
-    if ctx.db_url.startswith(("postgres", "postgresql")):
-        try:
-            from nexus.services.scheduler.events import AgentStateEmitter
-            from nexus.services.scheduler.policies.fair_share import FairShareCounter
-            from nexus.services.scheduler.queue import TaskQueue
-            from nexus.services.scheduler.service import SchedulerService
+    state_emitter: Any = None
+    try:
+        from nexus.services.scheduler.events import AgentStateEmitter
+        from nexus.services.scheduler.policies.fair_share import FairShareCounter
+        from nexus.services.scheduler.queue import TaskQueue
+        from nexus.services.scheduler.service import SchedulerService
 
-            _sched_state_emitter = AgentStateEmitter()
-            _sched_fair_share = FairShareCounter()
-            scheduler_service = SchedulerService(
-                queue=TaskQueue(),
-                db_pool=None,
-                credits_service=None,
-                state_emitter=_sched_state_emitter,
-                fair_share=_sched_fair_share,
-                use_hrrn=True,
-            )
-            logger.debug("[BOOT:SYSTEM] SchedulerService created (two-phase, pool=deferred)")
-        except Exception as exc:
-            logger.warning("[BOOT:SYSTEM] SchedulerService unavailable: %s", exc)
+        state_emitter = AgentStateEmitter()
+        scheduler_service = SchedulerService(
+            queue=TaskQueue(),
+            db_pool=None,
+            credits_service=None,
+            state_emitter=state_emitter,
+            fair_share=FairShareCounter(),
+            use_hrrn=True,
+        )
+        logger.debug("[BOOT:SYSTEM] SchedulerService created (two-phase, pool=deferred)")
+    except Exception as exc:
+        logger.warning(
+            "[BOOT:SYSTEM] SchedulerService unavailable, falling back to InMemoryScheduler: %s",
+            exc,
+        )
+        try:
+            from nexus.services.protocols.scheduler import InMemoryScheduler
+
+            scheduler_service = InMemoryScheduler()
+        except Exception:
+            # nexus.services namespace unavailable (e.g., nats not installed)
+            pass
+
+    # Wire state_emitter into async_agent_registry if both are available
+    import contextlib
+
+    with contextlib.suppress(Exception):
+        if state_emitter is not None and async_agent_registry is not None:
+            async_agent_registry._state_emitter = state_emitter
 
     # =====================================================================
     # Assemble result
@@ -567,9 +583,10 @@ def _boot_system_services(
         "scoped_hook_engine": scoped_hook_engine,
         "eviction_manager": eviction_manager,
         "zone_lifecycle": zone_lifecycle,
-        # Issue #2195: EventLog + Scheduler
+        # Issue #2195, #2360: EventLog + Scheduler (always-started)
         "event_log": event_log,
         "scheduler_service": scheduler_service,
+        "scheduler_state_emitter": state_emitter,
     }
 
     elapsed = time.perf_counter() - t0

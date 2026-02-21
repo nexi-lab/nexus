@@ -1,14 +1,18 @@
-"""Tests for SchedulerProtocol, AgentRequest, and InMemoryScheduler (Issue #1383)."""
+"""Tests for SchedulerProtocol, AgentRequest, InMemoryScheduler,
+and CreditsReservationProtocol (Issues #1383, #2360)."""
 
 from __future__ import annotations
 
 import dataclasses
+from decimal import Decimal
 
 import pytest
 
 from nexus.services.protocols.scheduler import (
     AgentRequest,
+    CreditsReservationProtocol,
     InMemoryScheduler,
+    NullCreditsReservation,
     SchedulerProtocol,
 )
 
@@ -229,3 +233,65 @@ class TestInMemorySchedulerFunctional:
         m = await scheduler.metrics()
         assert isinstance(m, dict)
         assert "pending_count" in m
+
+    async def test_metrics_shape_matches_production(self) -> None:
+        """InMemoryScheduler.metrics() should return keys compatible with SchedulerService."""
+        scheduler = InMemoryScheduler()
+        m = await scheduler.metrics()
+        assert "queue_by_class" in m
+        assert "fair_share" in m
+        assert "use_hrrn" in m
+        assert m["use_hrrn"] is False
+
+    async def test_lifecycle_methods_exist(self) -> None:
+        """InMemoryScheduler has no-op lifecycle methods for production fallback."""
+        scheduler = InMemoryScheduler()
+        await scheduler.initialize()
+        await scheduler.sync_fair_share()
+        assert await scheduler.run_aging_sweep() == 0
+        assert await scheduler.run_starvation_promotion() == 0
+        await scheduler.shutdown()
+
+    async def test_shutdown_clears_state(self) -> None:
+        scheduler = InMemoryScheduler()
+        await scheduler.submit(AgentRequest(agent_id="a1", zone_id="z1"))
+        assert await scheduler.pending_count() == 1
+        await scheduler.shutdown()
+        assert await scheduler.pending_count() == 0
+
+
+# ---------------------------------------------------------------------------
+# CreditsReservationProtocol tests (Issue #2360)
+# ---------------------------------------------------------------------------
+
+
+class TestCreditsReservationProtocol:
+    """Verify CreditsReservationProtocol structural contract."""
+
+    def test_expected_methods(self) -> None:
+        expected = {"reserve", "release_reservation"}
+        actual = {
+            name
+            for name in dir(CreditsReservationProtocol)
+            if not name.startswith("_") and callable(getattr(CreditsReservationProtocol, name))
+        }
+        assert expected <= actual
+
+    def test_null_credits_satisfies_protocol(self) -> None:
+        null = NullCreditsReservation()
+        assert isinstance(null, CreditsReservationProtocol)
+
+
+@pytest.mark.asyncio
+class TestNullCreditsReservation:
+    """Verify NullCreditsReservation is a functional no-op."""
+
+    async def test_reserve_returns_string(self) -> None:
+        null = NullCreditsReservation()
+        result = await null.reserve("agent-1", Decimal("10"))
+        assert isinstance(result, str)
+        assert result == "null-reservation"
+
+    async def test_release_reservation_is_noop(self) -> None:
+        null = NullCreditsReservation()
+        await null.release_reservation("any-id")  # Should not raise

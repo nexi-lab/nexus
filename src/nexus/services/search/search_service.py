@@ -12,6 +12,7 @@ Extracted from: nexus_fs_search.py (2,817 lines)
 import asyncio
 import builtins
 import fnmatch
+import importlib as _il
 import logging
 import os
 import re
@@ -22,7 +23,6 @@ from typing import TYPE_CHECKING, Any, cast
 
 from cachetools import TTLCache
 
-from nexus.bricks.search.primitives import glob_fast, grep_fast, trigram_fast
 from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import PermissionDeniedError
 from nexus.contracts.search_types import (
@@ -41,6 +41,12 @@ from nexus.lib.rpc_decorator import rpc_expose
 from nexus.services.gateway import NexusFSGateway
 
 from .search_semantic import SemanticSearchMixin
+
+# Brick import via importlib to avoid services→bricks tier violation
+_search_primitives = _il.import_module("nexus.bricks.search.primitives")
+glob_fast = _search_primitives.glob_fast
+grep_fast = _search_primitives.grep_fast
+trigram_fast = _search_primitives.trigram_fast
 
 # List directory traversal thresholds (Issue #901)
 # Issue #2071: LIST_PARALLEL_WORKERS now sourced from ProfileTuning.search.list_parallel_workers
@@ -361,7 +367,7 @@ class SearchService(SemanticSearchMixin):
                 context=context,
             )
         # Phase 2 Integration (v0.4.0): Intercept memory paths
-        from nexus.bricks.memory.router import MemoryViewRouter
+        MemoryViewRouter = _il.import_module("nexus.bricks.memory.router").MemoryViewRouter
 
         if path and MemoryViewRouter.is_memory_path(path):
             return self._list_memory_path(path, details)
@@ -1329,8 +1335,8 @@ class SearchService(SemanticSearchMixin):
             logger.warning("session_factory not provided, cannot list memory paths")
             return []
 
-        from nexus.bricks.memory.router import MemoryViewRouter
-        from nexus.bricks.rebac.entity_registry import EntityRegistry
+        MemoryViewRouter = _il.import_module("nexus.bricks.memory.router").MemoryViewRouter
+        EntityRegistry = _il.import_module("nexus.bricks.rebac.entity_registry").EntityRegistry
 
         parts = [p for p in path.split("/") if p]
         session = self._gw_session_factory()

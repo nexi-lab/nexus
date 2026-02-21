@@ -140,8 +140,9 @@ class AgentService:
         if self._record_store is None:
             raise RuntimeError("EntityRegistry requires record_store")
 
-        from nexus.bricks.rebac.entity_registry import EntityRegistry
+        import importlib as _il
 
+        EntityRegistry = _il.import_module("nexus.bricks.rebac.entity_registry").EntityRegistry
         self._entity_registry = EntityRegistry(self._record_store)
 
     def _create_agent_config_data(

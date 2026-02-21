@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock
 
 import pytest
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.services.event_subsystem.log.exporter_registry import ExporterRegistry
 from nexus.services.event_subsystem.types import FileEvent, FileEventType
 
@@ -17,7 +18,7 @@ def _make_event(event_id: str = "evt-1", path: str = "/test.txt") -> FileEvent:
     return FileEvent(
         type=FileEventType.FILE_WRITE,
         path=path,
-        zone_id="default",
+        zone_id=ROOT_ZONE_ID,
         event_id=event_id,
     )
 

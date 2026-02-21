@@ -4134,3 +4134,6 @@ class ReBACManager:
 
 
 ZoneAwareReBACManager = ReBACManager
+
+# Backward-compat alias — many tests and call-sites still reference the old name.
+EnhancedReBACManager = ReBACManager

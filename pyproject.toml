@@ -864,8 +864,6 @@ ignore_imports = [
     "nexus.storage.persistent_view_postgres -> nexus.bricks.cache.protocols",
     # cache -> rebac transitive chain (via nexus.server.telemetry, Issue #2179)
     "nexus.server.telemetry -> nexus.bricks.rebac.rebac_tracing",
-    # skills -> search: transitive via nexus.backends (Issue #2188)
-    "nexus.backends.sync_pipeline -> nexus.bricks.search.primitives.glob_fast",
     # a2a -> ipc: TYPE_CHECKING imports only (runtime imports now use importlib)
     "nexus.bricks.a2a.messaging_adapters -> nexus.bricks.ipc.envelope",
     "nexus.bricks.a2a.stores.vfs -> nexus.bricks.ipc.storage.protocol",

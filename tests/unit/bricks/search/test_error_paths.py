@@ -132,19 +132,19 @@ class TestVerifyImportsErrors:
 
     def test_verify_imports_with_patched_missing_module(self) -> None:
         """Simulate a required module being unavailable."""
-        import importlib
+        import importlib.util
         from unittest.mock import patch
 
         from nexus.bricks.search.manifest import verify_imports
 
-        original_import = importlib.import_module
+        original_find_spec = importlib.util.find_spec
 
-        def mock_import(name: str) -> Any:
+        def mock_find_spec(name: str, *args: Any, **kwargs: Any) -> Any:
             if name == "nexus.bricks.search.query_service":
-                raise ImportError(f"No module named '{name}'")
-            return original_import(name)
+                return None
+            return original_find_spec(name, *args, **kwargs)
 
-        with patch("importlib.import_module", side_effect=mock_import):
+        with patch("importlib.util.find_spec", side_effect=mock_find_spec):
             result = verify_imports()
             assert result["nexus.bricks.search.query_service"] is False
 
@@ -229,7 +229,7 @@ class TestSearchBrickManifest:
         assert m.protocol == "SearchBrickProtocol"
         assert m.version == "1.0.0"
         assert isinstance(m.config_schema, dict)
-        assert isinstance(m.dependencies, list)
+        assert isinstance(m.dependencies, tuple)
 
     def test_manifest_is_frozen(self) -> None:
         from nexus.bricks.search.manifest import SearchBrickManifest

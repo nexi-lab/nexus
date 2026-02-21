@@ -235,7 +235,7 @@ def _boot_system_services(
     # --- Workspace Registry ---
     workspace_registry: Any = None
     try:
-        from nexus.services.workspace.workspace_registry import WorkspaceRegistry
+        from nexus.bricks.workspace.workspace_registry import WorkspaceRegistry
 
         workspace_registry = WorkspaceRegistry(
             metadata=ctx.metadata_store,

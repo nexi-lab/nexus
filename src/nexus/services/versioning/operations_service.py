@@ -13,12 +13,11 @@ References:
     - services/versioning/operation_undo_service.py (OperationUndoService)
 """
 
+from collections.abc import Callable
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from nexus.services.versioning.operation_undo_service import OperationUndoService
 
 

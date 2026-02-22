@@ -17,6 +17,7 @@ References:
 """
 
 import json
+from collections.abc import Callable
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
@@ -26,8 +27,6 @@ from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.storage.models import FilePathModel, OperationLogModel
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from sqlalchemy.orm import Session
 
     from nexus.storage.backend_base import Backend

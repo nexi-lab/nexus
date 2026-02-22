@@ -25,11 +25,9 @@ Issue #1246: BufferedRecordStoreWriteObserver implements Decision 13A (write-beh
 """
 
 import logging
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from nexus.contracts.metadata import FileMetadata
-    from nexus.storage.record_store import RecordStoreABC
+from nexus.contracts.metadata import FileMetadata
+from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 

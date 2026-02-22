@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
-from nexus.core.event_bus import FileEvent
+from nexus.core.file_events import FileEvent
 
 
 @runtime_checkable

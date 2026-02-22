@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from nexus.bricks.memory._temporal import parse_datetime, validate_temporal_params
 from nexus.bricks.memory.router import MemoryViewRouter
+from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext, Permission
 
 logger = logging.getLogger(__name__)
@@ -567,7 +568,7 @@ class Memory:
             return
 
         # Use default zone if not provided
-        effective_zone_id = zone_id or "root"
+        effective_zone_id = zone_id or ROOT_ZONE_ID
 
         async def _do_store() -> None:
             _store = SQLAlchemyRecordStore(db_url=db_url)

@@ -7,7 +7,7 @@ Storage Affinity: **RecordStore** — relational upsert via RecordStoreProtocol.
 
 Upsert semantics: DELETE + INSERT (portable across PostgreSQL and SQLite).
 
-Moved from nexus.bricks.cache.persistent_view_postgres (Issue #2055) — this file
+Moved from nexus.cache.persistent_view_postgres (Issue #2055) — this file
 has RecordStore affinity, not cache affinity.
 """
 
@@ -23,7 +23,7 @@ from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.persistent_view import PersistentView
 
 if TYPE_CHECKING:
-    from nexus.bricks.cache.protocols import RecordStoreProtocol
+    from nexus.cache.protocols import RecordStoreProtocol
 
 logger = logging.getLogger(__name__)
 

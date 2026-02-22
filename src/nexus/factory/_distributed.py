@@ -103,7 +103,7 @@ def _create_distributed_infra(
             coordination_url_resolved = coordination_url or get_redis_url()
             event_url_resolved = coordination_url_resolved or get_dragonfly_url()
             if event_url_resolved:
-                from nexus.bricks.cache.dragonfly import DragonflyClient
+                from nexus.cache.dragonfly import DragonflyClient
                 from nexus.services.event_subsystem.bus import RedisEventBus
 
                 event_client = DragonflyClient(url=event_url_resolved)

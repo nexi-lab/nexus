@@ -18,9 +18,17 @@ Usage:
 
     perm_cache = brick.permission_cache
     tiger_cache = brick.tiger_cache
+
+Note:
+    DragonflyCacheStore is lazily imported to avoid pulling in the ``redis``
+    package at import time. Access it via::
+
+        from nexus.cache import DragonflyCacheStore
+        # or
+        from nexus.cache.dragonfly import DragonflyCacheStore
 """
 
-from nexus.cache.backend_wrapper import (
+from nexus.backends.caching_backend_wrapper import (
     CacheStrategy,
     CacheWrapperConfig,
     CachingBackendWrapper,
@@ -32,15 +40,15 @@ from nexus.cache.base import (
     TigerCacheProtocol,
 )
 from nexus.cache.brick import CacheBrick
-from nexus.cache.dragonfly import DragonflyCacheStore
 from nexus.cache.factory import CacheFactory
 from nexus.cache.inmemory import InMemoryCacheStore
 from nexus.cache.settings import CacheSettings
+from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
 
 __all__ = [
     # Brick facade (Issue #1524)
     "CacheBrick",
-    # Factory + config (kept temporarily, will be absorbed by CacheBrick)
+    # Factory + config (deprecated — use CacheBrick instead)
     "CacheFactory",
     "CacheSettings",
     # CachingBackendWrapper — transparent caching decorator for any Backend (#1392)
@@ -52,7 +60,20 @@ __all__ = [
     "PermissionCacheProtocol",
     "ResourceMapCacheProtocol",
     "TigerCacheProtocol",
+    # Fourth Pillar ABC — canonical home is nexus.contracts.cache_store (Issue #2055)
+    "CacheStoreABC",
+    "NullCacheStore",
     # CacheStoreABC drivers (for DI into CacheBrick/NexusFS)
-    "DragonflyCacheStore",
+    # DragonflyCacheStore — lazy import (use: from nexus.cache.dragonfly import ...)
     "InMemoryCacheStore",
 ]
+
+
+def __getattr__(name: str) -> object:
+    """Lazy import for DragonflyCacheStore to avoid pulling in redis at import time."""
+    if name == "DragonflyCacheStore":
+        from nexus.cache.dragonfly import DragonflyCacheStore
+
+        globals()["DragonflyCacheStore"] = DragonflyCacheStore
+        return DragonflyCacheStore
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -1185,8 +1185,8 @@ class OAuthService:
             TokenManager instance
         """
         if self._token_manager is None:
+            from nexus.bricks.auth.oauth.token_manager import TokenManager
             from nexus.core.context_utils import get_database_url
-            from nexus.server.auth import TokenManager
 
             # Use centralized database URL resolution
             db_path = get_database_url(self.nexus_fs) if self.nexus_fs else None

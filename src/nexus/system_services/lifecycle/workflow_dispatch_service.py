@@ -153,7 +153,7 @@ class WorkflowDispatchService:
         from nexus.core.pipe import PipeError
 
         try:
-            self._pipe_manager.mkpipe(
+            self._pipe_manager.create(
                 _WORKFLOW_PIPE_PATH,
                 capacity=_WORKFLOW_PIPE_CAPACITY,
                 owner_id="kernel",

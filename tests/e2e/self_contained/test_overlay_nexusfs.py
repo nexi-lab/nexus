@@ -168,6 +168,13 @@ def nexus_fs(
     # but factory doesn't pass it through yet)
     nx._overlay_resolver = overlay_resolver
 
+    # Ensure workspace_registry exists (factory may fail to create it if
+    # ReBACManager is unavailable — rebac_manager is optional for the registry)
+    if nx._workspace_registry is None:
+        from nexus.services.workspace.workspace_registry import WorkspaceRegistry
+
+        nx._workspace_registry = WorkspaceRegistry(metadata=metadata_store, rebac_manager=None)
+
     # Register workspace with overlay config so _get_overlay_config() finds it
     nx._workspace_registry.register_workspace(
         path="/ws/agent-a",

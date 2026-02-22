@@ -103,7 +103,7 @@ class TestTransactionalOutboxIntegration:
         mock_bus.publish = AsyncMock(side_effect=capture_publish)
 
         worker = EventDeliveryWorker(
-            record_store,
+            record_store.session_factory,
             event_bus=mock_bus,
             poll_interval_ms=50,
         )
@@ -235,7 +235,7 @@ class TestTransactionalOutboxIntegration:
         mock_bus.publish = AsyncMock()
 
         worker = EventDeliveryWorker(
-            record_store,
+            record_store.session_factory,
             event_bus=mock_bus,
             poll_interval_ms=50,
         )

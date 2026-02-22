@@ -20,7 +20,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
-from nexus.bricks.rebac.enforcer import check_stale_session
+from nexus.contracts.agent_utils import check_stale_session
 from nexus.contracts.types import OperationContext, Permission
 from nexus.rebac.utils.zone import normalize_zone_id
 

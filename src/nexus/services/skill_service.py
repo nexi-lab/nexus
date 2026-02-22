@@ -25,7 +25,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, cast
 
-from nexus.core.exceptions import PermissionDeniedError, ValidationError
+from nexus.contracts.exceptions import PermissionDeniedError, ValidationError
 from nexus.core.rpc_decorator import rpc_expose
 from nexus.skills.types import PromptContext, SkillContent, SkillInfo
 

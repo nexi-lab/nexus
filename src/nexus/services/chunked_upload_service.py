@@ -19,7 +19,7 @@ import zlib
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.exceptions import (
+from nexus.contracts.exceptions import (
     BackendError,
     UploadChecksumMismatchError,
     UploadExpiredError,

@@ -19,8 +19,8 @@ import time
 from concurrent.futures import as_completed
 from typing import TYPE_CHECKING, Any
 
+from nexus.contracts.types import Permission
 from nexus.core.exceptions import PermissionDeniedError
-from nexus.core.permissions import Permission
 from nexus.core.rpc_decorator import rpc_expose
 from nexus.raft.zone_manager import ROOT_ZONE_ID
 
@@ -427,7 +427,7 @@ class SearchListingMixin:
         if context:
             list_context = replace(context, backend_path=route.backend_path)
         else:
-            from nexus.core.permissions import OperationContext
+            from nexus.contracts.types import OperationContext
 
             list_context = OperationContext(
                 user_id="anonymous", groups=[], backend_path=route.backend_path
@@ -444,7 +444,7 @@ class SearchListingMixin:
 
         # Permission filtering
         if self._enforce_permissions and context:
-            from nexus.core.permissions import OperationContext
+            from nexus.contracts.types import OperationContext
 
             filter_ctx = context if isinstance(context, OperationContext) else self._default_context
             assert filter_ctx is not None  # guaranteed by isinstance or _default_context
@@ -718,7 +718,7 @@ class SearchListingMixin:
         if not self._enforce_permissions:
             return allowed_set, backend_dirs
 
-        from nexus.core.permissions import OperationContext
+        from nexus.contracts.types import OperationContext
 
         perm_start = time.time()
         ctx_raw = context or self._default_context

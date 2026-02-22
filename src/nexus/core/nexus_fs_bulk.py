@@ -626,7 +626,7 @@ class NexusFSBulkMixin:
                 modified_at=now,
                 version=new_version,
                 created_by=getattr(self, "agent_id", None) or getattr(self, "user_id", None),
-                zone_id=zone_id or "root",
+                zone_id=zone_id or ROOT_ZONE_ID,
             )
             metadata_list.append(metadata)
 
@@ -713,7 +713,7 @@ class NexusFSBulkMixin:
 
         # Create parent tuples and grant direct_owner for new files
         ctx = context if context is not None else self._default_context
-        zone_id_for_perms = ctx.zone_id or "root"
+        zone_id_for_perms = ctx.zone_id or ROOT_ZONE_ID
 
         # Batch hierarchy tuple creation
         _hierarchy_start = time.perf_counter()

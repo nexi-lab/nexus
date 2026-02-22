@@ -1,6 +1,6 @@
 """Tests for Message types (src/nexus/llm/message.py)."""
 
-from nexus.bricks.llm.message import (
+from nexus.contracts.llm_types import (
     ContentType,
     ImageContent,
     ImageDetail,

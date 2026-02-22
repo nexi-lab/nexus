@@ -15,13 +15,13 @@ from pydantic import SecretStr
 from nexus.bricks.llm.cancellation import AsyncCancellationToken
 from nexus.bricks.llm.config import LLMConfig
 from nexus.bricks.llm.exceptions import LLMCancellationError
-from nexus.bricks.llm.message import Message, MessageRole, TextContent
 from nexus.bricks.llm.provider import (
     CACHE_PROMPT_SUPPORTED_MODELS,
     LiteLLMProvider,
     LiteLLMResponse,
     LLMProvider,
 )
+from nexus.contracts.llm_types import Message, MessageRole, TextContent
 
 
 def _make_config(**overrides: Any) -> LLMConfig:

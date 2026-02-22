@@ -36,7 +36,9 @@ from nexus.bricks.llm.exceptions import (
     LLMTokenCountError,
 )
 from nexus.bricks.llm.manifest import LLMBrickManifest, verify_imports
-from nexus.bricks.llm.message import (
+from nexus.bricks.llm.metrics import LLMMetrics, ResponseLatency, TokenUsage
+from nexus.bricks.llm.provider import LiteLLMProvider, LLMProvider, LLMResponse
+from nexus.contracts.llm_types import (
     ContentType,
     ImageContent,
     ImageDetail,
@@ -46,8 +48,6 @@ from nexus.bricks.llm.message import (
     ToolCall,
     ToolFunction,
 )
-from nexus.bricks.llm.metrics import LLMMetrics, ResponseLatency, TokenUsage
-from nexus.bricks.llm.provider import LiteLLMProvider, LLMProvider, LLMResponse
 
 __all__ = [
     # Manifest

@@ -28,7 +28,7 @@ from typing import Any
 
 import yaml
 
-from nexus.core.registry import BaseRegistry
+from nexus.contracts.registry import BaseRegistry
 
 logger = logging.getLogger(__name__)
 

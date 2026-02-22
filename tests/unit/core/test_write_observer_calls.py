@@ -105,7 +105,7 @@ class TestDeleteCallsObserver:
         kwargs = observer.on_delete.call_args.kwargs
         assert kwargs["path"] == "/test.txt"
 
-    def test_delete_passes_snapshot_hash(self, nx: NexusFS, observer: MagicMock) -> None:
+    def test_delete_passes_metadata(self, nx: NexusFS, observer: MagicMock) -> None:
         result = nx.write("/test.txt", b"content")
         etag = result["etag"]
         observer.reset_mock()
@@ -113,7 +113,7 @@ class TestDeleteCallsObserver:
         nx.delete("/test.txt")
 
         kwargs = observer.on_delete.call_args.kwargs
-        assert kwargs["snapshot_hash"] == etag
+        assert kwargs["metadata"].etag == etag
 
 
 class TestRenameCallsObserver:
@@ -226,8 +226,8 @@ class TestRmdirCallsObserver:
 # =========================================================================
 
 
-class TestPostMutationHookCoverage:
-    """Verify _fire_post_mutation_hooks fires for all mutation operations."""
+class TestVFSObserverCoverage:
+    """Verify KernelDispatch OBSERVE fires for all mutation operations."""
 
     @pytest.fixture
     def hook(self) -> MagicMock:
@@ -244,7 +244,7 @@ class TestPostMutationHookCoverage:
             parsing=ParseConfig(auto_parse=False),
             system_services=SystemServices(write_observer=observer),
         )
-        nx.register_mutation_hook(hook)
+        nx.register_observe(hook)
         yield nx
         nx.close()
 

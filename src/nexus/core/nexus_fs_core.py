@@ -23,9 +23,9 @@ from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.constants import SYSTEM_PATH_PREFIX
 from nexus.contracts.exceptions import BackendError, ConflictError, NexusFileNotFoundError
 from nexus.contracts.types import Permission
+from nexus.contracts.vfs_hooks import MutationOp
 from nexus.core.hash_fast import hash_content
 from nexus.core.metadata import FileMetadata
-from nexus.lib.mutation_hooks import MutationOp
 from nexus.lib.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
@@ -66,8 +66,7 @@ class NexusFSCoreMixin:
         _event_tasks: set[asyncio.Task[Any]]  # Issue #913: Tracked async event tasks
         _overlay_resolver: Any  # Issue #1264: OverlayResolver service
         _workspace_registry: Any  # Workspace registry for overlay config lookup
-        _write_observer: Any  # Duck-typed: on_write()/on_delete()
-        _audit_strict_mode: bool
+        _dispatch: Any  # KernelDispatch — unified two-phase VFS dispatch
 
         @property
         def zone_id(self) -> str | None: ...
@@ -239,53 +238,6 @@ class NexusFSCoreMixin:
                     event_context.get("zone_id", "root"),
                 )
             )
-
-    def _fire_post_mutation_hooks(
-        self,
-        op: MutationOp,
-        path: str,
-        zone_id: str,
-        revision: int,
-        *,
-        agent_id: str | None = None,
-        user_id: str | None = None,
-        timestamp: str | None = None,
-        etag: str | None = None,
-        size: int | None = None,
-        version: int | None = None,
-        is_new: bool = False,
-        new_path: str | None = None,
-    ) -> None:
-        """Fire MutationEvent to all registered post-mutation hooks.
-
-        Called after every successful write/delete/rename. Error policy:
-        fire-and-forget — hook failures are logged but never abort the mutation.
-        """
-        hooks = getattr(self, "_post_mutation_hooks", None)
-        if not hooks:
-            return
-
-        from nexus.lib.mutation_hooks import MutationEvent
-
-        event = MutationEvent(
-            operation=op,
-            path=path,
-            zone_id=zone_id,
-            revision=revision,
-            agent_id=agent_id,
-            user_id=user_id,
-            timestamp=timestamp,
-            etag=etag,
-            size=size,
-            version=version,
-            is_new=is_new,
-            new_path=new_path,
-        )
-        for hook in hooks:
-            try:
-                hook.on_mutation(event)
-            except Exception as exc:
-                logger.warning("Post-mutation hook %s failed: %s", type(hook).__name__, exc)
 
     async def _start_workflow_consumer(self) -> None:
         """Background consumer for bounded workflow event queue (#1522)."""
@@ -1035,9 +987,8 @@ class NexusFSCoreMixin:
         # Apply dynamic_viewer filtering for CSV files
         content = self._apply_dynamic_viewer_filter_if_needed(path, content, context)
 
-        # Issue #2033 Phase 5: Dispatch post-read hooks (dynamic viewer, tracking, etc.)
-        _pipeline = getattr(self, "_hook_pipeline", None)
-        if _pipeline is not None and _pipeline.read_hook_count > 0:
+        # Issue #900: Unified INTERCEPT for read (dynamic viewer, tracking, etc.)
+        if self._dispatch.read_hook_count > 0:
             from nexus.contracts.vfs_hooks import ReadHookContext
 
             _read_ctx = ReadHookContext(
@@ -1049,7 +1000,7 @@ class NexusFSCoreMixin:
                 content=content,
                 content_hash=meta.etag,
             )
-            _pipeline.run_post_read(_read_ctx)
+            self._dispatch.intercept_post_read(_read_ctx)
             content = _read_ctx.content or content  # hooks may have filtered content
 
         # Handle parsed=True flag - return parsed content instead of raw bytes
@@ -1739,16 +1690,18 @@ class NexusFSCoreMixin:
 
         self.metadata.put(new_meta)
 
-        # Sync to RecordStore via write_observer (closes gap: write_stream was missing this)
-        self._notify_observer(
-            "write",
-            path,
-            metadata=new_meta,
-            is_new=(meta is None),
+        # Issue #900: Unified INTERCEPT for write_stream
+        from nexus.contracts.vfs_hooks import WriteHookContext
+
+        _ws_ctx = WriteHookContext(
             path=path,
+            content=b"",  # stream — content not available in single buffer
+            context=None,
             zone_id=zone_id,
-            agent_id=agent_id,
+            is_new_file=(meta is None),
+            metadata=new_meta,
         )
+        self._dispatch.intercept_post_write(_ws_ctx)
 
         return {
             "etag": content_hash,
@@ -1996,17 +1949,21 @@ class NexusFSCoreMixin:
         if cache_observer is not None:
             cache_observer.on_write(path, new_revision, zone_id or "root")
 
-        # Issue #625: Fire post-mutation hooks for single-file write
-        self._fire_post_mutation_hooks(
-            MutationOp.WRITE,
-            path,
-            zone_id or ROOT_ZONE_ID,
-            new_revision,
-            agent_id=agent_id,
-            etag=content_hash,
-            size=len(content),
-            version=new_version,
-            is_new=(meta is None),
+        # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
+        from nexus.contracts.vfs_hooks import MutationEvent
+
+        self._dispatch.notify(
+            MutationEvent(
+                operation=MutationOp.WRITE,
+                path=path,
+                zone_id=zone_id or ROOT_ZONE_ID,
+                revision=new_revision,
+                agent_id=agent_id,
+                etag=content_hash,
+                size=len(content),
+                version=new_version,
+                is_new=(meta is None),
+            )
         )
 
         # Leopard-style: Add new file to ancestor directory grants
@@ -2098,26 +2055,6 @@ class NexusFSCoreMixin:
         if self.auto_parse:
             self._auto_parse_file(path)
 
-        # Issue #2033 Phase 5: Dispatch post-write hooks (auto-parse, tiger cache, etc.)
-        _pipeline = getattr(self, "_hook_pipeline", None)
-        if _pipeline is not None and _pipeline.write_hook_count > 0:
-            from nexus.contracts.vfs_hooks import WriteHookContext
-
-            _write_ctx = WriteHookContext(
-                path=path,
-                content=content,
-                context=context,
-                zone_id=zone_id,
-                agent_id=agent_id,
-                is_new_file=(meta is None),
-                content_hash=content_hash,
-                old_metadata=meta,
-                new_version=new_version,
-                snapshot_hash=snapshot_hash,
-                metadata_snapshot=metadata_snapshot,
-            )
-            _pipeline.run_post_write(_write_ctx)
-
         # Issue #1752: Auto-track write in active transaction (snapshot for rollback)
         # Issue #2131 (14A): Direct attribute access (set in __init__ via BrickServices)
         if self._snapshot_service is not None:
@@ -2127,20 +2064,22 @@ class NexusFSCoreMixin:
                     _txn_id, path, snapshot_hash, metadata_snapshot, content_hash
                 )
 
-        # Task #45: Sync to RecordStore via write_observer (audit trail + version history)
-        # Observer is optional — injected by factory.py, not created by kernel.
-        # Issue #1246: Unified error handling via _notify_observer.
-        self._notify_observer(
-            "write",
-            path,
-            metadata=metadata,
-            is_new=(meta is None),
+        # Issue #900: Unified two-phase dispatch — INTERCEPT (observer + hooks)
+        from nexus.contracts.vfs_hooks import WriteHookContext
+
+        _write_ctx = WriteHookContext(
             path=path,
+            content=content,
+            context=context,
             zone_id=zone_id,
             agent_id=agent_id,
-            snapshot_hash=snapshot_hash,
-            metadata_snapshot=metadata_snapshot,
+            is_new_file=(meta is None),
+            content_hash=content_hash,
+            metadata=metadata,
+            old_metadata=meta,
+            new_version=new_version,
         )
+        self._dispatch.intercept_post_write(_write_ctx)
 
         # v0.7.0: Fire workflow event for automatic trigger execution
         is_new_file = meta is None or meta.etag is None
@@ -2713,33 +2652,34 @@ class NexusFSCoreMixin:
         # Store all metadata in a single transaction (with version history)
         self.metadata.put_batch(metadata_list)
 
-        # Task #45: Sync batch to RecordStore (audit trail + version history)
-        # Issue #1246: Unified error handling — no longer silently suppressed.
+        # Issue #900: Unified two-phase dispatch — INTERCEPT (observer + hooks)
         items = [
             (metadata, existing_metadata.get(metadata.path) is None) for metadata in metadata_list
         ]
-        self._notify_observer(
-            "write_batch",
-            f"batch({len(metadata_list)} files)",
-            items=items,
+        self._dispatch.intercept_post_write_batch(
+            items,
             zone_id=zone_id,
             agent_id=agent_id,
         )
 
-        # Issue #625: Fire post-mutation hooks for each file in the batch
+        # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
+        from nexus.contracts.vfs_hooks import MutationEvent
+
         new_revision = self._increment_zone_revision()
         for metadata in metadata_list:
             is_new = existing_metadata.get(metadata.path) is None
-            self._fire_post_mutation_hooks(
-                MutationOp.WRITE,
-                metadata.path,
-                zone_id or ROOT_ZONE_ID,
-                new_revision,
-                agent_id=agent_id,
-                etag=metadata.etag,
-                size=metadata.size,
-                version=metadata.version,
-                is_new=is_new,
+            self._dispatch.notify(
+                MutationEvent(
+                    operation=MutationOp.WRITE,
+                    path=metadata.path,
+                    zone_id=zone_id or ROOT_ZONE_ID,
+                    revision=new_revision,
+                    agent_id=agent_id,
+                    etag=metadata.etag,
+                    size=metadata.size,
+                    version=metadata.version,
+                    is_new=is_new,
+                )
             )
 
         # Issue #548: Create parent tuples and grant direct_owner for new files
@@ -2852,46 +2792,6 @@ class NexusFSCoreMixin:
                 self._auto_parse_file(path)
 
         return results
-
-    def _notify_observer(self, operation: str, op_path: str, **kwargs: Any) -> None:
-        """Notify the write observer of a mutation, with unified error policy.
-
-        Replaces the inconsistent error handling where single writes used
-        audit_strict_mode but batch/delete/rename silently suppressed errors.
-
-        Issue #1246: All observer calls now follow the same policy:
-        - audit_strict_mode=True: raise AuditLogError on failure
-        - audit_strict_mode=False: log critical warning, continue
-
-        Args:
-            operation: One of 'write', 'write_batch', 'delete', 'rename'.
-            op_path: Primary path affected (for error messages only).
-            **kwargs: Passed directly to the observer method.
-        """
-        if not self._write_observer:
-            return
-
-        try:
-            method = getattr(self._write_observer, f"on_{operation}")
-            method(**kwargs)
-        except Exception as e:
-            from nexus.contracts.exceptions import AuditLogError
-
-            if self._audit_strict_mode:
-                logger.error(
-                    f"AUDIT LOG FAILURE: {operation} on '{op_path}' ABORTED. "
-                    f"Error: {e}. Set audit_strict_mode=False to allow writes without audit logs."
-                )
-                raise AuditLogError(
-                    f"Operation aborted: audit logging failed for {operation}: {e}",
-                    path=op_path,
-                    original_error=e,
-                ) from e
-            else:
-                logger.critical(
-                    f"AUDIT LOG FAILURE: {operation} on '{op_path}' SUCCEEDED but audit log FAILED. "
-                    f"Error: {e}. This creates an audit trail gap!"
-                )
 
     def _auto_parse_file(self, path: str) -> None:
         """Auto-parse a file in the background (fire-and-forget).
@@ -3055,17 +2955,18 @@ class NexusFSCoreMixin:
             if _txn_id is not None:
                 self._snapshot_service.track_delete(_txn_id, path, snapshot_hash, metadata_snapshot)
 
-        # Task #45: Sync to RecordStore BEFORE deleting CAS content
-        # Issue #1246: Unified error handling via _notify_observer.
-        self._notify_observer(
-            "delete",
-            path,
+        # Issue #900: Unified two-phase dispatch — INTERCEPT (observer + hooks)
+        # Placed BEFORE physical content delete to preserve audit integrity.
+        from nexus.contracts.vfs_hooks import DeleteHookContext
+
+        _delete_ctx = DeleteHookContext(
             path=path,
+            context=context,
             zone_id=zone_id,
             agent_id=agent_id,
-            snapshot_hash=snapshot_hash,
-            metadata_snapshot=metadata_snapshot,
+            metadata=meta,
         )
+        self._dispatch.intercept_post_delete(_delete_ctx)
 
         # Delete from routed backend CAS (decrements ref count)
         # Content is only physically deleted when ref_count reaches 0
@@ -3086,15 +2987,19 @@ class NexusFSCoreMixin:
         if cache_observer is not None:
             cache_observer.on_delete(path, new_revision, zone_id or "root")
 
-        # Issue #625: Fire post-mutation hooks for delete
-        self._fire_post_mutation_hooks(
-            MutationOp.DELETE,
-            path,
-            zone_id or ROOT_ZONE_ID,
-            new_revision,
-            agent_id=agent_id,
-            etag=meta.etag,
-            size=meta.size,
+        # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
+        from nexus.contracts.vfs_hooks import MutationEvent
+
+        self._dispatch.notify(
+            MutationEvent(
+                operation=MutationOp.DELETE,
+                path=path,
+                zone_id=zone_id or ROOT_ZONE_ID,
+                revision=new_revision,
+                agent_id=agent_id,
+                etag=meta.etag,
+                size=meta.size,
+            )
         )
 
         # v0.7.0: Fire workflow event for automatic trigger execution
@@ -3121,20 +3026,6 @@ class NexusFSCoreMixin:
             etag=meta.etag,
             agent_id=agent_id,
         )
-
-        # Issue #2033 Phase 5: Dispatch post-delete hooks
-        _pipeline = getattr(self, "_hook_pipeline", None)
-        if _pipeline is not None and _pipeline.delete_hook_count > 0:
-            from nexus.contracts.vfs_hooks import DeleteHookContext
-
-            _delete_ctx = DeleteHookContext(
-                path=path,
-                context=context,
-                zone_id=zone_id,
-                agent_id=agent_id,
-                metadata=meta,
-            )
-            _pipeline.run_post_delete(_delete_ctx)
 
         return {}
 
@@ -3202,16 +3093,7 @@ class NexusFSCoreMixin:
         if not self.metadata.exists(old_path) and not is_implicit_dir:
             raise NexusFileNotFoundError(old_path)
 
-        # Capture snapshot before operation for undo capability
         meta = self.metadata.get(old_path)
-        snapshot_hash = meta.etag if meta else None
-        metadata_snapshot = None
-        if meta:
-            metadata_snapshot = {
-                "size": meta.size,
-                "version": meta.version,
-                "modified_at": meta.modified_at.isoformat() if meta.modified_at else None,
-            }
 
         # Check if destination already exists
         # For connector backends, also verify the file exists in backend storage
@@ -3287,14 +3169,18 @@ class NexusFSCoreMixin:
         if cache_observer is not None:
             cache_observer.on_rename(old_path, new_path, new_revision, zone_id or "root")
 
-        # Issue #625: Fire post-mutation hooks for rename
-        self._fire_post_mutation_hooks(
-            MutationOp.RENAME,
-            old_path,
-            zone_id or ROOT_ZONE_ID,
-            new_revision,
-            agent_id=agent_id,
-            new_path=new_path,
+        # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
+        from nexus.contracts.vfs_hooks import MutationEvent
+
+        self._dispatch.notify(
+            MutationEvent(
+                operation=MutationOp.RENAME,
+                path=old_path,
+                zone_id=zone_id or ROOT_ZONE_ID,
+                revision=new_revision,
+                agent_id=agent_id,
+                new_path=new_path,
+            )
         )
 
         # Update ReBAC permissions to follow the renamed file/directory
@@ -3331,35 +3217,19 @@ class NexusFSCoreMixin:
         else:
             logger.warning("[RENAME-REBAC] SKIPPED - no _rebac_manager available")
 
-        # Leopard-style: Update Tiger Cache bitmaps for moved files
-        # Issue #2033 Phase 5: Dispatch post-rename hooks (tiger cache, etc.)
-        _pipeline = getattr(self, "_hook_pipeline", None)
-        if _pipeline is not None and _pipeline.rename_hook_count > 0:
-            from nexus.contracts.vfs_hooks import RenameHookContext
+        # Issue #900: Unified two-phase dispatch — INTERCEPT (observer + hooks)
+        from nexus.contracts.vfs_hooks import RenameHookContext
 
-            _rename_ctx = RenameHookContext(
-                old_path=old_path,
-                new_path=new_path,
-                context=context,
-                zone_id=zone_id,
-                agent_id=agent_id,
-                is_directory=bool(is_directory),
-                metadata=meta,
-            )
-            _pipeline.run_post_rename(_rename_ctx)
-
-        # Task #45: Sync to RecordStore (audit trail)
-        # Issue #1246: Unified error handling via _notify_observer.
-        self._notify_observer(
-            "rename",
-            old_path,
+        _rename_ctx = RenameHookContext(
             old_path=old_path,
             new_path=new_path,
+            context=context,
             zone_id=zone_id,
             agent_id=agent_id,
-            snapshot_hash=snapshot_hash,
-            metadata_snapshot=metadata_snapshot,
+            is_directory=bool(is_directory),
+            metadata=meta,
         )
+        self._dispatch.intercept_post_rename(_rename_ctx)
 
         # v0.7.0: Fire workflow event for automatic trigger execution
         self._fire_workflow_event(

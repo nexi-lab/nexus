@@ -765,7 +765,7 @@ class TestFactoryServiceWiring:
         reg = nx._ensure_entity_registry()
         assert reg is not None
 
-    def test_hook_pipeline_wired(self, nx):
-        """VFSHookPipeline should be wired."""
-        assert hasattr(nx, "_hook_pipeline")
-        assert nx._hook_pipeline is not None
+    def test_kernel_dispatch_wired(self, nx):
+        """KernelDispatch should be wired."""
+        assert hasattr(nx, "_dispatch")
+        assert nx._dispatch is not None

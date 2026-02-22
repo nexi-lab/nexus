@@ -1,25 +1,26 @@
 """VFS Hook contracts — context dataclasses and hook protocols.
 
 These are inter-layer contracts used by the kernel (call sites in
-``nexus_fs_core.py``) and implemented by service-layer hooks
-(``services/hooks/``).  The kernel creates context objects after
-each VFS operation and passes them to whichever pipeline is injected
-via DI — the kernel never imports the pipeline class itself.
+``nexus_fs_core.py`` / ``nexus_fs.py``) and implemented by service-layer
+hooks.  The kernel creates context objects after each VFS operation
+and passes them to ``KernelDispatch`` (injected via DI).
 
-Lifecycle:
-    read:   [kernel: validate → route → metadata → backend.read] → post_read hooks
-    write:  [kernel: validate → route → backend.write → metadata.put] → post_write hooks
-    delete: [kernel: validate → route → metadata.delete] → post_delete hooks
-    rename: [kernel: validate → route → metadata.rename] → post_rename hooks
+Two-phase dispatch model (Issue #900):
+    INTERCEPT — synchronous, ordered.  Can abort (raise) or modify context.
+    OBSERVE   — fire-and-forget (``MutationEvent``).  Cannot abort.
 
-Issue #625: Extracted from ``core/vfs_hooks.py``.  Context dataclasses
-and protocols are contracts (like ``WriteObserverProtocol``); the
-pipeline dispatch class moved to ``services/hooks/pipeline.py``.
+All six operations are covered:
+    read / write / delete / rename / mkdir / rmdir
+
+Issue #625: Extracted from ``core/vfs_hooks.py``.
+Issue #900: Added MkdirHookContext, RmdirHookContext, VFSMkdirHook,
+            VFSRmdirHook.  Unified under KernelDispatch.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from nexus.contracts.types import OperationWarning
@@ -63,8 +64,6 @@ class WriteHookContext:
     metadata: FileMetadata | None = None
     old_metadata: FileMetadata | None = None
     new_version: int = 1
-    snapshot_hash: str | None = None
-    metadata_snapshot: dict[str, Any] | None = None
     warnings: list[OperationWarning] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -92,6 +91,33 @@ class RenameHookContext:
     zone_id: str | None = None
     agent_id: str | None = None
     is_directory: bool = False
+    metadata: FileMetadata | None = None
+    warnings: list[OperationWarning] = field(default_factory=list)
+    extra: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class MkdirHookContext:
+    """Context passed through mkdir hooks (Issue #900)."""
+
+    path: str
+    context: OperationContext | None
+    zone_id: str | None = None
+    agent_id: str | None = None
+    metadata: FileMetadata | None = None
+    warnings: list[OperationWarning] = field(default_factory=list)
+    extra: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class RmdirHookContext:
+    """Context passed through rmdir hooks (Issue #900)."""
+
+    path: str
+    context: OperationContext | None
+    zone_id: str | None = None
+    agent_id: str | None = None
+    recursive: bool = False
     metadata: FileMetadata | None = None
     warnings: list[OperationWarning] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)
@@ -160,3 +186,77 @@ class VFSRenameHook(Protocol):
     def name(self) -> str: ...
 
     def on_post_rename(self, ctx: RenameHookContext) -> None: ...
+
+
+@runtime_checkable
+class VFSMkdirHook(Protocol):
+    """Hook that runs after a mkdir operation (Issue #900)."""
+
+    @property
+    def name(self) -> str: ...
+
+    def on_post_mkdir(self, ctx: MkdirHookContext) -> None: ...
+
+
+@runtime_checkable
+class VFSRmdirHook(Protocol):
+    """Hook that runs after a rmdir operation (Issue #900)."""
+
+    @property
+    def name(self) -> str: ...
+
+    def on_post_rmdir(self, ctx: RmdirHookContext) -> None: ...
+
+
+# ---------------------------------------------------------------------------
+# OBSERVE phase — mutation event + observer protocol (Issue #900)
+# ---------------------------------------------------------------------------
+
+
+class MutationOp(Enum):
+    """Kernel VFS mutation operation types."""
+
+    WRITE = "write"
+    DELETE = "delete"
+    RENAME = "rename"
+    MKDIR = "mkdir"
+    RMDIR = "rmdir"
+
+
+@dataclass(frozen=True, slots=True)
+class MutationEvent:
+    """Frozen event passed to OBSERVE-phase observers after a VFS mutation.
+
+    Carries all context that observers might need.  Each observer
+    extracts what it requires and ignores the rest.
+    """
+
+    operation: MutationOp
+    path: str
+    zone_id: str
+    revision: int
+
+    # Common optional context
+    agent_id: str | None = None
+    user_id: str | None = None
+    timestamp: str | None = None
+    etag: str | None = None
+    size: int | None = None
+
+    # Write-specific
+    version: int | None = None
+    is_new: bool = False
+
+    # Rename-specific
+    new_path: str | None = None
+
+
+@runtime_checkable
+class VFSObserver(Protocol):
+    """OBSERVE-phase observer for kernel VFS mutations (fire-and-forget).
+
+    Receives a frozen ``MutationEvent`` after every successful mutation.
+    Must not raise — exceptions are caught and logged by KernelDispatch.
+    """
+
+    def on_mutation(self, event: MutationEvent) -> None: ...

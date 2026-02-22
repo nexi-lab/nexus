@@ -7,6 +7,10 @@ The kernel calls on_write()/on_delete()/on_rename()/on_write_batch()/
 on_mkdir()/on_rmdir() after Metastore mutations. These observers handle
 all RecordStore side-effects in a single transaction.
 
+The kernel passes kernel-native ``FileMetadata``.  Observers derive
+``snapshot_hash`` (``metadata.etag``) and ``metadata_snapshot``
+(``metadata.to_dict()``) internally — these are RecordStore concerns.
+
 Two implementations:
     RecordStoreWriteObserver         — synchronous, blocks hot path (~2-10ms)
     BufferedRecordStoreWriteObserver — async via WriteBuffer (~0.1ms amortized)
@@ -16,13 +20,14 @@ Architecture:
     Kernel → write_observer.on_delete() → [OperationLogger + VersionRecorder]
     Error policy owned by observer (strict_mode). Kernel is a pure caller.
 
+Issue #900: Replaced snapshot_hash/metadata_snapshot params with metadata.
 Issue #1246: BufferedRecordStoreWriteObserver implements Decision 13A (write-behind buffer).
 """
 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from nexus.core.metadata import FileMetadata
@@ -83,12 +88,15 @@ class RecordStoreWriteObserver:
         *,
         is_new: bool,
         path: str,
+        old_metadata: FileMetadata | None = None,
         zone_id: str | None = None,
         agent_id: str | None = None,
-        snapshot_hash: str | None = None,
-        metadata_snapshot: dict[str, Any] | None = None,
     ) -> None:
-        """Sync a write operation to RecordStore."""
+        """Sync a write operation to RecordStore.
+
+        snapshot_hash/metadata_snapshot in the operation log store the PREVIOUS
+        version (for undo).  Derived from old_metadata, not metadata.
+        """
         from nexus.storage.operation_logger import OperationLogger
         from nexus.storage.version_recorder import VersionRecorder
 
@@ -99,8 +107,8 @@ class RecordStoreWriteObserver:
                     path=path,
                     zone_id=zone_id,
                     agent_id=agent_id,
-                    snapshot_hash=snapshot_hash,
-                    metadata_snapshot=metadata_snapshot,
+                    snapshot_hash=old_metadata.etag if old_metadata else None,
+                    metadata_snapshot=old_metadata.to_dict() if old_metadata else None,
                     status="success",
                 )
                 VersionRecorder(session).record_write(metadata, is_new=is_new)
@@ -136,7 +144,7 @@ class RecordStoreWriteObserver:
                         snapshot_hash=metadata.etag,
                         metadata_snapshot=None,
                         status="success",
-                        flush=False,  # Defer flush — commit handles it
+                        flush=False,
                     )
                     recorder.record_write(metadata, is_new=is_new)
                 session.commit()
@@ -149,10 +157,9 @@ class RecordStoreWriteObserver:
         old_path: str,
         new_path: str,
         *,
+        metadata: FileMetadata | None = None,
         zone_id: str | None = None,
         agent_id: str | None = None,
-        snapshot_hash: str | None = None,
-        metadata_snapshot: dict[str, Any] | None = None,
     ) -> None:
         """Sync a rename operation to RecordStore."""
         from nexus.storage.operation_logger import OperationLogger
@@ -165,8 +172,8 @@ class RecordStoreWriteObserver:
                     new_path=new_path,
                     zone_id=zone_id,
                     agent_id=agent_id,
-                    snapshot_hash=snapshot_hash,
-                    metadata_snapshot=metadata_snapshot,
+                    snapshot_hash=metadata.etag if metadata else None,
+                    metadata_snapshot=metadata.to_dict() if metadata else None,
                     status="success",
                 )
                 session.commit()
@@ -177,10 +184,9 @@ class RecordStoreWriteObserver:
         self,
         path: str,
         *,
+        metadata: FileMetadata | None = None,
         zone_id: str | None = None,
         agent_id: str | None = None,
-        snapshot_hash: str | None = None,
-        metadata_snapshot: dict[str, Any] | None = None,
     ) -> None:
         """Sync a delete operation to RecordStore."""
         from nexus.storage.operation_logger import OperationLogger
@@ -193,8 +199,8 @@ class RecordStoreWriteObserver:
                     path=path,
                     zone_id=zone_id,
                     agent_id=agent_id,
-                    snapshot_hash=snapshot_hash,
-                    metadata_snapshot=metadata_snapshot,
+                    snapshot_hash=metadata.etag if metadata else None,
+                    metadata_snapshot=metadata.to_dict() if metadata else None,
                     status="success",
                 )
                 VersionRecorder(session).record_delete(path)
@@ -258,10 +264,6 @@ class BufferedRecordStoreWriteObserver:
     enqueues events into a WriteBuffer instead of writing synchronously.
     Hot path returns immediately (~0.1ms amortized vs ~2-10ms synchronous).
 
-    Error policy: strict_mode is stored for API consistency. Since enqueue
-    never fails, the error policy applies only to background flush failures
-    handled by WriteBuffer (retry + drop with logging).
-
     Must call start() before use and stop() on shutdown.
     """
 
@@ -303,10 +305,9 @@ class BufferedRecordStoreWriteObserver:
         *,
         is_new: bool,
         path: str,
+        old_metadata: FileMetadata | None = None,
         zone_id: str | None = None,
         agent_id: str | None = None,
-        snapshot_hash: str | None = None,
-        metadata_snapshot: dict[str, Any] | None = None,
     ) -> None:
         """Enqueue a write event. Returns immediately."""
         self._buffer.enqueue_write(
@@ -315,8 +316,8 @@ class BufferedRecordStoreWriteObserver:
             path=path,
             zone_id=zone_id,
             agent_id=agent_id,
-            snapshot_hash=snapshot_hash,
-            metadata_snapshot=metadata_snapshot,
+            snapshot_hash=old_metadata.etag if old_metadata else None,
+            metadata_snapshot=old_metadata.to_dict() if old_metadata else None,
         )
 
     def on_write_batch(
@@ -342,10 +343,9 @@ class BufferedRecordStoreWriteObserver:
         old_path: str,
         new_path: str,
         *,
+        metadata: FileMetadata | None = None,
         zone_id: str | None = None,
         agent_id: str | None = None,
-        snapshot_hash: str | None = None,
-        metadata_snapshot: dict[str, Any] | None = None,
     ) -> None:
         """Enqueue a rename event. Returns immediately."""
         self._buffer.enqueue_rename(
@@ -353,26 +353,25 @@ class BufferedRecordStoreWriteObserver:
             new_path=new_path,
             zone_id=zone_id,
             agent_id=agent_id,
-            snapshot_hash=snapshot_hash,
-            metadata_snapshot=metadata_snapshot,
+            snapshot_hash=metadata.etag if metadata else None,
+            metadata_snapshot=metadata.to_dict() if metadata else None,
         )
 
     def on_delete(
         self,
         path: str,
         *,
+        metadata: FileMetadata | None = None,
         zone_id: str | None = None,
         agent_id: str | None = None,
-        snapshot_hash: str | None = None,
-        metadata_snapshot: dict[str, Any] | None = None,
     ) -> None:
         """Enqueue a delete event. Returns immediately."""
         self._buffer.enqueue_delete(
             path=path,
             zone_id=zone_id,
             agent_id=agent_id,
-            snapshot_hash=snapshot_hash,
-            metadata_snapshot=metadata_snapshot,
+            snapshot_hash=metadata.etag if metadata else None,
+            metadata_snapshot=metadata.to_dict() if metadata else None,
         )
 
     def on_mkdir(

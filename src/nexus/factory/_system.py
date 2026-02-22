@@ -118,7 +118,7 @@ def _boot_system_services(
                 use_buffer = ctx.db_url.startswith(("postgres", "postgresql"))
 
         if use_buffer:
-            from nexus.storage.record_store_syncer import BufferedRecordStoreWriteObserver
+            from nexus.storage.record_store_write_observer import BufferedRecordStoreWriteObserver
 
             _st = ctx.profile_tuning.storage
             write_observer = BufferedRecordStoreWriteObserver(
@@ -128,7 +128,7 @@ def _boot_system_services(
                 max_buffer_size=_st.write_buffer_max_size,
             )
         else:
-            from nexus.storage.record_store_syncer import RecordStoreWriteObserver
+            from nexus.storage.record_store_write_observer import RecordStoreWriteObserver
 
             write_observer = RecordStoreWriteObserver(
                 ctx.record_store,

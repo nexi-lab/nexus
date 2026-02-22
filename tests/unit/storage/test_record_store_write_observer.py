@@ -19,7 +19,7 @@ from nexus.contracts.exceptions import AuditLogError
 from nexus.core.metadata import FileMetadata
 from nexus.storage.models import FilePathModel, OperationLogModel, VersionHistoryModel
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.storage.record_store_syncer import RecordStoreWriteObserver
+from nexus.storage.record_store_write_observer import RecordStoreWriteObserver
 
 
 @pytest.fixture

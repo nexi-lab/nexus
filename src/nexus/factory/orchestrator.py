@@ -445,17 +445,17 @@ def create_nexus_fs(
 
 
 def _register_vfs_hooks(nx: NexusFS) -> None:
-    """Register concrete VFS hook implementations on the pipeline.
+    """Register INTERCEPT hooks on KernelDispatch (Issue #900).
 
-    Each hook lives in its own service directory (Issue #625):
-      - DynamicViewerReadHook  → services/rebac/
-      - AutoParseWriteHook     → parsers/
-      - TigerCacheRenameHook   → services/permissions/cache/tiger/
+    Each hook lives in its own service directory:
+      - DynamicViewerReadHook  → services/rebac/     (INTERCEPT read)
+      - AutoParseWriteHook     → parsers/             (INTERCEPT write)
+      - TigerCacheRenameHook   → services/permissions/cache/tiger/  (INTERCEPT rename)
 
     Called by ``create_nexus_fs()`` after NexusFS construction + wired
     services binding, keeping the kernel free of service-layer imports.
     """
-    pipeline = nx._hook_pipeline
+    dispatch = nx._dispatch
 
     # DynamicViewerReadHook (post-read: column-level CSV filtering)
     rebac_mgr = getattr(nx, "_rebac_manager", None)
@@ -468,7 +468,7 @@ def _register_vfs_hooks(nx: NexusFS) -> None:
     if has_viewer:
         from nexus.services.rebac.dynamic_viewer_hook import DynamicViewerReadHook
 
-        pipeline.register_read_hook(
+        dispatch.register_intercept_read(
             DynamicViewerReadHook(
                 get_subject=nx._get_subject_from_context,
                 get_viewer_config=nx.get_dynamic_viewer_config,
@@ -482,7 +482,7 @@ def _register_vfs_hooks(nx: NexusFS) -> None:
     if parser_reg is not None and parse_fn is not None and getattr(nx, "auto_parse", False):
         from nexus.parsers.auto_parse_hook import AutoParseWriteHook
 
-        pipeline.register_write_hook(
+        dispatch.register_intercept_write(
             AutoParseWriteHook(
                 get_parser=parser_reg.get_parser,
                 parse_fn=parse_fn,
@@ -501,7 +501,7 @@ def _register_vfs_hooks(nx: NexusFS) -> None:
         ) -> Any:
             return nx.metadata.list(prefix=prefix, recursive=recursive)
 
-        pipeline.register_rename_hook(
+        dispatch.register_intercept_rename(
             TigerCacheRenameHook(
                 tiger_cache=tiger_cache,
                 metadata_list_iter=_metadata_list_iter,

@@ -91,7 +91,7 @@ def bench_sync(engine, session_factory, n: int) -> dict:
     """Benchmark sync writes (one DB round-trip per write)."""
     from unittest.mock import MagicMock
 
-    from nexus.storage.record_store_syncer import RecordStoreWriteObserver
+    from nexus.storage.record_store_write_observer import RecordStoreWriteObserver
 
     mock_record_store = MagicMock()
     mock_record_store.session_factory = session_factory
@@ -135,7 +135,7 @@ def bench_buffered(
     """Benchmark buffered writes (hot path = enqueue only, flush in background)."""
     from unittest.mock import MagicMock
 
-    from nexus.storage.record_store_syncer import BufferedRecordStoreWriteObserver
+    from nexus.storage.record_store_write_observer import BufferedRecordStoreWriteObserver
 
     mock_record_store = MagicMock()
     mock_record_store.session_factory = session_factory

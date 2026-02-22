@@ -22,7 +22,7 @@ from nexus.core.event_bus import FileEventType
 from nexus.core.metadata import FileMetadata
 from nexus.storage.models import OperationLogModel
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.storage.record_store_syncer import RecordStoreWriteObserver
+from nexus.storage.record_store_write_observer import RecordStoreWriteObserver
 
 
 @pytest.fixture

@@ -12,9 +12,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from nexus.contracts.vfs_hooks import MutationEvent, MutationOp
 from nexus.core.metadata import FileMetadata
 from nexus.core.pipe_manager import PipeManager
-from nexus.lib.mutation_hooks import MutationEvent, MutationOp
 from nexus.services.workflow_dispatch_service import WorkflowDispatchService
 
 # ======================================================================
@@ -132,7 +132,7 @@ class TestFire:
 
 
 # ======================================================================
-# on_mutation() — PostMutationHook
+# on_mutation() — VFSObserver
 # ======================================================================
 
 

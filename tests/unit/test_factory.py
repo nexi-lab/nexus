@@ -459,7 +459,7 @@ class TestStartBackgroundServices:
 
     def test_buffered_syncer_started(self) -> None:
         from nexus.factory import _start_background_services
-        from nexus.storage.record_store_syncer import BufferedRecordStoreWriteObserver
+        from nexus.storage.record_store_write_observer import BufferedRecordStoreWriteObserver
 
         wo = MagicMock(spec=BufferedRecordStoreWriteObserver)
         system = {"deferred_permission_buffer": None, "write_observer": wo, "delivery_worker": None}

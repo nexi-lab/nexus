@@ -101,6 +101,30 @@ class FileMetadata:
     def is_pipe(self) -> bool:
         return self.entry_type == 3
 
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to JSON-compatible dict.
+
+        Handles datetime -> ISO 8601 string conversion.
+        Generated from proto field definitions (SSOT).
+        """
+        return {
+            "path": self.path,
+            "backend_name": self.backend_name,
+            "physical_path": self.physical_path,
+            "size": self.size,
+            "etag": self.etag,
+            "mime_type": self.mime_type,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "modified_at": self.modified_at.isoformat() if self.modified_at else None,
+            "version": self.version,
+            "zone_id": self.zone_id,
+            "created_by": self.created_by,
+            "owner_id": self.owner_id,
+            "entry_type": self.entry_type,
+            "target_zone_id": self.target_zone_id,
+            "i_links_count": self.i_links_count,
+        }
+
     def validate(self) -> None:
         """Validate file metadata before database operations.
 

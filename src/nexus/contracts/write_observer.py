@@ -6,6 +6,9 @@ on_mkdir()/on_rmdir() after Metastore mutations. Observers handle
 side-effects (audit trail, version recording, etc.) and own their
 own error policy.
 
+The kernel passes kernel-native types only (FileMetadata).  Observers
+derive whatever they need (e.g. snapshot_hash = metadata.etag).
+
 Current implementations:
 - RecordStoreWriteObserver: synchronous audit trail + versioning (strict_mode)
 - BufferedRecordStoreWriteObserver: async via WriteBuffer (fire-and-forget)
@@ -14,11 +17,12 @@ The kernel is a pure caller — it never catches observer exceptions.
 Each implementation decides its own failure handling strategy.
 
 Tracked by: #55 (Move _audit_strict_mode from kernel to observer)
+Issue #900: Replaced snapshot_hash/metadata_snapshot with metadata.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from nexus.core.metadata import FileMetadata
@@ -31,6 +35,10 @@ class WriteObserverProtocol(Protocol):
     Duck-typed interface injected into NexusFS as write_observer.
     Implementations handle RecordStore side-effects (audit log,
     version history) and own their error policy.
+
+    The kernel passes ``metadata: FileMetadata`` — observers derive
+    ``snapshot_hash`` (``metadata.etag``) and ``metadata_snapshot``
+    (``metadata.to_dict()``) internally.
     """
 
     def on_write(
@@ -39,12 +47,19 @@ class WriteObserverProtocol(Protocol):
         *,
         is_new: bool,
         path: str,
+        old_metadata: FileMetadata | None = ...,
         zone_id: str | None = ...,
         agent_id: str | None = ...,
-        snapshot_hash: str | None = ...,
-        metadata_snapshot: dict[str, Any] | None = ...,
     ) -> None:
-        """Called after a single file write completes in Metastore."""
+        """Called after a single file write completes in Metastore.
+
+        Args:
+            metadata: New file metadata after the write.
+            is_new: True if this is a new file (no previous version).
+            path: Virtual path of the file.
+            old_metadata: Previous metadata before write (for undo).
+                          None when is_new=True.
+        """
         ...
 
     def on_write_batch(
@@ -66,10 +81,9 @@ class WriteObserverProtocol(Protocol):
         old_path: str,
         new_path: str,
         *,
+        metadata: FileMetadata | None = ...,
         zone_id: str | None = ...,
         agent_id: str | None = ...,
-        snapshot_hash: str | None = ...,
-        metadata_snapshot: dict[str, Any] | None = ...,
     ) -> None:
         """Called after a file rename completes in Metastore."""
         ...
@@ -78,10 +92,9 @@ class WriteObserverProtocol(Protocol):
         self,
         path: str,
         *,
+        metadata: FileMetadata | None = ...,
         zone_id: str | None = ...,
         agent_id: str | None = ...,
-        snapshot_hash: str | None = ...,
-        metadata_snapshot: dict[str, Any] | None = ...,
     ) -> None:
         """Called after a file delete completes in Metastore."""
         ...

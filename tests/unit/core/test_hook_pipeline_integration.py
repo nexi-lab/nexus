@@ -1,18 +1,20 @@
-"""Integration tests: VFSHookPipeline wired into NexusFS (Phase 5, Issue #2033).
+"""Integration tests: KernelDispatch wired into NexusFS (Issue #900).
 
-Validates that hooks registered on the pipeline are actually invoked
-during NexusFS read/write/rename operations.
+Validates that hooks registered on KernelDispatch are actually invoked
+during NexusFS read/write/rename/delete operations.
+
+Replaces old VFSHookPipeline integration tests (Issue #2033 Phase 5).
 """
 
 from __future__ import annotations
 
-from nexus.core.vfs_hooks import (
+from nexus.contracts.vfs_hooks import (
     DeleteHookContext,
     ReadHookContext,
     RenameHookContext,
-    VFSHookPipeline,
     WriteHookContext,
 )
+from nexus.core.kernel_dispatch import KernelDispatch
 from tests.conftest import make_test_nexus
 
 
@@ -84,55 +86,38 @@ class _TrackingRenameHook:
         self.calls.append(ctx)
 
 
-class TestHookPipelineOnNexusFS:
-    """Verify the _hook_pipeline attribute exists and is a VFSHookPipeline."""
+class TestKernelDispatchOnNexusFS:
+    """Verify the _dispatch attribute exists and is a KernelDispatch."""
 
-    def test_nexus_fs_has_hook_pipeline(self, tmp_path):
+    def test_nexus_fs_has_dispatch(self, tmp_path):
         nx = make_test_nexus(tmp_path)
-        assert hasattr(nx, "_hook_pipeline")
-        assert isinstance(nx._hook_pipeline, VFSHookPipeline)
+        assert hasattr(nx, "_dispatch")
+        assert isinstance(nx._dispatch, KernelDispatch)
 
-    def test_default_pipeline_is_empty(self, tmp_path):
+    def test_default_dispatch_is_empty(self, tmp_path):
         nx = make_test_nexus(tmp_path)
-        assert nx._hook_pipeline.read_hook_count == 0
-        assert nx._hook_pipeline.write_hook_count == 0
-        assert nx._hook_pipeline.delete_hook_count == 0
-        assert nx._hook_pipeline.rename_hook_count == 0
+        assert nx._dispatch.read_hook_count == 0
+        assert nx._dispatch.write_hook_count == 0
+        assert nx._dispatch.delete_hook_count == 0
+        assert nx._dispatch.rename_hook_count == 0
 
-    def test_pipeline_can_register_hooks(self, tmp_path):
+    def test_dispatch_can_register_hooks(self, tmp_path):
         nx = make_test_nexus(tmp_path)
         hook = _TrackingReadHook()
-        nx._hook_pipeline.register_read_hook(hook)
-        assert nx._hook_pipeline.read_hook_count == 1
+        nx._dispatch.register_intercept_read(hook)
+        assert nx._dispatch.read_hook_count == 1
 
 
-class TestHookPipelineInjectionViaSystemServices:
-    """Verify hook_pipeline can be injected via SystemServices."""
-
-    def test_injected_pipeline_is_used(self, tmp_path):
-        from nexus.core.config import SystemServices
-
-        pipeline = VFSHookPipeline()
-        hook = _TrackingReadHook()
-        pipeline.register_read_hook(hook)
-
-        sys_svc = SystemServices(hook_pipeline=pipeline)
-        nx = make_test_nexus(tmp_path, system_services=sys_svc)
-
-        assert nx._hook_pipeline is pipeline
-        assert nx._hook_pipeline.read_hook_count == 1
-
-
-class TestHookPipelineDirectDispatch:
-    """Verify the pipeline dispatches correctly when called directly."""
+class TestKernelDispatchDirectDispatch:
+    """Verify KernelDispatch dispatches correctly when called directly."""
 
     def test_read_hook_receives_context(self, tmp_path):
         nx = make_test_nexus(tmp_path)
         hook = _TrackingReadHook()
-        nx._hook_pipeline.register_read_hook(hook)
+        nx._dispatch.register_intercept_read(hook)
 
         ctx = ReadHookContext(path="/test.txt", context=None, content=b"hello")
-        nx._hook_pipeline.run_post_read(ctx)
+        nx._dispatch.intercept_post_read(ctx)
 
         assert len(hook.calls) == 1
         assert hook.calls[0].path == "/test.txt"
@@ -141,10 +126,10 @@ class TestHookPipelineDirectDispatch:
     def test_write_hook_receives_context(self, tmp_path):
         nx = make_test_nexus(tmp_path)
         hook = _TrackingWriteHook()
-        nx._hook_pipeline.register_write_hook(hook)
+        nx._dispatch.register_intercept_write(hook)
 
         ctx = WriteHookContext(path="/test.txt", content=b"data", context=None)
-        nx._hook_pipeline.run_post_write(ctx)
+        nx._dispatch.intercept_post_write(ctx)
 
         assert len(hook.calls) == 1
         assert hook.calls[0].path == "/test.txt"
@@ -152,26 +137,26 @@ class TestHookPipelineDirectDispatch:
     def test_content_transformation_hook(self, tmp_path):
         nx = make_test_nexus(tmp_path)
         hook = _UpperCaseReadHook()
-        nx._hook_pipeline.register_read_hook(hook)
+        nx._dispatch.register_intercept_read(hook)
 
         ctx = ReadHookContext(path="/data.csv", context=None, content=b"a,b\n1,2")
-        nx._hook_pipeline.run_post_read(ctx)
+        nx._dispatch.intercept_post_read(ctx)
 
         assert ctx.content == b"A,B\n1,2"
 
     def test_non_csv_not_transformed(self, tmp_path):
         nx = make_test_nexus(tmp_path)
         hook = _UpperCaseReadHook()
-        nx._hook_pipeline.register_read_hook(hook)
+        nx._dispatch.register_intercept_read(hook)
 
         ctx = ReadHookContext(path="/data.txt", context=None, content=b"a,b\n1,2")
-        nx._hook_pipeline.run_post_read(ctx)
+        nx._dispatch.intercept_post_read(ctx)
 
         assert ctx.content == b"a,b\n1,2"  # unchanged
 
 
-class TestHookPipelineFailureSafety:
-    """Verify hooks that raise don't crash the pipeline."""
+class TestKernelDispatchFailureSafety:
+    """Verify hooks that raise don't crash dispatch."""
 
     def test_failing_hook_adds_warning(self, tmp_path):
         class _BrokenHook:
@@ -183,10 +168,10 @@ class TestHookPipelineFailureSafety:
                 raise RuntimeError("hook exploded")
 
         nx = make_test_nexus(tmp_path)
-        nx._hook_pipeline.register_read_hook(_BrokenHook())
+        nx._dispatch.register_intercept_read(_BrokenHook())
 
         ctx = ReadHookContext(path="/test.txt", context=None, content=b"data")
-        nx._hook_pipeline.run_post_read(ctx)
+        nx._dispatch.intercept_post_read(ctx)
 
         assert len(ctx.warnings) == 1
         assert "broken" in ctx.warnings[0].component
@@ -203,27 +188,27 @@ class TestHookPipelineFailureSafety:
 
         nx = make_test_nexus(tmp_path)
         tracker = _TrackingReadHook()
-        nx._hook_pipeline.register_read_hook(_BrokenHook())
-        nx._hook_pipeline.register_read_hook(tracker)
+        nx._dispatch.register_intercept_read(_BrokenHook())
+        nx._dispatch.register_intercept_read(tracker)
 
         ctx = ReadHookContext(path="/test.txt", context=None, content=b"data")
-        nx._hook_pipeline.run_post_read(ctx)
+        nx._dispatch.intercept_post_read(ctx)
 
         assert len(tracker.calls) == 1  # still called
         assert len(ctx.warnings) == 1  # only broken hook warns
 
 
-class TestHookPipelineE2EDispatch:
+class TestKernelDispatchE2EDispatch:
     """Verify hooks are invoked during REAL NexusFS read/write/delete/rename ops.
 
     These tests register tracking hooks, perform actual VFS operations, and
-    confirm the pipeline dispatched to each hook with the correct context.
+    confirm KernelDispatch dispatched to each hook with the correct context.
     """
 
     def test_read_dispatches_post_read_hook(self, tmp_path):
         nx = make_test_nexus(tmp_path)
         tracker = _TrackingReadHook()
-        nx._hook_pipeline.register_read_hook(tracker)
+        nx._dispatch.register_intercept_read(tracker)
 
         # Write a file first, then read it
         nx.write("/test.txt", b"hello world")
@@ -237,7 +222,7 @@ class TestHookPipelineE2EDispatch:
     def test_read_hook_can_transform_content(self, tmp_path):
         nx = make_test_nexus(tmp_path)
         hook = _UpperCaseReadHook()
-        nx._hook_pipeline.register_read_hook(hook)
+        nx._dispatch.register_intercept_read(hook)
 
         nx.write("/data.csv", b"name,age\nalice,30")
         content = nx.read("/data.csv")
@@ -247,7 +232,7 @@ class TestHookPipelineE2EDispatch:
     def test_read_hook_skips_non_csv(self, tmp_path):
         nx = make_test_nexus(tmp_path)
         hook = _UpperCaseReadHook()
-        nx._hook_pipeline.register_read_hook(hook)
+        nx._dispatch.register_intercept_read(hook)
 
         nx.write("/data.txt", b"name,age\nalice,30")
         content = nx.read("/data.txt")
@@ -257,7 +242,7 @@ class TestHookPipelineE2EDispatch:
     def test_write_dispatches_post_write_hook(self, tmp_path):
         nx = make_test_nexus(tmp_path)
         tracker = _TrackingWriteHook()
-        nx._hook_pipeline.register_write_hook(tracker)
+        nx._dispatch.register_intercept_write(tracker)
 
         nx.write("/test.txt", b"hello")
 
@@ -269,7 +254,7 @@ class TestHookPipelineE2EDispatch:
     def test_write_hook_receives_update_context(self, tmp_path):
         nx = make_test_nexus(tmp_path)
         tracker = _TrackingWriteHook()
-        nx._hook_pipeline.register_write_hook(tracker)
+        nx._dispatch.register_intercept_write(tracker)
 
         nx.write("/test.txt", b"v1")
         nx.write("/test.txt", b"v2")
@@ -281,7 +266,7 @@ class TestHookPipelineE2EDispatch:
     def test_delete_dispatches_post_delete_hook(self, tmp_path):
         nx = make_test_nexus(tmp_path)
         tracker = _TrackingDeleteHook()
-        nx._hook_pipeline.register_delete_hook(tracker)
+        nx._dispatch.register_intercept_delete(tracker)
 
         nx.write("/test.txt", b"data")
         nx.delete("/test.txt")
@@ -293,7 +278,7 @@ class TestHookPipelineE2EDispatch:
     def test_rename_dispatches_post_rename_hook(self, tmp_path):
         nx = make_test_nexus(tmp_path)
         tracker = _TrackingRenameHook()
-        nx._hook_pipeline.register_rename_hook(tracker)
+        nx._dispatch.register_intercept_rename(tracker)
 
         nx.write("/old.txt", b"data")
         nx.rename("/old.txt", "/new.txt")
@@ -309,10 +294,10 @@ class TestHookPipelineE2EDispatch:
         delete_tracker = _TrackingDeleteHook()
         rename_tracker = _TrackingRenameHook()
 
-        nx._hook_pipeline.register_read_hook(read_tracker)
-        nx._hook_pipeline.register_write_hook(write_tracker)
-        nx._hook_pipeline.register_delete_hook(delete_tracker)
-        nx._hook_pipeline.register_rename_hook(rename_tracker)
+        nx._dispatch.register_intercept_read(read_tracker)
+        nx._dispatch.register_intercept_write(write_tracker)
+        nx._dispatch.register_intercept_delete(delete_tracker)
+        nx._dispatch.register_intercept_rename(rename_tracker)
 
         nx.write("/a.txt", b"data")  # write hook fires
         nx.read("/a.txt")  # read hook fires

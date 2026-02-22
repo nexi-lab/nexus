@@ -29,7 +29,7 @@ def _start_background_services(system: dict[str, Any]) -> None:
     # Write Observer — only BufferedRecordStoreWriteObserver needs .start()
     wo = system.get("write_observer")
     if wo is not None and hasattr(wo, "start"):
-        from nexus.storage.record_store_syncer import BufferedRecordStoreWriteObserver
+        from nexus.storage.record_store_write_observer import BufferedRecordStoreWriteObserver
 
         if isinstance(wo, BufferedRecordStoreWriteObserver):
             wo.start()

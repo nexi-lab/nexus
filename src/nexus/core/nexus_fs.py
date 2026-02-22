@@ -13,8 +13,8 @@ from nexus.backends.backend import Backend
 from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import InvalidPathError, NexusFileNotFoundError
 from nexus.contracts.types import OperationContext, Permission
+from nexus.contracts.vfs_hooks import MutationOp
 from nexus.core.hash_fast import hash_content
-from nexus.lib.mutation_hooks import MutationOp
 
 if TYPE_CHECKING:
     from nexus.rebac.entity_registry import EntityRegistry
@@ -261,16 +261,22 @@ class NexusFS(  # type: ignore[misc]
         self.events_service: Any = None
         self.task_queue_service: Any = None
 
-        # VFS Hook Pipeline — use injected pipeline from KernelServices if available
-        from nexus.core.vfs_hooks import VFSHookPipeline
+        # Issue #900: Unified two-phase kernel dispatch (INTERCEPT + OBSERVE)
+        from nexus.core.kernel_dispatch import KernelDispatch
 
-        _injected_pipeline = (
-            getattr(self._system_services, "hook_pipeline", None) if self._system_services else None
+        _injected_dispatch = (
+            getattr(self._system_services, "kernel_dispatch", None)
+            if self._system_services
+            else None
         )
-        self._hook_pipeline: VFSHookPipeline = (
-            _injected_pipeline if _injected_pipeline is not None else VFSHookPipeline()
+        self._dispatch: KernelDispatch = (
+            _injected_dispatch
+            if _injected_dispatch is not None
+            else KernelDispatch(
+                write_observer=self._write_observer,
+                audit_strict_mode=self._audit_strict_mode,
+            )
         )
-        self._post_mutation_hooks: builtins.list[Any] = []
 
         # PermissionChecker: core module, safe to create here (Issue #2133)
         from nexus.core.permission_checker import PermissionChecker
@@ -1039,21 +1045,28 @@ class NexusFS(  # type: ignore[misc]
             except Exception as e:
                 logger.warning(f"Failed to grant direct_owner permission for {path}: {e}")
 
-        # Issue #625: Observer + hook coverage for mkdir
+        # Issue #900: Unified two-phase dispatch for mkdir
         new_revision = self._increment_zone_revision()
-        if self._write_observer:
-            self._write_observer.on_mkdir(
+
+        from nexus.contracts.vfs_hooks import MkdirHookContext, MutationEvent
+
+        self._dispatch.intercept_post_mkdir(
+            MkdirHookContext(
                 path=path,
+                context=ctx,
                 zone_id=ctx.zone_id,
                 agent_id=ctx.agent_id,
             )
-        self._fire_post_mutation_hooks(
-            MutationOp.MKDIR,
-            path,
-            ctx.zone_id or "root",
-            new_revision,
-            agent_id=ctx.agent_id,
-            user_id=ctx.user_id,
+        )
+        self._dispatch.notify(
+            MutationEvent(
+                operation=MutationOp.MKDIR,
+                path=path,
+                zone_id=ctx.zone_id or "root",
+                revision=new_revision,
+                agent_id=ctx.agent_id,
+                user_id=ctx.user_id,
+            )
         )
 
         # Issue #1331: Publish dir_create event to event bus
@@ -1197,22 +1210,29 @@ class NexusFS(  # type: ignore[misc]
             except Exception as e:
                 logger.debug("Failed to clean up directory index for %s: %s", path, e)
 
-        # Issue #625: Observer + hook coverage for rmdir
+        # Issue #900: Unified two-phase dispatch for rmdir
         new_revision = self._increment_zone_revision()
-        if self._write_observer:
-            self._write_observer.on_rmdir(
+
+        from nexus.contracts.vfs_hooks import MutationEvent, RmdirHookContext
+
+        self._dispatch.intercept_post_rmdir(
+            RmdirHookContext(
                 path=path,
+                context=ctx,
                 zone_id=ctx.zone_id,
                 agent_id=ctx.agent_id,
                 recursive=recursive,
             )
-        self._fire_post_mutation_hooks(
-            MutationOp.RMDIR,
-            path,
-            ctx.zone_id or "root",
-            new_revision,
-            agent_id=ctx.agent_id,
-            user_id=ctx.user_id,
+        )
+        self._dispatch.notify(
+            MutationEvent(
+                operation=MutationOp.RMDIR,
+                path=path,
+                zone_id=ctx.zone_id or "root",
+                revision=new_revision,
+                agent_id=ctx.agent_id,
+                user_id=ctx.user_id,
+            )
         )
 
     @rpc_expose(description="Check if path is a directory")
@@ -1413,9 +1433,9 @@ class NexusFS(  # type: ignore[misc]
             raise RuntimeError("ReBAC manager not available")
         return mgr
 
-    def register_mutation_hook(self, hook: Any) -> None:
-        """Register a post-mutation hook (Issue #625)."""
-        self._post_mutation_hooks.append(hook)
+    def register_observe(self, observer: Any) -> None:
+        """Register a mutation observer (OBSERVE phase, Issue #900)."""
+        self._dispatch.register_observe(observer)
 
     # ------------------------------------------------------------------
     # ReBAC delegation stubs (Issue #2033)

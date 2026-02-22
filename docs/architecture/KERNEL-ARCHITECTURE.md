@@ -193,23 +193,43 @@ lists = no-op dispatch = kernel operates with zero services.
 
 Two-phase dispatch per VFS operation:
 
-| Phase | Semantics | Abort? | Modify? | Linux Analogue | Current Mechanism |
-|-------|-----------|--------|---------|----------------|-------------------|
-| **INTERCEPT** | Synchronous, ordered | Yes | Yes | LSM `call_void_hook()` | `WriteObserverProtocol` (abort), `VFSHookPipeline` (modify) |
-| **OBSERVE** | Fire-and-forget | No | No | `fsnotify()` / `notifier_call_chain()` | `PostMutationHook` |
+| Phase | Semantics | Abort? | Modify? | Linux Analogue | Mechanism |
+|-------|-----------|--------|---------|----------------|-----------|
+| **INTERCEPT** | Synchronous, ordered | Yes (observer) | Yes (hooks) | LSM `call_void_hook()` | `KernelDispatch.intercept_post_*()` |
+| **OBSERVE** | Fire-and-forget | No | No | `fsnotify()` / `notifier_call_chain()` | `KernelDispatch.notify()` |
 
-**Contracts:** Callback protocols and context types in `contracts/` (tier-neutral,
-like `include/linux/notifier.h`). Concrete implementations in `services/hooks/`
-(policy, like SELinux/AppArmor modules). Factory wires them at startup.
+**Implementation** (`core/kernel_dispatch.py`, Issue #900):
+
+`KernelDispatch` is a single class that owns both phases. Each VFS operation
+(read/write/delete/rename/mkdir/rmdir) calls `intercept_post_*()` then `notify()`.
+
+INTERCEPT phase runs in two stages:
+1. **Built-in write observer** (audit trail) — can abort via `AuditLogError`
+   when `audit_strict_mode=True`, else logs critical warning.
+2. **Registered interceptor hooks** — per-operation hook lists
+   (`register_intercept_read/write/delete/rename/mkdir/rmdir`).
+   Can modify context (e.g. filter CSV columns, update cache bitmaps).
+   Failures caught as `OperationWarning` — never abort.
+
+OBSERVE phase broadcasts a frozen `MutationEvent` to all registered
+`VFSObserver` instances. Used for cache invalidation, workflow triggers,
+telemetry. Failures logged, never abort.
+
+**Contracts:** Hook protocols (`VFSReadHook`, `VFSWriteHook`, etc.),
+context dataclasses (`ReadHookContext`, `WriteHookContext`, etc.),
+`MutationEvent`, `VFSObserver` — all in `contracts/vfs_hooks.py`
+(tier-neutral, like `include/linux/notifier.h`).
+Concrete implementations in `services/hooks/` (policy, like SELinux/AppArmor).
+
+**Registration API** (factory wires at startup):
+- `dispatch.register_intercept_read(hook)` — INTERCEPT hooks
+- `dispatch.register_observe(observer)` — OBSERVE observers
 
 **Distinction from HookEngineProtocol (S15/P17):** The kernel notification
 dispatch is an internal mechanism — always-on infrastructure that dispatches
 at operation points. `HookEngineProtocol` is the service-layer API for
 plugin/user hook registration (like netfilter userspace config) — an optional
 service brick that sits above kernel dispatch.
-
-> **Gap:** Three separate mechanisms (`WriteObserverProtocol`, `VFSHookPipeline`,
-> `PostMutationHook`) should unify into a single two-phase dispatch model.
 
 ### Service Protocols (`nexus.services.protocols`)
 

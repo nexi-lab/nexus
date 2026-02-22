@@ -134,17 +134,9 @@ def _boot_system_services(
                 strict_mode=ctx.audit.strict_mode,
             )
 
-        # Issue #900/#923: KernelDispatch — unified two-phase VFS dispatch
-        from nexus.core.kernel_dispatch import KernelDispatch
-
-        kernel_dispatch = KernelDispatch(
-            write_observer=write_observer,
-            audit_strict_mode=ctx.audit.strict_mode,
-        )
-
         logger.debug(
             "[BOOT:SYSTEM] Critical services created: rebac_manager, audit_store, "
-            "entity_registry, permission_enforcer, write_observer, kernel_dispatch"
+            "entity_registry, permission_enforcer, write_observer"
         )
 
     except BootError:
@@ -486,7 +478,6 @@ def _boot_system_services(
         "entity_registry": entity_registry,
         "permission_enforcer": permission_enforcer,
         "write_observer": write_observer,
-        "kernel_dispatch": kernel_dispatch,
         # Former-kernel degradable
         "dir_visibility_cache": dir_visibility_cache,
         "hierarchy_manager": hierarchy_manager,

@@ -141,7 +141,7 @@ class PermissionChecker:
         # Fix #332: Virtual parsed views inherit permissions from
         # their original files.
         # ----------------------------------------------------------
-        from nexus.core.virtual_views import parse_virtual_path
+        from nexus.lib.virtual_views import parse_virtual_path
 
         def metadata_exists(check_path: str) -> bool:
             return self._metadata_store.exists(check_path)

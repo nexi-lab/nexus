@@ -18,7 +18,7 @@ from nexus.skills.protocols import NexusFilesystem
 from nexus.skills.registry import SkillNotFoundError, SkillRegistry
 
 if TYPE_CHECKING:
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
     from nexus.rebac.manager import ReBACManager
     from nexus.skills.governance import SkillGovernance
 

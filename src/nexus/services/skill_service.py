@@ -32,7 +32,7 @@ from nexus.skills.types import PromptContext, SkillContent, SkillInfo
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
     from nexus.services.gateway import NexusFSGateway
 
 
@@ -1055,7 +1055,7 @@ class SkillService:
             if is_public:
                 try:
                     # Create a system context for reading public skill metadata
-                    from nexus.core.permissions import OperationContext as OpCtx
+                    from nexus.contracts.types import OperationContext as OpCtx
 
                     system_ctx = OpCtx(
                         user_id="system",

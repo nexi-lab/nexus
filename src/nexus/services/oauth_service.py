@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from nexus.contracts.cache_store import CacheStoreABC
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
 
 
 class PKCEStateStore:

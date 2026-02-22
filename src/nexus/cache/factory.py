@@ -50,7 +50,7 @@ from nexus.cache.domain import (
     TigerCache,
 )
 from nexus.cache.settings import CacheSettings
-from nexus.core.cache_store import CacheStoreABC, NullCacheStore
+from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend

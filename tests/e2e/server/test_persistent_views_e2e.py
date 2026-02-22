@@ -6,7 +6,7 @@ Verifies that:
 3. L3 doesn't break the existing namespace isolation behavior
 
 Uses multi-key StaticAPIKeyAuth for proper per-user identity, and the sync
-RPC endpoint (/api/nfs/) which doesn't require AsyncNexusFS (database_url).
+RPC endpoint (/api/nfs/) which doesn't require NexusFS (database_url).
 """
 
 import base64

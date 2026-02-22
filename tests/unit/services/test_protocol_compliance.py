@@ -392,7 +392,7 @@ _PROTOCOL_FILES: list[tuple[str, str]] = [
     ("agent_registry", "nexus/services/protocols/agent_registry.py"),
     ("auth", "nexus/services/protocols/auth.py"),
     ("delegation", "nexus/services/protocols/delegation.py"),
-    ("event_log", "nexus/services/event_log/protocol.py"),
+    ("event_log", "nexus/services/event_subsystem/log/protocol.py"),
     ("governance", "nexus/bricks/governance/protocols.py"),
     ("hook_engine", "nexus/services/protocols/hook_engine.py"),
     ("llm", "nexus/services/protocols/llm.py"),
@@ -422,7 +422,6 @@ _PROTOCOL_FILES: list[tuple[str, str]] = [
     ("vfs_core", "nexus/core/protocols/vfs_core.py"),
     ("caching", "nexus/core/protocols/caching.py"),
     ("connector", "nexus/core/protocols/connector.py"),
-    ("revision_service", "nexus/core/protocols/revision_service.py"),
     # Issue #2359: Moved protocols to their correct tier locations
     ("describable", "nexus/contracts/describable.py"),
     ("wirable_fs", "nexus/contracts/wirable_fs.py"),

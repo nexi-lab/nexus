@@ -911,7 +911,7 @@ class TestMountContextUtilsIntegration:
         nx.db_path = temp_dir / "token_manager.db"
 
         # Patch at source since gateway does local import inside method
-        with patch("nexus.core.context_utils.get_database_url") as mock_get_db_url:
+        with patch("nexus.lib.context_utils.get_database_url") as mock_get_db_url:
             mock_get_db_url.return_value = str(temp_dir / "token_manager.db")
 
             # This should use get_database_url for gdrive_connector

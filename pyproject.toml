@@ -431,7 +431,6 @@ disable_error_code = ["attr-defined", "return-value"]
 
 [[tool.mypy.overrides]]
 module = [
-    "nexus.bricks.filesystem.async_scoped_filesystem",
     "nexus.bricks.tools.langgraph.nexus_tools",
 ]
 # These modules call methods on RemoteNexusFS/AsyncRemoteNexusFS that are
@@ -874,7 +873,6 @@ ignore_imports = [
     # --- services importing bricks ---
     # filesystem backward-compat re-exports from bricks/ (Issue #2424)
     "nexus.services.filesystem -> nexus.bricks.filesystem._scoped_base",
-    "nexus.services.filesystem -> nexus.bricks.filesystem.async_scoped_filesystem",
     "nexus.services.filesystem -> nexus.bricks.filesystem.scoped_filesystem",
     "nexus.services.ace.consolidation -> nexus.bricks.search.embeddings",
     "nexus.services.oauth.oauth_service -> nexus.bricks.auth.oauth.credential_service",

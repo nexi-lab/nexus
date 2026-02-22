@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nexus.bricks.filesystem._scoped_base import ScopedPathMixin
-    from nexus.bricks.filesystem.async_scoped_filesystem import AsyncScopedFilesystem
     from nexus.bricks.filesystem.scoped_filesystem import ScopedFilesystem
     from nexus.contracts.filesystem.directory_ops_abc import DirectoryOpsABC
     from nexus.contracts.filesystem.discovery_abc import DiscoveryABC
@@ -28,10 +27,6 @@ _lazy_imports_cache: dict[str, Any] = {}
 
 _LAZY_IMPORTS = {
     # Scoped wrappers re-exported from bricks/ for backward compatibility
-    "AsyncScopedFilesystem": (
-        "nexus.bricks.filesystem.async_scoped_filesystem",
-        "AsyncScopedFilesystem",
-    ),
     "ScopedFilesystem": ("nexus.bricks.filesystem.scoped_filesystem", "ScopedFilesystem"),
     "ScopedPathMixin": ("nexus.bricks.filesystem._scoped_base", "ScopedPathMixin"),
     # ABCs re-exported from contracts/ for backward compatibility
@@ -63,7 +58,6 @@ def __getattr__(name: str) -> Any:
 
 
 __all__ = [
-    "AsyncScopedFilesystem",
     "DirectoryOpsABC",
     "DiscoveryABC",
     "FileOpsABC",

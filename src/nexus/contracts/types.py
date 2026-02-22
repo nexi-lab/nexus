@@ -345,3 +345,31 @@ class SnapshotId:
     """Opaque identifier for a transactional snapshot."""
 
     id: str
+
+
+# ---------------------------------------------------------------------------
+# Audit configuration (moved from nexus.core.config, Issue #959)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class AuditConfig:
+    """Audit trail error-policy configuration (Issue #2152).
+
+    Controls what happens when audit logging (RecordStore sync) fails
+    during write operations. This is a P0 compliance concern — separate
+    from permission enforcement (PermissionConfig).
+
+    P0 COMPLIANCE: SOX, HIPAA, GDPR, PCI DSS require complete audit
+    trails. ``strict_mode=True`` (default) ensures writes fail if audit
+    logging fails, preventing silent audit gaps.
+
+    Note on buffered observers: ``strict_mode`` is enforced by the
+    synchronous ``RecordStoreWriteObserver``. The async
+    ``BufferedRecordStoreWriteObserver`` enqueues events into a
+    ``WriteBuffer`` where the enqueue path cannot fail; actual error
+    handling (retry + drop) is managed by the ``WriteBuffer`` background
+    flush thread, not by ``strict_mode``.
+    """
+
+    strict_mode: bool = True

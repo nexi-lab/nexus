@@ -456,7 +456,7 @@ class TestConsistencyLevelImpact:
 
     def test_eventual_consistency_latency(self, benchmark, seeded_manager):
         """EVENTUAL (cache-friendly) should be the fastest path."""
-        from nexus.bricks.rebac.types import ConsistencyLevel
+        from nexus.contracts.rebac_types import ConsistencyLevel
 
         m = seeded_manager
 
@@ -480,7 +480,7 @@ class TestConsistencyLevelImpact:
 
     def test_strong_consistency_latency(self, benchmark, seeded_manager):
         """STRONG (cache-bypass) — measures raw graph traversal cost."""
-        from nexus.bricks.rebac.types import ConsistencyLevel
+        from nexus.contracts.rebac_types import ConsistencyLevel
 
         m = seeded_manager
 

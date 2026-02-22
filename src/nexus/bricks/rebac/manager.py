@@ -96,10 +96,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Canonical mapping imported from domain.py — see RELATION_TO_PERMISSIONS.
-# Local alias kept for backward compat with code referencing the old name.
-_RELATION_TO_PERMISSIONS = RELATION_TO_PERMISSIONS
-
 # ============================================================================
 # Flattened ReBAC Manager (Issue #1385)
 # ============================================================================
@@ -1083,7 +1079,7 @@ class ReBACManager:
 
         # Map relation to permission(s) for invalidation
         # This maps relation names to permissions they grant
-        permissions = _RELATION_TO_PERMISSIONS.get(relation, [])
+        permissions = RELATION_TO_PERMISSIONS.get(relation, [])
         if not permissions:
             return
 
@@ -1298,7 +1294,7 @@ class ReBACManager:
             object_id = object[1]
 
             # Get permissions for this relation (fail-closed: unknown → [])
-            permissions = _RELATION_TO_PERMISSIONS.get(relation, [])
+            permissions = RELATION_TO_PERMISSIONS.get(relation, [])
 
             # Persist each permission grant immediately
             for permission in permissions:
@@ -1411,7 +1407,7 @@ class ReBACManager:
 
                     # Get permissions for this relation
                     # FIX: Default to empty list for unknown relations
-                    permissions = _RELATION_TO_PERMISSIONS.get(relation, [])
+                    permissions = RELATION_TO_PERMISSIONS.get(relation, [])
 
                     # Persist each permission grant immediately
                     for permission in permissions:
@@ -1758,7 +1754,7 @@ class ReBACManager:
                 object_id = tuple_info["object_id"]
 
                 if subject_type and subject_id and object_type and object_id:
-                    permissions = _RELATION_TO_PERMISSIONS.get(relation, [])
+                    permissions = RELATION_TO_PERMISSIONS.get(relation, [])
 
                     # Revoke each permission immediately
                     for permission in permissions:
@@ -4193,8 +4189,6 @@ class ReBACManager:
         """
         pass
 
-
-ZoneAwareReBACManager = ReBACManager
 
 # Backward-compat alias — many tests and call-sites still reference the old name.
 EnhancedReBACManager = ReBACManager

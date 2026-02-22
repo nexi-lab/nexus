@@ -25,8 +25,8 @@ from litellm.utils import create_pretrained_tokenizer
 from nexus.bricks.llm.cancellation import AsyncCancellationToken
 from nexus.bricks.llm.config import LLMConfig
 from nexus.bricks.llm.exceptions import LLMCancellationError, LLMNoResponseError
-from nexus.bricks.llm.message import Message
 from nexus.bricks.llm.metrics import LLMMetrics
+from nexus.contracts.llm_types import Message
 
 logger = logging.getLogger(__name__)
 

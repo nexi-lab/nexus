@@ -20,18 +20,16 @@ Service container hierarchy (matches NEXUS-LEGO-ARCHITECTURE §2):
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+from nexus.bricks.workflows.protocol import WorkflowProtocol
 from nexus.constants import DEFAULT_NATS_URL
-
-if TYPE_CHECKING:
-    from nexus.bricks.workflows.protocol import WorkflowProtocol
-    from nexus.contracts.write_observer import WriteObserverProtocol
-    from nexus.core.protocols.entity_registry import EntityRegistryProtocol
-    from nexus.core.protocols.permission_enforcer import PermissionEnforcerProtocol
-    from nexus.core.protocols.rebac_manager import ReBACManagerProtocol
-    from nexus.core.protocols.workspace_manager import WorkspaceManagerProtocol
-    from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
+from nexus.contracts.write_observer import WriteObserverProtocol
+from nexus.core.protocols.entity_registry import EntityRegistryProtocol
+from nexus.core.protocols.permission_enforcer import PermissionEnforcerProtocol
+from nexus.core.protocols.rebac_manager import ReBACManagerProtocol
+from nexus.core.protocols.workspace_manager import WorkspaceManagerProtocol
+from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
 
 # ---------------------------------------------------------------------------
 # Config dataclasses (frozen — immutable, use dataclasses.replace() to copy)

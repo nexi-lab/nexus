@@ -77,6 +77,7 @@ def _make_mock_ctx(**overrides: Any) -> Any:
             deferred_flush_interval=0.05,
             audit_strict_mode=True,
         ),
+        "audit": MagicMock(strict_mode=True),
         "cache_ttl_seconds": 300,
         "dist": MagicMock(
             enable_events=False,
@@ -319,7 +320,7 @@ class TestBootBrickServices:
         with (
             caplog.at_level(logging.WARNING, logger="nexus.factory"),
             patch(
-                "nexus.rebac.circuit_breaker.AsyncCircuitBreaker",
+                "nexus.bricks.rebac.circuit_breaker.AsyncCircuitBreaker",
                 side_effect=RuntimeError("circuit breaker config error"),
             ),
         ):

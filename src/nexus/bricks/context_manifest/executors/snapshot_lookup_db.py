@@ -12,10 +12,7 @@ Re-exported here for backward compatibility.
 
 import json
 import logging
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
-
-if TYPE_CHECKING:
-    pass
+from typing import Any, Protocol, runtime_checkable
 
 from nexus.storage.repositories.snapshot_lookup import DatabaseSnapshotLookup
 

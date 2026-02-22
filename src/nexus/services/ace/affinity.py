@@ -16,16 +16,12 @@ https://arxiv.org/html/2601.02553
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING
 
 import numpy as np
 from numpy.typing import NDArray
 
 # sklearn is imported lazily inside cluster_by_affinity() to avoid
 # making it a hard dependency for other ACE components that don't need clustering.
-
-if TYPE_CHECKING:
-    pass
 
 
 @dataclass

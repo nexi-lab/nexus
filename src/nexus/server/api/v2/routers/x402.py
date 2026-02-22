@@ -10,15 +10,12 @@ Related: Issue #1206 (x402 protocol integration)
 
 import logging
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from nexus.server.dependencies import require_auth
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 

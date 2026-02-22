@@ -26,10 +26,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Generic, ParamSpec, TypeVar, cast
-
-if TYPE_CHECKING:
-    pass  # Exceptions imported at runtime to avoid circular imports
+from typing import Any, Generic, ParamSpec, TypeVar, cast
 
 T = TypeVar("T")
 

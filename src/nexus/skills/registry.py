@@ -17,7 +17,7 @@ from nexus.skills.parser import SkillParseError, SkillParser
 from nexus.skills.protocols import NexusFilesystem
 
 if TYPE_CHECKING:
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.types import OperationContext
     from nexus.rebac.manager import ReBACManager
 
 logger = logging.getLogger(__name__)

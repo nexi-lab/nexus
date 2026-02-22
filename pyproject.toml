@@ -725,16 +725,6 @@ module = [
 # Mixin attr-defined + no-any-return: mypy can't resolve host-class attrs
 disable_error_code = ["attr-defined", "no-any-return", "import-untyped"]
 
-# --- Async wrappers delegating to NexusFS (returns Any via dynamic dispatch) ---
-[[tool.mypy.overrides]]
-module = "nexus.core.async_scoped_filesystem"
-warn_return_any = false
-
-[[tool.mypy.overrides]]
-module = "nexus.core.async_nexus_fs"
-# aput arg-type from FileMetadata hierarchy + return-value
-disable_error_code = ["arg-type", "return-value"]
-
 # --- Backend / driver return-type mismatches (HandlerResponse covariance) ---
 [[tool.mypy.overrides]]
 module = [

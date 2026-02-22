@@ -4,12 +4,10 @@ import threading
 import time
 from unittest.mock import MagicMock
 
-from nexus.core.vfs_hook_impls import (
-    AutoParseWriteHook,
-    DynamicViewerReadHook,
-    TigerCacheRenameHook,
-)
-from nexus.core.vfs_hooks import ReadHookContext, RenameHookContext, WriteHookContext
+from nexus.bricks.rebac.cache.tiger.rename_hook import TigerCacheRenameHook
+from nexus.contracts.vfs_hooks import ReadHookContext, RenameHookContext, WriteHookContext
+from nexus.parsers.auto_parse_hook import AutoParseWriteHook
+from nexus.services.rebac.dynamic_viewer_hook import DynamicViewerReadHook
 
 # =========================================================================
 # DynamicViewerReadHook
@@ -19,7 +17,7 @@ from nexus.core.vfs_hooks import ReadHookContext, RenameHookContext, WriteHookCo
 class TestDynamicViewerReadHook:
     def _make_hook(
         self,
-        subject: str | None = "user:alice",
+        subject: tuple[str, str] | None = ("user", "alice"),
         config: dict | None = None,
         filtered: str = "col1\na",
     ) -> DynamicViewerReadHook:
@@ -61,7 +59,7 @@ class TestDynamicViewerReadHook:
 
     def test_handles_bytes_filtered_data(self):
         hook = DynamicViewerReadHook(
-            get_subject=lambda ctx: "user:alice",
+            get_subject=lambda ctx: ("user", "alice"),
             get_viewer_config=lambda s, p: {"columns": ["col1"]},
             apply_filter=lambda data, cfg, fmt: {"filtered_data": b"raw-bytes"},
         )

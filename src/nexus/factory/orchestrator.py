@@ -7,7 +7,6 @@ if TYPE_CHECKING:
     from nexus.backends.backend import Backend
     from nexus.bricks.workflows.protocol import WorkflowProtocol
     from nexus.core.config import (
-        AuditConfig,
         BrickServices,
         CacheConfig,
         DistributedConfig,
@@ -30,7 +29,6 @@ def create_nexus_services(
     router: "PathRouter",
     *,
     permissions: "PermissionConfig | None" = None,
-    audit: "AuditConfig | None" = None,
     cache: "CacheConfig | None" = None,
     distributed: "DistributedConfig | None" = None,
     zone_id: str | None = None,
@@ -60,7 +58,6 @@ def create_nexus_services(
         backend: Backend instance (for WorkspaceManager).
         router: PathRouter instance (for PermissionEnforcer object type resolution).
         permissions: Permission config (defaults from PermissionConfig()).
-        audit: Audit trail error-policy config (defaults from AuditConfig()).
         cache: Cache config (for TTL values, defaults from CacheConfig()).
         distributed: Distributed config (for event bus/locks).
         zone_id: Default zone ID (for WorkspaceManager, embedded mode only).
@@ -78,7 +75,6 @@ def create_nexus_services(
     """
     # --- Profile-based brick gating (Issue #1389) ---
     from nexus.contracts.deployment_profile import DeploymentProfile
-    from nexus.core.config import AuditConfig as _AuditConfig
     from nexus.core.config import BrickServices as _BrickServices
     from nexus.core.config import CacheConfig as _CacheConfig
     from nexus.core.config import DistributedConfig as _DistributedConfig
@@ -124,7 +120,6 @@ def create_nexus_services(
     _profile_tuning = resolve_profile_tuning(_factory_profile)
 
     perm = permissions or _PermissionConfig()
-    audit_cfg = audit or _AuditConfig()
     cache_cfg = cache or _CacheConfig()
     dist = distributed or _DistributedConfig()
 
@@ -136,7 +131,7 @@ def create_nexus_services(
         engine=record_store.engine,
         read_engine=record_store.read_engine,
         perm=perm,
-        audit=audit_cfg,
+        audit=cast(Any, None),  # AuditConfig removed; dead field in _BootContext
         cache_ttl_seconds=cache_cfg.ttl_seconds,
         dist=dist,
         zone_id=zone_id,
@@ -198,9 +193,6 @@ def create_nexus_services(
         resiliency_manager=system_dict["resiliency_manager"],
         eviction_manager=system_dict.get("eviction_manager"),
         zone_lifecycle=system_dict.get("zone_lifecycle"),
-        # Issue #2195: EventLog + Scheduler
-        event_log=system_dict.get("event_log"),
-        scheduler_service=system_dict.get("scheduler_service"),
     )
 
     brick_services = _BrickServices(
@@ -252,7 +244,6 @@ def create_nexus_fs(
     custom_namespaces: list[Any] | None = None,
     cache: "CacheConfig | None" = None,
     permissions: "PermissionConfig | None" = None,
-    audit: "AuditConfig | None" = None,
     distributed: "DistributedConfig | None" = None,
     memory: Any = None,
     parsing: Any = None,
@@ -277,7 +268,6 @@ def create_nexus_fs(
         custom_namespaces: Custom namespace configurations.
         cache: CacheConfig object.
         permissions: PermissionConfig object.
-        audit: AuditConfig object (audit trail error policy).
         distributed: DistributedConfig object.
         memory: MemoryConfig object.
         parsing: ParseConfig object.
@@ -341,7 +331,6 @@ def create_nexus_fs(
             backend=backend,
             router=router,
             permissions=permissions,
-            audit=audit,
             cache=cache,
             distributed=distributed,
             zone_id=zone_id,
@@ -472,10 +461,10 @@ def create_nexus_fs(
 def _register_vfs_hooks(nx: "NexusFS") -> None:
     """Register INTERCEPT hooks on KernelDispatch (Issue #900).
 
-    Each hook lives in ``nexus.core.vfs_hook_impls``:
-      - DynamicViewerReadHook  (INTERCEPT read)  — column-level CSV filtering
-      - AutoParseWriteHook     (INTERCEPT write)  — fire-and-forget background parsing
-      - TigerCacheRenameHook   (INTERCEPT rename) — bitmap updates on file/directory move
+    Each hook lives in its own service directory:
+      - DynamicViewerReadHook  → services/rebac/     (INTERCEPT read)
+      - AutoParseWriteHook     → parsers/             (INTERCEPT write)
+      - TigerCacheRenameHook   → services/permissions/cache/tiger/  (INTERCEPT rename)
 
     Called by ``create_nexus_fs()`` after NexusFS construction + wired
     services binding, keeping the kernel free of service-layer imports.
@@ -491,7 +480,7 @@ def _register_vfs_hooks(nx: "NexusFS") -> None:
         and hasattr(nx, "apply_dynamic_viewer_filter")
     )
     if has_viewer:
-        from nexus.core.vfs_hook_impls import DynamicViewerReadHook
+        from nexus.services.rebac.dynamic_viewer_hook import DynamicViewerReadHook
 
         dispatch.register_intercept_read(
             DynamicViewerReadHook(
@@ -505,7 +494,7 @@ def _register_vfs_hooks(nx: "NexusFS") -> None:
     parser_reg = getattr(nx, "parser_registry", None)
     parse_fn = getattr(nx, "_virtual_view_parse_fn", None)
     if parser_reg is not None and parse_fn is not None:
-        from nexus.core.vfs_hook_impls import AutoParseWriteHook
+        from nexus.parsers.auto_parse_hook import AutoParseWriteHook
 
         dispatch.register_intercept_write(
             AutoParseWriteHook(
@@ -517,7 +506,7 @@ def _register_vfs_hooks(nx: "NexusFS") -> None:
     # TigerCacheRenameHook (post-rename: bitmap updates)
     tiger_cache = getattr(rebac_mgr, "_tiger_cache", None) if rebac_mgr else None
     if tiger_cache is not None:
-        from nexus.core.vfs_hook_impls import TigerCacheRenameHook
+        from nexus.services.permissions.cache.tiger.rename_hook import TigerCacheRenameHook
 
         def _metadata_list_iter(
             prefix: str,

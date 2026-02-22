@@ -17,12 +17,10 @@ import inspect
 
 import pytest
 
-from nexus.core.nexus_fs_bulk import NexusFSBulkMixin
 from nexus.core.nexus_fs_core import NexusFSCoreMixin
 
 # ── Expected API Surface ──────────────────────────────────────────────────────
 # These are the extraction-critical methods that MUST exist after refactoring.
-# Issue #2272: Bulk methods moved from NexusFSCoreMixin → NexusFSBulkMixin.
 
 CORE_READ_METHODS = {
     "read": {"params": ["path", "context", "return_metadata", "parsed"], "async": False},
@@ -60,7 +58,7 @@ ALL_CORE_METHODS = {
     **CORE_METADATA_METHODS,
 }
 
-# Issue #2272: Bulk methods now live on NexusFSBulkMixin
+# Bulk methods on NexusFSCoreMixin (service-layer convenience, future extraction target).
 BULK_METHODS = {
     "read_bulk": {"params": ["paths", "context", "return_metadata", "skip_errors"], "async": False},
     "write_batch": {"params": ["files", "context"], "async": False},
@@ -145,47 +143,47 @@ class TestCoreMixinMethodGroups:
     """Verify method grouping by domain for extraction guidance."""
 
     def test_read_methods_count(self):
-        """Verify expected number of read methods (bulk moved to BulkMixin)."""
+        """Verify expected number of read methods."""
         assert len(CORE_READ_METHODS) == 3, "Expected 3 read methods (read, read_range, stream)"
 
     def test_write_methods_count(self):
-        """Verify expected number of write methods (write_batch moved to BulkMixin)."""
+        """Verify expected number of write methods."""
         assert len(CORE_WRITE_METHODS) == 4, "Expected 4 write methods"
 
     def test_delete_methods_count(self):
-        """Verify expected number of delete/rename methods (bulk moved to BulkMixin)."""
+        """Verify expected number of delete/rename methods."""
         assert len(CORE_DELETE_METHODS) == 2, "Expected 2 delete/rename methods"
 
     def test_metadata_methods_count(self):
-        """Verify expected number of metadata methods (bulk moved to BulkMixin)."""
+        """Verify expected number of metadata methods."""
         assert len(CORE_METADATA_METHODS) == 2, "Expected 2 metadata methods"
 
     def test_total_extraction_critical_methods(self):
         """Verify total count of extraction-critical methods on core mixin."""
-        assert len(ALL_CORE_METHODS) == 11, "Expected 11 core methods (7 bulk moved)"
+        assert len(ALL_CORE_METHODS) == 11, "Expected 11 core methods"
 
     def test_bulk_methods_count(self):
-        """Verify total count of bulk methods on BulkMixin."""
-        assert len(BULK_METHODS) == 7, "Expected 7 bulk methods on NexusFSBulkMixin"
+        """Verify total count of bulk methods on NexusFSCoreMixin."""
+        assert len(BULK_METHODS) == 7, "Expected 7 bulk methods on NexusFSCoreMixin"
 
 
-class TestBulkMixinAPIExists:
-    """Verify bulk methods exist on NexusFSBulkMixin (Issue #2272)."""
+class TestBulkMethodsOnCoreMixin:
+    """Verify bulk methods exist on NexusFSCoreMixin."""
 
     @pytest.mark.parametrize("method_name", list(BULK_METHODS.keys()))
     def test_method_exists(self, method_name: str):
-        assert hasattr(NexusFSBulkMixin, method_name), f"NexusFSBulkMixin.{method_name}() missing"
+        assert hasattr(NexusFSCoreMixin, method_name), f"NexusFSCoreMixin.{method_name}() missing"
 
     @pytest.mark.parametrize("method_name", list(BULK_METHODS.keys()))
     def test_method_is_callable(self, method_name: str):
-        method = getattr(NexusFSBulkMixin, method_name)
+        method = getattr(NexusFSCoreMixin, method_name)
         assert callable(method), f"{method_name} is not callable"
 
     @pytest.mark.parametrize("method_name", list(BULK_METHODS.keys()))
     def test_has_rpc_expose(self, method_name: str):
-        method = getattr(NexusFSBulkMixin, method_name)
+        method = getattr(NexusFSCoreMixin, method_name)
         assert hasattr(method, "_rpc_exposed"), (
-            f"NexusFSBulkMixin.{method_name}() missing @rpc_expose"
+            f"NexusFSCoreMixin.{method_name}() missing @rpc_expose"
         )
 
     @pytest.mark.parametrize(
@@ -193,27 +191,11 @@ class TestBulkMixinAPIExists:
         list(BULK_METHODS.items()),
     )
     def test_parameter_names(self, method_name: str, expected: dict):
-        method = getattr(NexusFSBulkMixin, method_name)
+        method = getattr(NexusFSCoreMixin, method_name)
         sig = inspect.signature(method)
         param_names = [p for p in sig.parameters if p != "self"]
         for expected_param in expected["params"]:
             assert expected_param in param_names, (
-                f"NexusFSBulkMixin.{method_name}() missing parameter '{expected_param}'. "
+                f"NexusFSCoreMixin.{method_name}() missing parameter '{expected_param}'. "
                 f"Has: {param_names}"
             )
-
-
-class TestBulkMethodsOnCoreMixin:
-    """Verify bulk methods still exist on NexusFSCoreMixin during migration.
-
-    Issue #2272: Bulk methods are being migrated to NexusFSBulkMixin but
-    remain on NexusFSCoreMixin until migration is complete. This test
-    verifies they are still present (backwards compatibility).
-    """
-
-    @pytest.mark.parametrize("method_name", list(BULK_METHODS.keys()))
-    def test_bulk_method_still_on_core(self, method_name: str):
-        assert hasattr(NexusFSCoreMixin, method_name), (
-            f"NexusFSCoreMixin.{method_name}() removed prematurely — "
-            f"migration to NexusFSBulkMixin not yet complete"
-        )

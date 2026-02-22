@@ -89,6 +89,10 @@ KNOWN_CROSS_BRICK_EXCEPTIONS: dict[tuple[str, str], list[str]] = {
         "nexus.bricks.memory.coref_resolver",
         "nexus.bricks.memory.relationship_extractor",
     ],
+    # TODO: Fix scheduler->pay via DI refactoring (CreditsService).
+    ("scheduler", "pay"): [
+        "nexus.bricks.scheduler.service",
+    ],
 }
 
 # Known exceptions for bricks importing from nexus.core (non-protocol) or

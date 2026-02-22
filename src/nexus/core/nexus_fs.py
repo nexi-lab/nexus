@@ -279,7 +279,7 @@ class NexusFS(  # type: ignore[misc]
         )
 
         # PermissionChecker: core module, safe to create here (Issue #2133)
-        from nexus.core.permission_checker import PermissionChecker
+        from nexus.services.permissions.checker import PermissionChecker
 
         self._permission_checker = PermissionChecker(
             permission_enforcer=self._permission_enforcer,
@@ -316,7 +316,7 @@ class NexusFS(  # type: ignore[misc]
         if _injected_tcm is not None:
             self._tiger_cache_manager = _injected_tcm
         else:
-            from nexus.services.tiger_cache_manager import TigerCacheManager
+            from nexus.bricks.rebac.tiger_cache_manager import TigerCacheManager
 
             self._tiger_cache_manager = TigerCacheManager(
                 rebac_manager=self._rebac_manager,

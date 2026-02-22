@@ -158,7 +158,7 @@ class VersionService:
                 context=context
             )
         """
-        from nexus.core.exceptions import NexusFileNotFoundError
+        from nexus.contracts.exceptions import NexusFileNotFoundError
 
         # Validate and normalize path
         path = self._validate_path(path)

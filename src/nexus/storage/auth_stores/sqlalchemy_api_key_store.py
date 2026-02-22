@@ -11,6 +11,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import Session
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.auth_store_types import APIKeyDTO
 from nexus.storage.models import APIKeyModel
 
@@ -60,7 +61,7 @@ class SQLAlchemyAPIKeyStore:
             name=name,
             subject_type=subject_type,
             subject_id=subject_id or user_id,
-            zone_id=zone_id or "root",
+            zone_id=zone_id or ROOT_ZONE_ID,
             is_admin=int(is_admin),
             expires_at=expires_at,
             inherit_permissions=int(inherit_permissions),

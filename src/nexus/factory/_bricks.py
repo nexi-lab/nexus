@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Any
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.factory._boot_context import _BootContext
 from nexus.factory._helpers import _make_gate, _resolve_tasks_db_path, _safe_create
 
@@ -422,7 +423,7 @@ def _boot_independent_bricks(
                 record_store=ctx.record_store,
             )
 
-            _ipc_zone = ctx.zone_id or "root"
+            _ipc_zone = ctx.zone_id or ROOT_ZONE_ID
             ipc_vfs_driver = IPCVFSDriver(
                 storage=ipc_storage_driver,
                 zone_id=_ipc_zone,
@@ -626,7 +627,7 @@ def _boot_dependent_bricks(
             from nexus.bricks.search.graph_store import GraphStore
 
             _record_store = ctx.record_store
-            _zone_id = ctx.zone_id or "root"
+            _zone_id = ctx.zone_id or ROOT_ZONE_ID
 
             def _make_graph_store(session: Any) -> Any:
                 return GraphStore(

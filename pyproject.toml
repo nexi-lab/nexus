@@ -947,7 +947,6 @@ ignore_imports = [
     "nexus.core.nexus_fs -> nexus.services.permissions.checker",
     # --- kernel (core) importing bricks ---
     "nexus.core.config -> nexus.bricks.workflows.protocol",
-    "nexus.core.permissions -> nexus.bricks.rebac.enforcer",
     "nexus.core.nexus_fs -> nexus.bricks.rebac.entity_registry",
     "nexus.core.nexus_fs -> nexus.bricks.rebac.tiger_cache_manager",
     "nexus.core.nexus_fs_core -> nexus.bricks.rebac.entity_registry",

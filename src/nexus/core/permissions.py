@@ -11,7 +11,7 @@ __all__ = ["OperationContext", "Permission"]
 
 
 def check_stale_session(agent_registry: object, context: OperationContext) -> None:
-    """Re-export check_stale_session from bricks.rebac.enforcer."""
-    from nexus.bricks.rebac.enforcer import check_stale_session as _check
+    """Re-export check_stale_session from contracts.agent_utils."""
+    from nexus.contracts.agent_utils import check_stale_session as _check
 
     _check(agent_registry, context)

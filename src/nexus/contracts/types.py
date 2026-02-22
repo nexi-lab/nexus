@@ -1,9 +1,9 @@
 """Tier-neutral domain types for the Nexus VFS (Issue #1501).
 
 Canonical home for shared types imported by 72+ files across the codebase.
-This module has **zero** runtime imports from ``nexus.*`` --- only stdlib --- so
-bricks, services, and backends can depend on it without pulling in kernel
-internals.
+This module imports only ``nexus.constants`` (tier-neutral, zero transitive
+dependencies) at runtime --- no kernel internals --- so bricks, services, and
+backends can depend on it safely.
 
 Types:
     - ``Permission``: IntFlag for file operation permissions (read/write/execute/traverse).

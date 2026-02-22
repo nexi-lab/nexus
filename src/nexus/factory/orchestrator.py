@@ -528,3 +528,11 @@ def _register_vfs_hooks(nx: "NexusFS") -> None:
                 metadata_list_iter=_metadata_list_iter,
             )
         )
+
+    # ── OBSERVE observers (Issue #900, #922) ──────────────────────────
+    # ReadSetCacheObserver: invalidates ReadSetAwareCache on mutations.
+    # Kernel fires MutationEvent via _dispatch.notify(); observer handles
+    # invalidation without the kernel knowing about caching.
+    cache_observer = getattr(nx, "_cache_observer", None)
+    if cache_observer is not None:
+        dispatch.register_observe(cache_observer)

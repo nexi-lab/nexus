@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from nexus.rebac.entity_registry import EntityRegistry
     from nexus.services.memory.memory_api import Memory
 from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
+from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
 from nexus.contracts.metadata import FileMetadata
 from nexus.core.config import (
     BrickServices,
@@ -32,7 +33,6 @@ from nexus.core.config import (
     SystemServices,
     WiredServices,
 )
-from nexus.core.filesystem import NexusFilesystem
 from nexus.core.metastore import MetastoreABC
 from nexus.core.nexus_fs_core import NexusFSCoreMixin
 from nexus.core.router import NamespaceConfig, PathRouter
@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 class NexusFS(  # type: ignore[misc]
     NexusFSCoreMixin,
-    NexusFilesystem,
+    NexusFilesystemABC,
 ):
     """
     Unified filesystem for Nexus.
@@ -1603,7 +1603,7 @@ class NexusFS(  # type: ignore[misc]
 
     # ------------------------------------------------------------------
     # Abstract method forwarders (ABCMeta requires real definitions)
-    # These satisfy the NexusFilesystem ABC while delegating to services.
+    # These satisfy the NexusFilesystemABC while delegating to services.
     # ------------------------------------------------------------------
 
     # --- Workspace Versioning (→ _workspace_rpc_service) ---

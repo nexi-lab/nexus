@@ -156,4 +156,4 @@ If future brick lifecycle notifications are needed:
 - Issue #900: Unify kernel notification mechanisms (KernelDispatch)
 - PR #2544: Implementation
 - `src/nexus/core/kernel_dispatch.py`: KernelDispatch implementation
-- `docs/rfcs/adr-nexus-fs-method-freeze.md`: Related service extraction pattern
+- `docs/rfcs/adr-nexus-fs-method-freeze.md`: Related NexusFS method freeze decision

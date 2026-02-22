@@ -9,7 +9,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from nexus.core.event_bus import FileEvent, FileEventType
+from nexus.core.file_events import FileEvent, FileEventType
 from nexus.services.event_bus.protocol import AckableEvent
 
 logger = logging.getLogger(__name__)

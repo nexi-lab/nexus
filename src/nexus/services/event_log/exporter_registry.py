@@ -13,7 +13,7 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from nexus.core.event_bus import FileEvent
+    from nexus.core.file_events import FileEvent
     from nexus.services.event_log.exporter_protocol import EventStreamExporterProtocol
 
 logger = logging.getLogger(__name__)

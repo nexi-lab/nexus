@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol, Self, runtime_checkable
 
 if TYPE_CHECKING:
-    from nexus.core.event_bus import FileEvent
+    from nexus.core.file_events import FileEvent
 
 
 @dataclass(frozen=True)

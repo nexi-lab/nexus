@@ -120,150 +120,6 @@ class NexusFSCoreMixin:
             agent_id=overlay_data.get("agent_id"),
         )
 
-    def _publish_file_event(
-        self,
-        event_type: str,
-        path: str,
-        zone_id: str | None,
-        size: int | None = None,
-        etag: str | None = None,
-        agent_id: str | None = None,
-        old_path: str | None = None,
-        revision: int | None = None,
-    ) -> None:
-        """Publish a file event to the distributed event bus.
-
-        Issue #1106 Block 2: Centralized event publishing to avoid code duplication.
-        Handles both async (event loop running) and sync (no event loop) contexts.
-
-        Args:
-            event_type: Event type string (e.g., "file_write", "file_delete", "file_rename")
-            path: Path of the affected file
-            zone_id: Zone ID (defaults to "root" if None)
-            size: File size in bytes (optional)
-            etag: Content hash (optional)
-            agent_id: Agent that performed the operation (optional)
-            old_path: Previous path for rename events (optional)
-            revision: Filesystem revision for consistency tracking (Issue #1187)
-        """
-        if not hasattr(self, "_event_bus") or self._event_bus is None:
-            return
-
-        try:
-            from nexus.core.event_bus import FileEvent, FileEventType
-
-            # Map string to enum
-            type_map = {
-                "file_write": FileEventType.FILE_WRITE,
-                "file_delete": FileEventType.FILE_DELETE,
-                "file_rename": FileEventType.FILE_RENAME,
-                "dir_create": FileEventType.DIR_CREATE,
-                "dir_delete": FileEventType.DIR_DELETE,
-            }
-            file_event_type = type_map.get(event_type, event_type)
-
-            event = FileEvent(
-                type=file_event_type,
-                path=path,
-                zone_id=zone_id or "root",
-                size=size,
-                etag=etag,
-                agent_id=agent_id,
-                old_path=old_path,
-                revision=revision,
-            )
-
-            # Fire event asynchronously (fire-and-forget via sync bridge)
-            from nexus.lib.sync_bridge import fire_and_forget
-
-            # Ensure event bus is started (lazy init for NATS JetStream)
-            if not getattr(self._event_bus, "_started", False):
-
-                async def _start_and_publish() -> None:
-                    await self._event_bus.start()
-                    await self._event_bus.publish(event)
-
-                fire_and_forget(_start_and_publish())
-                return
-
-            fire_and_forget(self._event_bus.publish(event))
-        except Exception as e:
-            logger.warning(f"Failed to create {event_type} event: {e}")
-
-    def _fire_workflow_event(
-        self,
-        trigger_type: str,
-        event_context: dict[str, Any],
-        label: str,
-    ) -> None:
-        """Fire a workflow event and broadcast to webhook subscriptions.
-
-        Consolidates the repeated async-or-thread pattern from write/delete/rename.
-        Does nothing if workflows are not enabled.
-
-        Args:
-            trigger_type: String trigger type (e.g. "file_write", "file_delete").
-            event_context: Event payload dict.
-            label: Human-readable label for task/thread naming (e.g. "file_write:/foo.txt").
-        """
-        if not (self.enable_workflows and self.workflow_engine):  # type: ignore[attr-defined]
-            return
-
-        # Bounded queue: try to enqueue, drop on overflow
-        queue = getattr(self, "_workflow_queue", None)
-        if queue is not None:
-            try:
-                queue.put_nowait((trigger_type, event_context))
-            except Exception:
-                logger.warning("Workflow event queue full, dropping event: %s", label)
-        else:
-            # Fallback: fire-and-forget (no queue — CLI or pre-startup)
-            from nexus.lib.sync_bridge import fire_and_forget
-
-            fire_and_forget(
-                self.workflow_engine.fire_event(trigger_type, event_context)  # type: ignore[attr-defined]
-            )
-
-        if self.subscription_manager:  # type: ignore[attr-defined]
-            from nexus.lib.sync_bridge import fire_and_forget
-
-            event_type = label.split(":")[0] if ":" in label else label
-            fire_and_forget(
-                self.subscription_manager.broadcast(  # type: ignore[attr-defined]
-                    event_type,
-                    event_context,
-                    event_context.get("zone_id", "root"),
-                )
-            )
-
-    async def _start_workflow_consumer(self) -> None:
-        """Background consumer for bounded workflow event queue (#1522)."""
-        queue = self._workflow_queue  # type: ignore[attr-defined]
-        engine = self.workflow_engine  # type: ignore[attr-defined]
-        while True:
-            trigger_type, event_context = await queue.get()
-            try:
-                await engine.fire_event(trigger_type, event_context)
-            except Exception as e:
-                logger.error("Workflow event processing failed: %s", e)
-            finally:
-                queue.task_done()
-
-    def ensure_workflow_consumer(self) -> None:
-        """Start the workflow consumer task if not already running."""
-        if (
-            getattr(self, "_workflow_queue", None) is None
-            or getattr(self, "_workflow_consumer_task", None) is not None
-        ):
-            return
-        try:
-            loop = asyncio.get_running_loop()
-            self._workflow_consumer_task = loop.create_task(  # type: ignore[attr-defined]
-                self._start_workflow_consumer()
-            )
-        except RuntimeError:
-            pass  # No event loop — consumer starts when server starts
-
     # =========================================================================
     # Zookie Consistency Token Support - Issue #1187
     # =========================================================================
@@ -2071,34 +1927,6 @@ class NexusFSCoreMixin:
         )
         self._dispatch.intercept_post_write(_write_ctx)
 
-        # v0.7.0: Fire workflow event for automatic trigger execution
-        is_new_file = meta is None or meta.etag is None
-        self._fire_workflow_event(
-            "file_write",
-            {
-                "file_path": path,
-                "size": len(content),
-                "etag": content_hash,
-                "version": new_version,
-                "zone_id": zone_id or "root",
-                "agent_id": agent_id,
-                "user_id": context.user_id if context and hasattr(context, "user_id") else None,
-                "created": is_new_file,
-                "timestamp": now.isoformat(),
-            },
-            label=f"file_write:{path}",
-        )
-
-        # Issue #1106 Block 2: Publish event to distributed event bus
-        self._publish_file_event(
-            event_type="file_write",
-            path=path,
-            zone_id=zone_id,
-            size=len(content),
-            etag=content_hash,
-            agent_id=agent_id,
-        )
-
         # Return metadata for optimistic concurrency control
         return {
             "etag": content_hash,
@@ -2983,31 +2811,6 @@ class NexusFSCoreMixin:
             )
         )
 
-        # v0.7.0: Fire workflow event for automatic trigger execution
-        self._fire_workflow_event(
-            "file_delete",
-            {
-                "file_path": path,
-                "size": meta.size,
-                "etag": meta.etag,
-                "zone_id": zone_id or "root",
-                "agent_id": agent_id,
-                "user_id": context.user_id if context and hasattr(context, "user_id") else None,
-                "timestamp": datetime.now(UTC).isoformat(),
-            },
-            label=f"file_delete:{path}",
-        )
-
-        # Issue #1106 Block 2: Publish event to distributed event bus
-        self._publish_file_event(
-            event_type="file_delete",
-            path=path,
-            zone_id=zone_id,
-            size=meta.size,
-            etag=meta.etag,
-            agent_id=agent_id,
-        )
-
         return {}
 
     @rpc_expose(description="Rename/move file")
@@ -3205,33 +3008,6 @@ class NexusFSCoreMixin:
             metadata=meta,
         )
         self._dispatch.intercept_post_rename(_rename_ctx)
-
-        # v0.7.0: Fire workflow event for automatic trigger execution
-        self._fire_workflow_event(
-            "file_rename",
-            {
-                "old_path": old_path,
-                "new_path": new_path,
-                "size": meta.size if meta else 0,
-                "etag": meta.etag if meta else None,
-                "zone_id": zone_id or "root",
-                "agent_id": agent_id,
-                "user_id": context.user_id if context and hasattr(context, "user_id") else None,
-                "timestamp": datetime.now(UTC).isoformat(),
-            },
-            label=f"file_rename:{old_path}->{new_path}",
-        )
-
-        # Issue #1106 Block 2: Publish event to distributed event bus
-        self._publish_file_event(
-            event_type="file_rename",
-            path=new_path,
-            old_path=old_path,
-            zone_id=zone_id,
-            size=meta.size if meta else 0,
-            etag=meta.etag if meta else None,
-            agent_id=agent_id,
-        )
 
         return {}
 

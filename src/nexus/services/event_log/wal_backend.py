@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Self
 import orjson
 
 if TYPE_CHECKING:
-    from nexus.core.event_bus import FileEvent
+    from nexus.core.file_events import FileEvent
     from nexus.services.event_log.protocol import EventLogConfig
 
 logger = logging.getLogger(__name__)
@@ -102,7 +102,7 @@ class WALEventLog:
         *,
         zone_id: str | None = None,
     ) -> list[FileEvent]:
-        from nexus.core.event_bus import FileEvent
+        from nexus.core.file_events import FileEvent
 
         zone_filter = zone_id.encode() if zone_id else None
         records = self._wal.read_from(seq, limit, zone_filter)

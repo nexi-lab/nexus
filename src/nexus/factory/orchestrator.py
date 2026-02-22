@@ -26,10 +26,10 @@ logger = logging.getLogger(__name__)
 
 
 def create_nexus_services(
-    record_store: RecordStoreABC,
-    metadata_store: MetastoreABC,
-    backend: Backend,
-    router: PathRouter,
+    record_store: "RecordStoreABC",
+    metadata_store: "MetastoreABC",
+    backend: "Backend",
+    router: "PathRouter",
     *,
     permissions: PermissionConfig | None = None,
     audit: AuditConfig | None = None,
@@ -40,7 +40,7 @@ def create_nexus_services(
     enable_write_buffer: bool | None = None,
     resiliency_raw: dict[str, Any] | None = None,
     enabled_bricks: frozenset[str] | None = None,
-) -> tuple[KernelServices, SystemServices, BrickServices]:
+) -> "tuple[KernelServices, SystemServices, BrickServices]":
     """Create default services for NexusFS dependency injection.
 
     Orchestrates 3-tier boot sequence:
@@ -88,7 +88,7 @@ def create_nexus_services(
     from nexus.core.config import SystemServices as _SystemServices
     from nexus.factory._background import _start_background_services
     from nexus.factory._boot_context import _BootContext
-    from nexus.factory._bricks import _boot_independent_bricks
+    from nexus.factory._bricks import _boot_dependent_bricks, _boot_independent_bricks
     from nexus.factory._helpers import _register_factory_bricks
     from nexus.factory._kernel import _boot_kernel_services
     from nexus.factory._system import _boot_system_services
@@ -156,6 +156,9 @@ def create_nexus_services(
 
     # --- Tier 2: BRICK (optional, gated by profile) ---
     brick_dict = _boot_independent_bricks(ctx, system_dict, _brick_on)
+
+    # --- Tier 2b: DEPENDENT BRICK (Issue #1861: artifact auto-indexing) ---
+    _boot_dependent_bricks(ctx, system_dict, brick_dict)
 
     # --- Start background threads post-construction ---
     _start_background_services(system_dict)
@@ -238,27 +241,27 @@ def create_nexus_services(
 
 
 def create_nexus_fs(
-    backend: Backend,
-    metadata_store: MetastoreABC,
-    record_store: RecordStoreABC | None = None,
+    backend: "Backend",
+    metadata_store: "MetastoreABC",
+    record_store: "RecordStoreABC | None" = None,
     *,
     cache_store: Any = None,
     is_admin: bool = False,
     custom_namespaces: list[Any] | None = None,
-    cache: CacheConfig | None = None,
-    permissions: PermissionConfig | None = None,
-    distributed: DistributedConfig | None = None,
+    cache: "CacheConfig | None" = None,
+    permissions: "PermissionConfig | None" = None,
+    distributed: "DistributedConfig | None" = None,
     memory: Any = None,
     parsing: Any = None,
-    kernel_services: KernelServices | None = None,
-    system_services: SystemServices | None = None,
-    brick_services: BrickServices | None = None,
+    kernel_services: "KernelServices | None" = None,
+    system_services: "SystemServices | None" = None,
+    brick_services: "BrickServices | None" = None,
     enable_write_buffer: bool | None = None,
     enabled_bricks: frozenset[str] | None = None,
     zone_id: str | None = None,
     agent_id: str | None = None,
-    workflow_engine: WorkflowProtocol | None = None,
-) -> NexusFS:
+    workflow_engine: "WorkflowProtocol | None" = None,
+) -> "NexusFS":
     """Create NexusFS with default services — the recommended entry point.
 
     Args:
@@ -359,7 +362,7 @@ def create_nexus_fs(
     from dataclasses import replace as _dc_replace
 
     # Create ParsersBrick — owns both registries (Issue #1523)
-    from nexus.parsers.brick import ParsersBrick
+    from nexus.bricks.parsers.brick import ParsersBrick
 
     parsers_brick = ParsersBrick(parsing_config=parsing)
     _parse_fn = parsers_brick.create_parse_fn()
@@ -386,7 +389,7 @@ def create_nexus_fs(
         _content_cache = ContentCache(max_size_mb=_cache_for_cc.content_cache_size_mb)
 
     # Create VFS lock manager (Issue #657)
-    from nexus.core.lock_fast import create_vfs_lock_manager
+    from nexus.lib.lock_fast import create_vfs_lock_manager
 
     _vfs_lock_manager = create_vfs_lock_manager()
 
@@ -437,8 +440,17 @@ def create_nexus_fs(
     if _mds is not None:
         cast(Any, nx)._metadata_export_service = _mds
 
-    # --- Register VFS hooks (Issue #625: each hook lives in its service) ---
-    _register_vfs_hooks(nx)
+    # Wire PermissionChecker from services/ (not core/) — Issue #874
+    # Factory DI: kernel calls self._permission_checker.check() duck-typed,
+    # without importing or knowing the concrete class.
+    from nexus.services.permissions.checker import PermissionChecker as _PC
+
+    cast(Any, nx)._permission_checker = _PC(
+        permission_enforcer=nx._permission_enforcer,
+        metadata_store=nx.metadata,
+        default_context=nx._default_context,
+        enforce_permissions=nx._enforce_permissions,
+    )
 
     # Register bricks created in create_nexus_fs with lifecycle manager (Issue #1704)
     _blm = getattr(system_services, "brick_lifecycle_manager", None)
@@ -446,17 +458,19 @@ def create_nexus_fs(
         _blm.register("parsers", parsers_brick, protocol_name="ParsersProtocol")
         _blm.register("cache", _cache_brick, protocol_name="CacheProtocol")
 
+    # --- Register INTERCEPT hooks on KernelDispatch (Issue #900) ---
+    _register_vfs_hooks(nx)
+
     return nx
 
 
-def _register_vfs_hooks(nx: NexusFS) -> None:
+def _register_vfs_hooks(nx: "NexusFS") -> None:
     """Register INTERCEPT hooks on KernelDispatch (Issue #900).
 
-    All hooks currently live in core/vfs_hook_impls.py (pending extraction
-    to service directories in a follow-up PR):
-      - DynamicViewerReadHook  (INTERCEPT read)
-      - AutoParseWriteHook     (INTERCEPT write)
-      - TigerCacheRenameHook   (INTERCEPT rename)
+    Each hook lives in its own service directory:
+      - DynamicViewerReadHook  → services/rebac/dynamic_viewer_hook  (INTERCEPT read)
+      - AutoParseWriteHook     → parsers/auto_parse_hook             (INTERCEPT write)
+      - TigerCacheRenameHook   → bricks/rebac/cache/tiger/rename_hook  (INTERCEPT rename)
 
     Called by ``create_nexus_fs()`` after NexusFS construction + wired
     services binding, keeping the kernel free of service-layer imports.
@@ -472,7 +486,7 @@ def _register_vfs_hooks(nx: NexusFS) -> None:
         and hasattr(nx, "apply_dynamic_viewer_filter")
     )
     if has_viewer:
-        from nexus.core.vfs_hook_impls import DynamicViewerReadHook
+        from nexus.services.rebac.dynamic_viewer_hook import DynamicViewerReadHook
 
         dispatch.register_intercept_read(
             DynamicViewerReadHook(
@@ -485,8 +499,8 @@ def _register_vfs_hooks(nx: NexusFS) -> None:
     # AutoParseWriteHook (post-write: background parsing)
     parser_reg = getattr(nx, "parser_registry", None)
     parse_fn = getattr(nx, "_virtual_view_parse_fn", None)
-    if parser_reg is not None and parse_fn is not None and getattr(nx, "auto_parse", False):
-        from nexus.core.vfs_hook_impls import AutoParseWriteHook
+    if parser_reg is not None and parse_fn is not None:
+        from nexus.parsers.auto_parse_hook import AutoParseWriteHook
 
         dispatch.register_intercept_write(
             AutoParseWriteHook(
@@ -498,7 +512,7 @@ def _register_vfs_hooks(nx: NexusFS) -> None:
     # TigerCacheRenameHook (post-rename: bitmap updates)
     tiger_cache = getattr(rebac_mgr, "_tiger_cache", None) if rebac_mgr else None
     if tiger_cache is not None:
-        from nexus.core.vfs_hook_impls import TigerCacheRenameHook
+        from nexus.bricks.rebac.cache.tiger.rename_hook import TigerCacheRenameHook
 
         def _metadata_list_iter(
             prefix: str,
@@ -513,3 +527,11 @@ def _register_vfs_hooks(nx: NexusFS) -> None:
                 metadata_list_iter=_metadata_list_iter,
             )
         )
+
+    # ── OBSERVE observers (Issue #900, #922) ──────────────────────────
+    # ReadSetCacheObserver: invalidates ReadSetAwareCache on mutations.
+    # Kernel fires MutationEvent via _dispatch.notify(); observer handles
+    # invalidation without the kernel knowing about caching.
+    cache_observer = getattr(nx, "_cache_observer", None)
+    if cache_observer is not None:
+        dispatch.register_observe(cache_observer)

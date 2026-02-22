@@ -6,8 +6,6 @@ Extracted from core/filesystem.py (Issue #2424) following the
 Contains: agent_id, zone_id, close, __enter__, __exit__
 """
 
-from __future__ import annotations
-
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -36,7 +34,7 @@ class LifecycleABC(ABC):
         """Close the filesystem and release resources."""
         ...
 
-    def __enter__(self) -> LifecycleABC:
+    def __enter__(self) -> "LifecycleABC":
         """Context manager entry."""
         return self
 

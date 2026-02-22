@@ -16,8 +16,6 @@ References:
     - services/protocols/time_travel.py          (TimeTravelProtocol)
 """
 
-from __future__ import annotations
-
 import json
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any

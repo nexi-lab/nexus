@@ -7,8 +7,6 @@ This package re-exports them for backward compatibility.
 Uses the same lazy-import + cache pattern as ``core/__init__.py``.
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:

@@ -17,8 +17,6 @@ Issue #900: Added MkdirHookContext, RmdirHookContext, VFSMkdirHook,
             VFSRmdirHook.  Unified under KernelDispatch.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
@@ -28,7 +26,6 @@ from nexus.contracts.operation_result import OperationWarning
 if TYPE_CHECKING:
     from nexus.contracts.metadata import FileMetadata
     from nexus.contracts.types import OperationContext
-
 
 # ---------------------------------------------------------------------------
 # Hook context dataclasses — passed through pre/post hook chains

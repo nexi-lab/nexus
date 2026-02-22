@@ -1,7 +1,5 @@
 """Unified filesystem implementation for Nexus."""
 
-from __future__ import annotations
-
 import builtins
 import contextlib
 import logging

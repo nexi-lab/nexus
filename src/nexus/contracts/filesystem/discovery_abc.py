@@ -6,8 +6,6 @@ Extracted from core/filesystem.py (Issue #2424) following the
 Contains: list, glob, grep
 """
 
-from __future__ import annotations
-
 import builtins
 from abc import ABC, abstractmethod
 from typing import Any

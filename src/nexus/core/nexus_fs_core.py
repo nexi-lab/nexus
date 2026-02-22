@@ -8,8 +8,6 @@ This module contains the fundamental file operations:
 - exists: Check file existence
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import logging

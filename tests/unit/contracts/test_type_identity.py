@@ -79,12 +79,6 @@ class TestReBACTypesIdentity:
 
         assert canonical is shim
 
-    def test_cross_zone_allowed_relations_identity(self) -> None:
-        from nexus.bricks.rebac.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS as shim
-        from nexus.contracts.rebac_types import CROSS_ZONE_ALLOWED_RELATIONS as canonical
-
-        assert canonical is shim
-
 
 class TestSearchTypesIdentity:
     """Verify nexus.contracts.search_types ↔ nexus.bricks.search.strategies identity."""

@@ -318,28 +318,28 @@ class TestZoneRevisionCounter:
         from nexus.core.nexus_fs_core import NexusFSCoreMixin
 
         mixin = NexusFSCoreMixin()
-        mixin._init_zone_revision()
+        mixin._init_vfs_revision()
 
-        values = [mixin._increment_zone_revision() for _ in range(100)]
+        values = [mixin._increment_vfs_revision() for _ in range(100)]
         assert values == list(range(1, 101))
 
     def test_get_returns_current(self):
-        """get_zone_revision returns the latest value."""
+        """get_vfs_revision returns the latest value."""
         from nexus.core.nexus_fs_core import NexusFSCoreMixin
 
         mixin = NexusFSCoreMixin()
-        mixin._init_zone_revision()
+        mixin._init_vfs_revision()
 
-        assert mixin._get_zone_revision() == 0
-        mixin._increment_zone_revision()
-        assert mixin._get_zone_revision() == 1
+        assert mixin._get_vfs_revision() == 0
+        mixin._increment_vfs_revision()
+        assert mixin._get_vfs_revision() == 1
 
     def test_concurrent_increments_no_lost_updates(self):
         """50 threads * 100 increments = 5000 total, no lost updates."""
         from nexus.core.nexus_fs_core import NexusFSCoreMixin
 
         mixin = NexusFSCoreMixin()
-        mixin._init_zone_revision()
+        mixin._init_vfs_revision()
 
         n_threads = 50
         n_per_thread = 100
@@ -348,7 +348,7 @@ class TestZoneRevisionCounter:
         def worker():
             barrier.wait()  # Ensure all threads start simultaneously
             for _ in range(n_per_thread):
-                mixin._increment_zone_revision()
+                mixin._increment_vfs_revision()
 
         threads = [threading.Thread(target=worker) for _ in range(n_threads)]
         for t in threads:
@@ -356,14 +356,14 @@ class TestZoneRevisionCounter:
         for t in threads:
             t.join()
 
-        assert mixin._get_zone_revision() == n_threads * n_per_thread
+        assert mixin._get_vfs_revision() == n_threads * n_per_thread
 
     def test_concurrent_no_duplicate_values(self):
         """Each increment returns a unique value (no duplicates)."""
         from nexus.core.nexus_fs_core import NexusFSCoreMixin
 
         mixin = NexusFSCoreMixin()
-        mixin._init_zone_revision()
+        mixin._init_vfs_revision()
 
         n_threads = 20
         n_per_thread = 50
@@ -373,7 +373,7 @@ class TestZoneRevisionCounter:
         def worker(idx):
             barrier.wait()
             for _ in range(n_per_thread):
-                results[idx].append(mixin._increment_zone_revision())
+                results[idx].append(mixin._increment_vfs_revision())
 
         threads = [threading.Thread(target=worker, args=(i,)) for i in range(n_threads)]
         for t in threads:

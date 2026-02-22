@@ -78,7 +78,7 @@ class TestForkBenchmark:
             ns.get(key)
         fork_ns = (time.perf_counter() - start) / 10_000
 
-        # Allow up to 10x (generous for CI) but typically <3x
+        # Allow up to 20x (generous for CI, especially macOS runners) but typically <3x
         ratio = fork_ns / baseline_ns if baseline_ns > 0 else 1.0
-        assert ratio < 10, f"Fork read overhead {ratio:.1f}x exceeds 10x"
+        assert ratio < 20, f"Fork read overhead {ratio:.1f}x exceeds 20x"
         fork_service.discard(info.fork_id)

@@ -111,7 +111,9 @@ def derive_grants(
 
     # Compare by value to handle pytest-xdist module double-loading where
     # enum identity (==) fails across separately-loaded module instances.
-    mode_value = mode.value if isinstance(mode, DelegationMode) else mode
+    # Use getattr instead of isinstance — isinstance fails when the enum
+    # class is loaded from two different module paths (xdist on macOS).
+    mode_value = getattr(mode, "value", mode)
     if mode_value == DelegationMode.COPY.value:
         result = _derive_copy(parent_map, remove_set, readonly_set, scope_prefix)
     elif mode_value == DelegationMode.CLEAN.value:

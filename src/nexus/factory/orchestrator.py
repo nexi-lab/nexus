@@ -502,7 +502,7 @@ def _register_vfs_hooks(nx: "NexusFS") -> None:
         and hasattr(nx, "apply_dynamic_viewer_filter")
     )
     if has_viewer:
-        from nexus.core.vfs_hook_impls import DynamicViewerReadHook
+        from nexus.services.rebac.dynamic_viewer_hook import DynamicViewerReadHook
 
         dispatch.register_intercept_read(
             DynamicViewerReadHook(
@@ -528,7 +528,7 @@ def _register_vfs_hooks(nx: "NexusFS") -> None:
     # TigerCacheRenameHook (post-rename: bitmap updates)
     tiger_cache = getattr(rebac_mgr, "_tiger_cache", None) if rebac_mgr else None
     if tiger_cache is not None:
-        from nexus.core.vfs_hook_impls import TigerCacheRenameHook
+        from nexus.bricks.rebac.cache.tiger.rename_hook import TigerCacheRenameHook
 
         def _metadata_list_iter(
             prefix: str,

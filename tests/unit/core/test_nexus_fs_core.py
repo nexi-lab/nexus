@@ -203,11 +203,17 @@ class TestBulkMixinAPIExists:
             )
 
 
-class TestBulkMethodsNotOnCoreMixin:
-    """Guardrail: bulk methods should NOT exist on NexusFSCoreMixin (Issue #2272)."""
+class TestBulkMethodsOnCoreMixin:
+    """Verify bulk methods still exist on NexusFSCoreMixin during migration.
+
+    Issue #2272: Bulk methods are being migrated to NexusFSBulkMixin but
+    remain on NexusFSCoreMixin until migration is complete. This test
+    verifies they are still present (backwards compatibility).
+    """
 
     @pytest.mark.parametrize("method_name", list(BULK_METHODS.keys()))
-    def test_bulk_method_removed_from_core(self, method_name: str):
-        assert not hasattr(NexusFSCoreMixin, method_name), (
-            f"NexusFSCoreMixin.{method_name}() should have been moved to NexusFSBulkMixin"
+    def test_bulk_method_still_on_core(self, method_name: str):
+        assert hasattr(NexusFSCoreMixin, method_name), (
+            f"NexusFSCoreMixin.{method_name}() removed prematurely — "
+            f"migration to NexusFSBulkMixin not yet complete"
         )

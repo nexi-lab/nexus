@@ -1,9 +1,8 @@
 """Tier-neutral domain types for the Nexus VFS (Issue #1501).
 
 Canonical home for shared types imported by 72+ files across the codebase.
-This module imports only ``nexus.constants`` (tier-neutral, zero transitive
-dependencies) at runtime --- no kernel internals --- so bricks, services, and
-backends can depend on it safely.
+This module has zero runtime ``nexus.*`` imports --- no kernel internals ---
+so bricks, services, and backends can depend on it safely.
 
 Types:
     - ``Permission``: IntFlag for file operation permissions (read/write/execute/traverse).
@@ -19,7 +18,8 @@ from dataclasses import asdict, dataclass, field
 from enum import IntFlag, StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from nexus.constants import ROOT_ZONE_ID
+# Inlined from nexus.constants to keep this module a zero-dependency leaf (Issue #1501).
+ROOT_ZONE_ID: str = "root"
 
 if TYPE_CHECKING:
     from nexus.storage.read_set import ReadSet

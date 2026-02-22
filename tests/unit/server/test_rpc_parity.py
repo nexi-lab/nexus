@@ -51,13 +51,13 @@ def get_all_rpc_exposed_methods():
     # Brick services that expose RPC methods directly
     _brick_classes: list[type] = []
     try:
-        from nexus.bricks.skills.service import SkillService
+        from nexus.skills.service import SkillService
 
         _brick_classes.append(SkillService)
     except ImportError:
         pass
     try:
-        from nexus.bricks.skills.package_service import SkillPackageService
+        from nexus.skills.package_service import SkillPackageService
 
         _brick_classes.append(SkillPackageService)
     except ImportError:
@@ -320,8 +320,8 @@ def test_all_public_methods_are_exposed_or_excluded():
         "locked",  # Async context manager - distributed lock acquisition
         # Consistency migration - server-side orchestration only (Issue #1180)
         "migrate_consistency_mode",  # Internal - SC↔EC migration orchestrator, exposed via PATCH endpoint
-        # PostMutationHook infrastructure (Issue #625) - server-side hook registration
-        "register_mutation_hook",  # Internal - registers post-mutation hooks for workflow dispatch
+        # KernelDispatch OBSERVE registration (Issue #900) - server-side observer registration
+        "register_observe",  # Internal - registers VFS observers for workflow dispatch
         # Workflow event queue - server-side background task (Issue #1522)
         "ensure_workflow_consumer",  # Internal - starts bounded workflow event queue consumer
         # Brick service references (Issue #2035) — object instances, not methods

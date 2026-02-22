@@ -109,11 +109,14 @@ def derive_grants(
         if existing is None or _relation_rank(relation) > _relation_rank(existing):
             parent_map[object_id] = relation
 
-    if mode == DelegationMode.COPY:
+    # Compare by value to handle pytest-xdist module double-loading where
+    # enum identity (==) fails across separately-loaded module instances.
+    mode_value = mode.value if isinstance(mode, DelegationMode) else mode
+    if mode_value == DelegationMode.COPY.value:
         result = _derive_copy(parent_map, remove_set, readonly_set, scope_prefix)
-    elif mode == DelegationMode.CLEAN:
+    elif mode_value == DelegationMode.CLEAN.value:
         result = _derive_clean(parent_map, add_set, scope_prefix)
-    elif mode == DelegationMode.SHARED:
+    elif mode_value == DelegationMode.SHARED.value:
         result = _derive_shared(parent_map, scope_prefix)
     else:
         raise InvalidDelegationModeError(f"Unknown delegation mode: {mode}")

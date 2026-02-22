@@ -6,8 +6,6 @@ Extracted from core/filesystem.py (Issue #2424) following the
 Contains: register_memory, unregister_memory, list_memories, get_memory_info
 """
 
-from __future__ import annotations
-
 import builtins
 from abc import ABC, abstractmethod
 from datetime import timedelta

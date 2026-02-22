@@ -20,12 +20,9 @@ Tracked by: #55 (Move _audit_strict_mode from kernel to observer)
 Issue #900: Replaced snapshot_hash/metadata_snapshot with metadata.
 """
 
-from __future__ import annotations
+from typing import Protocol, runtime_checkable
 
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
-
-if TYPE_CHECKING:
-    from nexus.contracts.metadata import FileMetadata
+from nexus.contracts.metadata import FileMetadata
 
 
 @runtime_checkable

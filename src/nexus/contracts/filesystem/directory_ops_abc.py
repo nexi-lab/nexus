@@ -6,14 +6,10 @@ Extracted from core/filesystem.py (Issue #2424) following the
 Contains: mkdir, rmdir, is_directory, get_available_namespaces
 """
 
-from __future__ import annotations
-
 import builtins
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from nexus.contracts.types import OperationContext
+from nexus.contracts.types import OperationContext
 
 
 class DirectoryOpsABC(ABC):

@@ -7,8 +7,6 @@ can inherit ``NexusFilesystemABC`` without an upward tier import.
 Uses the same lazy-import + cache pattern as ``services/filesystem/__init__.py``.
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:

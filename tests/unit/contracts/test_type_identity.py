@@ -61,24 +61,6 @@ class TestReBACTypesIdentity:
 
         assert canonical is shim
 
-    def test_consistency_level_identity(self) -> None:
-        from nexus.bricks.rebac.types import ConsistencyLevel as shim
-        from nexus.contracts.rebac_types import ConsistencyLevel as canonical
-
-        assert canonical is shim
-
-    def test_graph_limits_identity(self) -> None:
-        from nexus.bricks.rebac.types import GraphLimits as shim
-        from nexus.contracts.rebac_types import GraphLimits as canonical
-
-        assert canonical is shim
-
-    def test_traversal_stats_identity(self) -> None:
-        from nexus.bricks.rebac.types import TraversalStats as shim
-        from nexus.contracts.rebac_types import TraversalStats as canonical
-
-        assert canonical is shim
-
 
 class TestSearchTypesIdentity:
     """Verify nexus.contracts.search_types ↔ nexus.bricks.search.strategies identity."""

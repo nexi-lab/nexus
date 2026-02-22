@@ -6,7 +6,7 @@ import threading
 import time
 from unittest.mock import patch
 
-from nexus.core.revision_notifier import NullRevisionNotifier, RevisionNotifier
+from nexus.lib.revision_notifier import NullRevisionNotifier, RevisionNotifier
 
 
 class TestRevisionNotifier:
@@ -100,7 +100,7 @@ class TestLazyInit:
         NexusFSCoreMixin._revision_notifier = None
 
         with patch(
-            "nexus.core.revision_notifier.RevisionNotifier.__init__",
+            "nexus.lib.revision_notifier.RevisionNotifier.__init__",
             side_effect=RuntimeError("boom"),
         ):
             mixin = NexusFSCoreMixin()

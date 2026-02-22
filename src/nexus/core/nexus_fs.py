@@ -105,7 +105,6 @@ class NexusFS(  # type: ignore[misc]
         self._memory_recall_max_age_hours = memory.recall_max_age_hours
         self._enforce_permissions = permissions.enforce
         self._enforce_zone_isolation = permissions.enforce_zone_isolation
-        self._audit_strict_mode = permissions.audit_strict_mode
         self.allow_admin_bypass = permissions.allow_admin_bypass
         self.auto_parse = parsing.auto_parse
         self.is_admin = is_admin
@@ -187,7 +186,6 @@ class NexusFS(  # type: ignore[misc]
         self._workspace_registry = sys_svc.workspace_registry
         self.mount_manager = sys_svc.mount_manager
         self._workspace_manager = sys_svc.workspace_manager
-        self._write_observer = sys_svc.write_observer
         # overlay_resolver removed (Issue #2034) — always None, re-add when #1264 is implemented
         self._overlay_resolver = None
 
@@ -259,22 +257,16 @@ class NexusFS(  # type: ignore[misc]
         self.events_service: Any = None
         self.task_queue_service: Any = None
 
-        # Issue #900: Unified two-phase kernel dispatch (INTERCEPT + OBSERVE)
+        # Issue #900/#923: Kernel notification dispatch (INTERCEPT + OBSERVE).
+        # Factory injects fully-configured instance via SystemServices.kernel_dispatch.
+        # Empty KernelDispatch() = no-op dispatch = zero extra cost (KERNEL-ARCHITECTURE §3).
         from nexus.core.kernel_dispatch import KernelDispatch
 
-        _injected_dispatch = (
+        self._dispatch: KernelDispatch = (
             getattr(self._system_services, "kernel_dispatch", None)
             if self._system_services
             else None
-        )
-        self._dispatch: KernelDispatch = (
-            _injected_dispatch
-            if _injected_dispatch is not None
-            else KernelDispatch(
-                write_observer=self._write_observer,
-                audit_strict_mode=self._audit_strict_mode,
-            )
-        )
+        ) or KernelDispatch()
 
         # PermissionChecker: core module, safe to create here (Issue #2133)
         from nexus.services.permissions.checker import PermissionChecker

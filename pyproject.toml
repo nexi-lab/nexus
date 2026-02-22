@@ -510,30 +510,12 @@ module = "nexus.backends.slack_connector_utils"
 disable_error_code = ["no-any-return"]
 
 [[tool.mypy.overrides]]
-module = "nexus.server.auth.slack_oauth"
-# Slack OAuth provider
-disable_error_code = ["no-any-return", "arg-type"]
-
-[[tool.mypy.overrides]]
-module = "nexus.core.nexus_fs_oauth"
-# OAuth email handling
-disable_error_code = ["no-any-return"]
-
-[[tool.mypy.overrides]]
 module = [
     "nexus.bricks.rebac.share_mixin",
 ]
 # Mixin classes access `self.*` attributes defined on the concrete class
 # (ReBACService). Mypy cannot see across mixin boundaries.
 disable_error_code = ["attr-defined", "no-any-return"]
-
-[[tool.mypy.overrides]]
-module = [
-    "nexus.core.exceptions",
-]
-# Pre-existing errors from develop merges (zone-id-default-root).
-# Suppressed to unblock mixin extraction PR.
-disable_error_code = ["misc", "assignment", "attr-defined"]
 
 [[tool.mypy.overrides]]
 module = [
@@ -560,22 +542,6 @@ module = "nexus.bricks.llm.provider"
 warn_unused_ignores = false
 
 [[tool.mypy.overrides]]
-module = "nexus.cache.dragonfly"
-# redis library has complex async types that mypy struggles with
-warn_unused_ignores = false
-disable_error_code = ["no-any-return", "no-untyped-def", "return-value", "import-untyped", "attr-defined", "arg-type"]
-
-[[tool.mypy.overrides]]
-module = "nexus.services.event_bus.redis"
-# redis PubSub.aclose() not in type stubs
-disable_error_code = ["attr-defined"]
-
-[[tool.mypy.overrides]]
-module = "nexus.core.tiger_cache"
-# redis library has complex types that mypy struggles with
-disable_error_code = ["import-untyped", "call-overload", "dict-item"]
-
-[[tool.mypy.overrides]]
 module = "nexus.storage.cache"
 # cachetools library has complex generic types
 disable_error_code = ["no-any-return", "misc", "call-overload", "import-untyped"]
@@ -597,7 +563,6 @@ module = [
     "nexus.fuse.operations",
     "nexus.fuse.ops._shared",
     "nexus.bricks.skills.parser",
-    "nexus.server.auth.oauth_factory",
     "nexus.bricks.workflows.storage",
     "nexus.bricks.workflows.engine",
 ]
@@ -792,17 +757,12 @@ ignore = [
 "src/nexus/backends/*.py" = ["ARG002"]  # Keep unused context params for API compatibility
 "src/nexus/bricks/ipc/driver.py" = ["ARG002"]  # Backend ABC override — params required by interface
 "src/nexus/core/ace/trajectory.py" = ["ARG002"]  # Keep unused permission param for API compatibility
-"src/nexus/core/cache_store.py" = ["ARG002"]  # Backward-compat shim (canonical home: bricks/cache/cache_store.py)
-"src/nexus/bricks/cache/cache_store.py" = ["ARG002"]  # NullCacheStore: Null Object pattern — unused args by design
 "src/nexus/core/nexus_fs.py" = ["ARG002"]  # Constructor accepts cache params for public API
-"src/nexus/core/distributed_lock.py" = ["ARG002"]  # Interface method signature
 "src/nexus/raft/__init__.py" = ["E402"]  # Conditional imports require try/except after TYPE_CHECKING
-"src/nexus/skills/__init__.py" = ["E402", "ARG002"]  # PEP 451 finder: import order + unused PEP 451 signature params
 "src/nexus/bricks/skills/testing.py" = ["ARG002"]  # Protocol stub implementations — unused args by design
 "src/nexus/raft/transport_pb2_grpc.py" = ["ARG002"]  # Auto-generated gRPC stubs
 "src/nexus/raft/client.py" = ["SIM105"]  # datetime parsing with fallback
 "src/nexus/storage/raft_metadata_store.py" = ["ARG002", "SIM105", "SIM108", "SIM102"]  # Interface + datetime parsing + style
-"src/nexus/storage/sql_metadata_store.py" = ["ARG002"]  # Interface consistency param for API compatibility
 "scripts/*.py" = ["ARG001"]  # Utility scripts
 
 [tool.ruff.lint.isort]

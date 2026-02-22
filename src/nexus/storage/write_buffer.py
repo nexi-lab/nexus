@@ -36,6 +36,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
+from nexus.constants import ROOT_ZONE_ID
+
 if TYPE_CHECKING:
     from nexus.storage.record_store import RecordStoreABC
 
@@ -372,7 +374,7 @@ class WriteBuffer:
                 recorder = VersionRecorder(session)
 
                 for event in events:
-                    zone = event.zone_id or "root"
+                    zone = event.zone_id or ROOT_ZONE_ID
 
                     if event.event_type == EventType.WRITE:
                         op_logger.log_operation(

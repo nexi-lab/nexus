@@ -20,13 +20,11 @@ Example:
 """
 
 import builtins
-from typing import TYPE_CHECKING, Any, cast
-
-if TYPE_CHECKING:
-    from nexus.contracts.types import OperationContext
+from typing import Any, cast
 
 from nexus.bricks.filesystem._scoped_base import ScopedPathMixin
 from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
+from nexus.contracts.types import OperationContext
 
 
 class ScopedFilesystem(ScopedPathMixin):

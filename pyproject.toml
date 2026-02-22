@@ -833,7 +833,6 @@ ignore = [
 "src/nexus/bricks/ipc/driver.py" = ["ARG002"]  # Backend ABC override — params required by interface
 "src/nexus/core/cache_store.py" = ["ARG002"]  # NullCacheStore — null object pattern, args required by CacheStoreABC
 "src/nexus/ipc/driver.py" = ["ARG002"]  # Backend ABC override — context params required by interface
-"src/nexus/core/ace/trajectory.py" = ["ARG002"]  # Keep unused permission param for API compatibility
 "src/nexus/core/nexus_fs.py" = ["ARG002"]  # Constructor accepts cache params for public API
 "src/nexus/raft/__init__.py" = ["E402"]  # Conditional imports require try/except after TYPE_CHECKING
 "src/nexus/bricks/skills/testing.py" = ["ARG002"]  # Protocol stub implementations — unused args by design

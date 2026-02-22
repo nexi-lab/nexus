@@ -3,7 +3,7 @@
 import logging
 import stat
 import time
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 from fuse import FuseOSError
 
@@ -22,9 +22,6 @@ from nexus.fuse.ops._shared import (
     try_rust,
 )
 from nexus.lib.virtual_views import should_add_virtual_views
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 

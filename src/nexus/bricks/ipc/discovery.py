@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.bricks.ipc.conventions import AGENTS_ROOT, agent_card_path
 from nexus.bricks.ipc.storage.protocol import IPCStorageDriver
+from nexus.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from nexus.contracts.cache_store import CacheStoreABC
@@ -61,7 +62,7 @@ class AgentDiscovery:
     def __init__(
         self,
         storage: IPCStorageDriver,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         cache_ttl_seconds: float = 10.0,
         cache_store: "CacheStoreABC | None" = None,
     ) -> None:

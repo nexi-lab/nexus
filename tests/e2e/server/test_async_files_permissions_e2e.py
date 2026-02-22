@@ -3,8 +3,8 @@
 Starts a real `nexus serve` process (uvicorn + FastAPI) and makes real HTTP
 requests to verify all 9 /api/v2/files/* endpoints work through the full
 server stack, including:
-- Real FastAPI lifespan (AsyncNexusFS initialized via lifespan)
-- Real PostgreSQL database (shared between sync NexusFS and AsyncNexusFS)
+- Real FastAPI lifespan (NexusFS initialized via lifespan)
+- Real PostgreSQL database (shared between sync NexusFS and NexusFS)
 - Real HTTP network I/O (not ASGI test transport)
 - User context via X-Nexus-Subject and X-Nexus-Zone-ID headers
 
@@ -99,7 +99,7 @@ def server():
         "PYTHONPATH": str(Path(__file__).resolve().parents[2] / "src"),
         # PostgreSQL: used by BOTH sync NexusFS and async lifespan
         "NEXUS_DATABASE_URL": database_url,
-        # AsyncNexusFS settings
+        # NexusFS settings
         "NEXUS_BACKEND_ROOT": backend_root,
         "NEXUS_TENANT_ID": "e2e-test",
         # Permissions disabled for happy-path E2E (no ReBAC setup needed)

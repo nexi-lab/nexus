@@ -12,8 +12,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from nexus.contracts.metadata import FileMetadata
 from nexus.contracts.vfs_hooks import MutationEvent, MutationOp
-from nexus.core.metadata import FileMetadata
 from nexus.core.pipe_manager import PipeManager
 from nexus.services.workflow_dispatch_service import WorkflowDispatchService
 

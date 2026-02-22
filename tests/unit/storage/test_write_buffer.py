@@ -508,7 +508,7 @@ class TestBufferedObserverUrgency:
 
     def test_buffered_observer_passes_urgency_high(self, record_store) -> None:
         """on_write(urgency="high") should enqueue with Urgency.HIGH."""
-        from nexus.storage.record_store_syncer import BufferedRecordStoreWriteObserver
+        from nexus.storage.record_store_write_observer import BufferedRecordStoreWriteObserver
 
         obs = BufferedRecordStoreWriteObserver(record_store, flush_interval_ms=10000)
         # Spy on enqueue_write
@@ -527,7 +527,7 @@ class TestBufferedObserverUrgency:
 
     def test_buffered_observer_default_urgency_normal(self, record_store) -> None:
         """on_write() without urgency should enqueue with Urgency.NORMAL."""
-        from nexus.storage.record_store_syncer import BufferedRecordStoreWriteObserver
+        from nexus.storage.record_store_write_observer import BufferedRecordStoreWriteObserver
 
         obs = BufferedRecordStoreWriteObserver(record_store, flush_interval_ms=10000)
         from unittest.mock import patch as _patch

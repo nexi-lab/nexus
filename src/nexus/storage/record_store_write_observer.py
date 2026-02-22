@@ -30,7 +30,7 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from nexus.core.metadata import FileMetadata
+    from nexus.contracts.metadata import FileMetadata
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
@@ -122,6 +122,7 @@ class RecordStoreWriteObserver:
         *,
         zone_id: str | None = None,
         agent_id: str | None = None,
+        urgency: str | None = None,  # noqa: ARG002
     ) -> None:
         """Sync a batch write to RecordStore (single transaction).
 
@@ -326,6 +327,7 @@ class BufferedRecordStoreWriteObserver:
         *,
         zone_id: str | None = None,
         agent_id: str | None = None,
+        urgency: str | None = None,  # noqa: ARG002
     ) -> None:
         """Enqueue a batch of write events. Returns immediately."""
         for metadata, is_new in items:

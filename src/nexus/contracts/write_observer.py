@@ -25,7 +25,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from nexus.core.metadata import FileMetadata
+    from nexus.contracts.metadata import FileMetadata
 
 
 @runtime_checkable
@@ -68,6 +68,7 @@ class WriteObserverProtocol(Protocol):
         *,
         zone_id: str | None = ...,
         agent_id: str | None = ...,
+        urgency: str | None = ...,
     ) -> None:
         """Called after a batch write completes in Metastore.
 

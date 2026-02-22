@@ -36,7 +36,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from nexus.contracts.types import OperationWarning
 from nexus.contracts.vfs_hooks import (
     DeleteHookContext,
     MkdirHookContext,
@@ -53,6 +52,7 @@ from nexus.contracts.vfs_hooks import (
     VFSWriteHook,
     WriteHookContext,
 )
+from nexus.core.operation_result import OperationWarning
 
 logger = logging.getLogger(__name__)
 

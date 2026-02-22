@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from nexus.backends.backend import Backend
     from nexus.bricks.workflows.protocol import WorkflowProtocol
     from nexus.core.config import (
+        AuditConfig,
         BrickServices,
         CacheConfig,
         DistributedConfig,
@@ -31,6 +32,7 @@ def create_nexus_services(
     router: PathRouter,
     *,
     permissions: PermissionConfig | None = None,
+    audit: AuditConfig | None = None,
     cache: CacheConfig | None = None,
     distributed: DistributedConfig | None = None,
     zone_id: str | None = None,
@@ -77,6 +79,7 @@ def create_nexus_services(
     """
     # --- Profile-based brick gating (Issue #1389) ---
     from nexus.contracts.deployment_profile import DeploymentProfile
+    from nexus.core.config import AuditConfig as _AuditConfig
     from nexus.core.config import BrickServices as _BrickServices
     from nexus.core.config import CacheConfig as _CacheConfig
     from nexus.core.config import DistributedConfig as _DistributedConfig
@@ -122,6 +125,7 @@ def create_nexus_services(
     _profile_tuning = resolve_profile_tuning(_factory_profile)
 
     perm = permissions or _PermissionConfig()
+    audit_cfg = audit or _AuditConfig()
     cache_cfg = cache or _CacheConfig()
     dist = distributed or _DistributedConfig()
 
@@ -133,6 +137,7 @@ def create_nexus_services(
         engine=record_store.engine,
         read_engine=record_store.read_engine,
         perm=perm,
+        audit=audit_cfg,
         cache_ttl_seconds=cache_cfg.ttl_seconds,
         dist=dist,
         zone_id=zone_id,

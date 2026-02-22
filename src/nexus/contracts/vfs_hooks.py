@@ -23,11 +23,11 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from nexus.contracts.types import OperationWarning
+from nexus.core.operation_result import OperationWarning
 
 if TYPE_CHECKING:
-    from nexus.core.metadata import FileMetadata
-    from nexus.core.permissions import OperationContext
+    from nexus.contracts.metadata import FileMetadata
+    from nexus.contracts.types import OperationContext
 
 
 # ---------------------------------------------------------------------------

@@ -17,8 +17,8 @@ import logging
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from nexus.contracts.metadata import FileMetadata
     from nexus.contracts.vfs_hooks import MutationEvent
-    from nexus.core.metadata import FileMetadata
 
 logger = logging.getLogger(__name__)
 

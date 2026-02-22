@@ -30,6 +30,7 @@ Issue #900.
 import logging
 
 from nexus.contracts.exceptions import AuditLogError
+from nexus.contracts.operation_result import OperationWarning
 from nexus.contracts.vfs_hooks import (
     DeleteHookContext,
     MkdirHookContext,
@@ -48,7 +49,6 @@ from nexus.contracts.vfs_hooks import (
     WriteHookContext,
 )
 from nexus.core.file_events import FileEvent
-from nexus.core.operation_result import OperationWarning
 
 logger = logging.getLogger(__name__)
 

@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
     from nexus.bricks.workflows.protocol import WorkflowProtocol
+    from nexus.contracts.types import AuditConfig
     from nexus.core.config import (
-        AuditConfig,
         BrickServices,
         CacheConfig,
         DistributedConfig,
@@ -79,7 +79,7 @@ def create_nexus_services(
     """
     # --- Profile-based brick gating (Issue #1389) ---
     from nexus.contracts.deployment_profile import DeploymentProfile
-    from nexus.core.config import AuditConfig as _AuditConfig
+    from nexus.contracts.types import AuditConfig as _AuditConfig
     from nexus.core.config import BrickServices as _BrickServices
     from nexus.core.config import CacheConfig as _CacheConfig
     from nexus.core.config import DistributedConfig as _DistributedConfig

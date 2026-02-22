@@ -5,7 +5,7 @@ Extracted from ``NexusFSCoreMixin._fire_workflow_event`` / ``ensure_workflow_con
 over DT_PIPE kernel IPC) and broadcasts to webhook subscriptions.
 
 Implements ``VFSObserver`` — registered in KernelDispatch's OBSERVE phase so
-the kernel fires a single ``MutationEvent`` without knowing about workflows.
+the kernel fires a single ``FileEvent`` without knowing about workflows.
 
 DI dependencies (no god-object access):
     - pipe_manager: PipeManager for kernel IPC ring buffers
@@ -22,7 +22,7 @@ from typing import Any
 
 from nexus.bricks.workflows.protocol import WorkflowProtocol
 from nexus.constants import ROOT_ZONE_ID
-from nexus.contracts.vfs_hooks import MutationEvent
+from nexus.core.file_events import FileEvent
 from nexus.system_services.pipe_manager import PipeManager
 
 logger = logging.getLogger(__name__)
@@ -65,20 +65,22 @@ class WorkflowDispatchService:
     # VFSObserver — called by KernelDispatch OBSERVE phase
     # ------------------------------------------------------------------
 
-    def on_mutation(self, event: MutationEvent) -> None:
-        """Translate kernel MutationEvent into workflow fire + webhook broadcast."""
-        from nexus.contracts.vfs_hooks import MutationOp
+    def on_mutation(self, event: FileEvent) -> None:
+        """Translate kernel FileEvent into workflow fire + webhook broadcast."""
+        from nexus.core.file_events import FileEventType
 
-        trigger_type = f"file_{event.operation.value}"
+        trigger_type = (
+            event.type.value if isinstance(event.type, FileEventType) else str(event.type)
+        )
 
-        # Build event context from MutationEvent fields
+        # Build event context from FileEvent fields
         ctx: dict[str, Any] = {
             "zone_id": event.zone_id,
             "agent_id": event.agent_id,
             "user_id": event.user_id,
             "timestamp": event.timestamp,
         }
-        if event.operation is MutationOp.RENAME:
+        if event.type is FileEventType.FILE_RENAME:
             ctx["old_path"] = event.path
             ctx["new_path"] = event.new_path
         else:
@@ -90,7 +92,7 @@ class WorkflowDispatchService:
             ctx["etag"] = event.etag
         if event.version is not None:
             ctx["version"] = event.version
-        if event.operation is MutationOp.WRITE:
+        if event.type is FileEventType.FILE_WRITE:
             ctx["created"] = event.is_new
 
         label = f"{trigger_type}:{event.path}"

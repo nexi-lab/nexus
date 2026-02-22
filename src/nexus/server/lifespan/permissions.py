@@ -20,7 +20,7 @@ async def startup_permissions(app: "FastAPI", svc: "LifespanServices") -> list[a
     """Initialize permission infrastructure and return background tasks.
 
     Covers:
-    - Async ReBAC manager + AsyncNexusFS (Issue #940)
+    - ReBAC manager + NexusFS (Issue #940)
     - Cache factory + Tiger Cache L2 wiring (Issue #1075, #1106)
     - Tiger Cache queue processor + warm-up (Issue #935, #979)
     - DirectoryGrantExpander worker

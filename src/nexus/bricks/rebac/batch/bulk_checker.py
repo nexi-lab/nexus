@@ -147,7 +147,9 @@ class BulkPermissionChecker:
             if is_production:
                 raise ValueError("zone_id is required for bulk permission checks in production")
             else:
-                logger.warning("rebac_check_bulk called without zone_id, defaulting to 'root'")
+                logger.warning(
+                    "rebac_check_bulk called without zone_id, defaulting to ROOT_ZONE_ID"
+                )
                 zone_id = ROOT_ZONE_ID
 
         results: dict[tuple[tuple[str, str], str, tuple[str, str]], bool] = {}

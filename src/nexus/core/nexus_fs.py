@@ -292,7 +292,7 @@ class NexusFS(  # type: ignore[misc]
         self._read_set_cache = None
         metadata_cache = getattr(self.metadata, "_cache", None)
         if metadata_cache is not None and self._cache_config.enable_metadata_cache:
-            from nexus.core.read_set import ReadSetRegistry
+            from nexus.storage.read_set import ReadSetRegistry
             from nexus.storage.read_set_cache import ReadSetAwareCache
 
             self._read_set_registry = ReadSetRegistry()
@@ -306,7 +306,7 @@ class NexusFS(  # type: ignore[misc]
         # (Removed from KernelServices — NexusFS owns the cache observer lifecycle.)
         self._cache_observer = None
         if self._read_set_cache is not None:
-            from nexus.core.cache_invalidation import ReadSetCacheObserver
+            from nexus.storage.cache_invalidation import ReadSetCacheObserver
 
             self._cache_observer = ReadSetCacheObserver(self._read_set_cache)
 

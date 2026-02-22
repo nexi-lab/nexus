@@ -4,10 +4,11 @@ Verifies that each A2AError subclass has a consistent grpc_status
 attribute mapped to the expected gRPC status code.
 """
 
-import grpc
 import pytest
 
-from nexus.bricks.a2a.exceptions import (
+grpc = pytest.importorskip("grpc")
+
+from nexus.bricks.a2a.exceptions import (  # noqa: E402
     A2AError,
     ContentTypeNotSupportedError,
     InternalError,

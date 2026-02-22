@@ -452,10 +452,11 @@ def create_nexus_fs(
 def _register_vfs_hooks(nx: NexusFS) -> None:
     """Register INTERCEPT hooks on KernelDispatch (Issue #900).
 
-    Each hook lives in its own service directory:
-      - DynamicViewerReadHook  → core/vfs_hook_impls  (INTERCEPT read)
-      - AutoParseWriteHook     → parsers/             (INTERCEPT write)
-      - TigerCacheRenameHook   → services/permissions/cache/tiger/  (INTERCEPT rename)
+    All hooks currently live in core/vfs_hook_impls.py (pending extraction
+    to service directories in a follow-up PR):
+      - DynamicViewerReadHook  (INTERCEPT read)
+      - AutoParseWriteHook     (INTERCEPT write)
+      - TigerCacheRenameHook   (INTERCEPT rename)
 
     Called by ``create_nexus_fs()`` after NexusFS construction + wired
     services binding, keeping the kernel free of service-layer imports.
@@ -485,7 +486,7 @@ def _register_vfs_hooks(nx: NexusFS) -> None:
     parser_reg = getattr(nx, "parser_registry", None)
     parse_fn = getattr(nx, "_virtual_view_parse_fn", None)
     if parser_reg is not None and parse_fn is not None and getattr(nx, "auto_parse", False):
-        from nexus.parsers.auto_parse_hook import AutoParseWriteHook
+        from nexus.core.vfs_hook_impls import AutoParseWriteHook
 
         dispatch.register_intercept_write(
             AutoParseWriteHook(
@@ -497,7 +498,7 @@ def _register_vfs_hooks(nx: NexusFS) -> None:
     # TigerCacheRenameHook (post-rename: bitmap updates)
     tiger_cache = getattr(rebac_mgr, "_tiger_cache", None) if rebac_mgr else None
     if tiger_cache is not None:
-        from nexus.services.permissions.cache.tiger.rename_hook import TigerCacheRenameHook
+        from nexus.core.vfs_hook_impls import TigerCacheRenameHook
 
         def _metadata_list_iter(
             prefix: str,

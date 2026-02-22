@@ -7,7 +7,7 @@ and passes them to ``KernelDispatch`` (injected via DI).
 
 Two-phase dispatch model (Issue #900):
     INTERCEPT — synchronous, ordered.  Can abort (raise) or modify context.
-    OBSERVE   — fire-and-forget (``MutationEvent``).  Cannot abort.
+    OBSERVE   — fire-and-forget (``FileEvent``).  Cannot abort.
 
 All six operations are covered:
     read / write / delete / rename / mkdir / rmdir
@@ -18,7 +18,6 @@ Issue #900: Added MkdirHookContext, RmdirHookContext, VFSMkdirHook,
 """
 
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import Any, Protocol, runtime_checkable
 
 from nexus.contracts.metadata import FileMetadata
@@ -203,55 +202,37 @@ class VFSRmdirHook(Protocol):
     def on_post_rmdir(self, ctx: RmdirHookContext) -> None: ...
 
 
-# ---------------------------------------------------------------------------
-# OBSERVE phase — mutation event + observer protocol (Issue #900)
-# ---------------------------------------------------------------------------
+@dataclass
+class WriteBatchHookContext:
+    """Context passed through write-batch hooks (Issue #900)."""
 
-
-class MutationOp(Enum):
-    """Kernel VFS mutation operation types."""
-
-    WRITE = "write"
-    DELETE = "delete"
-    RENAME = "rename"
-    MKDIR = "mkdir"
-    RMDIR = "rmdir"
-
-
-@dataclass(frozen=True, slots=True)
-class MutationEvent:
-    """Frozen event passed to OBSERVE-phase observers after a VFS mutation.
-
-    Carries all context that observers might need.  Each observer
-    extracts what it requires and ignores the rest.
-    """
-
-    operation: MutationOp
-    path: str
-    zone_id: str
-    revision: int
-
-    # Common optional context
+    items: list[tuple[Any, bool]]
+    zone_id: str | None = None
     agent_id: str | None = None
-    user_id: str | None = None
-    timestamp: str | None = None
-    etag: str | None = None
-    size: int | None = None
+    warnings: list[OperationWarning] = field(default_factory=list)
 
-    # Write-specific
-    version: int | None = None
-    is_new: bool = False
 
-    # Rename-specific
-    new_path: str | None = None
+@runtime_checkable
+class VFSWriteBatchHook(Protocol):
+    """Hook that runs after a batch write operation (Issue #900)."""
+
+    @property
+    def name(self) -> str: ...
+
+    def on_post_write_batch(self, ctx: WriteBatchHookContext) -> None: ...
+
+
+# ---------------------------------------------------------------------------
+# OBSERVE phase — observer protocol (Issue #900)
+# ---------------------------------------------------------------------------
 
 
 @runtime_checkable
 class VFSObserver(Protocol):
     """OBSERVE-phase observer for kernel VFS mutations (fire-and-forget).
 
-    Receives a frozen ``MutationEvent`` after every successful mutation.
+    Receives a frozen ``FileEvent`` after every successful mutation.
     Must not raise — exceptions are caught and logged by KernelDispatch.
     """
 
-    def on_mutation(self, event: MutationEvent) -> None: ...
+    def on_mutation(self, event: Any) -> None: ...

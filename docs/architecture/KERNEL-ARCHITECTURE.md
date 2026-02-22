@@ -172,9 +172,13 @@ a Python mixin used to split the large NexusFS class. As services continue
 extracting, the mixin should shrink to pure VFS ops and eventually evolve from
 mixin (inheritance) to composition (standalone `VFSCore` class).
 
-`factory.py` is the init system (analogous to systemd): constructs kernel + drivers
-+ services and wires them together. NexusFS receives pre-built dependencies via its
-constructor and never auto-creates services.
+`factory.py` is the init system (analogous to systemd): constructs drivers
++ services and wires them together. NexusFS creates its own kernel
+infrastructure (dispatch, locks, pipes) with empty callback lists, and
+receives external dependencies (drivers, services) via constructor DI.
+Factory registers callbacks into kernel-owned infrastructure at boot —
+like Linux `security_init()` creates empty `security_hook_heads`, then
+LSM modules call `security_add_hooks()` to populate them.
 
 > *Resolved:* Event mixins fully extracted — `NexusFSEventsMixin` removed (#573),
 > `FileWatcher` moved to `services/watch/` (#706), orphaned kernel attrs cleaned (#656).
@@ -187,15 +191,16 @@ The kernel provides callback-based notification at VFS operation points (read,
 write, delete, rename, mkdir, rmdir). Like Linux's `security_hook_heads` and
 `fsnotify_group`, these are kernel-internal callback lists.
 
-**Decision (Issue #625):** Kernel **knows** (has callback list attributes),
-kernel does **not construct** (factory registers callbacks via DI). Empty
-lists = no-op dispatch = kernel operates with zero services.
+**Decision (Issue #625):** Kernel **owns** dispatch infrastructure — creates
+`KernelDispatch` with empty callback lists at init. Factory **registers**
+callbacks into kernel-owned dispatch at boot. Empty lists = no-op dispatch
+= kernel operates with zero services.
 
 Two-phase dispatch per VFS operation:
 
 | Phase | Semantics | Abort? | Modify? | Linux Analogue | Mechanism |
 |-------|-----------|--------|---------|----------------|-----------|
-| **INTERCEPT** | Synchronous, ordered | Yes (observer) | Yes (hooks) | LSM `call_void_hook()` | `KernelDispatch.intercept_post_*()` |
+| **INTERCEPT** | Synchronous, ordered | Yes (hook policy) | Yes (hooks) | LSM `call_void_hook()` | `KernelDispatch.intercept_post_*()` |
 | **OBSERVE** | Fire-and-forget | No | No | `fsnotify()` / `notifier_call_chain()` | `KernelDispatch.notify()` |
 
 **Implementation** (`core/kernel_dispatch.py`, Issue #900):
@@ -203,27 +208,30 @@ Two-phase dispatch per VFS operation:
 `KernelDispatch` is a single class that owns both phases. Each VFS operation
 (read/write/delete/rename/mkdir/rmdir) calls `intercept_post_*()` then `notify()`.
 
-INTERCEPT phase runs in two stages:
-1. **Built-in write observer** (audit trail) — can abort via `AuditLogError`
-   when `audit_strict_mode=True`, else logs critical warning.
-2. **Registered interceptor hooks** — per-operation hook lists
-   (`register_intercept_read/write/delete/rename/mkdir/rmdir`).
-   Can modify context (e.g. filter CSV columns, update cache bitmaps).
-   Failures caught as `OperationWarning` — never abort.
+INTERCEPT phase dispatches registered interceptor hooks — per-operation
+hook lists (`register_intercept_read/write/delete/rename/mkdir/rmdir`).
+Hooks can modify context (e.g. filter CSV columns, update cache bitmaps).
+The audit write observer is a factory-registered interceptor, not a kernel
+built-in; its error policy (abort vs log-and-continue) is observer-level
+config, not dispatch-level.
 
-OBSERVE phase broadcasts a frozen `MutationEvent` to all registered
-`VFSObserver` instances. Used for cache invalidation, workflow triggers,
-telemetry. Failures logged, never abort.
+OBSERVE phase broadcasts a frozen `FileEvent` to all registered
+`VFSObserver` instances. `FileEvent` is the single kernel-defined I/O
+event type — used by both OBSERVE (local, fire-and-forget) and EventBus
+(distributed delivery). Analogous to Linux `fsnotify_event`.
+Used for cache invalidation, workflow triggers, telemetry.
+Failures logged, never abort.
 
-**Contracts:** Hook protocols (`VFSReadHook`, `VFSWriteHook`, etc.),
-context dataclasses (`ReadHookContext`, `WriteHookContext`, etc.),
-`MutationEvent`, `VFSObserver` — all in `contracts/vfs_hooks.py`
-(tier-neutral, like `include/linux/notifier.h`).
-Concrete implementations in `services/hooks/` (policy, like SELinux/AppArmor).
+**Contracts:**
+- `FileEvent`/`FileEventType` in `core/file_events.py` (kernel-defined data type).
+- Hook protocols (`VFSReadHook`, `VFSWriteHook`, etc.), context dataclasses
+  (`ReadHookContext`, `WriteHookContext`, etc.), `VFSObserver` — in
+  `contracts/vfs_hooks.py` (tier-neutral, like `include/linux/notifier.h`).
+- Concrete implementations in `services/hooks/` (policy, like SELinux/AppArmor).
 
-**Registration API** (factory wires at startup):
-- `dispatch.register_intercept_read(hook)` — INTERCEPT hooks
-- `dispatch.register_observe(observer)` — OBSERVE observers
+**Registration API** (factory registers at boot):
+- `dispatch.register_intercept_read(hook)` — INTERCEPT hooks (per-operation)
+- `dispatch.register_observe(observer)` — OBSERVE observers (all mutations)
 
 **Distinction from HookEngineProtocol (S15/P17):** The kernel notification
 dispatch is an internal mechanism — always-on infrastructure that dispatches
@@ -416,11 +424,13 @@ IPC for agent messaging — 1:1 queue semantics using VFS as transport.
 
 `EventBusProtocol` (service protocol in `nexus.services.event_bus.protocol`) provides
 pub/sub for file system change notifications. Kernel defines only the event data types
-(`FileEvent`, `FileEventType` in `nexus.core.event_bus`).
+(`FileEvent`, `FileEventType` in `nexus.core.file_events`).
 
 Linux analogue: `dbus-daemon` (1:N broadcast). Consumed by `WatchProtocol` (S8) and
 `EventLogProtocol` (S17). Backends: Redis/Dragonfly (current default), NATS JetStream
 (preferred long-term). All should route through `CacheStoreABC` pub/sub.
+Target: EventBus delivery registered as `VFSObserver` on `KernelDispatch`, replacing
+`_publish_file_event()` direct calls (#969).
 
 **Federation gap:** EventBus is currently zone-local. Cross-zone event propagation not yet designed.
 

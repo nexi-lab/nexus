@@ -22,7 +22,7 @@ from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.contracts.metadata import FileMetadata
 from nexus.contracts.types import Permission
-from nexus.contracts.vfs_hooks import MutationOp
+from nexus.core.file_events import FileEvent, FileEventType
 from nexus.lib.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
@@ -30,9 +30,10 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
     from nexus.contracts.types import OperationContext
-    from nexus.contracts.write_observer import WriteObserverProtocol
+    from nexus.core.kernel_dispatch import KernelDispatch
     from nexus.core.metastore import MetastoreABC
     from nexus.core.router import PathRouter
+    from nexus.core.vfs_hooks import VFSHookPipeline
 
 
 class NexusFSBulkMixin:
@@ -49,11 +50,11 @@ class NexusFSBulkMixin:
         - _enforce_permissions: bool
         - _default_context: OperationContext
         - _hook_pipeline: VFSHookPipeline | None
-        - _write_observer: WriteObserverProtocol | None
+        - _dispatch: KernelDispatch
         - _permission_checker: object with .check() method
         - auto_parse: bool
         - Various methods: _validate_path, _get_routing_params, _check_zone_writable,
-          _fire_post_mutation_hooks, _increment_vfs_revision,
+          _increment_vfs_revision,
           _check_permission, _get_zone_id, exists, delete, rename, is_directory,
           _has_descendant_access, _rmdir_internal
     """
@@ -72,8 +73,8 @@ class NexusFSBulkMixin:
         _permission_enforcer: PermissionEnforcerProtocol | None
         _rebac_manager: Any
         _permission_checker: Any
-        _write_observer: "WriteObserverProtocol | None"
-        _hook_pipeline: Any
+        _dispatch: "KernelDispatch"
+        _hook_pipeline: "VFSHookPipeline | None"
 
         @property
         def zone_id(self) -> str | None: ...
@@ -97,24 +98,7 @@ class NexusFSBulkMixin:
         def _check_zone_writable(
             self, context: "OperationContext | dict | None" = None
         ) -> None: ...
-        def _fire_post_mutation_hooks(
-            self,
-            op: MutationOp,
-            path: str,
-            zone_id: str,
-            revision: int,
-            *,
-            agent_id: str | None = None,
-            user_id: str | None = None,
-            timestamp: str | None = None,
-            etag: str | None = None,
-            size: int | None = None,
-            version: int | None = None,
-            is_new: bool = False,
-            new_path: str | None = None,
-        ) -> None: ...
         def _increment_vfs_revision(self) -> int: ...
-        # _handle_observer_error → removed (Issue #2152)
         @staticmethod
         def _resolve_write_urgency(io_profile: str) -> str | None: ...
         def _get_zone_id(self, context: "OperationContext | None") -> str: ...
@@ -158,7 +142,7 @@ class NexusFSBulkMixin:
         """
         _pipeline = getattr(self, "_hook_pipeline", None)
         if _pipeline is not None and _pipeline.read_hook_count > 0:
-            from nexus.contracts.vfs_hooks import ReadHookContext
+            from nexus.core.vfs_hooks import ReadHookContext
 
             _read_ctx = ReadHookContext(
                 path=path,
@@ -641,37 +625,26 @@ class NexusFSBulkMixin:
         # Store all metadata in a single transaction
         self.metadata.put_batch(metadata_list)
 
-        # Sync batch to RecordStore (audit trail + version history)
-        # Observer owns error policy (Issue #2152).
+        # Issue #900/#966: Unified dispatch — INTERCEPT (write observer) + OBSERVE
         items = [
             (metadata, existing_metadata.get(metadata.path) is None) for metadata in metadata_list
         ]
-        if (obs := self._write_observer) is not None:
-            # Resolve urgency from the first route's IOProfile (#2426 Phase 2).
-            # Batch writes share the same mount, so all routes have the same io_profile.
-            _urgency = self._resolve_write_urgency(routes[0].io_profile) if routes else None
-            # observer owns error policy (#2152)
-            obs.on_write_batch(
-                items=items,
-                zone_id=zone_id,
-                agent_id=agent_id,
-                urgency=_urgency,
-            )
+        self._dispatch.intercept_post_write_batch(
+            items=items,
+            zone_id=zone_id,
+            agent_id=agent_id,
+        )
 
-        # Fire post-mutation hooks for each file in the batch
         new_revision = self._increment_vfs_revision()
         for metadata in metadata_list:
-            is_new = existing_metadata.get(metadata.path) is None
-            self._fire_post_mutation_hooks(
-                MutationOp.WRITE,
-                metadata.path,
-                zone_id or ROOT_ZONE_ID,
-                new_revision,
-                agent_id=agent_id,
-                etag=metadata.etag,
-                size=metadata.size,
-                version=metadata.version,
-                is_new=is_new,
+            self._dispatch.notify(
+                FileEvent(
+                    type=FileEventType.FILE_WRITE,
+                    path=metadata.path,
+                    zone_id=zone_id or ROOT_ZONE_ID,
+                    revision=new_revision,
+                    agent_id=agent_id,
+                )
             )
 
         # Issue #2175: Publish batch events to EventBus using publish_batch()
@@ -679,7 +652,6 @@ class NexusFSBulkMixin:
         _event_bus = getattr(self, "_event_bus", None)
         if _event_bus is not None and metadata_list:
             try:
-                from nexus.core.file_events import FileEvent, FileEventType
                 from nexus.lib.sync_bridge import fire_and_forget
 
                 batch_events = [
@@ -800,7 +772,7 @@ class NexusFSBulkMixin:
         # Dispatch post-write hooks (auto-parse, etc.)
         _pipeline = getattr(self, "_hook_pipeline", None)
         if _pipeline is not None and _pipeline.write_hook_count > 0:
-            from nexus.contracts.vfs_hooks import WriteHookContext
+            from nexus.core.vfs_hooks import WriteHookContext
 
             for (path, content), file_meta in zip(validated_files, metadata_list, strict=False):
                 _write_ctx = WriteHookContext(

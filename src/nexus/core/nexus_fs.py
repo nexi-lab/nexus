@@ -11,7 +11,7 @@ from nexus.backends.backend import Backend
 from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import InvalidPathError, NexusFileNotFoundError
 from nexus.contracts.types import OperationContext, Permission
-from nexus.contracts.vfs_hooks import MutationOp
+from nexus.core.file_events import FileEvent, FileEventType
 from nexus.core.hash_fast import hash_content
 
 if TYPE_CHECKING:
@@ -105,7 +105,6 @@ class NexusFS(  # type: ignore[misc]
         self._memory_recall_max_age_hours = memory.recall_max_age_hours
         self._enforce_permissions = permissions.enforce
         self._enforce_zone_isolation = permissions.enforce_zone_isolation
-        self._audit_strict_mode = permissions.audit_strict_mode
         self.allow_admin_bypass = permissions.allow_admin_bypass
         self.auto_parse = parsing.auto_parse
         self.is_admin = is_admin
@@ -187,7 +186,6 @@ class NexusFS(  # type: ignore[misc]
         self._workspace_registry = sys_svc.workspace_registry
         self.mount_manager = sys_svc.mount_manager
         self._workspace_manager = sys_svc.workspace_manager
-        self._write_observer = sys_svc.write_observer
         # overlay_resolver removed (Issue #2034) — always None, re-add when #1264 is implemented
         self._overlay_resolver = None
 
@@ -259,22 +257,12 @@ class NexusFS(  # type: ignore[misc]
         self.events_service: Any = None
         self.task_queue_service: Any = None
 
-        # Issue #900: Unified two-phase kernel dispatch (INTERCEPT + OBSERVE)
+        # Kernel notification dispatch (INTERCEPT + OBSERVE).
+        # Kernel owns dispatch infrastructure — creates empty callback lists.
+        # Factory registers hooks at boot (KERNEL-ARCHITECTURE §3).
         from nexus.core.kernel_dispatch import KernelDispatch
 
-        _injected_dispatch = (
-            getattr(self._system_services, "kernel_dispatch", None)
-            if self._system_services
-            else None
-        )
-        self._dispatch: KernelDispatch = (
-            _injected_dispatch
-            if _injected_dispatch is not None
-            else KernelDispatch(
-                write_observer=self._write_observer,
-                audit_strict_mode=self._audit_strict_mode,
-            )
-        )
+        self._dispatch: KernelDispatch = KernelDispatch()
 
         # PermissionChecker: core module, safe to create here (Issue #2133)
         from nexus.services.permissions.checker import PermissionChecker
@@ -1046,7 +1034,7 @@ class NexusFS(  # type: ignore[misc]
         # Issue #900: Unified two-phase dispatch for mkdir
         new_revision = self._increment_vfs_revision()
 
-        from nexus.contracts.vfs_hooks import MkdirHookContext, MutationEvent
+        from nexus.contracts.vfs_hooks import MkdirHookContext
 
         self._dispatch.intercept_post_mkdir(
             MkdirHookContext(
@@ -1057,8 +1045,8 @@ class NexusFS(  # type: ignore[misc]
             )
         )
         self._dispatch.notify(
-            MutationEvent(
-                operation=MutationOp.MKDIR,
+            FileEvent(
+                type=FileEventType.DIR_CREATE,
                 path=path,
                 zone_id=ctx.zone_id or ROOT_ZONE_ID,
                 revision=new_revision,
@@ -1211,7 +1199,7 @@ class NexusFS(  # type: ignore[misc]
         # Issue #900: Unified two-phase dispatch for rmdir
         new_revision = self._increment_vfs_revision()
 
-        from nexus.contracts.vfs_hooks import MutationEvent, RmdirHookContext
+        from nexus.contracts.vfs_hooks import RmdirHookContext
 
         self._dispatch.intercept_post_rmdir(
             RmdirHookContext(
@@ -1223,8 +1211,8 @@ class NexusFS(  # type: ignore[misc]
             )
         )
         self._dispatch.notify(
-            MutationEvent(
-                operation=MutationOp.RMDIR,
+            FileEvent(
+                type=FileEventType.DIR_DELETE,
                 path=path,
                 zone_id=ctx.zone_id or ROOT_ZONE_ID,
                 revision=new_revision,

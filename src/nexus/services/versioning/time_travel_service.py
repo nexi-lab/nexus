@@ -19,17 +19,14 @@ References:
 import json
 from collections.abc import Callable
 from contextlib import suppress
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from sqlalchemy import and_, or_, select
+from sqlalchemy.orm import Session
 
+from nexus.backends.backend import Backend
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.storage.models import FilePathModel, OperationLogModel
-
-if TYPE_CHECKING:
-    from sqlalchemy.orm import Session
-
-    from nexus.storage.backend_base import Backend
 
 
 class TimeTravelService:
@@ -264,7 +261,10 @@ class TimeTravelService:
             current_path = session.execute(path_stmt).scalar_one_or_none()
 
             if current_path:
-                content = self._backend.read_content(current_path.content_hash).unwrap()
+                content_hash = current_path.content_hash
+                if content_hash is None:
+                    raise NexusFileNotFoundError(f"File {path} has no content hash")
+                content = self._backend.read_content(content_hash).unwrap()
                 metadata_dict = {
                     "size": current_path.size_bytes,
                     "version": current_path.current_version,

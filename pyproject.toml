@@ -907,21 +907,10 @@ ignore_imports = [
     "nexus.lib.performance_tuning -> nexus.contracts.qos",
     "nexus.lib.response -> nexus.contracts.exceptions",
     # --- kernel (core) importing services ---
-    "nexus.core.config -> nexus.services.protocols.entity_registry",
     "nexus.core.config -> nexus.services.protocols.namespace_manager",
-    "nexus.core.config -> nexus.services.protocols.permission_enforcer",
-    "nexus.core.config -> nexus.services.protocols.rebac",
-    "nexus.core.config -> nexus.services.protocols.workspace_manager",
-    "nexus.core.nexus_fs_core -> nexus.services.protocols.permission_enforcer",
-    "nexus.core.nexus_fs -> nexus.bricks.memory.service",
-    "nexus.core.nexus_fs -> nexus.bricks.rebac.tiger_cache_manager",
     # --- kernel (core) importing bricks ---
     "nexus.core.config -> nexus.bricks.workflows.protocol",
-    "nexus.core.nexus_fs_core -> nexus.bricks.parsers.registry",
     "nexus.core.nexus_fs_core -> nexus.bricks.memory.router",
-    # --- kernel (core) importing bricks (rebac, Issue #2179) ---
-    "nexus.core.nexus_fs -> nexus.bricks.rebac.entity_registry",
-    "nexus.core.nexus_fs_core -> nexus.bricks.rebac.entity_registry",
     # --- services importing bricks ---
     # filesystem backward-compat re-exports from bricks/ (Issue #2424)
     "nexus.services.filesystem -> nexus.bricks.filesystem._scoped_base",

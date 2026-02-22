@@ -2,7 +2,7 @@
 
 Mutation-side: implements ``VFSObserver`` and is registered via
 ``KernelDispatch.register_observe()``.  The kernel fires a frozen
-``MutationEvent`` after each write/delete/rename (OBSERVE phase);
+``FileEvent`` after each write/delete/rename (OBSERVE phase);
 this observer handles cache invalidation.
 
 Read-side: ``on_read()`` is still called directly by the kernel (reads
@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from nexus.contracts.metadata import FileMetadata
-    from nexus.contracts.vfs_hooks import MutationEvent
+    from nexus.core.file_events import FileEvent
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ class CacheInvalidationObserver(Protocol):
     ``on_read()`` is called directly (reads are not mutations).
     """
 
-    def on_mutation(self, event: MutationEvent) -> None: ...
+    def on_mutation(self, event: FileEvent) -> None: ...
 
     def on_read(
         self,
@@ -56,11 +56,11 @@ class ReadSetCacheObserver:
     def __init__(self, read_set_cache: Any) -> None:
         self._cache = read_set_cache
 
-    def on_mutation(self, event: MutationEvent) -> None:
+    def on_mutation(self, event: FileEvent) -> None:
         """Handle VFS mutations (OBSERVE phase)."""
-        from nexus.contracts.vfs_hooks import MutationOp
+        from nexus.core.file_events import FileEventType
 
-        if event.operation is MutationOp.RENAME and event.new_path is not None:
+        if event.type is FileEventType.FILE_RENAME and event.new_path is not None:
             self._cache.invalidate_for_write(event.path, event.revision, zone_id=event.zone_id)
             self._cache.invalidate_for_write(event.new_path, event.revision, zone_id=event.zone_id)
         else:

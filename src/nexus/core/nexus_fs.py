@@ -11,7 +11,7 @@ from nexus.backends.backend import Backend
 from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import InvalidPathError, NexusFileNotFoundError
 from nexus.contracts.types import OperationContext, Permission
-from nexus.contracts.vfs_hooks import MutationOp
+from nexus.core.file_events import FileEvent, FileEventType
 from nexus.core.hash_fast import hash_content
 
 if TYPE_CHECKING:
@@ -1034,7 +1034,7 @@ class NexusFS(  # type: ignore[misc]
         # Issue #900: Unified two-phase dispatch for mkdir
         new_revision = self._increment_vfs_revision()
 
-        from nexus.contracts.vfs_hooks import MkdirHookContext, MutationEvent
+        from nexus.contracts.vfs_hooks import MkdirHookContext
 
         self._dispatch.intercept_post_mkdir(
             MkdirHookContext(
@@ -1045,8 +1045,8 @@ class NexusFS(  # type: ignore[misc]
             )
         )
         self._dispatch.notify(
-            MutationEvent(
-                operation=MutationOp.MKDIR,
+            FileEvent(
+                type=FileEventType.DIR_CREATE,
                 path=path,
                 zone_id=ctx.zone_id or ROOT_ZONE_ID,
                 revision=new_revision,
@@ -1199,7 +1199,7 @@ class NexusFS(  # type: ignore[misc]
         # Issue #900: Unified two-phase dispatch for rmdir
         new_revision = self._increment_vfs_revision()
 
-        from nexus.contracts.vfs_hooks import MutationEvent, RmdirHookContext
+        from nexus.contracts.vfs_hooks import RmdirHookContext
 
         self._dispatch.intercept_post_rmdir(
             RmdirHookContext(
@@ -1211,8 +1211,8 @@ class NexusFS(  # type: ignore[misc]
             )
         )
         self._dispatch.notify(
-            MutationEvent(
-                operation=MutationOp.RMDIR,
+            FileEvent(
+                type=FileEventType.DIR_DELETE,
                 path=path,
                 zone_id=ctx.zone_id or ROOT_ZONE_ID,
                 revision=new_revision,

@@ -10,7 +10,7 @@ through two ordered phases:
         Other failures are caught as OperationWarning — never abort.
 
     OBSERVE  (fire-and-forget)
-    └── Registered mutation observers receive a frozen MutationEvent.
+    └── Registered mutation observers receive a frozen FileEvent.
         Used for cache invalidation, telemetry, dependency tracking.
         Failures are caught and logged.  Never abort.
 
@@ -33,7 +33,6 @@ from nexus.contracts.exceptions import AuditLogError
 from nexus.contracts.vfs_hooks import (
     DeleteHookContext,
     MkdirHookContext,
-    MutationEvent,
     ReadHookContext,
     RenameHookContext,
     RmdirHookContext,
@@ -48,6 +47,7 @@ from nexus.contracts.vfs_hooks import (
     WriteBatchHookContext,
     WriteHookContext,
 )
+from nexus.core.file_events import FileEvent
 from nexus.core.operation_result import OperationWarning
 
 logger = logging.getLogger(__name__)
@@ -246,7 +246,7 @@ class KernelDispatch:
 
     # ── OBSERVE dispatch ───────────────────────────────────────────────
 
-    def notify(self, event: MutationEvent) -> None:
+    def notify(self, event: FileEvent) -> None:
         """OBSERVE phase — fire-and-forget to all registered observers."""
         for obs in self._observers:
             try:

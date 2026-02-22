@@ -22,7 +22,7 @@ from nexus.contracts.constants import SYSTEM_PATH_PREFIX
 from nexus.contracts.exceptions import BackendError, ConflictError, NexusFileNotFoundError
 from nexus.contracts.metadata import FileMetadata
 from nexus.contracts.types import OperationContext, Permission
-from nexus.contracts.vfs_hooks import MutationOp
+from nexus.core.file_events import FileEvent, FileEventType
 from nexus.core.hash_fast import hash_content
 from nexus.lib.rpc_decorator import rpc_expose
 
@@ -1942,11 +1942,9 @@ class NexusFSCoreMixin:
         new_revision = self._increment_vfs_revision()
 
         # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
-        from nexus.contracts.vfs_hooks import MutationEvent
-
         self._dispatch.notify(
-            MutationEvent(
-                operation=MutationOp.WRITE,
+            FileEvent(
+                type=FileEventType.FILE_WRITE,
                 path=path,
                 zone_id=zone_id or ROOT_ZONE_ID,
                 revision=new_revision,
@@ -2655,14 +2653,12 @@ class NexusFSCoreMixin:
         )
 
         # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
-        from nexus.contracts.vfs_hooks import MutationEvent
-
         new_revision = self._increment_vfs_revision()
         for metadata in metadata_list:
             is_new = existing_metadata.get(metadata.path) is None
             self._dispatch.notify(
-                MutationEvent(
-                    operation=MutationOp.WRITE,
+                FileEvent(
+                    type=FileEventType.FILE_WRITE,
                     path=metadata.path,
                     zone_id=zone_id or ROOT_ZONE_ID,
                     revision=new_revision,
@@ -2975,11 +2971,9 @@ class NexusFSCoreMixin:
         new_revision = self._increment_vfs_revision()
 
         # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
-        from nexus.contracts.vfs_hooks import MutationEvent
-
         self._dispatch.notify(
-            MutationEvent(
-                operation=MutationOp.DELETE,
+            FileEvent(
+                type=FileEventType.FILE_DELETE,
                 path=path,
                 zone_id=zone_id or ROOT_ZONE_ID,
                 revision=new_revision,
@@ -3153,11 +3147,9 @@ class NexusFSCoreMixin:
         new_revision = self._increment_vfs_revision()
 
         # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
-        from nexus.contracts.vfs_hooks import MutationEvent
-
         self._dispatch.notify(
-            MutationEvent(
-                operation=MutationOp.RENAME,
+            FileEvent(
+                type=FileEventType.FILE_RENAME,
                 path=old_path,
                 zone_id=zone_id or ROOT_ZONE_ID,
                 revision=new_revision,

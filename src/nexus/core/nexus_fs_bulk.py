@@ -22,6 +22,7 @@ from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.contracts.metadata import FileMetadata
 from nexus.contracts.types import Permission
+from nexus.core.file_events import FileEvent, FileEventType
 from nexus.lib.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
@@ -636,12 +637,9 @@ class NexusFSBulkMixin:
 
         new_revision = self._increment_vfs_revision()
         for metadata in metadata_list:
-            from nexus.contracts.vfs_hooks import MutationEvent
-            from nexus.contracts.vfs_hooks import MutationOp as _MutOp
-
             self._dispatch.notify(
-                MutationEvent(
-                    operation=_MutOp.WRITE,
+                FileEvent(
+                    type=FileEventType.FILE_WRITE,
                     path=metadata.path,
                     zone_id=zone_id or ROOT_ZONE_ID,
                     revision=new_revision,
@@ -654,7 +652,6 @@ class NexusFSBulkMixin:
         _event_bus = getattr(self, "_event_bus", None)
         if _event_bus is not None and metadata_list:
             try:
-                from nexus.core.file_events import FileEvent, FileEventType
                 from nexus.lib.sync_bridge import fire_and_forget
 
                 batch_events = [

@@ -10,8 +10,9 @@ Coverage matrix (all gaps closed in Issue #625):
 - rmdir()       -> on_rmdir()       YES  (Issue #625)
 
 Phase 1.3 of #1246/#1330 consolidation plan.
-Issue #2152: Observer owns error policy — kernel is a pure caller (no try/except).
 """
+
+from __future__ import annotations
 
 import tempfile
 from collections.abc import Generator
@@ -46,17 +47,6 @@ def nx(temp_dir: Path, observer: MagicMock) -> Generator[NexusFS, None, None]:
         parsing=ParseConfig(auto_parse=False),
         system_services=SystemServices(write_observer=observer),
     )
-
-    # Wire PermissionChecker via DI (same as factory/orchestrator.py, Issue #874)
-    from nexus.services.permissions.checker import PermissionChecker
-
-    nx._permission_checker = PermissionChecker(
-        permission_enforcer=nx._permission_enforcer,
-        metadata_store=nx.metadata,
-        default_context=nx._default_context,
-        enforce_permissions=nx._enforce_permissions,
-    )
-
     yield nx
     nx.close()
 
@@ -115,7 +105,7 @@ class TestDeleteCallsObserver:
         kwargs = observer.on_delete.call_args.kwargs
         assert kwargs["path"] == "/test.txt"
 
-    def test_delete_passes_snapshot_hash(self, nx: NexusFS, observer: MagicMock) -> None:
+    def test_delete_passes_metadata(self, nx: NexusFS, observer: MagicMock) -> None:
         result = nx.write("/test.txt", b"content")
         etag = result["etag"]
         observer.reset_mock()
@@ -123,7 +113,7 @@ class TestDeleteCallsObserver:
         nx.delete("/test.txt")
 
         kwargs = observer.on_delete.call_args.kwargs
-        assert kwargs["snapshot_hash"] == etag
+        assert kwargs["metadata"].etag == etag
 
 
 class TestRenameCallsObserver:
@@ -236,8 +226,8 @@ class TestRmdirCallsObserver:
 # =========================================================================
 
 
-class TestPostMutationHookCoverage:
-    """Verify _fire_post_mutation_hooks fires for all mutation operations."""
+class TestVFSObserverCoverage:
+    """Verify KernelDispatch OBSERVE fires for all mutation operations."""
 
     @pytest.fixture
     def hook(self) -> MagicMock:
@@ -254,18 +244,7 @@ class TestPostMutationHookCoverage:
             parsing=ParseConfig(auto_parse=False),
             system_services=SystemServices(write_observer=observer),
         )
-
-        # Wire PermissionChecker via DI (same as factory/orchestrator.py, Issue #874)
-        from nexus.services.permissions.checker import PermissionChecker
-
-        nx._permission_checker = PermissionChecker(
-            permission_enforcer=nx._permission_enforcer,
-            metadata_store=nx.metadata,
-            default_context=nx._default_context,
-            enforce_permissions=nx._enforce_permissions,
-        )
-
-        nx.register_mutation_hook(hook)
+        nx.register_observe(hook)
         yield nx
         nx.close()
 
@@ -315,74 +294,3 @@ class TestPostMutationHookCoverage:
         event = hook.on_mutation.call_args.args[0]
         assert event.operation.value == "rmdir"
         assert event.path == "/mydir"
-
-
-# =========================================================================
-# Observer error handling (Issue #1631)
-# =========================================================================
-
-
-def _make_failing_observer() -> MagicMock:
-    """Create a mock observer where every method raises RuntimeError."""
-    obs = MagicMock()
-    err = RuntimeError("observer boom")
-    obs.on_write.side_effect = err
-    obs.on_write_batch.side_effect = err
-    obs.on_delete.side_effect = err
-    obs.on_rename.side_effect = err
-    obs.on_mkdir.side_effect = err
-    obs.on_rmdir.side_effect = err
-    return obs
-
-
-class TestObserverErrorPropagation:
-    """Issue #2152: Observer errors propagate directly (no kernel safety net)."""
-
-    @pytest.fixture
-    def failing_observer(self) -> MagicMock:
-        return _make_failing_observer()
-
-    @pytest.fixture
-    def nx_with_failing_observer(
-        self, temp_dir: Path, failing_observer: MagicMock
-    ) -> Generator[NexusFS, None, None]:
-        nx = NexusFS(
-            backend=LocalBackend(str(temp_dir / "data")),
-            metadata_store=InMemoryMetastore(),
-            permissions=PermissionConfig(enforce=False),
-            parsing=ParseConfig(auto_parse=False),
-            system_services=SystemServices(write_observer=failing_observer),
-        )
-
-        # Wire PermissionChecker via DI (same as factory/orchestrator.py, Issue #874)
-        from nexus.services.permissions.checker import PermissionChecker
-
-        nx._permission_checker = PermissionChecker(
-            permission_enforcer=nx._permission_enforcer,
-            metadata_store=nx.metadata,
-            default_context=nx._default_context,
-            enforce_permissions=nx._enforce_permissions,
-        )
-
-        yield nx
-        nx.close()
-
-    def test_write_propagates_observer_error(self, nx_with_failing_observer: NexusFS) -> None:
-        """Observer RuntimeError propagates — no kernel try/except wrapper."""
-        with pytest.raises(RuntimeError, match="observer boom"):
-            nx_with_failing_observer.write("/test.txt", b"hello")
-
-    def test_mkdir_propagates_observer_error(self, nx_with_failing_observer: NexusFS) -> None:
-        with pytest.raises(RuntimeError, match="observer boom"):
-            nx_with_failing_observer.mkdir("/testdir")
-
-    def test_rmdir_propagates_observer_error(
-        self, nx_with_failing_observer: NexusFS, failing_observer: MagicMock
-    ) -> None:
-        # Create dir with a non-failing observer first, then switch
-        failing_observer.on_mkdir.side_effect = None
-        nx_with_failing_observer.mkdir("/testdir")
-        failing_observer.on_rmdir.side_effect = RuntimeError("observer boom")
-
-        with pytest.raises(RuntimeError, match="observer boom"):
-            nx_with_failing_observer.rmdir("/testdir")

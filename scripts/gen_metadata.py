@@ -5,7 +5,7 @@ SSOT: proto/nexus/core/metadata.proto is the single source of truth
 for FileMetadata fields. This script generates:
 
   - src/nexus/core/metadata_pb2.py         (protobuf stubs via grpc_tools.protoc)
-  - src/nexus/contracts/metadata.py        (FileMetadata + PaginatedResult data classes)
+  - src/nexus/core/metadata.py             (FileMetadata + PaginatedResult data classes)
   - src/nexus/core/metastore.py            (MetastoreABC + AsyncMetastoreWrapper)
   - src/nexus/core/_compact_generated.py   (CompactFileMetadata + interning)
 
@@ -22,7 +22,7 @@ from pathlib import Path
 # Resolve paths relative to repo root
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PROTO_PATH = REPO_ROOT / "proto" / "nexus" / "core" / "metadata.proto"
-METADATA_OUT = REPO_ROOT / "src" / "nexus" / "contracts" / "metadata.py"
+METADATA_OUT = REPO_ROOT / "src" / "nexus" / "core" / "metadata.py"
 METASTORE_OUT = REPO_ROOT / "src" / "nexus" / "core" / "metastore.py"
 COMPACT_OUT = REPO_ROOT / "src" / "nexus" / "core" / "_compact_generated.py"
 MAPPER_OUT = REPO_ROOT / "src" / "nexus" / "storage" / "_metadata_mapper_generated.py"
@@ -282,6 +282,22 @@ def _generate_enum_properties(
     return "\n".join(lines)
 
 
+def _generate_to_dict(fields: list[dict[str, str]]) -> str:
+    """Generate to_dict() dict entries for FileMetadata.
+
+    Datetime fields are serialized as ISO 8601 strings.
+    All other fields are passed through directly.
+    """
+    lines = []
+    for f in fields:
+        name = f["name"]
+        if name in DATETIME_FIELDS:
+            lines.append(f'            "{name}": self.{name}.isoformat() if self.{name} else None,')
+        else:
+            lines.append(f'            "{name}": self.{name},')
+    return "\n".join(lines)
+
+
 def generate_metadata_py(
     fields: list[dict[str, str]],
     enums: dict[str, list[tuple[str, int]]] | None = None,
@@ -304,11 +320,12 @@ def generate_metadata_py(
 
     fields_block = "\n".join(field_lines)
 
-    # Build enum constants and properties
+    # Build enum constants, properties, and to_dict
     enum_constants = _generate_enum_constants(enums)
     enum_constants_block = f"\n\n{enum_constants}\n" if enum_constants else ""
     enum_properties = _generate_enum_properties(fields, enums)
     enum_properties_block = f"\n{enum_properties}" if enum_properties else ""
+    to_dict_block = _generate_to_dict(fields)
 
     return f'''\
 """Auto-generated from proto/nexus/core/metadata.proto - DO NOT EDIT.
@@ -377,6 +394,16 @@ class FileMetadata:
 
 {fields_block}
 {enum_properties_block}
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to JSON-compatible dict.
+
+        Handles datetime -> ISO 8601 string conversion.
+        Generated from proto field definitions (SSOT).
+        """
+        return {{
+{to_dict_block}
+        }}
+
     def validate(self) -> None:
         """Validate file metadata before database operations.
 
@@ -621,7 +648,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from nexus.contracts.metadata import FileMetadata
+    from nexus.core.metadata import FileMetadata
 
 # --- String interning ---
 # Single global pool: string -> int ID, and reverse lookup.
@@ -680,7 +707,7 @@ class CompactFileMetadata:
 
     def to_file_metadata(self) -> FileMetadata:
         """Convert back to FileMetadata."""
-        from nexus.contracts.metadata import FileMetadata
+        from nexus.core.metadata import FileMetadata
 
         return FileMetadata(
 {fm_block}
@@ -816,7 +843,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.contracts.metadata import FileMetadata
+    from nexus.core.metadata import FileMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -879,7 +906,7 @@ class MetadataMapper:
     @staticmethod
     def from_proto(proto: Any) -> FileMetadata:
         """Convert protobuf message to FileMetadata dataclass."""
-        from nexus.contracts.metadata import FileMetadata
+        from nexus.core.metadata import FileMetadata
 
 {datetime_parse_block}
 
@@ -899,7 +926,7 @@ class MetadataMapper:
     @staticmethod
     def from_json(obj: dict[str, Any]) -> FileMetadata:
         """Convert JSON dict to FileMetadata dataclass."""
-        from nexus.contracts.metadata import FileMetadata
+        from nexus.core.metadata import FileMetadata
 
         # Migration: convert legacy is_directory -> entry_type
         if "is_directory" in obj:
@@ -1051,11 +1078,11 @@ def audit_ssot_coverage() -> list[str]:
     tests_dir = REPO_ROOT / "tests"
 
     # Match single-line and multi-line imports from generated/managed modules
-    # e.g. from nexus.contracts.metadata import FileMetadata, PaginatedResult
+    # e.g. from nexus.core.metadata import FileMetadata, PaginatedResult
     # e.g. from nexus.core.metastore import MetastoreABC
     # e.g. from nexus.core._compact_generated import CompactFileMetadata
     import_re = re.compile(
-        r"from\s+nexus\.(?:contracts|core)\.(metadata|metastore|_compact_generated)\s+import\s+"
+        r"from\s+nexus\.core\.(metadata|metastore|_compact_generated)\s+import\s+"
         r"(?:\(([^)]*)\)|(.+?))\s*$",
         re.MULTILINE | re.DOTALL,
     )

@@ -178,7 +178,6 @@ def create_nexus_services(
         entity_registry=system_dict["entity_registry"],
         permission_enforcer=system_dict["permission_enforcer"],
         write_observer=system_dict["write_observer"],
-        kernel_dispatch=system_dict["kernel_dispatch"],
         # Former-kernel degradable (Issue #2193)
         dir_visibility_cache=system_dict["dir_visibility_cache"],
         hierarchy_manager=system_dict["hierarchy_manager"],

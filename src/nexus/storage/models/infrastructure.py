@@ -10,6 +10,7 @@ from typing import Any
 from sqlalchemy import DateTime, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import ValidationError
 from nexus.storage.models._base import Base, ResourceConfigMixin, TimestampMixin, uuid_pk
 
@@ -98,7 +99,7 @@ class MountConfigModel(TimestampMixin, Base):
     backend_config: Mapped[str] = mapped_column(Text, nullable=False)
 
     owner_user_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default=ROOT_ZONE_ID)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     conflict_strategy: Mapped[str | None] = mapped_column(String(50), nullable=True, default=None)
@@ -308,7 +309,7 @@ class UserSessionModel(Base):
 
     user_id: Mapped[str] = mapped_column(String(255), nullable=False)
     agent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default=ROOT_ZONE_ID)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=lambda: datetime.now(UTC)

@@ -90,7 +90,7 @@ not by domain or implementation.
 | **Metastore** | `MetastoreABC` | Ordered KV, CAS, prefix scan, optional Raft SC | **Required** — sole kernel init param |
 | **ObjectStore** | `ObjectStoreABC` (= `Backend`) | Streaming I/O, immutable blobs, petabyte scale | **Interface only** — instances mounted dynamically |
 | **RecordStore** | `RecordStoreABC` | Relational ACID, JOINs, FK, vector search | **Services only** — optional, injected for ReBAC/Auth/etc. |
-| **CacheStore** | `CacheStoreABC` | Ephemeral KV, Pub/Sub, TTL | **Optional** — ABC in `contracts/` (like `include/linux/fscache.h`), kernel accepts via DI, services consume; defaults to `NullCacheStore` |
+| **CacheStore** | `CacheStoreABC` | Ephemeral KV, Pub/Sub, TTL | **Optional** — kernel defines ABC, services consume; defaults to `NullCacheStore` |
 
 **Orthogonality:** Between pillars = different query patterns. Within pillars = interchangeable
 drivers (deployment-time config). See `data-storage-matrix.md` for full proof.
@@ -133,7 +133,7 @@ See `ops-scenario-matrix.md` for full Ops-Scenario affinity proof.
 
 ---
 
-## 3. Kernel vs Services Boundary
+## 3. Kernel Interfaces & Primitives
 
 ### Kernel Interfaces (`nexus.core`)
 
@@ -142,12 +142,21 @@ See `ops-scenario-matrix.md` for full Ops-Scenario affinity proof.
 | `MetastoreABC` | `struct inode_operations` | Typed FileMetadata CRUD (the inode layer) |
 | `VFSRouterProtocol` | VFS `lookup_slow()` | Path resolution only — mount CRUD lives in Service `MountProtocol` |
 | `ObjectStoreABC` (= `Backend`) | `struct file_operations` | Blob I/O interface (read/write/delete/list) |
-| `CacheStoreABC` | `include/linux/fscache.h` | Ephemeral KV + Pub/Sub primitives — ABC in `contracts/`, kernel accepts optionally, services/bricks consume |
+| `CacheStoreABC` | (no direct analogue) | Ephemeral KV + Pub/Sub primitives |
 | `VFSLockManagerProtocol` | per-inode `i_rwsem` | Path-level RW locking with hierarchy awareness |
 | `PipeManagerProtocol` | `pipe(2)` + `fs/pipe.c` | Named pipe lifecycle + MPMC data path (see §6 Kernel Tier) |
+| Notification dispatch | `security_hook_heads` + `fsnotify` | Two-phase callback lists at VFS operation points (see §3 Notification Dispatch) |
 
 `MetastoreABC` is kernel because it IS the inode layer — the typed contract
 between VFS and storage. Without it, the kernel cannot describe files.
+
+`VFSLockManager` (`core/lock_fast.py`) provides rwsem semantics with hierarchical
+ancestor/descendant conflict detection. Rust-accelerated (PyO3), Python fallback.
+Distinct from service-layer advisory locking (LockProtocol / `ops-scenario-matrix.md` S9).
+
+> **Gap:** VFSLockManager is created in `NexusFS.__init__` but not yet wired into the
+> write path. Intent: local coroutine concurrency lock, complementing the distributed
+> RaftLockManager — like Linux `i_rwsem` (local) coexisting with `flock(2)` (distributed).
 
 ### NexusFS — Syscall Dispatch Layer
 
@@ -157,6 +166,12 @@ user-facing operations (read, write, list, mkdir, mount). NexusFS contains
 **no service business logic** — services are accessed through `ServiceRegistry`
 (Phase 2) or thin delegation stubs (Phase 1).
 
+`NexusFSCoreMixin` contains the VFS operation implementations (like `vfs_read`,
+`vfs_write` in Linux), inherited by NexusFS. This is an implementation detail —
+a Python mixin used to split the large NexusFS class. As services continue
+extracting, the mixin should shrink to pure VFS ops and eventually evolve from
+mixin (inheritance) to composition (standalone `VFSCore` class).
+
 `factory.py` is the init system (analogous to systemd): constructs kernel + drivers
 + services and wires them together. NexusFS receives pre-built dependencies via its
 constructor and never auto-creates services.
@@ -165,6 +180,56 @@ constructor and never auto-creates services.
 > `FileWatcher` moved to `services/watch/` (#706), orphaned kernel attrs cleaned (#656).
 > `_wire_services()` deleted — all service creation moved to `factory._boot_wired_services()` (#643).
 > Remaining: replace `KernelServices` dataclass with `ServiceRegistry`.
+
+### Kernel Notification Dispatch
+
+The kernel provides callback-based notification at VFS operation points (read,
+write, delete, rename, mkdir, rmdir). Like Linux's `security_hook_heads` and
+`fsnotify_group`, these are kernel-internal callback lists.
+
+**Decision (Issue #625):** Kernel **knows** (has callback list attributes),
+kernel does **not construct** (factory registers callbacks via DI). Empty
+lists = no-op dispatch = kernel operates with zero services.
+
+Two-phase dispatch per VFS operation:
+
+| Phase | Semantics | Abort? | Modify? | Linux Analogue | Mechanism |
+|-------|-----------|--------|---------|----------------|-----------|
+| **INTERCEPT** | Synchronous, ordered | Yes (observer) | Yes (hooks) | LSM `call_void_hook()` | `KernelDispatch.intercept_post_*()` |
+| **OBSERVE** | Fire-and-forget | No | No | `fsnotify()` / `notifier_call_chain()` | `KernelDispatch.notify()` |
+
+**Implementation** (`core/kernel_dispatch.py`, Issue #900):
+
+`KernelDispatch` is a single class that owns both phases. Each VFS operation
+(read/write/delete/rename/mkdir/rmdir) calls `intercept_post_*()` then `notify()`.
+
+INTERCEPT phase runs in two stages:
+1. **Built-in write observer** (audit trail) — can abort via `AuditLogError`
+   when `audit_strict_mode=True`, else logs critical warning.
+2. **Registered interceptor hooks** — per-operation hook lists
+   (`register_intercept_read/write/delete/rename/mkdir/rmdir`).
+   Can modify context (e.g. filter CSV columns, update cache bitmaps).
+   Failures caught as `OperationWarning` — never abort.
+
+OBSERVE phase broadcasts a frozen `MutationEvent` to all registered
+`VFSObserver` instances. Used for cache invalidation, workflow triggers,
+telemetry. Failures logged, never abort.
+
+**Contracts:** Hook protocols (`VFSReadHook`, `VFSWriteHook`, etc.),
+context dataclasses (`ReadHookContext`, `WriteHookContext`, etc.),
+`MutationEvent`, `VFSObserver` — all in `contracts/vfs_hooks.py`
+(tier-neutral, like `include/linux/notifier.h`).
+Concrete implementations in `services/hooks/` (policy, like SELinux/AppArmor).
+
+**Registration API** (factory wires at startup):
+- `dispatch.register_intercept_read(hook)` — INTERCEPT hooks
+- `dispatch.register_observe(observer)` — OBSERVE observers
+
+**Distinction from HookEngineProtocol (S15/P17):** The kernel notification
+dispatch is an internal mechanism — always-on infrastructure that dispatches
+at operation points. `HookEngineProtocol` is the service-layer API for
+plugin/user hook registration (like netfilter userspace config) — an optional
+service brick that sits above kernel dispatch.
 
 ### Service Protocols (`nexus.services.protocols`)
 
@@ -313,7 +378,31 @@ Three tiers, mirroring Linux's kernel → system → user space communication:
 
 **Selection rule:** Consensus write path → System (gRPC, 1:1). Agent-to-agent messaging → System (IPC, 1:1 queue). Notification read path → User Space (EventBus, 1:N fan-out to 100s of observers). Internal signaling → Kernel (Pipe, zero-copy).
 
-See `federation-memo.md` §7j for Pipe design.
+### Kernel Tier: Native Pipes
+
+Two-layer pipe architecture (matches Linux `kfifo` + `fs/pipe.c`):
+
+```
+┌─────────────────────────────────────────┐
+│ PipeManager (core/pipe_manager.py)      │  ← fs/pipe.c: VFS named pipe
+│   mkpipe() / destroy() / pipe_read()   │     lifecycle, per-pipe lock (MPMC)
+│   DT_PIPE inode in MetastoreABC        │
+├─────────────────────────────────────────┤
+│ RingBuffer (core/pipe.py)              │  ← kfifo: kernel-internal SPSC
+│   write_nowait() / read_nowait()       │     deque + asyncio.Event pair
+│   Process heap memory (no pillar)      │
+└─────────────────────────────────────────┘
+```
+
+- **Inode** (DT_PIPE FileMetadata) in MetastoreABC — VFS path visibility, ReBAC, observability
+- **Data** (bytes in ring buffer) in process heap — like Linux `kmalloc`'d pipe buffer
+- **SPSC → MPMC**: RingBuffer is lock-free SPSC (GIL-atomic). PipeManager wraps with
+  per-pipe `asyncio.Lock` for MPMC safety using lock→try→unlock→wait→retry (deadlock-free).
+
+Services depend on `PipeManagerProtocol` (defined in `core/pipe_manager.py`,
+matching `VFSLockManagerProtocol` pattern). Kernel creates the concrete `PipeManager`.
+
+See `federation-memo.md` §7j for Pipe design rationale.
 
 ### System Tier
 
@@ -334,14 +423,6 @@ Linux analogue: `dbus-daemon` (1:N broadcast). Consumed by `WatchProtocol` (S8) 
 (preferred long-term). All should route through `CacheStoreABC` pub/sub.
 
 **Federation gap:** EventBus is currently zone-local. Cross-zone event propagation not yet designed.
-
----
-
-## 7. RecordStoreABC Pattern
-
-Services consume `RecordStoreABC.session_factory` + SQLAlchemy ORM.
-Direct SQL or raw driver access is an abstraction break.
-This ensures driver interchangeability (PostgreSQL ↔ SQLite) without code changes.
 
 ---
 

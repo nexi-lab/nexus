@@ -1,5 +1,7 @@
 """Unified filesystem implementation for Nexus."""
 
+from __future__ import annotations
+
 import builtins
 import contextlib
 import logging
@@ -11,17 +13,13 @@ from nexus.backends.backend import Backend
 from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import InvalidPathError, NexusFileNotFoundError
 from nexus.contracts.types import OperationContext, Permission
+from nexus.contracts.vfs_hooks import MutationOp
 from nexus.core.hash_fast import hash_content
-from nexus.lib.mutation_hooks import MutationOp
 
 if TYPE_CHECKING:
-    from nexus.bricks.memory.service import Memory
-    from nexus.bricks.rebac.entity_registry import EntityRegistry
-
-
-from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
-from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
-from nexus.contracts.metadata import FileMetadata
+    from nexus.rebac.entity_registry import EntityRegistry
+    from nexus.services.memory.memory_api import Memory
+from nexus.core.cache_store import CacheStoreABC, NullCacheStore
 from nexus.core.config import (
     BrickServices,
     CacheConfig,
@@ -33,8 +31,9 @@ from nexus.core.config import (
     SystemServices,
     WiredServices,
 )
+from nexus.core.filesystem import NexusFilesystem
+from nexus.core.metadata import FileMetadata
 from nexus.core.metastore import MetastoreABC
-from nexus.core.nexus_fs_bulk import NexusFSBulkMixin
 from nexus.core.nexus_fs_core import NexusFSCoreMixin
 from nexus.core.router import NamespaceConfig, PathRouter
 from nexus.lib.rpc_decorator import rpc_expose
@@ -44,9 +43,8 @@ logger = logging.getLogger(__name__)
 
 
 class NexusFS(  # type: ignore[misc]
-    NexusFSBulkMixin,
     NexusFSCoreMixin,
-    NexusFilesystemABC,
+    NexusFilesystem,
 ):
     """
     Unified filesystem for Nexus.
@@ -109,6 +107,7 @@ class NexusFS(  # type: ignore[misc]
         self._memory_recall_max_age_hours = memory.recall_max_age_hours
         self._enforce_permissions = permissions.enforce
         self._enforce_zone_isolation = permissions.enforce_zone_isolation
+        self._audit_strict_mode = permissions.audit_strict_mode
         self.allow_admin_bypass = permissions.allow_admin_bypass
         self.auto_parse = parsing.auto_parse
         self.is_admin = is_admin
@@ -148,21 +147,15 @@ class NexusFS(  # type: ignore[misc]
         if brk_svc.parser_registry is not None:
             self.parser_registry = brk_svc.parser_registry
         else:
-            import importlib as _il
-
-            _PR = _il.import_module("nexus.bricks.parsers.registry").ParserRegistry
-            _MkD = _il.import_module("nexus.bricks.parsers.markitdown_parser").MarkItDownParser
+            from nexus.parsers.markitdown_parser import MarkItDownParser as _MkD
+            from nexus.parsers.registry import ParserRegistry as _PR
 
             self.parser_registry = _PR()
             self.parser_registry.register(_MkD())
         if brk_svc.provider_registry is not None:
             self.provider_registry = brk_svc.provider_registry
         else:
-            import importlib as _il_prov
-
-            _PvR = _il_prov.import_module(
-                "nexus.bricks.parsers.providers.registry"
-            ).ProviderRegistry
+            from nexus.parsers.providers.registry import ProviderRegistry as _PvR
 
             self.provider_registry = _PvR()
             self.provider_registry.auto_discover()
@@ -226,6 +219,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Lazy-init sentinels
         self._token_manager = None
+        self._semantic_search = None
         self._memory_api: Memory | None = None
         self._memory_config: dict[str, str | None] = {
             "zone_id": None,
@@ -241,7 +235,7 @@ class NexusFS(  # type: ignore[misc]
         if brk_svc.vfs_lock_manager is not None:
             self._vfs_lock_manager = brk_svc.vfs_lock_manager
         else:
-            from nexus.lib.lock_fast import create_vfs_lock_manager
+            from nexus.core.lock_fast import create_vfs_lock_manager
 
             self._vfs_lock_manager = create_vfs_lock_manager()
         logger.info("VFS lock manager initialized (%s)", type(self._vfs_lock_manager).__name__)
@@ -267,22 +261,38 @@ class NexusFS(  # type: ignore[misc]
         self.events_service: Any = None
         self.task_queue_service: Any = None
 
-        # VFS Hook Pipeline — use injected pipeline from KernelServices if available
-        from nexus.core.vfs_hooks import VFSHookPipeline
+        # Issue #900: Unified two-phase kernel dispatch (INTERCEPT + OBSERVE)
+        from nexus.core.kernel_dispatch import KernelDispatch
 
-        _injected_pipeline = (
-            getattr(self._system_services, "hook_pipeline", None) if self._system_services else None
+        _injected_dispatch = (
+            getattr(self._system_services, "kernel_dispatch", None)
+            if self._system_services
+            else None
         )
-        self._hook_pipeline: VFSHookPipeline = (
-            _injected_pipeline if _injected_pipeline is not None else VFSHookPipeline()
+        self._dispatch: KernelDispatch = (
+            _injected_dispatch
+            if _injected_dispatch is not None
+            else KernelDispatch(
+                write_observer=self._write_observer,
+                audit_strict_mode=self._audit_strict_mode,
+            )
         )
-        self._post_mutation_hooks: builtins.list[Any] = []
+
+        # PermissionChecker: core module, safe to create here (Issue #2133)
+        from nexus.core.permission_checker import PermissionChecker
+
+        self._permission_checker = PermissionChecker(
+            permission_enforcer=self._permission_enforcer,
+            metadata_store=self.metadata,
+            default_context=self._default_context,
+            enforce_permissions=self._enforce_permissions,
+        )
 
         # Read-set-aware cache (Issue #1169)
         self._read_set_cache = None
         metadata_cache = getattr(self.metadata, "_cache", None)
         if metadata_cache is not None and self._cache_config.enable_metadata_cache:
-            from nexus.storage.read_set import ReadSetRegistry
+            from nexus.core.read_set import ReadSetRegistry
             from nexus.storage.read_set_cache import ReadSetAwareCache
 
             self._read_set_registry = ReadSetRegistry()
@@ -306,12 +316,12 @@ class NexusFS(  # type: ignore[misc]
         if _injected_tcm is not None:
             self._tiger_cache_manager = _injected_tcm
         else:
-            from nexus.bricks.rebac.tiger_cache_manager import TigerCacheManager
+            from nexus.services.tiger_cache_manager import TigerCacheManager
 
             self._tiger_cache_manager = TigerCacheManager(
                 rebac_manager=self._rebac_manager,
                 metadata_store=self.metadata,
-                default_zone_id=self._default_context.zone_id or ROOT_ZONE_ID,
+                default_zone_id=self._default_context.zone_id or "root",
                 process_queue_fn=getattr(self, "process_tiger_cache_queue", None),
                 warm_cache_fn=getattr(self, "warm_tiger_cache", None),
             )
@@ -345,8 +355,6 @@ class NexusFS(  # type: ignore[misc]
             self.share_link_service = wired.get("share_link_service")
             self.events_service = wired.get("events_service")
             self.task_queue_service = wired.get("task_queue_service")
-            self.time_travel_service = wired.get("time_travel_service")
-            self.operations_service = wired.get("operations_service")
             self._workspace_rpc_service = wired.get("workspace_rpc_service")
             self._agent_rpc_service = wired.get("agent_rpc_service")
             self._user_provisioning_service = wired.get("user_provisioning_service")
@@ -373,8 +381,6 @@ class NexusFS(  # type: ignore[misc]
         self.share_link_service = wired.share_link_service
         self.events_service = wired.events_service
         self.task_queue_service = wired.task_queue_service
-        self.time_travel_service = wired.time_travel_service
-        self.operations_service = wired.operations_service
         self._workspace_rpc_service = wired.workspace_rpc_service
         self._agent_rpc_service = wired.agent_rpc_service
         self._user_provisioning_service = wired.user_provisioning_service
@@ -439,22 +445,223 @@ class NexusFS(  # type: ignore[misc]
         return getattr(self, "_rebac_manager", None)
 
     @property
-    def record_store(self) -> Any | None:
-        """Public accessor for the RecordStore pillar (#2138)."""
-        return self._record_store
-
-    @property
-    def llm_provider(self) -> Any | None:
-        """Public accessor for the LLM provider (#2138).
-
-        Set dynamically by server lifespan; may be None if no LLM configured.
-        """
-        return getattr(self, "_llm_provider", None)
+    def semantic_search_engine(self) -> Any | None:
+        """Public accessor for the semantic search engine instance."""
+        return self._semantic_search
 
     @property
     def memory(self) -> Any:
         """Get Memory API instance (lazy init on first access)."""
         return self._memory_provider.get_or_create()
+
+    def _init_performance_optimizations(self) -> None:
+        """Initialize performance optimizations for permission checks.
+
+        This method:
+        1. Syncs tiger_resource_map from existing metadata (Issue #934)
+        2. Grants TRAVERSE permission on implicit directories (enables O(1) stat)
+        3. Warms the Tiger Cache for faster subsequent permission checks
+        4. Starts background worker for Tiger Cache queue processing
+
+        Called automatically during __init__. Can be called manually to refresh.
+        """
+        import logging
+        import os
+
+        logger = logging.getLogger(__name__)
+
+        # Check if optimizations are enabled (default: True)
+        # Set NEXUS_DISABLE_PERF_OPTIMIZATIONS=true to disable
+        if os.getenv("NEXUS_DISABLE_PERF_OPTIMIZATIONS", "false").lower() in ("true", "1", "yes"):
+            logger.debug("Performance optimizations disabled via environment variable")
+            return
+
+        try:
+            # 1. Sync tiger_resource_map from existing metadata (Issue #934)
+            # This MUST happen BEFORE cache warming so Tiger Cache can find resources
+            # Fixes chicken-and-egg: resources only added during check_access(),
+            # but check_access() returns cache miss because map is empty
+            if os.getenv("NEXUS_SYNC_TIGER_RESOURCE_MAP", "true").lower() in (
+                "true",
+                "1",
+                "yes",
+            ):
+                synced = self._sync_resource_map_from_metadata()
+                if synced > 0:
+                    logger.info(f"Synced {synced} resources to Tiger resource map")
+
+            # 2. TRAVERSE on implicit directories is now AUTOMATIC
+            # The permission check auto-allows TRAVERSE for any implicit directory
+            # when the user is authenticated. No manual grants needed!
+            # See: permissions.py _check_rebac() TRAVERSE handling
+
+            # 3. Warm Tiger Cache (optional, can be slow for large systems)
+            # Only warm if explicitly enabled via environment variable
+            if os.getenv("NEXUS_WARM_TIGER_CACHE", "false").lower() in (
+                "true",
+                "1",
+                "yes",
+            ) and hasattr(self, "warm_tiger_cache"):
+                entries = self.warm_tiger_cache(zone_id=self._default_context.zone_id)
+                if entries > 0:
+                    logger.info(f"Warmed Tiger Cache with {entries} entries")
+
+            # 4. Start Tiger Cache background worker
+            # This processes permission change queue to keep Tiger Cache up-to-date
+            self._start_tiger_cache_worker()
+
+        except Exception as e:
+            # Don't fail initialization if optimizations fail
+            logger.warning(f"Failed to initialize performance optimizations: {e}")
+
+    def _sync_resource_map_from_metadata(self) -> int:
+        """Populate tiger_resource_map from existing metadata.
+
+        Issue #934: Enables Tiger Cache to work for pre-existing files by
+        ensuring all files have integer IDs in the resource map.
+
+        This fixes the chicken-and-egg problem where:
+        - Tiger Cache needs resource IDs to check access
+        - Resource IDs were only created during permission checks
+        - Permission checks returned cache miss → never populated
+
+        Returns:
+            Number of resources synced to the map
+
+        Performance:
+            ~5 seconds for 6,000 files (one-time startup cost)
+
+        Environment:
+            NEXUS_SYNC_TIGER_RESOURCE_MAP: Set to "false" to disable (default: true)
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        # Check if Tiger Cache is available
+        if not hasattr(self, "_rebac_manager"):
+            logger.debug("No ReBAC manager - skipping resource map sync")
+            return 0
+
+        tiger_cache = getattr(self._rebac_manager, "_tiger_cache", None)
+        if not tiger_cache:
+            logger.debug("Tiger Cache disabled - skipping resource map sync")
+            return 0
+
+        resource_map = getattr(tiger_cache, "_resource_map", None)
+        if not resource_map:
+            logger.debug("No resource map in Tiger Cache - skipping sync")
+            return 0
+
+        try:
+            # Stream files from metadata store instead of materializing full list
+            count = 0
+            log_interval = 1000
+
+            for meta in self.metadata.list_iter("/", recursive=True):
+                # Register resource in the map (idempotent operation)
+                # Note: zone_id removed from resource map (Issue #xyz)
+                resource_map.get_or_create_int_id(
+                    resource_type="file",
+                    resource_id=meta.path,
+                )
+                count += 1
+
+                # Log progress for large datasets
+                if count % log_interval == 0:
+                    logger.debug(f"Tiger resource map sync progress: {count} resources...")
+
+            logger.info(f"Tiger resource map sync complete: {count} resources")
+            return count
+
+        except Exception as e:
+            logger.warning(f"Failed to sync resource map from metadata: {e}")
+            return 0
+
+    def _start_tiger_cache_worker(self) -> None:
+        """Start background thread for Tiger Cache queue processing.
+
+        NOTE: With write-through implemented, automatic queue processing is
+        DISABLED by default. Write-through handles grants/revokes immediately.
+
+        Queue processing is only needed for:
+        - Cold start cache warming (use warm_tiger_cache() explicitly)
+        - Bulk migrations
+        - Group permission inheritance changes
+
+        To enable automatic queue processing, set:
+            NEXUS_ENABLE_TIGER_WORKER=true
+        """
+        import logging
+        import os
+        import threading
+
+        logger = logging.getLogger(__name__)
+
+        # Queue processor is DISABLED by default (write-through handles normal ops)
+        # Enable explicitly with NEXUS_ENABLE_TIGER_WORKER=true
+        if os.getenv("NEXUS_ENABLE_TIGER_WORKER", "false").lower() not in ("true", "1", "yes"):
+            logger.debug("Tiger Cache queue worker disabled (write-through handles grants)")
+            return
+
+        # Don't start if already running
+        worker_thread = getattr(self, "_tiger_worker_thread", None)
+        if worker_thread is not None and worker_thread.is_alive():
+            return
+
+        # Worker interval in seconds (default: 1 second)
+        interval = float(os.getenv("NEXUS_TIGER_WORKER_INTERVAL", "1.0"))
+
+        # Shutdown flag
+        self._tiger_worker_stop = threading.Event()
+
+        def worker_loop() -> None:
+            """Background worker loop for Tiger Cache queue processing.
+
+            NOTE: With write-through implemented, this worker is mainly for legacy
+            queue entries. New permission grants are handled immediately by
+            persist_single_grant() in rebac_write.
+            """
+            while not self._tiger_worker_stop.is_set():
+                try:
+                    if hasattr(self, "process_tiger_cache_queue"):
+                        # Process only 1 entry at a time to avoid blocking
+                        # Each entry can take 10-40 seconds due to _compute_accessible_resources
+                        processed = self.process_tiger_cache_queue(batch_size=1)
+                        if processed > 0:
+                            logger.debug(f"Tiger Cache worker processed {processed} updates")
+                except Exception as e:
+                    logger.warning(f"Tiger Cache worker error: {e}")
+
+                # Sleep longer since write-through handles new grants
+                # This worker is just for legacy queue cleanup
+                self._tiger_worker_stop.wait(timeout=interval * 10)
+
+            logger.debug("Tiger Cache worker stopped")
+
+        # Start worker thread
+        self._tiger_worker_thread = threading.Thread(
+            target=worker_loop,
+            name="tiger-cache-worker",
+            daemon=True,  # Daemon thread - exits when main program exits
+        )
+        self._tiger_worker_thread.start()
+        logger.debug(f"Tiger Cache worker started (interval={interval}s)")
+
+    def stop_tiger_cache_worker(self) -> None:
+        """Stop the Tiger Cache background worker.
+
+        Call this during graceful shutdown to stop the worker thread.
+        """
+        if hasattr(self, "_tiger_worker_stop"):
+            self._tiger_worker_stop.set()
+        if hasattr(self, "_tiger_worker_thread") and self._tiger_worker_thread is not None:
+            # Wait longer in test environments (check if pytest is running)
+            import sys
+
+            is_test = "pytest" in sys.modules
+            timeout = 15.0 if is_test else 5.0
+            self._tiger_worker_thread.join(timeout=timeout)
 
     def _load_custom_parsers(self, parser_configs: list[dict[str, Any]]) -> None:
         """
@@ -558,7 +765,7 @@ class NexusFS(  # type: ignore[misc]
         """Default user_id from the instance context."""
         return getattr(self._default_context, "user_id", None)
 
-    def _get_memory_api(self, context: dict | None = None) -> "Memory":
+    def _get_memory_api(self, context: dict | None = None) -> Memory:
         """Get Memory API instance with context-specific configuration."""
         return self._memory_provider.get_for_context(context)
 
@@ -568,7 +775,7 @@ class NexusFS(  # type: ignore[misc]
 
         return parse_context(context)
 
-    def _ensure_entity_registry(self) -> "EntityRegistry":
+    def _ensure_entity_registry(self) -> EntityRegistry:
         """Lazily create and cache an EntityRegistry instance."""
         return self._memory_provider.ensure_entity_registry()
 
@@ -686,7 +893,7 @@ class NexusFS(  # type: ignore[misc]
             modified_at=now,
             version=1,
             created_by=self._get_created_by(context),  # Track who created this directory
-            zone_id=ctx.zone_id or ROOT_ZONE_ID,  # P0 SECURITY: Set zone_id
+            zone_id=ctx.zone_id or "root",  # P0 SECURITY: Set zone_id
         )
 
         self.metadata.put(metadata)
@@ -780,7 +987,7 @@ class NexusFS(  # type: ignore[misc]
                             f"mkdir: Creating parent tuples for intermediate dir: {parent_dir}"
                         )
                         self._hierarchy_manager.ensure_parent_tuples(
-                            parent_dir, zone_id=ctx.zone_id or ROOT_ZONE_ID
+                            parent_dir, zone_id=ctx.zone_id or "root"
                         )
                     except Exception as e:
                         # Don't fail mkdir if parent tuple creation fails
@@ -804,10 +1011,10 @@ class NexusFS(  # type: ignore[misc]
         if hasattr(self, "_hierarchy_manager"):
             try:
                 logger.debug(
-                    f"mkdir: Calling ensure_parent_tuples for {path}, zone_id={ctx.zone_id or ROOT_ZONE_ID}"
+                    f"mkdir: Calling ensure_parent_tuples for {path}, zone_id={ctx.zone_id or 'default'}"
                 )
                 created_count = self._hierarchy_manager.ensure_parent_tuples(
-                    path, zone_id=ctx.zone_id or ROOT_ZONE_ID
+                    path, zone_id=ctx.zone_id or "root"
                 )
                 logger.debug(f"mkdir: Created {created_count} parent tuples for {path}")
                 if created_count > 0:
@@ -832,39 +1039,42 @@ class NexusFS(  # type: ignore[misc]
                     subject=("user", ctx.user_id),
                     relation="direct_owner",
                     object=("file", path),
-                    zone_id=ctx.zone_id or ROOT_ZONE_ID,
+                    zone_id=ctx.zone_id or "root",
                 )
                 logger.debug(f"mkdir: Granted direct_owner permission to {ctx.user_id} for {path}")
             except Exception as e:
                 logger.warning(f"Failed to grant direct_owner permission for {path}: {e}")
 
-        # Issue #625: Observer + hook coverage for mkdir
-        # Issue #1631: Direct typed dispatch — observer owns error policy (#2152).
+        # Issue #900: Unified two-phase dispatch for mkdir
         new_revision = self._increment_zone_revision()
-        if (obs := self._write_observer) is not None:
-            obs.on_mkdir(
+
+        from nexus.contracts.vfs_hooks import MkdirHookContext, MutationEvent
+
+        self._dispatch.intercept_post_mkdir(
+            MkdirHookContext(
                 path=path,
+                context=ctx,
                 zone_id=ctx.zone_id,
                 agent_id=ctx.agent_id,
             )
-        self._fire_post_mutation_hooks(
-            MutationOp.MKDIR,
-            path,
-            ctx.zone_id or ROOT_ZONE_ID,
-            new_revision,
-            agent_id=ctx.agent_id,
-            user_id=ctx.user_id,
+        )
+        self._dispatch.notify(
+            MutationEvent(
+                operation=MutationOp.MKDIR,
+                path=path,
+                zone_id=ctx.zone_id or "root",
+                revision=new_revision,
+                agent_id=ctx.agent_id,
+                user_id=ctx.user_id,
+            )
         )
 
         # Issue #1331: Publish dir_create event to event bus
-        from nexus.core.file_events import FileEventType
-
         self._publish_file_event(
-            event_type=FileEventType.DIR_CREATE,
+            event_type="dir_create",
             path=path,
             zone_id=ctx.zone_id,
             agent_id=ctx.agent_id,
-            revision=new_revision,
         )
 
     @rpc_expose(description="Remove directory")
@@ -1000,34 +1210,29 @@ class NexusFS(  # type: ignore[misc]
             except Exception as e:
                 logger.debug("Failed to clean up directory index for %s: %s", path, e)
 
-        # Issue #625: Observer + hook coverage for rmdir
-        # Issue #1631: Direct typed dispatch — observer owns error policy (#2152).
+        # Issue #900: Unified two-phase dispatch for rmdir
         new_revision = self._increment_zone_revision()
-        if (obs := self._write_observer) is not None:
-            obs.on_rmdir(
+
+        from nexus.contracts.vfs_hooks import MutationEvent, RmdirHookContext
+
+        self._dispatch.intercept_post_rmdir(
+            RmdirHookContext(
                 path=path,
+                context=ctx,
                 zone_id=ctx.zone_id,
                 agent_id=ctx.agent_id,
                 recursive=recursive,
             )
-        self._fire_post_mutation_hooks(
-            MutationOp.RMDIR,
-            path,
-            ctx.zone_id or ROOT_ZONE_ID,
-            new_revision,
-            agent_id=ctx.agent_id,
-            user_id=ctx.user_id,
         )
-
-        # Issue #2175: Publish dir_delete event to event bus (parity with mkdir)
-        from nexus.core.file_events import FileEventType
-
-        self._publish_file_event(
-            event_type=FileEventType.DIR_DELETE,
-            path=path,
-            zone_id=ctx.zone_id,
-            agent_id=ctx.agent_id,
-            revision=new_revision,
+        self._dispatch.notify(
+            MutationEvent(
+                operation=MutationOp.RMDIR,
+                path=path,
+                zone_id=ctx.zone_id or "root",
+                revision=new_revision,
+                agent_id=ctx.agent_id,
+                user_id=ctx.user_id,
+            )
         )
 
     @rpc_expose(description="Check if path is a directory")
@@ -1228,9 +1433,9 @@ class NexusFS(  # type: ignore[misc]
             raise RuntimeError("ReBAC manager not available")
         return mgr
 
-    def register_mutation_hook(self, hook: Any) -> None:
-        """Register a post-mutation hook (Issue #625)."""
-        self._post_mutation_hooks.append(hook)
+    def register_observe(self, observer: Any) -> None:
+        """Register a mutation observer (OBSERVE phase, Issue #900)."""
+        self._dispatch.register_observe(observer)
 
     # ------------------------------------------------------------------
     # ReBAC delegation stubs (Issue #2033)
@@ -1345,12 +1550,7 @@ class NexusFS(  # type: ignore[misc]
         "arebac_explain": ("rebac_service", "rebac_explain"),
         "arebac_list_tuples": ("rebac_service", "rebac_list_tuples"),
         "aget_namespace": ("rebac_service", "get_namespace"),
-        # ReBACService sync methods with _sync suffix (Issue #2033, #2440)
-        "rebac_create": ("rebac_service", "rebac_create_sync"),
-        "rebac_check": ("rebac_service", "rebac_check_sync"),
-        "rebac_check_batch": ("rebac_service", "rebac_check_batch_sync"),
-        "rebac_delete": ("rebac_service", "rebac_delete_sync"),
-        "rebac_list_tuples": ("rebac_service", "rebac_list_tuples_sync"),
+        # ReBACService sync methods with _sync suffix (Issue #2033)
         "rebac_expand": ("rebac_service", "rebac_expand_sync"),
         "rebac_explain": ("rebac_service", "rebac_explain_sync"),
         "share_with_user": ("rebac_service", "share_with_user_sync"),
@@ -1894,6 +2094,11 @@ class NexusFS(  # type: ignore[misc]
             cache_url=cache_url,
             embedding_cache_ttl=embedding_cache_ttl,
         )
+        # Keep backward-compat reference on NexusFS
+        self._semantic_search = self.search_service._semantic_search  # type: ignore[assignment]
+        # Wire search engine into LLMService (Issue #684: DI instead of kernel access)
+        if hasattr(self, "llm_service") and self._semantic_search is not None:
+            self.llm_service._semantic_search_engine = self._semantic_search
 
     def close(self) -> None:
         """Close the filesystem and release resources."""
@@ -1930,12 +2135,12 @@ class NexusFS(  # type: ignore[misc]
         if self._record_store is not None:
             self._record_store.close()
 
-        # Close ReBACManager to release database connection (NoOp.close() is safe)
-        if self._rebac_manager is not None:
+        # Close ReBACManager to release database connection
+        if hasattr(self, "_rebac_manager") and self._rebac_manager is not None:
             self._rebac_manager.close()
 
-        # Close AuditStore to release database connection (NoOp.close() is safe)
-        if self._audit_store is not None:
+        # Close AuditStore to release database connection
+        if hasattr(self, "_audit_store") and self._audit_store is not None:
             self._audit_store.close()
 
         # Close TokenManager to release database connection
@@ -1954,6 +2159,72 @@ class NexusFS(  # type: ignore[misc]
                     logger.debug("Failed to close backend token manager: %s", e)
 
     # ------------------------------------------------------------------
-    # ReBAC delegation stubs DELETED (Issue #2440)
-    # Consumers should call nx.rebac_service.rebac_*_sync() directly.
+    # ReBAC delegation stubs (Issue #2033)
+    # These delegate to rebac_service which now owns the business logic.
+    # Kept on NexusFS for backward-compatibility with tests and CLI.
     # ------------------------------------------------------------------
+
+    def rebac_create(
+        self,
+        subject: tuple[str, str],
+        relation: str,
+        object: tuple[str, str],
+        expires_at: Any = None,
+        zone_id: str | None = None,
+        context: Any = None,
+        column_config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Create a relationship tuple — delegates to rebac_service."""
+        return self.rebac_service.rebac_create_sync(
+            subject=subject,
+            relation=relation,
+            object=object,
+            expires_at=expires_at,
+            zone_id=zone_id,
+            context=context,
+            column_config=column_config,
+        )
+
+    def rebac_check(
+        self,
+        subject: tuple[str, str],
+        permission: str,
+        object: tuple[str, str],
+        zone_id: str | None = None,
+        context: Any = None,
+    ) -> bool:
+        """Check a permission — delegates to rebac_service."""
+        return self.rebac_service.rebac_check_sync(
+            subject=subject,
+            permission=permission,
+            object=object,
+            zone_id=zone_id,
+            context=context,
+        )
+
+    def rebac_check_batch(
+        self,
+        checks: builtins.list[tuple[tuple[str, str], str, tuple[str, str]]],
+    ) -> builtins.list[bool]:
+        """Batch check permissions — delegates to rebac_service."""
+        return self.rebac_service.rebac_check_batch_sync(checks=checks)
+
+    def rebac_delete(self, tuple_id: str) -> bool:
+        """Delete a relationship tuple — delegates to rebac_service."""
+        return self.rebac_service.rebac_delete_sync(tuple_id)
+
+    def rebac_list_tuples(
+        self,
+        subject: tuple[str, str] | None = None,
+        relation: str | None = None,
+        object: tuple[str, str] | None = None,
+        relation_in: builtins.list[str] | None = None,
+        **_kw: Any,
+    ) -> builtins.list[dict[str, Any]]:
+        """List relationship tuples — delegates to rebac_service."""
+        return self.rebac_service.rebac_list_tuples_sync(
+            subject=subject,
+            relation=relation,
+            object=object,
+            relation_in=relation_in,
+        )

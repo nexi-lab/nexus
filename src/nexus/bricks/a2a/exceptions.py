@@ -69,14 +69,6 @@ class UnsupportedOperationError(A2AError):
     grpc_status = grpc.StatusCode.UNIMPLEMENTED
 
 
-class ContentTypeNotSupportedError(A2AError):
-    """Content type not accepted by the agent."""
-
-    code = -32005
-    message = "Content type not supported"
-    grpc_status = grpc.StatusCode.INVALID_ARGUMENT
-
-
 class PushNotificationNotSupportedError(A2AError):
     """Push notification operations are not available."""
 
@@ -110,11 +102,3 @@ class InvalidParamsError(A2AError):
     code = -32602
     message = "Invalid params"
     grpc_status = grpc.StatusCode.INVALID_ARGUMENT
-
-
-class InternalError(A2AError):
-    """Internal server error."""
-
-    code = -32603
-    message = "Internal error"
-    grpc_status = grpc.StatusCode.INTERNAL

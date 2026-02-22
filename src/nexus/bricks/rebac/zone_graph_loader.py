@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from cachetools import LRUCache
 
-from nexus.bricks.rebac.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
+from nexus.contracts.rebac_types import CROSS_ZONE_ALLOWED_RELATIONS
 
 if TYPE_CHECKING:
     from nexus.bricks.rebac.cache.leopard_facade import LeopardFacade

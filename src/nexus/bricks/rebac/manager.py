@@ -38,7 +38,6 @@ from nexus.bricks.rebac.consistency.revision import (
     increment_version_token,
 )
 from nexus.bricks.rebac.consistency.zone_manager import ZoneManager
-from nexus.bricks.rebac.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
 from nexus.bricks.rebac.directory.expander import DirectoryExpander
 from nexus.bricks.rebac.domain import (
     RELATION_TO_PERMISSIONS,
@@ -86,6 +85,7 @@ from nexus.bricks.rebac.utils.fast import (
 )
 from nexus.bricks.rebac.zone_graph_loader import ZoneGraphLoader
 from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.rebac_types import CROSS_ZONE_ALLOWED_RELATIONS
 from nexus.lib.zone import normalize_zone_id
 
 if TYPE_CHECKING:

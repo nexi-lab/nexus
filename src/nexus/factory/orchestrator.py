@@ -312,7 +312,7 @@ def create_nexus_fs(
     # KERNEL-ARCHITECTURE §2: No CacheStore → EventBus disabled.
     _has_real_cache = cache_store is not None
     if _has_real_cache:
-        from nexus.core.cache_store import NullCacheStore as _NullCacheStore
+        from nexus.contracts.cache_store import NullCacheStore as _NullCacheStore
 
         if isinstance(cache_store, _NullCacheStore):
             _has_real_cache = False

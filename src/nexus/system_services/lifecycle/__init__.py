@@ -7,7 +7,6 @@ from nexus.system_services.lifecycle.brick_lifecycle import BrickLifecycleManage
 from nexus.system_services.lifecycle.brick_reconciler import BrickReconciler
 from nexus.system_services.lifecycle.events_service import EventsService
 from nexus.system_services.lifecycle.expectations import Expectations
-from nexus.system_services.lifecycle.hook_engine import ScopedHookEngine
 from nexus.system_services.lifecycle.task_queue_service import TaskQueueService
 
 __all__ = [
@@ -15,6 +14,5 @@ __all__ = [
     "BrickReconciler",
     "EventsService",
     "Expectations",
-    "ScopedHookEngine",
     "TaskQueueService",
 ]

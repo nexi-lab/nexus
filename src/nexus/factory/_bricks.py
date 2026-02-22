@@ -597,20 +597,15 @@ def _boot_dependent_bricks(
     """Boot Tier 2b (DEPENDENT BRICK) — requires services from independent bricks.
 
     Discovers ``brick_factory.py`` modules with ``TIER="dependent"`` and
-    wires their hook handlers into the hook engine.
+    collects their artifact callbacks into ``bricks["artifact_observers"]``.
 
     Cross-brick factories (ToolInfo, GraphStore) are constructed here in the
     factory layer and injected into brick factories to respect LEGO Principle 3.
 
     Currently handles:
-    - Artifact auto-indexing (Issue #1861): registers hook handlers for
-      ``post_artifact_create`` and ``post_artifact_update`` phases.
+    - Artifact auto-indexing (Issue #1861): collects ``ArtifactCallback``
+      handlers for direct invocation by ``TaskManager``.
     """
-    hook_engine = system.get("scoped_hook_engine")
-    if hook_engine is None:
-        logger.debug("[BOOT:BRICK:DEP] No hook engine available, skipping dependent bricks")
-        return
-
     # Build cross-brick factories in the factory layer (not inside bricks)
     tool_info_factory: Callable[..., Any] | None = None
     graph_store_factory: Callable[..., Any] | None = None
@@ -649,6 +644,8 @@ def _boot_dependent_bricks(
             graph_store_factory=graph_store_factory,
         )
 
+    artifact_observers: list[Any] = []
+
     for desc in _discover_brick_factories("dependent"):
         result = _safe_create(
             desc.result_key,
@@ -662,41 +659,19 @@ def _boot_dependent_bricks(
         if not handlers:
             continue
 
-        # Register each handler for both artifact phases
-        try:
-            import asyncio
+        # Collect handler functions as artifact observers
+        for h in handlers:
+            artifact_observers.append(h["handler"])
 
-            from nexus.services.protocols.hook_engine import (
-                POST_ARTIFACT_CREATE,
-                POST_ARTIFACT_UPDATE,
-                HookCapabilities,
-                HookSpec,
-            )
+        logger.debug(
+            "[BOOT:BRICK:DEP] Collected %d artifact observers from %s",
+            len(handlers),
+            desc.result_key,
+        )
 
-            _no_veto_caps = HookCapabilities(
-                can_veto=False,
-                can_modify_context=False,
-                max_timeout_ms=10000,
-            )
-
-            for h in handlers:
-                handler_fn = h["handler"]
-                handler_name = h["handler_name"]
-
-                for phase in (POST_ARTIFACT_CREATE, POST_ARTIFACT_UPDATE):
-                    spec = HookSpec(
-                        phase=phase,
-                        handler_name=handler_name,
-                        capabilities=_no_veto_caps,
-                    )
-
-                    # Boot runs in sync context (no event loop), so asyncio.run()
-                    # is safe for the async register_hook call.
-                    asyncio.run(hook_engine.register_hook(spec, handler_fn))
-
-            logger.debug(
-                "[BOOT:BRICK:DEP] Registered %d artifact indexing handlers",
-                len(handlers),
-            )
-        except Exception as exc:
-            logger.debug("[BOOT:BRICK:DEP] Failed to register artifact handlers: %s", exc)
+    bricks["artifact_observers"] = artifact_observers
+    if artifact_observers:
+        logger.debug(
+            "[BOOT:BRICK:DEP] Total artifact observers: %d",
+            len(artifact_observers),
+        )

@@ -238,9 +238,6 @@ class SystemServices:
     # Workspace branching (Issue #1315)
     context_branch_service: Any = None
 
-    # Hook engine chain (Issue #1257)
-    scoped_hook_engine: Any = None
-
     # Brick lifecycle (Issue #1704)
     brick_lifecycle_manager: Any = None
 

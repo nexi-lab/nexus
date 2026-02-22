@@ -386,7 +386,7 @@ class TestKernelIntegrationViaConnect:
         assert nx is not None
 
     def test_kernel_profile_dispatch_has_no_observers(self, tmp_path: "Path") -> None:
-        """KERNEL mode has empty dispatch (no record store to sync)."""
+        """KERNEL mode has only the late-binding EventBusObserver (no record store to sync)."""
         from nexus.backends.local import LocalBackend
         from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_bricks
         from nexus.factory.orchestrator import create_nexus_fs
@@ -402,7 +402,9 @@ class TestKernelIntegrationViaConnect:
             enabled_bricks=resolve_enabled_bricks(DeploymentProfile.KERNEL),
         )
 
-        assert nx._dispatch.observer_count == 0
+        # EventBusObserver is unconditionally registered with late-binding
+        # (Issue #969); it won't publish if no bus is configured.
+        assert nx._dispatch.observer_count == 1
 
     def test_kernel_profile_no_workflow_engine(self, tmp_path: "Path") -> None:
         """KERNEL mode has no workflow engine."""
@@ -421,7 +423,9 @@ class TestKernelIntegrationViaConnect:
             enabled_bricks=resolve_enabled_bricks(DeploymentProfile.KERNEL),
         )
 
-        assert nx.workflow_engine is None
+        # workflow_engine is no longer a NexusFS attribute; it lives in
+        # BrickDict / server state. getattr mirrors the CLI access pattern.
+        assert getattr(nx, "workflow_engine", None) is None
 
 
 # ---------------------------------------------------------------------------

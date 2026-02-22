@@ -6,7 +6,7 @@ of VFS operations, reducing HTTP round-trips for chatty agent workloads.
 Design decisions:
     - Presentation layer only (not a brick) per §5.5
     - Factory pattern for DI (same as async_files.py)
-    - Direct VFS dispatch via AsyncNexusFS
+    - Direct VFS dispatch via NexusFS
     - Batch-specific rate limit (separate from per-endpoint limits)
 
 References:

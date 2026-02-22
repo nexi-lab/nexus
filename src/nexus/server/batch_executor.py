@@ -4,7 +4,7 @@ Executes multiple VFS operations in a single request, reducing HTTP round-trips.
 Operations execute sequentially; each produces its own status code.
 
 Design decisions (from architecture review):
-    - Direct VFS dispatch via AsyncNexusFS (no ASGI loopback)
+    - Direct VFS dispatch via NexusFS (no ASGI loopback)
     - VFS operations only: read, write, delete, stat, exists, list, mkdir
     - Per-operation timeout via asyncio.wait_for (30s default)
     - Strict validation: 1-50 ops, max 10MB total payload
@@ -194,7 +194,7 @@ def _map_exception(exc: Exception) -> tuple[int, str]:
 
 
 class BatchExecutor:
-    """Executes a batch of VFS operations sequentially against AsyncNexusFS.
+    """Executes a batch of VFS operations sequentially against NexusFS.
 
     Follows the io_uring pattern: operations submitted as a batch,
     results returned with per-operation status codes.
@@ -258,7 +258,7 @@ class BatchExecutor:
         op: ReadOp | WriteOp | DeleteOp | StatOp | ExistsOp | ListOp | MkdirOp,
         context: "OperationContext",
     ) -> OperationResult:
-        """Dispatch a single operation to the appropriate AsyncNexusFS method."""
+        """Dispatch a single operation to the appropriate NexusFS method."""
         if isinstance(op, ReadOp):
             return await self._exec_read(op, context)
         if isinstance(op, WriteOp):

@@ -19,6 +19,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import ValidationError
 from nexus.storage.models._base import Base, ResourceConfigMixin, uuid_pk
 
@@ -36,7 +37,7 @@ class MemoryModel(Base):
 
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
 
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default=ROOT_ZONE_ID)
     user_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     agent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
@@ -259,7 +260,7 @@ class EntityModel(Base):
 
     entity_id: Mapped[str] = uuid_pk()
 
-    zone_id: Mapped[str] = mapped_column(String(64), nullable=False, default="root")
+    zone_id: Mapped[str] = mapped_column(String(64), nullable=False, default=ROOT_ZONE_ID)
 
     canonical_name: Mapped[str] = mapped_column(String(512), nullable=False)
     entity_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -353,7 +354,7 @@ class RelationshipModel(Base):
 
     relationship_id: Mapped[str] = uuid_pk()
 
-    zone_id: Mapped[str] = mapped_column(String(64), nullable=False, default="root")
+    zone_id: Mapped[str] = mapped_column(String(64), nullable=False, default=ROOT_ZONE_ID)
 
     source_entity_id: Mapped[str] = mapped_column(
         String(36),

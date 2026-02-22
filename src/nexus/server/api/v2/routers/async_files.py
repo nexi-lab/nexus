@@ -26,6 +26,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import (
     ConflictError,
     InvalidPathError,
@@ -165,7 +166,7 @@ def create_async_files_router(
             return OperationContext(
                 user_id="anonymous",
                 groups=[],
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
             )
         return get_operation_context(auth_result)
 

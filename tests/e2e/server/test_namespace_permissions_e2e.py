@@ -158,7 +158,7 @@ def server():
         "NO_PROXY": "*",
         # Source code on PYTHONPATH
         "PYTHONPATH": str(Path(__file__).resolve().parents[2] / "src"),
-        # AsyncNexusFS settings
+        # NexusFS settings
         "NEXUS_DATABASE_URL": f"sqlite:///{os.path.join(data_dir, 'nexus.db')}",
         "NEXUS_BACKEND_ROOT": backend_root,
         "NEXUS_TENANT_ID": "ns-e2e-test",

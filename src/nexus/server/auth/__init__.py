@@ -21,6 +21,7 @@ from nexus.auth.providers.local import LocalAuth  # noqa: F401
 from nexus.auth.providers.oidc import MultiOIDCAuth, OIDCAuth  # noqa: F401
 from nexus.auth.providers.static_key import StaticAPIKeyAuth  # noqa: F401
 from nexus.auth_config import OAuthConfig, OAuthProviderConfig  # noqa: F401
+from nexus.bricks.auth.oauth.token_manager import TokenManager  # noqa: F401
 
 # Factory function — stays here but delegates to brick providers
 from nexus.server.auth.factory import create_auth_provider  # noqa: F401
@@ -32,7 +33,6 @@ from nexus.server.auth.oauth_provider import (  # noqa: F401
     OAuthError,
     OAuthProvider,
 )
-from nexus.server.auth.token_manager import TokenManager  # noqa: F401
 
 __all__ = [
     # Auth brick (canonical: nexus.auth)

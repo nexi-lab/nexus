@@ -85,7 +85,7 @@ class CacheBrick:
         # Import NullCacheStore without importing nexus.core at module level
         _NullCacheStore: type | None = None
         try:
-            from nexus.core.cache_store import NullCacheStore as _NS
+            from nexus.contracts.cache_store import NullCacheStore as _NS
 
             _NullCacheStore = _NS
         except ImportError:

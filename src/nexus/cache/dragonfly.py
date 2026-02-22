@@ -25,7 +25,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from nexus.core.cache_store import CacheStoreABC
+from nexus.contracts.cache_store import CacheStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -341,6 +341,13 @@ class DragonflyCacheStore(CacheStoreABC):
             results = await pipe.execute()
             deleted += sum(1 for r in results if r)
         return deleted
+
+    async def keys_by_pattern(self, pattern: str) -> list[str]:
+        """Return keys matching pattern using SCAN cursor."""
+        keys: list[str] = []
+        async for key in self._client.client.scan_iter(match=pattern, count=1000):
+            keys.append(key.decode() if isinstance(key, bytes) else key)
+        return keys
 
     # --- Batch KV operations (Decision #13) ---
 

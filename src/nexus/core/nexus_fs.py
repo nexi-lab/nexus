@@ -1861,6 +1861,7 @@ class NexusFS(  # type: ignore[misc]
             priority=priority,
             readonly=readonly,
             io_profile=io_profile,
+            context=context,
         )
 
     def remove_mount(self, mount_point: str, context: Any = None) -> dict[str, Any]:

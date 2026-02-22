@@ -41,8 +41,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Canonical mapping from domain.py — local alias for backward compat.
-_RELATION_TO_PERMISSIONS = RELATION_TO_PERMISSIONS
 
 
 class CacheCoordinator:
@@ -853,7 +851,7 @@ class CacheCoordinator:
             return
 
         # Map relation to permissions
-        permissions = _RELATION_TO_PERMISSIONS.get(relation, [relation])
+        permissions = RELATION_TO_PERMISSIONS.get(relation, [relation])
 
         self._boundary_invalidations += 1
 

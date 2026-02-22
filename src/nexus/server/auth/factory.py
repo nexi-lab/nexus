@@ -6,7 +6,6 @@ This module now delegates to nexus.auth brick providers (Issue #1399).
 import logging
 from typing import Any
 
-from nexus.bricks.auth.constants import API_KEY_PREFIX  # noqa: F401
 from nexus.bricks.auth.providers.base import AuthProvider
 from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
 from nexus.bricks.auth.providers.discriminator import DiscriminatingAuthProvider  # noqa: F401

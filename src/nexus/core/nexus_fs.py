@@ -311,7 +311,7 @@ class NexusFS(  # type: ignore[misc]
             self._tiger_cache_manager = TigerCacheManager(
                 rebac_manager=self._rebac_manager,
                 metadata_store=self.metadata,
-                default_zone_id=self._default_context.zone_id or "root",
+                default_zone_id=self._default_context.zone_id or ROOT_ZONE_ID,
                 process_queue_fn=getattr(self, "process_tiger_cache_queue", None),
                 warm_cache_fn=getattr(self, "warm_tiger_cache", None),
             )
@@ -686,7 +686,7 @@ class NexusFS(  # type: ignore[misc]
             modified_at=now,
             version=1,
             created_by=self._get_created_by(context),  # Track who created this directory
-            zone_id=ctx.zone_id or "root",  # P0 SECURITY: Set zone_id
+            zone_id=ctx.zone_id or ROOT_ZONE_ID,  # P0 SECURITY: Set zone_id
         )
 
         self.metadata.put(metadata)
@@ -780,7 +780,7 @@ class NexusFS(  # type: ignore[misc]
                             f"mkdir: Creating parent tuples for intermediate dir: {parent_dir}"
                         )
                         self._hierarchy_manager.ensure_parent_tuples(
-                            parent_dir, zone_id=ctx.zone_id or "root"
+                            parent_dir, zone_id=ctx.zone_id or ROOT_ZONE_ID
                         )
                     except Exception as e:
                         # Don't fail mkdir if parent tuple creation fails
@@ -807,7 +807,7 @@ class NexusFS(  # type: ignore[misc]
                     f"mkdir: Calling ensure_parent_tuples for {path}, zone_id={ctx.zone_id or ROOT_ZONE_ID}"
                 )
                 created_count = self._hierarchy_manager.ensure_parent_tuples(
-                    path, zone_id=ctx.zone_id or "root"
+                    path, zone_id=ctx.zone_id or ROOT_ZONE_ID
                 )
                 logger.debug(f"mkdir: Created {created_count} parent tuples for {path}")
                 if created_count > 0:
@@ -832,7 +832,7 @@ class NexusFS(  # type: ignore[misc]
                     subject=("user", ctx.user_id),
                     relation="direct_owner",
                     object=("file", path),
-                    zone_id=ctx.zone_id or "root",
+                    zone_id=ctx.zone_id or ROOT_ZONE_ID,
                 )
                 logger.debug(f"mkdir: Granted direct_owner permission to {ctx.user_id} for {path}")
             except Exception as e:
@@ -850,7 +850,7 @@ class NexusFS(  # type: ignore[misc]
         self._fire_post_mutation_hooks(
             MutationOp.MKDIR,
             path,
-            ctx.zone_id or "root",
+            ctx.zone_id or ROOT_ZONE_ID,
             new_revision,
             agent_id=ctx.agent_id,
             user_id=ctx.user_id,
@@ -1013,7 +1013,7 @@ class NexusFS(  # type: ignore[misc]
         self._fire_post_mutation_hooks(
             MutationOp.RMDIR,
             path,
-            ctx.zone_id or "root",
+            ctx.zone_id or ROOT_ZONE_ID,
             new_revision,
             agent_id=ctx.agent_id,
             user_id=ctx.user_id,

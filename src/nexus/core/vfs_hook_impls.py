@@ -11,6 +11,7 @@ import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.core.vfs_hooks import ReadHookContext, RenameHookContext, WriteHookContext
 
 if TYPE_CHECKING:
@@ -239,7 +240,7 @@ class TigerCacheRenameHook:
         if self._tiger_cache is None:
             return
 
-        zone_id = ctx.zone_id or "root"
+        zone_id = ctx.zone_id or ROOT_ZONE_ID
         old_grants = self._tiger_cache.get_directory_grants_for_path(ctx.old_path, zone_id)
         new_grants = self._tiger_cache.get_directory_grants_for_path(ctx.new_path, zone_id)
 

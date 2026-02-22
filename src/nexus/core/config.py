@@ -71,6 +71,7 @@ class PermissionConfig:
     inherit: bool = True
     allow_admin_bypass: bool = False
     enforce_zone_isolation: bool = True
+    audit_strict_mode: bool = True
     enable_tiger_cache: bool = True
     enable_deferred: bool = True
     deferred_flush_interval: float = 0.05

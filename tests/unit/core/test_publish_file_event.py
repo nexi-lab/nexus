@@ -97,7 +97,7 @@ class TestPublishFileEvent:
             zone_id="root",
         )
 
-    @patch("nexus.core.nexus_fs_core.fire_and_forget")
+    @patch("nexus.lib.sync_bridge.fire_and_forget")
     def test_publishes_file_write_event(self, mock_faf: MagicMock) -> None:
         """FILE_WRITE event is published with correct fields."""
         bus = MockEventBus()
@@ -118,7 +118,7 @@ class TestPublishFileEvent:
         call_args = mock_faf.call_args[0][0]
         assert call_args is not None
 
-    @patch("nexus.core.nexus_fs_core.fire_and_forget")
+    @patch("nexus.lib.sync_bridge.fire_and_forget")
     def test_publishes_file_delete_event(self, mock_faf: MagicMock) -> None:
         """FILE_DELETE event is published with correct type."""
         bus = MockEventBus()
@@ -132,7 +132,7 @@ class TestPublishFileEvent:
 
         assert mock_faf.called
 
-    @patch("nexus.core.nexus_fs_core.fire_and_forget")
+    @patch("nexus.lib.sync_bridge.fire_and_forget")
     def test_publishes_file_rename_event(self, mock_faf: MagicMock) -> None:
         """FILE_RENAME event includes old_path."""
         bus = MockEventBus()
@@ -147,7 +147,7 @@ class TestPublishFileEvent:
 
         assert mock_faf.called
 
-    @patch("nexus.core.nexus_fs_core.fire_and_forget")
+    @patch("nexus.lib.sync_bridge.fire_and_forget")
     def test_publishes_dir_create_event(self, mock_faf: MagicMock) -> None:
         """DIR_CREATE event is published for mkdir."""
         bus = MockEventBus()
@@ -162,7 +162,7 @@ class TestPublishFileEvent:
 
         assert mock_faf.called
 
-    @patch("nexus.core.nexus_fs_core.fire_and_forget")
+    @patch("nexus.lib.sync_bridge.fire_and_forget")
     def test_publishes_dir_delete_event(self, mock_faf: MagicMock) -> None:
         """DIR_DELETE event is published for rmdir (Issue #2175)."""
         bus = MockEventBus()
@@ -177,7 +177,7 @@ class TestPublishFileEvent:
 
         assert mock_faf.called
 
-    @patch("nexus.core.nexus_fs_core.fire_and_forget")
+    @patch("nexus.lib.sync_bridge.fire_and_forget")
     def test_zone_id_defaults_to_root(self, mock_faf: MagicMock) -> None:
         """When zone_id is None, defaults to 'root'."""
         bus = MockEventBus()
@@ -191,14 +191,14 @@ class TestPublishFileEvent:
 
         assert mock_faf.called
 
-    @patch("nexus.core.nexus_fs_core.fire_and_forget")
+    @patch("nexus.lib.sync_bridge.fire_and_forget")
     def test_error_is_logged_not_raised(self, mock_faf: MagicMock) -> None:
         """Errors in event creation are logged but don't propagate."""
         bus = MockEventBus()
         stub = StubNexusFSCore(event_bus=bus)
 
         # Force an error by patching FileEvent to raise
-        with patch("nexus.core.nexus_fs_core.FileEvent", side_effect=ValueError("bad")):
+        with patch("nexus.core.file_events.FileEvent", side_effect=ValueError("bad")):
             # Should NOT raise
             stub._publish_file_event(
                 event_type=FileEventType.FILE_WRITE,
@@ -206,7 +206,7 @@ class TestPublishFileEvent:
                 zone_id="root",
             )
 
-    @patch("nexus.core.nexus_fs_core.fire_and_forget")
+    @patch("nexus.lib.sync_bridge.fire_and_forget")
     def test_lazy_start_when_bus_not_started(self, mock_faf: MagicMock) -> None:
         """When bus._started is False, creates start-then-publish coroutine."""
         bus = MockEventBus()
@@ -222,7 +222,7 @@ class TestPublishFileEvent:
         # fire_and_forget was called (with the start-and-publish wrapper)
         assert mock_faf.called
 
-    @patch("nexus.core.nexus_fs_core.fire_and_forget")
+    @patch("nexus.lib.sync_bridge.fire_and_forget")
     def test_revision_passed_through(self, mock_faf: MagicMock) -> None:
         """Revision field is included in the event."""
         bus = MockEventBus()

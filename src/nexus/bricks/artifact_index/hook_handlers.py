@@ -1,81 +1,81 @@
-"""Hook handler factories for artifact indexing (Issue #1861).
+"""Artifact callback factories for artifact indexing (Issue #1861).
 
-Each factory creates an async handler function that extracts content
-from the hook context payload and delegates to the corresponding
-indexer adapter.  Returns ``HookResult(proceed=True)`` always —
-errors are logged and suppressed inside the adapter.
+Each factory creates an async callback that extracts content
+from the artifact and delegates to the corresponding indexer adapter.
+Errors are logged and suppressed inside the adapter.
 """
 
 import logging
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 from nexus.bricks.artifact_index.extractors import extract_content
 from nexus.bricks.artifact_index.protocol import ArtifactIndexerProtocol
-from nexus.services.protocols.hook_engine import HookContext, HookResult
 
 logger = logging.getLogger(__name__)
 
-# Return type alias for hook handlers
-HookHandler = Callable[[HookContext], Awaitable[HookResult]]
-
-_OK = HookResult(proceed=True, modified_context=None, error=None)
+# Callback type alias: (artifact, task_id, zone_id) -> None
+ArtifactCallback = Callable[[Any, str, str], Awaitable[None]]
 
 
-def make_memory_hook_handler(adapter: ArtifactIndexerProtocol) -> HookHandler:
-    """Create a hook handler that indexes artifact content into memory."""
+def make_memory_hook_handler(adapter: ArtifactIndexerProtocol) -> ArtifactCallback:
+    """Create a callback that indexes artifact content into memory."""
 
-    async def _handler(context: HookContext) -> HookResult:
-        return await _run_indexer(adapter, context, "memory")
+    async def _handler(artifact: Any, task_id: str, zone_id: str) -> None:
+        await _run_indexer(adapter, artifact, task_id, zone_id, "memory")
 
     return _handler
 
 
-def make_tool_hook_handler(adapter: ArtifactIndexerProtocol) -> HookHandler:
-    """Create a hook handler that indexes tool schemas from artifacts."""
+def make_tool_hook_handler(adapter: ArtifactIndexerProtocol) -> ArtifactCallback:
+    """Create a callback that indexes tool schemas from artifacts."""
 
-    async def _handler(context: HookContext) -> HookResult:
-        return await _run_indexer(adapter, context, "tool")
+    async def _handler(artifact: Any, task_id: str, zone_id: str) -> None:
+        await _run_indexer(adapter, artifact, task_id, zone_id, "tool")
 
     return _handler
 
 
-def make_graph_hook_handler(adapter: ArtifactIndexerProtocol) -> HookHandler:
-    """Create a hook handler that indexes entities from artifacts."""
+def make_graph_hook_handler(adapter: ArtifactIndexerProtocol) -> ArtifactCallback:
+    """Create a callback that indexes entities from artifacts."""
 
-    async def _handler(context: HookContext) -> HookResult:
-        return await _run_indexer(adapter, context, "graph")
+    async def _handler(artifact: Any, task_id: str, zone_id: str) -> None:
+        await _run_indexer(adapter, artifact, task_id, zone_id, "graph")
 
     return _handler
 
 
 async def _run_indexer(
     adapter: ArtifactIndexerProtocol,
-    context: HookContext,
+    artifact: Any,
+    task_id: str,
+    zone_id: str,
     target: str,
-) -> HookResult:
-    """Shared logic: extract content from context payload, call adapter.
+) -> None:
+    """Shared logic: extract content from artifact, call adapter.
 
-    The payload is expected to contain:
-    - ``artifact``: An ``Artifact`` instance
-    - ``task_id``: The owning task ID
-    - ``zone_id``: The zone scope (falls back to context.zone_id)
-    - ``max_content_bytes``: Optional truncation limit
+    Parameters
+    ----------
+    adapter:
+        The indexer adapter to delegate to.
+    artifact:
+        An ``Artifact`` instance.
+    task_id:
+        The owning task ID.
+    zone_id:
+        The zone scope.
+    target:
+        Label for logging (``"memory"``, ``"tool"``, ``"graph"``).
     """
-    payload = context.payload
-    artifact = payload.get("artifact")
     if artifact is None:
-        return _OK
-
-    task_id = payload.get("task_id", "")
-    zone_id = payload.get("zone_id") or context.zone_id or ""
-    max_bytes = payload.get("max_content_bytes", 100_000)
+        return
 
     try:
         content = extract_content(
             artifact=artifact,
             task_id=task_id,
             zone_id=zone_id,
-            max_bytes=max_bytes,
+            max_bytes=100_000,
         )
         await adapter.index(content)
     except Exception:
@@ -84,5 +84,3 @@ async def _run_indexer(
             target,
             task_id,
         )
-
-    return _OK

@@ -209,7 +209,7 @@ class TestBrickHealthReport:
 
 
 class TestLifecyclePhaseConstants:
-    """Verify lifecycle phase constants for HookEngine integration."""
+    """Verify lifecycle phase constants."""
 
     def test_mount_phase_values(self) -> None:
         assert PRE_MOUNT == "pre_mount"

@@ -640,18 +640,6 @@ async def _startup_scheduler(app: "FastAPI", svc: "LifespanServices") -> None:
         # as part of the SchedulerProtocol contract.
         await scheduler.initialize(pool)
 
-        # Wire hook cleanup handler into state emitter (Issue #1257)
-        # Note: state_emitter is constructor-injected into AsyncAgentRegistry
-        # by factory._boot_system_services() — no post-construction wiring needed.
-        state_emitter = getattr(scheduler, "_state_emitter", None)
-        if state_emitter is not None:
-            scoped_hook_engine = svc.scoped_hook_engine
-            if scoped_hook_engine is not None:
-                from nexus.system_services.lifecycle.hook_engine import create_agent_cleanup_handler
-
-                state_emitter.add_handler(create_agent_cleanup_handler(scoped_hook_engine))
-                logger.debug("Hook cleanup handler registered on AgentStateEmitter")
-
         logger.info("Scheduler service initialized with Astraea (two-phase, PostgreSQL)")
     except ImportError as e:
         logger.debug("Scheduler async init not available: %s", e)

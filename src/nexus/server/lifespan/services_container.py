@@ -52,7 +52,6 @@ class LifespanServices:
     brick_lifecycle_manager: Any = None
     brick_reconciler: Any = None
     eviction_manager: Any = None
-    scoped_hook_engine: Any = None
     write_observer: Any = None
     zone_lifecycle: Any = None
 
@@ -113,7 +112,6 @@ class LifespanServices:
             ),
             brick_reconciler=(getattr(_sys, "brick_reconciler", None) if _sys else None),
             eviction_manager=(getattr(_sys, "eviction_manager", None) if _sys else None),
-            scoped_hook_engine=(getattr(_sys, "scoped_hook_engine", None) if _sys else None),
             write_observer=getattr(nx, "_write_observer", None) if nx else None,
             zone_lifecycle=(getattr(_sys, "zone_lifecycle", None) if _sys else None),
             # Issue #2195: EventLog + Scheduler

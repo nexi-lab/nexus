@@ -4,7 +4,7 @@ Defines the contract and frozen data models for transactional filesystem snapsho
 Agents can begin a transaction, perform writes/deletes, and atomically commit
 or rollback to the pre-transaction state.
 
-Follows patterns from hook_engine.py.
+Follows patterns from brick_lifecycle.py.
 """
 
 from dataclasses import dataclass

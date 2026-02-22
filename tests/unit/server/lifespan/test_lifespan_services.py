@@ -134,7 +134,6 @@ class TestFromAppSystemServices:
             brick_lifecycle_manager="blm",
             brick_reconciler="br",
             eviction_manager="em",
-            scoped_hook_engine="she",
             zone_lifecycle="zl",
         )
         nx = _make_nexus_fs(_system_services=sys_svc)
@@ -144,7 +143,6 @@ class TestFromAppSystemServices:
         assert svc.brick_lifecycle_manager == "blm"
         assert svc.brick_reconciler == "br"
         assert svc.eviction_manager == "em"
-        assert svc.scoped_hook_engine == "she"
         assert svc.zone_lifecycle == "zl"
 
     def test_missing_system_services_yields_none(self) -> None:

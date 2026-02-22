@@ -651,13 +651,6 @@ def _register_routes(app: FastAPI) -> None:
             except Exception:
                 return None
 
-        # Extract hook engine for artifact auto-indexing (Issue #1861)
-        _a2a_hook_engine = getattr(
-            getattr(app.state.nexus_fs, "_system_services", None),
-            "scoped_hook_engine",
-            None,
-        )
-
         a2a_router, a2a_task_manager = create_a2a_router(
             nexus_fs=app.state.nexus_fs,
             config=None,
@@ -665,7 +658,6 @@ def _register_routes(app: FastAPI) -> None:
             auth_required=a2a_auth_required,
             auth_fn=_a2a_auth_adapter,
             data_dir=getattr(app.state, "data_dir", None),
-            hook_engine=_a2a_hook_engine,
         )
         app.state.a2a_task_manager = a2a_task_manager  # Expose for gRPC transport
         app.include_router(a2a_router)

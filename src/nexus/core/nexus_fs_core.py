@@ -42,10 +42,10 @@ class NexusFSCoreMixin:
 
     _revision_notifier: ClassVar[Any] = None
 
-    # Issue #1169: Defaults for per-instance zone revision state.
-    # Actual instances override these in _init_zone_revision().
-    _zone_revision: int = 0
-    _zone_revision_lock: threading.Lock | None = None
+    # Issue #1169: Defaults for per-instance VFS revision state.
+    # Actual instances override these in _init_vfs_revision().
+    _vfs_revision: int = 0
+    _vfs_revision_lock: threading.Lock | None = None
     _read_tracking_enabled: bool = False
 
     # Type hints for attributes/methods that will be provided by NexusFS parent class
@@ -373,20 +373,20 @@ class NexusFSCoreMixin:
         return notifier.wait_for_revision(zone_id, min_revision, timeout_ms)
 
     # =========================================================================
-    # Zone Revision Counter - Issue #1169
+    # VFS Revision Counter - Issue #1169
     # =========================================================================
 
-    def _init_zone_revision(self) -> None:
-        """Initialize per-instance zone revision state.
+    def _init_vfs_revision(self) -> None:
+        """Initialize per-instance VFS revision state.
 
         Must be called during NexusFS.__init__ to ensure each instance
         has its own lock and counter (not shared via class-level defaults).
         """
-        self._zone_revision = 0
-        self._zone_revision_lock = threading.Lock()
+        self._vfs_revision = 0
+        self._vfs_revision_lock = threading.Lock()
 
-    def _increment_zone_revision(self) -> int:
-        """Atomically increment and return the new zone revision.
+    def _increment_vfs_revision(self) -> int:
+        """Atomically increment and return the new VFS revision.
 
         Called after every write/delete to advance the monotonic counter.
         Thread-safe via per-instance lock.
@@ -394,26 +394,26 @@ class NexusFSCoreMixin:
         Returns:
             The new revision number (always > previous).
         """
-        lock = self._zone_revision_lock
+        lock = self._vfs_revision_lock
         if lock is None:
             # Fallback: not yet initialized (shouldn't happen in production)
-            self._zone_revision += 1
-            return self._zone_revision
+            self._vfs_revision += 1
+            return self._vfs_revision
         with lock:
-            self._zone_revision += 1
-            return self._zone_revision
+            self._vfs_revision += 1
+            return self._vfs_revision
 
-    def _get_zone_revision(self) -> int:
-        """Return the current zone revision (read-only, thread-safe).
+    def _get_vfs_revision(self) -> int:
+        """Return the current VFS revision (read-only, thread-safe).
 
         Returns:
             Current monotonic revision counter value.
         """
-        lock = self._zone_revision_lock
+        lock = self._vfs_revision_lock
         if lock is None:
-            return self._zone_revision
+            return self._vfs_revision
         with lock:
-            return self._zone_revision
+            return self._vfs_revision
 
     # =========================================================================
     # Read Set Tracking - Issue #1166 / #1169
@@ -431,7 +431,7 @@ class NexusFSCoreMixin:
         This is called automatically by read(), stat(), and list() operations
         when the context has read tracking enabled.
 
-        Issue #1169: Uses per-zone monotonic counter instead of hardcoded 0.
+        Issue #1169: Uses per-VFS monotonic counter instead of hardcoded 0.
                      Gated by instance-level _read_tracking_enabled flag.
 
         Args:
@@ -449,8 +449,8 @@ class NexusFSCoreMixin:
         if context.read_set is None:
             return
 
-        # Issue #1169: Use per-zone monotonic counter for meaningful revisions
-        revision = self._get_zone_revision()
+        # Issue #1169: Use per-VFS monotonic counter for meaningful revisions
+        revision = self._get_vfs_revision()
 
         # Record the read
         context.record_read(
@@ -486,8 +486,8 @@ class NexusFSCoreMixin:
         if cache_observer is None or metadata is None:
             return
 
-        zone_id = getattr(self, "zone_id", None) or "root"
-        revision = self._get_zone_revision()
+        zone_id = getattr(self, "zone_id", None) or ROOT_ZONE_ID
+        revision = self._get_vfs_revision()
         cache_observer.on_read(path, metadata, revision, zone_id, resource_type)
 
     # =========================================================================
@@ -1941,8 +1941,8 @@ class NexusFSCoreMixin:
 
         self.metadata.put(metadata)
 
-        # Issue #1169: Advance zone revision counter after mutation
-        new_revision = self._increment_zone_revision()
+        # Issue #1169: Advance VFS revision counter after mutation
+        new_revision = self._increment_vfs_revision()
 
         # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
         from nexus.contracts.vfs_hooks import MutationEvent
@@ -2660,7 +2660,7 @@ class NexusFSCoreMixin:
         # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
         from nexus.contracts.vfs_hooks import MutationEvent
 
-        new_revision = self._increment_zone_revision()
+        new_revision = self._increment_vfs_revision()
         for metadata in metadata_list:
             is_new = existing_metadata.get(metadata.path) is None
             self._dispatch.notify(
@@ -2974,8 +2974,8 @@ class NexusFSCoreMixin:
         # Remove from metadata
         self.metadata.delete(path)
 
-        # Issue #1169: Advance zone revision counter after delete
-        new_revision = self._increment_zone_revision()
+        # Issue #1169: Advance VFS revision counter after delete
+        new_revision = self._increment_vfs_revision()
 
         # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
         from nexus.contracts.vfs_hooks import MutationEvent
@@ -3153,7 +3153,7 @@ class NexusFSCoreMixin:
         # For connector backends: metadata follows the file we just moved
         self.metadata.rename_path(old_path, new_path)
 
-        new_revision = self._increment_zone_revision()
+        new_revision = self._increment_vfs_revision()
 
         # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
         from nexus.contracts.vfs_hooks import MutationEvent

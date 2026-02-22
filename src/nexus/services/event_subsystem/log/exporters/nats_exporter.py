@@ -14,7 +14,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from nexus.constants import ROOT_ZONE_ID
-from nexus.core.event_bus import FileEvent
+from nexus.core.file_events import FileEvent
 
 if TYPE_CHECKING:
     from nexus.services.event_log.exporters.config import NatsExporterConfig

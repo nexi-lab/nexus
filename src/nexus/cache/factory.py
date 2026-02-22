@@ -32,10 +32,8 @@ Usage:
     await factory.shutdown()
 """
 
-from __future__ import annotations
-
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from nexus.cache.base import (
     EmbeddingCacheProtocol,
@@ -54,15 +52,19 @@ from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
-    from nexus.cache.backend_wrapper import CacheWrapperConfig, CachingBackendWrapper
+    from nexus.backends.caching_backend_wrapper import CacheWrapperConfig, CachingBackendWrapper
     from nexus.cache.dragonfly import DragonflyClient
-    from nexus.storage.record_store import RecordStoreABC
+    from nexus.cache.protocols import RecordStoreProtocol
 
 logger = logging.getLogger(__name__)
 
 
 class CacheFactory:
     """Factory for creating cache instances based on configuration.
+
+    .. deprecated:: Issue #1524
+        Use ``CacheBrick`` instead. CacheBrick now provides CacheFactory-compatible
+        methods (``initialize()``, ``shutdown()``, ``get_*_cache()``).
 
     Owns a CacheStoreABC driver and builds domain caches on top.
     When no driver is injected, creates one from settings or falls back to NullCacheStore.
@@ -75,21 +77,28 @@ class CacheFactory:
         self,
         settings: CacheSettings,
         cache_store: CacheStoreABC | None = None,
-        record_store: RecordStoreABC | None = None,
+        record_store: "RecordStoreProtocol | None" = None,
     ):
         """Initialize cache factory.
 
         Args:
             settings: Cache configuration
             cache_store: Pre-built CacheStoreABC driver. If None, created from settings.
-            record_store: RecordStoreABC for PostgreSQL cache fallback.
+            record_store: RecordStoreProtocol for PostgreSQL cache fallback.
                 If provided and Dragonfly is not available, the factory uses
                 record_store.engine for PostgreSQL-backed caches instead of NullCacheStore.
         """
+        import warnings
+
+        warnings.warn(
+            "CacheFactory is deprecated (Issue #1524). Use CacheBrick instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._settings = settings
         self._cache_store: CacheStoreABC = cache_store or NullCacheStore()
         self._cache_client: DragonflyClient | None = None  # kept for embedding cache
-        self._record_store: RecordStoreABC | None = record_store
+        self._record_store: RecordStoreProtocol | None = record_store
         self._initialized = False
         self._has_cache_store = False
         self._using_postgres = False
@@ -201,8 +210,9 @@ class CacheFactory:
         if self._using_postgres and self._record_store is not None:
             from nexus.cache.postgres import PostgresPermissionCache
 
+            engine = self._get_best_engine()
             return PostgresPermissionCache(
-                engine=self._record_store.engine,
+                engine=engine,
                 ttl=self._settings.permission_ttl,
                 denial_ttl=self._settings.permission_denial_ttl,
             )
@@ -225,7 +235,7 @@ class CacheFactory:
         if self._using_postgres and self._record_store is not None:
             from nexus.cache.postgres import PostgresTigerCache
 
-            return PostgresTigerCache(engine=self._record_store.engine)
+            return PostgresTigerCache(engine=self._get_best_engine())
 
         return TigerCache(
             store=self._cache_store,
@@ -244,7 +254,7 @@ class CacheFactory:
         if self._using_postgres and self._record_store is not None:
             from nexus.cache.postgres import PostgresResourceMapCache
 
-            return PostgresResourceMapCache(engine=self._record_store.engine)
+            return PostgresResourceMapCache(engine=self._get_best_engine())
 
         return ResourceMapCache(store=self._cache_store)
 
@@ -258,12 +268,23 @@ class CacheFactory:
             ttl=self._settings.embedding_ttl,
         )
 
+    def _get_best_engine(self) -> Any:
+        """Get the best available engine (async preferred, sync fallback).
+
+        Issue #1524, Decision #5A: prefer AsyncEngine for non-blocking I/O.
+        """
+        assert self._record_store is not None
+        async_engine = self._record_store.async_engine
+        if async_engine is not None:
+            return async_engine
+        return self._record_store.engine
+
     async def health_check(self) -> dict:
         """Check health of cache backend."""
         if self._using_postgres and self._record_store is not None:
             from nexus.cache.postgres import PostgresPermissionCache
 
-            pg_cache = PostgresPermissionCache(engine=self._record_store.engine)
+            pg_cache = PostgresPermissionCache(engine=self._get_best_engine())
             healthy = await pg_cache.health_check()
             return {
                 "backend": self.backend_name,
@@ -284,11 +305,11 @@ class CacheFactory:
 
     def create_caching_wrapper(
         self,
-        inner: Backend,
-        config: CacheWrapperConfig | None = None,
+        inner: "Backend",
+        config: "CacheWrapperConfig | None" = None,
         *,
         enable_logging: bool = False,
-    ) -> CachingBackendWrapper:
+    ) -> "CachingBackendWrapper":
         """Create a CachingBackendWrapper for the given backend.
 
         Wires the wrapper with this factory's CacheStoreABC for L2 distributed
@@ -312,7 +333,7 @@ class CacheFactory:
         if not self._initialized:
             raise RuntimeError("CacheFactory not initialized. Call initialize() first.")
 
-        from nexus.cache.backend_wrapper import CacheWrapperConfig, CachingBackendWrapper
+        from nexus.backends.caching_backend_wrapper import CacheWrapperConfig, CachingBackendWrapper
 
         effective_config = config or CacheWrapperConfig()
 
@@ -332,7 +353,7 @@ class CacheFactory:
             cache_store=cache_store,
         )
 
-    async def __aenter__(self) -> CacheFactory:
+    async def __aenter__(self) -> "CacheFactory":
         """Async context manager entry."""
         await self.initialize()
         return self

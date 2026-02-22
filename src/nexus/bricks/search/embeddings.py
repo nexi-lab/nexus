@@ -478,7 +478,7 @@ class CachedEmbeddingProvider(EmbeddingProvider):
 
     Usage::
 
-        # Initialize cache (CacheFactory from nexus.bricks.cache)
+        # Initialize cache (CacheFactory from nexus.cache)
         settings = CacheSettings.from_env()
         factory = CacheFactory(settings)
         await factory.initialize()
@@ -709,9 +709,9 @@ async def create_cached_embedding_provider(
     try:
         import importlib as _il
 
-        _cache_domain = _il.import_module("nexus.bricks.cache.domain")
+        _cache_domain = _il.import_module("nexus.cache.domain")
         EmbeddingCache = _cache_domain.EmbeddingCache
-        _cache_dragonfly = _il.import_module("nexus.bricks.cache.dragonfly")
+        _cache_dragonfly = _il.import_module("nexus.cache.dragonfly")
         DragonflyCacheStore = _cache_dragonfly.DragonflyCacheStore
         DragonflyClient = _cache_dragonfly.DragonflyClient
 

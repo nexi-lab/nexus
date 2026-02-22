@@ -6,23 +6,23 @@ the existing rebac_check_cache, tiger_cache, and tiger_resource_map tables.
 These serve as the cache backend when Dragonfly is not configured.
 PostgreSQL-only (no SQLite branching) — SQLite users fall back to NullCacheStore.
 
+Engine modes (Issue #1524, Decision #5A):
+    - AsyncEngine (preferred): fully non-blocking I/O via asyncpg
+    - Engine (legacy): sync calls wrapped in asyncio.to_thread()
+
 Extracted from:
     - rebac_manager.py (PermissionCache)
     - tiger_cache.py (TigerCache, ResourceMapCache)
 """
 
-from __future__ import annotations
-
+import asyncio
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from sqlalchemy import column, delete, text
 from sqlalchemy import table as sa_table
-
-if TYPE_CHECKING:
-    from sqlalchemy.engine import Engine
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +93,6 @@ _PERM_COUNT_VALID = text("""
     WHERE expires_at > :now
 """)
 
-
 # ---------------------------------------------------------------------------
 # SQL Queries — Tiger Cache (tiger_cache table)
 # ---------------------------------------------------------------------------
@@ -146,6 +145,20 @@ _RESMAP_BULK_GET = text("""
     )
 """)
 
+# ---------------------------------------------------------------------------
+# Engine detection helper
+# ---------------------------------------------------------------------------
+
+
+def _is_async_engine(engine: Any) -> bool:
+    """Check if engine is an AsyncEngine (without importing at module level)."""
+    try:
+        from sqlalchemy.ext.asyncio import AsyncEngine
+
+        return isinstance(engine, AsyncEngine)
+    except ImportError:
+        return False
+
 
 # ===========================================================================
 # PostgresPermissionCache
@@ -157,17 +170,21 @@ class PostgresPermissionCache:
 
     Implements PermissionCacheProtocol via structural subtyping.
 
+    Accepts either ``AsyncEngine`` (preferred, non-blocking) or sync ``Engine``
+    (legacy, wrapped in ``asyncio.to_thread()``).
+
     Extracted from rebac_manager.py:3841-4575 and rebac_manager_zone_aware.py:909-992.
     All queries include zone_id for multi-zone isolation (P0 security).
     """
 
     def __init__(
         self,
-        engine: Engine,
+        engine: Any,
         ttl: int = 300,
         denial_ttl: int = 60,
     ):
         self._engine = engine
+        self._is_async = _is_async_engine(engine)
         self._ttl = ttl
         self._denial_ttl = denial_ttl
 
@@ -182,19 +199,28 @@ class PostgresPermissionCache:
     ) -> bool | None:
         """Get cached permission result. Returns True/False/None."""
         now = datetime.now(UTC)
+        params = {
+            "zone_id": zone_id,
+            "subject_type": subject_type,
+            "subject_id": subject_id,
+            "permission": permission,
+            "object_type": object_type,
+            "object_id": object_id,
+            "now": now,
+        }
+        if self._is_async:
+            async with self._engine.connect() as conn:
+                result = await conn.execute(_PERM_GET, params)
+                row = result.fetchone()
+                if row:
+                    return bool(row.result)
+                return None
+        else:
+            return await asyncio.to_thread(self._get_sync, params)
+
+    def _get_sync(self, params: dict[str, Any]) -> bool | None:
         with self._engine.connect() as conn:
-            result = conn.execute(
-                _PERM_GET,
-                {
-                    "zone_id": zone_id,
-                    "subject_type": subject_type,
-                    "subject_id": subject_id,
-                    "permission": permission,
-                    "object_type": object_type,
-                    "object_id": object_id,
-                    "now": now,
-                },
-            )
+            result = conn.execute(_PERM_GET, params)
             row = result.fetchone()
             if row:
                 return bool(row.result)
@@ -224,21 +250,25 @@ class PostgresPermissionCache:
             "object_type": object_type,
             "object_id": object_id,
         }
+        insert_params = {
+            **params,
+            "cache_id": cache_id,
+            "result": int(result),
+            "computed_at": now,
+            "expires_at": expires_at,
+        }
 
+        if self._is_async:
+            async with self._engine.begin() as conn:
+                await conn.execute(_PERM_DELETE_EXACT, params)
+                await conn.execute(_PERM_INSERT, insert_params)
+        else:
+            await asyncio.to_thread(self._set_sync, params, insert_params)
+
+    def _set_sync(self, params: dict[str, Any], insert_params: dict[str, Any]) -> None:
         with self._engine.begin() as conn:
-            # Delete existing entry (idempotent upsert via DELETE + INSERT)
             conn.execute(_PERM_DELETE_EXACT, params)
-            # Insert new entry
-            conn.execute(
-                _PERM_INSERT,
-                {
-                    **params,
-                    "cache_id": cache_id,
-                    "result": int(result),
-                    "computed_at": now,
-                    "expires_at": expires_at,
-                },
-            )
+            conn.execute(_PERM_INSERT, insert_params)
 
     async def invalidate_subject(
         self,
@@ -247,16 +277,16 @@ class PostgresPermissionCache:
         zone_id: str,
     ) -> int:
         """Invalidate all cached permissions for a subject."""
-        with self._engine.begin() as conn:
-            result = conn.execute(
-                _PERM_DELETE_SUBJECT,
-                {
-                    "zone_id": zone_id,
-                    "subject_type": subject_type,
-                    "subject_id": subject_id,
-                },
-            )
-            return result.rowcount
+        params = {
+            "zone_id": zone_id,
+            "subject_type": subject_type,
+            "subject_id": subject_id,
+        }
+        if self._is_async:
+            async with self._engine.begin() as conn:
+                result = await conn.execute(_PERM_DELETE_SUBJECT, params)
+                return int(result.rowcount)
+        return await asyncio.to_thread(self._invalidate_sync, _PERM_DELETE_SUBJECT, params)
 
     async def invalidate_object(
         self,
@@ -265,16 +295,16 @@ class PostgresPermissionCache:
         zone_id: str,
     ) -> int:
         """Invalidate all cached permissions for an object."""
-        with self._engine.begin() as conn:
-            result = conn.execute(
-                _PERM_DELETE_OBJECT,
-                {
-                    "zone_id": zone_id,
-                    "object_type": object_type,
-                    "object_id": object_id,
-                },
-            )
-            return result.rowcount
+        params = {
+            "zone_id": zone_id,
+            "object_type": object_type,
+            "object_id": object_id,
+        }
+        if self._is_async:
+            async with self._engine.begin() as conn:
+                result = await conn.execute(_PERM_DELETE_OBJECT, params)
+                return int(result.rowcount)
+        return await asyncio.to_thread(self._invalidate_sync, _PERM_DELETE_OBJECT, params)
 
     async def invalidate_subject_object(
         self,
@@ -285,48 +315,73 @@ class PostgresPermissionCache:
         zone_id: str,
     ) -> int:
         """Invalidate cached permissions for a specific subject-object pair."""
+        params = {
+            "zone_id": zone_id,
+            "subject_type": subject_type,
+            "subject_id": subject_id,
+            "object_type": object_type,
+            "object_id": object_id,
+        }
+        if self._is_async:
+            async with self._engine.begin() as conn:
+                result = await conn.execute(_PERM_DELETE_SUBJECT_OBJECT, params)
+                return int(result.rowcount)
+        return await asyncio.to_thread(self._invalidate_sync, _PERM_DELETE_SUBJECT_OBJECT, params)
+
+    def _invalidate_sync(self, stmt: Any, params: dict[str, Any]) -> int:
         with self._engine.begin() as conn:
-            result = conn.execute(
-                _PERM_DELETE_SUBJECT_OBJECT,
-                {
-                    "zone_id": zone_id,
-                    "subject_type": subject_type,
-                    "subject_id": subject_id,
-                    "object_type": object_type,
-                    "object_id": object_id,
-                },
-            )
-            return result.rowcount
+            result = conn.execute(stmt, params)
+            return int(result.rowcount)
 
     async def clear(self, zone_id: str | None = None) -> int:
         """Clear cached permissions. If zone_id given, only that zone."""
+        if self._is_async:
+            async with self._engine.begin() as conn:
+                if zone_id is not None:
+                    result = await conn.execute(_PERM_DELETE_ZONE, {"zone_id": zone_id})
+                else:
+                    result = await conn.execute(_PERM_DELETE_ALL)
+                return int(result.rowcount)
+        return await asyncio.to_thread(self._clear_sync, zone_id)
+
+    def _clear_sync(self, zone_id: str | None) -> int:
         with self._engine.begin() as conn:
             if zone_id is not None:
                 result = conn.execute(_PERM_DELETE_ZONE, {"zone_id": zone_id})
             else:
                 result = conn.execute(_PERM_DELETE_ALL)
-            return result.rowcount
+            return int(result.rowcount)
 
     async def health_check(self) -> bool:
         """Check if cache backend is healthy."""
         try:
-            with self._engine.connect() as conn:
-                conn.execute(text("SELECT 1"))
-            return True
+            if self._is_async:
+                async with self._engine.connect() as conn:
+                    await conn.execute(text("SELECT 1"))
+                return True
+            return await asyncio.to_thread(self._health_check_sync)
         except Exception:
             return False
+
+    def _health_check_sync(self) -> bool:
+        with self._engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return True
 
     async def get_stats(self) -> dict:
         """Get cache statistics including count of valid entries."""
         now = datetime.now(UTC)
         count = 0
         try:
-            with self._engine.connect() as conn:
-                result = conn.execute(_PERM_COUNT_VALID, {"now": now})
-                row = result.fetchone()
-                count = int(row[0]) if row else 0
+            if self._is_async:
+                async with self._engine.connect() as conn:
+                    result = await conn.execute(_PERM_COUNT_VALID, {"now": now})
+                    row = result.fetchone()
+                    count = int(row[0]) if row else 0
+            else:
+                count = await asyncio.to_thread(self._get_stats_sync, now)
         except Exception as e:
-            logger.warning(f"Failed to get permission cache stats: {e}")
+            logger.warning("Failed to get permission cache stats: %s", e)
 
         return {
             "backend": "postgres",
@@ -334,6 +389,12 @@ class PostgresPermissionCache:
             "ttl_denials": self._denial_ttl,
             "valid_entries": count,
         }
+
+    def _get_stats_sync(self, now: datetime) -> int:
+        with self._engine.connect() as conn:
+            result = conn.execute(_PERM_COUNT_VALID, {"now": now})
+            row = result.fetchone()
+            return int(row[0]) if row else 0
 
 
 # ===========================================================================
@@ -346,12 +407,15 @@ class PostgresTigerCache:
 
     Implements TigerCacheProtocol via structural subtyping.
 
+    Accepts either ``AsyncEngine`` (preferred) or sync ``Engine`` (legacy).
+
     Extracted from tiger_cache.py:724-1370.
     Stores pre-materialized Roaring Bitmaps for O(1) permission filtering.
     """
 
-    def __init__(self, engine: Engine):
+    def __init__(self, engine: Any):
         self._engine = engine
+        self._is_async = _is_async_engine(engine)
 
     async def get_bitmap(
         self,
@@ -362,17 +426,25 @@ class PostgresTigerCache:
         zone_id: str,
     ) -> tuple[bytes, int] | None:
         """Get Tiger bitmap for a subject. Returns (bitmap_data, revision) or None."""
+        params = {
+            "subject_type": subject_type,
+            "subject_id": subject_id,
+            "permission": permission,
+            "resource_type": resource_type,
+            "zone_id": zone_id,
+        }
+        if self._is_async:
+            async with self._engine.connect() as conn:
+                result = await conn.execute(_TIGER_GET, params)
+                row = result.fetchone()
+                if row:
+                    return (bytes(row.bitmap_data), int(row.revision))
+                return None
+        return await asyncio.to_thread(self._get_bitmap_sync, params)
+
+    def _get_bitmap_sync(self, params: dict[str, Any]) -> tuple[bytes, int] | None:
         with self._engine.connect() as conn:
-            result = conn.execute(
-                _TIGER_GET,
-                {
-                    "subject_type": subject_type,
-                    "subject_id": subject_id,
-                    "permission": permission,
-                    "resource_type": resource_type,
-                    "zone_id": zone_id,
-                },
-            )
+            result = conn.execute(_TIGER_GET, params)
             row = result.fetchone()
             if row:
                 return (bytes(row.bitmap_data), int(row.revision))
@@ -389,19 +461,24 @@ class PostgresTigerCache:
         revision: int,
     ) -> None:
         """Store Tiger bitmap using PostgreSQL UPSERT."""
+        params = {
+            "subject_type": subject_type,
+            "subject_id": subject_id,
+            "permission": permission,
+            "resource_type": resource_type,
+            "zone_id": zone_id,
+            "bitmap_data": bitmap_data,
+            "revision": revision,
+        }
+        if self._is_async:
+            async with self._engine.begin() as conn:
+                await conn.execute(_TIGER_UPSERT, params)
+        else:
+            await asyncio.to_thread(self._set_bitmap_sync, params)
+
+    def _set_bitmap_sync(self, params: dict[str, Any]) -> None:
         with self._engine.begin() as conn:
-            conn.execute(
-                _TIGER_UPSERT,
-                {
-                    "subject_type": subject_type,
-                    "subject_id": subject_id,
-                    "permission": permission,
-                    "resource_type": resource_type,
-                    "zone_id": zone_id,
-                    "bitmap_data": bitmap_data,
-                    "revision": revision,
-                },
-            )
+            conn.execute(_TIGER_UPSERT, params)
 
     async def invalidate(
         self,
@@ -430,18 +507,32 @@ class PostgresTigerCache:
         if zone_id is not None:
             stmt = stmt.where(column("zone_id") == zone_id)
 
+        if self._is_async:
+            async with self._engine.begin() as conn:
+                result = await conn.execute(stmt)
+                return int(result.rowcount)
+        return await asyncio.to_thread(self._invalidate_sync, stmt)
+
+    def _invalidate_sync(self, stmt: Any) -> int:
         with self._engine.begin() as conn:
             result = conn.execute(stmt)
-            return result.rowcount
+            return int(result.rowcount)
 
     async def health_check(self) -> bool:
         """Check if cache backend is healthy."""
         try:
-            with self._engine.connect() as conn:
-                conn.execute(text("SELECT 1"))
-            return True
+            if self._is_async:
+                async with self._engine.connect() as conn:
+                    await conn.execute(text("SELECT 1"))
+                return True
+            return await asyncio.to_thread(self._health_check_sync)
         except Exception:
             return False
+
+    def _health_check_sync(self) -> bool:
+        with self._engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return True
 
 
 # ===========================================================================
@@ -454,6 +545,8 @@ class PostgresResourceMapCache:
 
     Implements ResourceMapCacheProtocol via structural subtyping.
 
+    Accepts either ``AsyncEngine`` (preferred) or sync ``Engine`` (legacy).
+
     Extracted from tiger_cache.py:91-167.
     Maps resource UUIDs to integer IDs for Roaring Bitmap compatibility.
 
@@ -462,8 +555,9 @@ class PostgresResourceMapCache:
     Protocol interface is accepted but not used in queries.
     """
 
-    def __init__(self, engine: Engine):
+    def __init__(self, engine: Any):
         self._engine = engine
+        self._is_async = _is_async_engine(engine)
 
     async def get_int_id(
         self,
@@ -472,14 +566,22 @@ class PostgresResourceMapCache:
         _zone_id: str,
     ) -> int | None:
         """Get integer ID for a resource."""
+        params = {
+            "resource_type": resource_type,
+            "resource_id": resource_id,
+        }
+        if self._is_async:
+            async with self._engine.connect() as conn:
+                result = await conn.execute(_RESMAP_GET, params)
+                row = result.fetchone()
+                if row:
+                    return int(row.resource_int_id)
+                return None
+        return await asyncio.to_thread(self._get_int_id_sync, params)
+
+    def _get_int_id_sync(self, params: dict[str, Any]) -> int | None:
         with self._engine.connect() as conn:
-            result = conn.execute(
-                _RESMAP_GET,
-                {
-                    "resource_type": resource_type,
-                    "resource_id": resource_id,
-                },
-            )
+            result = conn.execute(_RESMAP_GET, params)
             row = result.fetchone()
             if row:
                 return int(row.resource_int_id)
@@ -495,19 +597,26 @@ class PostgresResourceMapCache:
 
         types = [r[0] for r in resources]
         ids = [r[1] for r in resources]
+        params = {"types": types, "ids": ids}
 
+        if self._is_async:
+            async with self._engine.connect() as conn:
+                result = await conn.execute(_RESMAP_BULK_GET, params)
+                db_map: dict[tuple[str, str], int] = {}
+                for row in result:
+                    db_map[(row.resource_type, row.resource_id)] = int(row.resource_int_id)
+        else:
+            db_map = await asyncio.to_thread(self._get_int_ids_bulk_sync, params)
+
+        return {(rt, rid, zid): db_map.get((rt, rid)) for rt, rid, zid in resources}
+
+    def _get_int_ids_bulk_sync(self, params: dict[str, Any]) -> dict[tuple[str, str], int]:
         with self._engine.connect() as conn:
-            result = conn.execute(
-                _RESMAP_BULK_GET,
-                {"types": types, "ids": ids},
-            )
-            # Build lookup from DB results
+            result = conn.execute(_RESMAP_BULK_GET, params)
             db_map: dict[tuple[str, str], int] = {}
             for row in result:
                 db_map[(row.resource_type, row.resource_id)] = int(row.resource_int_id)
-
-        # Map back to input tuples (including zone_id)
-        return {(rt, rid, zid): db_map.get((rt, rid)) for rt, rid, zid in resources}
+            return db_map
 
     async def set_int_id(
         self,
@@ -520,14 +629,19 @@ class PostgresResourceMapCache:
 
         Uses INSERT ... ON CONFLICT DO NOTHING so existing mappings are preserved.
         """
+        params = {
+            "resource_type": resource_type,
+            "resource_id": resource_id,
+        }
+        if self._is_async:
+            async with self._engine.begin() as conn:
+                await conn.execute(_RESMAP_INSERT, params)
+        else:
+            await asyncio.to_thread(self._set_int_id_sync, params)
+
+    def _set_int_id_sync(self, params: dict[str, Any]) -> None:
         with self._engine.begin() as conn:
-            conn.execute(
-                _RESMAP_INSERT,
-                {
-                    "resource_type": resource_type,
-                    "resource_id": resource_id,
-                },
-            )
+            conn.execute(_RESMAP_INSERT, params)
 
     async def set_int_ids_bulk(
         self,
@@ -537,12 +651,20 @@ class PostgresResourceMapCache:
         if not mappings:
             return
 
+        if self._is_async:
+            async with self._engine.begin() as conn:
+                for key in mappings:
+                    await conn.execute(
+                        _RESMAP_INSERT,
+                        {"resource_type": key[0], "resource_id": key[1]},
+                    )
+        else:
+            await asyncio.to_thread(self._set_int_ids_bulk_sync, mappings)
+
+    def _set_int_ids_bulk_sync(self, mappings: dict[tuple[str, str, str], int]) -> None:
         with self._engine.begin() as conn:
             for key in mappings:
                 conn.execute(
                     _RESMAP_INSERT,
-                    {
-                        "resource_type": key[0],
-                        "resource_id": key[1],
-                    },
+                    {"resource_type": key[0], "resource_id": key[1]},
                 )

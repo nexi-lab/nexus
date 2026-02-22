@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.bricks.cache.inmemory import InMemoryCacheStore
+from nexus.cache.inmemory import InMemoryCacheStore
 from nexus.server.dependencies import (
     _get_cached_auth,
     _reset_auth_cache,

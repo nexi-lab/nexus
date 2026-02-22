@@ -22,9 +22,6 @@ Architecture::
 NOTE: L2 async write-behind is a follow-up (Decision #14).
 """
 
-from __future__ import annotations
-
-import hashlib
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -41,9 +38,10 @@ from nexus.cache.domain import (
     TigerCache,
 )
 from nexus.cache.settings import CacheSettings
+from nexus.contracts.cache_store import NullCacheStore
 
 if TYPE_CHECKING:
-    from nexus.cache.backend_wrapper import CacheWrapperConfig, CachingBackendWrapper
+    from nexus.backends.caching_backend_wrapper import CacheWrapperConfig, CachingBackendWrapper
 
 logger = logging.getLogger(__name__)
 
@@ -79,23 +77,7 @@ class CacheBrick:
             settings: Cache configuration. If None, defaults are used.
             record_store: Optional RecordStoreABC for PostgreSQL cache fallback.
         """
-        # Lazy import to avoid circular deps — NullCacheStore is in core
-        from nexus.cache.inmemory import InMemoryCacheStore
-
-        # Import NullCacheStore without importing nexus.core at module level
-        _NullCacheStore: type | None = None
-        try:
-            from nexus.contracts.cache_store import NullCacheStore as _NS
-
-            _NullCacheStore = _NS
-        except ImportError:
-            pass
-
-        self._store = (
-            cache_store
-            if cache_store is not None
-            else (_NullCacheStore() if _NullCacheStore else InMemoryCacheStore())
-        )
+        self._store = cache_store if cache_store is not None else NullCacheStore()
         self._settings = settings or CacheSettings(dragonfly_url=None)
         self._record_store = record_store
         self._started = False
@@ -115,9 +97,6 @@ class CacheBrick:
             store=self._store,
             ttl=self._settings.embedding_ttl,
         )
-
-        # SHA-256 hash cache (Decision #16) — keyed by (id, len)
-        self._hash_cache: dict[tuple[int, int], str] = {}
 
     # ------------------------------------------------------------------
     # Lifecycle (Decision #4) — satisfies BrickLifecycleProtocol
@@ -160,6 +139,40 @@ class CacheBrick:
             return await self._store.health_check()
         except Exception:
             return False
+
+    # ------------------------------------------------------------------
+    # CacheFactory-compatible API (Issue #1524 / #3A absorption)
+    # ------------------------------------------------------------------
+
+    async def initialize(self) -> None:
+        """CacheFactory-compatible alias for ``start()``.
+
+        Allows CacheBrick to be used as a drop-in replacement for CacheFactory.
+        """
+        await self.start()
+
+    async def shutdown(self) -> None:
+        """CacheFactory-compatible alias for ``stop()``.
+
+        Allows CacheBrick to be used as a drop-in replacement for CacheFactory.
+        """
+        await self.stop()
+
+    def get_permission_cache(self) -> PermissionCacheProtocol:
+        """CacheFactory-compatible accessor for permission cache."""
+        return self._permission_cache
+
+    def get_tiger_cache(self) -> TigerCacheProtocol:
+        """CacheFactory-compatible accessor for tiger cache."""
+        return self._tiger_cache
+
+    def get_resource_map_cache(self) -> ResourceMapCacheProtocol:
+        """CacheFactory-compatible accessor for resource map cache."""
+        return self._resource_map_cache
+
+    def get_embedding_cache(self) -> EmbeddingCacheProtocol:
+        """CacheFactory-compatible accessor for embedding cache."""
+        return self._embedding_cache
 
     # ------------------------------------------------------------------
     # Protocol-typed accessors
@@ -207,7 +220,7 @@ class CacheBrick:
     @property
     def has_cache_store(self) -> bool:
         """Whether a real (non-Null) CacheStoreABC driver is active."""
-        return type(self._store).__name__ != "NullCacheStore"
+        return not isinstance(self._store, NullCacheStore)
 
     # ------------------------------------------------------------------
     # CachingBackendWrapper factory
@@ -216,10 +229,10 @@ class CacheBrick:
     def create_caching_wrapper(
         self,
         inner: Any,
-        config: CacheWrapperConfig | None = None,
+        config: "CacheWrapperConfig | None" = None,
         *,
         enable_logging: bool = False,
-    ) -> CachingBackendWrapper:
+    ) -> "CachingBackendWrapper":
         """Create a CachingBackendWrapper for the given backend.
 
         Args:
@@ -230,8 +243,8 @@ class CacheBrick:
         Returns:
             CachingBackendWrapper wrapping the inner backend.
         """
-        from nexus.cache.backend_wrapper import CacheWrapperConfig as CWC
-        from nexus.cache.backend_wrapper import CachingBackendWrapper
+        from nexus.backends.caching_backend_wrapper import CacheWrapperConfig as CWC
+        from nexus.backends.caching_backend_wrapper import CachingBackendWrapper
 
         effective_config = config or CWC()
 
@@ -248,24 +261,3 @@ class CacheBrick:
             config=effective_config,
             cache_store=cache_store,
         )
-
-    # ------------------------------------------------------------------
-    # SHA-256 hash caching (Decision #16)
-    # ------------------------------------------------------------------
-
-    def compute_content_hash(self, data: bytes) -> str:
-        """Compute SHA-256 hash, caching by (id, len) for repeated calls.
-
-        Args:
-            data: Binary content to hash.
-
-        Returns:
-            64-character hex digest string.
-        """
-        cache_key = (id(data), len(data))
-        cached = self._hash_cache.get(cache_key)
-        if cached is not None:
-            return cached
-        digest = hashlib.sha256(data).hexdigest()
-        self._hash_cache[cache_key] = digest
-        return digest

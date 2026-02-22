@@ -87,8 +87,8 @@ async def _startup_cache_brick(app: "FastAPI", svc: "LifespanServices") -> None:
 
         if cache_brick is None:
             # Fallback: create CacheBrick from env settings (standalone mode)
-            from nexus.bricks.cache.brick import CacheBrick
-            from nexus.bricks.cache.settings import CacheSettings
+            from nexus.cache.brick import CacheBrick
+            from nexus.cache.settings import CacheSettings
 
             cache_settings = CacheSettings.from_env()
             record_store = svc.record_store

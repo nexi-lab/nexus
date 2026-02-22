@@ -207,7 +207,7 @@ class TestBackwardCompatibility:
     """Existing module-level constants still work as fallback defaults."""
 
     def test_grep_parallel_workers_constant(self) -> None:
-        from nexus.bricks.search.strategies import GREP_PARALLEL_WORKERS
+        from nexus.contracts.search_types import GREP_PARALLEL_WORKERS
 
         assert GREP_PARALLEL_WORKERS == 4  # FULL profile default
 

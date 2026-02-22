@@ -18,14 +18,12 @@ import asyncio
 import contextlib
 import json
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from nexus.constants import ROOT_ZONE_ID
-
-if TYPE_CHECKING:
-    from nexus.contracts.vfs_hooks import MutationEvent
-    from nexus.core.pipe_manager import PipeManager
-    from nexus.workflows.protocol import WorkflowProtocol
+from nexus.contracts.vfs_hooks import MutationEvent
+from nexus.core.pipe_manager import PipeManager
+from nexus.workflows.protocol import WorkflowProtocol
 
 logger = logging.getLogger(__name__)
 

@@ -15,6 +15,7 @@ Extracted from: nexus_fs_events.py (836 lines)
 
 import asyncio
 import contextlib
+import dataclasses
 import logging
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any, cast
@@ -232,7 +233,7 @@ class EventsService:
                     virtual_change_path = change.path
                     if not virtual_change_path.startswith("/"):
                         virtual_change_path = f"{watch_path.rstrip('/')}/{virtual_change_path}"
-                    event.path = virtual_change_path
+                    event = dataclasses.replace(event, path=virtual_change_path)
                     if event.matches_path_pattern(path):
                         return event.to_dict()
                     logger.debug(f"Event {event.path} didn't match pattern {path}, continuing...")

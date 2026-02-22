@@ -10,7 +10,7 @@ from unittest.mock import patch
 import pytest
 
 from nexus.bricks.search.primitives import trigram_fast
-from nexus.bricks.search.strategies import (
+from nexus.contracts.search_types import (
     GREP_TRIGRAM_THRESHOLD,
     SearchStrategy,
 )

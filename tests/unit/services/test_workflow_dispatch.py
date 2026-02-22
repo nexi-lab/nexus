@@ -88,7 +88,7 @@ class TestFire:
         """Overflow should log warning, not raise."""
         svc, pm = _make_service()
         # Create pipe with small capacity
-        pm.mkpipe("/nexus/pipes/workflow-events", capacity=256, owner_id="kernel")
+        pm.create("/nexus/pipes/workflow-events", capacity=256, owner_id="kernel")
         svc._pipe_ready = True
 
         # Fill the pipe

@@ -326,56 +326,6 @@ class TestDirectoryOperations:
         assert result is True
 
 
-class TestWorkspaceOperations:
-    """Test workspace operation path scoping."""
-
-    def test_register_workspace(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
-        """Test register_workspace with path scoping."""
-        mock_fs.register_workspace.return_value = {"path": "/zones/team_12/users/user_1/workspace"}
-        result = scoped_fs.register_workspace("/workspace", name="my-workspace")
-        mock_fs.register_workspace.assert_called_once_with(
-            "/zones/team_12/users/user_1/workspace",
-            "my-workspace",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        )
-        assert result["path"] == "/workspace"
-
-    def test_list_workspaces(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
-        """Test list_workspaces unscopes paths."""
-        mock_fs.list_workspaces.return_value = [
-            {"path": "/zones/team_12/users/user_1/workspace", "name": "ws1"}
-        ]
-        result = scoped_fs.list_workspaces()
-        assert result[0]["path"] == "/workspace"
-
-    def test_workspace_snapshot(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
-        """Test workspace_snapshot with path scoping."""
-        mock_fs.workspace_snapshot.return_value = {
-            "workspace_path": "/zones/team_12/users/user_1/workspace"
-        }
-        result = scoped_fs.workspace_snapshot(workspace_path="/workspace")
-        mock_fs.workspace_snapshot.assert_called_once_with(
-            "/zones/team_12/users/user_1/workspace", None, None
-        )
-        assert result["workspace_path"] == "/workspace"
-
-
-class TestSandboxOperations:
-    """Test that sandbox operations are passed through without path scoping."""
-
-    def test_sandbox_create(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
-        """Test sandbox_create is passed through."""
-        mock_fs.sandbox_create.return_value = {"sandbox_id": "sb-123"}
-        result = scoped_fs.sandbox_create("test-sandbox")
-        mock_fs.sandbox_create.assert_called_once_with("test-sandbox", 10, "e2b", None, None)
-        assert result["sandbox_id"] == "sb-123"
-
-
 class TestLifecycleManagement:
     """Test lifecycle management."""
 

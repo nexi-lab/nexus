@@ -15,7 +15,6 @@ from unittest.mock import MagicMock
 
 from nexus.contracts.vfs_hooks import (
     ReadHookContext,
-    VFSHookPipeline,
     VFSReadHook,
     VFSWriteHook,
     WriteHookContext,
@@ -115,7 +114,7 @@ class FakeBulkHost(NexusFSBulkMixin):
     """Minimal host that satisfies NexusFSBulkMixin dependencies."""
 
     def __init__(self) -> None:
-        self._hook_pipeline = VFSHookPipeline()
+        self._hook_pipeline = None
         self._enforce_permissions = False
         self._default_context = None
         self.auto_parse = False

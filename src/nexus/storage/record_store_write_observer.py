@@ -309,8 +309,18 @@ class BufferedRecordStoreWriteObserver:
         old_metadata: FileMetadata | None = None,
         zone_id: str | None = None,
         agent_id: str | None = None,
+        urgency: str | None = None,
     ) -> None:
         """Enqueue a write event. Returns immediately."""
+        from nexus.storage.write_buffer import Urgency
+
+        resolved_urgency = Urgency.NORMAL
+        if urgency is not None:
+            try:
+                resolved_urgency = Urgency(urgency)
+            except ValueError:
+                resolved_urgency = Urgency.NORMAL
+
         self._buffer.enqueue_write(
             metadata,
             is_new=is_new,
@@ -319,6 +329,7 @@ class BufferedRecordStoreWriteObserver:
             agent_id=agent_id,
             snapshot_hash=old_metadata.etag if old_metadata else None,
             metadata_snapshot=old_metadata.to_dict() if old_metadata else None,
+            urgency=resolved_urgency,
         )
 
     def on_write_batch(

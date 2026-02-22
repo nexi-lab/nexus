@@ -1046,7 +1046,7 @@ class NexusFS(  # type: ignore[misc]
                 logger.warning(f"Failed to grant direct_owner permission for {path}: {e}")
 
         # Issue #900: Unified two-phase dispatch for mkdir
-        new_revision = self._increment_zone_revision()
+        new_revision = self._increment_vfs_revision()
 
         from nexus.contracts.vfs_hooks import MkdirHookContext, MutationEvent
 
@@ -1211,7 +1211,7 @@ class NexusFS(  # type: ignore[misc]
                 logger.debug("Failed to clean up directory index for %s: %s", path, e)
 
         # Issue #900: Unified two-phase dispatch for rmdir
-        new_revision = self._increment_zone_revision()
+        new_revision = self._increment_vfs_revision()
 
         from nexus.contracts.vfs_hooks import MutationEvent, RmdirHookContext
 

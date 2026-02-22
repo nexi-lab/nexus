@@ -53,7 +53,7 @@ class NexusFSBulkMixin:
         - _permission_checker: object with .check() method
         - auto_parse: bool
         - Various methods: _validate_path, _get_routing_params, _check_zone_writable,
-          _fire_post_mutation_hooks, _increment_zone_revision,
+          _fire_post_mutation_hooks, _increment_vfs_revision,
           _check_permission, _get_zone_id, exists, delete, rename, is_directory,
           _has_descendant_access, _rmdir_internal
     """
@@ -113,7 +113,7 @@ class NexusFSBulkMixin:
             is_new: bool = False,
             new_path: str | None = None,
         ) -> None: ...
-        def _increment_zone_revision(self) -> int: ...
+        def _increment_vfs_revision(self) -> int: ...
         # _handle_observer_error → removed (Issue #2152)
         @staticmethod
         def _resolve_write_urgency(io_profile: str) -> str | None: ...
@@ -659,7 +659,7 @@ class NexusFSBulkMixin:
             )
 
         # Fire post-mutation hooks for each file in the batch
-        new_revision = self._increment_zone_revision()
+        new_revision = self._increment_vfs_revision()
         for metadata in metadata_list:
             is_new = existing_metadata.get(metadata.path) is None
             self._fire_post_mutation_hooks(

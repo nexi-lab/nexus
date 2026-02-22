@@ -440,7 +440,7 @@ class EventsService:
         Raises:
             LockTimeout: If lock cannot be acquired within timeout
         """
-        from nexus.core.exceptions import LockTimeout
+        from nexus.contracts.exceptions import LockTimeout
 
         lock_id = await self.lock(path, timeout=timeout, ttl=ttl, _context=_context)
         if lock_id is None:

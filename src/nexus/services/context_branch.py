@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
-from nexus.core.exceptions import (
+from nexus.contracts.exceptions import (
     BranchConflictError,
     BranchExistsError,
     BranchNotFoundError,

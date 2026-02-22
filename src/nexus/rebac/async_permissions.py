@@ -96,7 +96,7 @@ class AsyncPermissionEnforcer:
         if self.namespace_manager is not None:
             subject = context.get_subject()
             if not self.namespace_manager.is_visible(subject, path, context.zone_id):
-                from nexus.core.exceptions import NexusFileNotFoundError
+                from nexus.contracts.exceptions import NexusFileNotFoundError
 
                 raise NexusFileNotFoundError(
                     path=path,

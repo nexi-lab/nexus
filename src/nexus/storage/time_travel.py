@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import and_, or_, select
 
-from nexus.core.exceptions import NexusFileNotFoundError
+from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.storage.models import FilePathModel, OperationLogModel
 
 if TYPE_CHECKING:

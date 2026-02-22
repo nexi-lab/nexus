@@ -640,7 +640,7 @@ class DelegationService:
                     "subject": ("agent", worker_id),
                     "relation": grant.relation,
                     "object": (grant.object_type, grant.object_id),
-                    "zone_id": zone_id or "root",
+                    "zone_id": zone_id or ROOT_ZONE_ID,
                     "expires_at": expires_at,
                     "conditions": json.dumps({"delegated_by": coordinator_agent_id}),
                 }

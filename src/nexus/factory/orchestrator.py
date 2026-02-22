@@ -453,7 +453,7 @@ def _register_vfs_hooks(nx: NexusFS) -> None:
     """Register INTERCEPT hooks on KernelDispatch (Issue #900).
 
     Each hook lives in its own service directory:
-      - DynamicViewerReadHook  → services/rebac/     (INTERCEPT read)
+      - DynamicViewerReadHook  → core/vfs_hook_impls  (INTERCEPT read)
       - AutoParseWriteHook     → parsers/             (INTERCEPT write)
       - TigerCacheRenameHook   → services/permissions/cache/tiger/  (INTERCEPT rename)
 
@@ -471,7 +471,7 @@ def _register_vfs_hooks(nx: NexusFS) -> None:
         and hasattr(nx, "apply_dynamic_viewer_filter")
     )
     if has_viewer:
-        from nexus.services.rebac.dynamic_viewer_hook import DynamicViewerReadHook
+        from nexus.core.vfs_hook_impls import DynamicViewerReadHook
 
         dispatch.register_intercept_read(
             DynamicViewerReadHook(

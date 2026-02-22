@@ -385,8 +385,8 @@ class TestKernelIntegrationViaConnect:
 
         assert nx is not None
 
-    def test_kernel_profile_no_write_observer(self, tmp_path: "Path") -> None:
-        """KERNEL mode has no write observer (no record store to sync)."""
+    def test_kernel_profile_dispatch_has_no_observers(self, tmp_path: "Path") -> None:
+        """KERNEL mode has empty dispatch (no record store to sync)."""
         from nexus.backends.local import LocalBackend
         from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_bricks
         from nexus.factory.orchestrator import create_nexus_fs
@@ -402,7 +402,7 @@ class TestKernelIntegrationViaConnect:
             enabled_bricks=resolve_enabled_bricks(DeploymentProfile.KERNEL),
         )
 
-        assert nx._write_observer is None
+        assert nx._dispatch.observer_count == 0
 
     def test_kernel_profile_no_workflow_engine(self, tmp_path: "Path") -> None:
         """KERNEL mode has no workflow engine."""

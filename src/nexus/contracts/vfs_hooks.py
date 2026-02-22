@@ -23,7 +23,6 @@ from typing import Any, Protocol, runtime_checkable
 from nexus.contracts.metadata import FileMetadata
 from nexus.contracts.operation_result import OperationWarning
 from nexus.contracts.types import OperationContext
-from nexus.core.file_events import FileEvent
 
 # ---------------------------------------------------------------------------
 # Hook context dataclasses — passed through pre/post hook chains

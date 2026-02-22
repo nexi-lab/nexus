@@ -168,7 +168,13 @@ from nexus.bricks.search.ranking import (
 )
 from nexus.bricks.search.result_builders import build_result_from_row, build_semantic_result
 from nexus.bricks.search.results import BaseSearchResult, detect_matched_field
-from nexus.bricks.search.strategies import (
+from nexus.bricks.search.vector_db import VectorDatabase
+from nexus.bricks.search.zoekt_client import (
+    ZoektClient,
+    ZoektIndexManager,
+    ZoektMatch,
+)
+from nexus.contracts.search_types import (
     AGGREGATION_WORDS,
     COMPARISON_WORDS,
     COMPLEX_PATTERNS,
@@ -182,12 +188,6 @@ from nexus.bricks.search.strategies import (
     TEMPORAL_WORDS,
     GlobStrategy,
     SearchStrategy,
-)
-from nexus.bricks.search.vector_db import VectorDatabase
-from nexus.bricks.search.zoekt_client import (
-    ZoektClient,
-    ZoektIndexManager,
-    ZoektMatch,
 )
 
 __all__ = [

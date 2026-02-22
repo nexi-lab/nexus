@@ -318,7 +318,6 @@ class TestSystemServices:
             "workspace_registry",
             "mount_manager",
             "workspace_manager",
-            "kernel_dispatch",
             # Original system services
             "agent_registry",
             "async_agent_registry",

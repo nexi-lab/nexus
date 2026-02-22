@@ -123,7 +123,7 @@ def _boot_system_services(
             _st = ctx.profile_tuning.storage
             write_observer = BufferedRecordStoreWriteObserver(
                 ctx.record_store,
-                strict_mode=ctx.perm.audit_strict_mode,
+                strict_mode=ctx.audit.strict_mode,
                 flush_interval_ms=_st.write_buffer_flush_ms,
                 max_buffer_size=_st.write_buffer_max_size,
             )
@@ -132,7 +132,7 @@ def _boot_system_services(
 
             write_observer = RecordStoreWriteObserver(
                 ctx.record_store,
-                strict_mode=ctx.perm.audit_strict_mode,
+                strict_mode=ctx.audit.strict_mode,
             )
 
         logger.debug(

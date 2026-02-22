@@ -19,6 +19,7 @@ from nexus.core.hash_fast import hash_content
 if TYPE_CHECKING:
     from nexus.rebac.entity_registry import EntityRegistry
     from nexus.services.memory.memory_api import Memory
+from nexus.contracts.metadata import FileMetadata
 from nexus.core.cache_store import CacheStoreABC, NullCacheStore
 from nexus.core.config import (
     BrickServices,
@@ -32,7 +33,6 @@ from nexus.core.config import (
     WiredServices,
 )
 from nexus.core.filesystem import NexusFilesystem
-from nexus.core.metadata import FileMetadata
 from nexus.core.metastore import MetastoreABC
 from nexus.core.nexus_fs_core import NexusFSCoreMixin
 from nexus.core.router import NamespaceConfig, PathRouter

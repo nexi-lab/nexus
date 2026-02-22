@@ -239,12 +239,6 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
         True,
     ),
     (
-        "DelegationProtocol",
-        "nexus.services.protocols.delegation",
-        "nexus.bricks.delegation.service.DelegationService",
-        True,
-    ),
-    (
         "OperationLogProtocol",
         "nexus.services.protocols.operation_log",
         "nexus.storage.operation_logger.OperationLogger",
@@ -391,7 +385,6 @@ def test_rebac_manager_satisfies_manager_methods() -> None:
 _PROTOCOL_FILES: list[tuple[str, str]] = [
     ("agent_registry", "nexus/services/protocols/agent_registry.py"),
     ("auth", "nexus/services/protocols/auth.py"),
-    ("delegation", "nexus/services/protocols/delegation.py"),
     ("event_log", "nexus/services/event_subsystem/log/protocol.py"),
     ("governance", "nexus/bricks/governance/protocols.py"),
     ("hook_engine", "nexus/services/protocols/hook_engine.py"),
@@ -407,7 +400,6 @@ _PROTOCOL_FILES: list[tuple[str, str]] = [
     ("parse", "nexus/services/protocols/parse.py"),
     ("payment", "nexus/services/protocols/payment.py"),
     ("permission", "nexus/services/protocols/permission.py"),
-    ("plugin", "nexus/services/protocols/plugin.py"),
     ("rebac", "nexus/services/protocols/rebac.py"),
     ("reputation", "nexus/services/protocols/reputation.py"),
     ("scheduler", "nexus/services/protocols/scheduler.py"),

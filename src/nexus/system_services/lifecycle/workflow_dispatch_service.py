@@ -4,7 +4,7 @@ Extracted from ``NexusFSCoreMixin._fire_workflow_event`` / ``ensure_workflow_con
 (Task #808). Dispatches workflow trigger events via PipeManager (userspace API
 over DT_PIPE kernel IPC) and broadcasts to webhook subscriptions.
 
-Implements ``PostMutationHook`` — registered in the kernel's hook list so
+Implements ``VFSObserver`` — registered in KernelDispatch's OBSERVE phase so
 the kernel fires a single ``MutationEvent`` without knowing about workflows.
 
 DI dependencies (no god-object access):
@@ -13,6 +13,8 @@ DI dependencies (no god-object access):
     - subscription_manager: Optional webhook broadcast (injected late by server)
     - enable_workflows: Feature flag from DistributedConfig
 """
+
+from __future__ import annotations
 
 import asyncio
 import contextlib
@@ -23,9 +25,9 @@ from typing import TYPE_CHECKING, Any
 from nexus.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
-    from nexus.bricks.workflows.protocol import WorkflowProtocol
-    from nexus.lib.mutation_hooks import MutationEvent
-    from nexus.system_services.pipe_manager import PipeManager
+    from nexus.contracts.vfs_hooks import MutationEvent
+    from nexus.core.pipe_manager import PipeManager
+    from nexus.workflows.protocol import WorkflowProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -37,14 +39,14 @@ _WORKFLOW_PIPE_CAPACITY = 65_536  # 64KB
 class WorkflowDispatchService:
     """Dispatches workflow trigger events via PipeManager and webhook subscriptions.
 
-    Implements ``WorkflowDispatchProtocol`` and ``PostMutationHook``.
+    Implements ``WorkflowDispatchProtocol`` and ``VFSObserver``.
     """
 
     def __init__(
         self,
         *,
-        pipe_manager: "PipeManager | None",
-        workflow_engine: "WorkflowProtocol | None",
+        pipe_manager: PipeManager | None,
+        workflow_engine: WorkflowProtocol | None,
         subscription_manager: Any = None,
         enable_workflows: bool = True,
     ) -> None:
@@ -64,12 +66,12 @@ class WorkflowDispatchService:
         self._subscription_manager = manager
 
     # ------------------------------------------------------------------
-    # PostMutationHook — called by kernel's _fire_post_mutation_hooks
+    # VFSObserver — called by KernelDispatch OBSERVE phase
     # ------------------------------------------------------------------
 
-    def on_mutation(self, event: "MutationEvent") -> None:
+    def on_mutation(self, event: MutationEvent) -> None:
         """Translate kernel MutationEvent into workflow fire + webhook broadcast."""
-        from nexus.lib.mutation_hooks import MutationOp
+        from nexus.contracts.vfs_hooks import MutationOp
 
         trigger_type = f"file_{event.operation.value}"
 
@@ -151,7 +153,7 @@ class WorkflowDispatchService:
         from nexus.core.pipe import PipeError
 
         try:
-            self._pipe_manager.create(
+            self._pipe_manager.mkpipe(
                 _WORKFLOW_PIPE_PATH,
                 capacity=_WORKFLOW_PIPE_CAPACITY,
                 owner_id="kernel",

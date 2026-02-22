@@ -4,16 +4,18 @@ Tests the service directly (not via FakeCoreMixin) — fire(), on_mutation(),
 start()/stop() lifecycle, and PipeManager integration.
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from nexus.contracts.metadata import FileMetadata
-from nexus.lib.mutation_hooks import MutationEvent, MutationOp
-from nexus.system_services.lifecycle.workflow_dispatch_service import WorkflowDispatchService
-from nexus.system_services.pipe_manager import PipeManager
+from nexus.contracts.vfs_hooks import MutationEvent, MutationOp
+from nexus.core.metadata import FileMetadata
+from nexus.core.pipe_manager import PipeManager
+from nexus.services.workflow_dispatch_service import WorkflowDispatchService
 
 # ======================================================================
 # Fixtures
@@ -86,7 +88,7 @@ class TestFire:
         """Overflow should log warning, not raise."""
         svc, pm = _make_service()
         # Create pipe with small capacity
-        pm.create("/nexus/pipes/workflow-events", capacity=256, owner_id="kernel")
+        pm.mkpipe("/nexus/pipes/workflow-events", capacity=256, owner_id="kernel")
         svc._pipe_ready = True
 
         # Fill the pipe
@@ -130,7 +132,7 @@ class TestFire:
 
 
 # ======================================================================
-# on_mutation() — PostMutationHook
+# on_mutation() — VFSObserver
 # ======================================================================
 
 

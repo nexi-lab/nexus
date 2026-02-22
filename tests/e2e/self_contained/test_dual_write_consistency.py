@@ -6,6 +6,8 @@ contain consistent data with matching fields.
 Phase 1.4 of #1246/#1330 consolidation plan.
 """
 
+from __future__ import annotations
+
 import tempfile
 from collections.abc import Generator
 from pathlib import Path
@@ -56,7 +58,7 @@ def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore) -> Generator[NexusFS
     raft_store = _try_create_raft_store(str(temp_dir / "raft-metadata"))
     if raft_store is None:
         # Fallback to InMemoryMetastore with factory-style wiring
-        from nexus.storage.record_store_syncer import RecordStoreWriteObserver
+        from nexus.storage.record_store_write_observer import RecordStoreWriteObserver
         from tests.helpers.in_memory_metadata_store import InMemoryMetastore
 
         metadata_store = InMemoryMetastore()

@@ -207,7 +207,6 @@ def _boot_system_services(
         workspace_registry = WorkspaceRegistry(
             metadata=ctx.metadata_store,
             rebac_manager=rebac_manager,
-            record_store=ctx.record_store,
         )
         logger.debug("[BOOT:SYSTEM] WorkspaceRegistry created")
     except Exception as exc:
@@ -327,10 +326,9 @@ def _boot_system_services(
             from nexus.services.event_log.delivery_worker import EventDeliveryWorker
 
             delivery_worker = EventDeliveryWorker(
-                record_store=ctx.record_store,
+                session_factory=ctx.record_store.session_factory,
                 poll_interval_ms=200,
                 batch_size=50,
-                use_row_locking=True,
             )
         except Exception as exc:
             logger.warning("[BOOT:SYSTEM] EventDeliveryWorker unavailable: %s", exc)
@@ -431,7 +429,7 @@ def _boot_system_services(
     # --- Tiger Cache Manager (Issue #2133: injected via factory) ---
     tiger_cache_manager: Any = None
     try:
-        from nexus.services.tiger_cache_manager import TigerCacheManager
+        from nexus.bricks.rebac.tiger_cache_manager import TigerCacheManager
 
         tiger_cache_manager = TigerCacheManager(
             rebac_manager=rebac_manager,

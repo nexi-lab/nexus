@@ -289,7 +289,7 @@ def _boot_wired_services(
     else:
         logger.debug("[BOOT:WIRED] EventsService disabled by profile")
 
-    # --- RPC / helper services (Issue #2133: migrated from service_wiring.py) ---
+    # --- RPC / helper services (Issue #2133) ---
     # Pre-extract optional NexusFS attrs to avoid mypy getattr+None inference issues
     _nx_default_context: Any = getattr(nx, "_default_context", None)
     _nx_session_factory: Any = getattr(nx, "SessionLocal", None)

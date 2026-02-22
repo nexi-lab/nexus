@@ -388,7 +388,7 @@ class WiredServices:
     time_travel_service: Any = None
     operations_service: Any = None
 
-    # RPC services (Issue #2133: migrated from service_wiring.py)
+    # RPC services (Issue #2133)
     workspace_rpc_service: Any = None
     agent_rpc_service: Any = None
     user_provisioning_service: Any = None

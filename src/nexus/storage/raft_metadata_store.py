@@ -28,6 +28,7 @@ import logging
 from collections.abc import Iterator, Sequence
 from typing import Any
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.metadata import FileMetadata, PaginatedResult
 from nexus.core.metastore import CasResult, MetastoreABC
 
@@ -513,7 +514,7 @@ class RaftMetadataStore(MetastoreABC):
         # zone_id parameter accepted for API consistency but filtering is inherent.
         # RaftMetadataStore is zone-local. Non-zoned stores serve the "root" zone,
         # so zone_id="root" is always allowed. Only assert on specific zone_ids.
-        if zone_id is not None and zone_id != "root":
+        if zone_id is not None and zone_id != ROOT_ZONE_ID:
             assert self._zone_id is not None, (
                 f"zone_id filter '{zone_id}' passed to a non-zone-scoped store"
             )
@@ -579,7 +580,7 @@ class RaftMetadataStore(MetastoreABC):
         # RaftMetadataStore is zone-local: zone_id accepted for API consistency.
         # RaftMetadataStore is zone-local. Non-zoned stores serve the "root" zone,
         # so zone_id="root" is always allowed. Only assert on specific zone_ids.
-        if zone_id is not None and zone_id != "root":
+        if zone_id is not None and zone_id != ROOT_ZONE_ID:
             assert self._zone_id is not None, (
                 f"zone_id filter '{zone_id}' passed to a non-zone-scoped store"
             )
@@ -1140,7 +1141,7 @@ class RaftMetadataStore(MetastoreABC):
         # RaftMetadataStore is zone-local: zone_id accepted for API consistency.
         # RaftMetadataStore is zone-local. Non-zoned stores serve the "root" zone,
         # so zone_id="root" is always allowed. Only assert on specific zone_ids.
-        if zone_id is not None and zone_id != "root":
+        if zone_id is not None and zone_id != ROOT_ZONE_ID:
             assert self._zone_id is not None, (
                 f"zone_id filter '{zone_id}' passed to a non-zone-scoped store"
             )

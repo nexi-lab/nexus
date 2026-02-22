@@ -5,7 +5,6 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from nexus.bricks.cache.inmemory import InMemoryCacheStore
 from nexus.bricks.ipc.conventions import (
     dead_letter_path,
     inbox_path,
@@ -21,6 +20,7 @@ from nexus.bricks.ipc.exceptions import (
     InboxNotFoundError,
 )
 from nexus.bricks.ipc.provisioning import AgentProvisioner
+from nexus.cache.inmemory import InMemoryCacheStore
 
 from .fakes import (
     InMemoryEventPublisher,
@@ -427,7 +427,7 @@ class TestConcurrentProcessing:
             call_count += 1
             await asyncio.sleep(0.01)
 
-        from nexus.bricks.cache.inmemory import InMemoryCacheStore
+        from nexus.cache.inmemory import InMemoryCacheStore
 
         cache_store = InMemoryCacheStore()
         p1 = MessageProcessor(vfs, "agent:bob", handler, zone_id=ZONE, cache_store=cache_store)

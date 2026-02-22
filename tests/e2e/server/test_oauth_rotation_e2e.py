@@ -20,7 +20,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from nexus.bricks.auth.oauth.token_manager import TokenManager, _hash_token
-from nexus.bricks.cache.inmemory import InMemoryCacheStore
+from nexus.cache.inmemory import InMemoryCacheStore
 from nexus.contracts.exceptions import AuthenticationError
 from nexus.server.auth.oauth_provider import OAuthCredential
 from nexus.storage.models._base import Base

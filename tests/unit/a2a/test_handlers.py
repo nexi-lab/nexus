@@ -19,7 +19,7 @@ from nexus.bricks.a2a.handlers import dispatch, handle_cancel, handle_get, handl
 from nexus.bricks.a2a.models import Message, TaskState, TextPart
 from nexus.bricks.a2a.stores.in_memory import CacheBackedTaskStore
 from nexus.bricks.a2a.task_manager import TaskManager
-from nexus.bricks.cache.inmemory import InMemoryCacheStore
+from nexus.cache.inmemory import InMemoryCacheStore
 
 
 @pytest.fixture

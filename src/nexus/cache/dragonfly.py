@@ -17,8 +17,6 @@ Connection Pool Optimizations (Issue #1075):
 - Retry on timeout: Automatic retry for transient network issues
 """
 
-from __future__ import annotations
-
 import logging
 import socket
 from collections.abc import AsyncIterator
@@ -155,7 +153,7 @@ class DragonflyClient:
 
         # Verify connection
         try:
-            await self._client.ping()  # type: ignore[misc]
+            await self._client.ping()
             self._connected = True
             logger.info(
                 f"Connected to Dragonfly at {self._safe_url} "
@@ -177,8 +175,8 @@ class DragonflyClient:
         logger.info("Disconnected from Dragonfly")
 
     @property
-    def client(self) -> redis.Redis:
-        """Get the Redis client.
+    def client(self) -> Any:
+        """Get the Redis client (redis.asyncio.Redis).
 
         Raises:
             RuntimeError: If not connected
@@ -204,7 +202,7 @@ class DragonflyClient:
         if not self._client or not self._connected:
             return False
         try:
-            await self._client.ping()  # type: ignore[misc]
+            await self._client.ping()
             return True
         except Exception as e:
             logger.warning(f"Dragonfly health check failed: {e}")
@@ -267,7 +265,7 @@ class DragonflyClient:
         except Exception as e:
             return {"pool_status": "error", "error": str(e)}
 
-    async def __aenter__(self) -> DragonflyClient:
+    async def __aenter__(self) -> "DragonflyClient":
         """Async context manager entry."""
         await self.connect()
         return self
@@ -298,13 +296,14 @@ class DragonflyCacheStore(CacheStoreABC):
                 process(msg)
     """
 
-    def __init__(self, client: DragonflyClient) -> None:
+    def __init__(self, client: "DragonflyClient") -> None:
         self._client = client
 
     # --- KV operations ---
 
     async def get(self, key: str) -> bytes | None:
-        return await self._client.client.get(key)
+        result: bytes | None = await self._client.client.get(key)
+        return result
 
     async def set(self, key: str, value: bytes, ttl: int | None = None) -> None:
         if ttl is not None:
@@ -314,11 +313,11 @@ class DragonflyCacheStore(CacheStoreABC):
 
     async def delete(self, key: str) -> bool:
         result = await self._client.client.delete(key)
-        return result > 0
+        return bool(result > 0)
 
     async def exists(self, key: str) -> bool:
         result = await self._client.client.exists(key)
-        return result > 0
+        return bool(result > 0)
 
     async def delete_by_pattern(self, pattern: str) -> int:
         """Delete keys matching pattern using SCAN + pipeline DEL (Decision #13)."""
@@ -344,10 +343,10 @@ class DragonflyCacheStore(CacheStoreABC):
 
     async def keys_by_pattern(self, pattern: str) -> list[str]:
         """Return keys matching pattern using SCAN cursor."""
-        keys: list[str] = []
+        result: list[str] = []
         async for key in self._client.client.scan_iter(match=pattern, count=1000):
-            keys.append(key.decode() if isinstance(key, bytes) else key)
-        return keys
+            result.append(key.decode() if isinstance(key, bytes) else key)
+        return result
 
     # --- Batch KV operations (Decision #13) ---
 
@@ -378,7 +377,8 @@ class DragonflyCacheStore(CacheStoreABC):
     # --- PubSub operations ---
 
     async def publish(self, channel: str, message: bytes) -> int:
-        return await self._client.client.publish(channel, message)
+        result: int = await self._client.client.publish(channel, message)
+        return result
 
     @asynccontextmanager
     async def subscribe(self, channel: str) -> AsyncIterator[AsyncIterator[bytes]]:

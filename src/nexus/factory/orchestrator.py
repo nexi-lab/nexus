@@ -368,7 +368,7 @@ def create_nexus_fs(
     _parse_fn = parsers_brick.create_parse_fn()
 
     # Create CacheBrick — owns all cache domain services (Issue #1524)
-    from nexus.bricks.cache.brick import CacheBrick
+    from nexus.cache.brick import CacheBrick
 
     _cache_brick = CacheBrick(
         cache_store=cache_store,

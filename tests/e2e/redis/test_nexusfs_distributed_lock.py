@@ -48,7 +48,7 @@ def temp_dir():
 @pytest.fixture
 async def redis_client():
     """Create a DragonflyClient for testing."""
-    from nexus.bricks.cache.dragonfly import DragonflyClient
+    from nexus.cache.dragonfly import DragonflyClient
 
     redis_url = os.environ.get(
         "NEXUS_DRAGONFLY_COORDINATION_URL",
@@ -143,7 +143,7 @@ def nx_sync_with_lock(temp_dir, isolated_db):
     This fixture is suitable for testing write(lock=True) in pure sync context.
     """
     from nexus.backends.passthrough import PassthroughBackend
-    from nexus.bricks.cache.dragonfly import DragonflyClient
+    from nexus.cache.dragonfly import DragonflyClient
     from nexus.core.nexus_fs import NexusFS
     from nexus.lib.distributed_lock import RedisLockManager
 
@@ -384,7 +384,7 @@ class TestWriteWithLock:
         import time
 
         from nexus.backends.passthrough import PassthroughBackend
-        from nexus.bricks.cache.dragonfly import DragonflyClient
+        from nexus.cache.dragonfly import DragonflyClient
         from nexus.core.nexus_fs import NexusFS
         from nexus.lib.distributed_lock import RedisLockManager
 
@@ -787,7 +787,7 @@ class TestMultiThreadingContention:
         import threading
 
         from nexus.backends.passthrough import PassthroughBackend
-        from nexus.bricks.cache.dragonfly import DragonflyClient
+        from nexus.cache.dragonfly import DragonflyClient
         from nexus.core.nexus_fs import NexusFS
         from nexus.lib.distributed_lock import RedisLockManager
 
@@ -868,7 +868,7 @@ class TestMultiThreadingContention:
         import threading
         import time
 
-        from nexus.bricks.cache.dragonfly import DragonflyClient
+        from nexus.cache.dragonfly import DragonflyClient
         from nexus.lib.distributed_lock import RedisLockManager
 
         redis_url = os.environ.get(
@@ -954,7 +954,7 @@ class TestMultiThreadingContention:
         import threading
         import time
 
-        from nexus.bricks.cache.dragonfly import DragonflyClient
+        from nexus.cache.dragonfly import DragonflyClient
         from nexus.lib.distributed_lock import RedisLockManager
 
         redis_url = os.environ.get(
@@ -1044,7 +1044,7 @@ class TestMultiThreadingContention:
         """
         import threading
 
-        from nexus.bricks.cache.dragonfly import DragonflyClient
+        from nexus.cache.dragonfly import DragonflyClient
         from nexus.lib.distributed_lock import RedisLockManager
 
         redis_url = os.environ.get(
@@ -1170,7 +1170,7 @@ class TestLockIsolation:
         Zone A's lock on /file.txt should NOT block Zone B's lock on /file.txt.
         """
         from nexus.backends.passthrough import PassthroughBackend
-        from nexus.bricks.cache.dragonfly import DragonflyClient
+        from nexus.cache.dragonfly import DragonflyClient
         from nexus.contracts.types import OperationContext
         from nexus.core.nexus_fs import NexusFS
         from nexus.lib.distributed_lock import RedisLockManager

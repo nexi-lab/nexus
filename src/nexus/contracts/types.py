@@ -1,9 +1,9 @@
 """Tier-neutral domain types for the Nexus VFS (Issue #1501).
 
 Canonical home for shared types imported by 72+ files across the codebase.
-This module has **zero** runtime imports from ``nexus.*`` --- only stdlib --- so
-bricks, services, and backends can depend on it without pulling in kernel
-internals.
+This module imports only ``nexus.constants`` (tier-neutral, zero transitive
+dependencies) at runtime --- no kernel internals --- so bricks, services, and
+backends can depend on it safely.
 
 Types:
     - ``Permission``: IntFlag for file operation permissions (read/write/execute/traverse).
@@ -18,6 +18,8 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from enum import IntFlag, StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+from nexus.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from nexus.storage.read_set import ReadSet
@@ -230,9 +232,9 @@ def extract_context_identity(context: OperationContext | None) -> ContextIdentit
         Frozen ContextIdentity with zone_id, user_id, is_admin.
     """
     if context is None:
-        return ContextIdentity(zone_id="root", user_id="anonymous", is_admin=False)
+        return ContextIdentity(zone_id=ROOT_ZONE_ID, user_id="anonymous", is_admin=False)
     return ContextIdentity(
-        zone_id=getattr(context, "zone_id", None) or "root",
+        zone_id=getattr(context, "zone_id", None) or ROOT_ZONE_ID,
         user_id=(
             getattr(context, "user_id", None) or getattr(context, "subject_id", None) or "anonymous"
         ),

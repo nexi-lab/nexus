@@ -274,7 +274,6 @@ class TestSystemServices:
         assert ss.namespace_manager is None
         assert ss.async_namespace_manager is None
         assert ss.context_branch_service is None
-        assert ss.scoped_hook_engine is None
         assert ss.brick_lifecycle_manager is None
         assert ss.delivery_worker is None
         assert ss.observability_subsystem is None
@@ -325,7 +324,6 @@ class TestSystemServices:
             "namespace_manager",
             "async_namespace_manager",
             "context_branch_service",
-            "scoped_hook_engine",
             "brick_lifecycle_manager",
             "brick_reconciler",
             "delivery_worker",

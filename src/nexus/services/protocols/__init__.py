@@ -16,7 +16,6 @@ Only VFSRouterProtocol remains in core/protocols/ as it is a kernel concern
 
 Storage Affinity (per data-storage-matrix.md):
     - AgentRegistryProtocol  → RecordStore (relational agent identity)
-    - HookEngineProtocol     → CacheStore (ephemeral hook registration)
     - NamespaceManagerProtocol → RecordStore + CacheStore (ReBAC views)
     - SchedulerProtocol      → CacheStore or RecordStore (work queue)
 
@@ -41,25 +40,6 @@ from nexus.services.protocols.chunked_upload import ChunkedUploadProtocol
 from nexus.services.protocols.entity_registry import EntityRegistryProtocol
 from nexus.services.protocols.file_reader import FileReaderProtocol
 from nexus.services.protocols.filesystem import NexusFilesystem
-from nexus.services.protocols.hook_engine import (
-    POST_COPY,
-    POST_DELETE,
-    POST_MKDIR,
-    POST_READ,
-    POST_WRITE,
-    PRE_COPY,
-    PRE_DELETE,
-    PRE_MKDIR,
-    PRE_READ,
-    PRE_WRITE,
-    FailurePolicy,
-    HookContext,
-    HookEngineProtocol,
-    HookId,
-    HookPhaseType,
-    HookResult,
-    HookSpec,
-)
 from nexus.services.protocols.llm import LLMServiceProtocol
 from nexus.services.protocols.llm_provider import LLMProviderProtocol
 from nexus.services.protocols.lock import LockProtocol
@@ -118,13 +98,6 @@ __all__ = [
     "EventLogConfig",
     "FileReaderProtocol",
     "EventLogProtocol",
-    "FailurePolicy",
-    "HookContext",
-    "HookEngineProtocol",
-    "HookId",
-    "HookPhaseType",
-    "HookResult",
-    "HookSpec",
     "LifecycleManagerProtocol",
     "LLMProviderProtocol",
     "LLMServiceProtocol",
@@ -142,16 +115,6 @@ __all__ = [
     "NexusOperationsProtocol",
     "OAuthProtocol",
     "OperationLogProtocol",
-    "POST_COPY",
-    "POST_DELETE",
-    "POST_MKDIR",
-    "POST_READ",
-    "POST_WRITE",
-    "PRE_COPY",
-    "PRE_DELETE",
-    "PRE_MKDIR",
-    "PRE_READ",
-    "PRE_WRITE",
     "ParseProtocol",
     "PaymentProtocol",
     "PermissionEnforcerProtocol",

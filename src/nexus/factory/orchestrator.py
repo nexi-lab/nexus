@@ -191,7 +191,6 @@ def create_nexus_services(
         namespace_manager=system_dict["namespace_manager"],
         async_namespace_manager=system_dict["async_namespace_manager"],
         context_branch_service=system_dict.get("context_branch_service"),
-        scoped_hook_engine=system_dict.get("scoped_hook_engine"),
         brick_lifecycle_manager=system_dict.get("brick_lifecycle_manager"),
         brick_reconciler=system_dict.get("brick_reconciler"),
         delivery_worker=system_dict["delivery_worker"],

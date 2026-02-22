@@ -4,7 +4,7 @@ Defines the contract for atomic COW filesystem snapshots that enable
 agent rollback of risky operations.
 
 Architecture: System Service (Tier 2) per NEXUS-LEGO-ARCHITECTURE.md.
-Triggered via HookEngine pre-hooks on destructive VFS ops.
+Triggered via KernelDispatch INTERCEPT on destructive VFS ops.
 
 Transaction lifecycle (strict state machine):
     begin()  -> ACTIVE

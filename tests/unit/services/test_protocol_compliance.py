@@ -225,12 +225,6 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
         "nexus.bricks.rebac.async_namespace_manager.AsyncNamespaceManager",
         True,
     ),
-    (
-        "HookEngineProtocol",
-        "nexus.services.protocols.hook_engine",
-        "nexus.plugins.async_hooks.AsyncHookEngine",
-        True,
-    ),
     # ── Service-layer protocols ───────────────────────────────────────
     (
         "MCPProtocol",
@@ -387,7 +381,6 @@ _PROTOCOL_FILES: list[tuple[str, str]] = [
     ("auth", "nexus/services/protocols/auth.py"),
     ("event_log", "nexus/services/event_subsystem/log/protocol.py"),
     ("governance", "nexus/bricks/governance/protocols.py"),
-    ("hook_engine", "nexus/services/protocols/hook_engine.py"),
     ("llm", "nexus/services/protocols/llm.py"),
     ("llm_provider", "nexus/services/protocols/llm_provider.py"),
     ("lock", "nexus/services/protocols/lock.py"),

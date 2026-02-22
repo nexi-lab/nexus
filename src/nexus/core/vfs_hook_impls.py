@@ -12,7 +12,7 @@ from collections.abc import Callable
 from typing import Any
 
 from nexus.constants import ROOT_ZONE_ID
-from nexus.core.vfs_hooks import ReadHookContext, RenameHookContext, WriteHookContext
+from nexus.contracts.vfs_hooks import ReadHookContext, RenameHookContext, WriteHookContext
 
 logger = logging.getLogger(__name__)
 

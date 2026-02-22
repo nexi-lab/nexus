@@ -13,14 +13,14 @@ from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
 
-from nexus.core.nexus_fs_bulk import NexusFSBulkMixin
-from nexus.core.vfs_hooks import (
+from nexus.contracts.vfs_hooks import (
     ReadHookContext,
     VFSHookPipeline,
     VFSReadHook,
     VFSWriteHook,
     WriteHookContext,
 )
+from nexus.core.nexus_fs_bulk import NexusFSBulkMixin
 
 # ── Fake hook implementations ────────────────────────────────────────────────
 

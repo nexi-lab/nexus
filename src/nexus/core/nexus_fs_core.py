@@ -153,7 +153,7 @@ class NexusFSCoreMixin:
             return
 
         try:
-            from nexus.core.event_bus import FileEvent, FileEventType
+            from nexus.core.file_events import FileEvent, FileEventType
 
             # Map string to enum
             type_map = {
@@ -3709,7 +3709,7 @@ class NexusFSCoreMixin:
             NexusFileNotFoundError: If memory doesn't exist.
         """
         from nexus.bricks.memory.router import MemoryViewRouter
-        from nexus.rebac.entity_registry import EntityRegistry
+        from nexus.bricks.rebac.entity_registry import EntityRegistry
 
         # Get memory via router
         session = self.SessionLocal()
@@ -3794,7 +3794,7 @@ class NexusFSCoreMixin:
             NexusFileNotFoundError: If memory doesn't exist.
         """
         from nexus.bricks.memory.router import MemoryViewRouter
-        from nexus.rebac.entity_registry import EntityRegistry
+        from nexus.bricks.rebac.entity_registry import EntityRegistry
 
         # Get memory via router
         session = self.SessionLocal()

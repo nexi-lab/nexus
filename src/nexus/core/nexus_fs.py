@@ -17,7 +17,7 @@ from nexus.contracts.vfs_hooks import MutationOp
 from nexus.core.hash_fast import hash_content
 
 if TYPE_CHECKING:
-    from nexus.rebac.entity_registry import EntityRegistry
+    from nexus.bricks.rebac.entity_registry import EntityRegistry
     from nexus.services.memory.memory_api import Memory
 from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
 from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC

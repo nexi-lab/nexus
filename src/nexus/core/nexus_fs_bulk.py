@@ -22,7 +22,7 @@ from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.contracts.metadata import FileMetadata
 from nexus.contracts.types import Permission
-from nexus.lib.mutation_hooks import MutationOp
+from nexus.contracts.vfs_hooks import MutationOp
 from nexus.lib.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,6 @@ if TYPE_CHECKING:
     from nexus.contracts.write_observer import WriteObserverProtocol
     from nexus.core.metastore import MetastoreABC
     from nexus.core.router import PathRouter
-    from nexus.core.vfs_hooks import VFSHookPipeline
 
 
 class NexusFSBulkMixin:
@@ -74,7 +73,7 @@ class NexusFSBulkMixin:
         _rebac_manager: Any
         _permission_checker: Any
         _write_observer: "WriteObserverProtocol | None"
-        _hook_pipeline: "VFSHookPipeline | None"
+        _hook_pipeline: Any
 
         @property
         def zone_id(self) -> str | None: ...
@@ -159,7 +158,7 @@ class NexusFSBulkMixin:
         """
         _pipeline = getattr(self, "_hook_pipeline", None)
         if _pipeline is not None and _pipeline.read_hook_count > 0:
-            from nexus.core.vfs_hooks import ReadHookContext
+            from nexus.contracts.vfs_hooks import ReadHookContext
 
             _read_ctx = ReadHookContext(
                 path=path,
@@ -801,7 +800,7 @@ class NexusFSBulkMixin:
         # Dispatch post-write hooks (auto-parse, etc.)
         _pipeline = getattr(self, "_hook_pipeline", None)
         if _pipeline is not None and _pipeline.write_hook_count > 0:
-            from nexus.core.vfs_hooks import WriteHookContext
+            from nexus.contracts.vfs_hooks import WriteHookContext
 
             for (path, content), file_meta in zip(validated_files, metadata_list, strict=False):
                 _write_ctx = WriteHookContext(

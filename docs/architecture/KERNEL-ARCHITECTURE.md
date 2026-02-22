@@ -215,15 +215,19 @@ The audit write observer is a factory-registered interceptor, not a kernel
 built-in; its error policy (abort vs log-and-continue) is observer-level
 config, not dispatch-level.
 
-OBSERVE phase broadcasts a frozen `MutationEvent` to all registered
-`VFSObserver` instances. Used for cache invalidation, workflow triggers,
-telemetry. Failures logged, never abort.
+OBSERVE phase broadcasts a frozen `FileEvent` to all registered
+`VFSObserver` instances. `FileEvent` is the single kernel-defined I/O
+event type — used by both OBSERVE (local, fire-and-forget) and EventBus
+(distributed delivery). Analogous to Linux `fsnotify_event`.
+Used for cache invalidation, workflow triggers, telemetry.
+Failures logged, never abort.
 
-**Contracts:** Hook protocols (`VFSReadHook`, `VFSWriteHook`, etc.),
-context dataclasses (`ReadHookContext`, `WriteHookContext`, etc.),
-`MutationEvent`, `VFSObserver` — all in `contracts/vfs_hooks.py`
-(tier-neutral, like `include/linux/notifier.h`).
-Concrete implementations in `services/hooks/` (policy, like SELinux/AppArmor).
+**Contracts:**
+- `FileEvent`/`FileEventType` in `core/file_events.py` (kernel-defined data type).
+- Hook protocols (`VFSReadHook`, `VFSWriteHook`, etc.), context dataclasses
+  (`ReadHookContext`, `WriteHookContext`, etc.), `VFSObserver` — in
+  `contracts/vfs_hooks.py` (tier-neutral, like `include/linux/notifier.h`).
+- Concrete implementations in `services/hooks/` (policy, like SELinux/AppArmor).
 
 **Registration API** (factory registers at boot):
 - `dispatch.register_intercept_read(hook)` — INTERCEPT hooks (per-operation)
@@ -420,11 +424,13 @@ IPC for agent messaging — 1:1 queue semantics using VFS as transport.
 
 `EventBusProtocol` (service protocol in `nexus.services.event_bus.protocol`) provides
 pub/sub for file system change notifications. Kernel defines only the event data types
-(`FileEvent`, `FileEventType` in `nexus.core.event_bus`).
+(`FileEvent`, `FileEventType` in `nexus.core.file_events`).
 
 Linux analogue: `dbus-daemon` (1:N broadcast). Consumed by `WatchProtocol` (S8) and
 `EventLogProtocol` (S17). Backends: Redis/Dragonfly (current default), NATS JetStream
 (preferred long-term). All should route through `CacheStoreABC` pub/sub.
+Target: EventBus delivery registered as `VFSObserver` on `KernelDispatch`, replacing
+`_publish_file_event()` direct calls (#969).
 
 **Federation gap:** EventBus is currently zone-local. Cross-zone event propagation not yet designed.
 

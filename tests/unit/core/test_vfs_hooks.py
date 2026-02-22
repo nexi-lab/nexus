@@ -12,12 +12,11 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from nexus.contracts.vfs_hooks import (
-    MutationEvent,
-    MutationOp,
     ReadHookContext,
     RenameHookContext,
     WriteHookContext,
 )
+from nexus.core.file_events import FileEvent, FileEventType
 from nexus.core.kernel_dispatch import KernelDispatch
 
 
@@ -242,8 +241,8 @@ class TestKernelDispatchObserve:
         d.register_observe(obs1)
         d.register_observe(obs2)
 
-        event = MutationEvent(
-            operation=MutationOp.WRITE,
+        event = FileEvent(
+            type=FileEventType.FILE_WRITE,
             path="/test.txt",
             zone_id="root",
             revision=1,
@@ -261,8 +260,8 @@ class TestKernelDispatchObserve:
         d.register_observe(obs1)
         d.register_observe(obs2)
 
-        event = MutationEvent(
-            operation=MutationOp.DELETE,
+        event = FileEvent(
+            type=FileEventType.FILE_DELETE,
             path="/gone.txt",
             zone_id="root",
             revision=2,
@@ -273,8 +272,8 @@ class TestKernelDispatchObserve:
 
     def test_no_observers_is_noop(self):
         d = KernelDispatch()
-        event = MutationEvent(
-            operation=MutationOp.WRITE,
+        event = FileEvent(
+            type=FileEventType.FILE_WRITE,
             path="/x.txt",
             zone_id="root",
             revision=1,

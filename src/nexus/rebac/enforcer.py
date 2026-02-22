@@ -16,7 +16,7 @@ import time
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from nexus.bricks.rebac.enforcer import check_stale_session
+from nexus.contracts.agent_utils import check_stale_session
 from nexus.contracts.types import OperationContext, Permission
 
 if TYPE_CHECKING:

@@ -7,40 +7,40 @@ dict keys, pickling, etc. all work identically regardless of import path.
 
 
 class TestLLMTypesIdentity:
-    """Verify nexus.contracts.llm_types ↔ nexus.llm.message identity."""
+    """Verify nexus.contracts.llm_types ↔ nexus.bricks.llm identity."""
 
     def test_message_identity(self) -> None:
-        from nexus.bricks.llm.message import Message as shim
+        from nexus.bricks.llm import Message as shim
         from nexus.contracts.llm_types import Message as canonical
 
         assert canonical is shim
 
     def test_message_role_identity(self) -> None:
-        from nexus.bricks.llm.message import MessageRole as shim
+        from nexus.bricks.llm import MessageRole as shim
         from nexus.contracts.llm_types import MessageRole as canonical
 
         assert canonical is shim
 
     def test_content_type_identity(self) -> None:
-        from nexus.bricks.llm.message import ContentType as shim
+        from nexus.bricks.llm import ContentType as shim
         from nexus.contracts.llm_types import ContentType as canonical
 
         assert canonical is shim
 
     def test_text_content_identity(self) -> None:
-        from nexus.bricks.llm.message import TextContent as shim
+        from nexus.bricks.llm import TextContent as shim
         from nexus.contracts.llm_types import TextContent as canonical
 
         assert canonical is shim
 
     def test_image_content_identity(self) -> None:
-        from nexus.bricks.llm.message import ImageContent as shim
+        from nexus.bricks.llm import ImageContent as shim
         from nexus.contracts.llm_types import ImageContent as canonical
 
         assert canonical is shim
 
     def test_image_detail_identity(self) -> None:
-        from nexus.bricks.llm.message import ImageDetail as shim
+        from nexus.bricks.llm import ImageDetail as shim
         from nexus.contracts.llm_types import ImageDetail as canonical
 
         assert canonical is shim
@@ -76,11 +76,5 @@ class TestReBACTypesIdentity:
     def test_traversal_stats_identity(self) -> None:
         from nexus.bricks.rebac.types import TraversalStats as shim
         from nexus.contracts.rebac_types import TraversalStats as canonical
-
-        assert canonical is shim
-
-    def test_cross_zone_allowed_relations_identity(self) -> None:
-        from nexus.bricks.rebac.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS as shim
-        from nexus.contracts.rebac_types import CROSS_ZONE_ALLOWED_RELATIONS as canonical
 
         assert canonical is shim

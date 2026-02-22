@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import logging
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
@@ -191,7 +192,7 @@ class EventsService:
         # Layer 1: Same-box local watching (fallback)
         if self._is_same_box():
             logger.debug(f"Using same-box file watcher for {path}")
-            from nexus.core.event_bus import FileEvent
+            from nexus.core.file_events import FileEvent
 
             assert isinstance(self._backend, PassthroughProtocol), (
                 "Backend must implement PassthroughProtocol for this operation"
@@ -231,7 +232,7 @@ class EventsService:
                     virtual_change_path = change.path
                     if not virtual_change_path.startswith("/"):
                         virtual_change_path = f"{watch_path.rstrip('/')}/{virtual_change_path}"
-                    event.path = virtual_change_path
+                    event = dataclasses.replace(event, path=virtual_change_path)
                     if event.matches_path_pattern(path):
                         return event.to_dict()
                     logger.debug(f"Event {event.path} didn't match pattern {path}, continuing...")
@@ -476,7 +477,7 @@ class EventsService:
         self, event_type: Any, path: str, old_path: str | None
     ) -> None:
         """Handle cache invalidation for any event source."""
-        from nexus.core.event_bus import FileEventType
+        from nexus.core.file_events import FileEventType
 
         if isinstance(event_type, str):
             try:
@@ -499,7 +500,7 @@ class EventsService:
 
     def _on_file_change(self, change: Any) -> None:
         """Callback for Layer 1 (FileWatcher) file change events."""
-        from nexus.core.event_bus import FileEvent
+        from nexus.core.file_events import FileEvent
 
         event = FileEvent.from_file_change(change)
         self._handle_cache_invalidation_event(event.type, change.path, change.old_path)

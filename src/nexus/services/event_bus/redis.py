@@ -8,7 +8,7 @@ import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
-from nexus.core.event_bus import FileEvent
+from nexus.core.file_events import FileEvent
 from nexus.services.event_bus.base import EventBusBase
 from nexus.services.event_bus.protocol import AckableEvent, PubSubClientProtocol
 

@@ -551,3 +551,12 @@ def _register_vfs_hooks(nx: "NexusFS") -> None:
     cache_observer = getattr(nx, "_cache_observer", None)
     if cache_observer is not None:
         dispatch.register_observe(cache_observer)
+
+    # EventBusObserver: forwards FileEvents to distributed EventBus (Redis/NATS).
+    # Replaces _publish_file_event() direct calls — single dispatch exit point.
+    # Late-binding (Issue #969): always register with bus_provider=nx so that
+    # post-construction overrides of nx._event_bus (e.g. E2E test fixtures
+    # injecting a shared Redis bus) are picked up automatically.
+    from nexus.services.event_subsystem.bus.observer import EventBusObserver
+
+    dispatch.register_observe(EventBusObserver(bus_provider=nx))

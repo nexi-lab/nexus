@@ -205,8 +205,6 @@ class NexusFS(  # type: ignore[misc]
         # =====================================================================
         self._event_bus = brk_svc.event_bus
         self._lock_manager = brk_svc.lock_manager
-        self.enable_workflows = distributed.enable_workflows
-        self.workflow_engine = brk_svc.workflow_engine
         self._wallet_provisioner = brk_svc.wallet_provisioner
         self._snapshot_service = brk_svc.snapshot_service
         self._api_key_creator = brk_svc.api_key_creator
@@ -223,7 +221,6 @@ class NexusFS(  # type: ignore[misc]
             "agent_id": None,
         }
         self._sandbox_manager: Any = None
-        self.subscription_manager: Any = None
         self._coordination_client: Any = None
         self._event_client: Any = None
 
@@ -1053,14 +1050,6 @@ class NexusFS(  # type: ignore[misc]
                 agent_id=ctx.agent_id,
                 user_id=ctx.user_id,
             )
-        )
-
-        # Issue #1331: Publish dir_create event to event bus
-        self._publish_file_event(
-            event_type="dir_create",
-            path=path,
-            zone_id=ctx.zone_id,
-            agent_id=ctx.agent_id,
         )
 
     @rpc_expose(description="Remove directory")

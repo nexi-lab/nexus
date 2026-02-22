@@ -18,14 +18,11 @@ Issue #900: Added MkdirHookContext, RmdirHookContext, VFSMkdirHook,
 """
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from nexus.contracts.metadata import FileMetadata
 from nexus.contracts.operation_result import OperationWarning
 from nexus.contracts.types import OperationContext
-
-if TYPE_CHECKING:
-    from nexus.core.file_events import FileEvent
 
 # ---------------------------------------------------------------------------
 # Hook context dataclasses — passed through pre/post hook chains
@@ -238,4 +235,4 @@ class VFSObserver(Protocol):
     Must not raise — exceptions are caught and logged by KernelDispatch.
     """
 
-    def on_mutation(self, event: FileEvent) -> None: ...
+    def on_mutation(self, event: Any) -> None: ...

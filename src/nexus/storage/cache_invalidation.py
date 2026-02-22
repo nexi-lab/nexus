@@ -78,7 +78,7 @@ class ReadSetCacheObserver:
         if metadata is None:
             return
 
-        from nexus.core.read_set import ReadSet
+        from nexus.storage.read_set import ReadSet
 
         rs = ReadSet(query_id=f"cache:{path}", zone_id=zone_id)
         rs.record_read(resource_type, path, revision=revision)

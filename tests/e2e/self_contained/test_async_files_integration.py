@@ -74,6 +74,12 @@ async def client(
     # Inject real AsyncNexusFS into _fastapi_app.state
     # (this is what lifespan() does during server startup)
     # Access through the module to get the updated global (not the initial None)
+    #
+    # CRITICAL: The async_files router's get_fs() lambda reads app.state.nexus_fs
+    # (set by build_v2_registry via `nexus_fs_getter=lambda: app.state.nexus_fs`).
+    # We must override nexus_fs to point to the real AsyncNexusFS so the router
+    # operates on it instead of the MagicMock passed to create_app().
+    fastapi_server._fastapi_app.state.nexus_fs = async_fs
     fastapi_server._fastapi_app.state.async_nexus_fs = async_fs
 
     async with AsyncClient(
@@ -84,6 +90,7 @@ async def client(
 
     # Cleanup
     await async_fs.close()
+    fastapi_server._fastapi_app.state.nexus_fs = mock_nexus_fs
     fastapi_server._fastapi_app.state.async_nexus_fs = None
     metadata_store.close()
 

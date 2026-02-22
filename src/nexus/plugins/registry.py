@@ -10,7 +10,6 @@ import yaml
 
 from nexus.lib.registry import BaseRegistry
 from nexus.plugins.base import NexusPlugin, PluginMetadata
-from nexus.plugins.hooks import HookType, PluginHooks
 from nexus.services.protocols.filesystem import NexusFilesystem
 
 logger = logging.getLogger(__name__)
@@ -50,7 +49,6 @@ class PluginRegistry(BaseRegistry[NexusPlugin]):
         super().__init__(name="plugins")
         self._nexus_fs = nexus_fs
         self._plugin_info: dict[str, PluginInfo] = {}
-        self._hooks = PluginHooks()
         self._config_dir = config_dir or Path.home() / ".nexus" / "plugins"
         self._config_dir.mkdir(parents=True, exist_ok=True)
 
@@ -120,7 +118,6 @@ class PluginRegistry(BaseRegistry[NexusPlugin]):
 
             loaded_plugin: NexusPlugin = plugin
             super().register(info.name, loaded_plugin, allow_overwrite=True)
-            self._register_plugin_hooks(info.name, loaded_plugin)
 
             info.loaded = True
             info.metadata = loaded_plugin.metadata()
@@ -166,7 +163,6 @@ class PluginRegistry(BaseRegistry[NexusPlugin]):
         """
         plugin_name = name or plugin.metadata().name
         super().register(plugin_name, plugin, allow_overwrite=True)
-        self._register_plugin_hooks(plugin_name, plugin)
         logger.info("Registered plugin: %s", plugin_name)
 
     async def unregister_plugin(self, plugin_name: str) -> None:
@@ -178,12 +174,6 @@ class PluginRegistry(BaseRegistry[NexusPlugin]):
         plugin = self.get(plugin_name)
         if plugin is None:
             return
-
-        # Unregister hooks
-        for hook_type in HookType:
-            for hook_name, handler in plugin.hooks().items():
-                if hook_name == hook_type.value:
-                    self._hooks.unregister(hook_type, handler)
 
         # Shutdown plugin
         try:
@@ -279,44 +269,6 @@ class PluginRegistry(BaseRegistry[NexusPlugin]):
         if plugin:
             plugin.disable()
             logger.info("Disabled plugin: %s", name)
-
-    def get_hooks(self) -> PluginHooks:
-        """Get the hooks registry.
-
-        Returns:
-            PluginHooks instance
-        """
-        return self._hooks
-
-    async def execute_hook(
-        self, hook_type: HookType, context: dict[str, Any]
-    ) -> dict[str, Any] | None:
-        """Execute a hook with context.
-
-        Args:
-            hook_type: Type of hook to execute
-            context: Context data
-
-        Returns:
-            Modified context or None if execution should stop
-        """
-        return await self._hooks.execute(hook_type, context)
-
-    def _register_plugin_hooks(self, plugin_name: str, plugin: NexusPlugin) -> None:
-        """Register all hooks from a plugin.
-
-        Args:
-            plugin_name: Name of the plugin
-            plugin: Plugin instance
-        """
-        for hook_name, handler in plugin.hooks().items():
-            try:
-                hook_type = HookType(hook_name)
-                priority = plugin.get_config(f"hook_priority.{hook_name}", 0)
-                self._hooks.register(hook_type, handler, priority)
-                logger.debug("Registered hook %s for plugin %s", hook_name, plugin_name)
-            except ValueError:
-                logger.warning("Unknown hook type %s from plugin %s", hook_name, plugin_name)
 
     def _load_plugin_config(self, plugin_name: str) -> dict[str, Any]:
         """Load configuration for a plugin.

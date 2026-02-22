@@ -31,18 +31,10 @@ from graphlib import CycleError, TopologicalSorter
 from typing import Any
 
 from nexus.services.protocols.brick_lifecycle import (
-    POST_MOUNT,
-    POST_UNMOUNT,
-    PRE_MOUNT,
-    PRE_UNMOUNT,
     BrickHealthReport,
     BrickLifecycleProtocol,
     BrickState,
     BrickStatus,
-)
-from nexus.services.protocols.hook_engine import (
-    HookContext,
-    HookEngineProtocol,
 )
 
 logger = logging.getLogger(__name__)
@@ -222,13 +214,8 @@ class BrickLifecycleManager:
         await manager.unmount_all() # Reverse-DAG-ordered shutdown
     """
 
-    def __init__(
-        self,
-        *,
-        hook_engine: HookEngineProtocol | None = None,
-    ) -> None:
+    def __init__(self) -> None:
         self._bricks: dict[str, _BrickEntry] = {}
-        self._hook_engine = hook_engine
 
     # ------------------------------------------------------------------
     # Registration (synchronous, boot-time)
@@ -309,67 +296,6 @@ class BrickLifecycleManager:
         entry.state = state
 
     # ------------------------------------------------------------------
-    # Hook integration
-    # ------------------------------------------------------------------
-
-    async def _fire_hook(
-        self,
-        phase: str,
-        entry: _BrickEntry,
-        *,
-        veto_keeps_current: bool = False,
-        agent_id: str | None = None,
-    ) -> bool:
-        """Fire a lifecycle hook via the HookEngine.
-
-        Returns True if the operation should proceed, False if vetoed.
-        When no hook engine is configured, always returns True.
-
-        Args:
-            phase: The lifecycle phase (PRE_MOUNT, POST_MOUNT, etc.)
-            entry: The brick entry to include in hook context.
-            veto_keeps_current: If True, a veto does NOT mark the brick as FAILED
-                (used for PRE_UNMOUNT where the brick should stay ACTIVE).
-            agent_id: Agent requesting the operation (explicit propagation).
-        """
-        if self._hook_engine is None:
-            return True
-
-        context = HookContext(
-            phase=phase,
-            path=None,
-            zone_id=None,
-            agent_id=agent_id,
-            payload={
-                "brick_name": entry.name,
-                "protocol_name": entry.protocol_name,
-                "state": entry.state.value,
-            },
-        )
-
-        try:
-            result = await self._hook_engine.fire(phase, context)
-        except Exception as exc:
-            logger.warning(
-                "[LIFECYCLE] Hook fire failed for %s on brick %r: %s",
-                phase,
-                entry.name,
-                exc,
-            )
-            # Hook failure doesn't block the operation
-            return True
-
-        if not result.proceed:
-            error_msg = result.error or f"Vetoed by {phase} hook"
-            logger.warning("[LIFECYCLE] Brick %r vetoed by %s: %s", entry.name, phase, error_msg)
-            if not veto_keeps_current:
-                entry.state = BrickState.FAILED
-                entry.error = error_msg
-            return False
-
-        return True
-
-    # ------------------------------------------------------------------
     # Status & health
     # ------------------------------------------------------------------
 
@@ -448,7 +374,6 @@ class BrickLifecycleManager:
         name: str,
         *,
         timeout: float = DEFAULT_START_TIMEOUT,
-        agent_id: str | None = None,
     ) -> None:
         """Mount a single brick: REGISTERED → STARTING → ACTIVE.
 
@@ -461,7 +386,6 @@ class BrickLifecycleManager:
         Args:
             name: Brick name to mount.
             timeout: Maximum seconds to wait for ``start()`` to complete.
-            agent_id: Agent requesting the mount (for scoped hooks).
 
         Raises:
             KeyError: If brick not found.
@@ -472,29 +396,22 @@ class BrickLifecycleManager:
             raise KeyError(f"Brick {name!r} not found")
 
         async with entry.lock:
-            await self._do_mount(entry, timeout=timeout, agent_id=agent_id)
+            await self._do_mount(entry, timeout=timeout)
 
     async def _do_mount(
         self,
         entry: _BrickEntry,
         *,
         timeout: float,
-        agent_id: str | None = None,
     ) -> None:
         """Internal mount logic (must be called under entry.lock).
 
-        Flow: PRE_MOUNT hook → transition → start() → POST_MOUNT hook.
-        If PRE_MOUNT vetoes, brick transitions to FAILED.
-        If start() fails, POST_MOUNT is NOT fired.
+        Flow: transition → start().
+        If start() fails, brick transitions to FAILED.
         """
         with _lifecycle_span(
             "mount", entry.name, protocol=entry.protocol_name, timeout=str(timeout)
         ) as span:
-            # Fire PRE_MOUNT hook — may veto
-            if not await self._fire_hook(PRE_MOUNT, entry, agent_id=agent_id):
-                _record_span_result(span, state="FAILED", error="Vetoed by PRE_MOUNT hook")
-                return  # Vetoed — entry already marked FAILED
-
             # Transition: REGISTERED → STARTING
             self._transition(entry.name, "mount")
 
@@ -524,11 +441,9 @@ class BrickLifecycleManager:
                 entry.started_at = time.monotonic()
                 logger.info("[LIFECYCLE] Brick %r mounted (ACTIVE, stateless)", entry.name)
 
-            # Fire POST_MOUNT hook (informational — no veto check)
-            await self._fire_hook(POST_MOUNT, entry, agent_id=agent_id)
             _record_span_result(span, state=entry.state.value)
 
-    async def unmount(self, name: str, *, agent_id: str | None = None) -> None:
+    async def unmount(self, name: str) -> None:
         """Unmount a single brick: ACTIVE → STOPPING → UNREGISTERED.
 
         For lifecycle-aware bricks, calls ``stop()``. Stateless bricks
@@ -536,7 +451,6 @@ class BrickLifecycleManager:
 
         Args:
             name: Brick name to unmount.
-            agent_id: Agent requesting the unmount (for hook scoping).
 
         Raises:
             KeyError: If brick not found.
@@ -547,26 +461,15 @@ class BrickLifecycleManager:
             raise KeyError(f"Brick {name!r} not found")
 
         async with entry.lock:
-            await self._do_unmount(entry, agent_id=agent_id)
+            await self._do_unmount(entry)
 
-    async def _do_unmount(self, entry: _BrickEntry, *, agent_id: str | None = None) -> None:
+    async def _do_unmount(self, entry: _BrickEntry) -> None:
         """Internal unmount logic (must be called under entry.lock).
 
-        Flow: PRE_UNMOUNT hook → transition → stop() → POST_UNMOUNT hook.
-        If PRE_UNMOUNT vetoes, brick stays ACTIVE.
-        If stop() fails, POST_UNMOUNT is NOT fired.
-
-        Args:
-            agent_id: Agent requesting the unmount (for hook scoping).
+        Flow: transition → stop().
+        If stop() fails, brick transitions to FAILED.
         """
         with _lifecycle_span("unmount", entry.name, protocol=entry.protocol_name) as span:
-            # Fire PRE_UNMOUNT hook — may veto (brick stays ACTIVE)
-            if not await self._fire_hook(
-                PRE_UNMOUNT, entry, veto_keeps_current=True, agent_id=agent_id
-            ):
-                _record_span_result(span, state="ACTIVE", error="Vetoed by PRE_UNMOUNT hook")
-                return  # Vetoed — brick stays in current state
-
             # Transition: ACTIVE → STOPPING
             self._transition(entry.name, "unmount")
 
@@ -590,8 +493,6 @@ class BrickLifecycleManager:
                 entry.stopped_at = time.monotonic()
                 logger.info("[LIFECYCLE] Brick %r unmounted (UNREGISTERED, stateless)", entry.name)
 
-            # Fire POST_UNMOUNT hook (informational)
-            await self._fire_hook(POST_UNMOUNT, entry, agent_id=agent_id)
             _record_span_result(span, state=entry.state.value)
 
     # ------------------------------------------------------------------

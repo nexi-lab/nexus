@@ -72,7 +72,6 @@ EXPECTED_SYSTEM_KEYS = frozenset(
         "context_branch_service",
         "brick_lifecycle_manager",
         "brick_reconciler",
-        "scoped_hook_engine",
         "tiger_cache_manager",
         "zone_lifecycle",
     }

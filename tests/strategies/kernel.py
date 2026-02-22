@@ -6,7 +6,6 @@ Provides bounded, reusable strategies for:
   - Agent requests (Scheduler)
   - Operation contexts (Permissions)
   - Agent info with generation counters (Agent Registry)
-  - Hook specs and contexts (HookEngine)
 
 All strategies are explicitly bounded to prevent pathological inputs:
   - Path strings: max 255 chars, valid path characters
@@ -18,7 +17,6 @@ from hypothesis import strategies as st
 
 from nexus.contracts.types import OperationContext
 from nexus.services.protocols.agent_registry import AgentInfo
-from nexus.services.protocols.hook_engine import HookContext, HookSpec
 from nexus.services.protocols.scheduler import AgentRequest
 from nexus.storage.read_set import AccessType, ReadSetEntry, ResourceType
 
@@ -191,42 +189,4 @@ def agent_info(
         name=draw(st.one_of(st.none(), _IDENTIFIER)),
         state=draw(st.sampled_from(["CONNECTED", "DISCONNECTED", "IDLE", "BUSY"])),
         generation=draw(st.integers(min_value=0, max_value=1_000_000)),
-    )
-
-
-# ---------------------------------------------------------------------------
-# HookEngine strategies
-# ---------------------------------------------------------------------------
-
-_HOOK_PHASES = [
-    "pre_read",
-    "post_read",
-    "pre_write",
-    "post_write",
-    "pre_delete",
-    "post_delete",
-    "pre_mkdir",
-    "post_mkdir",
-]
-
-
-@st.composite
-def hook_spec(draw: st.DrawFn) -> HookSpec:
-    """Generate a valid HookSpec."""
-    return HookSpec(
-        phase=draw(st.sampled_from(_HOOK_PHASES)),
-        handler_name=draw(_IDENTIFIER),
-        priority=draw(st.integers(min_value=-10, max_value=10)),
-    )
-
-
-@st.composite
-def hook_context(draw: st.DrawFn) -> HookContext:
-    """Generate a valid HookContext."""
-    return HookContext(
-        phase=draw(st.sampled_from(_HOOK_PHASES)),
-        path=draw(st.one_of(st.none(), valid_path())),
-        zone_id=draw(st.one_of(st.none(), _IDENTIFIER)),
-        agent_id=draw(st.one_of(st.none(), _IDENTIFIER)),
-        payload=draw(st.fixed_dictionaries({})),
     )

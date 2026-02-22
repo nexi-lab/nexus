@@ -135,90 +135,9 @@ class TestExtractUserId:
         assert result == "bob"
 
 
-class TestCreateAgentConfigData:
-    """Tests for _create_agent_config_data helper method."""
-
-    def test_create_agent_config_data_minimal(self, nx: NexusFS) -> None:
-        """Test creating minimal agent config data."""
-        config = nx._create_agent_config_data(
-            agent_id="admin,test_agent",
-            name="Test Agent",
-            user_id="admin",
-            description=None,
-            created_at=None,
-        )
-
-        assert config["agent_id"] == "admin,test_agent"
-        assert config["name"] == "Test Agent"
-        assert config["user_id"] == "admin"
-        assert config["description"] is None
-        assert config["created_at"] is None
-
-    def test_create_agent_config_data_with_description(self, nx: NexusFS) -> None:
-        """Test creating agent config data with description."""
-        config = nx._create_agent_config_data(
-            agent_id="admin,test_agent",
-            name="Test Agent",
-            user_id="admin",
-            description="A test agent",
-            created_at="2024-01-01T00:00:00Z",
-        )
-
-        assert config["description"] == "A test agent"
-        assert config["created_at"] == "2024-01-01T00:00:00Z"
-
-    def test_create_agent_config_data_with_metadata(self, nx: NexusFS) -> None:
-        """Test creating agent config data with metadata."""
-        metadata = {
-            "platform": "langgraph",
-            "endpoint_url": "http://localhost:2024",
-            "agent_id": "agent",
-        }
-        config = nx._create_agent_config_data(
-            agent_id="admin,test_agent",
-            name="Test Agent",
-            user_id="admin",
-            description=None,
-            created_at=None,
-            metadata=metadata,
-        )
-
-        assert config["metadata"] == metadata
-        assert config["metadata"]["platform"] == "langgraph"
-
-    def test_create_agent_config_data_with_api_key(self, nx: NexusFS) -> None:
-        """Test creating agent config data with API key."""
-        config = nx._create_agent_config_data(
-            agent_id="admin,test_agent",
-            name="Test Agent",
-            user_id="admin",
-            description=None,
-            created_at=None,
-            api_key="sk-test-key",
-        )
-
-        assert config["api_key"] == "sk-test-key"
-
-    def test_create_agent_config_data_with_all_options(self, nx: NexusFS) -> None:
-        """Test creating agent config data with all options."""
-        metadata = {"platform": "langgraph"}
-        config = nx._create_agent_config_data(
-            agent_id="admin,test_agent",
-            name="Test Agent",
-            user_id="admin",
-            description="Test description",
-            created_at="2024-01-01T00:00:00Z",
-            metadata=metadata,
-            api_key="sk-test-key",
-        )
-
-        assert config["agent_id"] == "admin,test_agent"
-        assert config["name"] == "Test Agent"
-        assert config["user_id"] == "admin"
-        assert config["description"] == "Test description"
-        assert config["created_at"] == "2024-01-01T00:00:00Z"
-        assert config["metadata"] == metadata
-        assert config["api_key"] == "sk-test-key"
+# TestCreateAgentConfigData removed: _create_agent_config_data was moved from
+# NexusFS to AgentService (nexus.services.agents.agent_service).
+# Equivalent tests live in tests/unit/services/test_agent_service.py.
 
 
 class TestDetermineAgentKeyExpiration:

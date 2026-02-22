@@ -18,8 +18,8 @@ import pytest
 
 from nexus.contracts.deployment_profile import DeploymentProfile
 from nexus.contracts.exceptions import BootError
+from nexus.contracts.types import AuditConfig
 from nexus.core.config import (
-    AuditConfig,
     BrickServices,
     DistributedConfig,
     KernelServices,

@@ -20,6 +20,8 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+from nexus.constants import ROOT_ZONE_ID
+
 logger = logging.getLogger(__name__)
 
 
@@ -100,7 +102,7 @@ class NexusFederation:
         Returns:
             The new zone's ID.
         """
-        root_zone = self._mgr.root_zone_id or "root"
+        root_zone = self._mgr.root_zone_id or ROOT_ZONE_ID
 
         # Step 1: Create zone + copy subtree + DT_MOUNT in parent
         new_zone_id: str = self._mgr.share_subtree(
@@ -163,14 +165,14 @@ class NexusFederation:
             ValueError: If remote_path is not a DT_MOUNT on peer.
             RuntimeError: If zone discovery or join fails.
         """
-        root_zone = self._mgr.root_zone_id or "root"
+        root_zone = self._mgr.root_zone_id or ROOT_ZONE_ID
 
         # Step 1: Discover zone via peer's DT_MOUNT
         client = self._client_factory(peer_addr)
         try:
             metadata = await client.get_metadata(
                 path=remote_path,
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
             )
 
             if metadata is None:

@@ -13,8 +13,6 @@ References:
     - services/versioning/time_travel_service.py (concrete implementation)
 """
 
-from __future__ import annotations
-
 from typing import Any, Protocol, runtime_checkable
 
 

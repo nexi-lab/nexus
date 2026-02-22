@@ -8,8 +8,6 @@ This module contains the fundamental file operations:
 - exists: Check file existence
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import logging
@@ -23,7 +21,7 @@ from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.constants import SYSTEM_PATH_PREFIX
 from nexus.contracts.exceptions import BackendError, ConflictError, NexusFileNotFoundError
 from nexus.contracts.metadata import FileMetadata
-from nexus.contracts.types import Permission
+from nexus.contracts.types import OperationContext, Permission
 from nexus.contracts.vfs_hooks import MutationOp
 from nexus.core.hash_fast import hash_content
 from nexus.lib.rpc_decorator import rpc_expose
@@ -32,7 +30,6 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
-    from nexus.contracts.types import OperationContext
     from nexus.core.router import PathRouter
     from nexus.parsers.registry import ParserRegistry
 

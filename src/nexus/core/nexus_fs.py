@@ -1,7 +1,5 @@
 """Unified filesystem implementation for Nexus."""
 
-from __future__ import annotations
-
 import builtins
 import contextlib
 import logging
@@ -220,7 +218,7 @@ class NexusFS(  # type: ignore[misc]
         # Lazy-init sentinels
         self._token_manager = None
         self._semantic_search = None
-        self._memory_api: Memory | None = None
+        self._memory_api: "Memory | None" = None
         self._memory_config: dict[str, str | None] = {
             "zone_id": None,
             "user_id": None,
@@ -765,7 +763,7 @@ class NexusFS(  # type: ignore[misc]
         """Default user_id from the instance context."""
         return getattr(self._default_context, "user_id", None)
 
-    def _get_memory_api(self, context: dict | None = None) -> Memory:
+    def _get_memory_api(self, context: dict | None = None) -> "Memory":
         """Get Memory API instance with context-specific configuration."""
         return self._memory_provider.get_for_context(context)
 
@@ -775,7 +773,7 @@ class NexusFS(  # type: ignore[misc]
 
         return parse_context(context)
 
-    def _ensure_entity_registry(self) -> EntityRegistry:
+    def _ensure_entity_registry(self) -> "EntityRegistry":
         """Lazily create and cache an EntityRegistry instance."""
         return self._memory_provider.ensure_entity_registry()
 

@@ -6,8 +6,6 @@ Extracted from core/filesystem.py (Issue #2424) following the
 Contains: read, write, write_batch, append, edit, delete, rename, exists
 """
 
-from __future__ import annotations
-
 import builtins
 from abc import ABC, abstractmethod
 from typing import Any

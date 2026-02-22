@@ -24,14 +24,10 @@ Issue #900: Replaced snapshot_hash/metadata_snapshot params with metadata.
 Issue #1246: BufferedRecordStoreWriteObserver implements Decision 13A (write-behind buffer).
 """
 
-from __future__ import annotations
-
 import logging
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from nexus.contracts.metadata import FileMetadata
-    from nexus.storage.record_store import RecordStoreABC
+from nexus.contracts.metadata import FileMetadata
+from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 

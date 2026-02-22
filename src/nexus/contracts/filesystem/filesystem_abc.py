@@ -11,8 +11,6 @@ The narrow Protocol at ``services/protocols/filesystem.py`` is kept as-is
 for brick consumers that only need 7 methods.
 """
 
-from __future__ import annotations
-
 from nexus.contracts.filesystem.directory_ops_abc import DirectoryOpsABC
 from nexus.contracts.filesystem.discovery_abc import DiscoveryABC
 from nexus.contracts.filesystem.file_ops_abc import FileOpsABC

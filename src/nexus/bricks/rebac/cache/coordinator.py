@@ -29,6 +29,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from nexus.bricks.rebac.domain import RELATION_TO_PERMISSIONS
+from nexus.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from collections.abc import Callable, MutableMapping
@@ -39,9 +40,6 @@ if TYPE_CHECKING:
     from nexus.bricks.rebac.domain import Entity
 
 logger = logging.getLogger(__name__)
-
-# Default zone when none specified
-_ROOT_ZONE_ID = "root"
 
 # Canonical mapping from domain.py — local alias for backward compat.
 _RELATION_TO_PERMISSIONS = RELATION_TO_PERMISSIONS
@@ -363,7 +361,7 @@ class CacheCoordinator:
             expires_at: Optional expiration time (disables eager recomputation)
             conn: Optional database connection to reuse
         """
-        effective_zone_id = zone_id if zone_id is not None else _ROOT_ZONE_ID
+        effective_zone_id = zone_id if zone_id is not None else ROOT_ZONE_ID
 
         # Track write for adaptive TTL (Phase 4)
         if self._l1_cache:
@@ -725,7 +723,7 @@ class CacheCoordinator:
                         relation,
                         object_type,
                         object_id,
-                        zone_id or _ROOT_ZONE_ID,
+                        zone_id or ROOT_ZONE_ID,
                         datetime.now(UTC).isoformat(),
                     ),
                 )

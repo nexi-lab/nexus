@@ -77,7 +77,7 @@ def _get_ace_context(nexus_fs: Any, auth_result: dict[str, Any]) -> ACEContext:
         backend=nexus_fs.memory.backend,
         user_id=context.user_id or "anonymous",
         agent_id=getattr(context, "agent_id", None),
-        zone_id=context.zone_id or "root",
+        zone_id=context.zone_id or ROOT_ZONE_ID,
         context=context,
     )
 

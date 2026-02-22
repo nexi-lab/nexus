@@ -168,7 +168,7 @@ class NexusFSCoreMixin:
             event = FileEvent(
                 type=file_event_type,
                 path=path,
-                zone_id=zone_id or "root",
+                zone_id=zone_id or ROOT_ZONE_ID,
                 size=size,
                 etag=etag,
                 agent_id=agent_id,
@@ -486,7 +486,7 @@ class NexusFSCoreMixin:
         if cache_observer is None or metadata is None:
             return
 
-        zone_id = getattr(self, "zone_id", None) or "root"
+        zone_id = getattr(self, "zone_id", None) or ROOT_ZONE_ID
         revision = self._get_zone_revision()
         cache_observer.on_read(path, metadata, revision, zone_id, resource_type)
 
@@ -1685,7 +1685,8 @@ class NexusFSCoreMixin:
             created_at=meta.created_at if meta else now,
             modified_at=now,
             created_by=self._get_created_by(context),
-            zone_id=zone_id or "root",  # Issue #904, #773: Store zone_id for PREWHERE filtering
+            zone_id=zone_id
+            or ROOT_ZONE_ID,  # Issue #904, #773: Store zone_id for PREWHERE filtering
         )
 
         self.metadata.put(new_meta)
@@ -1935,7 +1936,8 @@ class NexusFSCoreMixin:
             modified_at=now,
             version=new_version,
             created_by=self._get_created_by(context),  # Track who created/modified this version
-            zone_id=zone_id or "root",  # Issue #904, #773: Store zone_id for PREWHERE filtering
+            zone_id=zone_id
+            or ROOT_ZONE_ID,  # Issue #904, #773: Store zone_id for PREWHERE filtering
             owner_id=owner_id,  # Issue #920: O(1) owner permission checks
         )
 
@@ -1947,7 +1949,7 @@ class NexusFSCoreMixin:
         # Issue #1169: Precise cache invalidation via cache observer
         cache_observer = getattr(self, "_cache_observer", None)
         if cache_observer is not None:
-            cache_observer.on_write(path, new_revision, zone_id or "root")
+            cache_observer.on_write(path, new_revision, zone_id or ROOT_ZONE_ID)
 
         # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
         from nexus.contracts.vfs_hooks import MutationEvent
@@ -1976,7 +1978,7 @@ class NexusFSCoreMixin:
                 if tiger_cache:
                     added_count = tiger_cache.add_file_to_ancestor_grants(
                         file_path=path,
-                        zone_id=zone_id or "root",
+                        zone_id=zone_id or ROOT_ZONE_ID,
                     )
                     if added_count > 0:
                         logger.debug(
@@ -2009,9 +2011,11 @@ class NexusFSCoreMixin:
             # DEFERRED PATH: Queue permission operations for background batch processing
             # Owner can still access file immediately via owner_id fast-path
             try:
-                deferred_buffer.queue_hierarchy(path, ctx.zone_id or "root")
+                deferred_buffer.queue_hierarchy(path, ctx.zone_id or ROOT_ZONE_ID)
                 if meta is None and ctx.user_id and not ctx.is_system:
-                    deferred_buffer.queue_owner_grant(ctx.user_id, path, ctx.zone_id or "root")
+                    deferred_buffer.queue_owner_grant(
+                        ctx.user_id, path, ctx.zone_id or ROOT_ZONE_ID
+                    )
             except Exception as e:
                 logger.warning(f"write: Failed to queue deferred permissions for {path}: {e}")
         else:
@@ -2022,7 +2026,7 @@ class NexusFSCoreMixin:
                         f"write: Calling ensure_parent_tuples for {path}, zone_id={ctx.zone_id or 'default'}"
                     )
                     created_count = self._hierarchy_manager.ensure_parent_tuples(
-                        path, zone_id=ctx.zone_id or "root"
+                        path, zone_id=ctx.zone_id or ROOT_ZONE_ID
                     )
                     logger.info(f"write: Created {created_count} parent tuples for {path}")
                 except Exception as e:
@@ -2041,7 +2045,7 @@ class NexusFSCoreMixin:
                             subject=("user", ctx.user_id),
                             relation="direct_owner",
                             object=("file", path),
-                            zone_id=ctx.zone_id or "root",
+                            zone_id=ctx.zone_id or ROOT_ZONE_ID,
                         )
                         logger.debug(
                             f"write: Granted direct_owner permission to {ctx.user_id} for {path}"
@@ -2090,7 +2094,7 @@ class NexusFSCoreMixin:
                 "size": len(content),
                 "etag": content_hash,
                 "version": new_version,
-                "zone_id": zone_id or "root",
+                "zone_id": zone_id or ROOT_ZONE_ID,
                 "agent_id": agent_id,
                 "user_id": context.user_id if context and hasattr(context, "user_id") else None,
                 "created": is_new_file,
@@ -2635,7 +2639,8 @@ class NexusFSCoreMixin:
                 version=new_version,
                 created_by=getattr(self, "agent_id", None)
                 or getattr(self, "user_id", None),  # Track who created/modified this version
-                zone_id=zone_id or "root",  # Issue #904, #773: Store zone_id for PREWHERE filtering
+                zone_id=zone_id
+                or ROOT_ZONE_ID,  # Issue #904, #773: Store zone_id for PREWHERE filtering
             )
             metadata_list.append(metadata)
 
@@ -2686,7 +2691,7 @@ class NexusFSCoreMixin:
         # This ensures agents can read files they create (via user inheritance)
         # PERF OPTIMIZATION: Use batch operations instead of individual calls (20x faster)
         ctx = context if context is not None else self._default_context
-        zone_id_for_perms = ctx.zone_id or "root"
+        zone_id_for_perms = ctx.zone_id or ROOT_ZONE_ID
 
         # PERF: Batch hierarchy tuple creation (single transaction instead of N)
         _hierarchy_start = time.perf_counter()
@@ -2985,7 +2990,7 @@ class NexusFSCoreMixin:
         # Issue #1169: Precise cache invalidation via cache observer
         cache_observer = getattr(self, "_cache_observer", None)
         if cache_observer is not None:
-            cache_observer.on_delete(path, new_revision, zone_id or "root")
+            cache_observer.on_delete(path, new_revision, zone_id or ROOT_ZONE_ID)
 
         # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
         from nexus.contracts.vfs_hooks import MutationEvent
@@ -3009,7 +3014,7 @@ class NexusFSCoreMixin:
                 "file_path": path,
                 "size": meta.size,
                 "etag": meta.etag,
-                "zone_id": zone_id or "root",
+                "zone_id": zone_id or ROOT_ZONE_ID,
                 "agent_id": agent_id,
                 "user_id": context.user_id if context and hasattr(context, "user_id") else None,
                 "timestamp": datetime.now(UTC).isoformat(),
@@ -3167,7 +3172,7 @@ class NexusFSCoreMixin:
         new_revision = self._increment_zone_revision()
         cache_observer = getattr(self, "_cache_observer", None)
         if cache_observer is not None:
-            cache_observer.on_rename(old_path, new_path, new_revision, zone_id or "root")
+            cache_observer.on_rename(old_path, new_path, new_revision, zone_id or ROOT_ZONE_ID)
 
         # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
         from nexus.contracts.vfs_hooks import MutationEvent
@@ -3239,7 +3244,7 @@ class NexusFSCoreMixin:
                 "new_path": new_path,
                 "size": meta.size if meta else 0,
                 "etag": meta.etag if meta else None,
-                "zone_id": zone_id or "root",
+                "zone_id": zone_id or ROOT_ZONE_ID,
                 "agent_id": agent_id,
                 "user_id": context.user_id if context and hasattr(context, "user_id") else None,
                 "timestamp": datetime.now(UTC).isoformat(),

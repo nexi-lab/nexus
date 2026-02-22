@@ -21,6 +21,7 @@ import time
 from collections.abc import Callable
 from typing import Any, cast
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.factory._boot_context import _BootContext
 from nexus.factory._helpers import _make_gate
 
@@ -435,7 +436,7 @@ def _boot_system_services(
         tiger_cache_manager = TigerCacheManager(
             rebac_manager=rebac_manager,
             metadata_store=ctx.metadata_store,
-            default_zone_id=ctx.zone_id or "root",
+            default_zone_id=ctx.zone_id or ROOT_ZONE_ID,
         )
         tiger_cache_manager.initialize()
         logger.debug("[BOOT:SYSTEM] TigerCacheManager created")

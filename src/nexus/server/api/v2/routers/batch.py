@@ -20,6 +20,7 @@ from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext
 from nexus.server.batch_executor import BatchExecutor, BatchRequest, BatchResponse
 
@@ -80,7 +81,7 @@ def create_batch_router(
             if auth_result is None or not auth_result.get("authenticated"):
                 from nexus.contracts.types import OperationContext as OC
 
-                return OC(user_id="anonymous", groups=[], zone_id="root")
+                return OC(user_id="anonymous", groups=[], zone_id=ROOT_ZONE_ID)
             return cast("OperationContext", _real_get_operation_context(auth_result))
 
     @router.post("/batch", response_model=BatchResponse)

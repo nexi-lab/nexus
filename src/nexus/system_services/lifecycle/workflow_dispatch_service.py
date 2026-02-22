@@ -14,8 +14,6 @@ DI dependencies (no god-object access):
     - enable_workflows: Feature flag from DistributedConfig
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import json

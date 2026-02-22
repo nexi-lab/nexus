@@ -19,8 +19,6 @@ Service container hierarchy (matches NEXUS-LEGO-ARCHITECTURE §2):
     BrickServices   — Tier 2: optional, silent on failure, hot-swappable
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 

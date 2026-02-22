@@ -6,8 +6,6 @@ Extracted from core/filesystem.py (Issue #2424) following the
 Contains: workspace snapshot/restore/log/diff + register/unregister/list/get
 """
 
-from __future__ import annotations
-
 import builtins
 from abc import ABC, abstractmethod
 from datetime import timedelta

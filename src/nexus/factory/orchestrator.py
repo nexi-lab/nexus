@@ -1,7 +1,5 @@
 """Factory orchestrator — create_nexus_services, create_nexus_fs."""
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any, cast
 

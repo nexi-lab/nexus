@@ -13,8 +13,6 @@ References:
     - services/versioning/operation_undo_service.py (OperationUndoService)
 """
 
-from __future__ import annotations
-
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 

@@ -109,9 +109,9 @@ def derive_grants(
         if existing is None or _relation_rank(relation) > _relation_rank(existing):
             parent_map[object_id] = relation
 
-    # Compare by value to handle pytest-xdist module double-loading where
-    # enum identity (==) fails across separately-loaded module instances.
-    mode_value = mode.value if isinstance(mode, DelegationMode) else mode
+    # Compare by .value string to handle pytest-xdist module double-loading
+    # where both isinstance() and enum == fail across separate class objects.
+    mode_value = getattr(mode, "value", mode)
     if mode_value == DelegationMode.COPY.value:
         result = _derive_copy(parent_map, remove_set, readonly_set, scope_prefix)
     elif mode_value == DelegationMode.CLEAN.value:

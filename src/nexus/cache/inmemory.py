@@ -28,7 +28,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from fnmatch import fnmatch
 
-from nexus.core.cache_store import CacheStoreABC
+from nexus.contracts.cache_store import CacheStoreABC
 
 
 class InMemoryCacheStore(CacheStoreABC):
@@ -107,6 +107,10 @@ class InMemoryCacheStore(CacheStoreABC):
             for k in to_delete:
                 del self._store[k]
             return len(to_delete)
+
+    async def keys_by_pattern(self, pattern: str) -> list[str]:
+        with self._lock:
+            return [k for k in self._store if fnmatch(k, pattern)]
 
     # --- PubSub operations ---
 

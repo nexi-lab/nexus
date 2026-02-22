@@ -38,7 +38,7 @@ from nexus.core.response import HandlerResponse, timed_response
 from nexus.storage.content_cache import ContentCache
 
 if TYPE_CHECKING:
-    from nexus.core.cache_store import CacheStoreABC
+    from nexus.contracts.cache_store import CacheStoreABC
     from nexus.core.permissions import OperationContext
 
 logger = logging.getLogger(__name__)

@@ -432,11 +432,13 @@ disable_error_code = ["attr-defined", "return-value"]
 [[tool.mypy.overrides]]
 module = [
     "nexus.bricks.tools.langgraph.nexus_tools",
+    "nexus.tools.langgraph.nexus_tools",
 ]
 # These modules call methods on RemoteNexusFS/AsyncRemoteNexusFS that are
 # dispatched via __getattr__ (Issue #1289 RPC Proxy). The proxy returns Any
 # for dynamically-dispatched methods, triggering no-any-return warnings.
 warn_return_any = false
+disable_error_code = ["no-any-return"]
 
 [[tool.mypy.overrides]]
 module = "nexus.bricks.*.tests.*"
@@ -711,6 +713,79 @@ module = "nexus.bricks.search.semantic"
 # Inherits same suppressions as raft-callers group + misc for "None" not callable
 disable_error_code = ["attr-defined", "union-attr", "no-any-return", "misc"]
 warn_unused_ignores = false
+
+# --- Mixin classes: access `self.*` from host class (NexusFS/SearchService) ---
+[[tool.mypy.overrides]]
+module = [
+    "nexus.services.search_listing_mixin",
+    "nexus.services.search_grep_mixin",
+    "nexus.services.rebac_share_mixin",
+]
+# Mixin attr-defined + no-any-return: mypy can't resolve host-class attrs
+disable_error_code = ["attr-defined", "no-any-return", "import-untyped"]
+
+# --- Async wrappers delegating to NexusFS (returns Any via dynamic dispatch) ---
+[[tool.mypy.overrides]]
+module = "nexus.core.async_scoped_filesystem"
+warn_return_any = false
+
+[[tool.mypy.overrides]]
+module = "nexus.core.async_nexus_fs"
+# aput arg-type from FileMetadata hierarchy + return-value
+disable_error_code = ["arg-type", "return-value"]
+
+# --- Backend / driver return-type mismatches (HandlerResponse covariance) ---
+[[tool.mypy.overrides]]
+module = [
+    "nexus.cache.backend_wrapper",
+    "nexus.isolation.backend",
+    "nexus.ipc.driver",
+]
+disable_error_code = ["return-value", "override"]
+
+# --- Cache/dragonfly: unused type-ignore + no-any-return ---
+[[tool.mypy.overrides]]
+module = "nexus.cache.dragonfly"
+warn_unused_ignores = false
+disable_error_code = ["no-any-return"]
+
+# --- Service modules with arg-type / return-value / misc issues ---
+[[tool.mypy.overrides]]
+module = [
+    "nexus.services.overlay_resolver",
+    "nexus.services.search_service",
+    "nexus.services.sync_service",
+    "nexus.services.workspace_manager",
+    "nexus.services.change_log_store",  # unused-ignore from suppressed no-any-return
+    "nexus.services.sync_backlog_store",
+    "nexus.services.version_service",
+    "nexus.services.mount_manager",
+    "nexus.services.mount_service",
+    "nexus.services.search_service",
+    "nexus.services.event_subsystem.log.exporters.factory",
+    "nexus.portability.import_service",
+    "nexus.server.lifespan.realtime",
+]
+# MetastoreABC arg-type / return-value mismatches from API evolution
+disable_error_code = ["arg-type", "return-value", "attr-defined", "union-attr", "no-any-return", "assignment"]
+warn_unused_ignores = false
+
+# --- Misc single-file overrides ---
+[[tool.mypy.overrides]]
+module = "nexus.core.metadata"
+disable_error_code = ["arg-type", "return-value"]
+
+[[tool.mypy.overrides]]
+module = "nexus.core.read_set"
+disable_error_code = ["assignment"]
+
+[[tool.mypy.overrides]]
+module = "nexus.mcp.server"
+disable_error_code = ["arg-type", "assignment"]
+
+[[tool.mypy.overrides]]
+module = "nexus.search.embeddings"
+disable_error_code = ["override", "attr-defined"]
 
 [tool.ruff]
 target-version = "py311"

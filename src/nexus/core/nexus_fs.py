@@ -257,16 +257,12 @@ class NexusFS(  # type: ignore[misc]
         self.events_service: Any = None
         self.task_queue_service: Any = None
 
-        # Issue #900/#923: Kernel notification dispatch (INTERCEPT + OBSERVE).
-        # Factory injects fully-configured instance via SystemServices.kernel_dispatch.
-        # Empty KernelDispatch() = no-op dispatch = zero extra cost (KERNEL-ARCHITECTURE §3).
+        # Kernel notification dispatch (INTERCEPT + OBSERVE).
+        # Kernel owns dispatch infrastructure — creates empty callback lists.
+        # Factory registers hooks at boot (KERNEL-ARCHITECTURE §3).
         from nexus.core.kernel_dispatch import KernelDispatch
 
-        self._dispatch: KernelDispatch = (
-            getattr(self._system_services, "kernel_dispatch", None)
-            if self._system_services
-            else None
-        ) or KernelDispatch()
+        self._dispatch: KernelDispatch = KernelDispatch()
 
         # PermissionChecker: core module, safe to create here (Issue #2133)
         from nexus.services.permissions.checker import PermissionChecker

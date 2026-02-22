@@ -178,7 +178,6 @@ def create_nexus_services(
         entity_registry=system_dict["entity_registry"],
         permission_enforcer=system_dict["permission_enforcer"],
         write_observer=system_dict["write_observer"],
-        kernel_dispatch=system_dict["kernel_dispatch"],
         # Former-kernel degradable (Issue #2193)
         dir_visibility_cache=system_dict["dir_visibility_cache"],
         hierarchy_manager=system_dict["hierarchy_manager"],
@@ -466,17 +465,33 @@ def create_nexus_fs(
 
 
 def _register_vfs_hooks(nx: "NexusFS") -> None:
-    """Register INTERCEPT hooks on KernelDispatch (Issue #900).
+    """Register hooks + observers into kernel-owned dispatch (Issue #900).
 
-    Each hook lives in its own service directory:
-      - DynamicViewerReadHook  → services/rebac/dynamic_viewer_hook  (INTERCEPT read)
-      - AutoParseWriteHook     → parsers/auto_parse_hook             (INTERCEPT write)
-      - TigerCacheRenameHook   → bricks/rebac/cache/tiger/rename_hook  (INTERCEPT rename)
+    Kernel creates KernelDispatch with empty callback lists at init.
+    This function populates them at boot — modules register into
+    kernel-owned infrastructure, kernel never auto-constructs hooks.
 
     Called by ``create_nexus_fs()`` after NexusFS construction + wired
     services binding, keeping the kernel free of service-layer imports.
     """
     dispatch = nx._dispatch
+
+    # ── Audit write observer as interceptor (Issue #900) ──────────
+    # Registered FIRST so it runs before other hooks (audit before side effects).
+    write_observer = (
+        getattr(nx._system_services, "write_observer", None) if nx._system_services else None
+    )
+    if write_observer is not None:
+        from nexus.storage.write_observer_hooks import AuditWriteInterceptor
+
+        strict = getattr(write_observer, "_strict_mode", True)
+        audit = AuditWriteInterceptor(write_observer, strict_mode=strict)
+        dispatch.register_intercept_write(audit)
+        dispatch.register_intercept_write_batch(audit)
+        dispatch.register_intercept_delete(audit)
+        dispatch.register_intercept_rename(audit)
+        dispatch.register_intercept_mkdir(audit)
+        dispatch.register_intercept_rmdir(audit)
 
     # DynamicViewerReadHook (post-read: column-level CSV filtering)
     rebac_mgr = getattr(nx, "_rebac_manager", None)
@@ -487,7 +502,7 @@ def _register_vfs_hooks(nx: "NexusFS") -> None:
         and hasattr(nx, "apply_dynamic_viewer_filter")
     )
     if has_viewer:
-        from nexus.services.rebac.dynamic_viewer_hook import DynamicViewerReadHook
+        from nexus.core.vfs_hook_impls import DynamicViewerReadHook
 
         dispatch.register_intercept_read(
             DynamicViewerReadHook(
@@ -513,7 +528,7 @@ def _register_vfs_hooks(nx: "NexusFS") -> None:
     # TigerCacheRenameHook (post-rename: bitmap updates)
     tiger_cache = getattr(rebac_mgr, "_tiger_cache", None) if rebac_mgr else None
     if tiger_cache is not None:
-        from nexus.bricks.rebac.cache.tiger.rename_hook import TigerCacheRenameHook
+        from nexus.core.vfs_hook_impls import TigerCacheRenameHook
 
         def _metadata_list_iter(
             prefix: str,

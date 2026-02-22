@@ -203,6 +203,26 @@ class VFSRmdirHook(Protocol):
     def on_post_rmdir(self, ctx: RmdirHookContext) -> None: ...
 
 
+@dataclass
+class WriteBatchHookContext:
+    """Context passed through write-batch hooks (Issue #900)."""
+
+    items: list[tuple[Any, bool]]
+    zone_id: str | None = None
+    agent_id: str | None = None
+    warnings: list[OperationWarning] = field(default_factory=list)
+
+
+@runtime_checkable
+class VFSWriteBatchHook(Protocol):
+    """Hook that runs after a batch write operation (Issue #900)."""
+
+    @property
+    def name(self) -> str: ...
+
+    def on_post_write_batch(self, ctx: WriteBatchHookContext) -> None: ...
+
+
 # ---------------------------------------------------------------------------
 # OBSERVE phase — mutation event + observer protocol (Issue #900)
 # ---------------------------------------------------------------------------

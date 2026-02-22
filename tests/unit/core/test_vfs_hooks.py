@@ -2,7 +2,7 @@
 
 Tests dispatch mechanics: registration, hook invocation order,
 error handling (warnings for INTERCEPT, log-and-continue for OBSERVE),
-and write observer integration.
+and AuditWriteInterceptor integration.
 
 Issue #900.
 """
@@ -282,50 +282,75 @@ class TestKernelDispatchObserve:
         d.notify(event)  # should not raise
 
 
-class TestKernelDispatchWriteObserver:
-    def test_write_observer_called_during_intercept_write(self):
+class TestAuditWriteInterceptor:
+    """Tests for AuditWriteInterceptor registered as VFS hook.
+
+    The adapter wraps WriteObserverProtocol and is registered via
+    standard register_intercept_*() APIs — dispatch has no knowledge
+    of audit policy or write observer specifics.
+    """
+
+    def test_write_observer_called_via_interceptor(self):
+        from nexus.storage.write_observer_hooks import AuditWriteInterceptor
+
         obs = MagicMock()
-        d = KernelDispatch(write_observer=obs)
+        audit = AuditWriteInterceptor(obs, strict_mode=False)
+
+        d = KernelDispatch()
+        d.register_intercept_write(audit)
 
         ctx = WriteHookContext(path="/test.txt", content=b"data", context=None)
         d.intercept_post_write(ctx)
 
         obs.on_write.assert_called_once()
 
-    def test_write_observer_called_during_intercept_delete(self):
-        obs = MagicMock()
-        d = KernelDispatch(write_observer=obs)
-
+    def test_delete_observer_called_via_interceptor(self):
         from nexus.contracts.vfs_hooks import DeleteHookContext
+        from nexus.storage.write_observer_hooks import AuditWriteInterceptor
+
+        obs = MagicMock()
+        audit = AuditWriteInterceptor(obs, strict_mode=False)
+
+        d = KernelDispatch()
+        d.register_intercept_delete(audit)
 
         ctx = DeleteHookContext(path="/test.txt", context=None)
         d.intercept_post_delete(ctx)
 
         obs.on_delete.assert_called_once()
 
-    def test_no_write_observer_is_noop(self):
-        d = KernelDispatch(write_observer=None)
+    def test_no_interceptor_is_noop(self):
+        d = KernelDispatch()
 
         ctx = WriteHookContext(path="/test.txt", content=b"data", context=None)
         d.intercept_post_write(ctx)  # should not raise
 
-    def test_audit_strict_mode_raises_on_observer_failure(self):
+    def test_strict_mode_raises_audit_error(self):
         import pytest
 
         from nexus.contracts.exceptions import AuditLogError
+        from nexus.storage.write_observer_hooks import AuditWriteInterceptor
 
         obs = MagicMock()
         obs.on_write.side_effect = RuntimeError("db down")
-        d = KernelDispatch(write_observer=obs, audit_strict_mode=True)
+        audit = AuditWriteInterceptor(obs, strict_mode=True)
+
+        d = KernelDispatch()
+        d.register_intercept_write(audit)
 
         ctx = WriteHookContext(path="/test.txt", content=b"data", context=None)
         with pytest.raises(AuditLogError):
             d.intercept_post_write(ctx)
 
-    def test_audit_non_strict_logs_but_continues(self):
+    def test_non_strict_mode_logs_but_continues(self):
+        from nexus.storage.write_observer_hooks import AuditWriteInterceptor
+
         obs = MagicMock()
         obs.on_write.side_effect = RuntimeError("db down")
-        d = KernelDispatch(write_observer=obs, audit_strict_mode=False)
+        audit = AuditWriteInterceptor(obs, strict_mode=False)
+
+        d = KernelDispatch()
+        d.register_intercept_write(audit)
 
         ctx = WriteHookContext(path="/test.txt", content=b"data", context=None)
-        d.intercept_post_write(ctx)  # should not raise
+        d.intercept_post_write(ctx)  # should not raise — non-strict logs only

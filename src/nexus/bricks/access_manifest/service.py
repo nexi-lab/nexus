@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select, update
 
 from nexus.bricks.access_manifest.evaluator import ManifestEvaluator
+from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.access_manifest_types import (
     AccessManifest,
     ManifestEntry,
@@ -151,7 +152,7 @@ class AccessManifestService:
         agent_id: str,
         name: str,
         entries: tuple[ManifestEntry, ...],
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         created_by: str = "",
         valid_hours: int = 720,
         credential_id: str | None = None,
@@ -234,7 +235,9 @@ class AccessManifestService:
             credential_id=credential_id,
         )
 
-    def evaluate(self, agent_id: str, tool_name: str, zone_id: str = "root") -> ToolPermission:
+    def evaluate(
+        self, agent_id: str, tool_name: str, zone_id: str = ROOT_ZONE_ID
+    ) -> ToolPermission:
         """Evaluate a tool access request for an agent.
 
         Uses cache first, falls back to DB lookup.
@@ -253,7 +256,7 @@ class AccessManifestService:
         return self._evaluator.evaluate(entries, tool_name)
 
     def filter_tools(
-        self, agent_id: str, tool_names: frozenset[str], zone_id: str = "root"
+        self, agent_id: str, tool_names: frozenset[str], zone_id: str = ROOT_ZONE_ID
     ) -> frozenset[str]:
         """Batch filter tools for an agent.
 

@@ -9,6 +9,7 @@ import logging
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.contracts.rpc import rpc_expose
 from nexus.contracts.types import OperationContext, parse_operation_context
@@ -197,7 +198,7 @@ class WorkspaceRPCService:
         self,
         paths: list[str],
         agent_id: str | None = None,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Begin a transactional snapshot for the specified paths."""

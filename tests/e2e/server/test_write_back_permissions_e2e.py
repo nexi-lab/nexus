@@ -161,7 +161,7 @@ def server():
 
     base_url = f"http://127.0.0.1:{port}"
 
-    # SQLite database for async engine (required by AsyncNexusFS)
+    # SQLite database for async engine (required by NexusFS)
     db_path = os.path.join(data_dir, "nexus_e2e.db")
 
     env = {
@@ -174,9 +174,9 @@ def server():
         "NO_PROXY": "*",
         # Source code on PYTHONPATH
         "PYTHONPATH": str(Path(__file__).resolve().parents[2] / "src"),
-        # Database URL for async engine (AsyncNexusFS requires this)
+        # Database URL for async engine (NexusFS requires this)
         "NEXUS_DATABASE_URL": f"sqlite:///{db_path}",
-        # AsyncNexusFS settings
+        # NexusFS settings
         "NEXUS_BACKEND_ROOT": backend_root,
         "NEXUS_TENANT_ID": "wb-perm-e2e",
         # CRITICAL: Permissions ENABLED

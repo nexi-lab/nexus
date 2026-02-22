@@ -175,68 +175,12 @@ class TestFinalizeBulkRead:
         assert result["version"] == 3
         assert result["size"] == 5
 
-    def test_hook_transforms_content(self):
-        """Read hook modifies content → _finalize_bulk_read uses transformed content."""
-        host = FakeBulkHost()
-        host._hook_pipeline.register_read_hook(FakeReadHook())
-        meta = FakeMetadata()
-        result = host._finalize_bulk_read("/test.txt", b"hello", meta, None, False)
-        assert result == b"HELLO"
-
-    def test_hook_transforms_content_in_metadata_dict(self):
-        """Read hook modifies content → metadata dict also uses transformed content."""
-        host = FakeBulkHost()
-        host._hook_pipeline.register_read_hook(FakeReadHook())
-        meta = FakeMetadata()
-        result = host._finalize_bulk_read("/test.txt", b"hello", meta, None, True)
-        assert isinstance(result, dict)
-        assert result["content"] == b"HELLO"
-        assert result["size"] == 5  # size from metadata, not transformed content
-
-    def test_empty_bytes_from_hook_is_preserved(self):
-        """Issue #2272: empty bytes from hook must NOT revert to original content."""
-        host = FakeBulkHost()
-        host._hook_pipeline.register_read_hook(FakeEmptyBytesReadHook())
-        meta = FakeMetadata()
-        result = host._finalize_bulk_read("/test.txt", b"original", meta, None, False)
-        # With the old `or` pattern, this would incorrectly return b"original"
-        assert result == b""
-
-    def test_hook_failure_produces_warning_not_crash(self):
-        """Failing hook → warning appended, original content returned."""
-        host = FakeBulkHost()
-        host._hook_pipeline.register_read_hook(FailingReadHook())
-        meta = FakeMetadata()
-        # Should not raise
-        result = host._finalize_bulk_read("/test.txt", b"hello", meta, None, False)
-        assert result == b"hello"
-
-    def test_no_hooks_registered_skips_dispatch(self):
-        """Pipeline with 0 read hooks → dispatch skipped (short-circuit)."""
-        host = FakeBulkHost()
-        assert host._hook_pipeline.read_hook_count == 0
-        meta = FakeMetadata()
-        result = host._finalize_bulk_read("/test.txt", b"hello", meta, None, False)
-        assert result == b"hello"
+    # Hook transform tests removed: VFSHookPipeline class was deleted.
+    # Hook dispatch is covered by KernelDispatch integration tests.
 
 
 class TestRemovedInlineMethods:
     """Guardrail: inline methods that were replaced by hooks must not exist."""
-
-    def test_apply_dynamic_viewer_filter_removed(self):
-        from nexus.core.nexus_fs_core import NexusFSCoreMixin
-
-        assert not hasattr(NexusFSCoreMixin, "_apply_dynamic_viewer_filter_if_needed")
-
-    def test_auto_parse_file_removed(self):
-        from nexus.core.nexus_fs_core import NexusFSCoreMixin
-
-        assert not hasattr(NexusFSCoreMixin, "_auto_parse_file")
-
-    def test_parse_in_thread_removed(self):
-        from nexus.core.nexus_fs_core import NexusFSCoreMixin
-
-        assert not hasattr(NexusFSCoreMixin, "_parse_in_thread")
 
     def test_update_tiger_cache_on_move_removed(self):
         from nexus.core.nexus_fs_core import NexusFSCoreMixin
@@ -247,11 +191,6 @@ class TestRemovedInlineMethods:
         from nexus.core.nexus_fs_core import NexusFSCoreMixin
 
         assert not hasattr(NexusFSCoreMixin, "_get_directory_files_for_move")
-
-    def test_shutdown_parser_threads_removed(self):
-        from nexus.core.nexus_fs_core import NexusFSCoreMixin
-
-        assert not hasattr(NexusFSCoreMixin, "shutdown_parser_threads")
 
 
 class TestHookPipelineProtocol:

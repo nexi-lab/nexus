@@ -7,8 +7,6 @@ Domain-specific logic (ReBAC checks, escrow, amount validation) belongs
 in the subclass, NOT here.
 """
 
-from __future__ import annotations
-
 import logging
 import uuid
 from dataclasses import dataclass

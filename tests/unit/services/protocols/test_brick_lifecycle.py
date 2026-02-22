@@ -3,8 +3,6 @@
 TDD: Tests written FIRST, implementation follows.
 """
 
-from __future__ import annotations
-
 import dataclasses
 from enum import Enum
 
@@ -22,12 +20,16 @@ from nexus.services.protocols.brick_lifecycle import (
     BrickDependency,
     BrickHealthReport,
     BrickLifecycleProtocol,
+    BrickReconcileOutcome,
     BrickSpec,
     BrickState,
     BrickStatus,
     DriftAction,
     DriftReport,
+    LifecycleManagerProtocol,
+    ReconcileContext,
     ReconcileResult,
+    ReconcilerProtocol,
 )
 
 # ---------------------------------------------------------------------------
@@ -36,13 +38,13 @@ from nexus.services.protocols.brick_lifecycle import (
 
 
 class TestBrickState:
-    """Verify BrickState is a proper StrEnum with 5 lifecycle states + FAILED."""
+    """Verify BrickState is a proper StrEnum with 6 lifecycle states + FAILED."""
 
     def test_is_enum(self) -> None:
         assert issubclass(BrickState, Enum)
 
-    def test_has_five_lifecycle_states(self) -> None:
-        expected = {"REGISTERED", "STARTING", "ACTIVE", "STOPPING", "UNREGISTERED"}
+    def test_has_six_lifecycle_states(self) -> None:
+        expected = {"REGISTERED", "STARTING", "ACTIVE", "STOPPING", "UNMOUNTED", "UNREGISTERED"}
         actual = {s.name for s in BrickState if s.name != "FAILED"}
         assert expected == actual
 
@@ -61,7 +63,8 @@ class TestBrickState:
         assert names.index("REGISTERED") < names.index("STARTING")
         assert names.index("STARTING") < names.index("ACTIVE")
         assert names.index("ACTIVE") < names.index("STOPPING")
-        assert names.index("STOPPING") < names.index("UNREGISTERED")
+        assert names.index("STOPPING") < names.index("UNMOUNTED")
+        assert names.index("UNMOUNTED") < names.index("UNREGISTERED")
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +96,7 @@ class TestBrickStatus:
             "error",
             "started_at",
             "stopped_at",
+            "unmounted_at",
         }
 
     def test_defaults(self) -> None:
@@ -104,6 +108,7 @@ class TestBrickStatus:
         assert status.error is None
         assert status.started_at is None
         assert status.stopped_at is None
+        assert status.unmounted_at is None
 
     def test_with_error(self) -> None:
         status = BrickStatus(
@@ -431,3 +436,132 @@ class TestReconcilePhaseConstants:
             RECONCILE_COMPLETED,
         }
         assert len(all_phases) == 8
+
+
+# ---------------------------------------------------------------------------
+# ReconcileContext frozen dataclass tests (Issue #2059)
+# ---------------------------------------------------------------------------
+
+
+class TestReconcileContext:
+    """Verify ReconcileContext is a proper frozen, slots dataclass."""
+
+    def test_frozen(self) -> None:
+        ctx = ReconcileContext(
+            brick_name="search",
+            current_state=BrickState.ACTIVE,
+            desired_enabled=True,
+            retry_count=0,
+            last_error=None,
+            last_healthy_at=1000.0,
+        )
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            ctx.brick_name = "changed"
+
+    def test_slots(self) -> None:
+        assert hasattr(ReconcileContext, "__slots__")
+
+    def test_fields_accessible(self) -> None:
+        ctx = ReconcileContext(
+            brick_name="search",
+            current_state=BrickState.FAILED,
+            desired_enabled=True,
+            retry_count=2,
+            last_error="Connection refused",
+            last_healthy_at=None,
+        )
+        assert ctx.brick_name == "search"
+        assert ctx.current_state == BrickState.FAILED
+        assert ctx.desired_enabled is True
+        assert ctx.retry_count == 2
+        assert ctx.last_error == "Connection refused"
+        assert ctx.last_healthy_at is None
+
+
+# ---------------------------------------------------------------------------
+# BrickReconcileOutcome frozen dataclass tests (Issue #2059)
+# ---------------------------------------------------------------------------
+
+
+class TestBrickReconcileOutcome:
+    """Verify BrickReconcileOutcome is a proper frozen, slots dataclass."""
+
+    def test_defaults(self) -> None:
+        outcome = BrickReconcileOutcome()
+        assert outcome.requeue is False
+        assert outcome.requeue_after is None
+        assert outcome.error is None
+
+    def test_requeue_true(self) -> None:
+        outcome = BrickReconcileOutcome(requeue=True)
+        assert outcome.requeue is True
+        assert outcome.requeue_after is None
+
+    def test_explicit_requeue_after(self) -> None:
+        from datetime import timedelta
+
+        outcome = BrickReconcileOutcome(requeue=True, requeue_after=timedelta(seconds=5))
+        assert outcome.requeue is True
+        assert outcome.requeue_after == timedelta(seconds=5)
+        assert outcome.requeue_after.total_seconds() == 5.0
+
+    def test_error_set(self) -> None:
+        outcome = BrickReconcileOutcome(error="Index corrupted")
+        assert outcome.error == "Index corrupted"
+
+    def test_frozen(self) -> None:
+        outcome = BrickReconcileOutcome()
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            outcome.requeue = True
+
+
+# ---------------------------------------------------------------------------
+# ReconcilerProtocol structural tests (Issue #2059)
+# ---------------------------------------------------------------------------
+
+
+class TestReconcilerProtocol:
+    """Verify ReconcilerProtocol is runtime_checkable with expected method."""
+
+    def test_is_runtime_checkable(self) -> None:
+        assert getattr(ReconcilerProtocol, "_is_runtime_protocol", False)
+
+    def test_duck_typed_class_satisfies(self) -> None:
+        class SelfHealingBrick:
+            async def reconcile(self, ctx: ReconcileContext) -> BrickReconcileOutcome:
+                return BrickReconcileOutcome()
+
+        assert isinstance(SelfHealingBrick(), ReconcilerProtocol)
+
+    def test_plain_class_does_not_satisfy(self) -> None:
+        class PlainBrick:
+            pass
+
+        assert not isinstance(PlainBrick(), ReconcilerProtocol)
+
+
+# ---------------------------------------------------------------------------
+# LifecycleManagerProtocol structural tests (Issue #2059)
+# ---------------------------------------------------------------------------
+
+
+class TestLifecycleManagerProtocol:
+    """Verify LifecycleManagerProtocol has expected methods."""
+
+    def test_expected_methods(self) -> None:
+        expected = {
+            "iter_bricks",
+            "get_status",
+            "fail_brick",
+            "reset_for_retry",
+            "mount",
+            "unmount",
+            "clear_retry_count",
+            "get_retry_count",
+        }
+        actual = {
+            name
+            for name in dir(LifecycleManagerProtocol)
+            if not name.startswith("_") and callable(getattr(LifecycleManagerProtocol, name))
+        }
+        assert expected <= actual

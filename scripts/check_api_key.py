@@ -21,7 +21,7 @@ sys.path.insert(0, str(src_dir))
 from sqlalchemy import create_engine, text  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
-from nexus.auth.providers.database_key import DatabaseAPIKeyAuth  # noqa: E402
+from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth  # noqa: E402
 
 
 def check_api_key(database_url: str, api_key: str) -> str:

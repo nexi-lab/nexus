@@ -5,8 +5,6 @@ following the pattern from the Beads project for git-friendly backups
 and zero-downtime migrations.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal

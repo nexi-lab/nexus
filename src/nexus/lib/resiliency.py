@@ -17,11 +17,8 @@ Usage::
 Issue #1366.
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
-import enum
 import logging
 import re
 import time
@@ -29,6 +26,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import wraps
 from typing import Any, TypeVar, cast
+
+from nexus.lib.circuit_breaker import CircuitState
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +117,7 @@ class ResiliencyConfig:
     targets: dict[str, TargetBinding] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, raw: dict[str, Any] | None) -> ResiliencyConfig:
+    def from_dict(cls, raw: dict[str, Any] | None) -> "ResiliencyConfig":
         """Convert raw YAML dict → frozen ``ResiliencyConfig`` dataclasses.
 
         Returns default config when *raw* is None or empty.  Falls back to
@@ -179,12 +178,6 @@ class ResiliencyConfig:
 # ---------------------------------------------------------------------------
 # 1C: CircuitBreakerOpenError
 # ---------------------------------------------------------------------------
-
-
-class CircuitState(enum.Enum):
-    CLOSED = "closed"
-    OPEN = "open"
-    HALF_OPEN = "half_open"
 
 
 class CircuitBreakerOpenError(Exception):
@@ -249,7 +242,7 @@ class AsyncCircuitBreaker:
 
     # -- context manager -----------------------------------------------------
 
-    async def __aenter__(self) -> AsyncCircuitBreaker:
+    async def __aenter__(self) -> "AsyncCircuitBreaker":
         state = self.current_state
 
         if state is CircuitState.CLOSED:
@@ -349,15 +342,15 @@ class AsyncCircuitBreaker:
 class ResiliencyManager:
     """Singleton-style manager that owns circuit breaker instances and config."""
 
-    def __init__(self, config: ResiliencyConfig) -> None:
+    def __init__(self, config: "ResiliencyConfig") -> None:
         self._config = config
         self._breakers: dict[str, AsyncCircuitBreaker] = {}
 
     @property
-    def config(self) -> ResiliencyConfig:
+    def config(self) -> "ResiliencyConfig":
         return self._config
 
-    def get_breaker(self, name: str) -> AsyncCircuitBreaker:
+    def get_breaker(self, name: str) -> "AsyncCircuitBreaker":
         """Get or create a circuit breaker by policy name (idempotent)."""
         if name in self._breakers:
             return self._breakers[name]
@@ -459,7 +452,7 @@ def with_resiliency(
             cb_name = circuit_breaker or "default"
 
         # Look up timeout policy
-        if isinstance(timeout, (int, float)):
+        if isinstance(timeout, int | float):
             timeout_seconds = float(timeout)
         else:
             tp = mgr.config.timeouts.get(
@@ -529,7 +522,7 @@ def parse_duration(value: str | int | float) -> float:
     Raises:
         ValueError: If the format is unrecognised.
     """
-    if isinstance(value, (int, float)):
+    if isinstance(value, int | float):
         return float(value)
 
     m = _DURATION_RE.match(value)

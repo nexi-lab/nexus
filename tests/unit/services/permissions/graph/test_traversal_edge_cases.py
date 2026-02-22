@@ -20,16 +20,14 @@ were NOT covered by existing tests:
 Tested against SQLite in-memory via ReBACManager (composition root).
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 import pytest
 from freezegun import freeze_time
 from sqlalchemy import create_engine
 
-from nexus.rebac.domain import NamespaceConfig
-from nexus.rebac.manager import ReBACManager
+from nexus.bricks.rebac.domain import NamespaceConfig
+from nexus.bricks.rebac.manager import ReBACManager
 from nexus.storage.models import Base
 
 # ── Fixtures ──────────────────────────────────────────────────────────

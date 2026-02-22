@@ -8,8 +8,6 @@ Auth caching uses CacheStoreABC (the CacheStore pillar) per
 KERNEL-ARCHITECTURE.md §2 — accessed via ``app_state.auth_cache_store``.
 """
 
-from __future__ import annotations
-
 import asyncio
 import hashlib
 import hmac
@@ -25,7 +23,7 @@ from nexus.constants import ROOT_ZONE_ID
 from nexus.server.token_utils import parse_sk_token
 
 if TYPE_CHECKING:
-    from nexus.core.cache_store import CacheStoreABC
+    from nexus.contracts.cache_store import CacheStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +39,9 @@ def _auth_cache_key(token: str) -> str:
     return f"auth:cache:{hashlib.sha256(token.encode()).hexdigest()[:32]}"
 
 
-async def _get_cached_auth(cache_store: CacheStoreABC | None, token: str) -> dict[str, Any] | None:
+async def _get_cached_auth(
+    cache_store: "CacheStoreABC | None", token: str
+) -> dict[str, Any] | None:
     """Get cached auth result if valid via CacheStoreABC."""
     if cache_store is None:
         return None
@@ -53,7 +53,7 @@ async def _get_cached_auth(cache_store: CacheStoreABC | None, token: str) -> dic
 
 
 async def _set_cached_auth(
-    cache_store: CacheStoreABC | None, token: str, result: dict[str, Any]
+    cache_store: "CacheStoreABC | None", token: str, result: dict[str, Any]
 ) -> None:
     """Cache auth result with TTL via CacheStoreABC."""
     if cache_store is None:
@@ -61,7 +61,7 @@ async def _set_cached_auth(
     await cache_store.set(_auth_cache_key(token), json.dumps(result).encode(), ttl=_AUTH_CACHE_TTL)
 
 
-async def _reset_auth_cache(cache_store: CacheStoreABC | None) -> None:
+async def _reset_auth_cache(cache_store: "CacheStoreABC | None") -> None:
     """Reset the auth cache. Used by tests for isolation."""
     if cache_store is None:
         return
@@ -326,7 +326,7 @@ def get_operation_context(auth_result: dict[str, Any]) -> Any:
     # Admin capabilities
     admin_capabilities = set()
     if is_admin:
-        from nexus.rebac.permissions_enhanced import AdminCapability
+        from nexus.bricks.rebac.permissions_enhanced import AdminCapability
 
         admin_capabilities = {
             AdminCapability.READ_ALL,

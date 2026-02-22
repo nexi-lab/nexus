@@ -6,8 +6,6 @@ Tests delta sync change detection metadata returned by each backend:
 - S3ConnectorBackend: S3 version ID or ETag fallback
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch

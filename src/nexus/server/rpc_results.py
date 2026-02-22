@@ -3,8 +3,6 @@
 These are response types (not request params) used by ReBAC operations.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 
 

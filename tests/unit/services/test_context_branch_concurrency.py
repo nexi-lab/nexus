@@ -7,8 +7,6 @@ Tests:
 - Retry exhaustion raises
 """
 
-from __future__ import annotations
-
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -17,13 +15,13 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from nexus.contracts.exceptions import BranchNotFoundError, StalePointerError
-from nexus.services.context_branch import (
+from nexus.storage.models._base import Base
+from nexus.storage.models.context_branch import ContextBranchModel
+from nexus.system_services.workspace.context_branch import (
     _BASE_BACKOFF_MS,
     _MAX_RETRIES,
     ContextBranchService,
 )
-from nexus.storage.models._base import Base
-from nexus.storage.models.context_branch import ContextBranchModel
 
 
 @pytest.fixture

@@ -1,4 +1,4 @@
-"""Storage connector protocol interfaces (Issue #1601, #1703).
+"""Storage connector protocol interfaces (Issue #1601, #1703, #2367).
 
 Defines the Storage Brick boundary as composable protocols:
 
@@ -10,6 +10,7 @@ Defines the Storage Brick boundary as composable protocols:
 - ``StreamingProtocol`` — Memory-efficient large file I/O (stream/range)
 - ``BatchContentProtocol`` — Bulk content read optimization
 - ``DirectoryListingProtocol`` — Extended directory listing + file metadata
+- ``SearchableConnector`` — Thin search capability for searchable connectors
 
 Design decisions:
     - Protocol for brick interfaces, ABC for internal implementations (§11.3)
@@ -23,8 +24,6 @@ References:
     - Issue #1703: Make backends implement ConnectorProtocol
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
@@ -33,8 +32,52 @@ if TYPE_CHECKING:
 
     from nexus.backends.backend import FileInfo, HandlerStatusResponse
     from nexus.contracts.types import OperationContext
+    from nexus.core.protocols.capabilities import ConnectorCapability
     from nexus.lib.response import HandlerResponse
 
+# ---------------------------------------------------------------------------
+# SearchableConnector (Issue #2367)
+# ---------------------------------------------------------------------------
+
+@runtime_checkable
+class SearchableConnector(Protocol):
+    """Thin search capability for connectors that support content/metadata search.
+
+    Heavy search logic stays in the Search brick. This protocol just
+    advertises "I support search" at the connector level, enabling the
+    Search brick to discover searchable connectors via isinstance().
+
+    References:
+        - NEXUS-LEGO-ARCHITECTURE.md §2.3, §4.3
+        - Issue #2367: Extract SearchableConnector sub-protocol
+    """
+
+    def search(
+        self,
+        query: str,
+        *,
+        filters: dict[str, Any] | None = None,
+        limit: int = 10,
+        context: "OperationContext | None" = None,
+    ) -> list[dict[str, Any]]: ...
+
+    def index(
+        self,
+        key: str,
+        content: str,
+        metadata: dict[str, Any] | None = None,
+        context: "OperationContext | None" = None,
+    ) -> None: ...
+
+    def remove_from_index(
+        self,
+        key: str,
+        context: "OperationContext | None" = None,
+    ) -> None: ...
+
+# ---------------------------------------------------------------------------
+# ContentStoreProtocol (Issue #1601)
+# ---------------------------------------------------------------------------
 
 @runtime_checkable
 class ContentStoreProtocol(Protocol):
@@ -48,29 +91,28 @@ class ContentStoreProtocol(Protocol):
     def name(self) -> str: ...
 
     def write_content(
-        self, content: bytes, context: OperationContext | None = None
-    ) -> HandlerResponse[str]: ...
+        self, content: bytes, context: "OperationContext | None" = None
+    ) -> "HandlerResponse[str]": ...
 
     def read_content(
-        self, content_hash: str, context: OperationContext | None = None
-    ) -> HandlerResponse[bytes]: ...
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> "HandlerResponse[bytes]": ...
 
     def delete_content(
-        self, content_hash: str, context: OperationContext | None = None
-    ) -> HandlerResponse[None]: ...
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> "HandlerResponse[None]": ...
 
     def content_exists(
-        self, content_hash: str, context: OperationContext | None = None
-    ) -> HandlerResponse[bool]: ...
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> "HandlerResponse[bool]": ...
 
     def get_content_size(
-        self, content_hash: str, context: OperationContext | None = None
-    ) -> HandlerResponse[int]: ...
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> "HandlerResponse[int]": ...
 
     def get_ref_count(
-        self, content_hash: str, context: OperationContext | None = None
-    ) -> HandlerResponse[int]: ...
-
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> "HandlerResponse[int]": ...
 
 @runtime_checkable
 class DirectoryOpsProtocol(Protocol):
@@ -81,23 +123,37 @@ class DirectoryOpsProtocol(Protocol):
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: OperationContext | None = None,
-    ) -> HandlerResponse[None]: ...
+        context: "OperationContext | None" = None,
+    ) -> "HandlerResponse[None]": ...
 
     def rmdir(
         self,
         path: str,
         recursive: bool = False,
-        context: OperationContext | None = None,
-    ) -> HandlerResponse[None]: ...
+        context: "OperationContext | None" = None,
+    ) -> "HandlerResponse[None]": ...
 
     def is_directory(
-        self, path: str, context: OperationContext | None = None
-    ) -> HandlerResponse[bool]: ...
-
+        self, path: str, context: "OperationContext | None" = None
+    ) -> "HandlerResponse[bool]": ...
 
 @runtime_checkable
-class ConnectorProtocol(ContentStoreProtocol, DirectoryOpsProtocol, Protocol):
+class CapabilityAwareProtocol(Protocol):
+    """Protocol for backends that declare capabilities (Issue #2069).
+
+    Implemented by Backend ABC and all wrappers. Consumers use this to
+    query backend capabilities uniformly instead of hasattr/isinstance.
+    """
+
+    @property
+    def capabilities(self) -> "frozenset[ConnectorCapability]": ...
+
+    def has_capability(self, cap: "ConnectorCapability") -> bool: ...
+
+@runtime_checkable
+class ConnectorProtocol(
+    ContentStoreProtocol, DirectoryOpsProtocol, CapabilityAwareProtocol, Protocol
+):
     """Full connector interface — the Storage Brick boundary.
 
     Combines CAS content operations, directory operations, and connection
@@ -106,13 +162,13 @@ class ConnectorProtocol(ContentStoreProtocol, DirectoryOpsProtocol, Protocol):
 
     # --- Connection lifecycle ---
 
-    def connect(self, context: OperationContext | None = None) -> HandlerStatusResponse: ...
+    def connect(self, context: "OperationContext | None" = None) -> "HandlerStatusResponse": ...
 
-    def disconnect(self, context: OperationContext | None = None) -> None: ...
+    def disconnect(self, context: "OperationContext | None" = None) -> None: ...
 
     def check_connection(
-        self, context: OperationContext | None = None
-    ) -> HandlerStatusResponse: ...
+        self, context: "OperationContext | None" = None
+    ) -> "HandlerStatusResponse": ...
 
     # --- Capability flags ---
 
@@ -134,7 +190,6 @@ class ConnectorProtocol(ContentStoreProtocol, DirectoryOpsProtocol, Protocol):
     @property
     def has_token_manager(self) -> bool: ...
 
-
 @runtime_checkable
 class PassthroughProtocol(Protocol):
     """Same-box operations — locking, physical path access.
@@ -152,7 +207,6 @@ class PassthroughProtocol(Protocol):
 
     def unlock(self, lock_id: str) -> bool: ...
 
-
 @runtime_checkable
 class OAuthCapableProtocol(Protocol):
     """OAuth token management capability.
@@ -167,7 +221,6 @@ class OAuthCapableProtocol(Protocol):
     user_email: str | None
     provider: str
 
-
 @runtime_checkable
 class StreamingProtocol(Protocol):
     """Memory-efficient large file I/O — streaming reads and writes.
@@ -181,7 +234,7 @@ class StreamingProtocol(Protocol):
         self,
         content_hash: str,
         chunk_size: int = 8192,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> Any: ...
 
     def stream_range(
@@ -190,30 +243,28 @@ class StreamingProtocol(Protocol):
         start: int,
         end: int,
         chunk_size: int = 8192,
-        context: OperationContext | None = None,
-    ) -> Iterator[bytes]: ...
+        context: "OperationContext | None" = None,
+    ) -> "Iterator[bytes]": ...
 
     def write_stream(
         self,
-        chunks: Iterator[bytes],
-        context: OperationContext | None = None,
-    ) -> HandlerResponse[str]: ...
-
+        chunks: "Iterator[bytes]",
+        context: "OperationContext | None" = None,
+    ) -> "HandlerResponse[str]": ...
 
 @runtime_checkable
 class BatchContentProtocol(Protocol):
     """Bulk content read optimization.
 
-    Used by object_store, async_nexus_fs, and memory services to reduce
+    Used by object_store and memory services to reduce
     round-trips when reading multiple content items.
     """
 
     def batch_read_content(
         self,
         content_hashes: list[str],
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, bytes | None]: ...
-
 
 @runtime_checkable
 class DirectoryListingProtocol(Protocol):
@@ -224,9 +275,37 @@ class DirectoryListingProtocol(Protocol):
     """
 
     def list_dir(
-        self, path: str, context: OperationContext | None = None
+        self, path: str, context: "OperationContext | None" = None
     ) -> list[str]: ...
 
     def get_file_info(
-        self, path: str, context: OperationContext | None = None
-    ) -> HandlerResponse[FileInfo]: ...
+        self, path: str, context: "OperationContext | None" = None
+    ) -> "HandlerResponse[FileInfo]": ...
+
+@runtime_checkable
+class SignedUrlProtocol(Protocol):
+    """Backend can generate pre-signed/signed download URLs (Issue #2069).
+
+    Replaces orphan ``hasattr(backend, 'generate_presigned_url')`` and
+    ``hasattr(backend, 'generate_signed_url')`` checks in filesystem.py.
+    """
+
+    def generate_signed_download_url(
+        self,
+        backend_path: str,
+        expires_in: int = 3600,
+        context: "OperationContext | None" = None,
+    ) -> dict[str, Any]: ...
+
+@runtime_checkable
+class PathDeleteProtocol(Protocol):
+    """Backend supports path-based delete (Issue #2069).
+
+    Replaces 3-way hasattr fallback chain in write_back_service.py.
+    """
+
+    def delete(
+        self,
+        path: str,
+        context: "OperationContext | None" = None,
+    ) -> "HandlerResponse[None]": ...

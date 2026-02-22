@@ -8,8 +8,6 @@ correctly when wired through the full dependency injection pipeline.
 No Raft required — uses InMemoryMetadata implementing MetastoreABC.
 """
 
-from __future__ import annotations
-
 from collections.abc import Sequence
 from typing import Any
 
@@ -17,10 +15,10 @@ import pytest
 
 from nexus.backends.local import LocalBackend
 from nexus.contracts.exceptions import NexusFileNotFoundError
+from nexus.contracts.metadata import FileMetadata
 from nexus.contracts.workspace_manifest import ManifestEntry, WorkspaceManifest
-from nexus.core.metadata import FileMetadata
-from nexus.core.metastore import MetastoreABC
-from nexus.services.overlay_resolver import OverlayResolver
+from nexus.core.metastore import CasResult, MetastoreABC
+from nexus.system_services.workspace.overlay_resolver import OverlayResolver
 
 
 class InMemoryMetastore(MetastoreABC):
@@ -35,10 +33,25 @@ class InMemoryMetastore(MetastoreABC):
     def get(self, path: str) -> FileMetadata | None:
         return self._store.get(path)
 
-    def put(self, metadata: FileMetadata) -> None:
+    def put(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:
         self._store[metadata.path] = metadata
+        return None
 
-    def delete(self, path: str) -> dict[str, Any] | None:
+    def put_if_version(
+        self,
+        metadata: FileMetadata,
+        expected_version: int,
+        *,
+        consistency: str = "sc",
+    ) -> CasResult:
+        current = self._store.get(metadata.path)
+        current_ver = current.version if current else 0
+        if current_ver != expected_version:
+            return CasResult(success=False, current_version=current_ver)
+        self._store[metadata.path] = metadata
+        return CasResult(success=True, current_version=metadata.version)
+
+    def delete(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
         if path in self._store:
             del self._store[path]
             return {"deleted": path}

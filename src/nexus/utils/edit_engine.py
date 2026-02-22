@@ -24,12 +24,10 @@ References:
 - https://fabianhertwig.com/blog/coding-assistants-file-edits/
 """
 
-from __future__ import annotations
-
 import difflib
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 # Try to use rapidfuzz for 10-100x faster fuzzy matching (Rust-backed)
 # Falls back to difflib if not available
@@ -39,9 +37,6 @@ try:
     RAPIDFUZZ_AVAILABLE = True
 except ImportError:
     RAPIDFUZZ_AVAILABLE = False
-
-if TYPE_CHECKING:
-    pass
 
 
 @dataclass(slots=True)

@@ -4,8 +4,6 @@ Tests that admins with admin:read:* cannot access files from other zones
 unless they have MANAGE_ZONES capability (system admin only).
 """
 
-from __future__ import annotations
-
 import tempfile
 from collections.abc import Generator
 from pathlib import Path
@@ -13,11 +11,11 @@ from pathlib import Path
 import pytest
 
 from nexus import LocalBackend, NexusFS
+from nexus.bricks.rebac.permissions_enhanced import AdminCapability
 from nexus.contracts.types import OperationContext
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.lib.zone_helpers import add_user_to_zone
-from nexus.rebac.permissions_enhanced import AdminCapability
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 

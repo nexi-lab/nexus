@@ -8,14 +8,12 @@ requiring a full database. For real E2E tests with database failure
 injection, see the E2E validation step in the plan.
 """
 
-from __future__ import annotations
-
 import asyncio
 from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.rebac.circuit_breaker import (
+from nexus.bricks.rebac.circuit_breaker import (
     AsyncCircuitBreaker,
     CircuitBreakerConfig,
     CircuitState,
@@ -104,7 +102,7 @@ class TestCachedPermissionServedWhenCircuitOpen:
         """Verify that ReBACService returns cached results during outage."""
         from sqlalchemy.exc import OperationalError
 
-        from nexus.services.rebac_service import ReBACService
+        from nexus.bricks.rebac.rebac_service import ReBACService
 
         mock_manager = MagicMock()
         mock_manager.rebac_check.side_effect = OperationalError("conn lost", None, None)
@@ -155,7 +153,7 @@ class TestCircuitRecoveryThroughService:
         """Trip → wait timeout → verify recovery via state."""
         from sqlalchemy.exc import OperationalError
 
-        from nexus.services.rebac_service import ReBACService
+        from nexus.bricks.rebac.rebac_service import ReBACService
 
         mock_manager = MagicMock()
         mock_manager.rebac_check.side_effect = OperationalError("conn lost", None, None)

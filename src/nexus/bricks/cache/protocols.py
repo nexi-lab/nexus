@@ -7,8 +7,6 @@ properties are needed for PostgreSQL cache operations.
 Issue #2189: Replace concrete nexus.storage imports with Protocol abstractions.
 """
 
-from __future__ import annotations
-
 from typing import Any, Protocol
 
 

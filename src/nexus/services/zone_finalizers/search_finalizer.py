@@ -5,8 +5,6 @@ Performs batch ``DELETE FROM entities WHERE zone_id = ?`` and
 search data when a zone is deprovisioned.
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Callable
 from typing import Any
@@ -27,7 +25,11 @@ class SearchZoneFinalizer:
         return "nexus.core/search"
 
     async def finalize_zone(self, zone_id: str) -> None:
-        """Bulk-delete search index entries for *zone_id*."""
+        """Bulk-delete search index entries for *zone_id*.
+
+        .. todo:: Issue #2070: consider batched DELETE with LIMIT for zones with
+           millions of rows to avoid long-running transactions.
+        """
         with self._session_factory() as session:
             # Delete entities
             result_entities = session.execute(

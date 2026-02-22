@@ -1,7 +1,5 @@
 """Skill analytics and usage tracking."""
 
-from __future__ import annotations
-
 import dataclasses
 import json
 import logging
@@ -13,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 from nexus.bricks.skills.exceptions import SkillValidationError
 
 if TYPE_CHECKING:
-    from nexus.core.cache_store import CacheStoreABC
+    from nexus.contracts.cache_store import CacheStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +120,7 @@ class SkillAnalyticsTracker:
     - Generate dashboard metrics for org-wide analytics
 
     Example:
-        >>> from nexus.skills import SkillAnalyticsTracker
+        >>> from nexus.bricks.skills.analytics import SkillAnalyticsTracker
         >>>
         >>> # Initialize tracker
         >>> tracker = SkillAnalyticsTracker()
@@ -144,7 +142,7 @@ class SkillAnalyticsTracker:
         >>> print(f"Total skills: {metrics.total_skills}")
     """
 
-    def __init__(self, cache_store: CacheStoreABC | None = None) -> None:
+    def __init__(self, cache_store: "CacheStoreABC | None" = None) -> None:
         """Initialize analytics tracker.
 
         Args:
@@ -154,7 +152,7 @@ class SkillAnalyticsTracker:
         if cache_store is not None:
             self._cache: CacheStoreABC = cache_store
         else:
-            from nexus.cache.inmemory import InMemoryCacheStore
+            from nexus.contracts.cache_store import InMemoryCacheStore
 
             self._cache = InMemoryCacheStore()
 

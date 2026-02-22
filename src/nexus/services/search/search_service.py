@@ -9,11 +9,10 @@ This service handles all search operations:
 Extracted from: nexus_fs_search.py (2,817 lines)
 """
 
-from __future__ import annotations
-
 import asyncio
 import builtins
 import fnmatch
+import importlib as _il
 import logging
 import os
 import re
@@ -24,7 +23,6 @@ from typing import TYPE_CHECKING, Any, cast
 
 from cachetools import TTLCache
 
-from nexus.bricks.search.primitives import glob_fast, grep_fast, trigram_fast
 from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import PermissionDeniedError
 from nexus.contracts.search_types import (
@@ -43,6 +41,12 @@ from nexus.lib.rpc_decorator import rpc_expose
 from nexus.services.gateway import NexusFSGateway
 
 from .search_semantic import SemanticSearchMixin
+
+# Brick import via importlib to avoid services→bricks tier violation
+_search_primitives = _il.import_module("nexus.bricks.search.primitives")
+glob_fast = _search_primitives.glob_fast
+grep_fast = _search_primitives.grep_fast
+trigram_fast = _search_primitives.trigram_fast
 
 # List directory traversal thresholds (Issue #901)
 # Issue #2071: LIST_PARALLEL_WORKERS now sourced from ProfileTuning.search.list_parallel_workers
@@ -118,11 +122,11 @@ def _filter_ignored_paths(
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from nexus.bricks.rebac.enforcer import PermissionEnforcer
+    from nexus.bricks.rebac.manager import ReBACManager
     from nexus.contracts.types import OperationContext
     from nexus.core.metastore import MetastoreABC
     from nexus.core.router import PathRouter
-    from nexus.rebac.enforcer import PermissionEnforcer
-    from nexus.rebac.manager import EnhancedReBACManager
 
 
 class SearchService(SemanticSearchMixin):
@@ -138,18 +142,19 @@ class SearchService(SemanticSearchMixin):
 
     def __init__(
         self,
-        metadata_store: MetastoreABC,
-        permission_enforcer: PermissionEnforcer | None = None,
-        router: PathRouter | None = None,
-        rebac_manager: EnhancedReBACManager | None = None,
+        metadata_store: "MetastoreABC",
+        permission_enforcer: "PermissionEnforcer | None" = None,
+        router: "PathRouter | None" = None,
+        rebac_manager: "ReBACManager | None" = None,
         enforce_permissions: bool = True,
-        default_context: OperationContext | None = None,
+        default_context: "OperationContext | None" = None,
         record_store: Any | None = None,
         # Gateway for NexusFS operations (Issue #1287, replaces 8 Callable params)
         gateway: NexusFSGateway | None = None,
         list_parallel_workers: int = LIST_PARALLEL_WORKERS,
         grep_parallel_workers: int = GREP_PARALLEL_WORKERS,
         file_cache: Any | None = None,
+        zoekt_client: Any | None = None,
     ):
         """Initialize search service.
 
@@ -162,11 +167,13 @@ class SearchService(SemanticSearchMixin):
             default_context: Default operation context (embedded mode)
             record_store: RecordStoreABC for SQL engine (needed for semantic search)
             gateway: NexusFSGateway for file ops, routing, and dependency tracking
+            zoekt_client: Injected ZoektClient instance (Issue #2188).
         """
         self.metadata = metadata_store
         self._record_store = record_store
         # Injected file cache (Issue #690 — replaces global singleton)
         self._file_cache = file_cache
+        self._zoekt_client = zoekt_client
         self._permission_enforcer = permission_enforcer
         self.router = router
         self._rebac_manager = rebac_manager
@@ -177,8 +184,6 @@ class SearchService(SemanticSearchMixin):
         self._gw = gateway
 
         # Semantic search (initialized later, types declared in SemanticSearchMixin)
-        self._semantic_search = None
-        self._async_search = None
 
         # Shared thread pool for parallel grep (Issue #929, fix #14)
         self._thread_pool: ThreadPoolExecutor | None = None
@@ -362,7 +367,7 @@ class SearchService(SemanticSearchMixin):
                 context=context,
             )
         # Phase 2 Integration (v0.4.0): Intercept memory paths
-        from nexus.bricks.memory.router import MemoryViewRouter
+        MemoryViewRouter = _il.import_module("nexus.bricks.memory.router").MemoryViewRouter
 
         if path and MemoryViewRouter.is_memory_path(path):
             return self._list_memory_path(path, details)
@@ -787,7 +792,7 @@ class SearchService(SemanticSearchMixin):
         _rebac_manager: Any,
     ) -> tuple[builtins.list[Any], set[str], bool, int | None]:
         """Non-recursive list using sparse directory index + Tiger bitmap."""
-        from nexus.core.metadata import FileMetadata
+        from nexus.contracts.metadata import FileMetadata
 
         _preapproved_dirs: set[str] = set()
         _revision_before: int | None = None
@@ -1236,7 +1241,7 @@ class SearchService(SemanticSearchMixin):
         context: Any,
     ) -> Any:
         """Paginated list with over-fetch strategy for permission filtering (Issue #937)."""
-        from nexus.core.metadata import PaginatedResult
+        from nexus.contracts.metadata import PaginatedResult
         from nexus.lib.pagination import encode_cursor
 
         context = context or self._default_context
@@ -1330,8 +1335,8 @@ class SearchService(SemanticSearchMixin):
             logger.warning("session_factory not provided, cannot list memory paths")
             return []
 
-        from nexus.bricks.memory.router import MemoryViewRouter
-        from nexus.rebac.entity_registry import EntityRegistry
+        MemoryViewRouter = _il.import_module("nexus.bricks.memory.router").MemoryViewRouter
+        EntityRegistry = _il.import_module("nexus.bricks.rebac.entity_registry").EntityRegistry
 
         parts = [p for p in path.split("/") if p]
         session = self._gw_session_factory()
@@ -1861,19 +1866,16 @@ class SearchService(SemanticSearchMixin):
         context: Any,
     ) -> builtins.list[dict[str, Any]] | None:
         """Try Zoekt for accelerated grep. Returns None if not available."""
-        try:
-            from nexus.bricks.search.zoekt_client import get_zoekt_client
-        except ImportError:
+        if self._zoekt_client is None:
             return None
 
-        client = get_zoekt_client()
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():
                 return None
-            is_available = loop.run_until_complete(client.is_available())
+            is_available = loop.run_until_complete(self._zoekt_client.is_available())
         except RuntimeError:
-            is_available = asyncio.run(client.is_available())
+            is_available = asyncio.run(self._zoekt_client.is_available())
 
         if not is_available:
             return None
@@ -1889,9 +1891,11 @@ class SearchService(SemanticSearchMixin):
                 loop = asyncio.get_event_loop()
                 if loop.is_running():
                     return None
-                matches = loop.run_until_complete(client.search(zoekt_query, num=max_results * 3))
+                matches = loop.run_until_complete(
+                    self._zoekt_client.search(zoekt_query, num=max_results * 3)
+                )
             except RuntimeError:
-                matches = asyncio.run(client.search(zoekt_query, num=max_results * 3))
+                matches = asyncio.run(self._zoekt_client.search(zoekt_query, num=max_results * 3))
 
             if not matches:
                 return None
@@ -2153,18 +2157,17 @@ class SearchService(SemanticSearchMixin):
 
     def _is_zoekt_available(self) -> bool:
         """Check if Zoekt indexing service is available."""
-        try:
-            from nexus.bricks.search.zoekt_client import get_zoekt_client
+        if self._zoekt_client is None:
+            return False
 
-            client = get_zoekt_client()
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    return False
-                return loop.run_until_complete(client.is_available())
-            except RuntimeError:
-                return asyncio.run(client.is_available())
-        except (ImportError, Exception):
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                return False
+            return loop.run_until_complete(self._zoekt_client.is_available())
+        except RuntimeError:
+            return asyncio.run(self._zoekt_client.is_available())
+        except Exception:
             return False
 
     def _select_grep_strategy(

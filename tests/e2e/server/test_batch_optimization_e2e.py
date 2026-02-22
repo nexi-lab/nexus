@@ -10,8 +10,6 @@ Validates that:
 3. No performance regression from batch optimizations
 """
 
-from __future__ import annotations
-
 import os
 import shutil
 import signal
@@ -72,7 +70,7 @@ def _build_startup_script(port: int, data_dir: str) -> str:
 
         sys.path.insert(0, os.getenv("PYTHONPATH", ""))
 
-        from nexus.auth.providers.static_key import StaticAPIKeyAuth
+        from nexus.bricks.auth.providers.static_key import StaticAPIKeyAuth
         from nexus.cli import main as cli_main
 
         auth_config = {{

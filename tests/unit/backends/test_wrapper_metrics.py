@@ -13,8 +13,6 @@ Design reference:
     - Issue #2077: Deduplicate backend wrapper boilerplate
 """
 
-from __future__ import annotations
-
 import threading
 from unittest.mock import MagicMock, patch
 
@@ -105,7 +103,7 @@ class TestOTelIntegration:
         mock_get_meter = MagicMock(return_value=mock_meter)
 
         with (
-            patch("nexus.server.telemetry.is_telemetry_enabled", return_value=True),
+            patch("nexus.lib.telemetry.is_telemetry_enabled", return_value=True),
             patch("opentelemetry.metrics.get_meter", mock_get_meter),
         ):
             metrics = WrapperMetrics(
@@ -150,7 +148,7 @@ class TestOTelIntegration:
         )
 
         with patch(
-            "nexus.server.telemetry.is_telemetry_enabled",
+            "nexus.lib.telemetry.is_telemetry_enabled",
             side_effect=ImportError("no telemetry"),
         ):
             metrics.increment("ops")

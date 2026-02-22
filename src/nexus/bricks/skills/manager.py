@@ -1,7 +1,5 @@
 """Skill lifecycle management: create, fork, publish, and versioning."""
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from datetime import UTC, datetime
@@ -16,12 +14,12 @@ from nexus.bricks.skills.models import SkillMetadata
 from nexus.bricks.skills.parser import SkillParser
 from nexus.bricks.skills.protocols import NexusFilesystem
 from nexus.bricks.skills.registry import SkillNotFoundError, SkillRegistry
-from nexus.constants import ROOT_ZONE_ID
+from nexus.lib.zone import normalize_zone_id
 
 if TYPE_CHECKING:
     from nexus.bricks.skills.governance import SkillGovernance
     from nexus.bricks.skills.types import SkillOperationContext as OperationContext
-    from nexus.rebac.manager import ReBACManager
+    from nexus.services.protocols.rebac import ReBACBrickProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +35,8 @@ class SkillManager:
 
     Example:
         >>> from nexus import connect
-        >>> from nexus.skills import SkillRegistry, SkillManager
+        >>> from nexus.bricks.skills.registry import SkillRegistry
+        >>> from nexus.bricks.skills.manager import SkillManager
         >>>
         >>> nx = connect()
         >>> registry = SkillRegistry(nx)
@@ -66,8 +65,8 @@ class SkillManager:
         self,
         filesystem: NexusFilesystem | None = None,
         registry: SkillRegistry | None = None,
-        rebac_manager: ReBACManager | None = None,
-        governance: SkillGovernance | None = None,
+        rebac_manager: "ReBACBrickProtocol | None" = None,
+        governance: "SkillGovernance | None" = None,
     ):
         """Initialize skill manager.
 
@@ -108,12 +107,13 @@ class SkillManager:
             return True
 
         try:
-            return self._rebac.rebac_check(
+            result: bool = self._rebac.rebac_check(
                 subject=(subject_type, subject_id),
                 permission=permission,
                 object=("skill", object_name),
                 zone_id=zone_id,
             )
+            return result
         except Exception as e:
             logger.warning(f"ReBAC check failed: {e}")
             return False
@@ -126,7 +126,7 @@ class SkillManager:
         owner_id: str,
         tier: str,
         zone_id: str | None = None,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> None:
         """Create ReBAC permission tuples for a skill based on tier.
 
@@ -150,7 +150,7 @@ class SkillManager:
 
         try:
             # Get zone_id from context if not provided
-            effective_zone_id = zone_id or (context.zone_id if context else None) or ROOT_ZONE_ID
+            effective_zone_id = normalize_zone_id(zone_id or (context.zone_id if context else None))
 
             # For user-level skills: Owner gets direct_owner on the skill directory
             # This allows them full control (read, write, delete)
@@ -183,7 +183,7 @@ class SkillManager:
                     subject=("role", "public"),
                     relation="viewer",
                     object=("file", skill_dir.rstrip("/")),
-                    zone_id=ROOT_ZONE_ID,  # System skills use root zone
+                    zone_id=normalize_zone_id(None),  # System skills use root zone
                 )
                 logger.debug(f"Created public viewer permission on {skill_dir}")
 
@@ -205,7 +205,7 @@ class SkillManager:
         creator_id: str | None = None,
         creator_type: str = "agent",
         zone_id: str | None = None,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
         **kwargs: str,
     ) -> str:
         """Create a new skill from a template.
@@ -357,7 +357,7 @@ class SkillManager:
         version: str = "1.0.0",
         source_url: str | None = None,
         metadata: dict[str, Any] | None = None,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> str:
         """Create a new skill from content (e.g., from web scraping).
 

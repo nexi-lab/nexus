@@ -4,8 +4,6 @@ Tests suspension lifecycle, appeal workflow, and throttle logic
 using mocked database dependencies.
 """
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock
 
 import pytest
@@ -24,13 +22,13 @@ class _FakeAsyncSession:
     def __init__(self) -> None:
         self._added: list[object] = []
 
-    async def __aenter__(self) -> _FakeAsyncSession:
+    async def __aenter__(self) -> "_FakeAsyncSession":
         return self
 
     async def __aexit__(self, *args: object) -> None:
         pass
 
-    def begin(self) -> _FakeAsyncSession:
+    def begin(self) -> "_FakeAsyncSession":
         """Return self as async context manager for begin()."""
         return self
 
@@ -45,7 +43,7 @@ def _mock_session_factory() -> object:
     """Create a session factory that returns a proper async context manager."""
     session = _FakeAsyncSession()
 
-    def factory() -> _FakeAsyncSession:
+    def factory() -> "_FakeAsyncSession":
         return session
 
     return factory

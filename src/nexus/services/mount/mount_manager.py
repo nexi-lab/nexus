@@ -10,8 +10,6 @@ Supports:
 - Removing mount configurations
 """
 
-from __future__ import annotations
-
 import json
 import uuid
 from datetime import UTC, datetime
@@ -35,7 +33,7 @@ class MountManager:
 
     Example:
         >>> from nexus import NexusFS
-        >>> from nexus.services.mount_manager import MountManager
+        >>> from nexus.services.mount.mount_manager import MountManager
         >>>
         >>> nx = NexusFS(...)
         >>> manager = MountManager(nx._record_store)
@@ -56,7 +54,7 @@ class MountManager:
         >>> manager.remove_mount("/personal/alice")
     """
 
-    def __init__(self, record_store: RecordStoreABC) -> None:
+    def __init__(self, record_store: "RecordStoreABC") -> None:
         """Initialize mount manager.
 
         Args:

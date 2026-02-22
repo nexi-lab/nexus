@@ -4,8 +4,6 @@ Issue #2129 §11A: Tests submit -> expire -> verify status == EXPIRED,
 and expire non-pending -> InvalidTransitionError.
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.bricks.governance.approval.state_machine import InvalidTransitionError

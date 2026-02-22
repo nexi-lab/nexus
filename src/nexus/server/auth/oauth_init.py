@@ -4,8 +4,6 @@ Extracted from ``nexus.server.fastapi_server._initialize_oauth_provider`` (#2049
 to reduce the size of the monolithic server module.
 """
 
-from __future__ import annotations
-
 import logging
 import os
 from typing import TYPE_CHECKING, Any
@@ -18,7 +16,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def initialize_oauth_provider(nexus_fs: NexusFS, auth_provider: Any) -> None:
+def initialize_oauth_provider(nexus_fs: "NexusFS", auth_provider: Any) -> None:
     """Initialize OAuth provider if Google OAuth credentials are available.
 
     Args:
@@ -56,9 +54,9 @@ def initialize_oauth_provider(nexus_fs: NexusFS, auth_provider: Any) -> None:
             return
 
         # Initialize OAuth provider (provider-agnostic via DI)
-        from nexus.auth.oauth.crypto import OAuthCrypto
-        from nexus.auth.oauth.providers.google import GoogleOAuthProvider
-        from nexus.auth.oauth.user_auth import OAuthUserAuth
+        from nexus.bricks.auth.oauth.crypto import OAuthCrypto
+        from nexus.bricks.auth.oauth.providers.google import GoogleOAuthProvider
+        from nexus.bricks.auth.oauth.user_auth import OAuthUserAuth
         from nexus.server.auth.auth_routes import set_oauth_provider
 
         _oauth_enc_key = os.environ.get("NEXUS_OAUTH_ENCRYPTION_KEY", "").strip() or None
@@ -77,11 +75,21 @@ def initialize_oauth_provider(nexus_fs: NexusFS, auth_provider: Any) -> None:
             ],
             provider_name="google-auth",
         )
+        # Issue #2281: inject UserProvisionerProtocol to break circular dep
+        user_provisioner = None
+        try:
+            from nexus.bricks.auth.stores.nexusfs_provisioner import NexusFSUserProvisioner
+
+            user_provisioner = NexusFSUserProvisioner(nexus_fs)
+        except Exception:
+            logger.debug("NexusFSUserProvisioner unavailable; OAuth user provisioning disabled")
+
         oauth_provider = OAuthUserAuth(
             session_factory=session_factory,
             providers={"google": google_provider},
             jwt_secret=jwt_secret,
             oauth_crypto=oauth_crypto,
+            user_provisioner=user_provisioner,
         )
 
         set_oauth_provider(oauth_provider)

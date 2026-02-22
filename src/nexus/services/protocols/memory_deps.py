@@ -11,8 +11,6 @@ in-memory fakes (see bricks/memory/testing.py), following the same pattern
 as SkillPermissionProtocol (Issue #2035).
 """
 
-from __future__ import annotations
-
 from typing import Any, Protocol, runtime_checkable
 
 

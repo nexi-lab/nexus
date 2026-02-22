@@ -11,8 +11,6 @@ Bearer token authentication enabled, covering:
 Run with: python -m pytest tests/e2e/test_memory_paging_fastapi_e2e.py -v
 """
 
-from __future__ import annotations
-
 import shutil
 import tempfile
 from collections.abc import Sequence
@@ -23,10 +21,10 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
-from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
-from nexus.auth.providers.discriminator import DiscriminatingAuthProvider
+from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
+from nexus.bricks.auth.providers.discriminator import DiscriminatingAuthProvider
+from nexus.contracts.metadata import FileMetadata, PaginatedResult
 from nexus.core.config import MemoryConfig, PermissionConfig
-from nexus.core.metadata import FileMetadata, PaginatedResult
 from nexus.core.metastore import MetastoreABC
 from nexus.storage.models import Base
 
@@ -345,7 +343,7 @@ class TestAdminUser:
         )
         assert response.status_code == 200
         data = response.json()
-        assert isinstance(data, (dict, list))
+        assert isinstance(data, dict | list)
 
     def test_admin_delete_memory(self, client, admin_headers):
         """Admin can delete memories."""

@@ -8,17 +8,16 @@ Tests that the trust gate in delegate() correctly:
 5. Is skipped when reputation_service is None
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nexus.services.delegation.errors import InsufficientTrustError
-from nexus.services.delegation.models import DelegationMode
-from nexus.services.delegation.service import DelegationService
+from nexus.bricks.delegation.errors import InsufficientTrustError
+from nexus.bricks.delegation.models import DelegationMode
+from nexus.bricks.delegation.service import DelegationService
+from nexus.constants import ROOT_ZONE_ID
 
 
 @dataclass(frozen=True)
@@ -44,7 +43,7 @@ class FakeReputationScore:
     disputed_interactions: int = 0
     global_trust_score: float | None = None
     updated_at: datetime = datetime(2025, 1, 1)
-    zone_id: str = "default"
+    zone_id: str = ROOT_ZONE_ID
 
 
 @pytest.fixture()

@@ -15,8 +15,6 @@ Extracted from:
     - tiger_cache.py (TigerCache, ResourceMapCache)
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import uuid
@@ -95,7 +93,6 @@ _PERM_COUNT_VALID = text("""
     WHERE expires_at > :now
 """)
 
-
 # ---------------------------------------------------------------------------
 # SQL Queries — Tiger Cache (tiger_cache table)
 # ---------------------------------------------------------------------------
@@ -147,7 +144,6 @@ _RESMAP_BULK_GET = text("""
         SELECT UNNEST(CAST(:types AS text[])), UNNEST(CAST(:ids AS text[]))
     )
 """)
-
 
 # ---------------------------------------------------------------------------
 # Engine detection helper

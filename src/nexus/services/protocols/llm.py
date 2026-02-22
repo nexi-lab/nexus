@@ -1,7 +1,7 @@
 """LLM service protocol (Issue #1287: Extract domain services).
 
 Defines the contract for LLM-powered document reading operations.
-Existing implementation: ``nexus.services.llm_service.LLMService``.
+Existing implementation: ``nexus.bricks.llm.llm_service.LLMService``.
 
 Renamed from LLMProtocol → LLMServiceProtocol in Issue #1521 to
 distinguish from the brick-level LLMProviderProtocol.
@@ -12,14 +12,8 @@ References:
     - Issue #1521: Extract LLM module into LLM brick
 """
 
-from __future__ import annotations
-
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
-
-if TYPE_CHECKING:
-    from nexus.llm.provider import LLMProvider
-    from nexus.services.llm.llm_citation import DocumentReadResult
+from typing import Any, Protocol, runtime_checkable
 
 
 @runtime_checkable
@@ -43,7 +37,7 @@ class LLMServiceProtocol(Protocol):
         api_key: str | None = None,
         use_search: bool = True,
         search_mode: str = "semantic",
-        provider: LLMProvider | None = None,
+        provider: Any = None,
     ) -> str: ...
 
     async def llm_read_detailed(
@@ -57,8 +51,8 @@ class LLMServiceProtocol(Protocol):
         search_mode: str = "semantic",
         search_limit: int = 10,
         include_citations: bool = True,
-        provider: LLMProvider | None = None,
-    ) -> DocumentReadResult: ...
+        provider: Any = None,
+    ) -> Any: ...
 
     def llm_read_stream(
         self,
@@ -69,12 +63,12 @@ class LLMServiceProtocol(Protocol):
         api_key: str | None = None,
         use_search: bool = True,
         search_mode: str = "semantic",
-        provider: LLMProvider | None = None,
+        provider: Any = None,
     ) -> AsyncIterator[str]: ...
 
     def create_llm_reader(
         self,
-        provider: LLMProvider | None = None,
+        provider: Any = None,
         model: str | None = None,
         api_key: str | None = None,
         system_prompt: str | None = None,

@@ -12,14 +12,13 @@ Usage:
     >>> results = memory.search_with_paging("query about fact")
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from nexus.bricks.memory.memory_paging import MemoryPager
 from nexus.bricks.memory.service import Memory
+from nexus.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -49,8 +48,8 @@ class MemoryWithPaging(Memory):
 
     def __init__(
         self,
-        session: Session,
-        backend: Backend,
+        session: "Session",
+        backend: "Backend",
         zone_id: str | None = None,
         user_id: str | None = None,
         agent_id: str | None = None,
@@ -61,7 +60,7 @@ class MemoryWithPaging(Memory):
         warm_up: bool = True,
         vector_db: Any = None,
         engine: Any = None,
-        session_factory: Callable[[], Session] | None = None,
+        session_factory: "Callable[[], Session] | None" = None,
     ):
         """Initialize Memory API with paging.
 
@@ -98,21 +97,19 @@ class MemoryWithPaging(Memory):
             # Fallback: wrap the provided session (single-threaded use)
             session_factory = lambda: session  # noqa: E731
 
-        # Create VectorDatabase from engine if not provided directly
+        # VectorDatabase must be injected via vector_db param (DI).
+        # The factory layer is responsible for creating VectorDatabase
+        # from the engine and passing it here.
         if vector_db is None and engine is not None:
-            try:
-                from nexus.bricks.search.vector_db import VectorDatabase
-
-                vector_db = VectorDatabase(engine)
-                vector_db.initialize()
-            except Exception as e:
-                logger.warning(f"Failed to initialize VectorDatabase: {e}")
-                vector_db = None
+            logger.debug(
+                "engine provided but no vector_db — "
+                "inject vector_db from factory for pgvector-accelerated search"
+            )
 
         if enable_paging:
             self.pager = MemoryPager(
                 session_factory=session_factory,
-                zone_id=zone_id or "root",
+                zone_id=zone_id or ROOT_ZONE_ID,
                 main_capacity=main_capacity,
                 recall_max_age_hours=recall_max_age_hours,
                 warm_up=warm_up,
@@ -307,7 +304,7 @@ class MemoryWithPaging(Memory):
         hash_val = int(hashlib.sha256(text.encode()).hexdigest(), 16)
         return [(hash_val >> (i % 256)) % 100 / 100.0 for i in range(_EMBEDDING_DIM)]
 
-    def _memory_to_dict(self, memory: MemoryModel) -> dict:
+    def _memory_to_dict(self, memory: "MemoryModel") -> dict:
         """Convert MemoryModel to dict.
 
         Args:

@@ -12,8 +12,6 @@ The SchedulerService is the main entry point for task scheduling. It:
 Related: Issue #1212, #1274
 """
 
-from __future__ import annotations
-
 import logging
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -25,10 +23,13 @@ from nexus.services.scheduler.constants import (
     TASK_STATUS_FAILED,
     PriorityClass,
     PriorityTier,
-    RequestState,
 )
 from nexus.services.scheduler.models import ScheduledTask, TaskSubmission
-from nexus.services.scheduler.policies.classifier import classify_request
+from nexus.services.scheduler.policies.classifier import (
+    classify_agent_request,
+    classify_request,
+    parse_request_enums,
+)
 from nexus.services.scheduler.policies.fair_share import FairShareCounter
 from nexus.services.scheduler.priority import (
     compute_boost_tiers,
@@ -38,8 +39,7 @@ from nexus.services.scheduler.priority import (
 from nexus.services.scheduler.queue import TaskQueue
 
 if TYPE_CHECKING:
-    from nexus.bricks.pay.credits import CreditsService
-    from nexus.services.protocols.scheduler import AgentRequest
+    from nexus.services.protocols.scheduler import AgentRequest, CreditsReservationProtocol
     from nexus.services.scheduler.events import AgentStateEmitter, AgentStateEvent
 
 logger = logging.getLogger(__name__)
@@ -58,8 +58,8 @@ class SchedulerService:
         *,
         queue: TaskQueue | None = None,
         db_pool: Any = None,
-        credits_service: CreditsService | None = None,
-        state_emitter: AgentStateEmitter | None = None,
+        credits_service: "CreditsReservationProtocol | None" = None,
+        state_emitter: "AgentStateEmitter | None" = None,
         fair_share: FairShareCounter | None = None,
         use_hrrn: bool = True,
     ) -> None:
@@ -68,16 +68,53 @@ class SchedulerService:
         self._credits = credits_service
         self._fair_share = fair_share or FairShareCounter()
         self._use_hrrn = use_hrrn
+        self._state_emitter = state_emitter
+
+        # Two-phase init tracking (Issue #2195):
+        # Factory creates with db_pool=None, lifespan calls initialize(pool).
+        self._initialized = db_pool is not None
 
         # Register for agent state events if emitter is provided
         if state_emitter is not None:
             state_emitter.add_handler(self._on_agent_state_change)
 
     # =========================================================================
+    # Two-phase initialization (Issue #2195)
+    # =========================================================================
+
+    @property
+    def pool(self) -> Any:
+        """Return the asyncpg pool, raising if not yet initialized."""
+        if self._pool is None:
+            raise RuntimeError(
+                "SchedulerService.pool accessed before initialize(). "
+                "Call `await scheduler.initialize(db_pool)` first."
+            )
+        return self._pool
+
+    async def initialize(self, db_pool: Any) -> None:
+        """Complete async initialization with the asyncpg pool.
+
+        Called by lifespan after creating the asyncpg pool.
+        """
+        self._pool = db_pool
+        self._initialized = True
+        await self.sync_fair_share()
+        logger.info("SchedulerService initialized (pool connected, fair-share synced)")
+
+    async def shutdown(self) -> None:
+        """Close the asyncpg pool and mark as uninitialized."""
+        if self._pool is not None:
+            await self._pool.close()
+            self._pool = None
+            self._initialized = False
+            logger.info("SchedulerService shutdown (pool closed)")
+
+    # =========================================================================
     # SchedulerProtocol — 8 methods
     # =========================================================================
 
-    async def submit(self, request: AgentRequest) -> str:
+    async def submit(self, request: "AgentRequest") -> str:
         """Submit an AgentRequest, auto-classify, and enqueue.
 
         1. Converts AgentRequest to internal TaskSubmission
@@ -91,16 +128,8 @@ class SchedulerService:
         Returns:
             Task ID string.
         """
-        # Map AgentRequest fields to internal types
-        try:
-            tier = PriorityTier(request.priority)
-        except ValueError:
-            tier = PriorityTier.NORMAL
-
-        try:
-            req_state = RequestState(request.request_state)
-        except ValueError:
-            req_state = RequestState.PENDING
+        # Map AgentRequest fields to internal types (shared parser — DRY)
+        tier, req_state = parse_request_enums(request)
 
         # Auto-classify priority_class
         priority_class_str = request.priority_class
@@ -154,7 +183,7 @@ class SchedulerService:
         effective_tier = compute_effective_tier(submission, enqueued_at=now, now=now)
 
         # Enqueue with Astraea fields
-        async with self._pool.acquire() as conn:
+        async with self.pool.acquire() as conn:
             task_id = await self._queue.enqueue(
                 conn,
                 agent_id=submission.agent_id,
@@ -175,7 +204,7 @@ class SchedulerService:
 
         return str(task_id)
 
-    async def next(self, *, executor_id: str | None = None) -> AgentRequest | None:
+    async def next(self, *, executor_id: str | None = None) -> "AgentRequest | None":
         """Dequeue the next task and return as AgentRequest."""
         task = await self.dequeue_next(executor_id=executor_id)
         if task is None:
@@ -198,7 +227,7 @@ class SchedulerService:
 
     async def get_status(self, task_id: str) -> dict[str, Any] | None:
         """Get task status by ID as a dict."""
-        async with self._pool.acquire() as conn:
+        async with self.pool.acquire() as conn:
             task = await self._queue.get_task(conn, task_id)
         if task is None:
             return None
@@ -223,7 +252,7 @@ class SchedulerService:
     async def complete(self, task_id: str, *, error: str | None = None) -> None:
         """Mark a task as completed or failed, and update fair-share counter."""
         status = TASK_STATUS_FAILED if error else TASK_STATUS_COMPLETED
-        async with self._pool.acquire() as conn:
+        async with self.pool.acquire() as conn:
             # Look up the task to get agent_id for fair-share
             task = await self._queue.get_task(conn, task_id)
             await self._queue.complete(conn, task_id, status=status, error=error)
@@ -231,23 +260,13 @@ class SchedulerService:
         if task is not None:
             self._fair_share.record_complete(task.agent_id)
 
-    async def classify(self, request: AgentRequest) -> str:
+    async def classify(self, request: "AgentRequest") -> str:
         """Classify an AgentRequest into a PriorityClass."""
-        try:
-            tier = PriorityTier(request.priority)
-        except ValueError:
-            tier = PriorityTier.NORMAL
-
-        try:
-            req_state = RequestState(request.request_state)
-        except ValueError:
-            req_state = RequestState.PENDING
-
-        return classify_request(tier, req_state)
+        return classify_agent_request(request)
 
     async def metrics(self, *, zone_id: str | None = None) -> dict[str, Any]:
         """Get scheduler metrics including queue stats and fair-share."""
-        async with self._pool.acquire() as conn:
+        async with self.pool.acquire() as conn:
             queue_metrics = await self._queue.get_queue_metrics(conn, zone_id=zone_id)
 
         return {
@@ -264,13 +283,16 @@ class SchedulerService:
         }
 
     async def pending_count(self, *, zone_id: str | None = None) -> int:
-        """Count pending tasks. Placeholder for protocol conformance."""
-        m = await self.metrics(zone_id=zone_id)
-        return sum(row.get("cnt", 0) for row in m.get("queue_by_class", []))
+        """Count pending tasks via a direct COUNT(*) query.
+
+        More efficient than metrics() which aggregates by priority_class.
+        """
+        async with self.pool.acquire() as conn:
+            return await self._queue.count_pending(conn, zone_id=zone_id)
 
     async def cancel(self, agent_id: str) -> int:
         """Cancel all queued tasks for an agent. Returns count cancelled."""
-        async with self._pool.acquire() as conn:
+        async with self.pool.acquire() as conn:
             return await self._queue.cancel_by_agent(conn, agent_id)
 
     # =========================================================================
@@ -279,7 +301,7 @@ class SchedulerService:
 
     async def cancel_by_id(self, task_id: str) -> bool:
         """Cancel a single queued task with credit release."""
-        async with self._pool.acquire() as conn:
+        async with self.pool.acquire() as conn:
             task = await self._queue.get_task(conn, task_id)
             cancelled = await self._queue.cancel(conn, task_id)
 
@@ -301,7 +323,7 @@ class SchedulerService:
         Args:
             executor_id: If provided, only dequeue tasks assigned to this executor.
         """
-        async with self._pool.acquire() as conn:
+        async with self.pool.acquire() as conn:
             if self._use_hrrn:
                 task = await self._queue.dequeue_hrrn(conn, executor_id=executor_id)
             else:
@@ -315,14 +337,14 @@ class SchedulerService:
     async def run_aging_sweep(self) -> int:
         """Run one aging sweep cycle."""
         now = datetime.now(UTC)
-        async with self._pool.acquire() as conn:
+        async with self.pool.acquire() as conn:
             return await self._queue.aging_sweep(conn, now)
 
     # =========================================================================
     # Astraea internal methods (Issue #1274)
     # =========================================================================
 
-    async def _on_agent_state_change(self, event: AgentStateEvent) -> None:
+    async def _on_agent_state_change(self, event: "AgentStateEvent") -> None:
         """Handle agent state transitions — update executor_state in DB."""
         logger.info(
             "Agent state change: %s %s -> %s",
@@ -330,12 +352,12 @@ class SchedulerService:
             event.previous_state,
             event.new_state,
         )
-        async with self._pool.acquire() as conn:
+        async with self.pool.acquire() as conn:
             await self._queue.update_executor_state(conn, event.agent_id, event.new_state)
 
     async def sync_fair_share(self) -> None:
         """Initialize fair-share counters from database on startup."""
-        async with self._pool.acquire() as conn:
+        async with self.pool.acquire() as conn:
             running_counts = await self._queue.count_running_by_agent(conn)
         self._fair_share.sync_from_db(running_counts)
         logger.info("Fair-share synced from DB: %d agents", len(running_counts))
@@ -345,7 +367,7 @@ class SchedulerService:
         threshold_seconds: float = STARVATION_PROMOTION_THRESHOLD_SECS,
     ) -> int:
         """Promote starved BACKGROUND tasks to BATCH."""
-        async with self._pool.acquire() as conn:
+        async with self.pool.acquire() as conn:
             count = await self._queue.promote_starved(conn, threshold_seconds)
         if count > 0:
             logger.info("Starvation promotion: %d tasks promoted", count)

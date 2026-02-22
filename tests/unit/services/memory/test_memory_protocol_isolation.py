@@ -6,8 +6,6 @@ ReBAC classes. This proves the Protocol decoupling is real, not just
 annotation-level.
 """
 
-from __future__ import annotations
-
 from datetime import datetime
 from typing import Any
 from unittest.mock import MagicMock
@@ -68,7 +66,7 @@ class TestMemoryStateManagerWithFakes:
     def _make_state_manager(
         self, *, allow_permission: bool = True
     ) -> tuple[Any, FakePermissionChecker, MagicMock]:
-        from nexus.services.memory.state import MemoryStateManager
+        from nexus.bricks.memory.state import MemoryStateManager
 
         fake_perm = FakePermissionChecker(allow=allow_permission)
         mock_router = MagicMock()

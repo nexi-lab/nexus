@@ -4,13 +4,11 @@ These tests use a real RaftLockManager backed by SQLite (no external
 dependencies) to verify the full lock lifecycle through the REST API.
 """
 
-from __future__ import annotations
-
 import pytest
 from pydantic import ValidationError
 
 from nexus.raft.lock_manager import RaftLockManager
-from nexus.server.api.v1.models.locks import (
+from nexus.server.api.v2.models.locks import (
     LOCK_MAX_TTL,
     LockAcquireRequest,
     LockExtendRequest,

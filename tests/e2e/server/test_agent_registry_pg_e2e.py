@@ -15,8 +15,6 @@ Run with:
     pytest tests/e2e/test_agent_registry_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import os
 import signal
 import socket
@@ -622,8 +620,8 @@ class TestNamespaceE2E:
 
     def test_namespace_manager_with_postgres(self, pg_engine):
         """NamespaceManager works with PostgreSQL-backed ReBAC."""
-        from nexus.rebac.manager import EnhancedReBACManager
-        from nexus.rebac.namespace_manager import NamespaceManager
+        from nexus.bricks.rebac.manager import EnhancedReBACManager
+        from nexus.bricks.rebac.namespace_manager import NamespaceManager
 
         rebac = EnhancedReBACManager(engine=pg_engine, cache_ttl_seconds=5, max_depth=10)
         tuple_ids: list[str] = []

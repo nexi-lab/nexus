@@ -17,15 +17,13 @@ Connection Pool Optimizations (Issue #1075):
 - Retry on timeout: Automatic retry for transient network issues
 """
 
-from __future__ import annotations
-
 import logging
 import socket
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from nexus.core.protocols import CacheStoreABC
+from nexus.contracts.cache_store import CacheStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -267,7 +265,7 @@ class DragonflyClient:
         except Exception as e:
             return {"pool_status": "error", "error": str(e)}
 
-    async def __aenter__(self) -> DragonflyClient:
+    async def __aenter__(self) -> "DragonflyClient":
         """Async context manager entry."""
         await self.connect()
         return self
@@ -298,7 +296,7 @@ class DragonflyCacheStore(CacheStoreABC):
                 process(msg)
     """
 
-    def __init__(self, client: DragonflyClient) -> None:
+    def __init__(self, client: "DragonflyClient") -> None:
         self._client = client
 
     # --- KV operations ---

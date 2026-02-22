@@ -4,8 +4,6 @@ Tests: ensure_main_branch, create_branch, list_branches, get_branch,
        get_current_branch, delete_branch, commit, checkout, log, diff.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -20,14 +18,14 @@ from nexus.contracts.exceptions import (
     BranchProtectedError,
     BranchStateError,
 )
-from nexus.services.context_branch import (
+from nexus.storage.models import WorkspaceSnapshotModel
+from nexus.storage.models._base import Base
+from nexus.storage.models.context_branch import ContextBranchModel
+from nexus.system_services.workspace.context_branch import (
     DEFAULT_BRANCH,
     ContextBranchService,
     _slugify,
 )
-from nexus.storage.models import WorkspaceSnapshotModel
-from nexus.storage.models._base import Base
-from nexus.storage.models.context_branch import ContextBranchModel
 
 
 @pytest.fixture

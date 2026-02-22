@@ -10,8 +10,6 @@ Both tests run with:
 Tests both admin and unauthenticated access.
 """
 
-from __future__ import annotations
-
 import os
 import signal
 import socket
@@ -124,7 +122,7 @@ def operations_server(tmp_path_factory):
         from sqlalchemy import create_engine as ce2
         from sqlalchemy.orm import sessionmaker as sm2
 
-        from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+        from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
 
         engine2 = ce2(f"sqlite:///{db_path}")
         Session2 = sm2(bind=engine2)

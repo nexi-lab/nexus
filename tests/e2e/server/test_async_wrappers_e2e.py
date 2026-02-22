@@ -14,19 +14,18 @@ Run with:
     pytest tests/e2e/test_async_wrappers_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import asyncio
+import types
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
+from nexus.bricks.rebac.async_namespace_manager import AsyncNamespaceManager
 from nexus.core.router import PathNotMountedError, PathRouter
 from nexus.plugins.async_hooks import AsyncHookEngine
 from nexus.plugins.hooks import PluginHooks
-from nexus.rebac.async_namespace_manager import AsyncNamespaceManager
 from nexus.services.agents.agent_registry import AgentRegistry, InvalidTransitionError
 from nexus.services.agents.async_agent_registry import AsyncAgentRegistry
 from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
@@ -370,10 +369,9 @@ class TestServerWiring:
         """fastapi_server.py imports cleanly with async wrapper wiring."""
         from nexus.server import fastapi_server
 
-        # Verify AppState has the new attribute
-        state = fastapi_server.AppState()
-        assert hasattr(state, "async_agent_registry")
-        assert state.async_agent_registry is None  # None until lifespan runs
+        # AppState class was removed (Issue #1288); app state now lives on
+        # app.state directly.  Just verify the module imports cleanly.
+        assert hasattr(fastapi_server, "create_app")
 
     def test_async_agent_registry_import(self) -> None:
         """AsyncAgentRegistry can be imported from the expected path."""
@@ -382,7 +380,7 @@ class TestServerWiring:
         assert AsyncAgentRegistry is not None
 
     def test_async_namespace_manager_import(self) -> None:
-        from nexus.rebac.async_namespace_manager import AsyncNamespaceManager
+        from nexus.bricks.rebac.async_namespace_manager import AsyncNamespaceManager
 
         assert AsyncNamespaceManager is not None
 
@@ -413,7 +411,6 @@ class TestServerLifespanWiring:
     @pytest.mark.asyncio()
     async def test_lifespan_wiring_with_real_db(self, tmp_path: Path) -> None:
         """Simulate server lifespan: AgentRegistry + AsyncAgentRegistry wiring."""
-        from nexus.server import fastapi_server
         from nexus.services.agents.agent_registry import AgentRegistry
         from nexus.services.agents.async_agent_registry import AsyncAgentRegistry
 
@@ -426,8 +423,9 @@ class TestServerLifespanWiring:
             flush_interval=60,
         )
 
-        # Simulate the lifespan wiring (lines 800-803 of fastapi_server.py)
-        state = fastapi_server.AppState()
+        # Simulate the lifespan wiring — AppState was removed (Issue #1288),
+        # app state now lives on app.state (a SimpleNamespace).
+        state = types.SimpleNamespace()
         state.agent_registry = agent_registry
         state.async_agent_registry = AsyncAgentRegistry(state.agent_registry)
 
@@ -472,11 +470,11 @@ class TestServerLifespanWiring:
         from unittest.mock import MagicMock
 
         from nexus.backends.local import LocalBackend
+        from nexus.bricks.rebac.async_namespace_manager import AsyncNamespaceManager
         from nexus.core.protocols.vfs_router import VFSRouterProtocol
         from nexus.core.router import PathRouter
         from nexus.plugins.async_hooks import AsyncHookEngine
         from nexus.plugins.hooks import PluginHooks
-        from nexus.rebac.async_namespace_manager import AsyncNamespaceManager
         from nexus.services.agents.agent_registry import AgentRegistry
         from nexus.services.agents.async_agent_registry import AsyncAgentRegistry
         from nexus.services.protocols.hook_engine import HookEngineProtocol

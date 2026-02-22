@@ -1,7 +1,5 @@
 """Plugin System commands - manage Nexus plugins."""
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import inspect

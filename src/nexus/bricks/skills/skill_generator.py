@@ -24,8 +24,6 @@ Example:
     ... )
 """
 
-from __future__ import annotations
-
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -36,7 +34,8 @@ import yaml
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from nexus.mcp.models import MCPMount, MCPToolDefinition
+    from nexus.bricks.skills.types import MCPMountLike as MCPMount
+    from nexus.bricks.skills.types import MCPToolDefinitionLike as MCPToolDefinition
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +83,7 @@ class SkillGenerator:
     def __init__(
         self,
         templates_path: Path | None = None,
-        service_info_lookup: Callable[[str], Any] | None = None,
+        service_info_lookup: "Callable[[str], Any] | None" = None,
     ):
         """Initialize the skill generator.
 
@@ -103,7 +102,9 @@ class SkillGenerator:
     def _default_service_info_lookup(name: str) -> Any:
         """Lazy fallback that imports ServiceMap at runtime."""
         try:
-            from nexus.backends.service_map import ServiceMap
+            import importlib as _il
+
+            ServiceMap = _il.import_module("nexus.backends.service_map").ServiceMap
 
             return ServiceMap.get_service_info(name)
         except ImportError:
@@ -196,8 +197,8 @@ class SkillGenerator:
         service_name: str,
         mount_path: str,
         mcp_tools: list[dict[str, Any]] | None = None,
-        mcp_mount: MCPMount | None = None,
-        tool_defs: list[MCPToolDefinition] | None = None,
+        mcp_mount: "MCPMount | None" = None,
+        tool_defs: "list[MCPToolDefinition] | None" = None,
     ) -> str:
         """Generate unified SKILL.md content.
 
@@ -243,8 +244,8 @@ class SkillGenerator:
         self,
         service_name: str,
         service_info: Any | None,
-        mcp_mount: MCPMount | None,
-        tool_defs: list[MCPToolDefinition] | None,
+        mcp_mount: "MCPMount | None",
+        tool_defs: "list[MCPToolDefinition] | None",
     ) -> SkillMetadata:
         """Build skill metadata from available sources."""
         if service_info:
@@ -285,7 +286,7 @@ class SkillGenerator:
         mount_path: str,
         metadata: SkillMetadata,
         mcp_tools: list[dict[str, Any]] | None,
-        tool_defs: list[MCPToolDefinition] | None,
+        tool_defs: "list[MCPToolDefinition] | None",
     ) -> str:
         """Generate SKILL.md using connector template as base."""
         # Replace {mount_path} placeholder in both content and description
@@ -339,8 +340,8 @@ class SkillGenerator:
         mount_path: str,
         metadata: SkillMetadata,
         mcp_tools: list[dict[str, Any]] | None,
-        tool_defs: list[MCPToolDefinition] | None,
-        mcp_mount: MCPMount | None,
+        tool_defs: "list[MCPToolDefinition] | None",
+        mcp_mount: "MCPMount | None",
     ) -> str:
         """Generate SKILL.md for MCP-only service."""
         # Replace {mount_path} in description
@@ -424,7 +425,7 @@ class SkillGenerator:
         content = "\n".join(content_parts)
         return f"---\n{frontmatter_yaml}---\n\n{content}"
 
-    def _generate_tools_section(self, tool_defs: list[MCPToolDefinition]) -> str:
+    def _generate_tools_section(self, tool_defs: "list[MCPToolDefinition]") -> str:
         """Generate markdown section for MCP tools."""
         parts = ["## MCP Tools", ""]
 
@@ -497,8 +498,8 @@ def generate_skill_md(
     service_name: str,
     mount_path: str,
     mcp_tools: list[dict[str, Any]] | None = None,
-    mcp_mount: MCPMount | None = None,
-    tool_defs: list[MCPToolDefinition] | None = None,
+    mcp_mount: "MCPMount | None" = None,
+    tool_defs: "list[MCPToolDefinition] | None" = None,
 ) -> str:
     """Convenience function to generate SKILL.md content.
 

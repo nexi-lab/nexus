@@ -12,8 +12,6 @@ ARCHITECTURAL DECISION (KERNEL-ARCHITECTURE.md §3):
     existing ``@rpc_expose`` methods continue to work identically.
 """
 
-from __future__ import annotations
-
 import contextlib
 import json
 import logging
@@ -28,7 +26,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
-
 
 # ---------------------------------------------------------------------------
 # Standalone context helpers (no NexusFS dependency)
@@ -99,7 +96,7 @@ class AgentService:
         entity_registry: Any | None = None,
         rebac_manager: Any | None = None,
         key_service: Any | None = None,
-        wallet_provisioner: Callable | None = None,
+        wallet_provisioner: "Callable | None" = None,
         api_key_creator: Any | None = None,
         record_store: Any | None = None,
     ) -> None:
@@ -143,8 +140,9 @@ class AgentService:
         if self._record_store is None:
             raise RuntimeError("EntityRegistry requires record_store")
 
-        from nexus.rebac.entity_registry import EntityRegistry
+        import importlib as _il
 
+        EntityRegistry = _il.import_module("nexus.bricks.rebac.entity_registry").EntityRegistry
         self._entity_registry = EntityRegistry(self._record_store)
 
     def _create_agent_config_data(
@@ -404,7 +402,9 @@ class AgentService:
     ) -> None:
         """Write public DID document to the agent's .identity namespace (Issue #1355)."""
         try:
-            from nexus.identity.did import create_did_document
+            import importlib as _il
+
+            create_did_document = _il.import_module("nexus.bricks.identity.did").create_did_document
 
             assert self._key_service is not None
             key_record = self._key_service.get_active_keys(agent_id)[0]

@@ -15,8 +15,6 @@ Example:
     "She called him yesterday" -> "Alice called John yesterday"
 """
 
-from __future__ import annotations
-
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -37,7 +35,7 @@ class LLMProviderProtocol(Protocol):
     TODO(#2124): Extract to nexus.llm.protocols when LLM module is brick-extracted.
     """
 
-    def complete(self, messages: Sequence[Any]) -> Any:
+    def complete(self, messages: "Sequence[Any]") -> Any:
         """Synchronous completion. Returns response with .content attribute."""
         ...
 
@@ -226,7 +224,10 @@ Resolved text:"""
 
         try:
             # Build message list for providers that expect structured messages
-            from nexus.llm import Message, MessageRole
+            import importlib as _il
+
+            _llm = _il.import_module("nexus.bricks.llm")
+            Message, MessageRole = _llm.Message, _llm.MessageRole
 
             messages = [Message(role=MessageRole.USER, content=prompt)]
 

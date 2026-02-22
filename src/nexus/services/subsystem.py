@@ -6,8 +6,6 @@ This module provides:
 - ``Subsystem`` ABC: Base class for all extracted subsystems with lifecycle hooks.
 """
 
-from __future__ import annotations
-
 from abc import ABC, abstractmethod
 from typing import Any
 

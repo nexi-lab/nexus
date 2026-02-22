@@ -4,11 +4,13 @@ LRU cache that stores file content by hash to avoid disk I/O for frequently
 accessed files. Uses size-based eviction to prevent memory bloat.
 
 Supports transparent LZ4 compression for 3-4x capacity improvement (Issue #908).
+Priority-aware two-pass eviction for IOProfile integration (Issue #2427).
 """
 
 import logging
 import threading
 from collections import OrderedDict
+from typing import NamedTuple
 
 import lz4.frame
 
@@ -18,15 +20,25 @@ logger = logging.getLogger(__name__)
 _LZ4_MAGIC = b"\x04\x22\x4d\x18"
 
 
+class _CacheEntry(NamedTuple):
+    """Internal cache entry with metadata alongside stored content."""
+
+    content: bytes  # Possibly LZ4-compressed
+    priority: int  # 0=minimal, 1=low, 2=medium, 3=high
+    original_size: int  # Pre-compression size for accurate stats
+
+
 class ContentCache:
     """
     LRU cache for file content indexed by content hash.
 
     Thread-safe cache that stores file content in memory to avoid repeated
-    disk reads. Uses size-based LRU eviction to limit memory usage.
+    disk reads. Uses size-based two-pass LRU eviction to limit memory usage.
 
     Features:
     - Size-based eviction (tracks total bytes, not just entry count)
+    - Priority-aware two-pass eviction: first pass evicts priority=0 only,
+      second pass evicts any entry (mirrors LocalDiskCache CLOCK pattern)
     - Thread-safe operations with fine-grained locking
     - Fast O(1) get/put operations
     - Automatic eviction of least-recently-used content when size limit exceeded
@@ -34,7 +46,7 @@ class ContentCache:
 
     Example:
         >>> cache = ContentCache(max_size_mb=256)
-        >>> cache.put("abc123...", b"file content")
+        >>> cache.put("abc123...", b"file content", priority=3)
         >>> content = cache.get("abc123...")  # Fast memory read
     """
 
@@ -55,7 +67,7 @@ class ContentCache:
         """
         self._max_size_bytes = max_size_mb * 1024 * 1024
         self._current_size_bytes = 0
-        self._cache: OrderedDict[str, bytes] = OrderedDict()
+        self._cache: OrderedDict[str, _CacheEntry] = OrderedDict()
         self._lock = threading.Lock()
 
         # Compression settings
@@ -66,6 +78,9 @@ class ContentCache:
         self._original_bytes_total = 0  # Sum of original sizes
         self._compressed_entries = 0  # Number of compressed entries
         self._compression_savings = 0  # Bytes saved by compression
+
+        # Priority tracking for fast first-pass skip
+        self._priority_zero_count = 0
 
     def get(self, content_hash: str) -> bytes | None:
         """
@@ -87,7 +102,8 @@ class ContentCache:
 
             # Move to end (most recently used)
             self._cache.move_to_end(content_hash)
-            content = self._cache[content_hash]
+            entry = self._cache[content_hash]
+            content = entry.content
 
             # Transparently decompress if LZ4-compressed
             if len(content) >= 4 and content[:4] == _LZ4_MAGIC:
@@ -100,17 +116,23 @@ class ContentCache:
 
             return content
 
-    def put(self, content_hash: str, content: bytes) -> None:
+    def put(self, content_hash: str, content: bytes, *, priority: int = 0) -> None:
         """
-        Add content to cache with LRU eviction.
+        Add content to cache with priority-aware LRU eviction.
 
         Thread-safe operation that adds content to cache and evicts least
         recently used items if necessary to stay within size limit.
         Content above compression threshold is transparently LZ4-compressed.
 
+        Two-pass eviction:
+        - First pass: evict only priority=0 entries (LRU order)
+        - Second pass: evict any entry (LRU order) if first pass insufficient
+
         Args:
             content_hash: SHA-256 hash of content
             content: Content bytes to cache
+            priority: Cache priority (0=minimal, 1=low, 2=medium, 3=high).
+                      Higher priority entries survive eviction longer.
 
         Notes:
             - If content is larger than max cache size, it won't be cached
@@ -135,54 +157,110 @@ class ContentCache:
                 is_compressed = True
 
         content_size = len(stored_content)
+        new_entry = _CacheEntry(
+            content=stored_content,
+            priority=priority,
+            original_size=original_size,
+        )
 
         with self._lock:
             # If already exists, update and move to end
             if content_hash in self._cache:
-                old_content = self._cache[content_hash]
-                old_size = len(old_content)
-                old_was_compressed = len(old_content) >= 4 and old_content[:4] == _LZ4_MAGIC
+                old_entry = self._cache[content_hash]
+                old_size = len(old_entry.content)
+
+                # Update priority-zero counter
+                if old_entry.priority == 0 and priority != 0:
+                    self._priority_zero_count -= 1
+                elif old_entry.priority != 0 and priority == 0:
+                    self._priority_zero_count += 1
 
                 # Update size tracking
                 self._current_size_bytes -= old_size
+                old_was_compressed = (
+                    len(old_entry.content) >= 4 and old_entry.content[:4] == _LZ4_MAGIC
+                )
                 if old_was_compressed:
                     self._compressed_entries -= 1
-                    # Approximate: we stored compressed, so original was larger
-                    # We'll lose some precision here, but it's stats only
 
-                self._cache[content_hash] = stored_content
+                self._cache[content_hash] = new_entry
                 self._current_size_bytes += content_size
 
                 if is_compressed:
                     self._compressed_entries += 1
                     self._compression_savings += original_size - content_size
-                    self._original_bytes_total += original_size
-                else:
-                    self._original_bytes_total += original_size
+                self._original_bytes_total += original_size
 
                 self._cache.move_to_end(content_hash)
                 return
 
-            # Evict LRU items until we have space
-            while self._current_size_bytes + content_size > self._max_size_bytes and self._cache:
-                # Remove least recently used (first item)
-                lru_hash, lru_content = self._cache.popitem(last=False)
-                lru_size = len(lru_content)
-                self._current_size_bytes -= lru_size
-
-                # Update compression stats for evicted entry
-                if len(lru_content) >= 4 and lru_content[:4] == _LZ4_MAGIC:
-                    self._compressed_entries -= 1
+            # Evict entries using two-pass strategy
+            self._evict_for_space(content_size)
 
             # Add new content
-            self._cache[content_hash] = stored_content
+            self._cache[content_hash] = new_entry
             self._current_size_bytes += content_size
+            if priority == 0:
+                self._priority_zero_count += 1
 
             # Update compression stats
             if is_compressed:
                 self._compressed_entries += 1
                 self._compression_savings += original_size - content_size
             self._original_bytes_total += original_size
+
+    def _evict_for_space(self, needed: int) -> None:
+        """Two-pass LRU eviction: priority-0 first, then any.
+
+        Must be called while holding self._lock.
+        """
+        space_needed = self._current_size_bytes + needed - self._max_size_bytes
+        if space_needed <= 0:
+            return
+
+        freed = 0
+
+        # First pass: only evict priority=0 entries (if any exist)
+        if self._priority_zero_count > 0:
+            to_evict: list[str] = []
+            for key, entry in self._cache.items():
+                if freed >= space_needed:
+                    break
+                if entry.priority == 0:
+                    to_evict.append(key)
+                    freed += len(entry.content)
+
+            for key in to_evict:
+                self._remove_entry_unlocked(key)
+
+        # Second pass: evict any entry if first pass wasn't enough
+        if freed < space_needed:
+            to_evict_2: list[str] = []
+            remaining = space_needed - freed
+            for key, entry in self._cache.items():
+                if remaining <= 0:
+                    break
+                to_evict_2.append(key)
+                remaining -= len(entry.content)
+
+            for key in to_evict_2:
+                self._remove_entry_unlocked(key)
+
+    def _remove_entry_unlocked(self, content_hash: str) -> None:
+        """Remove a cache entry without acquiring the lock.
+
+        Must be called while holding self._lock.
+        """
+        entry = self._cache.pop(content_hash)
+        entry_size = len(entry.content)
+        self._current_size_bytes -= entry_size
+
+        if entry.priority == 0:
+            self._priority_zero_count -= 1
+
+        # Update compression stats for evicted entry
+        if len(entry.content) >= 4 and entry.content[:4] == _LZ4_MAGIC:
+            self._compressed_entries -= 1
 
     def remove(self, content_hash: str) -> bool:
         """
@@ -199,15 +277,7 @@ class ContentCache:
         with self._lock:
             if content_hash not in self._cache:
                 return False
-
-            content = self._cache.pop(content_hash)
-            content_size = len(content)
-            self._current_size_bytes -= content_size
-
-            # Update compression stats
-            if len(content) >= 4 and content[:4] == _LZ4_MAGIC:
-                self._compressed_entries -= 1
-
+            self._remove_entry_unlocked(content_hash)
             return True
 
     def clear(self) -> None:
@@ -222,6 +292,7 @@ class ContentCache:
             self._original_bytes_total = 0
             self._compressed_entries = 0
             self._compression_savings = 0
+            self._priority_zero_count = 0
 
     def get_stats(self) -> dict[str, int | float]:
         """
@@ -237,6 +308,7 @@ class ContentCache:
                 - compression_ratio: Ratio of compressed to original size (lower is better)
                 - compression_savings_bytes: Total bytes saved by compression
                 - effective_capacity_mb: Estimated original content capacity
+                - priority_zero_count: Number of entries with priority=0
         """
         with self._lock:
             entries = len(self._cache)
@@ -261,4 +333,5 @@ class ContentCache:
                 "compression_ratio": round(compression_ratio, 3),
                 "compression_savings_bytes": self._compression_savings,
                 "effective_capacity_mb": int(effective_capacity // (1024 * 1024)),
+                "priority_zero_count": self._priority_zero_count,
             }

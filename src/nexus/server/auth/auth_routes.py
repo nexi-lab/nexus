@@ -9,8 +9,8 @@ from typing import Any
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, EmailStr, Field
 
-from nexus.auth.oauth.user_auth import OAuthUserAuth
-from nexus.auth.providers.database_local import DatabaseLocalAuth
+from nexus.bricks.auth.oauth.user_auth import OAuthUserAuth
+from nexus.bricks.auth.providers.database_local import DatabaseLocalAuth
 from nexus.constants import ROOT_ZONE_ID
 
 logger = logging.getLogger(__name__)
@@ -64,21 +64,6 @@ def set_nexus_instance(nexus_fs: Any) -> None:
 def get_nexus_instance() -> Any | None:
     """Return the injected NexusFS instance, or None if not configured."""
     return _nexus_fs_instance
-
-
-# Issue #635: User provisioning via extracted service
-_user_provisioning_service: Any = None
-
-
-def set_user_provisioning_service(svc: Any) -> None:
-    """Inject the UserProvisioningService. Called by server layer at startup."""
-    global _user_provisioning_service
-    _user_provisioning_service = svc
-
-
-def get_user_provisioning_service() -> Any | None:
-    """Return the injected UserProvisioningService, or None."""
-    return _user_provisioning_service
 
 
 async def get_authenticated_user(
@@ -453,7 +438,7 @@ async def setup_zone(
     try:
         from datetime import UTC, datetime, timedelta
 
-        from nexus.auth.user_queries import get_user_by_id
+        from nexus.bricks.auth.user_queries import get_user_by_id
 
         # Get user from database
         with auth.session_factory() as session:
@@ -512,11 +497,11 @@ async def setup_zone(
         try:
             from nexus.contracts.types import OperationContext
 
-            prov_svc = get_user_provisioning_service()
-            if not prov_svc:
+            nx = get_nexus_instance()
+            if not nx:
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="User provisioning service not configured.",
+                    detail="NexusFS instance not configured. Cannot provision user resources.",
                 )
 
             admin_context = OperationContext(
@@ -527,7 +512,7 @@ async def setup_zone(
             )
 
             # Provision user resources with API key (90 days expiry)
-            provision_result = prov_svc.provision_user(
+            provision_result = nx.provision_user(
                 user_id=user_id,
                 email=user.email,
                 display_name=user.display_name,
@@ -629,7 +614,7 @@ async def get_profile(
         401: Not authenticated
         404: User not found
     """
-    from nexus.auth.user_queries import get_user_by_id
+    from nexus.bricks.auth.user_queries import get_user_by_id
 
     user_id, _email = user_info
 
@@ -673,7 +658,7 @@ async def update_profile(
         401: Not authenticated
         404: User not found
     """
-    from nexus.auth.user_queries import get_user_by_id
+    from nexus.bricks.auth.user_queries import get_user_by_id
 
     user_id, _email = user_info
 
@@ -791,7 +776,7 @@ async def request_verification(
         return {"message": "If this email is registered, a verification link has been sent."}
 
     try:
-        from nexus.auth.user_queries import get_user_by_email
+        from nexus.bricks.auth.user_queries import get_user_by_email
 
         with auth.session_factory() as session:
             user = get_user_by_email(session, str(email))
@@ -906,7 +891,7 @@ async def oauth_check(
 
     try:
         # Exchange code for tokens to get user info
-        from nexus.auth.oauth.pending import get_pending_oauth_manager
+        from nexus.bricks.auth.oauth.pending import get_pending_oauth_manager
 
         google_provider = oauth_provider._get_provider("google")
         oauth_credential = await google_provider.exchange_code(
@@ -924,7 +909,7 @@ async def oauth_check(
             raise ValueError("OAuth response missing 'sub' claim (user ID)")
 
         # Check if OAuth account already exists (existing user)
-        from nexus.auth.user_queries import get_user_by_email
+        from nexus.bricks.auth.user_queries import get_user_by_email
         from nexus.storage.models import UserOAuthAccountModel
 
         with oauth_provider.session_factory() as session:
@@ -941,7 +926,7 @@ async def oauth_check(
                 # Existing OAuth account - login immediately
                 from datetime import UTC, datetime, timedelta
 
-                from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+                from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
                 from nexus.storage.models import APIKeyModel, UserModel
 
                 user = session.get(UserModel, existing_oauth.user_id)
@@ -1203,7 +1188,7 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
 
     try:
         # Validate and consume pending token (one-time use)
-        from nexus.auth.oauth.pending import get_pending_oauth_manager
+        from nexus.bricks.auth.oauth.pending import get_pending_oauth_manager
 
         pending_manager = get_pending_oauth_manager()
         registration = pending_manager.consume(request.pending_token)
@@ -1221,8 +1206,8 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
         import uuid
         from datetime import UTC, datetime, timedelta
 
-        from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
-        from nexus.auth.user_queries import get_user_by_email
+        from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
+        from nexus.bricks.auth.user_queries import get_user_by_email
         from nexus.storage.models import UserModel
 
         # Check if user with this email already exists
@@ -1387,8 +1372,8 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
         try:
             from nexus.contracts.types import OperationContext
 
-            prov_svc = get_user_provisioning_service()
-            if prov_svc:
+            nx = get_nexus_instance()
+            if nx:
                 admin_context = OperationContext(
                     user_id="system",
                     groups=[],
@@ -1397,7 +1382,7 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
                 )
 
                 # Provision user resources with OAuth-specific API key (90 days expiry)
-                provision_result = prov_svc.provision_user(
+                provision_result = nx.provision_user(
                     user_id=user_id,
                     email=user.email,
                     display_name=user.display_name,

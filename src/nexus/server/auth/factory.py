@@ -3,18 +3,16 @@
 This module now delegates to nexus.auth brick providers (Issue #1399).
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 
-from nexus.auth.constants import API_KEY_PREFIX  # noqa: F401
-from nexus.auth.providers.base import AuthProvider
-from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
-from nexus.auth.providers.discriminator import DiscriminatingAuthProvider  # noqa: F401
-from nexus.auth.providers.local import LocalAuth
-from nexus.auth.providers.oidc import MultiOIDCAuth, OIDCAuth
-from nexus.auth.providers.static_key import StaticAPIKeyAuth
+from nexus.bricks.auth.constants import API_KEY_PREFIX  # noqa: F401
+from nexus.bricks.auth.providers.base import AuthProvider
+from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
+from nexus.bricks.auth.providers.discriminator import DiscriminatingAuthProvider  # noqa: F401
+from nexus.bricks.auth.providers.local import LocalAuth
+from nexus.bricks.auth.providers.oidc import MultiOIDCAuth, OIDCAuth
+from nexus.bricks.auth.providers.static_key import StaticAPIKeyAuth
 
 logger = logging.getLogger(__name__)
 

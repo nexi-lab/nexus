@@ -1,15 +1,13 @@
 """Tests for skill_generator module."""
 
-from __future__ import annotations
-
 from pathlib import Path
 
 import pytest
 import yaml
 
 from nexus.backends.service_map import SERVICE_REGISTRY, ServiceInfo, _sync_from_connector_registry
-from nexus.mcp.models import MCPMount, MCPToolConfig, MCPToolDefinition
-from nexus.skills.skill_generator import (
+from nexus.bricks.mcp.models import MCPMount, MCPToolConfig, MCPToolDefinition
+from nexus.bricks.skills.skill_generator import (
     ConnectorTemplate,
     SkillGenerator,
     SkillMetadata,

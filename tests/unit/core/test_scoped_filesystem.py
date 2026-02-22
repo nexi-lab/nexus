@@ -3,13 +3,11 @@
 Tests path scoping/unscoping for multi-zone isolation.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, PropertyMock
 
 import pytest
 
-from nexus.core.scoped_filesystem import ScopedFilesystem
+from nexus.bricks.filesystem.scoped_filesystem import ScopedFilesystem
 
 
 @pytest.fixture

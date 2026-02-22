@@ -6,8 +6,6 @@ contain consistent data with matching fields.
 Phase 1.4 of #1246/#1330 consolidation plan.
 """
 
-from __future__ import annotations
-
 import tempfile
 from collections.abc import Generator
 from pathlib import Path

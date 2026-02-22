@@ -617,7 +617,7 @@ def test_connector_error_caught_by_backend_error() -> None:
 
 def test_connector_validation_error_caught_by_core() -> None:
     """Test that connectors.base.ValidationError is caught by core ValidationError."""
-    from nexus.connectors.base import ValidationError as ConnectorValidationError
+    from nexus.backends.connectors.base import ValidationError as ConnectorValidationError
 
     assert issubclass(ConnectorValidationError, ValidationError)
 

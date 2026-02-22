@@ -3,13 +3,11 @@
 Tests path scoping/unscoping for multi-zone isolation with async client.
 """
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock, MagicMock, PropertyMock
 
 import pytest
 
-from nexus.core.async_scoped_filesystem import AsyncScopedFilesystem
+from nexus.bricks.filesystem.async_scoped_filesystem import AsyncScopedFilesystem
 
 
 @pytest.fixture
@@ -352,6 +350,20 @@ class TestMemoryOperations:
         )
         result = await scoped_fs.list_registered_memories()
         assert result[0]["path"] == "/workspace/memory"
+
+
+class TestAgentOperations:
+    """Test that agent operations are passed through without path scoping."""
+
+    @pytest.mark.asyncio
+    async def test_register_agent(
+        self, scoped_fs: AsyncScopedFilesystem, mock_async_fs: MagicMock
+    ) -> None:
+        """Test register_agent is passed through."""
+        mock_async_fs.register_agent = AsyncMock(return_value={"agent_id": "agent-123"})
+        result = await scoped_fs.register_agent("agent-123", "Test Agent")
+        mock_async_fs.register_agent.assert_called_once_with("agent-123", "Test Agent", None, False)
+        assert result["agent_id"] == "agent-123"
 
 
 class TestLifecycleManagement:

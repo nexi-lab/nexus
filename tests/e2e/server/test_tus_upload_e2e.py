@@ -7,8 +7,6 @@ Uses the nexus_server fixture from conftest.py which starts
 `nexus serve` as a subprocess with NEXUS_API_KEY auth.
 """
 
-from __future__ import annotations
-
 import base64
 import hashlib
 

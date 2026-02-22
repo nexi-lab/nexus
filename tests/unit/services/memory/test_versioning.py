@@ -6,8 +6,6 @@ and gc_old_versions — before the Memory service gets moved to the
 brick structure.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -17,11 +15,11 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from nexus.backends.local import LocalBackend
+from nexus.bricks.memory.router import MemoryViewRouter
+from nexus.bricks.memory.service import Memory
+from nexus.bricks.memory.versioning import MemoryVersioning
+from nexus.bricks.rebac.entity_registry import EntityRegistry
 from nexus.contracts.types import OperationContext
-from nexus.rebac.entity_registry import EntityRegistry
-from nexus.services.memory.memory_api import Memory
-from nexus.services.memory.memory_router import MemoryViewRouter
-from nexus.services.memory.versioning import MemoryVersioning
 from nexus.storage.models import Base
 
 # ---------------------------------------------------------------------------

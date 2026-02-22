@@ -8,8 +8,6 @@ Tests:
 - New slices (background_task, resiliency, connector, pool) are exposed
 """
 
-from __future__ import annotations
-
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -17,6 +15,7 @@ from fastapi.testclient import TestClient
 from nexus.contracts.deployment_profile import DeploymentProfile
 from nexus.server.api.core.features import router
 from nexus.server.lifespan import _compute_features_info
+from nexus.server.lifespan.services_container import LifespanServices
 
 
 @pytest.fixture
@@ -29,7 +28,13 @@ def app_full_profile() -> FastAPI:
     app.state.profile_tuning = profile.tuning()
     app.state.deployment_mode = "standalone"
 
-    _compute_features_info(app)
+    svc = LifespanServices(
+        deployment_profile=profile.value,
+        deployment_mode="standalone",
+        enabled_bricks=profile.default_bricks(),
+        profile_tuning=profile.tuning(),
+    )
+    _compute_features_info(app, svc)
     app.include_router(router)
     return app
 
@@ -44,7 +49,13 @@ def app_lite_profile() -> FastAPI:
     app.state.profile_tuning = profile.tuning()
     app.state.deployment_mode = "standalone"
 
-    _compute_features_info(app)
+    svc = LifespanServices(
+        deployment_profile=profile.value,
+        deployment_mode="standalone",
+        enabled_bricks=profile.default_bricks(),
+        profile_tuning=profile.tuning(),
+    )
+    _compute_features_info(app, svc)
     app.include_router(router)
     return app
 
@@ -201,7 +212,7 @@ class TestBackwardCompatibility:
         assert GREP_PARALLEL_WORKERS == 4  # FULL profile default
 
     def test_list_parallel_workers_constant(self) -> None:
-        from nexus.services.search_service import LIST_PARALLEL_WORKERS
+        from nexus.services.search.search_service import LIST_PARALLEL_WORKERS
 
         assert LIST_PARALLEL_WORKERS == 10  # FULL profile default
 
@@ -232,7 +243,7 @@ class TestDIWiring:
         """SearchService constructor accepts custom parallel worker counts."""
         from unittest.mock import MagicMock
 
-        from nexus.services.search_service import SearchService
+        from nexus.services.search.search_service import SearchService
 
         svc = SearchService(
             metadata_store=MagicMock(),

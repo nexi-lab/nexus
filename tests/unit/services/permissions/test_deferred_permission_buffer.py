@@ -4,13 +4,13 @@ This module tests the deferred permission buffer that optimizes
 permission operations via batching and background flushing.
 """
 
-from __future__ import annotations
-
 import threading
 import time
 from unittest.mock import MagicMock
 
-from nexus.rebac.deferred_permission_buffer import (
+from sqlalchemy.exc import OperationalError
+
+from nexus.bricks.rebac.deferred_permission_buffer import (
     DeferredPermissionBuffer,
     get_default_buffer,
     set_default_buffer,
@@ -394,7 +394,9 @@ class TestErrorHandling:
     def test_hierarchy_flush_error_requeues_items(self) -> None:
         """Test that hierarchy flush errors re-queue items."""
         hierarchy = MagicMock()
-        hierarchy.ensure_parent_tuples_batch.side_effect = Exception("DB error")
+        hierarchy.ensure_parent_tuples_batch.side_effect = OperationalError(
+            "stmt", {}, Exception("DB error")
+        )
         buffer = DeferredPermissionBuffer(hierarchy_manager=hierarchy)
 
         buffer.queue_hierarchy("/path1", "zone1")
@@ -409,7 +411,7 @@ class TestErrorHandling:
     def test_grant_flush_error_requeues_items(self) -> None:
         """Test that grant flush errors re-queue items."""
         rebac = MagicMock()
-        rebac.rebac_write_batch.side_effect = Exception("Write error")
+        rebac.rebac_write_batch.side_effect = OperationalError("stmt", {}, Exception("Write error"))
         buffer = DeferredPermissionBuffer(rebac_manager=rebac)
 
         buffer.queue_owner_grant("user1", "/file1", "zone1")
@@ -436,14 +438,14 @@ class TestErrorHandling:
         buffer.start()
         buffer.queue_owner_grant("user1", "/file1", "zone1")
 
-        # Wait for first flush attempt (will fail)
-        time.sleep(0.1)
+        # Wait for first flush attempt (will fail) — generous margin for slow CI
+        time.sleep(0.3)
 
         # Queue another item
         buffer.queue_owner_grant("user2", "/file2", "zone1")
 
         # Wait for second flush attempt (should succeed)
-        time.sleep(0.1)
+        time.sleep(0.3)
 
         buffer.stop()
 
@@ -454,7 +456,9 @@ class TestErrorHandling:
         """Test that hierarchy error doesn't prevent grant processing."""
         rebac = MagicMock()
         hierarchy = MagicMock()
-        hierarchy.ensure_parent_tuples_batch.side_effect = Exception("Hierarchy error")
+        hierarchy.ensure_parent_tuples_batch.side_effect = OperationalError(
+            "stmt", {}, Exception("Hierarchy error")
+        )
 
         buffer = DeferredPermissionBuffer(
             rebac_manager=rebac,
@@ -477,7 +481,7 @@ class TestErrorHandling:
         """Test that grant error doesn't prevent hierarchy processing."""
         rebac = MagicMock()
         hierarchy = MagicMock()
-        rebac.rebac_write_batch.side_effect = Exception("Grant error")
+        rebac.rebac_write_batch.side_effect = OperationalError("stmt", {}, Exception("Grant error"))
 
         buffer = DeferredPermissionBuffer(
             rebac_manager=rebac,

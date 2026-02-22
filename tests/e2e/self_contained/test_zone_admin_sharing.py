@@ -3,8 +3,6 @@
 Tests that zone admins can share resources within their zone.
 """
 
-from __future__ import annotations
-
 import tempfile
 from collections.abc import Generator
 from pathlib import Path

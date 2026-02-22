@@ -5,8 +5,6 @@ deactivate, invalidate, revalidate, and batch operations — before the
 Memory service gets moved to the brick structure.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -16,11 +14,11 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from nexus.backends.local import LocalBackend
+from nexus.bricks.memory.router import MemoryViewRouter
+from nexus.bricks.memory.service import Memory
+from nexus.bricks.memory.state import MemoryStateManager
+from nexus.bricks.rebac.entity_registry import EntityRegistry
 from nexus.contracts.types import OperationContext
-from nexus.rebac.entity_registry import EntityRegistry
-from nexus.services.memory.memory_api import Memory
-from nexus.services.memory.memory_router import MemoryViewRouter
-from nexus.services.memory.state import MemoryStateManager
 from nexus.storage.models import Base
 
 # ---------------------------------------------------------------------------

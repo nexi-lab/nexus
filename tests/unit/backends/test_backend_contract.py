@@ -1,7 +1,5 @@
 """Backend contract tests -- parametrized across MockBackend and LocalBackend (Issue #1601)."""
 
-from __future__ import annotations
-
 import hashlib
 from typing import Any
 

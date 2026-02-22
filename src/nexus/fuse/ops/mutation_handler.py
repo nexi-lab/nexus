@@ -1,7 +1,5 @@
 """File/directory mutation operations: create, unlink, mkdir, rmdir, rename."""
 
-from __future__ import annotations
-
 import errno
 import logging
 import os
@@ -19,7 +17,7 @@ from nexus.fuse.ops._shared import (
 
 # Import event types
 try:
-    from nexus.core.event_bus import FileEventType
+    from nexus.core.file_events import FileEventType
 
     HAS_EVENT_BUS = True
 except ImportError:

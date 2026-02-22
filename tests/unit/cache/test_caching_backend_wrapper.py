@@ -1,11 +1,9 @@
-"""Dedicated CachingBackendWrapper test file (Issue #1524, #10A).
+"""Dedicated CachingBackendWrapper test file (Issue #1524, #2362).
 
 Tests construction, L1 cache hit/miss, cache invalidation on write,
-describe() chain introspection, CacheStrategy enum, and CacheWrapperConfig
-defaults.
+describe() chain introspection, CacheStrategy enum, CacheWrapperConfig
+defaults, and WrapperMetrics integration.
 """
-
-from __future__ import annotations
 
 from unittest.mock import MagicMock
 
@@ -257,3 +255,39 @@ class TestCacheWrapperConfigDefaults:
         config = CacheWrapperConfig()
         with pytest.raises(AttributeError):
             config.strategy = CacheStrategy.WRITE_THROUGH  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# L2 write-populate-only and stats shape (Issue #2362)
+# ---------------------------------------------------------------------------
+
+
+class TestL2WritePopulateOnly:
+    """Verify L2 is write-populate-only (no sync reads)."""
+
+    def test_stats_show_l2_mode(self) -> None:
+        """get_cache_stats() includes l2_mode: write-populate-only."""
+        inner = _make_mock_backend()
+        wrapper = CachingBackendWrapper(inner=inner)
+        stats = wrapper.get_cache_stats()
+        assert stats["l2_mode"] == "write-populate-only"
+
+    def test_stats_no_l2_hit_miss_counters(self) -> None:
+        """Stats no longer include l2_hits or l2_misses (L2 is write-only)."""
+        inner = _make_mock_backend()
+        wrapper = CachingBackendWrapper(inner=inner)
+        stats = wrapper.get_cache_stats()
+        assert "l2_hits" not in stats
+        assert "l2_misses" not in stats
+
+    def test_clear_cache_resets_all_counters(self) -> None:
+        """clear_cache() resets WrapperMetrics counters."""
+        inner = _make_mock_backend()
+        inner.read_content.return_value = _ok_response(b"data")
+        wrapper = CachingBackendWrapper(inner=inner)
+
+        wrapper.read_content("hash_z")
+        wrapper.clear_cache()
+        stats = wrapper.get_cache_stats()
+        assert stats["l1_misses"] == 0
+        assert stats["l1_hits"] == 0

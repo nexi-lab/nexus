@@ -7,8 +7,6 @@ for backward compatibility.
 Part of: #1628 (Split CacheConnectorMixin into focused units)
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -89,7 +87,7 @@ class CacheEntry:
         content_bytes: bytes,
         content_hash: str,
         now: datetime | None = None,
-    ) -> CacheEntry:
+    ) -> "CacheEntry":
         """Create a CacheEntry from L1 content hit (get_content result)."""
         now = now or datetime.now(UTC)
         return cls(
@@ -113,7 +111,7 @@ class CacheEntry:
         content_hash: str,
         original_size: int,
         now: datetime | None = None,
-    ) -> CacheEntry:
+    ) -> "CacheEntry":
         """Create a CacheEntry from L1 metadata hit (get result)."""
         now = now or datetime.now(UTC)
         return cls(
@@ -136,7 +134,7 @@ class CacheEntry:
         meta: dict,
         content_text: str | None = None,
         content_binary_raw: bytes | None = None,
-    ) -> CacheEntry:
+    ) -> "CacheEntry":
         """Create a CacheEntry from disk metadata sidecar."""
         return cls(
             cache_id="",
@@ -173,7 +171,7 @@ class CacheEntry:
         cache_id: str = "",
         max_cache_file_size: int = MAX_CACHE_FILE_SIZE,
         now: datetime | None = None,
-    ) -> CacheEntry:
+    ) -> "CacheEntry":
         """Create a CacheEntry from a write operation."""
         now = now or datetime.now(UTC)
         return cls(
@@ -203,4 +201,4 @@ class CachedReadResult:
     content: bytes
     content_hash: str  # Can be used as ETag
     from_cache: bool  # True if served from cache, False if fetched from backend
-    cache_entry: CacheEntry | None = None  # Full cache entry if available
+    cache_entry: "CacheEntry | None" = None  # Full cache entry if available

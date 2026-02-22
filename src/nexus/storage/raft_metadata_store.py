@@ -22,15 +22,15 @@ Usage:
     store = await RaftMetadataStore.remote("10.0.0.2:2026")
 """
 
-from __future__ import annotations
-
+import builtins
 import json
 import logging
 from collections.abc import Iterator, Sequence
 from typing import Any
 
-from nexus.core.metadata import FileMetadata, PaginatedResult
-from nexus.core.metastore import MetastoreABC
+from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.metadata import FileMetadata, PaginatedResult
+from nexus.core.metastore import CasResult, MetastoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -203,6 +203,28 @@ class RaftMetadataStore(MetastoreABC):
             # Compiled PyO3 binary may not yet support the consistency parameter
             return self._engine.set_metadata(metadata.path, data)
 
+    def _cas_put_engine(
+        self,
+        metadata: FileMetadata,
+        expected_version: int,
+        *,
+        consistency: str = "sc",
+    ) -> CasResult:
+        """Atomic CAS via PyO3 cas_set_metadata (single redb txn, ~8μs).
+
+        Falls back to the ABC default (read-check-write) if the compiled
+        PyO3 binary does not yet expose ``cas_set_metadata``.
+        """
+        data = _serialize_metadata(metadata)
+        try:
+            success, current_version = self._engine.cas_set_metadata(
+                metadata.path, data, expected_version, consistency=consistency
+            )
+        except (TypeError, AttributeError):
+            # PyO3 binary doesn't support CAS yet — fall back to ABC default
+            return super().put_if_version(metadata, expected_version, consistency=consistency)
+        return CasResult(success=success, current_version=current_version)
+
     def _delete_engine(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
         """Delete metadata from the embedded sled engine.
 
@@ -258,7 +280,7 @@ class RaftMetadataStore(MetastoreABC):
         return result
 
     @classmethod
-    def embedded(cls, db_path: str, zone_id: str | None = None) -> RaftMetadataStore:
+    def embedded(cls, db_path: str, zone_id: str | None = None) -> "RaftMetadataStore":
         """Create an embedded metastore using direct sled access.
 
         This is the fast path (~5μs per operation) for standalone mode.
@@ -287,7 +309,7 @@ class RaftMetadataStore(MetastoreABC):
         cls,
         address: str,
         zone_id: str | None = None,
-    ) -> RaftMetadataStore:
+    ) -> "RaftMetadataStore":
         """Create a remote Raft metadata store using gRPC.
 
         This connects to a remote Raft node over gRPC (~200μs per operation).
@@ -335,6 +357,31 @@ class RaftMetadataStore(MetastoreABC):
             return self._put_engine(metadata, consistency=consistency)
         else:
             raise NotImplementedError("Remote mode requires async. Use put_async() instead.")
+
+    def put_if_version(
+        self,
+        metadata: FileMetadata,
+        expected_version: int,
+        *,
+        consistency: str = "sc",
+    ) -> CasResult:
+        """Atomic compare-and-swap on FileMetadata.version.
+
+        Overrides the ABC default with a true atomic CAS via the
+        embedded PyO3 engine (single redb write transaction).
+
+        Args:
+            metadata: The new metadata to store.
+            expected_version: Version that must match the current stored
+                version.  Use 0 for create-only semantics.
+            consistency: ``"sc"`` (default) or ``"ec"``.
+
+        Returns:
+            CasResult indicating success and the current version.
+        """
+        if self._has_engine:
+            return self._cas_put_engine(metadata, expected_version, consistency=consistency)
+        raise NotImplementedError("Remote CAS requires async. Use put_if_version_async() instead.")
 
     def is_committed(self, token: int) -> str | None:
         """Check if an EC write token has been replicated to a majority.
@@ -467,7 +514,7 @@ class RaftMetadataStore(MetastoreABC):
         # zone_id parameter accepted for API consistency but filtering is inherent.
         # RaftMetadataStore is zone-local. Non-zoned stores serve the "root" zone,
         # so zone_id="root" is always allowed. Only assert on specific zone_ids.
-        if zone_id is not None and zone_id != "root":
+        if zone_id is not None and zone_id != ROOT_ZONE_ID:
             assert self._zone_id is not None, (
                 f"zone_id filter '{zone_id}' passed to a non-zone-scoped store"
             )
@@ -533,7 +580,7 @@ class RaftMetadataStore(MetastoreABC):
         # RaftMetadataStore is zone-local: zone_id accepted for API consistency.
         # RaftMetadataStore is zone-local. Non-zoned stores serve the "root" zone,
         # so zone_id="root" is always allowed. Only assert on specific zone_ids.
-        if zone_id is not None and zone_id != "root":
+        if zone_id is not None and zone_id != ROOT_ZONE_ID:
             assert self._zone_id is not None, (
                 f"zone_id filter '{zone_id}' passed to a non-zone-scoped store"
             )
@@ -962,7 +1009,7 @@ class RaftMetadataStore(MetastoreABC):
         else:
             raise NotImplementedError("Remote lock info requires async")
 
-    def list_locks(self, prefix: str = "", limit: int = 1000) -> list[dict[str, Any]]:
+    def list_locks(self, prefix: str = "", limit: int = 1000) -> builtins.list[dict[str, Any]]:
         """List all active locks matching a prefix.
 
         Args:
@@ -1077,7 +1124,7 @@ class RaftMetadataStore(MetastoreABC):
         prefix: str = "",
         recursive: bool = True,
         zone_id: str | None = None,
-    ) -> list[FileMetadata]:
+    ) -> builtins.list[FileMetadata]:
         """List all files with given path prefix (async).
 
         RaftMetadataStore is zone-local: each zone has its own sled database,
@@ -1094,7 +1141,7 @@ class RaftMetadataStore(MetastoreABC):
         # RaftMetadataStore is zone-local: zone_id accepted for API consistency.
         # RaftMetadataStore is zone-local. Non-zoned stores serve the "root" zone,
         # so zone_id="root" is always allowed. Only assert on specific zone_ids.
-        if zone_id is not None and zone_id != "root":
+        if zone_id is not None and zone_id != ROOT_ZONE_ID:
             assert self._zone_id is not None, (
                 f"zone_id filter '{zone_id}' passed to a non-zone-scoped store"
             )

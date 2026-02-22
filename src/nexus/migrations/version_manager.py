@@ -8,8 +8,6 @@ This module provides the core logic for:
 - Rolling back failed migrations
 """
 
-from __future__ import annotations
-
 import json
 import shutil
 import time
@@ -40,8 +38,8 @@ class MigrationContext:
         progress_callback: Optional callback for progress updates
     """
 
-    config: NexusConfig
-    session: Session | None = None
+    config: "NexusConfig"
+    session: "Session | None" = None
     dry_run: bool = False
     backup_path: str | None = None
     progress_callback: Callable[[str, int, int], None] | None = None
@@ -143,7 +141,7 @@ class VersionManager:
 
     def __init__(
         self,
-        config: NexusConfig,
+        config: "NexusConfig",
         session_factory: Any | None = None,
     ) -> None:
         """Initialize version manager.

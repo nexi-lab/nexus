@@ -8,17 +8,15 @@ Tests thread-safety of:
 - Subscription cache TTL under contention
 """
 
-from __future__ import annotations
-
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 import pytest
 
-from nexus.skills.package_service import SkillPackageService
-from nexus.skills.service import SkillService
-from nexus.skills.testing import (
+from nexus.bricks.skills.package_service import SkillPackageService
+from nexus.bricks.skills.service import SkillService
+from nexus.bricks.skills.testing import (
     FakeOperationContext,
     InMemorySkillFilesystem,
     StubSkillPermissions,
@@ -83,7 +81,6 @@ def _make_ctx(user_id: str = "alice", zone_id: str = "acme") -> FakeOperationCon
 
 
 SKILL_BASE = "/zone/acme/user/alice/skill/"
-
 
 # ---------------------------------------------------------------------------
 # Parallel Discover

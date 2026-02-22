@@ -12,8 +12,6 @@ Tests three user types:
 - Unauthenticated: rejected with 401
 """
 
-from __future__ import annotations
-
 import os
 import signal
 import socket
@@ -133,7 +131,7 @@ def audit_server(tmp_path_factory):
         from sqlalchemy import create_engine as ce
         from sqlalchemy.orm import sessionmaker
 
-        from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+        from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
 
         eng = ce(f"sqlite:///{db_path}")
         factory = sessionmaker(bind=eng)

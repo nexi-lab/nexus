@@ -3,9 +3,7 @@
 Tests the full FastAPI router with a mock AsyncNexusFS via TestClient.
 """
 
-from __future__ import annotations
-
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi import FastAPI
@@ -30,9 +28,9 @@ def _make_mock_context() -> MagicMock:
 
 
 @pytest.fixture()
-def mock_fs() -> AsyncMock:
-    """Create a mock AsyncNexusFS with default behaviors."""
-    fs = AsyncMock()
+def mock_fs() -> MagicMock:
+    """Create a mock NexusFS with default behaviors."""
+    fs = MagicMock()
     fs.read.return_value = b"hello world"
     fs.write.return_value = {
         "etag": "abc123",
@@ -43,7 +41,7 @@ def mock_fs() -> AsyncMock:
     }
     fs.delete.return_value = {"deleted": True, "path": "/test.txt"}
     fs.exists.return_value = True
-    fs.list_dir.return_value = ["a.txt", "b.txt"]
+    fs.list.return_value = ["/a.txt", "/b.txt"]
     fs.mkdir.return_value = None
 
     meta = MagicMock()
@@ -59,11 +57,11 @@ def mock_fs() -> AsyncMock:
 
 
 @pytest.fixture()
-def client(mock_fs: AsyncMock) -> TestClient:
+def client(mock_fs: MagicMock) -> TestClient:
     """Create a FastAPI test client with batch router (no auth import chain)."""
     app = FastAPI()
     router = create_batch_router(
-        async_fs=mock_fs,
+        nexus_fs=mock_fs,
         get_context_override=lambda: _make_mock_context(),
     )
     app.include_router(router, prefix="/api/v2")
@@ -157,7 +155,7 @@ class TestBatchEndpointErrors:
         )
         assert response.status_code == 422
 
-    def test_partial_failure_returns_200(self, client: TestClient, mock_fs: AsyncMock) -> None:
+    def test_partial_failure_returns_200(self, client: TestClient, mock_fs: MagicMock) -> None:
         mock_fs.write.side_effect = NexusPermissionError("denied")
         response = client.post(
             "/api/v2/batch",
@@ -177,7 +175,7 @@ class TestBatchEndpointErrors:
 class TestBatchStopOnError:
     """stop_on_error flag tests."""
 
-    def test_stop_on_error_skips_remaining(self, client: TestClient, mock_fs: AsyncMock) -> None:
+    def test_stop_on_error_skips_remaining(self, client: TestClient, mock_fs: MagicMock) -> None:
         mock_fs.read.side_effect = NexusFileNotFoundError(path="/missing.txt")
         response = client.post(
             "/api/v2/batch",
@@ -194,7 +192,7 @@ class TestBatchStopOnError:
         assert data["results"][0]["status"] == 404
         assert data["results"][1]["status"] == 424
 
-    def test_stop_on_error_false_continues(self, client: TestClient, mock_fs: AsyncMock) -> None:
+    def test_stop_on_error_false_continues(self, client: TestClient, mock_fs: MagicMock) -> None:
         mock_fs.read.side_effect = NexusFileNotFoundError(path="/missing.txt")
         response = client.post(
             "/api/v2/batch",

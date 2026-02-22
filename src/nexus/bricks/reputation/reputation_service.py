@@ -9,8 +9,6 @@ Federation-safe: no process-local caches or locks.
 All reads go directly to the database.
 """
 
-from __future__ import annotations
-
 import hashlib
 import json
 import logging
@@ -57,7 +55,7 @@ class ReputationService(SessionMixin):
 
     def __init__(
         self,
-        record_store: RecordStoreABC,
+        record_store: "RecordStoreABC",
     ) -> None:
         self._session_factory = record_store.session_factory
 
@@ -263,7 +261,7 @@ class ReputationService(SessionMixin):
 
     def _create_event(
         self,
-        session: Session,
+        session: "Session",
         rater_agent_id: str,
         rated_agent_id: str,
         exchange_id: str,
@@ -316,7 +314,7 @@ class ReputationService(SessionMixin):
 
     def _update_materialized_score(
         self,
-        session: Session,
+        session: "Session",
         rated_agent_id: str,
         zone_id: str,
         outcome: str,

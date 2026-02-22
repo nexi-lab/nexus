@@ -1,7 +1,5 @@
 """Skill governance and approval workflows."""
 
-from __future__ import annotations
-
 import dataclasses
 import json
 import logging
@@ -14,8 +12,8 @@ from typing import TYPE_CHECKING, Any
 from nexus.bricks.skills.exceptions import SkillPermissionDeniedError, SkillValidationError
 
 if TYPE_CHECKING:
-    from nexus.core.cache_store import CacheStoreABC
-    from nexus.rebac.manager import ReBACManager
+    from nexus.contracts.cache_store import CacheStoreABC
+    from nexus.services.protocols.rebac import ReBACBrickProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +106,7 @@ class SkillGovernance:
     - Only approved skills can be published to /shared/
 
     Example:
-        >>> from nexus.skills import SkillGovernance
+        >>> from nexus.bricks.skills.governance import SkillGovernance
         >>>
         >>> # Initialize governance
         >>> gov = SkillGovernance()
@@ -133,8 +131,8 @@ class SkillGovernance:
 
     def __init__(
         self,
-        rebac_manager: ReBACManager | None = None,
-        cache_store: CacheStoreABC | None = None,
+        rebac_manager: "ReBACBrickProtocol | None" = None,
+        cache_store: "CacheStoreABC | None" = None,
     ):
         """Initialize governance system.
 
@@ -147,7 +145,7 @@ class SkillGovernance:
         if cache_store is not None:
             self._cache: CacheStoreABC = cache_store
         else:
-            from nexus.cache.inmemory import InMemoryCacheStore
+            from nexus.contracts.cache_store import InMemoryCacheStore
 
             self._cache = InMemoryCacheStore()
 

@@ -4,8 +4,6 @@ Extracted from fastapi_server.py (#1602). Admin handlers accept both
 ``nexus_fs`` and ``auth_provider`` as explicit parameters.
 """
 
-from __future__ import annotations
-
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -68,8 +66,8 @@ def handle_admin_create_key(auth_provider: Any, params: Any, context: Any) -> di
     import uuid
     from datetime import timedelta
 
-    from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
-    from nexus.rebac.entity_registry import EntityRegistry
+    from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
+    from nexus.bricks.rebac.entity_registry import EntityRegistry
 
     require_admin(context)
     require_database_auth(auth_provider)
@@ -185,7 +183,7 @@ def handle_admin_get_key(auth_provider: Any, params: Any, context: Any) -> dict[
 
 def handle_admin_revoke_key(auth_provider: Any, params: Any, context: Any) -> dict[str, Any]:
     """Handle admin_revoke_key method."""
-    from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+    from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
     from nexus.contracts.exceptions import NexusFileNotFoundError
 
     require_admin(context)

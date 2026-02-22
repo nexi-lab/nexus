@@ -1,7 +1,5 @@
 """Directory operation commands - ls, mkdir, rmdir, tree."""
 
-from __future__ import annotations
-
 from typing import Any, cast
 
 import click
@@ -14,7 +12,6 @@ from nexus.cli.utils import (
     console,
     get_filesystem,
     handle_error,
-    is_standalone,
 )
 
 
@@ -54,38 +51,20 @@ def list_files(
         # Time-travel: List files at historical operation point
         nexus ls /workspace --at-operation op_abc123
     """
+    from nexus.core.nexus_fs import NexusFS
+
     try:
         nx = get_filesystem(backend_config)
 
         if at_operation:
             # Time-travel: List files at historical operation point
-            try:
-                from nexus.storage.time_travel import TimeTravelReader
-            except ImportError as e:
-                console.print(f"[red]Error:[/red] Failed to import time-travel modules: {e}")
-                nx.close()
-                return
-
-            if not is_standalone(nx):
+            time_travel = getattr(nx, "time_travel_service", None)
+            if time_travel is None:
                 console.print("[red]Error:[/red] Time-travel is only supported with local NexusFS")
                 nx.close()
                 return
 
-            # Create time-travel reader with a session
-            record_store = nx._record_store
-            if record_store is None:
-                console.print("[red]Error:[/red] Time-travel requires a record store")
-                nx.close()
-                return
-
-            with record_store.session_factory() as session:
-                time_travel = TimeTravelReader(session, nx.backend)
-
-                # Get directory listing at operation
-                files = time_travel.list_files_at_operation(
-                    path, at_operation, zone_id=nx._default_context.zone_id, recursive=recursive
-                )
-
+            files = time_travel.list_files_at_operation(path, at_operation, recursive=recursive)
             nx.close()
 
             if not files:
@@ -164,7 +143,7 @@ def list_files(
             table.add_column("Modified", style="yellow")
 
             # Get metadata with permissions
-            if is_standalone(nx):
+            if isinstance(nx, NexusFS):
                 for file in files:
                     # Use is_directory from metadata if available, otherwise check via API
                     is_dir = file.get("is_directory", False)

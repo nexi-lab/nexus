@@ -17,7 +17,7 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from nexus.rebac.cache.result_cache import ReBACPermissionCache
+from nexus.bricks.rebac.cache.result_cache import ReBACPermissionCache
 
 
 def benchmark_invalidation_modes():

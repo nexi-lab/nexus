@@ -18,15 +18,13 @@ NOTE: These are SERVICE-LEVEL domain caches, NOT kernel code.
       consume these domain caches.
 """
 
-from __future__ import annotations
-
 import hashlib
 import json
 import logging
 import struct
 from collections.abc import Awaitable, Callable
 
-from nexus.core.protocols import CacheStoreABC
+from nexus.contracts.cache_store import CacheStoreABC
 
 logger = logging.getLogger(__name__)
 

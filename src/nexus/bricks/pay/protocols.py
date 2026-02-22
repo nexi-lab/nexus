@@ -6,8 +6,6 @@ Concrete implementations are wired by factory.py at boot time.
 Issue #2189: Replace concrete nexus.storage imports with Protocol abstractions.
 """
 
-from __future__ import annotations
-
 from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Protocol
@@ -67,7 +65,7 @@ class SpendingPolicyRepository(Protocol):
         rules: list[dict[str, Any]] | None,
         priority: int,
         enabled: bool,
-    ) -> SpendingPolicy:
+    ) -> "SpendingPolicy":
         """Create and persist a new spending policy."""
         ...
 
@@ -75,7 +73,7 @@ class SpendingPolicyRepository(Protocol):
         self,
         agent_id: str | None,
         zone_id: str,
-    ) -> SpendingPolicy | None:
+    ) -> "SpendingPolicy | None":
         """Get enabled policy by agent_id + zone_id."""
         ...
 
@@ -83,7 +81,7 @@ class SpendingPolicyRepository(Protocol):
         self,
         policy_id: str,
         **updates: Any,
-    ) -> tuple[SpendingPolicy | None, tuple[str, str] | None]:
+    ) -> "tuple[SpendingPolicy | None, tuple[str, str] | None]":
         """Update policy fields.
 
         Returns:
@@ -105,7 +103,7 @@ class SpendingPolicyRepository(Protocol):
         """
         ...
 
-    async def list_policies(self, zone_id: str) -> list[SpendingPolicy]:
+    async def list_policies(self, zone_id: str) -> "list[SpendingPolicy]":
         """List all policies for a zone, ordered by priority descending."""
         ...
 
@@ -113,7 +111,7 @@ class SpendingPolicyRepository(Protocol):
         self,
         agent_id: str,
         zone_id: str,
-    ) -> SpendingPolicy | None:
+    ) -> "SpendingPolicy | None":
         """Resolve effective policy: agent-specific first, then zone default."""
         ...
 
@@ -160,7 +158,7 @@ class SpendingPolicyRepository(Protocol):
         to: str,
         memo: str,
         expires_at: datetime,
-    ) -> SpendingApproval:
+    ) -> "SpendingApproval":
         """Create a pending approval request."""
         ...
 
@@ -169,7 +167,7 @@ class SpendingPolicyRepository(Protocol):
         approval_id: str,
         agent_id: str,
         amount: Decimal,
-    ) -> SpendingApproval | None:
+    ) -> "SpendingApproval | None":
         """Check if approval is valid (approved, not expired, matches agent/amount)."""
         ...
 
@@ -178,13 +176,13 @@ class SpendingPolicyRepository(Protocol):
         approval_id: str,
         decision: str,
         decided_by: str,
-    ) -> SpendingApproval | None:
+    ) -> "SpendingApproval | None":
         """Approve or reject a pending approval. Returns None if not found/not pending."""
         ...
 
     async def list_pending_approvals(
         self,
         zone_id: str,
-    ) -> list[SpendingApproval]:
+    ) -> "list[SpendingApproval]":
         """List pending approvals for a zone (not expired)."""
         ...

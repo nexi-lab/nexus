@@ -6,7 +6,8 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from nexus.services.sessions import (
+from nexus.storage.models import Base, MemoryModel, UserSessionModel
+from nexus.system_services.lifecycle.sessions import (
     cleanup_expired_sessions,
     cleanup_inactive_sessions,
     create_session,
@@ -16,7 +17,6 @@ from nexus.services.sessions import (
     list_user_sessions,
     update_session_activity,
 )
-from nexus.storage.models import Base, MemoryModel, UserSessionModel
 
 
 @pytest.fixture

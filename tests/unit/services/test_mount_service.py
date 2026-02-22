@@ -5,15 +5,13 @@ All async service methods are tested via asyncio.run() to avoid
 pytest-asyncio dependency.
 """
 
-from __future__ import annotations
-
 import asyncio
 from unittest.mock import MagicMock
 
 import pytest
 
 from nexus.contracts.types import OperationContext
-from nexus.services.mount_service import MountService
+from nexus.services.mount.mount_service import MountService
 
 # =============================================================================
 # Fixtures

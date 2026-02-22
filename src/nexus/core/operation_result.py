@@ -18,8 +18,6 @@ One of the Four Pillars of the kernel VFS layer
 (NEXUS-LEGO-ARCHITECTURE.md §4.3: Hook Pipeline + Error Classification).
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from typing import Generic, Literal, TypeVar
 
@@ -58,7 +56,7 @@ class OperationResult(Generic[T]):
         severity: Literal["degraded", "cosmetic"],
         component: str,
         message: str,
-    ) -> OperationResult[T]:
+    ) -> "OperationResult[T]":
         """Return a new result with an additional warning appended."""
         new_warning = OperationWarning(severity, component, message)
         return OperationResult(
@@ -66,7 +64,7 @@ class OperationResult(Generic[T]):
             warnings=(*self.warnings, new_warning),
         )
 
-    def merge_warnings(self, other: OperationResult) -> OperationResult[T]:
+    def merge_warnings(self, other: "OperationResult") -> "OperationResult[T]":
         """Return a new result combining warnings from both results."""
         return OperationResult(
             value=self.value,

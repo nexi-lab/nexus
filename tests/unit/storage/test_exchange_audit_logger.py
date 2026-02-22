@@ -5,8 +5,6 @@ tamper detection, cursor pagination, filtering, aggregations, and
 ORM immutability guards.
 """
 
-from __future__ import annotations
-
 import hashlib
 from datetime import UTC, datetime
 from decimal import Decimal

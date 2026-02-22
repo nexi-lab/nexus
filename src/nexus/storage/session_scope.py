@@ -5,8 +5,6 @@ context manager that also translates SQLAlchemy errors to the Nexus
 DatabaseError hierarchy at the storage boundary.
 """
 
-from __future__ import annotations
-
 import socket
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
@@ -47,7 +45,7 @@ def _is_timeout_error(exc: SAOperationalError) -> bool:
         if pgcode in _PG_TIMEOUT_CODES:
             return True
         # Check for socket.timeout (common in connection timeout scenarios)
-        if isinstance(orig, (socket.timeout, TimeoutError)):
+        if isinstance(orig, socket.timeout | TimeoutError):
             return True
     # Fallback: string matching for SQLite and other dialects
     msg = str(exc).lower()

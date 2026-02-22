@@ -16,8 +16,6 @@ Usage:
     pytest tests/integration/test_delta_sync_postgres.py -v --tb=short
 """
 
-from __future__ import annotations
-
 import os
 from datetime import UTC, datetime
 
@@ -25,9 +23,9 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
-from nexus.services.change_log_store import ChangeLogStore
 from nexus.storage.models import BackendChangeLogModel
 from nexus.storage.record_store import RecordStoreABC
+from nexus.system_services.sync.change_log_store import ChangeLogStore
 
 # ============================================================================
 # Skip if PostgreSQL is not available
@@ -55,7 +53,6 @@ pytestmark = pytest.mark.skipif(
     not is_postgres_available(),
     reason="PostgreSQL not available (start with: docker compose --profile test up -d postgres-test)",
 )
-
 
 # ============================================================================
 # Helpers

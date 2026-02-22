@@ -18,10 +18,7 @@ Backend-specific logic is delegated to:
 - vector_db_postgres.py: PostgreSQL init, vector search, keyword search
 """
 
-from __future__ import annotations
-
 import asyncio
-import atexit
 import concurrent.futures
 import logging
 from typing import TYPE_CHECKING, Any
@@ -30,40 +27,7 @@ from nexus.bricks.search.hnsw_config import HNSWConfig
 
 logger = logging.getLogger(__name__)
 
-# Module-level shared thread pool for _run_sync (Issue #1520: replaces per-call creation)
-# Issue #2071: Worker count sourced from ProfileTuning.search.vector_pool_workers at startup.
-# Default 2 (FULL profile) is used if tuning not yet resolved at import time.
 _DEFAULT_VDB_WORKERS = 2
-_SYNC_POOL = concurrent.futures.ThreadPoolExecutor(
-    max_workers=_DEFAULT_VDB_WORKERS, thread_name_prefix="nexus-vdb"
-)
-atexit.register(_SYNC_POOL.shutdown, wait=False)
-
-
-def configure_sync_pool(max_workers: int) -> None:
-    """Reconfigure the module-level sync pool with profile-tuned worker count.
-
-    Called once at startup by factory/server init. Thread-safe: old pool
-    is shut down gracefully before replacement.
-    """
-    global _SYNC_POOL  # noqa: PLW0603
-    old = _SYNC_POOL
-    _SYNC_POOL = concurrent.futures.ThreadPoolExecutor(
-        max_workers=max_workers, thread_name_prefix="nexus-vdb"
-    )
-    atexit.register(_SYNC_POOL.shutdown, wait=False)
-    old.shutdown(wait=False)
-
-
-def _run_sync(coro: Any) -> Any:
-    """Run an async coroutine synchronously (Issue #1520: avoid core.sync_bridge import)."""
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-    # If a loop is already running, use shared thread pool
-    return _SYNC_POOL.submit(asyncio.run, coro).result()
-
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -77,7 +41,16 @@ class VectorDatabase:
     to vector_db_sqlite and vector_db_postgres modules.
     """
 
-    def __init__(self, engine: Engine, hnsw_config: HNSWConfig | None = None):
+    def __init__(
+        self,
+        engine: "Engine",
+        hnsw_config: HNSWConfig | None = None,
+        zoekt_client: Any | None = None,
+        bm25s_index: Any | None = None,
+        sync_pool_workers: int = _DEFAULT_VDB_WORKERS,
+        *,
+        is_postgresql: bool = False,
+    ):
         """Initialize vector database.
 
         Args:
@@ -86,14 +59,41 @@ class VectorDatabase:
                 medium-scale defaults (m=24, ef_construction=128). Use
                 HNSWConfig.for_dataset_size() for auto-configuration based
                 on your dataset size.
+            zoekt_client: Injected ZoektClient instance (Issue #2188).
+            bm25s_index: Injected BM25SIndex instance (Issue #2188).
+            sync_pool_workers: Thread pool size for sync-to-async bridge (Issue #2188).
+            is_postgresql: Config-time flag indicating PostgreSQL backend.
+                When False, assumes SQLite. Avoids runtime dialect sniffing.
         """
         self.engine = engine
-        self.db_type = engine.dialect.name
+        self._is_postgresql = is_postgresql
         self.hnsw_config = hnsw_config or HNSWConfig.medium_scale()
+        self._zoekt_client = zoekt_client
+        self._bm25s_index = bm25s_index
+        self._sync_pool = concurrent.futures.ThreadPoolExecutor(
+            max_workers=sync_pool_workers, thread_name_prefix="nexus-vdb"
+        )
         self._initialized = False
         self.vec_available = False  # Set to True if vector extension is loaded
         self.bm25_available = False  # Set to True if pg_textsearch BM25 is available
         self._sqlite_vec_loaded = False  # Track if we've set up the event listener
+
+    @property
+    def db_type(self) -> str:
+        """Return database type string for callers that need it."""
+        return "postgresql" if self._is_postgresql else "sqlite"
+
+    def _run_sync(self, coro: Any) -> Any:
+        """Run an async coroutine synchronously using the instance thread pool."""
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(coro)
+        return self._sync_pool.submit(asyncio.run, coro).result()
+
+    def close(self) -> None:
+        """Shut down the thread pool (Issue #2188: deterministic lifecycle)."""
+        self._sync_pool.shutdown(wait=False)
 
     def initialize(self) -> None:
         """Initialize vector extensions and create FTS tables."""
@@ -101,12 +101,10 @@ class VectorDatabase:
             return
 
         with self.engine.connect() as conn:
-            if self.db_type == "sqlite":
-                self._init_sqlite(conn)
-            elif self.db_type == "postgresql":
+            if self._is_postgresql:
                 self._init_postgresql(conn)
             else:
-                raise ValueError(f"Unsupported database type: {self.db_type}")
+                self._init_sqlite(conn)
 
         self._initialized = True
 
@@ -125,7 +123,7 @@ class VectorDatabase:
 
         self.vec_available, self.bm25_available = init_postgresql(conn, self.hnsw_config)
 
-    def store_embedding(self, session: Session, chunk_id: str, embedding: list[float]) -> None:
+    def store_embedding(self, session: "Session", chunk_id: str, embedding: list[float]) -> None:
         """Store embedding for a chunk.
 
         Args:
@@ -133,18 +131,18 @@ class VectorDatabase:
             chunk_id: Chunk ID
             embedding: Embedding vector
         """
-        if self.db_type == "sqlite":
-            from nexus.bricks.search.vector_db_sqlite import sqlite_store_embedding
-
-            sqlite_store_embedding(session, chunk_id, embedding)
-        elif self.db_type == "postgresql":
+        if self._is_postgresql:
             from nexus.bricks.search.vector_db_postgres import postgres_store_embedding
 
             postgres_store_embedding(session, chunk_id, embedding)
+        else:
+            from nexus.bricks.search.vector_db_sqlite import sqlite_store_embedding
+
+            sqlite_store_embedding(session, chunk_id, embedding)
 
     def vector_search(
         self,
-        session: Session,
+        session: "Session",
         query_embedding: list[float],
         limit: int = 10,
         path_filter: str | None = None,
@@ -160,21 +158,19 @@ class VectorDatabase:
         Returns:
             List of search results with scores
         """
-        if self.db_type == "sqlite":
-            from nexus.bricks.search.vector_db_sqlite import sqlite_vector_search
-
-            return sqlite_vector_search(session, query_embedding, limit, path_filter)
-        elif self.db_type == "postgresql":
+        if self._is_postgresql:
             from nexus.bricks.search.vector_db_postgres import postgres_vector_search
 
             return postgres_vector_search(
                 session, query_embedding, limit, path_filter, self.hnsw_config
             )
         else:
-            raise ValueError(f"Unsupported database type: {self.db_type}")
+            from nexus.bricks.search.vector_db_sqlite import sqlite_vector_search
+
+            return sqlite_vector_search(session, query_embedding, limit, path_filter)
 
     def keyword_search(
-        self, session: Session, query: str, limit: int = 10, path_filter: str | None = None
+        self, session: "Session", query: str, limit: int = 10, path_filter: str | None = None
     ) -> list[dict[str, Any]]:
         """Search by keywords using Zoekt, BM25S, or FTS.
 
@@ -207,16 +203,14 @@ class VectorDatabase:
 
         # Fall back to FTS
         logger.debug("[KEYWORD] Using FTS fallback")
-        if self.db_type == "sqlite":
-            from nexus.bricks.search.vector_db_sqlite import sqlite_keyword_search
-
-            return sqlite_keyword_search(session, query, limit, path_filter)
-        elif self.db_type == "postgresql":
+        if self._is_postgresql:
             from nexus.bricks.search.vector_db_postgres import postgres_keyword_search
 
             return postgres_keyword_search(session, query, limit, path_filter, self.bm25_available)
         else:
-            raise ValueError(f"Unsupported database type: {self.db_type}")
+            from nexus.bricks.search.vector_db_sqlite import sqlite_keyword_search
+
+            return sqlite_keyword_search(session, query, limit, path_filter)
 
     def _try_keyword_search_with_zoekt(
         self, query: str, limit: int, path_filter: str | None
@@ -231,15 +225,11 @@ class VectorDatabase:
         Returns:
             List of results if Zoekt succeeded, None to fall back to FTS
         """
-        try:
-            from nexus.bricks.search.zoekt_client import get_zoekt_client
-        except ImportError:
+        if self._zoekt_client is None:
             return None
 
-        client = get_zoekt_client()
-
         # Check if Zoekt is available (sync wrapper, Issue #1520)
-        is_available = _run_sync(client.is_available())
+        is_available = self._run_sync(self._zoekt_client.is_available())
 
         if not is_available:
             return None
@@ -253,7 +243,7 @@ class VectorDatabase:
                 zoekt_query = f"file:{path_filter.lstrip('/')} {zoekt_query}"
 
             # Run search
-            matches = _run_sync(client.search(zoekt_query, num=limit * 2))
+            matches = self._run_sync(self._zoekt_client.search(zoekt_query, num=limit * 2))
 
             if not matches:
                 # No results - let FTS try
@@ -302,21 +292,14 @@ class VectorDatabase:
         Returns:
             List of results if BM25S succeeded, None to fall back to FTS
         """
-        try:
-            from nexus.bricks.search.bm25s_search import BM25SIndex, is_bm25s_available
-        except ImportError:
+        if self._bm25s_index is None:
             return None
-
-        if not is_bm25s_available():
-            return None
-
-        index = BM25SIndex.get_instance()
 
         # Check if index is initialized and has documents (Issue #1520)
-        if not _run_sync(index.initialize()):
+        if not self._run_sync(self._bm25s_index.initialize()):
             return None
 
-        stats = _run_sync(index.get_stats())
+        stats = self._run_sync(self._bm25s_index.get_stats())
         if stats.get("total_documents", 0) == 0:
             return None
 
@@ -324,8 +307,8 @@ class VectorDatabase:
 
         try:
             # Run search
-            bm25s_results = _run_sync(
-                index.search(query=query, limit=limit, path_filter=path_filter)
+            bm25s_results = self._run_sync(
+                self._bm25s_index.search(query=query, limit=limit, path_filter=path_filter)
             )
 
             if not bm25s_results:
@@ -358,7 +341,7 @@ class VectorDatabase:
 
     def hybrid_search(
         self,
-        session: Session,
+        session: "Session",
         query: str,
         query_embedding: list[float],
         limit: int = 10,
@@ -422,6 +405,6 @@ class VectorDatabase:
         return {
             "vec_enabled": self.vec_available,
             "bm25_available": self.bm25_available,
-            "db_type": self.db_type,
+            "db_type": "postgresql" if self._is_postgresql else "sqlite",
             "initialized": self._initialized,
         }

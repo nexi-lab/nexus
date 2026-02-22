@@ -39,6 +39,9 @@ from nexus.storage.models._base import uuid_pk as uuid_pk
 # Domain: A2A (Task persistence)
 from nexus.storage.models.a2a import A2ATaskModel as A2ATaskModel
 
+# Domain: Access Manifests (Issue #1754)
+from nexus.storage.models.access_manifest import AccessManifestModel as AccessManifestModel
+
 # Domain: ACE (Trajectories, Feedback, Playbooks)
 from nexus.storage.models.ace import PlaybookModel as PlaybookModel
 from nexus.storage.models.ace import TrajectoryFeedbackModel as TrajectoryFeedbackModel
@@ -78,7 +81,8 @@ from nexus.storage.models.filesystem import DocumentChunkModel as DocumentChunkM
 from nexus.storage.models.filesystem import FileMetadataModel as FileMetadataModel
 from nexus.storage.models.filesystem import WorkspaceSnapshotModel as WorkspaceSnapshotModel
 
-# Domain: Identity (Agent signing keys, Issue #1355)
+# Domain: Identity (Agent signing keys, Issue #1355; Credentials, Issue #1753)
+from nexus.storage.models.identity import AgentCredentialModel as AgentCredentialModel
 from nexus.storage.models.identity import AgentKeyModel as AgentKeyModel
 
 # Domain: Infrastructure (Sandbox, Config, Sessions, Migrations)

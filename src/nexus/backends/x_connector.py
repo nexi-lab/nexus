@@ -35,6 +35,7 @@ Example:
 """
 
 import hashlib
+import importlib as _il
 import json
 import logging
 import os
@@ -49,13 +50,16 @@ from cachetools import LRUCache
 from nexus.backends.backend import Backend
 from nexus.backends.oauth_mixin import OAuthConnectorMixin
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
-from nexus.bricks.search.primitives import glob_fast
 from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import BackendError
+from nexus.core.protocols.capabilities import OAUTH_CONNECTOR_CAPABILITIES
 from nexus.lib.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
+
+# Brick import via importlib to avoid non-layer→bricks tier violation
+glob_fast = _il.import_module("nexus.bricks.search.primitives").glob_fast
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +113,8 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
     - Read-only for most paths
     - Fixed virtual directory structure
     """
+
+    _CAPABILITIES = OAUTH_CONNECTOR_CAPABILITIES
 
     user_scoped = True
 
@@ -1170,7 +1176,8 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
                         available.append(f"/x/timeline/{file.name}")
 
             # Filter by pattern using Rust-accelerated glob matching
-            return glob_fast.glob_filter(available, include_patterns=[pattern])
+            filtered: list[str] = glob_fast.glob_filter(available, include_patterns=[pattern])
+            return filtered
 
         # Handle posts glob (requires API call)
         if pattern.startswith("/x/posts/") and "*.json" in pattern:

@@ -37,11 +37,9 @@ New projects should use nexus.sdk for a cleaner API.
 PERFORMANCE NOTE:
 -----------------
 This module uses lazy imports to minimize startup time. Heavy modules like
-nexus.skills, nexus.core.nexus_fs, and nexus.remote are only loaded when
+nexus.bricks.skills, nexus.core.nexus_fs, and nexus.remote are only loaded when
 first accessed. This reduces import time from ~10s to ~1s for simple use cases.
 """
-
-from __future__ import annotations
 
 import logging
 import os as _os
@@ -65,6 +63,15 @@ if TYPE_CHECKING:
     from nexus.backends.backend import Backend
     from nexus.backends.gcs import GCSBackend
     from nexus.backends.local import LocalBackend
+    from nexus.bricks.skills.exporter import SkillExporter, SkillExportError
+    from nexus.bricks.skills.manager import SkillManager, SkillManagerError
+    from nexus.bricks.skills.models import Skill, SkillMetadata
+    from nexus.bricks.skills.parser import SkillParseError, SkillParser
+    from nexus.bricks.skills.registry import (
+        SkillDependencyError,
+        SkillNotFoundError,
+        SkillRegistry,
+    )
     from nexus.config import NexusConfig, load_config
     from nexus.contracts.exceptions import (
         BackendError,
@@ -74,24 +81,11 @@ if TYPE_CHECKING:
         NexusFileNotFoundError,
         NexusPermissionError,
     )
-    from nexus.core.filesystem import NexusFilesystem
+    from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC as NexusFilesystem
     from nexus.core.metastore import MetastoreABC
     from nexus.core.nexus_fs import NexusFS
     from nexus.core.router import NamespaceConfig
     from nexus.remote import RemoteNexusFS
-    from nexus.skills import (
-        Skill,
-        SkillDependencyError,
-        SkillExporter,
-        SkillExportError,
-        SkillManager,
-        SkillManagerError,
-        SkillMetadata,
-        SkillNotFoundError,
-        SkillParseError,
-        SkillParser,
-        SkillRegistry,
-    )
 
 # =============================================================================
 # Lightweight imports (always loaded) - these are fast
@@ -123,23 +117,23 @@ _LAZY_IMPORTS = {
     "NexusConfig": ("nexus.config", "NexusConfig"),
     "load_config": ("nexus.config", "load_config"),
     # Core - heavy
-    "NexusFilesystem": ("nexus.core.filesystem", "NexusFilesystem"),
+    "NexusFilesystem": ("nexus.contracts.filesystem.filesystem_abc", "NexusFilesystemABC"),
     "NexusFS": ("nexus.core.nexus_fs", "NexusFS"),
     "NamespaceConfig": ("nexus.core.router", "NamespaceConfig"),
     # Remote - needed for FUSE mount
     "RemoteNexusFS": ("nexus.remote", "RemoteNexusFS"),
     # Skills - very heavy
-    "Skill": ("nexus.skills", "Skill"),
-    "SkillDependencyError": ("nexus.skills", "SkillDependencyError"),
-    "SkillExporter": ("nexus.skills", "SkillExporter"),
-    "SkillExportError": ("nexus.skills", "SkillExportError"),
-    "SkillManager": ("nexus.skills", "SkillManager"),
-    "SkillManagerError": ("nexus.skills", "SkillManagerError"),
-    "SkillMetadata": ("nexus.skills", "SkillMetadata"),
-    "SkillNotFoundError": ("nexus.skills", "SkillNotFoundError"),
-    "SkillParseError": ("nexus.skills", "SkillParseError"),
-    "SkillParser": ("nexus.skills", "SkillParser"),
-    "SkillRegistry": ("nexus.skills", "SkillRegistry"),
+    "Skill": ("nexus.bricks.skills.models", "Skill"),
+    "SkillDependencyError": ("nexus.bricks.skills.registry", "SkillDependencyError"),
+    "SkillExporter": ("nexus.bricks.skills.exporter", "SkillExporter"),
+    "SkillExportError": ("nexus.bricks.skills.exporter", "SkillExportError"),
+    "SkillManager": ("nexus.bricks.skills.manager", "SkillManager"),
+    "SkillManagerError": ("nexus.bricks.skills.manager", "SkillManagerError"),
+    "SkillMetadata": ("nexus.bricks.skills.models", "SkillMetadata"),
+    "SkillNotFoundError": ("nexus.bricks.skills.registry", "SkillNotFoundError"),
+    "SkillParseError": ("nexus.bricks.skills.parser", "SkillParseError"),
+    "SkillParser": ("nexus.bricks.skills.parser", "SkillParser"),
+    "SkillRegistry": ("nexus.bricks.skills.registry", "SkillRegistry"),
 }
 
 
@@ -172,8 +166,8 @@ def __getattr__(name: str) -> Any:
 
 
 def connect(
-    config: str | Path | dict | NexusConfig | None = None,
-) -> NexusFilesystem:
+    config: "str | Path | dict | NexusConfig | None" = None,
+) -> "NexusFilesystem":
     """
     Connect to Nexus filesystem.
 
@@ -289,7 +283,14 @@ def connect(
         data_dir = str(Path(nexus_root) / "data")
     else:
         data_dir = cfg.data_dir if cfg.data_dir is not None else str(Path(NEXUS_STATE_DIR) / "data")
-        nexus_root = str(Path(data_dir).parent)
+        # nexus_root hosts sibling state directories (metastore, record_store).
+        # When data_dir is explicitly provided (e.g. --data-dir /some/path), USE
+        # data_dir itself as nexus_root so metastore goes inside it — this avoids
+        # polluting the parent directory (which could be /tmp or /) and ensures
+        # each data_dir is fully self-contained.  When data_dir is the default
+        # (~/.nexus/data), the parent (~/.nexus) is still used as nexus_root
+        # for backward compatibility.
+        nexus_root = data_dir if cfg.data_dir is not None else str(Path(data_dir).parent)
         backend = LocalBackend(root_path=Path(data_dir).resolve())
 
     # Resolve paths — new fields take precedence, db_path is legacy fallback
@@ -352,14 +353,19 @@ def connect(
     enable_tiger_cache_env = os.getenv("NEXUS_ENABLE_TIGER_CACHE", "true").lower()
     enable_tiger_cache = enable_tiger_cache_env in ("true", "1", "yes")
 
-    # RecordStore (Four Pillars) — optional; only created when record_store_path
-    # is set.  Passing None gives a bare kernel (storage-only) where all
-    # service-layer features (audit log, versioning, ReBAC, etc.) are skipped.
-    # The factory handles record_store=None gracefully.
+    # RecordStore (Four Pillars) — created from NEXUS_RECORD_STORE_PATH or
+    # NEXUS_DATABASE_URL.  Passing None gives a bare kernel (storage-only)
+    # where all service-layer features (audit log, versioning, ReBAC, Memory
+    # API, etc.) are skipped.  The factory handles record_store=None gracefully.
+    _database_url = os.environ.get("NEXUS_DATABASE_URL")
     if record_store_path:
         from nexus.storage.record_store import SQLAlchemyRecordStore
 
         record_store = SQLAlchemyRecordStore(db_path=record_store_path)
+    elif _database_url:
+        from nexus.storage.record_store import SQLAlchemyRecordStore
+
+        record_store = SQLAlchemyRecordStore(db_url=_database_url)
     else:
         record_store = None
 
@@ -400,7 +406,7 @@ def connect(
     from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_bricks
 
     if cfg.profile == "auto":
-        from nexus.lib.device_capabilities import detect_capabilities, suggest_profile
+        from nexus.core.device_capabilities import detect_capabilities, suggest_profile
 
         caps = detect_capabilities()
         resolved_profile = suggest_profile(caps)
@@ -414,7 +420,7 @@ def connect(
     else:
         resolved_profile = DeploymentProfile(cfg.profile)
         # Warn if explicit profile may exceed device capabilities
-        from nexus.lib.device_capabilities import (
+        from nexus.core.device_capabilities import (
             detect_capabilities,
             warn_if_profile_exceeds_device,
         )
@@ -463,7 +469,7 @@ def connect(
     return nx_fs
 
 
-def _restore_mounts(nx_fs: NexusFS) -> None:
+def _restore_mounts(nx_fs: "NexusFS") -> None:
     """Restore saved mounts from database at application startup.
 
     This is application-layer I/O that runs after NexusFS construction.

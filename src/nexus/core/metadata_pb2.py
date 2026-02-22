@@ -24,7 +24,7 @@ DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
-_builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, "nexus.core.metadata_pb2", _globals)
+_builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, "nexus.contracts.metadata_pb2", _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
     DESCRIPTOR._loaded_options = None
     _globals["_DIRENTRYTYPE"]._serialized_start = 370

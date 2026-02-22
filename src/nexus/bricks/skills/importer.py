@@ -1,7 +1,5 @@
 """Skill importer for ZIP/archive packages."""
 
-from __future__ import annotations
-
 import io
 import logging
 import re
@@ -17,7 +15,7 @@ from nexus.bricks.skills.exceptions import (
 from nexus.bricks.skills.parser import SkillParseError, SkillParser
 from nexus.bricks.skills.protocols import NexusFilesystem
 from nexus.bricks.skills.registry import SkillRegistry
-from nexus.constants import ROOT_ZONE_ID
+from nexus.lib.zone import normalize_zone_id
 
 if TYPE_CHECKING:
     from nexus.bricks.skills.types import SkillOperationContext as OperationContext
@@ -37,7 +35,8 @@ class SkillImporter:
 
     Example:
         >>> from nexus import connect
-        >>> from nexus.skills import SkillRegistry, SkillImporter
+        >>> from nexus.bricks.skills.registry import SkillRegistry
+        >>> from nexus.bricks.skills.importer import SkillImporter
         >>>
         >>> nx = connect()
         >>> registry = SkillRegistry(nx)
@@ -76,7 +75,7 @@ class SkillImporter:
         zip_data: bytes,
         tier: str = "user",
         allow_overwrite: bool = False,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Import skill from ZIP package.
 
@@ -331,7 +330,7 @@ class SkillImporter:
         self,
         skill_name: str,
         tier: str,
-        context: OperationContext | None,
+        context: "OperationContext | None",
     ) -> bool:
         """Check if skill name already exists in target tier.
 
@@ -356,7 +355,7 @@ class SkillImporter:
         self,
         skill_name: str,
         tier: str,
-        context: OperationContext | None,
+        context: "OperationContext | None",
     ) -> str:
         """Get target path for skill based on tier and context.
 
@@ -377,7 +376,7 @@ class SkillImporter:
         if not context:
             raise ValueError("Context required for personal/zone tier skills")
 
-        zone_id = context.zone_id or ROOT_ZONE_ID
+        zone_id = normalize_zone_id(context.zone_id)
 
         if tier == "personal":
             # Personal: /zone/{tid}/user/{uid}/skill/{skill_name}/
@@ -418,7 +417,7 @@ class SkillImporter:
         return None
 
     async def _copy_skill_directory(
-        self, source_dir: Path, target_path: str, context: OperationContext | None = None
+        self, source_dir: Path, target_path: str, context: "OperationContext | None" = None
     ) -> None:
         """Copy skill directory to target path in filesystem.
 

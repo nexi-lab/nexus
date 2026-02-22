@@ -4,8 +4,6 @@ Tests for the shared _init_oauth() method that extracts duplicated
 TokenManager initialization boilerplate from connector backends.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, patch
 
 from nexus.backends.oauth_mixin import OAuthConnectorMixin
@@ -21,7 +19,7 @@ class TestInitOAuth:
     """Tests for OAuthConnectorMixin._init_oauth()."""
 
     @patch("nexus.backends.connector_utils.resolve_database_url", return_value="/tmp/tokens.db")
-    @patch("nexus.auth.oauth.token_manager.TokenManager")
+    @patch("nexus.bricks.auth.oauth.token_manager.TokenManager")
     def test_init_oauth_sets_attributes(
         self, _mock_tm_cls: MagicMock, _mock_resolve: MagicMock
     ) -> None:
@@ -34,7 +32,7 @@ class TestInitOAuth:
         assert obj.provider == "gmail"
 
     @patch("nexus.backends.connector_utils.resolve_database_url", return_value="/data/tokens.db")
-    @patch("nexus.auth.oauth.token_manager.TokenManager")
+    @patch("nexus.bricks.auth.oauth.token_manager.TokenManager")
     def test_init_oauth_db_url_path(self, mock_tm_cls: MagicMock, _mock_resolve: MagicMock) -> None:
         """Plain path (no scheme) creates TokenManager with db_path."""
         obj = _TestOAuthBackend()
@@ -47,7 +45,7 @@ class TestInitOAuth:
         "nexus.backends.connector_utils.resolve_database_url",
         return_value="postgresql://host/db",
     )
-    @patch("nexus.auth.oauth.token_manager.TokenManager")
+    @patch("nexus.bricks.auth.oauth.token_manager.TokenManager")
     def test_init_oauth_db_url_postgresql(
         self, mock_tm_cls: MagicMock, _mock_resolve: MagicMock
     ) -> None:
@@ -61,7 +59,7 @@ class TestInitOAuth:
         "nexus.backends.connector_utils.resolve_database_url",
         return_value="sqlite:///local.db",
     )
-    @patch("nexus.auth.oauth.token_manager.TokenManager")
+    @patch("nexus.bricks.auth.oauth.token_manager.TokenManager")
     def test_init_oauth_db_url_sqlite(
         self, mock_tm_cls: MagicMock, _mock_resolve: MagicMock
     ) -> None:
@@ -72,7 +70,7 @@ class TestInitOAuth:
         mock_tm_cls.assert_called_once_with(db_url="sqlite:///local.db")
 
     @patch("nexus.backends.connector_utils.resolve_database_url", return_value="/tmp/t.db")
-    @patch("nexus.auth.oauth.token_manager.TokenManager")
+    @patch("nexus.bricks.auth.oauth.token_manager.TokenManager")
     def test_init_oauth_default_provider(
         self, _mock_tm_cls: MagicMock, _mock_resolve: MagicMock
     ) -> None:
@@ -83,7 +81,7 @@ class TestInitOAuth:
         assert obj.provider == "oauth"
 
     @patch("nexus.backends.connector_utils.resolve_database_url", return_value="/tmp/t.db")
-    @patch("nexus.auth.oauth.token_manager.TokenManager")
+    @patch("nexus.bricks.auth.oauth.token_manager.TokenManager")
     def test_init_oauth_with_user_email(
         self, _mock_tm_cls: MagicMock, _mock_resolve: MagicMock
     ) -> None:

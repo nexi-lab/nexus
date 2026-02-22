@@ -3,19 +3,18 @@
 Includes brick auto-discovery via ``brick_factory.py`` convention.
 """
 
-from __future__ import annotations
-
 import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 from typing import Any
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.factory._boot_context import _BootContext
 from nexus.factory._helpers import _make_gate, _resolve_tasks_db_path, _safe_create
 
 logger = logging.getLogger(__name__)
-
 
 # ---------------------------------------------------------------------------
 # Brick auto-discovery (Issue #2180)
@@ -29,6 +28,7 @@ class BrickFactoryDescriptor:
     name: str | None  # Profile gate name (None = always enabled)
     result_key: str
     create_fn: Callable[..., Any]
+    manifest: Any | None = None  # Optional BrickManifest instance
 
 
 def _discover_brick_factories(tier: str = "independent") -> list[BrickFactoryDescriptor]:
@@ -38,6 +38,7 @@ def _discover_brick_factories(tier: str = "independent") -> list[BrickFactoryDes
     - ``BRICK_NAME``: Maps to deployment profile gate name (None = always on)
     - ``TIER``: ``"independent"`` or ``"dependent"``
     - ``RESULT_KEY``: Key in the result dict
+    - ``MANIFEST``: Optional ``BrickManifest`` instance for import verification
     - ``create(ctx, system) -> Any``: Factory function
     """
     import importlib
@@ -66,6 +67,7 @@ def _discover_brick_factories(tier: str = "independent") -> list[BrickFactoryDes
                 name=getattr(mod, "BRICK_NAME", name),
                 result_key=mod.RESULT_KEY,
                 create_fn=mod.create,
+                manifest=getattr(mod, "MANIFEST", None),
             )
         )
 
@@ -104,6 +106,20 @@ def _boot_independent_bricks(
     # === Auto-discovered bricks ===
     auto_results: dict[str, Any] = {}
     for desc in _discover_brick_factories("independent"):
+        # Manifest pre-check: verify imports once, skip if required modules missing
+        _manifest_status: dict[str, bool] | None = None
+        if desc.manifest is not None:
+            _manifest_status = desc.manifest.verify_imports()
+            _required_ok = all(
+                _manifest_status.get(mod, False) for mod in desc.manifest.required_modules
+            )
+            if not _required_ok:
+                logger.debug(
+                    "[BOOT:BRICK] Skipping %s — required modules missing",
+                    desc.result_key,
+                )
+                continue
+
         if desc.name is None:
             # No profile gate — always create
             auto_results[desc.result_key] = _safe_create(
@@ -119,6 +135,18 @@ def _boot_independent_bricks(
                 _on,
             )
 
+        # Log cached manifest status for successfully created bricks
+        if (
+            _manifest_status is not None
+            and auto_results.get(desc.result_key) is not None
+            and logger.isEnabledFor(logging.DEBUG)
+        ):
+            logger.debug(
+                "[BOOT:BRICK] %s manifest: %s",
+                desc.result_key,
+                _manifest_status,
+            )
+
     # === Manually-wired bricks (complex conditional logic) ===
 
     # --- Search Brick Import Validation (Issue #1520) ---
@@ -131,17 +159,30 @@ def _boot_independent_bricks(
         except ImportError:
             logger.debug("[BOOT:BRICK] Search brick manifest not available")
 
-        # Wire zoekt callbacks into backends (Issue #1520)
+        # Wire zoekt callbacks into backends (Issue #1520, #2188: DI via factory)
         try:
-            from nexus.bricks.search.zoekt_client import (
-                notify_zoekt_sync_complete,
-                notify_zoekt_write,
-            )
+            from nexus.bricks.search.config import search_config_from_env
+            from nexus.bricks.search.zoekt_client import ZoektIndexManager
 
-            if hasattr(ctx.backend, "on_write_callback") and ctx.backend.on_write_callback is None:
-                ctx.backend.on_write_callback = notify_zoekt_write
-            if hasattr(ctx.backend, "on_sync_callback") and ctx.backend.on_sync_callback is None:
-                ctx.backend.on_sync_callback = notify_zoekt_sync_complete
+            _search_cfg = search_config_from_env()
+            if _search_cfg.zoekt_enabled:
+                _zoekt_index_mgr = ZoektIndexManager(
+                    index_dir=_search_cfg.zoekt_index_dir,
+                    data_dir=_search_cfg.zoekt_data_dir,
+                    debounce_seconds=_search_cfg.zoekt_debounce_seconds,
+                    enabled=True,
+                    index_binary=_search_cfg.zoekt_index_binary,
+                )
+                if (
+                    hasattr(ctx.backend, "on_write_callback")
+                    and ctx.backend.on_write_callback is None
+                ):
+                    ctx.backend.on_write_callback = _zoekt_index_mgr.notify_write
+                if (
+                    hasattr(ctx.backend, "on_sync_callback")
+                    and ctx.backend.on_sync_callback is None
+                ):
+                    ctx.backend.on_sync_callback = _zoekt_index_mgr.notify_sync_complete
         except ImportError:
             logger.debug("[BOOT:BRICK] Zoekt not available, skipping callback wiring")
     else:
@@ -221,7 +262,7 @@ def _boot_independent_bricks(
     tool_namespace_middleware = None
     if _on("mcp"):
         try:
-            from nexus.mcp.middleware import ToolNamespaceMiddleware
+            from nexus.bricks.mcp.middleware import ToolNamespaceMiddleware
 
             tool_namespace_middleware = ToolNamespaceMiddleware(
                 rebac_manager=system["rebac_manager"],
@@ -302,21 +343,15 @@ def _boot_independent_bricks(
     elif not _on("workflows"):
         logger.debug("[BOOT:BRICK] Workflows brick disabled by profile")
 
-    # --- API key creator (Issue #1519, 3A: inject server auth into kernel) ---
-    api_key_creator: Any = None
-    try:
-        from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
-
-        api_key_creator = DatabaseAPIKeyAuth
-    except ImportError:
-        pass  # Server auth not available (e.g. embedded mode)
+    # --- API key creator is now auto-discovered via bricks/auth/brick_factory.py ---
+    api_key_creator: Any = auto_results.pop("api_key_creator", None)
 
     # --- TransactionalSnapshotService (Issue #1752) ---
     snapshot_service: Any = auto_results.pop("snapshot_service", None)
     if snapshot_service is None:
         try:
             from nexus.bricks.snapshot.service import TransactionalSnapshotService
-            from nexus.core.metadata import FileMetadata
+            from nexus.contracts.metadata import FileMetadata
 
             snapshot_service = TransactionalSnapshotService(
                 record_store=ctx.record_store,
@@ -341,8 +376,10 @@ def _boot_independent_bricks(
             logger.debug("[BOOT:BRICK] ReputationService unavailable: %s", _rep_exc)
 
     # --- DelegationService (Issue #2131: extracted to bricks) ---
-    delegation_service: Any = auto_results.pop("delegation_service", None)
-    if delegation_service is None and ctx.record_store is not None:
+    # Always recreate with reputation_service (cross-brick dep wired by kernel)
+    auto_results.pop("delegation_service", None)
+    delegation_service: Any = None
+    if ctx.record_store is not None:
         try:
             from nexus.bricks.delegation.service import DelegationService
 
@@ -378,15 +415,15 @@ def _boot_independent_bricks(
         logger.debug("[BOOT:BRICK] IPC brick disabled by profile")
     elif ctx.record_store is not None:
         try:
-            from nexus.ipc.driver import IPCVFSDriver
-            from nexus.ipc.provisioning import AgentProvisioner
-            from nexus.ipc.storage.recordstore_driver import RecordStoreStorageDriver
+            from nexus.bricks.ipc.driver import IPCVFSDriver
+            from nexus.bricks.ipc.provisioning import AgentProvisioner
+            from nexus.bricks.ipc.storage.recordstore_driver import RecordStoreStorageDriver
 
             ipc_storage_driver = RecordStoreStorageDriver(
                 record_store=ctx.record_store,
             )
 
-            _ipc_zone = ctx.zone_id or "root"
+            _ipc_zone = ctx.zone_id or ROOT_ZONE_ID
             ipc_vfs_driver = IPCVFSDriver(
                 storage=ipc_storage_driver,
                 zone_id=_ipc_zone,
@@ -448,7 +485,7 @@ def _boot_independent_bricks(
             entity_registry=system["entity_registry"],
         )
 
-        from nexus.rebac.memory_permission_enforcer import MemoryPermissionEnforcer
+        from nexus.bricks.rebac.memory_permission_enforcer import MemoryPermissionEnforcer
 
         memory_permission = MemoryPermissionEnforcer(
             metadata_store=ctx.metadata_store,
@@ -490,7 +527,7 @@ def _boot_independent_bricks(
     # --- ReBAC Circuit Breaker (Issue #2034: moved from kernel to brick tier) ---
     rebac_circuit_breaker: Any = None
     try:
-        from nexus.rebac.circuit_breaker import AsyncCircuitBreaker, CircuitBreakerConfig
+        from nexus.bricks.rebac.circuit_breaker import AsyncCircuitBreaker, CircuitBreakerConfig
 
         _res = ctx.profile_tuning.resiliency
         rebac_circuit_breaker = AsyncCircuitBreaker(
@@ -545,3 +582,121 @@ def _boot_independent_bricks(
     active = sum(1 for v in result.values() if v is not None)
     logger.info("[BOOT:BRICK] %d/%d services ready (%.3fs)", active, len(result), elapsed)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Dependent bricks (Issue #1861) — run after independent bricks
+# ---------------------------------------------------------------------------
+
+
+def _boot_dependent_bricks(
+    ctx: _BootContext,
+    system: dict[str, Any],
+    bricks: dict[str, Any],
+) -> None:
+    """Boot Tier 2b (DEPENDENT BRICK) — requires services from independent bricks.
+
+    Discovers ``brick_factory.py`` modules with ``TIER="dependent"`` and
+    wires their hook handlers into the hook engine.
+
+    Cross-brick factories (ToolInfo, GraphStore) are constructed here in the
+    factory layer and injected into brick factories to respect LEGO Principle 3.
+
+    Currently handles:
+    - Artifact auto-indexing (Issue #1861): registers hook handlers for
+      ``post_artifact_create`` and ``post_artifact_update`` phases.
+    """
+    hook_engine = system.get("scoped_hook_engine")
+    if hook_engine is None:
+        logger.debug("[BOOT:BRICK:DEP] No hook engine available, skipping dependent bricks")
+        return
+
+    # Build cross-brick factories in the factory layer (not inside bricks)
+    tool_info_factory: Callable[..., Any] | None = None
+    graph_store_factory: Callable[..., Any] | None = None
+
+    try:
+        from nexus.bricks.discovery.tool_index import ToolInfo
+
+        tool_info_factory = ToolInfo
+    except ImportError:
+        logger.debug("[BOOT:BRICK:DEP] ToolInfo not available")
+
+    if ctx.record_store is not None:
+        try:
+            from nexus.bricks.search.graph_store import GraphStore
+
+            _record_store = ctx.record_store
+            _zone_id = ctx.zone_id or ROOT_ZONE_ID
+
+            def _make_graph_store(session: Any) -> Any:
+                return GraphStore(
+                    record_store=_record_store,
+                    session=session,
+                    zone_id=_zone_id,
+                )
+
+            graph_store_factory = _make_graph_store
+        except ImportError:
+            logger.debug("[BOOT:BRICK:DEP] GraphStore not available")
+
+    def _create_dependent(descriptor: BrickFactoryDescriptor) -> Any:
+        return descriptor.create_fn(
+            ctx,
+            system,
+            bricks,
+            tool_info_factory=tool_info_factory,
+            graph_store_factory=graph_store_factory,
+        )
+
+    for desc in _discover_brick_factories("dependent"):
+        result = _safe_create(
+            desc.result_key,
+            partial(_create_dependent, desc),
+            lambda _n: True,  # always enabled (no profile gate)
+        )
+        if result is None:
+            continue
+
+        handlers = result.get("handlers", [])
+        if not handlers:
+            continue
+
+        # Register each handler for both artifact phases
+        try:
+            import asyncio
+
+            from nexus.services.protocols.hook_engine import (
+                POST_ARTIFACT_CREATE,
+                POST_ARTIFACT_UPDATE,
+                HookCapabilities,
+                HookSpec,
+            )
+
+            _no_veto_caps = HookCapabilities(
+                can_veto=False,
+                can_modify_context=False,
+                max_timeout_ms=10000,
+            )
+
+            for h in handlers:
+                handler_fn = h["handler"]
+                handler_name = h["handler_name"]
+
+                for phase in (POST_ARTIFACT_CREATE, POST_ARTIFACT_UPDATE):
+                    spec = HookSpec(
+                        phase=phase,
+                        handler_name=handler_name,
+                        capabilities=_no_veto_caps,
+                    )
+
+                    # Boot runs in sync context (no event loop), so asyncio.run()
+                    # is safe for the async register_hook call.
+                    asyncio.run(hook_engine.register_hook(spec, handler_fn))
+
+            logger.debug(
+                "[BOOT:BRICK:DEP] Registered %d artifact indexing handlers",
+                len(handlers),
+            )
+        except Exception as exc:
+            logger.debug("[BOOT:BRICK:DEP] Failed to register artifact handlers: %s", exc)

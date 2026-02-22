@@ -13,8 +13,6 @@ Cache key layout::
     a2a:task:{zone_id}:{task_id}  →  JSON { task, agent_id, created_at }
 """
 
-from __future__ import annotations
-
 import json
 from datetime import UTC, datetime
 from typing import Any, Protocol, runtime_checkable
@@ -28,7 +26,7 @@ _KEY_PREFIX = "a2a:task"
 class _CacheKV(Protocol):
     """Subset of CacheStoreABC used by CacheBackedTaskStore.
 
-    Bricks cannot import nexus.core.cache_store directly (LEGO §1.2).
+    Canonical CacheStoreABC now lives in nexus.contracts.cache_store.
     This protocol captures the exact contract we rely on, satisfied by
     InMemoryCacheStore, DragonflyCacheStore, and NullCacheStore.
     """

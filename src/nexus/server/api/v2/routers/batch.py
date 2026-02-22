@@ -14,37 +14,32 @@ References:
     - Issue #1242: General /batch HTTP endpoint for io_uring-style submission
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from nexus.contracts.types import OperationContext
 from nexus.server.batch_executor import BatchExecutor, BatchRequest, BatchResponse
 
-if TYPE_CHECKING:
-    from nexus.core.async_nexus_fs import AsyncNexusFS
-
 logger = logging.getLogger(__name__)
 
 
 def create_batch_router(
-    async_fs: AsyncNexusFS | None = None,
+    nexus_fs: Any | None = None,
     get_fs: Any | None = None,
     get_context_override: Callable[..., Any] | None = None,
 ) -> APIRouter:
     """Create a batch operations router.
 
     Supports two modes (same pattern as async_files.py):
-    1. Direct: Pass async_fs instance (for testing)
+    1. Direct: Pass nexus_fs instance (for testing)
     2. Lazy: Pass get_fs callable that returns the instance at request time
 
     Args:
-        async_fs: Initialized AsyncNexusFS instance (direct mode).
-        get_fs: Callable returning AsyncNexusFS (lazy mode).
+        nexus_fs: Initialized NexusFS instance (direct mode).
+        get_fs: Callable returning NexusFS (lazy mode).
         get_context_override: Optional context provider for testing.
             When None, imports auth from fastapi_server.
 
@@ -53,17 +48,17 @@ def create_batch_router(
     """
     router = APIRouter(tags=["batch"])
 
-    async def _get_fs() -> AsyncNexusFS:
-        """Get AsyncNexusFS, supporting both direct and lazy modes."""
-        if async_fs is not None:
-            return async_fs
+    async def _get_fs() -> Any:
+        """Get NexusFS, supporting both direct and lazy modes."""
+        if nexus_fs is not None:
+            return nexus_fs
         if get_fs is not None:
             fs = get_fs()
             if fs is not None:
-                return cast("AsyncNexusFS", fs)
+                return cast(Any, fs)
         raise HTTPException(
             status_code=503,
-            detail="AsyncNexusFS not initialized. Server may still be starting up.",
+            detail="NexusFS not initialized. Server may still be starting up.",
         )
 
     # Build context dependency: use override if provided, else import from server.

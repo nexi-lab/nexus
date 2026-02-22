@@ -13,8 +13,6 @@ Architecture:
 Follows VersionService pattern (DI constructor, asyncio.to_thread for DB ops).
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import uuid
@@ -89,7 +87,7 @@ class TransactionalSnapshotService:
 
     def __init__(
         self,
-        record_store: RecordStoreABC,
+        record_store: "RecordStoreABC",
         cas_store: Any,
         metadata_store: Any,
         metadata_factory: Callable[..., Any] | None = None,
@@ -101,7 +99,7 @@ class TransactionalSnapshotService:
             cas_store: CASBlobStore for hold_reference/release.
             metadata_store: MetastoreABC for reading current file state.
             metadata_factory: Callable to construct FileMetadata-like objects
-                (injected by factory.py to avoid importing nexus.core.metadata).
+                (injected by factory.py to avoid importing nexus.contracts.metadata).
         """
         self._session_factory = record_store.session_factory
         self._cas_store = cas_store
@@ -394,7 +392,7 @@ class TransactionalSnapshotService:
     ) -> Any:
         """Build a FileMetadata from a JSON snapshot (used during rollback).
 
-        Uses the injected ``metadata_factory`` to avoid importing ``nexus.core.metadata``
+        Uses the injected ``metadata_factory`` to avoid importing ``nexus.contracts.metadata``
         directly (LEGO Architecture Principle 3: bricks don't import from kernel).
         """
         if self._metadata_factory is None:

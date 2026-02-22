@@ -9,8 +9,6 @@ Hybrid Python/Rust mode (--use-rust):
     resolution, and virtual views.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from contextlib import suppress
@@ -61,7 +59,7 @@ except ImportError:
 
 # Import event system (Issue #1115)
 try:
-    from nexus.core.event_bus import FileEvent, FileEventType
+    from nexus.core.file_events import FileEvent, FileEventType
 
     HAS_EVENT_BUS = True
 except ImportError:
@@ -70,10 +68,10 @@ except ImportError:
     FileEventType = None  # type: ignore[misc,assignment]
 
 if TYPE_CHECKING:
+    from nexus.bricks.rebac.namespace_manager import NamespaceManager
+    from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
     from nexus.contracts.types import OperationContext
-    from nexus.core.filesystem import NexusFilesystem
     from nexus.fuse.mount import MountMode
-    from nexus.rebac.namespace_manager import NamespaceManager
 
 logger = logging.getLogger(__name__)
 
@@ -87,11 +85,11 @@ class NexusFUSEOperations(Operations):
 
     def __init__(
         self,
-        nexus_fs: NexusFilesystem,
-        mode: MountMode,
+        nexus_fs: "NexusFilesystemABC",
+        mode: "MountMode",
         cache_config: dict[str, Any] | None = None,
-        context: OperationContext | None = None,
-        namespace_manager: NamespaceManager | None = None,
+        context: "OperationContext | None" = None,
+        namespace_manager: "NamespaceManager | None" = None,
         use_rust: bool = False,
         event_bus: Any | None = None,
         subscription_manager: Any | None = None,

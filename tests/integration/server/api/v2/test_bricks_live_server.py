@@ -13,8 +13,6 @@ This validates:
 - Drift detection and reset through live stack (Issue #2060)
 """
 
-from __future__ import annotations
-
 import logging
 import time
 from unittest.mock import AsyncMock, MagicMock
@@ -29,8 +27,8 @@ from nexus.server.api.v2.versioning import (
     register_v2_routers,
 )
 from nexus.server.dependencies import require_admin
-from nexus.services.brick_lifecycle import BrickLifecycleManager
-from nexus.services.brick_reconciler import BrickReconciler
+from nexus.system_services.lifecycle.brick_lifecycle import BrickLifecycleManager
+from nexus.system_services.lifecycle.brick_reconciler import BrickReconciler
 
 # ---------------------------------------------------------------------------
 # Helpers

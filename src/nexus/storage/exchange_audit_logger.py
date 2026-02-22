@@ -12,8 +12,6 @@ Write performance: callers should use ``asyncio.create_task()`` to
 fire-and-forget audit writes so they never block the hot path.
 """
 
-from __future__ import annotations
-
 import hashlib
 import json
 import logging
@@ -24,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import desc, event, func, select
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.storage.models.exchange_audit_log import ExchangeAuditLogModel
 
 if TYPE_CHECKING:
@@ -31,7 +30,6 @@ if TYPE_CHECKING:
 from nexus.storage.query_mixin import AppendOnlyQueryMixin
 
 logger = logging.getLogger(__name__)
-
 
 # ---------------------------------------------------------------------------
 # Immutability guards (Decision #3)
@@ -145,7 +143,7 @@ class ExchangeAuditLogger:
         record_store: RecordStoreABC instance providing session factory.
     """
 
-    def __init__(self, record_store: RecordStoreABC) -> None:
+    def __init__(self, record_store: "RecordStoreABC") -> None:
         self._session_factory = record_store.session_factory
         self._query = AppendOnlyQueryMixin(
             model_class=ExchangeAuditLogModel,
@@ -167,7 +165,7 @@ class ExchangeAuditLogger:
         currency: str = "credits",
         status: str,
         application: str,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         trace_id: str | None = None,
         metadata: dict[str, Any] | None = None,
         transfer_id: str | None = None,

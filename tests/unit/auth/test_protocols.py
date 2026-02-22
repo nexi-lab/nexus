@@ -7,17 +7,15 @@ Covers:
 - In-memory fakes for testing downstream consumers
 """
 
-from __future__ import annotations
-
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.auth.protocols.user_lookup import UserLookupProtocol
-from nexus.auth.protocols.user_provisioner import UserProvisionerProtocol
-from nexus.auth.stores.nexusfs_provisioner import NexusFSUserProvisioner
-from nexus.auth.types import UserInfo
+from nexus.bricks.auth.protocols.user_lookup import UserLookupProtocol
+from nexus.bricks.auth.protocols.user_provisioner import UserProvisionerProtocol
+from nexus.bricks.auth.stores.nexusfs_provisioner import NexusFSUserProvisioner
+from nexus.bricks.auth.types import UserInfo
 
 # ---------------------------------------------------------------------------
 # In-memory fakes (used by downstream auth code for testing)

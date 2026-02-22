@@ -19,8 +19,6 @@ Run with:
     pytest tests/e2e/test_email_verification_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import uuid
@@ -31,10 +29,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from starlette.testclient import TestClient
 
-from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
-from nexus.auth.providers.database_local import DatabaseLocalAuth
-from nexus.auth.providers.discriminator import DiscriminatingAuthProvider
 from nexus.backends.local import LocalBackend
+from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
+from nexus.bricks.auth.providers.database_local import DatabaseLocalAuth
+from nexus.bricks.auth.providers.discriminator import DiscriminatingAuthProvider
 from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
 from nexus.factory import create_nexus_fs
@@ -50,7 +48,6 @@ pytestmark = [
         reason="Requires native _nexus_raft module (maturin develop)",
     ),
 ]
-
 
 # ---------------------------------------------------------------------------
 # Helpers

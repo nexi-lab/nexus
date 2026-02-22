@@ -30,8 +30,6 @@ Performance targets:
 Issue: #951
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import logging
@@ -134,6 +132,7 @@ class SearchDaemon:
         config: DaemonConfig | None = None,
         *,
         async_session_factory: Any | None = None,
+        zoekt_client: Any | None = None,
     ):
         """Initialize the search daemon.
 
@@ -141,9 +140,11 @@ class SearchDaemon:
             config: Daemon configuration (uses defaults if not provided)
             async_session_factory: Injected async_sessionmaker from RecordStoreABC.
                 When provided, skips creating a private engine (Issue #1597).
+            zoekt_client: Injected ZoektClient instance (Issue #2188).
         """
         self.config = config or DaemonConfig()
         self.stats = DaemonStats()
+        self._zoekt_client = zoekt_client
 
         # Search components (initialized on startup)
         self._bm25s_index: BM25SIndex | None = None
@@ -412,11 +413,12 @@ class SearchDaemon:
 
     async def _check_zoekt(self) -> None:
         """Check if Zoekt trigram search is available."""
-        try:
-            from nexus.bricks.search.zoekt_client import get_zoekt_client
+        if self._zoekt_client is None:
+            self.stats.zoekt_available = False
+            return
 
-            client = get_zoekt_client()
-            self.stats.zoekt_available = await client.is_available()
+        try:
+            self.stats.zoekt_available = await self._zoekt_client.is_available()
 
             if self.stats.zoekt_available:
                 logger.info("Zoekt trigram search available")
@@ -688,10 +690,7 @@ class SearchDaemon:
     ) -> list[SearchResult]:
         """Search using Zoekt trigram index."""
         try:
-            from nexus.bricks.search.zoekt_client import get_zoekt_client
-
-            client = get_zoekt_client()
-            if not await client.is_available():
+            if self._zoekt_client is None or not await self._zoekt_client.is_available():
                 return []
 
             # Build Zoekt query
@@ -699,7 +698,7 @@ class SearchDaemon:
             if path_filter:
                 zoekt_query = f"file:{path_filter.lstrip('/')} {zoekt_query}"
 
-            matches = await client.search(zoekt_query, num=limit)
+            matches = await self._zoekt_client.search(zoekt_query, num=limit)
 
             return [
                 SearchResult(
@@ -1017,29 +1016,6 @@ class SearchDaemon:
         }
 
 
-# Global singleton for easy access
-_daemon_instance: SearchDaemon | None = None
-
-
-def get_search_daemon() -> SearchDaemon | None:
-    """Get the global search daemon instance.
-
-    Returns:
-        SearchDaemon instance or None if not initialized
-    """
-    return _daemon_instance
-
-
-def set_search_daemon(daemon: SearchDaemon) -> None:
-    """Set the global search daemon instance.
-
-    Args:
-        daemon: SearchDaemon instance to set as global
-    """
-    global _daemon_instance
-    _daemon_instance = daemon
-
-
 async def create_and_start_daemon(
     database_url: str | None = None,
     bm25s_index_dir: str | None = None,
@@ -1065,6 +1041,4 @@ async def create_and_start_daemon(
 
     daemon = SearchDaemon(config, async_session_factory=async_session_factory)
     await daemon.startup()
-
-    set_search_daemon(daemon)
     return daemon

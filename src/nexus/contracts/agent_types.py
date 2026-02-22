@@ -10,8 +10,6 @@ Issue #2169: Added AgentSpec/AgentStatus for declarative agent management
 with drift detection (Kubernetes-inspired spec/status separation).
 """
 
-from __future__ import annotations
-
 import types
 from dataclasses import dataclass, field
 from datetime import datetime

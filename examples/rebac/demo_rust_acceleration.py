@@ -8,8 +8,8 @@ Rust acceleration for significant performance improvements.
 
 import time
 
-from nexus.rebac.manager import ReBACManager
-from nexus.rebac.utils.fast import get_performance_stats, is_rust_available
+from nexus.bricks.rebac.manager import ReBACManager
+from nexus.bricks.rebac.utils.fast import get_performance_stats, is_rust_available
 
 
 def setup_demo_data(manager: ReBACManager) -> None:

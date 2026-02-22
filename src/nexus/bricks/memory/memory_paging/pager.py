@@ -6,8 +6,6 @@ Automatically pages memories based on capacity and age.
 Thread-safe: ContextManager uses locks, stores use per-operation sessions.
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 import time
@@ -19,6 +17,7 @@ from nexus.bricks.memory.memory_paging.archival_store import ArchivalStore
 from nexus.bricks.memory.memory_paging.context_manager import ContextManager
 from nexus.bricks.memory.memory_paging.namespace_util import strip_tier_prefix
 from nexus.bricks.memory.memory_paging.recall_store import RecallStore
+from nexus.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -60,8 +59,8 @@ class MemoryPager:
 
     def __init__(
         self,
-        session_factory: Callable[[], Session],
-        zone_id: str = "root",
+        session_factory: "Callable[[], Session]",
+        zone_id: str = ROOT_ZONE_ID,
         main_capacity: int = 100,
         recall_max_age_hours: float = 24.0,
         warm_up: bool = True,
@@ -100,7 +99,7 @@ class MemoryPager:
             finally:
                 session.close()
 
-    def add_to_main(self, memory: MemoryModel) -> None:
+    def add_to_main(self, memory: "MemoryModel") -> None:
         """Add memory to main context, handling cascading evictions.
 
         Flow:
@@ -130,7 +129,7 @@ class MemoryPager:
         if should_archive:
             self._archive_old_recall()
 
-    def get_from_main(self, memory_id: str) -> MemoryModel | None:
+    def get_from_main(self, memory_id: str) -> "MemoryModel | None":
         """Get memory from main context (updates LRU).
 
         Args:
@@ -148,7 +147,7 @@ class MemoryPager:
         recall_count: int = 3,
         archival_count: int = 2,
         archival_threshold: float = 0.7,
-    ) -> dict[str, list[MemoryModel] | list[tuple[MemoryModel, float]]]:
+    ) -> "dict[str, list[MemoryModel] | list[tuple[MemoryModel, float]]]":
         """Search across all tiers for relevant memories.
 
         Args:
@@ -192,7 +191,7 @@ class MemoryPager:
 
         return results
 
-    def get_recent_context(self, limit: int = 50) -> list[MemoryModel]:
+    def get_recent_context(self, limit: int = 50) -> "list[MemoryModel]":
         """Get recent memories for LLM context.
 
         Combines main context + recent recall for conversational context.

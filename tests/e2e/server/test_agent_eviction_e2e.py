@@ -8,8 +8,6 @@ Tests the full eviction pipeline:
 5. Verify agents can reconnect and restore checkpoint
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, patch
 
 import pytest

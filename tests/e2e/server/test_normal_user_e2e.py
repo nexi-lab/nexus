@@ -19,8 +19,6 @@ This exercises the changes from the comprehensive review:
 Issue #1293: Comprehensive codebase review
 """
 
-from __future__ import annotations
-
 import os
 import signal
 import socket

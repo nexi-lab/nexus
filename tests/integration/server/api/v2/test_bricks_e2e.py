@@ -10,8 +10,6 @@ with mock brick instances. Validates:
 - Drift detection and brick reset (Issue #2060)
 """
 
-from __future__ import annotations
-
 import logging
 import time
 from unittest.mock import AsyncMock, MagicMock
@@ -27,9 +25,14 @@ from nexus.server.api.v2.routers.bricks import (
     router,
 )
 from nexus.server.dependencies import require_admin
-from nexus.services.brick_lifecycle import BrickLifecycleManager
-from nexus.services.brick_reconciler import BrickReconciler
-from nexus.services.protocols.brick_lifecycle import BrickLifecycleProtocol, DriftAction
+from nexus.services.protocols.brick_lifecycle import (
+    BrickLifecycleProtocol,
+    BrickReconcileOutcome,
+    DriftAction,
+    ReconcileContext,
+)
+from nexus.system_services.lifecycle.brick_lifecycle import BrickLifecycleManager
+from nexus.system_services.lifecycle.brick_reconciler import BrickReconciler
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -529,3 +532,111 @@ class TestBricksE2ESelfHealing:
         skip_drifts = [d for d in result.drifts if d.action is DriftAction.SKIP]
         assert len(skip_drifts) == 1
         assert "exceeded" in skip_drifts[0].detail.lower()
+
+
+# ---------------------------------------------------------------------------
+# E2E: Per-brick reconcile protocol (Issue #2059)
+# ---------------------------------------------------------------------------
+
+
+class TestBricksE2EPerBrickReconcile:
+    """Test per-brick reconcile via full stack (Issue #2059)."""
+
+    @pytest.mark.asyncio
+    async def test_brick_self_heals_on_second_pass(self) -> None:
+        """Brick with reconcile() self-heals on second reconcile pass."""
+        manager = BrickLifecycleManager()
+        call_count = 0
+
+        async def _reconcile(ctx: ReconcileContext) -> BrickReconcileOutcome:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return BrickReconcileOutcome(requeue=True)
+            return BrickReconcileOutcome()  # healthy
+
+        brick = AsyncMock()
+        brick.start = AsyncMock(return_value=None)
+        brick.stop = AsyncMock(return_value=None)
+        brick.health_check = AsyncMock(return_value=True)
+        brick.reconcile = AsyncMock(side_effect=_reconcile)
+        brick.__class__.__name__ = "SearchBrick"
+
+        manager.register("search", brick, protocol_name="SearchProtocol")
+        await manager.mount("search")
+
+        reconciler = BrickReconciler(lifecycle_manager=manager)
+
+        # First pass: requeue
+        await reconciler.reconcile()
+        outcomes = reconciler.last_reconcile_outcomes
+        assert len(outcomes) == 1
+        assert outcomes[0][1].requeue is True
+
+        # Clear backoff for second pass
+        reconciler._next_retry_after.clear()
+
+        # Second pass: healthy
+        await reconciler.reconcile()
+        outcomes = reconciler.last_reconcile_outcomes
+        assert len(outcomes) == 1
+        assert outcomes[0][1].requeue is False
+
+        # Brick should still be active
+        assert manager.get_status("search").state.value == "active"
+
+    @pytest.mark.asyncio
+    async def test_brick_reconcile_error_transitions_to_failed(self) -> None:
+        """Brick with reconcile() returning error → FAILED."""
+        manager = BrickLifecycleManager()
+
+        async def _reconcile(ctx: ReconcileContext) -> BrickReconcileOutcome:
+            return BrickReconcileOutcome(error="Index corrupted beyond repair")
+
+        brick = AsyncMock()
+        brick.start = AsyncMock(return_value=None)
+        brick.stop = AsyncMock(return_value=None)
+        brick.health_check = AsyncMock(return_value=True)
+        brick.reconcile = AsyncMock(side_effect=_reconcile)
+        brick.__class__.__name__ = "SearchBrick"
+
+        manager.register("search", brick, protocol_name="SearchProtocol")
+        await manager.mount("search")
+
+        reconciler = BrickReconciler(lifecycle_manager=manager)
+        await reconciler.reconcile()
+
+        status = manager.get_status("search")
+        assert status.state.value == "failed"
+        assert "corrupted" in status.error
+
+    @pytest.mark.asyncio
+    async def test_drift_endpoint_shows_reconcile_outcomes(self) -> None:
+        """GET /drift includes reconcile_outcomes in response."""
+        manager = BrickLifecycleManager()
+
+        async def _reconcile(ctx: ReconcileContext) -> BrickReconcileOutcome:
+            return BrickReconcileOutcome(requeue=True)
+
+        brick = AsyncMock()
+        brick.start = AsyncMock(return_value=None)
+        brick.stop = AsyncMock(return_value=None)
+        brick.health_check = AsyncMock(return_value=True)
+        brick.reconcile = AsyncMock(side_effect=_reconcile)
+        brick.__class__.__name__ = "SearchBrick"
+
+        manager.register("search", brick, protocol_name="SearchProtocol")
+        await manager.mount("search")
+
+        reconciler = BrickReconciler(lifecycle_manager=manager)
+        await reconciler.reconcile()  # Populate cache
+
+        _, client = _make_app_with_manager(manager, reconciler=reconciler)
+
+        resp = client.get("/api/v2/bricks/drift")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "reconcile_outcomes" in data
+        assert len(data["reconcile_outcomes"]) == 1
+        assert data["reconcile_outcomes"][0]["brick_name"] == "search"
+        assert data["reconcile_outcomes"][0]["requeue"] is True

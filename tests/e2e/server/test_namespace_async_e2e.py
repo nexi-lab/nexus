@@ -7,8 +7,6 @@ Tests namespace visibility with:
 - No admin bypass - pure user permission testing
 """
 
-from __future__ import annotations
-
 import os
 import shutil
 import signal

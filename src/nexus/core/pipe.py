@@ -7,10 +7,11 @@ Implements the Kernel messaging tier from KERNEL-ARCHITECTURE.md §6:
     | **Kernel** | kfifo ring buffer| Nexus Native Pipe (DT_PIPE)        | ~5μs    |
 
 This file contains the kernel-internal ring buffer (kfifo equivalent).
-For VFS-visible named pipes (mkfifo/fs/pipe.c equivalent), see pipe_manager.py.
+For VFS-visible named pipes (mkfifo/fs/pipe.c equivalent), see
+system_services/pipe_manager.py (moved from core/ per Issue #2366).
 
     pipe.py         = kfifo     (include/linux/kfifo.h + lib/kfifo.c)
-    pipe_manager.py = fs/pipe.c (VFS named pipe with per-pipe lock for MPMC)
+    system_services/pipe_manager.py = fs/pipe.c (VFS named pipe, system service tier)
 
 Storage model (KERNEL-ARCHITECTURE.md line 228):
     - Pipe **inode** (FileMetadata, entry_type=DT_PIPE) → MetastoreABC
@@ -24,8 +25,6 @@ Phase 1 = Python (this file). Phase 2 = Rust lock-free SPSC via nexus_fast (Task
 
 See: federation-memo.md §7j, ISSUE-A2A-PHASE2-VFS-IPC.md
 """
-
-from __future__ import annotations
 
 import asyncio
 import logging
@@ -71,7 +70,7 @@ class RingBuffer:
     directly for fast async signaling.
 
     For VFS-visible named pipes (mkfifo equivalent), use PipeManager
-    from pipe_manager.py.
+    from system_services/pipe_manager.py.
 
     Design choices:
       - Message-oriented (deque of discrete bytes), not byte-stream.

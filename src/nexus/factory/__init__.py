@@ -43,6 +43,7 @@ from nexus.factory._background import _start_background_services
 
 # Re-exports for backward compatibility (Issue #2180)
 from nexus.factory._boot_context import _BootContext
+from nexus.factory._bricks import _boot_dependent_bricks
 from nexus.factory._bricks import _boot_independent_bricks as _boot_brick_services
 from nexus.factory._helpers import (
     _FACTORY_BRICKS,
@@ -56,7 +57,6 @@ from nexus.factory._memory import create_memory_service
 from nexus.factory._metadata_export import create_metadata_export_service
 from nexus.factory._record_store import create_record_store
 from nexus.factory._system import _boot_system_services
-from nexus.factory._user_provisioning import create_user_provisioning_service
 from nexus.factory._wired import _boot_wired_services
 from nexus.factory.adapters import _NexusFSFileReader, _WorkflowLifecycleAdapter
 from nexus.factory.orchestrator import create_nexus_fs, create_nexus_services
@@ -68,5 +68,4 @@ __all__ = [
     "create_record_store",
     "create_memory_service",
     "create_metadata_export_service",
-    "create_user_provisioning_service",
 ]

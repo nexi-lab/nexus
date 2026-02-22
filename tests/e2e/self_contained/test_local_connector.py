@@ -12,8 +12,6 @@ Unlike unit tests which mock dependencies, these tests use real
 file operations and the actual NexusFS stack.
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 
 import pytest

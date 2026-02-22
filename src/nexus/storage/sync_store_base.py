@@ -7,8 +7,6 @@ Extracted from ChangeLogStore (Issue #1127) during Phase 0 refactoring
 for Issue #1129 (Bidirectional Sync).
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -31,7 +29,7 @@ class SyncStoreBase:
 
     def __init__(
         self,
-        record_store: RecordStoreABC | None,
+        record_store: "RecordStoreABC | None",
         *,
         is_postgresql: bool = False,
     ) -> None:

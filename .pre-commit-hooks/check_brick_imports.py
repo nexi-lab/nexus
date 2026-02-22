@@ -23,7 +23,7 @@ BRICKS_RELATIVE_PATH = Path("src") / "nexus" / "bricks"
 # Forbidden import patterns for files under bricks/
 # Bricks may only import from:
 #   - nexus.core.protocols.*    (kernel protocol interfaces)
-#   - nexus.core.cache_store    (CacheStoreABC — kernel storage pillar)
+#   - nexus.contracts.cache_store (CacheStoreABC — kernel storage pillar)
 #   - nexus.core.object_store   (ObjectStoreABC — kernel storage pillar)
 #   - nexus.services.protocols.*  (system service protocol interfaces)
 #   - nexus.storage.*           (storage pillar ABCs + RecordStoreABC)
@@ -56,12 +56,47 @@ CROSS_BRICK_IMPORT_RE = re.compile(r"^\s*(?:from|import)\s+nexus\.bricks\.(\w+)"
 # DI refactoring to fix properly. Each entry maps (source_brick, target_brick)
 # to a list of importing modules. Remove entries as fixes land.
 # TODO(#2286): Fix memory->search via DI refactoring.
+# TODO(#2364): Fix search->cache via DI refactoring for EmbeddingCache/Dragonfly.
 KNOWN_CROSS_BRICK_EXCEPTIONS: dict[tuple[str, str], list[str]] = {
     ("memory", "search"): [
         "nexus.bricks.memory.enrichment",
         "nexus.bricks.memory.memory_with_paging",
         "nexus.bricks.memory.service",
     ],
+    ("search", "cache"): [
+        "nexus.bricks.search.embeddings",
+    ],
+    # TODO(#2429): Fix a2a->ipc via DI refactoring.
+    ("a2a", "ipc"): [
+        "nexus.bricks.a2a.messaging_adapters",
+        "nexus.bricks.a2a.stores.vfs",
+    ],
+    # TODO(#2429): Fix mcp->rebac/discovery via DI refactoring.
+    ("mcp", "rebac"): [
+        "nexus.bricks.mcp.middleware",
+        "nexus.bricks.mcp.profiles",
+    ],
+    ("mcp", "discovery"): [
+        "nexus.bricks.mcp.server",
+    ],
+    # TODO(#2429): Fix parsers->sandbox via DI refactoring.
+    ("parsers", "sandbox"): [
+        "nexus.bricks.parsers.validation.runner",
+        "nexus.bricks.parsers.validation.detector",
+    ],
+    # TODO(#2429): Fix memory->llm via DI refactoring.
+    ("memory", "llm"): [
+        "nexus.bricks.memory.coref_resolver",
+        "nexus.bricks.memory.relationship_extractor",
+    ],
+}
+
+# Known exceptions for bricks importing from nexus.core (non-protocol) or
+# nexus.services (non-protocol). Each entry maps a module name to a list of
+# allowed forbidden-pattern descriptions. Remove entries as fixes land.
+# TODO(#2429): Fix mcp.server -> nexus.core.filesystem via protocol/DI.
+KNOWN_CORE_EXCEPTIONS: dict[str, list[str]] = {
+    "nexus.bricks.mcp.server": ["nexus.core"],
 }
 
 # Lines matching these patterns are not actual imports (comments, strings, etc.)
@@ -98,11 +133,18 @@ def _module_name_from_path(file_path: Path) -> str | None:
     Example: .../src/nexus/bricks/memory/service.py -> 'nexus.bricks.memory.service'
     """
     parts = file_path.parts
+    # Prefer the "nexus" that follows "src/" to avoid matching repo directory names
+    # (e.g. on CI: /home/runner/work/nexus/nexus/src/nexus/bricks/...)
     try:
-        idx = parts.index("nexus")
+        src_idx = parts.index("src")
+        mod_parts = list(parts[src_idx + 1 :])
     except ValueError:
-        return None
-    mod_parts = list(parts[idx:])
+        # No src/ in path; fall back to first "nexus"
+        try:
+            idx = parts.index("nexus")
+        except ValueError:
+            return None
+        mod_parts = list(parts[idx:])
     # Strip .py from last part
     if mod_parts[-1].endswith(".py"):
         mod_parts[-1] = mod_parts[-1][:-3]
@@ -141,10 +183,14 @@ def check_file(file_path: Path, brick_name: str | None = None) -> list[tuple[int
 
                 # Check static forbidden patterns (core/services internals)
                 found = False
+                module_name = _module_name_from_path(file_path)
                 for pattern, desc in FORBIDDEN_PATTERNS:
                     if pattern.search(line):
-                        violations.append((line_num, line.rstrip(), desc))
-                        found = True
+                        # Check if this module has a known core exception
+                        allowed = KNOWN_CORE_EXCEPTIONS.get(module_name or "", [])
+                        if desc not in allowed:
+                            violations.append((line_num, line.rstrip(), desc))
+                            found = True
                         break  # One violation per line is enough
 
                 if found:
@@ -190,11 +236,15 @@ def main() -> int:
         python check_brick_imports.py <file1> [file2] ...
     """
     if len(sys.argv) > 1:
-        # Pre-commit mode: check specified files, filter to bricks/ only
+        # Pre-commit mode: check specified files, filter to src/bricks/ only
+        # Test files (tests/) are excluded — test code legitimately imports
+        # from core/services/other-bricks to set up fixtures and assertions.
         files = [
             Path(f)
             for f in sys.argv[1:]
-            if f.endswith(".py") and "/bricks/" in f.replace("\\", "/")
+            if f.endswith(".py")
+            and "/bricks/" in f.replace("\\", "/")
+            and not f.replace("\\", "/").startswith("tests/")
         ]
     else:
         # CI mode: scan entire bricks/ directory
@@ -228,13 +278,12 @@ def main() -> int:
         print("LEGO Architecture Principle 3: Bricks don't know about the kernel")
         print("or each other. Bricks may only import from:")
         print("     nexus.core.protocols.*      (kernel protocol interfaces)")
-        print("     nexus.core.cache_store      (CacheStoreABC -- storage pillar)")
+        print("     nexus.contracts.cache_store  (CacheStoreABC -- storage pillar)")
         print("     nexus.core.object_store     (ObjectStoreABC -- storage pillar)")
         print("     nexus.services.protocols.*   (system service protocol interfaces)")
         print("     nexus.storage.*              (RecordStoreABC + storage utilities)")
         print("     nexus.bricks.<own_brick>.*   (same-brick internal imports)")
         print()
-        print("See docs/design/NEXUS-LEGO-ARCHITECTURE.md")
         print()
 
         return 1

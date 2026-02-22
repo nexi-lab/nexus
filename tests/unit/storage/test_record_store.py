@@ -5,8 +5,6 @@ creator/async_creator pass-through, async URL conversion, lifecycle,
 and RecordStoreABC.session()/read_session() context managers.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, patch
 
 import pytest

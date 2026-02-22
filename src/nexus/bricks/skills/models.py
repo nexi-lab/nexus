@@ -1,13 +1,11 @@
 """Data models for the Skills System."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.mcp.models import MCPToolConfig
+    from nexus.bricks.skills.types import MCPToolConfigLike as MCPToolConfig
 
 
 @dataclass
@@ -38,7 +36,7 @@ class SkillMetadata:
     skill_type: str = "documentation"
 
     # MCP tool configuration (for skill_type="mcp_tool" or "hybrid")
-    mcp_config: MCPToolConfig | None = None
+    mcp_config: "MCPToolConfig | None" = None
 
     # Tags for categorization
     tags: list[str] = field(default_factory=list)

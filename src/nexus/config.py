@@ -8,8 +8,8 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # Import OAuthConfig - required for OAuth configuration
-# Moved to nexus.auth_config to fix config.py → server/ architecture violation (#1389)
-from nexus.auth_config import OAuthConfig
+# Canonical path: nexus.bricks.auth.oauth.config (#2281)
+from nexus.bricks.auth.oauth.config import OAuthConfig
 
 
 class DockerImageTemplate(BaseModel):
@@ -450,7 +450,7 @@ def _load_from_dict(config_dict: dict[str, Any]) -> NexusConfig:
 
     # Convert oauth dict to OAuthConfig if present
     if "oauth" in merged_dict and isinstance(merged_dict["oauth"], dict):
-        from nexus.auth_config import OAuthConfig as OAuthConfigType
+        from nexus.bricks.auth.oauth.config import OAuthConfig as OAuthConfigType
 
         merged_dict["oauth"] = OAuthConfigType(**merged_dict["oauth"])
 

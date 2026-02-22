@@ -6,13 +6,11 @@ Verifies:
 - NexusFS initialization creates the lock manager attribute.
 """
 
-from __future__ import annotations
-
 from unittest.mock import patch
 
 import pytest
 
-from nexus.core.lock_fast import (
+from nexus.lib.lock_fast import (
     PythonVFSLockManager,
     VFSLockManagerProtocol,
     create_vfs_lock_manager,
@@ -26,7 +24,7 @@ from nexus.core.lock_fast import (
 def _implementations() -> list[type]:
     impls: list[type] = [PythonVFSLockManager]
     try:
-        from nexus.core.lock_fast import RustVFSLockManager
+        from nexus.lib.lock_fast import RustVFSLockManager
 
         impls.append(RustVFSLockManager)
     except (ImportError, Exception):
@@ -124,7 +122,7 @@ class TestNexusFSIntegration:
             # Normally __init__ sets it, but we can't easily instantiate NexusFS
             # without a full backend. Instead, verify the import and class exist.
             assert NexusFS is not None
-            from nexus.core.lock_fast import RustVFSLockManager
+            from nexus.lib.lock_fast import RustVFSLockManager
 
             mgr = RustVFSLockManager()
             assert isinstance(mgr, VFSLockManagerProtocol)

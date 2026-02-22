@@ -5,8 +5,6 @@ and searchable text — without requiring the compiled Rust PyO3 library.
 A FakeLocalRaft simulates the real PyO3 LocalRaft behavior in pure Python.
 """
 
-from __future__ import annotations
-
 import json
 import time
 from dataclasses import dataclass, field
@@ -15,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from nexus.core.metadata import FileMetadata, PaginatedResult
+from nexus.contracts.metadata import FileMetadata, PaginatedResult
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 # ---------------------------------------------------------------------------
@@ -166,6 +164,38 @@ class FakeLocalRaft:
             self._locks[path].holders = []
             return True
         return False
+
+    def cas_set_metadata(
+        self,
+        path: str,
+        value: bytes | list[int],
+        expected_version: int,
+        consistency: str = "sc",
+    ) -> tuple[bool, int]:
+        """Compare-and-swap: write only if current version matches expected_version."""
+        from nexus.storage.raft_metadata_store import _deserialize_metadata
+
+        if isinstance(value, list):
+            value = bytes(value)
+
+        current_data = self._metadata.get(path)
+        if current_data is None:
+            if expected_version == 0:
+                self._metadata[path] = value
+                new_meta = _deserialize_metadata(value)
+                return (True, new_meta.version)
+            return (False, 0)
+
+        # Extract version from current stored data
+        current_meta = _deserialize_metadata(current_data)
+        current_ver = current_meta.version
+
+        if current_ver != expected_version:
+            return (False, current_ver)
+
+        self._metadata[path] = value
+        new_meta = _deserialize_metadata(value)
+        return (True, new_meta.version)
 
     def flush(self) -> None:
         pass
@@ -744,3 +774,104 @@ class TestMultiZoneIsolation:
         store.put(_make_meta(path="/test.txt"))
         result = store.list()  # No zone_id — should work fine
         assert len(result) == 1
+
+
+# ===========================================================================
+# CAS (Compare-And-Swap) Tests — put_if_version via FakeLocalRaft
+# ===========================================================================
+
+
+class TestCASOperations:
+    """Tests for put_if_version() through the full RaftMetadataStore layer."""
+
+    def test_put_if_version_success(self) -> None:
+        """CAS with correct expected_version succeeds."""
+        from nexus.core.metastore import CasResult
+
+        store = _make_store()
+        store.put(_make_meta(path="/cas/file.txt", version=1))
+
+        result = store.put_if_version(
+            _make_meta(path="/cas/file.txt", version=2),
+            expected_version=1,
+        )
+        assert result == CasResult(success=True, current_version=2)
+
+        # Verify the stored version was updated
+        stored = store.get("/cas/file.txt")
+        assert stored is not None
+        assert stored.version == 2
+
+    def test_put_if_version_mismatch(self) -> None:
+        """CAS with wrong expected_version fails and reports current version."""
+        from nexus.core.metastore import CasResult
+
+        store = _make_store()
+        store.put(_make_meta(path="/cas/file.txt", version=3))
+
+        result = store.put_if_version(
+            _make_meta(path="/cas/file.txt", version=4),
+            expected_version=1,
+        )
+        assert result == CasResult(success=False, current_version=3)
+
+        # Verify the stored version was NOT changed
+        stored = store.get("/cas/file.txt")
+        assert stored is not None
+        assert stored.version == 3
+
+    def test_put_if_version_create_new(self) -> None:
+        """CAS with expected_version=0 creates a new entry."""
+        from nexus.core.metastore import CasResult
+
+        store = _make_store()
+        result = store.put_if_version(
+            _make_meta(path="/cas/new.txt", version=1),
+            expected_version=0,
+        )
+        assert result == CasResult(success=True, current_version=1)
+        assert store.exists("/cas/new.txt")
+
+    def test_put_if_version_create_exists(self) -> None:
+        """CAS with expected_version=0 fails when file already exists."""
+        from nexus.core.metastore import CasResult
+
+        store = _make_store()
+        store.put(_make_meta(path="/cas/exists.txt", version=1))
+
+        result = store.put_if_version(
+            _make_meta(path="/cas/exists.txt", version=1),
+            expected_version=0,
+        )
+        assert result == CasResult(success=False, current_version=1)
+
+    def test_put_if_version_concurrent_single_winner(self) -> None:
+        """Under concurrent CAS, exactly one writer wins per round."""
+        import threading
+
+        from nexus.core.metastore import CasResult
+
+        store = _make_store()
+        store.put(_make_meta(path="/cas/race.txt", version=1))
+
+        num_threads = 20
+        results: list[CasResult] = [CasResult(success=False, current_version=0)] * num_threads
+
+        def cas_writer(idx: int) -> None:
+            results[idx] = store.put_if_version(
+                _make_meta(path="/cas/race.txt", version=2),
+                expected_version=1,
+            )
+
+        threads = [threading.Thread(target=cas_writer, args=(i,)) for i in range(num_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        success_count = sum(1 for r in results if r.success)
+        assert success_count == 1, f"Expected exactly 1 winner, got {success_count}"
+
+        stored = store.get("/cas/race.txt")
+        assert stored is not None
+        assert stored.version == 2

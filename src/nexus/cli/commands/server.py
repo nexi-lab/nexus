@@ -6,8 +6,6 @@ This module contains server-related CLI commands for:
 - Starting the Nexus RPC server
 """
 
-from __future__ import annotations
-
 import logging
 import sys
 import time
@@ -23,7 +21,6 @@ from nexus.cli.utils import (
     console,
     get_filesystem,
     handle_error,
-    is_standalone,
 )
 from nexus.lib.env import get_database_url
 from nexus.lib.sync_bridge import run_sync
@@ -822,15 +819,16 @@ def serve(
 
             from nexus.cli.utils import create_backend_from_config
             from nexus.config import load_config
+            from nexus.core.nexus_fs import NexusFS
 
             try:
                 cfg = load_config(PathlibPath(backend_config.config_path))
                 # Store config on NexusFS for OAuth factory and other components
-                if is_standalone(nx):
+                if isinstance(nx, NexusFS):
                     nx._config = cfg
                 if cfg.backends:
                     # Type check: backends can only be mounted on NexusFS, not RemoteNexusFS
-                    if not is_standalone(nx):
+                    if not isinstance(nx, NexusFS):
                         console.print(
                             "[yellow]⚠️  Warning: Multi-backend configuration is only supported for local NexusFS instances[/yellow]"
                         )
@@ -970,17 +968,17 @@ def serve(
             sys.exit(1)
 
         # Create authentication provider
-        from nexus.auth.providers.base import AuthProvider
+        from nexus.bricks.auth.providers.base import AuthProvider
 
         auth_provider: AuthProvider | None = None
         if auth_type == "database":
             # Database authentication with both API keys (sk-*) and JWT tokens
             import os
 
-            from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
-            from nexus.auth.providers.database_local import DatabaseLocalAuth
+            from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
+            from nexus.bricks.auth.providers.database_local import DatabaseLocalAuth
+            from nexus.factory._record_store import create_record_store
             from nexus.server.auth.factory import DiscriminatingAuthProvider
-            from nexus.storage.record_store import SQLAlchemyRecordStore
 
             db_url = get_database_url()
             if not db_url:
@@ -1001,7 +999,7 @@ def serve(
                     "[yellow]   For production, set: export NEXUS_JWT_SECRET='your-secret-key'[/yellow]"
                 )
 
-            _record_store = SQLAlchemyRecordStore(db_url=db_url)
+            _record_store = create_record_store(db_url=db_url)
             session_factory = _record_store.session_factory
 
             # Create composite provider that routes tokens to appropriate handler
@@ -1021,8 +1019,8 @@ def serve(
             # Local username/password authentication with JWT tokens (database-backed)
             import os
 
-            from nexus.auth.providers.database_local import DatabaseLocalAuth
-            from nexus.storage.record_store import SQLAlchemyRecordStore
+            from nexus.bricks.auth.providers.database_local import DatabaseLocalAuth
+            from nexus.factory._record_store import create_record_store
 
             db_url = get_database_url()
             if not db_url:
@@ -1041,7 +1039,7 @@ def serve(
 
                 jwt_secret = secrets.token_urlsafe(32)
 
-            _record_store = SQLAlchemyRecordStore(db_url=db_url)
+            _record_store = create_record_store(db_url=db_url)
             session_factory = _record_store.session_factory
             # Use DatabaseLocalAuth directly (not LocalAuth) for user registration/login endpoints
             auth_provider = DatabaseLocalAuth(
@@ -1142,14 +1140,15 @@ def serve(
             console.print("  • All permissions and relationships")
             console.print()
 
-            from sqlalchemy import text
+            from sqlalchemy import table
 
-            from nexus.storage.record_store import SQLAlchemyRecordStore
+            from nexus.factory._record_store import create_record_store
 
-            _record_store = SQLAlchemyRecordStore(db_url=db_url)
+            _record_store = create_record_store(db_url=db_url)
             engine = _record_store.engine
 
-            # List of tables to clear (in dependency order)
+            # List of tables to clear (in dependency order).
+            # Uses SQLAlchemy table() construct — never f-string SQL.
             tables_to_clear = [
                 # Auth tables
                 "oauth_credentials",  # OAuth tokens (v0.7.0)
@@ -1183,19 +1182,18 @@ def serve(
             deleted_counts = {}
             console.print("[yellow]Clearing database tables...[/yellow]")
 
-            for table_name in tables_to_clear:
+            for name in tables_to_clear:
                 try:
+                    tbl = table(name)
                     with engine.connect() as conn:
                         trans = conn.begin()
                         try:
-                            cursor_result = conn.execute(text(f"DELETE FROM {table_name}"))
+                            cursor_result = conn.execute(tbl.delete())
                             count = cursor_result.rowcount
                             trans.commit()
-                            deleted_counts[table_name] = count
+                            deleted_counts[name] = count
                             if count > 0:
-                                console.print(
-                                    f"  [dim]Deleted {count} rows from {table_name}[/dim]"
-                                )
+                                console.print(f"  [dim]Deleted {count} rows from {name}[/dim]")
                         except Exception:
                             trans.rollback()
                             # Ignore table doesn't exist errors
@@ -1244,16 +1242,17 @@ def serve(
 
             from datetime import UTC, datetime, timedelta
 
-            from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
-            from nexus.rebac.entity_registry import EntityRegistry
-            from nexus.storage.record_store import SQLAlchemyRecordStore
+            from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
+            from nexus.bricks.rebac.entity_registry import EntityRegistry
+            from nexus.constants import ROOT_ZONE_ID
+            from nexus.factory._record_store import create_record_store
 
-            _record_store = SQLAlchemyRecordStore(db_url=db_url)
+            _record_store = create_record_store(db_url=db_url)
             Session = _record_store.session_factory
 
             # Register user in entity registry (for agent permission inheritance)
-            entity_registry = EntityRegistry(Session)
-            zone_id = "default"
+            entity_registry = EntityRegistry(_record_store)
+            zone_id = ROOT_ZONE_ID
 
             # User might already exist, ignore errors
             try:
@@ -1310,16 +1309,16 @@ def serve(
                             raise
 
                     # Grant admin user ownership
-                    from nexus.rebac.manager import (
-                        EnhancedReBACManager,
+                    from nexus.bricks.rebac.manager import (
+                        ReBACManager,
                     )
 
-                    rebac = EnhancedReBACManager(engine)
+                    rebac = ReBACManager(engine)
                     rebac.rebac_write(
                         subject=("user", admin_user),
                         relation="direct_owner",
                         object=("file", "/workspace"),
-                        zone_id="default",
+                        zone_id=ROOT_ZONE_ID,
                     )
                     console.print(
                         f"[green]✓[/green] Granted '{admin_user}' ownership of /workspace"

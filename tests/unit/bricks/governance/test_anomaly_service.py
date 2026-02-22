@@ -4,8 +4,6 @@ Tests the detector's detect() method and the service's
 analyze_transaction() orchestration with mocked dependencies.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 

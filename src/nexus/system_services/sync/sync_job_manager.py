@@ -8,7 +8,7 @@ Manages the lifecycle of async sync_mount jobs:
 - Job listing and status queries
 
 Example:
-    >>> from nexus.services.sync_job_manager import SyncJobManager
+    >>> from nexus.system_services.sync.sync_job_manager import SyncJobManager
     >>>
     >>> manager = SyncJobManager(record_store)
     >>>
@@ -23,8 +23,6 @@ Example:
     >>> # Cancel if needed
     >>> manager.cancel_job(job_id)
 """
-
-from __future__ import annotations
 
 import asyncio
 import json
@@ -92,7 +90,7 @@ class SyncJobManager:
         the database status.
     """
 
-    def __init__(self, record_store: RecordStoreABC) -> None:
+    def __init__(self, record_store: "RecordStoreABC") -> None:
         """Initialize sync job manager.
 
         Args:
@@ -143,7 +141,7 @@ class SyncJobManager:
         logger.info(f"Created sync job {job_id} for mount {mount_point}")
         return job_id
 
-    async def start_job(self, job_id: str, nexus_fs: NexusFS) -> None:
+    async def start_job(self, job_id: str, nexus_fs: "NexusFS") -> None:
         """Start a sync job as a background asyncio task.
 
         Args:
@@ -332,7 +330,7 @@ class SyncJobManager:
 
         return callback
 
-    async def _run_sync(self, job_id: str, nexus_fs: NexusFS) -> None:
+    async def _run_sync(self, job_id: str, nexus_fs: "NexusFS") -> None:
         """Internal: Execute sync with progress updates.
 
         This runs in a background asyncio task.

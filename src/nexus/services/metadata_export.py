@@ -7,15 +7,13 @@ Architecture: System Service (server-layer), wired into _brick_sources
 via factory function. Receives MetastoreABC via dependency injection.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from nexus.core.metadata import FileMetadata
+from nexus.contracts.metadata import FileMetadata
 from nexus.lib.export_import import (
     CollisionDetail,
     ExportFilter,

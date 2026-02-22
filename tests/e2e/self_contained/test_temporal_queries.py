@@ -14,8 +14,6 @@ Example:
     pytest tests/integration/test_temporal_queries.py
 """
 
-from __future__ import annotations
-
 import logging
 import os
 from datetime import UTC, datetime, timedelta
@@ -23,8 +21,8 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from nexus.backends.local import LocalBackend
-from nexus.rebac.entity_registry import EntityRegistry
-from nexus.services.memory.memory_api import Memory
+from nexus.bricks.memory.service import Memory
+from nexus.bricks.rebac.entity_registry import EntityRegistry
 from nexus.storage.models import Base, MemoryModel
 from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
@@ -372,7 +370,7 @@ class TestPostgreSQLTimestampPrecision:
     )
     def test_microsecond_precision(self, session):
         """Test that PostgreSQL handles microsecond precision correctly."""
-        from nexus.services.memory.memory_router import MemoryViewRouter
+        from nexus.bricks.memory.router import MemoryViewRouter
 
         now = datetime.now(UTC)
 

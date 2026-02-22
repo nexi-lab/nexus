@@ -1,28 +1,12 @@
 """Core components for Nexus filesystem.
 
 This module uses lazy imports for performance optimization.
-Heavy modules (nexus_fs, async_scoped_filesystem) are only loaded when accessed.
+Heavy modules (nexus_fs) are only loaded when accessed.
 """
 
 import os
 import sys
 from typing import TYPE_CHECKING, Any
-
-# =============================================================================
-# Lightweight imports (always loaded) - these are fast
-# =============================================================================
-from nexus.contracts.exceptions import (
-    AccessDeniedError,
-    BackendError,
-    InvalidPathError,
-    MetadataError,
-    NexusError,
-    NexusFileNotFoundError,
-    NexusPermissionError,
-    PathNotMountedError,
-    PermissionDeniedError,
-    ValidationError,
-)
 
 
 def setup_uvloop() -> bool:
@@ -75,10 +59,8 @@ def setup_uvloop() -> bool:
 # LAZY IMPORTS for performance optimization
 # =============================================================================
 if TYPE_CHECKING:
-    from nexus.core.async_scoped_filesystem import AsyncScopedFilesystem
-    from nexus.core.filesystem import NexusFilesystem
+    from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
     from nexus.core.nexus_fs import NexusFS
-    from nexus.core.scoped_filesystem import ScopedFilesystem
     from nexus.lib.registry import BaseRegistry, BrickInfo, BrickRegistry
 
 # Module-level cache for lazy imports
@@ -86,21 +68,16 @@ _lazy_imports_cache: dict[str, Any] = {}
 
 # Mapping of attribute names to their import paths
 _LAZY_IMPORTS = {
-    "AsyncScopedFilesystem": ("nexus.core.async_scoped_filesystem", "AsyncScopedFilesystem"),
     "BaseRegistry": ("nexus.lib.registry", "BaseRegistry"),
     "BrickInfo": ("nexus.lib.registry", "BrickInfo"),
     "BrickRegistry": ("nexus.lib.registry", "BrickRegistry"),
-    "NexusFilesystem": ("nexus.core.filesystem", "NexusFilesystem"),
+    "NexusFilesystemABC": ("nexus.contracts.filesystem.filesystem_abc", "NexusFilesystemABC"),
     "NexusFS": ("nexus.core.nexus_fs", "NexusFS"),
-    "ScopedFilesystem": ("nexus.core.scoped_filesystem", "ScopedFilesystem"),
 }
 
 
 def __getattr__(name: str) -> Any:
-    """Lazy import for heavy dependencies.
-
-    Also provides backward compatibility for search primitives (Issue #2123).
-    """
+    """Lazy import for heavy dependencies."""
     # Check cache first
     if name in _lazy_imports_cache:
         return _lazy_imports_cache[name]
@@ -115,24 +92,6 @@ def __getattr__(name: str) -> Any:
         _lazy_imports_cache[name] = value
         return value
 
-    # Backward compatibility for search primitives (Issue #2123)
-    # Deprecated: moved from nexus.core.* to nexus.bricks.search.primitives.*
-    if name in ("grep_fast", "glob_fast", "trigram_fast"):
-        import warnings
-
-        warnings.warn(
-            f"Importing {name} from nexus.core is deprecated. "
-            f"Use: from nexus.bricks.search.primitives import {name}",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        import importlib
-
-        module = importlib.import_module("nexus.bricks.search.primitives")
-        value = getattr(module, name)
-        _lazy_imports_cache[name] = value
-        return value
-
     raise AttributeError(f"module 'nexus.core' has no attribute {name!r}")
 
 
@@ -144,19 +103,6 @@ __all__ = [
     "BrickInfo",
     "BrickRegistry",
     # Filesystem classes (lazy)
-    "AsyncScopedFilesystem",
-    "NexusFilesystem",
+    "NexusFilesystemABC",
     "NexusFS",
-    "ScopedFilesystem",
-    # Exceptions (always loaded - lightweight)
-    "AccessDeniedError",
-    "BackendError",
-    "InvalidPathError",
-    "MetadataError",
-    "NexusError",
-    "NexusFileNotFoundError",
-    "NexusPermissionError",
-    "PathNotMountedError",
-    "PermissionDeniedError",
-    "ValidationError",
 ]

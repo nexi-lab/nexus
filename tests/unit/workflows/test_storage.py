@@ -1,4 +1,8 @@
-"""Tests for workflow storage (async)."""
+"""Tests for workflow storage (async).
+
+Consolidated API: load_workflow/delete_workflow/set_enabled/get_executions
+each accept keyword-only ``workflow_id`` or ``name`` (exactly one required).
+"""
 
 import uuid
 
@@ -60,6 +64,10 @@ class TestWorkflowStore:
         assert workflow_store is not None
         assert workflow_store.zone_id == "test-zone"
 
+    # ------------------------------------------------------------------
+    # save_workflow (unchanged)
+    # ------------------------------------------------------------------
+
     @pytest.mark.asyncio
     async def test_save_workflow(self, workflow_store):
         """Test saving a workflow."""
@@ -85,7 +93,7 @@ class TestWorkflowStore:
         )
 
         workflow_id = await workflow_store.save_workflow(definition)
-        loaded = await workflow_store.load_workflow(workflow_id)
+        loaded = await workflow_store.load_workflow(workflow_id=workflow_id)
 
         assert loaded is not None
         assert len(loaded.triggers) == 1
@@ -102,7 +110,7 @@ class TestWorkflowStore:
         )
 
         workflow_id = await workflow_store.save_workflow(definition)
-        loaded = await workflow_store.load_workflow(workflow_id)
+        loaded = await workflow_store.load_workflow(workflow_id=workflow_id)
 
         assert loaded is not None
         assert loaded.variables == {"env": "test", "debug": True}
@@ -131,13 +139,17 @@ class TestWorkflowStore:
         # Should be the same workflow ID (update not create new)
         assert workflow_id1 == workflow_id2
 
-        loaded = await workflow_store.load_workflow(workflow_id1)
+        loaded = await workflow_store.load_workflow(workflow_id=workflow_id1)
         assert loaded.version == "2.0"
         assert loaded.description == "Updated"
 
+    # ------------------------------------------------------------------
+    # load_workflow (consolidated: workflow_id= or name=)
+    # ------------------------------------------------------------------
+
     @pytest.mark.asyncio
-    async def test_load_workflow(self, workflow_store):
-        """Test loading a workflow."""
+    async def test_load_workflow_by_id(self, workflow_store):
+        """Test loading a workflow by ID."""
         definition = WorkflowDefinition(
             name="test_workflow",
             version="1.0",
@@ -146,7 +158,7 @@ class TestWorkflowStore:
         )
 
         workflow_id = await workflow_store.save_workflow(definition)
-        loaded = await workflow_store.load_workflow(workflow_id)
+        loaded = await workflow_store.load_workflow(workflow_id=workflow_id)
 
         assert loaded is not None
         assert loaded.name == "test_workflow"
@@ -155,14 +167,14 @@ class TestWorkflowStore:
         assert len(loaded.actions) == 1
 
     @pytest.mark.asyncio
-    async def test_load_nonexistent_workflow(self, workflow_store):
-        """Test loading non-existent workflow."""
-        loaded = await workflow_store.load_workflow(str(uuid.uuid4()))
+    async def test_load_workflow_by_id_nonexistent(self, workflow_store):
+        """Test loading non-existent workflow by ID."""
+        loaded = await workflow_store.load_workflow(workflow_id=str(uuid.uuid4()))
         assert loaded is None
 
     @pytest.mark.asyncio
     async def test_load_workflow_by_name(self, workflow_store):
-        """Test loading workflow by name."""
+        """Test loading workflow by name (keyword arg)."""
         definition = WorkflowDefinition(
             name="test_workflow",
             version="1.0",
@@ -170,7 +182,7 @@ class TestWorkflowStore:
         )
 
         await workflow_store.save_workflow(definition)
-        loaded = await workflow_store.load_workflow_by_name("test_workflow")
+        loaded = await workflow_store.load_workflow(name="test_workflow")
 
         assert loaded is not None
         assert loaded.name == "test_workflow"
@@ -178,8 +190,18 @@ class TestWorkflowStore:
     @pytest.mark.asyncio
     async def test_load_workflow_by_name_nonexistent(self, workflow_store):
         """Test loading non-existent workflow by name."""
-        loaded = await workflow_store.load_workflow_by_name("nonexistent")
+        loaded = await workflow_store.load_workflow(name="nonexistent")
         assert loaded is None
+
+    @pytest.mark.asyncio
+    async def test_load_workflow_no_args_raises(self, workflow_store):
+        """Test that calling load_workflow with no args raises ValueError."""
+        with pytest.raises(ValueError, match="workflow_id or name"):
+            await workflow_store.load_workflow()
+
+    # ------------------------------------------------------------------
+    # list_workflows (unchanged)
+    # ------------------------------------------------------------------
 
     @pytest.mark.asyncio
     async def test_list_workflows(self, workflow_store):
@@ -228,9 +250,13 @@ class TestWorkflowStore:
         workflows = await workflow_store.list_workflows()
         assert workflows == []
 
+    # ------------------------------------------------------------------
+    # delete_workflow (consolidated: workflow_id= or name=)
+    # ------------------------------------------------------------------
+
     @pytest.mark.asyncio
-    async def test_delete_workflow(self, workflow_store):
-        """Test deleting a workflow."""
+    async def test_delete_workflow_by_id(self, workflow_store):
+        """Test deleting a workflow by ID."""
         definition = WorkflowDefinition(
             name="test_workflow",
             version="1.0",
@@ -238,17 +264,17 @@ class TestWorkflowStore:
         )
 
         workflow_id = await workflow_store.save_workflow(definition)
-        result = await workflow_store.delete_workflow(workflow_id)
+        result = await workflow_store.delete_workflow(workflow_id=workflow_id)
         assert result is True
 
         # Verify it's deleted
-        loaded = await workflow_store.load_workflow(workflow_id)
+        loaded = await workflow_store.load_workflow(workflow_id=workflow_id)
         assert loaded is None
 
     @pytest.mark.asyncio
-    async def test_delete_nonexistent_workflow(self, workflow_store):
-        """Test deleting non-existent workflow."""
-        result = await workflow_store.delete_workflow(str(uuid.uuid4()))
+    async def test_delete_workflow_by_id_nonexistent(self, workflow_store):
+        """Test deleting non-existent workflow by ID."""
+        result = await workflow_store.delete_workflow(workflow_id=str(uuid.uuid4()))
         assert result is False
 
     @pytest.mark.asyncio
@@ -261,22 +287,32 @@ class TestWorkflowStore:
         )
 
         await workflow_store.save_workflow(definition)
-        result = await workflow_store.delete_workflow_by_name("test_workflow")
+        result = await workflow_store.delete_workflow(name="test_workflow")
         assert result is True
 
         # Verify it's deleted
-        loaded = await workflow_store.load_workflow_by_name("test_workflow")
+        loaded = await workflow_store.load_workflow(name="test_workflow")
         assert loaded is None
 
     @pytest.mark.asyncio
     async def test_delete_workflow_by_name_nonexistent(self, workflow_store):
         """Test deleting non-existent workflow by name."""
-        result = await workflow_store.delete_workflow_by_name("nonexistent")
+        result = await workflow_store.delete_workflow(name="nonexistent")
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_set_enabled(self, workflow_store):
-        """Test enabling/disabling workflow."""
+    async def test_delete_workflow_no_args_raises(self, workflow_store):
+        """Test that calling delete_workflow with no args raises ValueError."""
+        with pytest.raises(ValueError, match="workflow_id or name"):
+            await workflow_store.delete_workflow()
+
+    # ------------------------------------------------------------------
+    # set_enabled (consolidated: enabled, *, workflow_id= or name=)
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_set_enabled_by_id(self, workflow_store):
+        """Test enabling/disabling workflow by ID."""
         definition = WorkflowDefinition(
             name="test_workflow",
             version="1.0",
@@ -286,23 +322,23 @@ class TestWorkflowStore:
         workflow_id = await workflow_store.save_workflow(definition, enabled=True)
 
         # Disable
-        result = await workflow_store.set_enabled(workflow_id, False)
+        result = await workflow_store.set_enabled(False, workflow_id=workflow_id)
         assert result is True
 
         workflows = await workflow_store.list_workflows()
         assert workflows[0]["enabled"] is False
 
         # Enable
-        result = await workflow_store.set_enabled(workflow_id, True)
+        result = await workflow_store.set_enabled(True, workflow_id=workflow_id)
         assert result is True
 
         workflows = await workflow_store.list_workflows()
         assert workflows[0]["enabled"] is True
 
     @pytest.mark.asyncio
-    async def test_set_enabled_nonexistent(self, workflow_store):
-        """Test setting enabled on non-existent workflow."""
-        result = await workflow_store.set_enabled(str(uuid.uuid4()), True)
+    async def test_set_enabled_by_id_nonexistent(self, workflow_store):
+        """Test setting enabled on non-existent workflow by ID."""
+        result = await workflow_store.set_enabled(True, workflow_id=str(uuid.uuid4()))
         assert result is False
 
     @pytest.mark.asyncio
@@ -317,7 +353,7 @@ class TestWorkflowStore:
         await workflow_store.save_workflow(definition, enabled=True)
 
         # Disable
-        result = await workflow_store.set_enabled_by_name("test_workflow", False)
+        result = await workflow_store.set_enabled(False, name="test_workflow")
         assert result is True
 
         workflows = await workflow_store.list_workflows()
@@ -326,8 +362,18 @@ class TestWorkflowStore:
     @pytest.mark.asyncio
     async def test_set_enabled_by_name_nonexistent(self, workflow_store):
         """Test setting enabled by name on non-existent workflow."""
-        result = await workflow_store.set_enabled_by_name("nonexistent", True)
+        result = await workflow_store.set_enabled(True, name="nonexistent")
         assert result is False
+
+    @pytest.mark.asyncio
+    async def test_set_enabled_no_args_raises(self, workflow_store):
+        """Test that calling set_enabled with no identifier raises ValueError."""
+        with pytest.raises(ValueError, match="workflow_id or name"):
+            await workflow_store.set_enabled(True)
+
+    # ------------------------------------------------------------------
+    # save_execution (unchanged)
+    # ------------------------------------------------------------------
 
     @pytest.mark.asyncio
     async def test_save_execution(self, workflow_store):
@@ -351,9 +397,13 @@ class TestWorkflowStore:
         assert execution_id is not None
         assert isinstance(execution_id, str)
 
+    # ------------------------------------------------------------------
+    # get_executions (consolidated: workflow_id= or name=, single session)
+    # ------------------------------------------------------------------
+
     @pytest.mark.asyncio
-    async def test_get_executions(self, workflow_store):
-        """Test getting execution history."""
+    async def test_get_executions_by_id(self, workflow_store):
+        """Test getting execution history by workflow ID."""
         from datetime import UTC, datetime
 
         # Save a workflow first
@@ -379,7 +429,7 @@ class TestWorkflowStore:
             await workflow_store.save_execution(execution)
 
         # Get executions
-        executions = await workflow_store.get_executions(workflow_id_str, limit=10)
+        executions = await workflow_store.get_executions(workflow_id=workflow_id_str, limit=10)
         assert len(executions) == 3
 
     @pytest.mark.asyncio
@@ -410,12 +460,12 @@ class TestWorkflowStore:
             await workflow_store.save_execution(execution)
 
         # Get executions with limit
-        executions = await workflow_store.get_executions(workflow_id_str, limit=3)
+        executions = await workflow_store.get_executions(workflow_id=workflow_id_str, limit=3)
         assert len(executions) == 3
 
     @pytest.mark.asyncio
     async def test_get_executions_by_name(self, workflow_store):
-        """Test getting execution history by workflow name."""
+        """Test getting execution history by workflow name (single session JOIN)."""
         from datetime import UTC, datetime
 
         # Save a workflow first
@@ -440,14 +490,24 @@ class TestWorkflowStore:
         await workflow_store.save_execution(execution)
 
         # Get executions by name
-        executions = await workflow_store.get_executions_by_name("test_workflow")
+        executions = await workflow_store.get_executions(name="test_workflow")
         assert len(executions) == 1
 
     @pytest.mark.asyncio
     async def test_get_executions_by_name_nonexistent(self, workflow_store):
-        """Test getting execution history for non-existent workflow."""
-        executions = await workflow_store.get_executions_by_name("nonexistent")
+        """Test getting execution history for non-existent workflow by name."""
+        executions = await workflow_store.get_executions(name="nonexistent")
         assert executions == []
+
+    @pytest.mark.asyncio
+    async def test_get_executions_no_args_raises(self, workflow_store):
+        """Test that calling get_executions with no args raises ValueError."""
+        with pytest.raises(ValueError, match="workflow_id or name"):
+            await workflow_store.get_executions()
+
+    # ------------------------------------------------------------------
+    # Utility tests (unchanged)
+    # ------------------------------------------------------------------
 
     def test_compute_hash(self, workflow_store):
         """Test computing workflow hash."""

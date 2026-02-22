@@ -22,8 +22,6 @@ Architecture::
 NOTE: L2 async write-behind is a follow-up (Decision #14).
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -40,6 +38,7 @@ from nexus.bricks.cache.domain import (
     TigerCache,
 )
 from nexus.bricks.cache.settings import CacheSettings
+from nexus.contracts.cache_store import NullCacheStore
 
 if TYPE_CHECKING:
     from nexus.backends.caching_backend_wrapper import CacheWrapperConfig, CachingBackendWrapper
@@ -78,23 +77,7 @@ class CacheBrick:
             settings: Cache configuration. If None, defaults are used.
             record_store: Optional RecordStoreABC for PostgreSQL cache fallback.
         """
-        # Lazy import to avoid circular deps — NullCacheStore is in core
-        from nexus.bricks.cache.inmemory import InMemoryCacheStore
-
-        # Import NullCacheStore without importing nexus.core at module level
-        _NullCacheStore: type | None = None
-        try:
-            from nexus.core.protocols import NullCacheStore as _NS
-
-            _NullCacheStore = _NS
-        except ImportError:
-            pass
-
-        self._store = (
-            cache_store
-            if cache_store is not None
-            else (_NullCacheStore() if _NullCacheStore else InMemoryCacheStore())
-        )
+        self._store = cache_store if cache_store is not None else NullCacheStore()
         self._settings = settings or CacheSettings(dragonfly_url=None)
         self._record_store = record_store
         self._started = False
@@ -237,7 +220,7 @@ class CacheBrick:
     @property
     def has_cache_store(self) -> bool:
         """Whether a real (non-Null) CacheStoreABC driver is active."""
-        return type(self._store).__name__ != "NullCacheStore"
+        return not isinstance(self._store, NullCacheStore)
 
     # ------------------------------------------------------------------
     # CachingBackendWrapper factory
@@ -246,10 +229,10 @@ class CacheBrick:
     def create_caching_wrapper(
         self,
         inner: Any,
-        config: CacheWrapperConfig | None = None,
+        config: "CacheWrapperConfig | None" = None,
         *,
         enable_logging: bool = False,
-    ) -> CachingBackendWrapper:
+    ) -> "CachingBackendWrapper":
         """Create a CachingBackendWrapper for the given backend.
 
         Args:

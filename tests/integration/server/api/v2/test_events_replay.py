@@ -6,8 +6,6 @@ against a real SQLite backend.
 Issue #1139: Event Replay.
 """
 
-from __future__ import annotations
-
 import uuid
 from collections.abc import Generator
 from datetime import UTC, datetime
@@ -18,6 +16,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.server.api.v2.routers.events_replay import router
 from nexus.storage.models import OperationLogModel
 from nexus.storage.record_store import SQLAlchemyRecordStore
@@ -66,7 +65,7 @@ def _seed_events(session_factory: Any, count: int) -> list[str]:
                 operation_id=op_id,
                 operation_type="write" if i % 2 == 0 else "delete",
                 path=f"/workspace/file{i}.txt",
-                zone_id="default",
+                zone_id=ROOT_ZONE_ID,
                 agent_id=f"agent-{i % 3}",
                 status="success",
                 delivered=True,

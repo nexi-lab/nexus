@@ -1,35 +1,42 @@
-"""Scoped hook engine — per-agent scoping + verified execution (Issue #1257).
+"""Scoped hook engine — per-agent scoping + verified execution (Issue #1257, #2064).
 
 Wrapping layer over ``AsyncHookEngine`` (Mechanism 2: same-Protocol wrapping)
-per NEXUS-LEGO-ARCHITECTURE §4.3.
+per NEXUS-LEGO-ARCHITECTURE Section 4.3.
 
 Features:
     - **Per-agent scoping**: Hooks can target a specific agent via ``HookSpec.agent_scope``.
     - **Verified execution**: ``HookCapabilities`` are enforced at runtime (veto override,
       context modification override, per-handler timeout).
     - **Dual-index O(1) lookup**: Separate indexes for global and agent-scoped hooks.
-    - **Sequential PRE / concurrent POST**: PRE hooks run sequentially (veto chain),
-      POST hooks run concurrently via ``asyncio.gather()``.
+    - **Mutating/Validating phases** (Issue #2064): Within PRE phases, mutating hooks
+      run first (sequential, can modify + veto) then validating hooks (sequential,
+      can veto only, sees final mutated context). Modeled after Kubernetes admission
+      controllers.
+    - **Failure policies** (Issue #2064): Per-hook ``FailurePolicy.FAIL`` or ``IGNORE``
+      determines behavior on handler error/timeout.
+    - **Context threading**: Mutating hooks thread ``modified_context`` through the chain
+      so each hook sees the result of previous mutations.
     - **Lock-free fire()**: No lock on the read path; lock only on register/unregister.
 
 References:
-    - docs/design/NEXUS-LEGO-ARCHITECTURE.md §4.3 (Recursive Wrapping)
-    - docs/design/NEXUS-LEGO-ARCHITECTURE.md §7 (eBPF / BPF LSM analogy)
+    - docs/design/NEXUS-LEGO-ARCHITECTURE.md Section 4.3 (Recursive Wrapping)
+    - docs/design/NEXUS-LEGO-ARCHITECTURE.md Section 7 (eBPF / BPF LSM analogy)
     - Issue #1257: Hook engine per-agent scoping and verified execution
+    - Issue #2064: Mutating/validating phases with failure policies
 """
-
-from __future__ import annotations
 
 import asyncio
 import logging
 import uuid
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from nexus.services.protocols.hook_engine import (
+    FailurePolicy,
     HookContext,
     HookId,
+    HookPhaseType,
     HookResult,
     HookSpec,
 )
@@ -75,6 +82,20 @@ def _is_pre_phase(phase: str) -> bool:
     return phase in _PRE_PHASES or phase.startswith("pre_")
 
 
+def _effective_phase_type(entry: _ScopedEntry) -> HookPhaseType:
+    """Determine the effective phase type for an entry.
+
+    If ``HookSpec.phase_type`` is set, use it. Otherwise default to
+    MUTATING (backward compatible with pre-#2064 hooks).
+    """
+    if entry.spec.phase_type is not None:
+        return entry.spec.phase_type
+    # Legacy hooks without phase_type default to MUTATING
+    return HookPhaseType.MUTATING
+
+
+_PROCEED = HookResult(proceed=True, modified_context=None, error=None)
+
 # ---------------------------------------------------------------------------
 # ScopedHookEngine
 # ---------------------------------------------------------------------------
@@ -83,8 +104,16 @@ def _is_pre_phase(phase: str) -> bool:
 class ScopedHookEngine:
     """Wrapping layer over AsyncHookEngine adding agent scoping + verified execution.
 
-    Follows NEXUS-LEGO-ARCHITECTURE §4.3 Recursive Wrapping pattern.
+    Follows NEXUS-LEGO-ARCHITECTURE Section 4.3 Recursive Wrapping pattern.
     Satisfies ``HookEngineProtocol`` via duck typing.
+
+    Issue #2064 additions:
+        - PRE phases partition hooks into MUTATING (runs first) and VALIDATING
+          (runs second, sees final mutated context).
+        - Failure policies: ``FailurePolicy.FAIL`` on error/timeout returns
+          ``proceed=False`` instead of silently continuing.
+        - Context threading: mutating hooks thread ``modified_context`` through
+          the chain via ``dataclasses.replace()``.
 
     Thread-safety: ``fire()`` is lock-free (cooperative asyncio, no concurrent
     mutation between awaits).  ``register_hook`` / ``unregister_hook`` acquire
@@ -93,7 +122,7 @@ class ScopedHookEngine:
 
     def __init__(
         self,
-        inner: AsyncHookEngine,
+        inner: "AsyncHookEngine",
         *,
         default_timeout_ms: int = 5000,
     ) -> None:
@@ -101,11 +130,11 @@ class ScopedHookEngine:
         self._default_timeout_ms = default_timeout_ms
 
         # Dual index for O(1) lookup
-        self._global_hooks: dict[str, list[_ScopedEntry]] = {}  # phase → entries
+        self._global_hooks: dict[str, list[_ScopedEntry]] = {}  # phase -> entries
         self._agent_hooks: dict[
             tuple[str, str], list[_ScopedEntry]
-        ] = {}  # (phase, agent_id) → entries
-        self._id_to_entry: dict[str, _ScopedEntry] = {}  # hook_id.id → entry
+        ] = {}  # (phase, agent_id) -> entries
+        self._id_to_entry: dict[str, _ScopedEntry] = {}  # hook_id.id -> entry
         self._lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
@@ -135,13 +164,16 @@ class ScopedHookEngine:
                 hooks_list.append(entry)
                 hooks_list.sort(key=lambda e: e.spec.priority, reverse=True)
 
-        logger.debug(
-            "[HOOK] Registered %r (phase=%s, scope=%s, priority=%d)",
-            spec.handler_name,
-            spec.phase,
-            spec.agent_scope or "global",
-            spec.priority,
-        )
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "[HOOK] Registered %r (phase=%s, scope=%s, priority=%d, phase_type=%s, failure_policy=%s)",
+                spec.handler_name,
+                spec.phase,
+                spec.agent_scope or "global",
+                spec.priority,
+                spec.phase_type or "auto",
+                spec.capabilities.failure_policy,
+            )
         return hook_id
 
     async def unregister_hook(self, hook_id: HookId) -> bool:
@@ -165,17 +197,19 @@ class ScopedHookEngine:
         return True
 
     # ------------------------------------------------------------------
-    # Fire — lock-free read path
+    # Fire -- lock-free read path
     # ------------------------------------------------------------------
 
     async def fire(self, phase: str, context: HookContext) -> HookResult:
         """Fire hooks for a given phase and context.
 
         - Merges global hooks + agent-scoped hooks (if context.agent_id matches).
-        - PRE phases: sequential execution (higher priority first), can veto.
+        - PRE phases (Issue #2064): partitions into MUTATING (sequential, runs
+          first, can modify + veto, context threading) then VALIDATING
+          (sequential, can veto only, sees final mutated context).
         - POST phases: concurrent execution via asyncio.gather().
         """
-        # Collect applicable hooks (no lock needed — cooperative asyncio)
+        # Collect applicable hooks (no lock needed -- cooperative asyncio)
         entries = list(self._global_hooks.get(phase, []))
 
         if context.agent_id is not None:
@@ -188,29 +222,72 @@ class ScopedHookEngine:
                 )
 
         if not entries:
-            return HookResult(proceed=True, modified_context=None, error=None)
+            return _PROCEED
 
         if _is_pre_phase(phase):
-            return await self._fire_sequential(entries, context)
-        else:
-            return await self._fire_concurrent(entries, context)
+            return await self._fire_pre_phase(entries, context)
+        return await self._fire_concurrent(entries, context)
 
-    async def _fire_sequential(
+    async def _fire_pre_phase(
         self,
         entries: list[_ScopedEntry],
         context: HookContext,
     ) -> HookResult:
-        """Execute hooks sequentially (PRE phases). Respects veto chain."""
-        last_modified: dict[str, object] | None = None
+        """Execute PRE phase hooks: MUTATING first, then VALIDATING (Issue #2064).
+
+        Mutating hooks:
+          - Sequential in priority order.
+          - Can modify context (threaded via dataclasses.replace).
+          - Can veto.
+
+        Validating hooks:
+          - Sequential in priority order (after all mutating hooks).
+          - Can veto but CANNOT modify context.
+          - Sees the final mutated context from the mutating phase.
+        """
+        # Partition entries by phase type (pre-sorted by priority within each group)
+        mutating: list[_ScopedEntry] = []
+        validating: list[_ScopedEntry] = []
 
         for entry in entries:
-            result = await self._execute_with_enforcement(entry, context)
+            pt = _effective_phase_type(entry)
+            if pt == HookPhaseType.VALIDATING:
+                validating.append(entry)
+            else:
+                mutating.append(entry)
+
+        # Phase 1: Run MUTATING hooks sequentially with context threading
+        current_context = context
+        last_modified: dict[str, object] | None = None
+
+        for entry in mutating:
+            result = await self._execute_with_enforcement(entry, current_context)
 
             if not result.proceed:
                 return result
 
             if result.modified_context is not None:
                 last_modified = result.modified_context
+                # Thread modified context to next hook (Issue #2064 / Issue #8)
+                current_context = replace(
+                    current_context,
+                    payload=dict(result.modified_context),
+                )
+
+        # Phase 2: Run VALIDATING hooks sequentially (sees final mutated context)
+        for entry in validating:
+            result = await self._execute_with_enforcement(entry, current_context)
+
+            if not result.proceed:
+                return result
+
+            # Validating hooks cannot modify — enforced by _execute_with_enforcement
+            # but double-check here (belt + suspenders)
+            if result.modified_context is not None and logger.isEnabledFor(logging.WARNING):
+                logger.warning(
+                    "[HOOK] Validating hook %r returned modified_context — stripping",
+                    entry.spec.handler_name,
+                )
 
         return HookResult(proceed=True, modified_context=last_modified, error=None)
 
@@ -219,26 +296,53 @@ class ScopedHookEngine:
         entries: list[_ScopedEntry],
         context: HookContext,
     ) -> HookResult:
-        """Execute hooks concurrently (POST phases). No veto possible."""
+        """Execute hooks concurrently (POST phases).
 
-        async def _run_one(entry: _ScopedEntry) -> HookResult:
-            return await self._execute_with_enforcement(entry, context)
+        Issue #2064: POST hooks with ``failure_policy=FAIL`` that error
+        cause the result to indicate failure. Structured logging for all
+        POST hook results.
+        """
 
-        results = await asyncio.gather(
+        async def _run_one(entry: _ScopedEntry) -> tuple[_ScopedEntry, HookResult]:
+            result = await self._execute_with_enforcement(entry, context)
+            return (entry, result)
+
+        raw_results = await asyncio.gather(
             *(_run_one(e) for e in entries),
             return_exceptions=True,
         )
 
-        # POST hooks don't veto; collect any modifications
-        for r in results:
+        # Check for failure-policy violations and log results
+        for r in raw_results:
             if isinstance(r, BaseException):
-                logger.warning("[HOOK] POST hook failed: %s", r)
+                # This shouldn't happen since _execute_with_enforcement catches
+                # exceptions, but handle defensively.
+                logger.warning("[HOOK] POST hook gather failed: %s", r)
                 continue
 
-        return HookResult(proceed=True, modified_context=None, error=None)
+            entry, result = r
+            if not result.proceed:
+                # A POST hook with failure_policy=FAIL returned proceed=False
+                if logger.isEnabledFor(logging.WARNING):
+                    logger.warning(
+                        "[HOOK] POST hook %r failed (failure_mode=%s): %s",
+                        entry.spec.handler_name,
+                        result.failure_mode,
+                        result.error,
+                    )
+                return result
+
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(
+                    "[HOOK] POST hook %r completed (modified=%s)",
+                    entry.spec.handler_name,
+                    result.modified_context is not None,
+                )
+
+        return _PROCEED
 
     # ------------------------------------------------------------------
-    # Capability enforcement
+    # Capability enforcement (Issue #1257 + #2064)
     # ------------------------------------------------------------------
 
     async def _execute_with_enforcement(
@@ -249,11 +353,14 @@ class ScopedHookEngine:
         """Execute a single hook handler with capability enforcement.
 
         - Timeout: asyncio.wait_for with spec.capabilities.max_timeout_ms
+        - Failure policy (Issue #2064): FAIL -> proceed=False on error/timeout;
+          IGNORE -> proceed=True (backward compatible).
         - Veto override: if can_veto=False, override proceed=False to True
         - Modify override: if can_modify_context=False, strip modified_context
         """
         caps = entry.spec.capabilities
         timeout_s = caps.max_timeout_ms / 1000.0
+        policy = caps.failure_policy
 
         try:
             result = await asyncio.wait_for(
@@ -261,24 +368,49 @@ class ScopedHookEngine:
                 timeout=timeout_s,
             )
         except TimeoutError:
+            if policy == FailurePolicy.FAIL:
+                logger.warning(
+                    "[HOOK] Handler %r timed out after %dms (failure_policy=FAIL) — aborting",
+                    entry.spec.handler_name,
+                    caps.max_timeout_ms,
+                )
+                return HookResult(
+                    proceed=False,
+                    modified_context=None,
+                    error=f"Hook '{entry.spec.handler_name}' timed out after {caps.max_timeout_ms}ms",
+                    failure_mode="timeout",
+                )
             logger.warning(
                 "[HOOK] Handler %r timed out after %dms — skipping",
                 entry.spec.handler_name,
                 caps.max_timeout_ms,
             )
-            return HookResult(proceed=True, modified_context=None, error=None)
+            return _PROCEED
         except Exception as exc:
+            if policy == FailurePolicy.FAIL:
+                logger.warning(
+                    "[HOOK] Handler %r raised %s (failure_policy=FAIL) — aborting",
+                    entry.spec.handler_name,
+                    exc,
+                )
+                return HookResult(
+                    proceed=False,
+                    modified_context=None,
+                    error=f"Hook '{entry.spec.handler_name}' failed: {exc}",
+                    failure_mode="error",
+                )
             logger.warning(
                 "[HOOK] Handler %r raised %s — skipping",
                 entry.spec.handler_name,
                 exc,
             )
-            return HookResult(proceed=True, modified_context=None, error=None)
+            return _PROCEED
 
         # Enforce capabilities
         proceed = result.proceed
         modified_context = result.modified_context
         error = result.error
+        failure_mode = result.failure_mode
 
         if not caps.can_veto and not proceed:
             logger.warning(
@@ -287,6 +419,7 @@ class ScopedHookEngine:
             )
             proceed = True
             error = None
+            failure_mode = None
 
         if not caps.can_modify_context and modified_context is not None:
             logger.warning(
@@ -295,7 +428,24 @@ class ScopedHookEngine:
             )
             modified_context = None
 
-        return HookResult(proceed=proceed, modified_context=modified_context, error=error)
+        # Enforce phase_type constraints (Issue #2064)
+        if entry.spec.phase_type == HookPhaseType.VALIDATING and modified_context is not None:
+            logger.warning(
+                "[HOOK] Validating hook %r returned modified_context — stripping per phase_type",
+                entry.spec.handler_name,
+            )
+            modified_context = None
+
+        # Set failure_mode for explicit vetoes
+        if not proceed and failure_mode is None:
+            failure_mode = "veto"
+
+        return HookResult(
+            proceed=proceed,
+            modified_context=modified_context,
+            error=error,
+            failure_mode=failure_mode,
+        )
 
     # ------------------------------------------------------------------
     # Agent cleanup
@@ -327,12 +477,12 @@ class ScopedHookEngine:
         agent_count = sum(len(v) for v in self._agent_hooks.values())
         return (
             f"ScopedHookEngine(global={global_count}, agent_scoped={agent_count}) "
-            f"→ {self._inner.__class__.__name__}"
+            f"-> {self._inner.__class__.__name__}"
         )
 
 
 # ---------------------------------------------------------------------------
-# Factory: agent state → hook cleanup handler
+# Factory: agent state -> hook cleanup handler
 # ---------------------------------------------------------------------------
 
 _CLEANUP_STATES = frozenset({"IDLE", "SUSPENDED"})

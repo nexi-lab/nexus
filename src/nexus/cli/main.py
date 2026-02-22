@@ -4,8 +4,6 @@ This module provides the main CLI entry point for the Nexus command-line tool.
 It creates the main command group and registers all commands from the modular structure.
 """
 
-from __future__ import annotations
-
 import warnings
 
 import click
@@ -65,7 +63,6 @@ def main() -> None:
 
 # Register all commands from the modular structure
 register_all_commands(main)
-
 
 # For backwards compatibility and direct execution
 if __name__ == "__main__":

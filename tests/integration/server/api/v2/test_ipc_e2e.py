@@ -9,8 +9,6 @@ with mock auth. Validates:
 - Error handling: missing inbox, invalid message type, self-send
 """
 
-from __future__ import annotations
-
 import time
 from typing import Any
 
@@ -18,7 +16,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from nexus.ipc.provisioning import AgentProvisioner
+from nexus.bricks.ipc.provisioning import AgentProvisioner
 from nexus.server.api.v2.routers.ipc import (
     _get_ipc_provisioner,
     _get_ipc_storage,
@@ -26,7 +24,7 @@ from nexus.server.api.v2.routers.ipc import (
     _get_zone_id,
     router,
 )
-from tests.unit.ipc.fakes import InMemoryStorageDriver
+from tests.unit.bricks.ipc.fakes import InMemoryStorageDriver
 
 ZONE = "test-zone"
 
@@ -36,7 +34,6 @@ ZONE = "test-zone"
 # so the dependency-override key matches the key FastAPI recorded when
 # the router decorators were evaluated.
 _REQUIRE_AUTH = _get_require_auth()
-
 
 # ---------------------------------------------------------------------------
 # Auth helpers

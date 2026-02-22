@@ -14,8 +14,6 @@ Tests cover:
 7. Zone isolation: different zones cannot see each other's files
 """
 
-from __future__ import annotations
-
 import base64
 import json
 import time

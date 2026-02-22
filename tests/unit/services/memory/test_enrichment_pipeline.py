@@ -7,15 +7,13 @@ Each test covers one enrichment step in isolation, ensuring behavioral equivalen
 after extraction.
 """
 
-from __future__ import annotations
-
 from unittest.mock import patch
 
 import pytest
 
 from nexus.backends.local import LocalBackend
-from nexus.rebac.entity_registry import EntityRegistry
-from nexus.services.memory.memory_api import Memory
+from nexus.bricks.memory.service import Memory
+from nexus.bricks.rebac.entity_registry import EntityRegistry
 from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
 
@@ -98,7 +96,7 @@ class TestEntityExtraction:
         wrapped in try/except like all other enrichment steps.
         """
         with patch(
-            "nexus.rebac.entity_extractor.EntityExtractor.extract",
+            "nexus.bricks.rebac.entity_extractor.EntityExtractor.extract",
             side_effect=RuntimeError("NER engine crashed"),
         ):
             memory_id = memory_api.store(
@@ -175,7 +173,7 @@ class TestStabilityClassification:
     def test_classification_failure_non_fatal(self, memory_api):
         """Classification failure should not prevent memory storage."""
         with patch(
-            "nexus.services.memory.stability_classifier.TemporalStabilityClassifier.classify",
+            "nexus.bricks.memory.stability_classifier.TemporalStabilityClassifier.classify",
             side_effect=RuntimeError("Classifier exploded"),
         ):
             memory_id = memory_api.store(

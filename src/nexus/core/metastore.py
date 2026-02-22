@@ -20,14 +20,29 @@ SSOT: proto/nexus/core/metadata.proto defines the FileMetadata fields.
 This ABC defines the *operations* over those fields.
 """
 
-from __future__ import annotations
-
 import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import Iterator, Sequence
+from dataclasses import dataclass
 from typing import Any
 
-from nexus.core.metadata import FileMetadata, PaginatedResult
+from nexus.contracts.metadata import FileMetadata, PaginatedResult
+
+
+@dataclass(frozen=True, slots=True)
+class CasResult:
+    """Result of an atomic compare-and-swap (CAS) metadata operation.
+
+    Returned by ``put_if_version()`` to indicate whether the write
+    succeeded and what the current version is.
+    """
+
+    success: bool
+    """True if the CAS write was applied (version matched)."""
+
+    current_version: int
+    """Version after the operation.  On success this is the *new* version;
+    on failure it is the version that caused the mismatch."""
 
 
 class MetastoreABC(ABC):
@@ -151,6 +166,37 @@ class MetastoreABC(ABC):
             result[path] = metadata.etag if metadata else None
         return result
 
+    def put_if_version(
+        self,
+        metadata: FileMetadata,
+        expected_version: int,
+        *,
+        consistency: str = "sc",
+    ) -> CasResult:
+        """Atomic compare-and-swap on FileMetadata.version.
+
+        Writes ``metadata`` only if the current version of the file at
+        ``metadata.path`` equals ``expected_version``.
+
+        Default implementation: non-atomic fallback (read-check-write).
+        Override in concrete subclasses for true atomicity.
+
+        Args:
+            metadata: The new metadata to store.
+            expected_version: Version that must match the current stored
+                version.  Use 0 for create-only semantics.
+            consistency: ``"sc"`` (default) or ``"ec"``.
+
+        Returns:
+            CasResult indicating success and the current version.
+        """
+        current = self.get(metadata.path)
+        current_ver = current.version if current else 0
+        if current_ver != expected_version:
+            return CasResult(success=False, current_version=current_ver)
+        self.put(metadata, consistency=consistency)
+        return CasResult(success=True, current_version=metadata.version)
+
     @abstractmethod
     def close(self) -> None:
         """Close the metadata store and release resources."""
@@ -215,6 +261,17 @@ class AsyncMetastoreWrapper:
 
     async def abatch_get_content_ids(self, paths: Sequence[str]) -> dict[str, str | None]:
         return await asyncio.to_thread(self._store.batch_get_content_ids, paths)
+
+    async def aput_if_version(
+        self,
+        metadata: FileMetadata,
+        expected_version: int,
+        *,
+        consistency: str = "sc",
+    ) -> CasResult:
+        return await asyncio.to_thread(
+            self._store.put_if_version, metadata, expected_version, consistency=consistency
+        )
 
     async def aclose(self) -> None:
         return await asyncio.to_thread(self._store.close)

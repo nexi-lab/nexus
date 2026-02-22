@@ -7,8 +7,6 @@ Operations:
 - Metadata synchronization (via SyncService / SyncJobService DI)
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 import logging
@@ -39,7 +37,7 @@ ProgressCallback = Callable[[int, str], None]
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
-    from nexus.core.nexus_fs import NexusFilesystem
+    from nexus.core.nexus_fs import NexusFS as NexusFilesystem
     from nexus.core.router import PathRouter
 
     from .mount_manager import MountManager
@@ -64,9 +62,9 @@ class MountService:
 
     def __init__(
         self,
-        router: PathRouter,
-        mount_manager: MountManager | None = None,
-        nexus_fs: NexusFilesystem | None = None,
+        router: "PathRouter",
+        mount_manager: "MountManager | None" = None,
+        nexus_fs: "NexusFilesystem | None" = None,
         *,
         sync_service: Any = None,
         sync_job_service: Any = None,
@@ -110,7 +108,7 @@ class MountService:
         priority: int = 0,
         readonly: bool = False,
         io_profile: str = "balanced",
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> str:
         """Add a dynamic backend mount to the filesystem.
 
@@ -212,7 +210,7 @@ class MountService:
     async def remove_mount(
         self,
         mount_point: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Remove a backend mount from the filesystem.
 
@@ -321,7 +319,7 @@ class MountService:
         revoke_oauth: bool = False,
         provider: str | None = None,
         user_email: str | None = None,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Delete a connector completely with bundled operations.
 
@@ -463,7 +461,7 @@ class MountService:
         return await asyncio.to_thread(_list_connectors_sync)
 
     @rpc_expose(description="List all backend mounts")
-    async def list_mounts(self, context: OperationContext | None = None) -> list[dict[str, Any]]:
+    async def list_mounts(self, context: "OperationContext | None" = None) -> list[dict[str, Any]]:
         """List all active backend mounts that the user has permission to access.
 
         Automatically filters mounts based on the user's permissions. Only mounts
@@ -528,7 +526,7 @@ class MountService:
                             )
                         elif subject_id:
                             # Check if user has read permission (includes owner, editor, viewer)
-                            has_permission = self.nexus_fs.rebac_service.rebac_check_sync(  # type: ignore[attr-defined]
+                            has_permission = self.nexus_fs.rebac_service.rebac_check_sync(
                                 subject=(subject_type, subject_id),
                                 permission="read",
                                 object=("file", mount_point),
@@ -575,7 +573,7 @@ class MountService:
     async def get_mount(
         self,
         mount_point: str,
-        context: OperationContext | None = None,  # noqa: ARG002 - Protocol compliance
+        context: "OperationContext | None" = None,  # noqa: ARG002 - Protocol compliance
     ) -> dict[str, Any] | None:
         """Get details about a specific mount.
 
@@ -640,7 +638,7 @@ class MountService:
         owner_user_id: str | None = None,
         zone_id: str | None = None,
         description: str | None = None,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> str:
         """Save a mount configuration to the database for persistence.
 
@@ -727,7 +725,7 @@ class MountService:
         self,
         owner_user_id: str | None = None,
         zone_id: str | None = None,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> list[dict[str, Any]]:
         """List mount configurations saved in the database.
 
@@ -880,7 +878,7 @@ class MountService:
         include_patterns: list[str] | None = None,
         exclude_patterns: list[str] | None = None,
         generate_embeddings: bool = False,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
         progress_callback: ProgressCallback | None = None,
         full_sync: bool = False,
     ) -> dict[str, Any]:
@@ -947,7 +945,7 @@ class MountService:
         include_patterns: list[str] | None = None,
         exclude_patterns: list[str] | None = None,
         generate_embeddings: bool = False,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Start an async sync job for a mount point.
 
@@ -1100,7 +1098,7 @@ class MountService:
     # =========================================================================
 
     def _grant_mount_owner_permission(
-        self, mount_point: str, context: OperationContext | None
+        self, mount_point: str, context: "OperationContext | None"
     ) -> None:
         """Grant direct_owner permission to the user who created the mount.
 
@@ -1153,7 +1151,7 @@ class MountService:
             )
 
     def _generate_connector_skill(
-        self, mount_point: str, backend_type: str, context: OperationContext | None
+        self, mount_point: str, backend_type: str, context: "OperationContext | None"
     ) -> bool:
         """Generate SKILL.md for a connector mount.
 

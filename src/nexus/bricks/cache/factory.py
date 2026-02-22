@@ -32,8 +32,6 @@ Usage:
     await factory.shutdown()
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -50,7 +48,7 @@ from nexus.bricks.cache.domain import (
     TigerCache,
 )
 from nexus.bricks.cache.settings import CacheSettings
-from nexus.core.protocols import CacheStoreABC, NullCacheStore
+from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
@@ -79,7 +77,7 @@ class CacheFactory:
         self,
         settings: CacheSettings,
         cache_store: CacheStoreABC | None = None,
-        record_store: RecordStoreProtocol | None = None,
+        record_store: "RecordStoreProtocol | None" = None,
     ):
         """Initialize cache factory.
 
@@ -307,11 +305,11 @@ class CacheFactory:
 
     def create_caching_wrapper(
         self,
-        inner: Backend,
-        config: CacheWrapperConfig | None = None,
+        inner: "Backend",
+        config: "CacheWrapperConfig | None" = None,
         *,
         enable_logging: bool = False,
-    ) -> CachingBackendWrapper:
+    ) -> "CachingBackendWrapper":
         """Create a CachingBackendWrapper for the given backend.
 
         Wires the wrapper with this factory's CacheStoreABC for L2 distributed
@@ -355,7 +353,7 @@ class CacheFactory:
             cache_store=cache_store,
         )
 
-    async def __aenter__(self) -> CacheFactory:
+    async def __aenter__(self) -> "CacheFactory":
         """Async context manager entry."""
         await self.initialize()
         return self

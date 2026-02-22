@@ -31,8 +31,6 @@ Usage:
             logger.error(f"System error: {e}", exc_info=True)
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 
@@ -485,7 +483,7 @@ class LockTimeout(NexusError):
 
 
 class AuditLogError(NexusError):
-    """Raised when audit logging fails and audit_strict_mode is enabled.
+    """Raised when audit logging fails and AuditConfig.strict_mode is enabled.
 
     This is an unexpected error - indicates critical infrastructure failure
     that requires immediate investigation. P0 COMPLIANCE issue.
@@ -493,12 +491,12 @@ class AuditLogError(NexusError):
     P0 COMPLIANCE: This exception prevents operations from succeeding without
     proper audit trail, ensuring compliance with SOX, HIPAA, GDPR, PCI DSS.
 
-    When audit_strict_mode=True (default):
+    When AuditConfig(strict_mode=True) (default):
     - Write operations FAIL if audit logging fails
     - Ensures complete audit trail for compliance
     - Prevents silent audit gaps
 
-    When audit_strict_mode=False:
+    When AuditConfig(strict_mode=False):
     - Write operations SUCCEED even if audit logging fails
     - Failure is logged at CRITICAL level
     - Use only in high-availability scenarios where availability > auditability
@@ -549,6 +547,26 @@ class PathNotMountedError(NexusError):
     def __init__(self, path: str, message: str | None = None):
         msg = message or "No mount found for path"
         super().__init__(msg, path)
+
+
+class CredentialError(NexusError):
+    """Credential operation error with structured code (Issue #1753).
+
+    Used for credential issuance, verification, and revocation failures.
+    This is an expected error — maps to HTTP 400 Bad Request.
+
+    Codes: "expired", "revoked", "invalid_jws", "unknown_issuer",
+           "invalid_signature", "malformed".
+    """
+
+    is_expected = True
+    status_code = 400
+    error_type = "Bad Request"
+
+    def __init__(self, code: str, message: str, credential_id: str | None = None):
+        self.code = code
+        self.credential_id = credential_id
+        super().__init__(message)
 
 
 class ZoneTerminatingError(NexusError):
@@ -769,3 +787,61 @@ class StalePointerError(BranchError):
             f"expected version {expected_version}, current is {current_version}"
         )
         super().__init__(msg, branch_name=branch_name)
+
+
+# =====================================================================
+# Namespace Fork errors (Issue #1273)
+# =====================================================================
+
+
+class NamespaceForkError(NexusError):
+    """Base error for namespace fork operations.
+
+    All namespace fork errors are expected (user-facing) — they result
+    from invalid fork IDs, merge conflicts, or stale state.
+    Maps to HTTP 400 Bad Request by default.
+    """
+
+    is_expected = True
+    status_code = 400
+    error_type = "Bad Request"
+
+    def __init__(self, message: str, *, fork_id: str | None = None):
+        self.fork_id = fork_id
+        super().__init__(message)
+
+
+class NamespaceForkNotFoundError(NamespaceForkError):
+    """Raised when a fork_id does not exist in the active forks.
+
+    Maps to HTTP 404 Not Found.
+    """
+
+    status_code = 404
+    error_type = "Not Found"
+
+    def __init__(self, fork_id: str):
+        msg = f"Namespace fork '{fork_id}' not found"
+        super().__init__(msg, fork_id=fork_id)
+
+
+class NamespaceMergeConflictError(NamespaceForkError):
+    """Raised when a namespace merge has conflicting paths and strategy='fail'.
+
+    Contains the list of conflicting paths for the caller to handle.
+    Maps to HTTP 409 Conflict.
+    """
+
+    status_code = 409
+    error_type = "Conflict"
+
+    def __init__(self, fork_id: str, conflicting_paths: list[str]):
+        self.conflicting_paths = conflicting_paths
+        paths_str = ", ".join(conflicting_paths[:5])
+        if len(conflicting_paths) > 5:
+            paths_str += f" (and {len(conflicting_paths) - 5} more)"
+        msg = (
+            f"Namespace fork '{fork_id}' merge conflict: "
+            f"{len(conflicting_paths)} path(s) changed in both fork and parent: {paths_str}"
+        )
+        super().__init__(msg, fork_id=fork_id)

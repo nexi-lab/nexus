@@ -5,8 +5,6 @@ class exposes all methods declared in a Protocol with compatible parameter
 names and counts.
 """
 
-from __future__ import annotations
-
 import inspect
 from typing import Any
 

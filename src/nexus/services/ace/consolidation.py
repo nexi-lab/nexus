@@ -11,8 +11,6 @@ Reference: SimpleMem: Efficient Lifelong Memory for LLM Agents
 https://arxiv.org/html/2601.02553
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import uuid
@@ -280,7 +278,7 @@ class ConsolidationEngine:
         Returns:
             Consolidation prompt
         """
-        from nexus.security.prompt_sanitizer import wrap_untrusted_data
+        from nexus.lib.security.prompt_sanitizer import wrap_untrusted_data
 
         prompt = """# Memory Consolidation Task
 
@@ -434,7 +432,7 @@ Provide only the consolidated summary, no additional commentary.
     async def consolidate_by_affinity_async(
         self,
         memory_ids: list[str] | None = None,
-        embedding_provider: EmbeddingProvider | None = None,
+        embedding_provider: "EmbeddingProvider | None" = None,
         beta: float = 0.7,
         lambda_decay: float = 0.1,
         affinity_threshold: float = 0.85,
@@ -713,7 +711,7 @@ Provide only the consolidated summary, no additional commentary.
     async def _ensure_embeddings(
         self,
         memory_vectors: list[MemoryVector],
-        embedding_provider: EmbeddingProvider | None = None,
+        embedding_provider: "EmbeddingProvider | None" = None,
     ) -> tuple[list[MemoryVector], list[str]]:
         """Ensure all memory vectors have embeddings.
 
@@ -741,8 +739,11 @@ Provide only the consolidated summary, no additional commentary.
         # Create embedding provider if not provided
         if embedding_provider is None:
             try:
-                from nexus.bricks.search.embeddings import create_embedding_provider
+                import importlib as _il
 
+                create_embedding_provider = _il.import_module(
+                    "nexus.bricks.search.embeddings"
+                ).create_embedding_provider
                 embedding_provider = create_embedding_provider("openai", "text-embedding-3-small")
             except Exception as e:
                 msg = f"Could not create embedding provider: {e}"
@@ -794,7 +795,7 @@ Provide only the consolidated summary, no additional commentary.
     def sync_consolidate_by_affinity(
         self,
         memory_ids: list[str] | None = None,
-        embedding_provider: EmbeddingProvider | None = None,
+        embedding_provider: "EmbeddingProvider | None" = None,
         beta: float = 0.7,
         lambda_decay: float = 0.1,
         affinity_threshold: float = 0.85,

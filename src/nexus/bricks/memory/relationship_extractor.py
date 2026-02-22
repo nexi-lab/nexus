@@ -15,8 +15,6 @@ Example:
     "Task X blocks Task Y" -> (Task X, BLOCKS, Task Y, 0.90)
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import re
@@ -368,7 +366,10 @@ Output:"""
     async def _call_llm(self, provider: Any, prompt: str) -> str:
         """Call LLM provider and get response."""
         if hasattr(provider, "complete_async"):
-            from nexus.llm import Message, MessageRole
+            import importlib as _il
+
+            _llm = _il.import_module("nexus.bricks.llm")
+            Message, MessageRole = _llm.Message, _llm.MessageRole
 
             messages = [Message(role=MessageRole.USER, content=prompt)]
             response = await provider.complete_async(messages)
@@ -378,7 +379,10 @@ Output:"""
             return str(response)
         elif hasattr(provider, "complete"):
             if hasattr(provider, "config"):
-                from nexus.llm import Message, MessageRole
+                import importlib as _il
+
+                _llm = _il.import_module("nexus.bricks.llm")
+                Message, MessageRole = _llm.Message, _llm.MessageRole
 
                 messages = [Message(role=MessageRole.USER, content=prompt)]
                 response = provider.complete(messages)
@@ -470,9 +474,12 @@ Output:"""
         import os
 
         try:
+            import importlib as _il
+
             from pydantic import SecretStr
 
-            from nexus.llm import LiteLLMProvider, LLMConfig
+            _llm = _il.import_module("nexus.bricks.llm")
+            LiteLLMProvider, LLMConfig = _llm.LiteLLMProvider, _llm.LLMConfig
 
             # Prefer OpenRouter for cost-effective extraction
             if os.environ.get("OPENROUTER_API_KEY"):

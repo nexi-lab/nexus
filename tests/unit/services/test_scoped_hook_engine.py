@@ -3,15 +3,12 @@
 TDD: RED tests written first, then implementation to make them GREEN.
 """
 
-from __future__ import annotations
-
 import asyncio
 
 import pytest
 
 from nexus.plugins.async_hooks import AsyncHookEngine
 from nexus.plugins.hooks import PluginHooks
-from nexus.services.hook_engine import ScopedHookEngine
 from nexus.services.protocols.hook_engine import (
     POST_WRITE,
     PRE_WRITE,
@@ -21,6 +18,7 @@ from nexus.services.protocols.hook_engine import (
     HookResult,
     HookSpec,
 )
+from nexus.system_services.lifecycle.hook_engine import ScopedHookEngine
 
 # ---------------------------------------------------------------------------
 # Test helpers
@@ -491,8 +489,8 @@ class TestAgentLifecycleCleanup:
     @pytest.mark.asyncio
     async def test_state_event_handler_triggers_cleanup(self) -> None:
         """Integration: AgentStateEvent for IDLE triggers cleanup."""
-        from nexus.services.hook_engine import create_agent_cleanup_handler
         from nexus.services.scheduler.events import AgentStateEmitter, AgentStateEvent
+        from nexus.system_services.lifecycle.hook_engine import create_agent_cleanup_handler
 
         engine = _make_engine()
         emitter = AgentStateEmitter()
@@ -519,8 +517,8 @@ class TestAgentLifecycleCleanup:
     @pytest.mark.asyncio
     async def test_state_event_handler_ignores_connected(self) -> None:
         """Cleanup handler ignores transitions TO CONNECTED."""
-        from nexus.services.hook_engine import create_agent_cleanup_handler
         from nexus.services.scheduler.events import AgentStateEmitter, AgentStateEvent
+        from nexus.system_services.lifecycle.hook_engine import create_agent_cleanup_handler
 
         engine = _make_engine()
         emitter = AgentStateEmitter()

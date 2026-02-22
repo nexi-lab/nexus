@@ -10,20 +10,18 @@ Uses create_nexus_fs with CachingBackendWrapper-wrapped backend and
 in-process NexusFS for deterministic, fast e2e testing.
 """
 
-from __future__ import annotations
-
 import time
 import uuid
 from pathlib import Path
 
 import pytest
 
-from nexus.backends.local import LocalBackend
-from nexus.cache.backend_wrapper import (
+from nexus.backends.caching_backend_wrapper import (
     CacheStrategy,
     CacheWrapperConfig,
     CachingBackendWrapper,
 )
+from nexus.backends.local import LocalBackend
 from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs

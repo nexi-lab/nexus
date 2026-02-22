@@ -8,8 +8,6 @@ References:
     - docs/design/KERNEL-ARCHITECTURE.md §1 (service DI)
 """
 
-from __future__ import annotations
-
 from typing import Protocol, runtime_checkable
 
 from nexus.contracts.types import SyncContext, SyncResult

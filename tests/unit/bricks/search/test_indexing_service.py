@@ -5,8 +5,6 @@ Validates content-hash skip logic, delegation to pipeline, directory indexing,
 delete operations, and stats retrieval.
 """
 
-from __future__ import annotations
-
 from contextlib import contextmanager
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock

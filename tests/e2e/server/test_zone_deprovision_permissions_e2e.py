@@ -11,8 +11,6 @@ Tests the full zone lifecycle with actual permission enforcement:
 Issue #2061: Zone Finalizer Protocol for Ordered Cleanup.
 """
 
-from __future__ import annotations
-
 import tempfile
 from pathlib import Path
 
@@ -78,7 +76,7 @@ def app_with_auth():
     )
 
     # Create auth provider with SAME database
-    from nexus.auth.providers.database_local import DatabaseLocalAuth
+    from nexus.bricks.auth.providers.database_local import DatabaseLocalAuth
 
     auth = DatabaseLocalAuth(
         session_factory=SessionLocal,

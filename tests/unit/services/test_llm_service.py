@@ -6,14 +6,12 @@ and error handling for missing dependencies.
 All async service methods are tested via asyncio.run().
 """
 
-from __future__ import annotations
-
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nexus.services.llm_service import LLMService
+from nexus.bricks.llm.llm_service import LLMService
 
 # =============================================================================
 # Fixtures
@@ -96,9 +94,9 @@ class TestProviderCache:
     def test_provider_cache_populated_on_reader_creation(self, service):
         """Creating a reader populates the provider cache."""
         with (
-            patch("nexus.services.llm.llm_document_reader.LLMDocumentReader"),
-            patch("nexus.llm.provider.LiteLLMProvider"),
-            patch("nexus.llm.config.LLMConfig"),
+            patch("nexus.bricks.llm.llm_document_reader.LLMDocumentReader"),
+            patch("nexus.bricks.llm.provider.LiteLLMProvider"),
+            patch("nexus.bricks.llm.config.LLMConfig"),
         ):
             service._get_llm_reader(model="claude-sonnet-4")
             assert len(service._provider_cache) == 1
@@ -109,7 +107,7 @@ class TestProviderCache:
         cache_key = "claude-sonnet-4:" + str(hash(None))
         service._provider_cache[cache_key] = mock_provider
 
-        with patch("nexus.services.llm.llm_document_reader.LLMDocumentReader") as mock_reader_cls:
+        with patch("nexus.bricks.llm.llm_document_reader.LLMDocumentReader") as mock_reader_cls:
             service._get_llm_reader(model="claude-sonnet-4")
             # Should use the cached provider, not create a new one
             call_kwargs = mock_reader_cls.call_args
@@ -133,9 +131,9 @@ class TestGetLLMReader:
     def test_creates_reader_with_nexus_fs(self, service):
         """Successfully creates reader when nexus_fs is set."""
         with (
-            patch("nexus.services.llm.llm_document_reader.LLMDocumentReader") as mock_reader_cls,
-            patch("nexus.llm.provider.LiteLLMProvider"),
-            patch("nexus.llm.config.LLMConfig"),
+            patch("nexus.bricks.llm.llm_document_reader.LLMDocumentReader") as mock_reader_cls,
+            patch("nexus.bricks.llm.provider.LiteLLMProvider"),
+            patch("nexus.bricks.llm.config.LLMConfig"),
         ):
             service._get_llm_reader()
             mock_reader_cls.assert_called_once()
@@ -143,7 +141,7 @@ class TestGetLLMReader:
     def test_passes_custom_provider(self, service):
         """Custom provider is passed directly without caching."""
         custom_provider = MagicMock()
-        with patch("nexus.services.llm.llm_document_reader.LLMDocumentReader") as mock_reader_cls:
+        with patch("nexus.bricks.llm.llm_document_reader.LLMDocumentReader") as mock_reader_cls:
             service._get_llm_reader(provider=custom_provider)
             call_kwargs = mock_reader_cls.call_args[1]
             assert call_kwargs["provider"] is custom_provider
@@ -151,9 +149,9 @@ class TestGetLLMReader:
     def test_passes_system_prompt(self, service):
         """Custom system prompt is forwarded to reader."""
         with (
-            patch("nexus.services.llm.llm_document_reader.LLMDocumentReader") as mock_reader_cls,
-            patch("nexus.llm.provider.LiteLLMProvider"),
-            patch("nexus.llm.config.LLMConfig"),
+            patch("nexus.bricks.llm.llm_document_reader.LLMDocumentReader") as mock_reader_cls,
+            patch("nexus.bricks.llm.provider.LiteLLMProvider"),
+            patch("nexus.bricks.llm.config.LLMConfig"),
         ):
             service._get_llm_reader(system_prompt="You are a helpful expert.")
             call_kwargs = mock_reader_cls.call_args[1]
@@ -162,9 +160,9 @@ class TestGetLLMReader:
     def test_passes_max_context_tokens(self, service):
         """Custom max_context_tokens is forwarded to reader."""
         with (
-            patch("nexus.services.llm.llm_document_reader.LLMDocumentReader") as mock_reader_cls,
-            patch("nexus.llm.provider.LiteLLMProvider"),
-            patch("nexus.llm.config.LLMConfig"),
+            patch("nexus.bricks.llm.llm_document_reader.LLMDocumentReader") as mock_reader_cls,
+            patch("nexus.bricks.llm.provider.LiteLLMProvider"),
+            patch("nexus.bricks.llm.config.LLMConfig"),
         ):
             service._get_llm_reader(max_context_tokens=5000)
             call_kwargs = mock_reader_cls.call_args[1]
@@ -173,9 +171,9 @@ class TestGetLLMReader:
     def test_openrouter_model_uses_custom_provider(self, service):
         """OpenRouter models (anthropic/*) use custom_llm_provider='openrouter'."""
         with (
-            patch("nexus.services.llm.llm_document_reader.LLMDocumentReader"),
-            patch("nexus.llm.provider.LiteLLMProvider"),
-            patch("nexus.llm.config.LLMConfig") as mock_config,
+            patch("nexus.bricks.llm.llm_document_reader.LLMDocumentReader"),
+            patch("nexus.bricks.llm.provider.LiteLLMProvider"),
+            patch("nexus.bricks.llm.config.LLMConfig") as mock_config,
         ):
             service._get_llm_reader(model="anthropic/claude-3-opus")
             call_kwargs = mock_config.call_args[1]

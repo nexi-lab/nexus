@@ -7,8 +7,6 @@ Includes temporal query operators (Issue #1023) for time-based filtering
 inspired by SimpleMem (arXiv:2601.02553).
 """
 
-from __future__ import annotations
-
 import builtins
 import logging
 from collections.abc import Callable
@@ -19,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from nexus.bricks.memory._temporal import parse_datetime, validate_temporal_params
 from nexus.bricks.memory.router import MemoryViewRouter
+from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext, Permission
 
 logger = logging.getLogger(__name__)
@@ -98,6 +97,8 @@ class Memory:
         entity_registry: Any = None,
         llm_provider: Any = None,
         permission_enforcer: Any = None,
+        embedding_provider: Any = None,
+        graph_store_class: type[Any] | None = None,
     ):
         """Initialize Memory API.
 
@@ -110,6 +111,8 @@ class Memory:
             entity_registry: Entity registry instance (MemoryEntityRegistryProtocol).
             llm_provider: Optional LLM provider for reflection/learning.
             permission_enforcer: Optional permission enforcer (MemoryPermissionProtocol).
+            embedding_provider: Optional embedding provider for semantic search (DI).
+            graph_store_class: Optional GraphStore class for entity/relationship storage (DI).
         """
         self.session = session
         self.backend = backend
@@ -117,18 +120,20 @@ class Memory:
         self.user_id = user_id
         self.agent_id = agent_id
         self.llm_provider = llm_provider
+        self._embedding_provider = embedding_provider
+        self._graph_store_class = graph_store_class
 
         # Initialize components — accept injected deps or fall back
         if entity_registry is not None:
             self.entity_registry = entity_registry
         else:
+            import importlib
             from types import SimpleNamespace
 
-            from nexus.rebac.entity_registry import EntityRegistry
+            _er_mod = importlib.import_module("nexus.bricks.rebac.entity_registry")
+            _EntityRegistry = _er_mod.EntityRegistry
 
-            self.entity_registry = EntityRegistry(
-                SimpleNamespace(session_factory=lambda: session)  # type: ignore[arg-type]
-            )
+            self.entity_registry = _EntityRegistry(SimpleNamespace(session_factory=lambda: session))
 
         self.memory_router = MemoryViewRouter(session, self.entity_registry)
 
@@ -136,17 +141,19 @@ class Memory:
         if permission_enforcer is not None:
             self.permission_enforcer = permission_enforcer
         else:
+            import importlib
+
             from sqlalchemy import Engine
 
-            from nexus.rebac.manager import EnhancedReBACManager
-            from nexus.rebac.memory_permission_enforcer import (
-                MemoryPermissionEnforcer,
-            )
+            _rebac_mod = importlib.import_module("nexus.bricks.rebac.manager")
+            _ReBACManager = _rebac_mod.ReBACManager
+            _enforcer_mod = importlib.import_module("nexus.bricks.rebac.memory_permission_enforcer")
+            _MemoryPermissionEnforcer = _enforcer_mod.MemoryPermissionEnforcer
 
             bind = session.get_bind()
             assert isinstance(bind, Engine), "Expected Engine, got Connection"
-            rebac_manager = EnhancedReBACManager(bind)
-            self.permission_enforcer = MemoryPermissionEnforcer(
+            rebac_manager = _ReBACManager(bind)
+            self.permission_enforcer = _MemoryPermissionEnforcer(
                 memory_router=self.memory_router,
                 entity_registry=self.entity_registry,
                 rebac_manager=rebac_manager,
@@ -537,8 +544,12 @@ class Memory:
         import os
 
         from nexus.bricks.memory._sync import run_sync
-        from nexus.bricks.search.graph_store import GraphStore
         from nexus.storage.record_store import SQLAlchemyRecordStore
+
+        GraphStore = self._graph_store_class
+        if GraphStore is None:
+            logger.debug("No graph_store_class injected, skipping graph storage")
+            return
 
         # Get database URL from session's engine
         db_url = os.environ.get("NEXUS_DATABASE_URL", "")
@@ -557,7 +568,7 @@ class Memory:
             return
 
         # Use default zone if not provided
-        effective_zone_id = zone_id or "root"
+        effective_zone_id = zone_id or ROOT_ZONE_ID
 
         async def _do_store() -> None:
             _store = SQLAlchemyRecordStore(db_url=db_url)
@@ -942,23 +953,11 @@ class Memory:
 
         # For semantic/hybrid search, we need embeddings
         if embedding_provider is None:
-            # Try to use a default embedding provider if available
-            try:
-                from nexus.bricks.search.embeddings import create_embedding_provider
-
-                # Try to create an embedding provider (checks for API keys in env)
-                try:
-                    embedding_provider = create_embedding_provider(provider="openrouter")
-                except Exception as e:
-                    # Fall back to keyword search if no provider available
-                    logger.debug(
-                        "Failed to create embedding provider, falling back to keyword search: %s", e
-                    )
-                    return self._keyword_search(
-                        query, scope, memory_type, limit, after_dt, before_dt
-                    )
-            except ImportError:
-                # Fall back to keyword search
+            # Use the DI-injected embedding provider if available
+            embedding_provider = self._embedding_provider
+            if embedding_provider is None:
+                # Fall back to keyword search if no provider available
+                logger.debug("No embedding provider available, falling back to keyword search")
                 return self._keyword_search(query, scope, memory_type, limit, after_dt, before_dt)
 
         # Generate query embedding
@@ -2039,17 +2038,14 @@ class Memory:
 
         from nexus.storage.models import MemoryModel
 
-        # Try to get embedding provider
+        # Try to get embedding provider via DI
         if embedding_provider is None:
-            try:
-                from nexus.bricks.search.embeddings import create_embedding_provider
-
-                embedding_provider = create_embedding_provider(provider="openrouter")
-            except Exception as e:
+            embedding_provider = self._embedding_provider
+            if embedding_provider is None:
                 raise ValueError(
-                    f"Failed to create embedding provider: {e}. "
-                    "Please provide an embedding provider or set OPENROUTER_API_KEY env var."
-                ) from e
+                    "No embedding provider available for index_memories_async(). "
+                    "Pass embedding_provider= or inject via Memory(..., embedding_provider=...)."
+                )
 
         # Query memories without embeddings
         stmt = select(MemoryModel).where(MemoryModel.embedding.is_(None))

@@ -15,8 +15,6 @@ Design reference:
     - Issue #2077: Deduplicate backend wrapper boilerplate
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -36,9 +34,19 @@ class DelegatingBackend(Backend):
     Delegates every Backend property and method to ``_inner`` by default.
     Concrete wrappers override only the operations they intercept.
 
-    Data-transforming wrappers (compression, encryption) override
-    ``_transform_on_write`` and ``_transform_on_read`` instead of
-    ``write_content`` / ``read_content`` / ``batch_read_content``.
+    Wrapper Patterns:
+
+        **Data-transform wrappers** (CompressedStorage, EncryptedStorage):
+        Override ``_transform_on_write`` and ``_transform_on_read`` hooks.
+        DelegatingBackend handles write_content/read_content/batch_read_content
+        orchestration, calling the hooks at the right points. These wrappers
+        never touch directory ops or connection lifecycle.
+
+        **Behavioral wrappers** (CachingBackendWrapper, LoggingBackendWrapper):
+        Override full methods directly (read_content, write_content, etc.)
+        to add caching, logging, or other cross-cutting behavior. These
+        wrappers bypass the transform hooks entirely and manage delegation
+        to ``_inner`` themselves.
 
     Recursive Wrapping Rules (PART 16):
         1. Wrapper MUST implement the same Protocol as ``inner``.
@@ -50,6 +58,7 @@ class DelegatingBackend(Backend):
 
     def __init__(self, inner: Backend) -> None:
         self._inner = inner
+        self._cached_capabilities = inner.capabilities
 
     # === Name & Chain Introspection ===
 
@@ -104,6 +113,17 @@ class DelegatingBackend(Backend):
     def supports_parallel_mmap_read(self) -> bool:
         return self._inner.supports_parallel_mmap_read
 
+    # === Capability Discovery (Issue #2069) ===
+
+    @property
+    def capabilities(self) -> frozenset:
+        """Delegate to inner backend's capabilities (cached in __init__)."""
+        return self._cached_capabilities
+
+    def has_capability(self, cap: object) -> bool:
+        """Check capability using cached frozenset."""
+        return cap in self._cached_capabilities
+
     # === Transform Hooks (override in data-transforming wrappers) ===
 
     def _transform_on_write(self, content: bytes) -> bytes:
@@ -135,8 +155,8 @@ class DelegatingBackend(Backend):
     # === Content Operations (with hook support) ===
 
     def write_content(
-        self, content: bytes, context: OperationContext | None = None
-    ) -> HandlerResponse[str]:
+        self, content: bytes, context: "OperationContext | None" = None
+    ) -> "HandlerResponse[str]":
         """Transform content via ``_transform_on_write``, then write to inner.
 
         If ``_transform_on_write`` raises, returns an error response.
@@ -153,8 +173,8 @@ class DelegatingBackend(Backend):
         return self._inner.write_content(transformed, context=context)
 
     def read_content(
-        self, content_hash: str, context: OperationContext | None = None
-    ) -> HandlerResponse[bytes]:
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> "HandlerResponse[bytes]":
         """Read from inner, then transform via ``_transform_on_read``."""
         from nexus.lib.response import HandlerResponse
 
@@ -178,9 +198,9 @@ class DelegatingBackend(Backend):
     def batch_read_content(
         self,
         content_hashes: list[str],
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
         *,
-        contexts: dict[str, OperationContext] | None = None,
+        contexts: "dict[str, OperationContext] | None" = None,
     ) -> dict[str, bytes | None]:
         """Read batch from inner, then transform each item via ``_transform_on_read``."""
         raw_results = self._inner.batch_read_content(
@@ -207,23 +227,23 @@ class DelegatingBackend(Backend):
         return transformed
 
     def delete_content(
-        self, content_hash: str, context: OperationContext | None = None
-    ) -> HandlerResponse[None]:
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> "HandlerResponse[None]":
         return self._inner.delete_content(content_hash, context=context)
 
     def content_exists(
-        self, content_hash: str, context: OperationContext | None = None
-    ) -> HandlerResponse[bool]:
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> "HandlerResponse[bool]":
         return self._inner.content_exists(content_hash, context=context)
 
     def get_content_size(
-        self, content_hash: str, context: OperationContext | None = None
-    ) -> HandlerResponse[int]:
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> "HandlerResponse[int]":
         return self._inner.get_content_size(content_hash, context=context)
 
     def get_ref_count(
-        self, content_hash: str, context: OperationContext | None = None
-    ) -> HandlerResponse[int]:
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> "HandlerResponse[int]":
         return self._inner.get_ref_count(content_hash, context=context)
 
     # === Directory Operations (delegate to inner) ===
@@ -233,35 +253,37 @@ class DelegatingBackend(Backend):
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: OperationContext | None = None,
-    ) -> HandlerResponse[None]:
+        context: "OperationContext | None" = None,
+    ) -> "HandlerResponse[None]":
         return self._inner.mkdir(path, parents=parents, exist_ok=exist_ok, context=context)
 
     def rmdir(
         self,
         path: str,
         recursive: bool = False,
-        context: OperationContext | None = None,
-    ) -> HandlerResponse[None]:
+        context: "OperationContext | None" = None,
+    ) -> "HandlerResponse[None]":
         return self._inner.rmdir(path, recursive=recursive, context=context)
 
     def is_directory(
-        self, path: str, context: OperationContext | None = None
-    ) -> HandlerResponse[bool]:
+        self, path: str, context: "OperationContext | None" = None
+    ) -> "HandlerResponse[bool]":
         return self._inner.is_directory(path, context=context)
 
-    def list_dir(self, path: str, context: OperationContext | None = None) -> list[str]:
+    def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:
         return self._inner.list_dir(path, context=context)
 
     # === Connection Lifecycle (delegate to inner) ===
 
-    def connect(self, context: OperationContext | None = None) -> HandlerStatusResponse:
+    def connect(self, context: "OperationContext | None" = None) -> "HandlerStatusResponse":
         return self._inner.connect(context=context)
 
-    def disconnect(self, context: OperationContext | None = None) -> None:
+    def disconnect(self, context: "OperationContext | None" = None) -> None:
         self._inner.disconnect(context=context)
 
-    def check_connection(self, context: OperationContext | None = None) -> HandlerStatusResponse:
+    def check_connection(
+        self, context: "OperationContext | None" = None
+    ) -> "HandlerStatusResponse":
         return self._inner.check_connection(context=context)
 
     # === Fallback for any remaining/future Backend methods ===

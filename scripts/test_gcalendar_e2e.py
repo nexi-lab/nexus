@@ -91,7 +91,7 @@ def test_validation_errors(backend) -> bool:
     """Test that validation errors are properly raised."""
     print_header("Test 2: Validation Errors")
 
-    from nexus.connectors.base import ValidationError
+    from nexus.backends.connectors.base import ValidationError
 
     tests_passed = True
 
@@ -380,6 +380,7 @@ def main():
 
     # Import after path setup
     from nexus.backends.gcalendar_connector import GoogleCalendarConnectorBackend
+    from nexus.constants import ROOT_ZONE_ID
     from nexus.contracts.types import OperationContext
 
     # Create backend
@@ -394,7 +395,7 @@ def main():
     context = OperationContext(
         user_id=user_email,
         groups=[],
-        zone_id="default",
+        zone_id=ROOT_ZONE_ID,
     )
 
     # Create temp directory for output

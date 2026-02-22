@@ -11,8 +11,6 @@ Features:
 - Configurable concurrency and progress reporting
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import uuid

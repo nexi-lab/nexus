@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from nexus.core.filesystem import NexusFilesystem
+from nexus.services.protocols.filesystem import NexusFilesystem
 
 
 @dataclass

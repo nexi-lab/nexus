@@ -18,12 +18,13 @@ Requires real EnhancedReBACManager + NamespaceManager + EntityRegistry.
 
 import pytest
 
-from nexus.rebac.entity_registry import EntityRegistry
-from nexus.rebac.manager import EnhancedReBACManager
+from nexus.bricks.delegation.errors import DelegationChainError, EscalationError
+from nexus.bricks.delegation.models import DelegationMode, DelegationStatus
+from nexus.bricks.delegation.service import DelegationService
+from nexus.bricks.rebac.entity_registry import EntityRegistry
+from nexus.bricks.rebac.manager import EnhancedReBACManager
+from nexus.constants import ROOT_ZONE_ID
 from nexus.services.agents.agent_registry import AgentRegistry
-from nexus.services.delegation.errors import DelegationChainError, EscalationError
-from nexus.services.delegation.models import DelegationMode, DelegationStatus
-from nexus.services.delegation.service import DelegationService
 from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
 # ---------------------------------------------------------------------------
@@ -370,7 +371,7 @@ class TestFullDelegationLifecycle:
             worker_id="worker_sub_b",
             worker_name="Sub Worker B",
             delegation_mode=DelegationMode.COPY,
-            zone_id="default",
+            zone_id=ROOT_ZONE_ID,
             can_sub_delegate=True,
             intent="Coordinate sub-tasks",
         )
@@ -382,7 +383,7 @@ class TestFullDelegationLifecycle:
             worker_id="worker_sub_c",
             worker_name="Sub Worker C",
             delegation_mode=DelegationMode.COPY,
-            zone_id="default",
+            zone_id=ROOT_ZONE_ID,
             intent="Execute specific task",
         )
 
@@ -510,7 +511,7 @@ class TestFullDelegationLifecycle:
             worker_id="worker_intent",
             worker_name="Intent Worker",
             delegation_mode=DelegationMode.COPY,
-            zone_id="default",
+            zone_id=ROOT_ZONE_ID,
             intent="Run security scan on project files",
         )
 
@@ -535,7 +536,7 @@ class TestFullDelegationLifecycle:
                 worker_id=f"worker_page_{i}",
                 worker_name=f"Page Worker {i}",
                 delegation_mode=DelegationMode.COPY,
-                zone_id="default",
+                zone_id=ROOT_ZONE_ID,
             )
 
         # Get first page

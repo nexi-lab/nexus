@@ -5,8 +5,6 @@ per the A2A specification.  Each exception also carries a
 ``grpc_status`` attribute for the gRPC transport binding (#1726).
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 import grpc

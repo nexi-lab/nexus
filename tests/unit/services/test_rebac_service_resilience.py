@@ -4,21 +4,19 @@ Covers failure scenarios, cache fallback, write operation behavior,
 circuit recovery, and business exception pass-through.
 """
 
-from __future__ import annotations
-
 import asyncio
 from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy.exc import OperationalError
 
-from nexus.contracts.exceptions import CircuitOpenError
-from nexus.rebac.circuit_breaker import (
+from nexus.bricks.rebac.circuit_breaker import (
     AsyncCircuitBreaker,
     CircuitBreakerConfig,
     CircuitState,
 )
-from nexus.services.rebac_service import ReBACService
+from nexus.bricks.rebac.rebac_service import ReBACService
+from nexus.contracts.exceptions import CircuitOpenError
 
 # =========================================================================
 # Fixtures

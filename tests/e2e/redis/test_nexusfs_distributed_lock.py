@@ -13,8 +13,6 @@ Requirements:
 Related: Issue #1106 Block 3
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 import os
@@ -30,11 +28,10 @@ from nexus.storage.raft_metadata_store import RaftMetadataStore
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
 
-# Skip: RedisLockManager was removed from nexus.core.distributed_lock
+# Skip: RedisLockManager was removed from nexus.lib.distributed_lock
 pytestmark = pytest.mark.skip(
     reason="TODO: https://github.com/nexi-lab/nexus/issues/1702 — RedisLockManager removed from source; tests need rewrite for RaftLockManager",
 )
-
 
 # =============================================================================
 # Fixtures
@@ -51,7 +48,7 @@ def temp_dir():
 @pytest.fixture
 async def redis_client():
     """Create a DragonflyClient for testing."""
-    from nexus.cache.dragonfly import DragonflyClient
+    from nexus.bricks.cache.dragonfly import DragonflyClient
 
     redis_url = os.environ.get(
         "NEXUS_DRAGONFLY_COORDINATION_URL",
@@ -76,8 +73,8 @@ async def redis_client():
 async def nx_with_lock(temp_dir, redis_client, isolated_db):
     """Create a NexusFS instance with distributed lock manager configured."""
     from nexus.backends.passthrough import PassthroughBackend
-    from nexus.core.distributed_lock import RedisLockManager
     from nexus.core.nexus_fs import NexusFS
+    from nexus.lib.distributed_lock import RedisLockManager
 
     backend = PassthroughBackend(base_path=temp_dir)
     # Disable permission enforcement for tests
@@ -104,8 +101,8 @@ async def nx_pair_with_lock(temp_dir, redis_client, isolated_db, tmp_path):
     (like Postgres in production). The lock manager is also shared via Redis.
     """
     from nexus.backends.passthrough import PassthroughBackend
-    from nexus.core.distributed_lock import RedisLockManager
     from nexus.core.nexus_fs import NexusFS
+    from nexus.lib.distributed_lock import RedisLockManager
 
     # Both instances use the same backend (shared storage)
     backend = PassthroughBackend(base_path=temp_dir)
@@ -146,9 +143,9 @@ def nx_sync_with_lock(temp_dir, isolated_db):
     This fixture is suitable for testing write(lock=True) in pure sync context.
     """
     from nexus.backends.passthrough import PassthroughBackend
-    from nexus.cache.dragonfly import DragonflyClient
-    from nexus.core.distributed_lock import RedisLockManager
+    from nexus.bricks.cache.dragonfly import DragonflyClient
     from nexus.core.nexus_fs import NexusFS
+    from nexus.lib.distributed_lock import RedisLockManager
 
     redis_url = os.environ.get(
         "NEXUS_DRAGONFLY_COORDINATION_URL",
@@ -212,7 +209,7 @@ class TestLockedContextManager:
     """Tests for the locked() async context manager."""
 
     @pytest.mark.asyncio
-    async def test_locked_basic_usage(self, nx_with_lock: NexusFS):
+    async def test_locked_basic_usage(self, nx_with_lock: "NexusFS"):
         """Test basic locked() context manager usage."""
         # Write initial content
         nx_with_lock.write("/test.txt", b"initial")
@@ -231,7 +228,7 @@ class TestLockedContextManager:
         assert nx_with_lock.read("/test.txt") == b"modified"
 
     @pytest.mark.asyncio
-    async def test_locked_releases_on_exception(self, nx_with_lock: NexusFS):
+    async def test_locked_releases_on_exception(self, nx_with_lock: "NexusFS"):
         """Test that lock is released even when exception occurs."""
         nx_with_lock.write("/test.txt", b"content")
 
@@ -298,7 +295,7 @@ class TestWriteWithLock:
     These tests use the sync fixture nx_sync_with_lock.
     """
 
-    def test_write_with_lock_basic(self, nx_sync_with_lock: NexusFS):
+    def test_write_with_lock_basic(self, nx_sync_with_lock: "NexusFS"):
         """Test basic write with lock=True."""
         result = nx_sync_with_lock.write("/test.txt", b"content", lock=True)
 
@@ -306,7 +303,7 @@ class TestWriteWithLock:
         assert result["version"] == 1
         assert nx_sync_with_lock.read("/test.txt") == b"content"
 
-    def test_write_with_lock_false_default(self, nx_sync_with_lock: NexusFS):
+    def test_write_with_lock_false_default(self, nx_sync_with_lock: "NexusFS"):
         """Test that lock=False is the default (backward compatible)."""
         # This should work without any lock
         result = nx_sync_with_lock.write("/test.txt", b"content")
@@ -314,7 +311,7 @@ class TestWriteWithLock:
         assert result["etag"] is not None
         assert nx_sync_with_lock.read("/test.txt") == b"content"
 
-    def test_write_lock_from_async_context_raises(self, nx_with_lock: NexusFS):
+    def test_write_lock_from_async_context_raises(self, nx_with_lock: "NexusFS"):
         """Test that write(lock=True) raises error when called from async context."""
 
         async def try_write_with_lock():
@@ -323,7 +320,7 @@ class TestWriteWithLock:
 
         asyncio.run(try_write_with_lock())
 
-    def test_write_with_lock_timeout_raises(self, nx_sync_with_lock: NexusFS):
+    def test_write_with_lock_timeout_raises(self, nx_sync_with_lock: "NexusFS"):
         """Test that write(lock=True, lock_timeout=0.1) raises LockTimeout when contended."""
         import threading
 
@@ -360,7 +357,7 @@ class TestWriteWithLock:
         finally:
             t.join(timeout=10)
 
-    def test_write_with_lock_and_etag(self, nx_sync_with_lock: NexusFS):
+    def test_write_with_lock_and_etag(self, nx_sync_with_lock: "NexusFS"):
         """Test write(lock=True, if_match=etag) — lock + OCC combination."""
         result = nx_sync_with_lock.write("/occ.txt", b"v1", lock=True)
         etag = result["etag"]
@@ -387,9 +384,9 @@ class TestWriteWithLock:
         import time
 
         from nexus.backends.passthrough import PassthroughBackend
-        from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.bricks.cache.dragonfly import DragonflyClient
         from nexus.core.nexus_fs import NexusFS
+        from nexus.lib.distributed_lock import RedisLockManager
 
         redis_url = os.environ.get(
             "NEXUS_DRAGONFLY_COORDINATION_URL",
@@ -472,7 +469,7 @@ class TestAtomicUpdate:
     """Tests for atomic_update() method."""
 
     @pytest.mark.asyncio
-    async def test_atomic_update_basic(self, nx_with_lock: NexusFS):
+    async def test_atomic_update_basic(self, nx_with_lock: "NexusFS"):
         """Test basic atomic_update usage."""
         # Initialize with JSON content
         nx_with_lock.write("/counter.json", b'{"count": 0}')
@@ -488,7 +485,7 @@ class TestAtomicUpdate:
         assert content["count"] == 1
 
     @pytest.mark.asyncio
-    async def test_atomic_update_append(self, nx_with_lock: NexusFS):
+    async def test_atomic_update_append(self, nx_with_lock: "NexusFS"):
         """Test atomic_update for appending content."""
         nx_with_lock.write("/log.txt", b"line1\n")
 
@@ -500,7 +497,7 @@ class TestAtomicUpdate:
         assert nx_with_lock.read("/log.txt") == b"line1\nline2\n"
 
     @pytest.mark.asyncio
-    async def test_atomic_update_concurrent_no_lost_updates(self, nx_with_lock: NexusFS):
+    async def test_atomic_update_concurrent_no_lost_updates(self, nx_with_lock: "NexusFS"):
         """Test that concurrent atomic_update doesn't lose updates.
 
         Uses a single NexusFS instance with multiple concurrent tasks.
@@ -529,7 +526,7 @@ class TestAtomicUpdate:
         assert content["count"] == 20
 
     @pytest.mark.asyncio
-    async def test_atomic_update_file_not_found(self, nx_with_lock: NexusFS):
+    async def test_atomic_update_file_not_found(self, nx_with_lock: "NexusFS"):
         """Test atomic_update on non-existent file raises error."""
         from nexus.contracts.exceptions import NexusFileNotFoundError
 
@@ -540,7 +537,7 @@ class TestAtomicUpdate:
             )
 
     @pytest.mark.asyncio
-    async def test_atomic_update_transform_error_releases_lock(self, nx_with_lock: NexusFS):
+    async def test_atomic_update_transform_error_releases_lock(self, nx_with_lock: "NexusFS"):
         """Test that lock is released when transform function raises."""
         nx_with_lock.write("/test.txt", b"content")
 
@@ -639,7 +636,7 @@ class TestEdgeCases:
     """Edge cases and error handling tests."""
 
     @pytest.mark.asyncio
-    async def test_locked_on_new_file(self, nx_with_lock: NexusFS):
+    async def test_locked_on_new_file(self, nx_with_lock: "NexusFS"):
         """Test locked() on a path that doesn't exist yet."""
         # Lock a non-existent path, then create the file
         async with nx_with_lock.events_service.locked("/new_file.txt") as lock_id:
@@ -649,7 +646,7 @@ class TestEdgeCases:
         assert nx_with_lock.read("/new_file.txt") == b"created"
 
     @pytest.mark.asyncio
-    async def test_nested_locked_same_path_reentrant(self, nx_with_lock: NexusFS):
+    async def test_nested_locked_same_path_reentrant(self, nx_with_lock: "NexusFS"):
         """Test that nested locked() on same path works (if reentrant)."""
         nx_with_lock.write("/test.txt", b"content")
 
@@ -688,7 +685,7 @@ class TestEdgeCases:
         nx.close()
 
     @pytest.mark.asyncio
-    async def test_locked_custom_ttl(self, nx_with_lock: NexusFS):
+    async def test_locked_custom_ttl(self, nx_with_lock: "NexusFS"):
         """Test locked() with custom TTL."""
         nx_with_lock.write("/test.txt", b"content")
 
@@ -699,7 +696,7 @@ class TestEdgeCases:
             await asyncio.sleep(0.1)
 
     @pytest.mark.asyncio
-    async def test_atomic_update_preserves_binary(self, nx_with_lock: NexusFS):
+    async def test_atomic_update_preserves_binary(self, nx_with_lock: "NexusFS"):
         """Test atomic_update preserves binary content correctly."""
         binary_content = bytes(range(256))
         nx_with_lock.write("/binary.bin", binary_content)
@@ -723,7 +720,7 @@ class TestPerformance:
 
     @pytest.mark.asyncio
     @pytest.mark.slow
-    async def test_many_sequential_atomic_updates(self, nx_with_lock: NexusFS):
+    async def test_many_sequential_atomic_updates(self, nx_with_lock: "NexusFS"):
         """Test many sequential atomic updates."""
         nx_with_lock.write("/counter.json", b'{"count": 0}')
 
@@ -738,7 +735,7 @@ class TestPerformance:
 
     @pytest.mark.asyncio
     @pytest.mark.slow
-    async def test_high_contention_atomic_updates(self, nx_with_lock: NexusFS):
+    async def test_high_contention_atomic_updates(self, nx_with_lock: "NexusFS"):
         """Test high contention with many concurrent atomic updates.
 
         Uses a single NexusFS instance with multiple concurrent tasks.
@@ -790,9 +787,9 @@ class TestMultiThreadingContention:
         import threading
 
         from nexus.backends.passthrough import PassthroughBackend
-        from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.bricks.cache.dragonfly import DragonflyClient
         from nexus.core.nexus_fs import NexusFS
+        from nexus.lib.distributed_lock import RedisLockManager
 
         redis_url = os.environ.get(
             "NEXUS_DRAGONFLY_COORDINATION_URL",
@@ -871,8 +868,8 @@ class TestMultiThreadingContention:
         import threading
         import time
 
-        from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.bricks.cache.dragonfly import DragonflyClient
+        from nexus.lib.distributed_lock import RedisLockManager
 
         redis_url = os.environ.get(
             "NEXUS_DRAGONFLY_COORDINATION_URL",
@@ -957,8 +954,8 @@ class TestMultiThreadingContention:
         import threading
         import time
 
-        from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.bricks.cache.dragonfly import DragonflyClient
+        from nexus.lib.distributed_lock import RedisLockManager
 
         redis_url = os.environ.get(
             "NEXUS_DRAGONFLY_COORDINATION_URL",
@@ -1047,8 +1044,8 @@ class TestMultiThreadingContention:
         """
         import threading
 
-        from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.distributed_lock import RedisLockManager
+        from nexus.bricks.cache.dragonfly import DragonflyClient
+        from nexus.lib.distributed_lock import RedisLockManager
 
         redis_url = os.environ.get(
             "NEXUS_DRAGONFLY_COORDINATION_URL",
@@ -1173,10 +1170,10 @@ class TestLockIsolation:
         Zone A's lock on /file.txt should NOT block Zone B's lock on /file.txt.
         """
         from nexus.backends.passthrough import PassthroughBackend
-        from nexus.cache.dragonfly import DragonflyClient
+        from nexus.bricks.cache.dragonfly import DragonflyClient
         from nexus.contracts.types import OperationContext
-        from nexus.core.distributed_lock import RedisLockManager
         from nexus.core.nexus_fs import NexusFS
+        from nexus.lib.distributed_lock import RedisLockManager
 
         redis_url = os.environ.get(
             "NEXUS_DRAGONFLY_COORDINATION_URL",

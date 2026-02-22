@@ -7,8 +7,6 @@ Hierarchy:
     DuplicateDisputeError     - Dispute already exists for exchange
 """
 
-from __future__ import annotations
-
 
 class DuplicateFeedbackError(Exception):
     """Raised when duplicate feedback is submitted for the same exchange+rater."""

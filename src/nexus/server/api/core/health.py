@@ -3,8 +3,6 @@
 Extracted from fastapi_server.py (#1602).
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 
@@ -101,7 +99,7 @@ async def health_check_detailed(request: Request) -> dict[str, Any]:
     if has_rebac:
         cb = getattr(state, "rebac_circuit_breaker", None)
         if cb:
-            from nexus.rebac.circuit_breaker import CircuitState
+            from nexus.bricks.rebac.circuit_breaker import CircuitState
 
             cb_state = cb.state
             if cb_state == CircuitState.CLOSED:
@@ -146,8 +144,8 @@ async def health_check_detailed(request: Request) -> dict[str, Any]:
             health["components"]["reactive_subscriptions"] = {
                 "status": "healthy",
                 "total_subscriptions": reactive_stats["total_subscriptions"],
-                "read_set_subscriptions": reactive_stats["read_set_subscriptions"],
-                "pattern_subscriptions": reactive_stats["pattern_subscriptions"],
+                "connections_tracked": reactive_stats["connections_tracked"],
+                "lookup_count": reactive_stats["lookup_count"],
                 "avg_lookup_ms": reactive_stats["avg_lookup_ms"],
                 "registry": reactive_stats["registry"],
             }

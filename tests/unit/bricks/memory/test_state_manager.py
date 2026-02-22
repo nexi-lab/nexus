@@ -5,8 +5,7 @@ deactivate, invalidate, revalidate, and batch operations — before the
 Memory service gets moved to the brick structure.
 """
 
-from __future__ import annotations
-
+import importlib
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -20,8 +19,10 @@ from nexus.bricks.memory.router import MemoryViewRouter
 from nexus.bricks.memory.service import Memory
 from nexus.bricks.memory.state import MemoryStateManager
 from nexus.contracts.types import OperationContext
-from nexus.rebac.entity_registry import EntityRegistry
 from nexus.storage.models import Base
+
+_er_mod = importlib.import_module("nexus.bricks.rebac.entity_registry")
+EntityRegistry = _er_mod.EntityRegistry
 
 # ---------------------------------------------------------------------------
 # Fixtures

@@ -10,8 +10,6 @@ Tests the full IPC flow through the actual FastAPI server:
 Uses a custom auth_server fixture that starts nexus serve with --api-key.
 """
 
-from __future__ import annotations
-
 import json
 import os
 import signal
@@ -378,10 +376,10 @@ class TestIPCLocal:
     @pytest.mark.asyncio
     async def test_full_lifecycle_no_server(self) -> None:
         """Full IPC lifecycle using InMemoryVFS."""
-        from nexus.ipc.delivery import MessageProcessor, MessageSender
-        from nexus.ipc.envelope import MessageEnvelope, MessageType
-        from nexus.ipc.provisioning import AgentProvisioner
-        from tests.unit.ipc.fakes import InMemoryEventPublisher, InMemoryVFS
+        from nexus.bricks.ipc.delivery import MessageProcessor, MessageSender
+        from nexus.bricks.ipc.envelope import MessageEnvelope, MessageType
+        from nexus.bricks.ipc.provisioning import AgentProvisioner
+        from tests.unit.bricks.ipc.fakes import InMemoryEventPublisher, InMemoryVFS
 
         vfs = InMemoryVFS()
         publisher = InMemoryEventPublisher()
@@ -419,11 +417,11 @@ class TestIPCLocal:
     @pytest.mark.asyncio
     async def test_dead_letter_flow(self) -> None:
         """Message goes to dead_letter when handler fails."""
-        from nexus.ipc.conventions import dead_letter_path, inbox_path
-        from nexus.ipc.delivery import MessageProcessor, MessageSender
-        from nexus.ipc.envelope import MessageEnvelope, MessageType
-        from nexus.ipc.provisioning import AgentProvisioner
-        from tests.unit.ipc.fakes import InMemoryVFS
+        from nexus.bricks.ipc.conventions import dead_letter_path, inbox_path
+        from nexus.bricks.ipc.delivery import MessageProcessor, MessageSender
+        from nexus.bricks.ipc.envelope import MessageEnvelope, MessageType
+        from nexus.bricks.ipc.provisioning import AgentProvisioner
+        from tests.unit.bricks.ipc.fakes import InMemoryVFS
 
         vfs = InMemoryVFS()
         zone = "e2e-local"
@@ -457,9 +455,9 @@ class TestIPCLocal:
     @pytest.mark.asyncio
     async def test_discovery_flow(self) -> None:
         """End-to-end discovery: provision → ls → get card → find by skill."""
-        from nexus.ipc.discovery import AgentDiscovery
-        from nexus.ipc.provisioning import AgentProvisioner
-        from tests.unit.ipc.fakes import InMemoryVFS
+        from nexus.bricks.ipc.discovery import AgentDiscovery
+        from nexus.bricks.ipc.provisioning import AgentProvisioner
+        from tests.unit.bricks.ipc.fakes import InMemoryVFS
 
         vfs = InMemoryVFS()
         zone = "e2e-local"
@@ -486,13 +484,13 @@ class TestIPCLocal:
         """E2E: cross-zone IPC with permissions — agent-a (zone-1) → agent-b (zone-2)."""
         from typing import Any
 
-        from nexus.ipc.delivery import MessageProcessor, MessageSender
-        from nexus.ipc.envelope import MessageEnvelope, MessageType
-        from nexus.ipc.exceptions import CrossZoneDeliveryError
-        from nexus.ipc.provisioning import AgentProvisioner
-        from nexus.ipc.storage.cross_zone_driver import CrossZoneStorageDriver
+        from nexus.bricks.ipc.delivery import MessageProcessor, MessageSender
+        from nexus.bricks.ipc.envelope import MessageEnvelope, MessageType
+        from nexus.bricks.ipc.exceptions import CrossZoneDeliveryError
+        from nexus.bricks.ipc.provisioning import AgentProvisioner
+        from nexus.bricks.ipc.storage.cross_zone_driver import CrossZoneStorageDriver
         from nexus.services.protocols.agent_registry import AgentInfo
-        from tests.unit.ipc.fakes import (
+        from tests.unit.bricks.ipc.fakes import (
             InMemoryEventPublisher,
             InMemoryHotPathPublisher,
             InMemoryStorageDriver,

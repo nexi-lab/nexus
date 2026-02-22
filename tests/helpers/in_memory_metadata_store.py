@@ -5,13 +5,11 @@ including rename_path and set_file_metadata which are not part of the
 base MetastoreABC ABC but are used via duck-typing.
 """
 
-from __future__ import annotations
-
 from collections.abc import Sequence
 from typing import Any
 
-from nexus.core.metadata import FileMetadata
-from nexus.core.metastore import MetastoreABC
+from nexus.contracts.metadata import FileMetadata
+from nexus.core.metastore import CasResult, MetastoreABC
 
 
 class InMemoryMetastore(MetastoreABC):
@@ -21,20 +19,36 @@ class InMemoryMetastore(MetastoreABC):
         self._store: dict[str, FileMetadata] = {}
         self._file_metadata: dict[str, dict[str, Any]] = {}  # path -> {key: value}
 
-    def get(self, path: str) -> FileMetadata | None:
+    def get(self, path: str, **kwargs: Any) -> FileMetadata | None:
         return self._store.get(path)
 
-    def put(self, metadata: FileMetadata) -> None:
+    def put(self, metadata: FileMetadata, **kwargs: Any) -> int | None:
         self._store[metadata.path] = metadata
+        return None
 
-    def delete(self, path: str) -> dict[str, Any] | None:
+    def put_if_version(
+        self,
+        metadata: FileMetadata,
+        expected_version: int,
+        *,
+        consistency: str = "sc",
+    ) -> CasResult:
+        """Atomic CAS — trivially safe under Python GIL."""
+        current = self._store.get(metadata.path)
+        current_ver = current.version if current else 0
+        if current_ver != expected_version:
+            return CasResult(success=False, current_version=current_ver)
+        self._store[metadata.path] = metadata
+        return CasResult(success=True, current_version=metadata.version)
+
+    def delete(self, path: str, **kwargs: Any) -> dict[str, Any] | None:
         if path in self._store:
             del self._store[path]
             self._file_metadata.pop(path, None)
             return {"deleted": path}
         return None
 
-    def exists(self, path: str) -> bool:
+    def exists(self, path: str, **kwargs: Any) -> bool:
         return path in self._store
 
     def list(self, prefix: str = "", recursive: bool = True, **kwargs: Any) -> list[FileMetadata]:
@@ -45,12 +59,12 @@ class InMemoryMetastore(MetastoreABC):
             results = [m for m in results if m.path.rstrip("/").count("/") == depth]
         return results
 
-    def delete_batch(self, paths: Sequence[str]) -> None:
+    def delete_batch(self, paths: Sequence[str], **kwargs: Any) -> None:
         for path in paths:
             self._store.pop(path, None)
             self._file_metadata.pop(path, None)
 
-    def put_batch(self, metadata_list: Sequence[FileMetadata]) -> None:
+    def put_batch(self, metadata_list: Sequence[FileMetadata], **kwargs: Any) -> None:
         for metadata in metadata_list:
             self._store[metadata.path] = metadata
 

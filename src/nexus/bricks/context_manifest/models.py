@@ -13,8 +13,6 @@ References:
     - Stripe Minions: https://stripe.dev/blog/minions-stripes-one-shot-end-to-end-coding-agents
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal, Protocol, runtime_checkable
 
@@ -26,7 +24,6 @@ from pydantic import BaseModel, ConfigDict, Discriminator, Field
 
 DEFAULT_TIMEOUT_SECONDS: float = 4.0  # Must fit within ManifestResolver.max_resolve_seconds (5.0s)
 DEFAULT_MAX_RESULT_BYTES: int = 1_048_576  # 1 MB
-
 
 # ===========================================================================
 # ContextSourceProtocol — structural interface for all source types (CQ-3)
@@ -169,7 +166,6 @@ ContextSource = Annotated[
 Pydantic dispatches on the ``type`` field to select the correct model.
 """
 
-
 # ===========================================================================
 # Result types (frozen dataclasses)
 # ===========================================================================
@@ -202,7 +198,7 @@ class SourceResult:
         source_name: str,
         data: Any,
         elapsed_ms: float = 0.0,
-    ) -> SourceResult:
+    ) -> "SourceResult":
         """Create a successful result."""
         return cls(
             source_type=source_type,
@@ -219,7 +215,7 @@ class SourceResult:
         source_name: str,
         error_message: str,
         elapsed_ms: float = 0.0,
-    ) -> SourceResult:
+    ) -> "SourceResult":
         """Create an error result."""
         return cls(
             source_type=source_type,
@@ -237,7 +233,7 @@ class SourceResult:
         source_name: str,
         error_message: str,
         elapsed_ms: float = 0.0,
-    ) -> SourceResult:
+    ) -> "SourceResult":
         """Create a timeout result."""
         return cls(
             source_type=source_type,
@@ -254,7 +250,7 @@ class SourceResult:
         source_type: str,
         source_name: str,
         error_message: str,
-    ) -> SourceResult:
+    ) -> "SourceResult":
         """Create a skipped result (e.g., no executor registered)."""
         return cls(
             source_type=source_type,
@@ -272,7 +268,7 @@ class SourceResult:
         data: Any,
         error_message: str,
         elapsed_ms: float = 0.0,
-    ) -> SourceResult:
+    ) -> "SourceResult":
         """Create a truncated result."""
         return cls(
             source_type=source_type,
@@ -294,7 +290,7 @@ class ManifestResult:
         total_ms: Total wall-clock time for manifest resolution in milliseconds.
     """
 
-    sources: tuple[SourceResult, ...]
+    sources: "tuple[SourceResult, ...]"
     resolved_at: str
     total_ms: float
 
@@ -311,7 +307,7 @@ class ManifestResolutionError(Exception):
         failed_sources: Tuple of SourceResult objects for the failed required sources.
     """
 
-    def __init__(self, failed_sources: tuple[SourceResult, ...]) -> None:
+    def __init__(self, failed_sources: "tuple[SourceResult, ...]") -> None:
         self.failed_sources = failed_sources
         names = ", ".join(s.source_name for s in failed_sources)
         super().__init__(f"Required sources failed: {names}")

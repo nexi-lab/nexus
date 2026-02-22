@@ -1,7 +1,5 @@
 """Boot Tier 2b (WIRED) — services needing NexusFS reference."""
 
-from __future__ import annotations
-
 import logging
 import time
 from collections.abc import Callable
@@ -15,11 +13,11 @@ logger = logging.getLogger(__name__)
 
 def _boot_wired_services(
     nx: Any,
-    kernel_services: KernelServices,
+    kernel_services: "KernelServices",
     system_services: Any,
-    brick_services: BrickServices,
+    brick_services: "BrickServices",
     brick_on: Callable[[str], bool] | None = None,
-) -> WiredServices:
+) -> "WiredServices":
     """Boot Tier 2b (WIRED) — services needing NexusFS reference.
 
     Two-phase init: called AFTER NexusFS construction in ``create_nexus_fs()``.
@@ -63,7 +61,7 @@ def _boot_wired_services(
     # --- ReBACService: Permission and access control operations ---
     rebac_service: Any = None
     try:
-        from nexus.services.rebac.rebac_service import ReBACService
+        from nexus.bricks.rebac.rebac_service import ReBACService
 
         rebac_service = ReBACService(
             rebac_manager=system_services.rebac_manager,
@@ -81,7 +79,7 @@ def _boot_wired_services(
     mcp_service: Any = None
     if _on("mcp"):
         try:
-            from nexus.services.mcp.mcp_service import MCPService
+            from nexus.bricks.mcp.mcp_service import MCPService
 
             mcp_service = MCPService(filesystem=nx)
             logger.debug("[BOOT:WIRED] MCPService created")
@@ -95,7 +93,7 @@ def _boot_wired_services(
     llm_subsystem: Any = None
     if _on("llm"):
         try:
-            from nexus.services.llm.llm_service import LLMService
+            from nexus.bricks.llm.llm_service import LLMService
 
             llm_service = LLMService(nexus_fs=nx)
 
@@ -205,7 +203,7 @@ def _boot_wired_services(
     skill_service: Any = brick_services.skill_service
     if skill_service is None and _on("skills") and gateway is not None:
         try:
-            from nexus.services.skills.skill_service import SkillService as _SkillService
+            from nexus.bricks.skills.skill_service_adapter import SkillService as _SkillService
 
             skill_service = _SkillService(gateway=gateway)
             logger.debug("[BOOT:WIRED] SkillService created")
@@ -218,7 +216,7 @@ def _boot_wired_services(
     skill_package_service: Any = getattr(brick_services, "skill_package_service", None)
     if skill_package_service is None and _on("skills") and skill_service is not None:
         try:
-            from nexus.skills.package_service import SkillPackageService as _SkillPkgSvc
+            from nexus.bricks.skills.package_service import SkillPackageService as _SkillPkgSvc
 
             skill_package_service = _SkillPkgSvc(
                 fs=skill_service._fs,
@@ -291,7 +289,7 @@ def _boot_wired_services(
     else:
         logger.debug("[BOOT:WIRED] EventsService disabled by profile")
 
-    # --- RPC / helper services (Issue #2133: migrated from service_wiring.py) ---
+    # --- RPC / helper services (Issue #2133) ---
     # Pre-extract optional NexusFS attrs to avoid mypy getattr+None inference issues
     _nx_default_context: Any = getattr(nx, "_default_context", None)
     _nx_session_factory: Any = getattr(nx, "SessionLocal", None)
@@ -340,7 +338,24 @@ def _boot_wired_services(
     try:
         from nexus.services.user_provisioning import UserProvisioningService
 
-        user_provisioning_service = UserProvisioningService(nx=nx)
+        user_provisioning_service = UserProvisioningService(
+            vfs=nx,
+            session_factory=_nx_session_factory,
+            entity_registry=system_services.entity_registry,
+            api_key_creator=brick_services.api_key_creator,
+            backend=nx.backend,
+            rebac_manager=system_services.rebac_manager,
+            rmdir_fn=nx.rmdir if hasattr(nx, "rmdir") else None,
+            rebac_create_fn=(rebac_service.rebac_create_sync if rebac_service else None),
+            rebac_delete_fn=(rebac_service.rebac_delete_sync if rebac_service else None),
+            register_workspace_fn=(
+                workspace_rpc_service.register_workspace if workspace_rpc_service else None
+            ),
+            register_agent_fn=(agent_rpc_service.register_agent if agent_rpc_service else None),
+            skills_import_fn=getattr(nx, "skills_import", None),
+            list_cache=getattr(nx, "_list_cache", None),
+            exists_cache=getattr(nx, "_exists_cache", None),
+        )
         logger.debug("[BOOT:WIRED] UserProvisioningService created")
     except Exception as exc:
         logger.warning("[BOOT:WIRED] UserProvisioningService unavailable: %s", exc)
@@ -402,7 +417,7 @@ def _boot_wired_services(
 
     memory_provider: Any = None
     try:
-        from nexus.services.memory_provider import MemoryProvider
+        from nexus.bricks.memory.memory_provider import MemoryProvider
 
         memory_provider = MemoryProvider(
             session_factory=_nx_session_factory,
@@ -416,6 +431,44 @@ def _boot_wired_services(
         logger.debug("[BOOT:WIRED] MemoryProvider created")
     except Exception as exc:
         logger.debug("[BOOT:WIRED] MemoryProvider unavailable: %s", exc)
+
+    # --- TimeTravelService: historical operation-point queries (Issue #882) ---
+    time_travel_service: Any = None
+    if _nx_session_factory is not None:
+        try:
+            from nexus.services.versioning.time_travel_service import TimeTravelService
+
+            time_travel_service = TimeTravelService(
+                session_factory=_nx_session_factory,
+                backend=nx.backend,
+                default_zone_id=getattr(_nx_default_context, "zone_id", None),
+            )
+            logger.debug("[BOOT:WIRED] TimeTravelService created")
+        except Exception as exc:
+            logger.debug("[BOOT:WIRED] TimeTravelService unavailable: %s", exc)
+
+    # --- OperationsService: audit trail queries + undo (Issue #882) ---
+    operations_service: Any = None
+    if _nx_session_factory is not None:
+        try:
+            from nexus.services.versioning.operation_undo_service import OperationUndoService
+            from nexus.services.versioning.operations_service import OperationsService
+
+            _undo_service = OperationUndoService(
+                router=kernel_services.router,
+                write_fn=nx.write,
+                delete_fn=nx.delete,
+                rename_fn=nx.rename,
+                exists_fn=nx.exists,
+                fallback_backend=getattr(nx, "backend", None),
+            )
+            operations_service = OperationsService(
+                session_factory=_nx_session_factory,
+                undo_service=_undo_service,
+            )
+            logger.debug("[BOOT:WIRED] OperationsService created")
+        except Exception as exc:
+            logger.debug("[BOOT:WIRED] OperationsService unavailable: %s", exc)
 
     result = _WiredServices(
         rebac_service=rebac_service,
@@ -435,6 +488,8 @@ def _boot_wired_services(
         share_link_service=share_link_service,
         events_service=events_service,
         task_queue_service=brick_services.task_queue_service,
+        time_travel_service=time_travel_service,
+        operations_service=operations_service,
         workspace_rpc_service=workspace_rpc_service,
         agent_rpc_service=agent_rpc_service,
         user_provisioning_service=user_provisioning_service,

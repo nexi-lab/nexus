@@ -9,6 +9,11 @@ All Backend operations pass through transparently. Only CAS read operations
 are cached (read_content, batch_read_content). Writes invalidate or populate
 cache based on the configured CacheStrategy.
 
+L2 is write-populate-only: content is populated into L2 on read misses
+and writes (fire-and-forget), but L2 is never read synchronously. This
+avoids deadlock risks in the FastAPI server path and keeps the hot path
+fast. Other instances (or restarts) benefit from L2 population.
+
 Cache failures are silently swallowed — inner backend is always the fallback.
 
 Usage:
@@ -23,26 +28,23 @@ Usage:
     resp = wrapper.read_content(content_hash)
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
-import threading
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 from nexus.backends.backend import Backend
 from nexus.backends.delegating import DelegatingBackend
+from nexus.backends.wrapper_metrics import WrapperMetrics
 from nexus.lib.response import HandlerResponse, timed_response
 from nexus.storage.content_cache import ContentCache
 
 if TYPE_CHECKING:
+    from nexus.contracts.cache_store import CacheStoreABC
     from nexus.contracts.types import OperationContext
-    from nexus.core.cache_store import CacheStoreABC
 
 logger = logging.getLogger(__name__)
-
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -100,13 +102,18 @@ class CachingBackendWrapper(DelegatingBackend):
 
     Cache failures are silently swallowed — inner backend is always the
     source of truth. OTel counters track hit/miss/error rates.
+
+    L2 is write-populate-only (Decision 13C): content is pushed to L2 on
+    read misses and writes for cross-instance warming, but L2 is never read
+    synchronously. This eliminates deadlock risks on the FastAPI event loop
+    thread and keeps the hot path fast.
     """
 
     def __init__(
         self,
         inner: Backend,
         config: CacheWrapperConfig | None = None,
-        cache_store: CacheStoreABC | None = None,
+        cache_store: "CacheStoreABC | None" = None,
     ) -> None:
         super().__init__(inner)
         self._config = config or CacheWrapperConfig()
@@ -118,18 +125,21 @@ class CachingBackendWrapper(DelegatingBackend):
             compression_threshold=self._config.l1_compression_threshold,
         )
 
-        # Hit/miss counters (protected by _stats_lock for thread-safety)
-        self._stats_lock = threading.Lock()
-        self._l1_hits = 0
-        self._l1_misses = 0
-        self._l2_hits = 0
-        self._l2_misses = 0
-        self._cache_errors = 0
-        self._invalidations = 0
+        # Shared OTel + in-memory metrics via WrapperMetrics
+        self._metrics = WrapperMetrics(
+            meter_name="nexus.cache.backend_wrapper",
+            counter_names=[
+                "l1_hits",
+                "l1_misses",
+                "cache_errors",
+                "invalidations",
+            ],
+            enabled=self._config.metrics_enabled,
+        )
 
-        # OTel metrics (lazy-initialized on first access)
-        self._metrics: dict[str, Any] | None = None
-        self._metrics_initialized = False
+        # Note: get_cache_stats() returns a best-effort snapshot. L1 stats and
+        # WrapperMetrics counters are individually thread-safe but the combined
+        # snapshot is not atomic (acceptable for diagnostic/observability use).
 
     # === Name & Chain Introspection ===
 
@@ -145,31 +155,21 @@ class CachingBackendWrapper(DelegatingBackend):
 
     @timed_response
     def read_content(
-        self, content_hash: str, context: OperationContext | None = None
+        self, content_hash: str, context: "OperationContext | None" = None
     ) -> HandlerResponse[bytes]:
-        """Read content with L1 → L2 → inner backend fallback."""
+        """Read content with L1 → inner backend fallback.
+
+        L2 is write-populate-only; reads never check L2.
+        """
         # L1 check
         try:
             cached = self._l1_cache.get(content_hash)
             if cached is not None:
-                self._record_l1_hit()
+                self._metrics.increment("l1_hits")
                 return HandlerResponse.ok(data=cached, backend_name=self.name)
-            self._record_l1_miss()
+            self._metrics.increment("l1_misses")
         except Exception as e:
             self._record_cache_error("l1_read", e)
-
-        # L2 check (sync bridge — only if event loop is running)
-        l2_data = self._l2_get_sync(content_hash)
-        if l2_data is not None:
-            self._record_l2_hit()
-            # Promote to L1
-            try:
-                self._l1_cache.put(content_hash, l2_data)
-            except Exception as e:
-                self._record_cache_error("l1_promote", e)
-            return HandlerResponse.ok(data=l2_data, backend_name=self.name)
-
-        self._record_l2_miss()
 
         # Inner backend read
         response = self._inner.read_content(content_hash, context=context)
@@ -186,7 +186,7 @@ class CachingBackendWrapper(DelegatingBackend):
 
     @timed_response
     def write_content(
-        self, content: bytes, context: OperationContext | None = None
+        self, content: bytes, context: "OperationContext | None" = None
     ) -> HandlerResponse[str]:
         """Write content to inner backend, then handle cache based on strategy."""
         response = self._inner.write_content(content, context=context)
@@ -211,7 +211,7 @@ class CachingBackendWrapper(DelegatingBackend):
 
     @timed_response
     def delete_content(
-        self, content_hash: str, context: OperationContext | None = None
+        self, content_hash: str, context: "OperationContext | None" = None
     ) -> HandlerResponse[None]:
         """Delete from inner backend and invalidate caches."""
         response = self._inner.delete_content(content_hash, context=context)
@@ -220,24 +220,22 @@ class CachingBackendWrapper(DelegatingBackend):
 
     @timed_response
     def content_exists(
-        self, content_hash: str, context: OperationContext | None = None
+        self, content_hash: str, context: "OperationContext | None" = None
     ) -> HandlerResponse[bool]:
-        """Always delegate to inner backend — source of truth for existence.
-
-        Unlike read_content, content_exists is not cached because a stale True
-        from L1 could cause the caller to skip a necessary write. The inner
-        backend check is lightweight (no data transfer).
-        """
+        """Always delegate to inner backend — source of truth for existence."""
         return self._inner.content_exists(content_hash, context=context)
 
     def batch_read_content(
         self,
         content_hashes: list[str],
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
         *,
-        contexts: dict[str, OperationContext] | None = None,
+        contexts: "dict[str, OperationContext] | None" = None,
     ) -> dict[str, bytes | None]:
-        """Batch read with L1 cache for already-cached items."""
+        """Batch read with L1 cache for already-cached items.
+
+        L2 is write-populate-only; batch reads never check L2.
+        """
         result: dict[str, bytes | None] = {}
         uncached_hashes: list[str] = []
 
@@ -247,33 +245,15 @@ class CachingBackendWrapper(DelegatingBackend):
                 cached = self._l1_cache.get(content_hash)
                 if cached is not None:
                     result[content_hash] = cached
-                    self._record_l1_hit()
+                    self._metrics.increment("l1_hits")
                 else:
                     uncached_hashes.append(content_hash)
-                    self._record_l1_miss()
+                    self._metrics.increment("l1_misses")
             except Exception as e:
                 self._record_cache_error("l1_batch_read", e)
                 uncached_hashes.append(content_hash)
 
-        # Second pass: check L2 for uncached items
-        if uncached_hashes and self._l2_available:
-            still_uncached: list[str] = []
-            for content_hash in uncached_hashes:
-                l2_data = self._l2_get_sync(content_hash)
-                if l2_data is not None:
-                    result[content_hash] = l2_data
-                    self._record_l2_hit()
-                    # Promote to L1
-                    try:
-                        self._l1_cache.put(content_hash, l2_data)
-                    except Exception as e:
-                        self._record_cache_error("l1_batch_promote", e)
-                else:
-                    still_uncached.append(content_hash)
-                    self._record_l2_miss()
-            uncached_hashes = still_uncached
-
-        # Third pass: read remaining uncached from inner backend
+        # Second pass: read remaining uncached from inner backend
         if uncached_hashes:
             inner_results = self._inner.batch_read_content(
                 uncached_hashes, context=context, contexts=contexts
@@ -291,78 +271,34 @@ class CachingBackendWrapper(DelegatingBackend):
 
         return result
 
-    # === Non-cached content operations (explicit delegation) ===
-
-    @timed_response
-    def get_content_size(
-        self, content_hash: str, context: OperationContext | None = None
-    ) -> HandlerResponse[int]:
-        return self._inner.get_content_size(content_hash, context=context)
-
-    @timed_response
-    def get_ref_count(
-        self, content_hash: str, context: OperationContext | None = None
-    ) -> HandlerResponse[int]:
-        return self._inner.get_ref_count(content_hash, context=context)
-
-    # === Directory operations (explicit delegation) ===
-
-    @timed_response
-    def mkdir(
-        self,
-        path: str,
-        parents: bool = False,
-        exist_ok: bool = False,
-        context: OperationContext | None = None,
-    ) -> HandlerResponse[None]:
-        return self._inner.mkdir(path, parents=parents, exist_ok=exist_ok, context=context)
-
-    @timed_response
-    def rmdir(
-        self,
-        path: str,
-        recursive: bool = False,
-        context: OperationContext | None = None,
-    ) -> HandlerResponse[None]:
-        return self._inner.rmdir(path, recursive=recursive, context=context)
-
-    @timed_response
-    def is_directory(
-        self, path: str, context: OperationContext | None = None
-    ) -> HandlerResponse[bool]:
-        return self._inner.is_directory(path, context=context)
-
-    # === Cache management ===
+    # === Cache management (CachingConnectorContract) ===
 
     def get_cache_stats(self) -> dict[str, Any]:
-        """Return L1 stats, L2 health, and hit/miss counters."""
+        """Return L1 stats, L2 health, and hit/miss counters.
+
+        Note: Stats are best-effort snapshots. L1 stats and counter values
+        are individually thread-safe but the combined snapshot is not atomic.
+        """
         l1_stats = self._l1_cache.get_stats()
-        with self._stats_lock:
-            return {
-                "l1": l1_stats,
-                "l1_hits": self._l1_hits,
-                "l1_misses": self._l1_misses,
-                "l2_hits": self._l2_hits,
-                "l2_misses": self._l2_misses,
-                "cache_errors": self._cache_errors,
-                "invalidations": self._invalidations,
-                "strategy": self._config.strategy.value,
-                "l2_enabled": self._config.l2_enabled,
-                "l2_connected": self._cache_store is not None,
-            }
+        counters = self._metrics.get_stats()
+        return {
+            "l1": l1_stats,
+            "l1_hits": counters.get("l1_hits", 0),
+            "l1_misses": counters.get("l1_misses", 0),
+            "cache_errors": counters.get("cache_errors", 0),
+            "invalidations": counters.get("invalidations", 0),
+            "strategy": self._config.strategy.value,
+            "l2_enabled": self._config.l2_enabled,
+            "l2_connected": self._cache_store is not None,
+            "l2_mode": "write-populate-only",
+        }
 
     def clear_cache(self) -> None:
         """Clear L1 cache and reset all stats. L2 cleared via scheduled invalidation."""
         self._l1_cache.clear()
-        with self._stats_lock:
-            self._l1_hits = 0
-            self._l1_misses = 0
-            self._l2_hits = 0
-            self._l2_misses = 0
-            self._cache_errors = 0
-            self._invalidations = 0
+        self._metrics.reset()
 
-    # === L2 helpers ===
+    # === L2 helpers (write-populate-only) ===
 
     @property
     def _l2_available(self) -> bool:
@@ -373,8 +309,6 @@ class CachingBackendWrapper(DelegatingBackend):
         """Build the L2 cache key for a content hash."""
         return f"{self._config.l2_key_prefix}:{content_hash}"
 
-    # === L2 background population ===
-
     def _schedule_l2_populate(self, content_hash: str, content: bytes) -> None:
         """Fire-and-forget L2 population in the event loop (if running)."""
         if not self._l2_available:
@@ -384,7 +318,9 @@ class CachingBackendWrapper(DelegatingBackend):
             loop.create_task(self._l2_populate(content_hash, content))
         except RuntimeError:
             # No running event loop — skip L2 (pure sync context)
-            pass
+            logger.debug(
+                "L2 populate skipped: no running event loop for hash=%s", content_hash[:12]
+            )
 
     async def _l2_populate(self, content_hash: str, content: bytes) -> None:
         """Async L2 cache population. Errors logged, never raised."""
@@ -396,41 +332,6 @@ class CachingBackendWrapper(DelegatingBackend):
             )
         except Exception as e:
             self._record_cache_error("l2_populate", e)
-
-    def _l2_get_sync(self, content_hash: str) -> bytes | None:
-        """Synchronous L2 read — only called on L1 miss.
-
-        Uses run_coroutine_threadsafe with a timeout to avoid blocking
-        indefinitely. Returns None on any error (graceful degradation).
-
-        IMPORTANT — Main-thread skip (Issue #1524 documentation):
-        If the current thread IS the event loop thread (e.g. FastAPI request
-        handlers), ``run_coroutine_threadsafe + .result()`` would deadlock
-        because the loop can't execute the coroutine while blocked on
-        ``.result()``. In that case we skip L2 reads entirely and let the
-        caller fall through to the inner backend.
-
-        This means L2 cache is **write-populate only** in the FastAPI
-        server path — L2 is populated via fire-and-forget ``create_task``
-        on reads/writes, providing cross-instance cache warming. Reads
-        from other instances (or after restart) benefit from L2. The L1
-        in-memory cache handles the hot-path reads for the current process.
-        """
-        if not self._l2_available or self._cache_store is None:
-            return None
-        try:
-            loop = asyncio.get_running_loop()
-            # Deadlock guard: if we're on the event loop thread, we cannot
-            # block with .result() — the loop would never execute the coroutine.
-            if loop.is_running() and threading.current_thread() is threading.main_thread():
-                return None
-            key = self._l2_key(content_hash)
-            store = self._cache_store
-            future = asyncio.run_coroutine_threadsafe(store.get(key), loop)
-            result = future.result(timeout=0.1)  # 100ms timeout
-            return result if isinstance(result, bytes) else None
-        except Exception:
-            return None
 
     def _l2_invalidate(self, content_hash: str) -> None:
         """Schedule L2 cache invalidation (fire-and-forget)."""
@@ -461,72 +362,10 @@ class CachingBackendWrapper(DelegatingBackend):
             self._record_cache_error("l1_invalidate", e)
 
         self._l2_invalidate(content_hash)
-        self._record_invalidation()
+        self._metrics.increment("invalidations")
 
-    # === Metrics ===
-
-    def _record_l1_hit(self) -> None:
-        with self._stats_lock:
-            self._l1_hits += 1
-        self._emit_metric("l1_hits")
-
-    def _record_l1_miss(self) -> None:
-        with self._stats_lock:
-            self._l1_misses += 1
-        self._emit_metric("l1_misses")
-
-    def _record_l2_hit(self) -> None:
-        with self._stats_lock:
-            self._l2_hits += 1
-        self._emit_metric("l2_hits")
-
-    def _record_l2_miss(self) -> None:
-        with self._stats_lock:
-            self._l2_misses += 1
-        self._emit_metric("l2_misses")
-
-    def _record_invalidation(self) -> None:
-        with self._stats_lock:
-            self._invalidations += 1
-        self._emit_metric("invalidations")
+    # === Error recording ===
 
     def _record_cache_error(self, operation: str, error: Exception) -> None:
-        with self._stats_lock:
-            self._cache_errors += 1
-        self._emit_metric("cache_errors")
+        self._metrics.increment("cache_errors")
         logger.debug("Cache error in %s: %s", operation, error)
-
-    def _emit_metric(self, name: str) -> None:
-        """Emit OTel counter increment (lazy-initialized, no-op if disabled)."""
-        if not self._config.metrics_enabled:
-            return
-        metrics = self._get_metrics()
-        if metrics is not None and name in metrics:
-            metrics[name].add(1)
-
-    def _get_metrics(self) -> dict[str, Any] | None:
-        """Lazy-init OTel counters. Returns None if OTel disabled."""
-        if self._metrics_initialized:
-            return self._metrics
-        self._metrics_initialized = True
-
-        try:
-            from nexus.server.telemetry import is_telemetry_enabled
-
-            if not is_telemetry_enabled():
-                return None
-
-            from opentelemetry import metrics
-
-            meter = metrics.get_meter("nexus.cache.backend_wrapper")
-            self._metrics = {
-                "l1_hits": meter.create_counter("cache.backend_wrapper.l1.hits"),
-                "l1_misses": meter.create_counter("cache.backend_wrapper.l1.misses"),
-                "l2_hits": meter.create_counter("cache.backend_wrapper.l2.hits"),
-                "l2_misses": meter.create_counter("cache.backend_wrapper.l2.misses"),
-                "cache_errors": meter.create_counter("cache.backend_wrapper.errors"),
-                "invalidations": meter.create_counter("cache.backend_wrapper.invalidations"),
-            }
-            return self._metrics
-        except Exception:
-            return None

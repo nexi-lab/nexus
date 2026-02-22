@@ -6,8 +6,6 @@ from ReBACService into the share mixin.
 Issue #2132: Previously 0% test coverage.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -15,7 +13,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.services.rebac.rebac_share_mixin import ReBACShareMixin
+from nexus.bricks.rebac.share_mixin import ReBACShareMixin
 
 
 def _pandas_available() -> bool:

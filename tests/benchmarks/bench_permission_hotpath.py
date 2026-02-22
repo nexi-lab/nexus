@@ -12,8 +12,6 @@ Run with:
     PYTHONPATH=src python -m pytest tests/benchmarks/bench_permission_hotpath.py -v
 """
 
-from __future__ import annotations
-
 import statistics
 import time
 from typing import Any
@@ -34,7 +32,6 @@ BENCH_ITERATIONS = 2_000
 
 PERMISSION = "read"
 RESOURCE_TYPE = "file"
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -114,8 +111,8 @@ def _build_tiger_cache(engine: MagicMock, num_resources: int = NUM_RESOURCES) ->
     Directly injects entries into ``_cache`` and ``_resource_map`` so that
     ``check_access()`` never touches the database.
     """
-    from nexus.rebac.cache.tiger.bitmap_cache import CacheKey, TigerCache
-    from nexus.rebac.cache.tiger.resource_map import TigerResourceMap
+    from nexus.bricks.rebac.cache.tiger.bitmap_cache import CacheKey, TigerCache
+    from nexus.bricks.rebac.cache.tiger.resource_map import TigerResourceMap
 
     resource_map = TigerResourceMap(engine)
 
@@ -233,8 +230,8 @@ def _build_manager_with_tiger(
     We patch out the constructor's heavy initialization (DB table creation,
     Leopard index, etc.) and inject the pre-built tiger cache directly.
     """
-    from nexus.rebac.cache.tiger.facade import TigerFacade
-    from nexus.rebac.manager import ReBACManager
+    from nexus.bricks.rebac.cache.tiger.facade import TigerFacade
+    from nexus.bricks.rebac.manager import ReBACManager
 
     # Patch __init__ to avoid DB-dependent setup, then manually wire fields
     with patch.object(ReBACManager, "__init__", lambda self, *a, **kw: None):
@@ -270,8 +267,8 @@ def _build_manager_no_tiger(engine_sqlite: MagicMock) -> Any:
     mock to return True instantly, giving a baseline for the non-tiger path
     overhead.
     """
-    from nexus.rebac.cache.tiger.facade import TigerFacade
-    from nexus.rebac.manager import ReBACManager
+    from nexus.bricks.rebac.cache.tiger.facade import TigerFacade
+    from nexus.bricks.rebac.manager import ReBACManager
 
     with patch.object(ReBACManager, "__init__", lambda self, *a, **kw: None):
         mgr = ReBACManager.__new__(ReBACManager)
@@ -377,7 +374,7 @@ class TestDeferredPermissionBufferFlush:
         batch_size: int = 100,
     ) -> Any:
         """Create a DeferredPermissionBuffer with mocked rebac/hierarchy managers."""
-        from nexus.rebac.deferred_permission_buffer import DeferredPermissionBuffer
+        from nexus.bricks.rebac.deferred_permission_buffer import DeferredPermissionBuffer
 
         mock_rebac = MagicMock()
         mock_rebac.rebac_write_batch = MagicMock(return_value=None)
@@ -456,7 +453,7 @@ class TestDeferredPermissionBufferFlush:
 
     def test_background_flush_fires(self) -> None:
         """Verify the background thread flushes within flush_interval_sec."""
-        from nexus.rebac.deferred_permission_buffer import DeferredPermissionBuffer
+        from nexus.bricks.rebac.deferred_permission_buffer import DeferredPermissionBuffer
 
         mock_rebac = MagicMock()
         mock_rebac.rebac_write_batch = MagicMock(return_value=None)

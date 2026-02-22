@@ -38,13 +38,12 @@ Design reference:
     - Issue #2077: Deduplicate backend wrapper boilerplate
 """
 
-from __future__ import annotations
-
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from nexus.backends.delegating import DelegatingBackend
+from nexus.backends.wrapper_headers import COMPRESSED_HEADER as _COMPRESSED_HEADER
 from nexus.backends.wrapper_metrics import WrapperMetrics
 
 if TYPE_CHECKING:
@@ -92,11 +91,7 @@ def is_zstd_available() -> bool:
     return _ZSTD_AVAILABLE
 
 
-# Magic header to identify compressed content.
-# "NEXZ" + version byte (1).
-_COMPRESSED_HEADER = b"NEXZ\x01"
 _HEADER_LEN = len(_COMPRESSED_HEADER)
-
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -154,7 +149,7 @@ class CompressedStorage(DelegatingBackend):
         RuntimeError: If zstd is not available at construction time.
     """
 
-    def __init__(self, inner: Backend, config: CompressedStorageConfig | None = None) -> None:
+    def __init__(self, inner: "Backend", config: CompressedStorageConfig | None = None) -> None:
         super().__init__(inner)
         if not _ZSTD_AVAILABLE:
             raise RuntimeError(

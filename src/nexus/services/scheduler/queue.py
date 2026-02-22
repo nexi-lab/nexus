@@ -10,8 +10,6 @@ inline HRRN score DESC, enqueued_at ASC for Astraea-style scheduling.
 Related: Issue #1212, #1274
 """
 
-from __future__ import annotations
-
 import json
 from datetime import datetime
 from decimal import Decimal
@@ -224,6 +222,18 @@ WHERE status = 'queued'
 RETURNING id
 """
 
+_SQL_COUNT_PENDING = """
+SELECT count(*) AS cnt
+FROM scheduled_tasks
+WHERE status = 'queued'
+"""
+
+_SQL_COUNT_PENDING_BY_ZONE = """
+SELECT count(*) AS cnt
+FROM scheduled_tasks
+WHERE status = 'queued' AND zone_id = $1
+"""
+
 _SQL_PENDING_METRICS = """
 SELECT
     priority_class,
@@ -245,7 +255,6 @@ FROM scheduled_tasks
 WHERE status = 'queued' AND zone_id = $1
 GROUP BY priority_class
 """
-
 
 # =============================================================================
 # Row-to-Model Conversion
@@ -440,6 +449,18 @@ class TaskQueue:
         """Promote BACKGROUND tasks that have waited longer than threshold to BATCH."""
         rows = await conn.fetch(_SQL_STARVATION_PROMOTE, threshold_seconds)
         return len(rows)
+
+    async def count_pending(self, conn: Any, *, zone_id: str | None = None) -> int:
+        """Count pending (queued) tasks via a direct COUNT(*).
+
+        More efficient than ``get_queue_metrics()`` when only the total
+        count is needed (avoids GROUP BY aggregation).
+        """
+        if zone_id is not None:
+            row = await conn.fetchrow(_SQL_COUNT_PENDING_BY_ZONE, zone_id)
+        else:
+            row = await conn.fetchrow(_SQL_COUNT_PENDING)
+        return row["cnt"] if row else 0
 
     async def get_queue_metrics(
         self, conn: Any, *, zone_id: str | None = None

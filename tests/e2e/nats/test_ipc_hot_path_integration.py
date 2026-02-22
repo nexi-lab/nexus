@@ -9,17 +9,15 @@ Set NEXUS_NATS_URL to override the default nats://localhost:4222.
 Related: Issue #1747 (LEGO 17.7)
 """
 
-from __future__ import annotations
-
 import asyncio
 import os
 
 import pytest
 
-from nexus.ipc.delivery import DeliveryMode, MessageProcessor, MessageSender
-from nexus.ipc.envelope import MessageEnvelope, MessageType
-from nexus.ipc.nats_adapter import NatsHotPathAdapter
-from nexus.ipc.provisioning import AgentProvisioner
+from nexus.bricks.ipc.delivery import DeliveryMode, MessageProcessor, MessageSender
+from nexus.bricks.ipc.envelope import MessageEnvelope, MessageType
+from nexus.bricks.ipc.nats_adapter import NatsHotPathAdapter
+from nexus.bricks.ipc.provisioning import AgentProvisioner
 
 NATS_URL = os.environ.get("NEXUS_NATS_URL", "nats://localhost:4222")
 ZONE = "e2e-hot-path-zone"
@@ -44,7 +42,6 @@ pytestmark = [
     pytest.mark.skipif(not _is_nats_available(), reason="NATS not available"),
     pytest.mark.xdist_group("nats"),
 ]
-
 
 # --- In-memory VFS for the cold path (reuse from unit tests) ---
 

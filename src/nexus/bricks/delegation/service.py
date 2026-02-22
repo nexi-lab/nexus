@@ -21,8 +21,6 @@ On failure at step 2+: unregister agent (no key exists, safe to retry).
     - DelegationScope serialization
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import uuid
@@ -47,13 +45,12 @@ from nexus.bricks.delegation.models import (
     DelegationScope,
     DelegationStatus,
 )
+from nexus.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
-    from nexus.rebac.entity_registry import EntityRegistry
-    from nexus.rebac.manager import EnhancedReBACManager
-    from nexus.rebac.namespace_manager import NamespaceManager
+    from nexus.services.protocols.entity_registry import EntityRegistryProtocol
     from nexus.services.protocols.reputation import ReputationProtocol
     from nexus.storage.record_store import RecordStoreABC
 
@@ -75,12 +72,12 @@ class DelegationService:
 
     def __init__(
         self,
-        record_store: RecordStoreABC,
-        rebac_manager: EnhancedReBACManager,
-        namespace_manager: NamespaceManager | None = None,
-        entity_registry: EntityRegistry | None = None,
+        record_store: "RecordStoreABC",
+        rebac_manager: Any,
+        namespace_manager: Any = None,
+        entity_registry: "EntityRegistryProtocol | None" = None,
         agent_registry: Any = None,
-        reputation_service: ReputationProtocol | None = None,
+        reputation_service: "ReputationProtocol | None" = None,
     ) -> None:
         self._session_factory = record_store.session_factory
         self._rebac_manager = rebac_manager
@@ -502,7 +499,7 @@ class DelegationService:
         if self._reputation_service is None:
             return  # Caller should have checked; defensive no-op
 
-        zone_id = record.zone_id or "default"
+        zone_id = record.zone_id or ROOT_ZONE_ID
 
         try:
             if outcome == DelegationOutcome.COMPLETED:
@@ -643,7 +640,7 @@ class DelegationService:
                     "subject": ("agent", worker_id),
                     "relation": grant.relation,
                     "object": (grant.object_type, grant.object_id),
-                    "zone_id": zone_id or "root",
+                    "zone_id": zone_id or ROOT_ZONE_ID,
                     "expires_at": expires_at,
                     "conditions": json.dumps({"delegated_by": coordinator_agent_id}),
                 }
@@ -720,7 +717,7 @@ class DelegationService:
         expires_at: datetime | None,
     ) -> str:
         """Create API key for the worker agent."""
-        from nexus.identity.api_key_ops import create_api_key
+        from nexus.storage.api_key_ops import create_api_key
 
         with self._session() as session:
             _key_id, raw_key = create_api_key(
@@ -732,7 +729,7 @@ class DelegationService:
                 zone_id=zone_id,
                 expires_at=expires_at,
             )
-            return raw_key
+            return str(raw_key)
 
     def _get_worker_mount_table(
         self,
@@ -772,7 +769,7 @@ class DelegationService:
         """Revoke all API keys for the worker agent."""
         from sqlalchemy import select
 
-        from nexus.identity.api_key_ops import revoke_api_key
+        from nexus.storage.api_key_ops import revoke_api_key
         from nexus.storage.models.auth import APIKeyModel
 
         with self._session() as session:

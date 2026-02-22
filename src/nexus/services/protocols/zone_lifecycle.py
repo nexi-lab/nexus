@@ -13,8 +13,6 @@ References:
     - Issue #2061: Zone finalizer protocol for ordered cleanup
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol, runtime_checkable

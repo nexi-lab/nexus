@@ -2,7 +2,7 @@
 
 import pytest
 
-from nexus.skills.governance import (
+from nexus.bricks.skills.governance import (
     ApprovalStatus,
     GovernanceError,
     SkillApproval,
@@ -227,7 +227,7 @@ async def test_approval_validation() -> None:
     """Test approval record validation."""
     from datetime import datetime
 
-    from nexus.skills.exceptions import SkillValidationError
+    from nexus.bricks.skills.exceptions import SkillValidationError
 
     # Valid approval
     approval = SkillApproval(

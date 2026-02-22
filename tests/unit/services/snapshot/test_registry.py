@@ -3,12 +3,10 @@
 Tests: Register, TrackPath, FastPath, Unregister, Concurrent.
 """
 
-from __future__ import annotations
-
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
-from nexus.services.snapshot.registry import TransactionRegistry
+from nexus.bricks.snapshot.registry import TransactionRegistry
 
 
 class TestRegister:

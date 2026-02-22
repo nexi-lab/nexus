@@ -12,8 +12,6 @@ Run with:
     pytest tests/e2e/test_directory_grants_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import os
 import sys
 import time
@@ -370,7 +368,7 @@ def standalone_engine(tmp_path):
                 resource_int_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 resource_type VARCHAR(50) NOT NULL,
                 resource_id TEXT NOT NULL,
-                zone_id VARCHAR(255) NOT NULL DEFAULT 'default',
+                zone_id VARCHAR(255) NOT NULL DEFAULT 'root',
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE (resource_type, resource_id)
             )
@@ -386,7 +384,7 @@ class TestDirectoryGrantWorker:
 
     def test_worker_processes_pending_grants(self, standalone_engine):
         """Test that the DirectoryGrantExpander processes pending grants."""
-        from nexus.rebac.cache.tiger import (
+        from nexus.bricks.rebac.cache.tiger import (
             DirectoryGrantExpander,
             TigerCache,
             TigerResourceMap,
@@ -410,7 +408,7 @@ class TestDirectoryGrantWorker:
                     """
                 INSERT INTO tiger_directory_grants
                 (grant_id, subject_type, subject_id, permission, directory_path, zone_id, grant_revision, include_future_files, expansion_status, expanded_count, created_at, updated_at)
-                VALUES (1, 'user', 'testuser', 'read', '/test/dir/', 'default', 0, 1, 'pending', 0, datetime('now'), datetime('now'))
+                VALUES (1, 'user', 'testuser', 'read', '/test/dir/', 'root', 0, 1, 'pending', 0, datetime('now'), datetime('now'))
             """
                 )
             )
@@ -423,7 +421,7 @@ class TestDirectoryGrantWorker:
 
     def test_worker_marks_completed_on_empty_directory(self, standalone_engine):
         """Test that worker marks empty directory grants as completed."""
-        from nexus.rebac.cache.tiger import (
+        from nexus.bricks.rebac.cache.tiger import (
             DirectoryGrantExpander,
             TigerCache,
             TigerResourceMap,
@@ -447,7 +445,7 @@ class TestDirectoryGrantWorker:
                     """
                 INSERT INTO tiger_directory_grants
                 (grant_id, subject_type, subject_id, permission, directory_path, zone_id, grant_revision, include_future_files, expansion_status, expanded_count, created_at, updated_at)
-                VALUES (1, 'user', 'emptyuser', 'read', '/empty/dir/', 'default', 0, 1, 'pending', 0, datetime('now'), datetime('now'))
+                VALUES (1, 'user', 'emptyuser', 'read', '/empty/dir/', 'root', 0, 1, 'pending', 0, datetime('now'), datetime('now'))
             """
                 )
             )

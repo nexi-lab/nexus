@@ -5,8 +5,6 @@ This module contains MCP-related CLI commands for:
 - Starting MCP server with HTTP transport (for web clients)
 """
 
-from __future__ import annotations
-
 import sys
 from typing import TYPE_CHECKING, Any, cast
 
@@ -59,12 +57,12 @@ def _add_api_key_middleware(mcp_server: Any) -> None:
     try:
         from starlette.middleware.base import BaseHTTPMiddleware
 
-        from nexus.mcp import reset_request_api_key, set_request_api_key
+        from nexus.bricks.mcp import reset_request_api_key, set_request_api_key
 
         class APIKeyMiddleware(BaseHTTPMiddleware):
             """Middleware to extract API key from HTTP headers."""
 
-            async def dispatch(self, request: Request, call_next: Any) -> Response:
+            async def dispatch(self, request: "Request", call_next: Any) -> "Response":
                 # Extract API key from header (try both formats)
                 api_key = request.headers.get("X-Nexus-API-Key") or request.headers.get(
                     "x-nexus-api-key"
@@ -231,7 +229,7 @@ def serve(
     try:
         # Check if fastmcp is installed
         try:
-            from nexus.mcp import create_mcp_server
+            from nexus.bricks.mcp import create_mcp_server
         except ImportError:
             # For stdio mode, print errors to stderr
             import sys as sys_module

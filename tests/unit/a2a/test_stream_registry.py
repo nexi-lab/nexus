@@ -3,8 +3,6 @@
 TDD-first tests for the extracted SSE stream management component.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 

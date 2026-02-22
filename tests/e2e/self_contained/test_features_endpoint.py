@@ -9,8 +9,6 @@ Tests:
 - Response includes version info
 """
 
-from __future__ import annotations
-
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -160,6 +158,18 @@ class TestFeaturesEndpointFallback:
         assert data["profile"] == "full"
 
 
+def _svc_from_app(app: FastAPI) -> Any:
+    """Build a minimal LifespanServices from app.state for testing."""
+    from nexus.server.lifespan.services_container import LifespanServices
+
+    return LifespanServices(
+        deployment_profile=getattr(app.state, "deployment_profile", "full"),
+        deployment_mode=getattr(app.state, "deployment_mode", "standalone"),
+        enabled_bricks=getattr(app.state, "enabled_bricks", frozenset()),
+        profile_tuning=getattr(app.state, "profile_tuning", None),
+    )
+
+
 class TestComputeFeaturesInfo:
     """Tests for _compute_features_info lifespan function."""
 
@@ -170,7 +180,7 @@ class TestComputeFeaturesInfo:
         app.state.deployment_profile = "lite"
         app.state.deployment_mode = "standalone"
 
-        _compute_features_info(app)
+        _compute_features_info(app, _svc_from_app(app))
 
         info: Any = app.state.features_info
         assert info.profile == "lite"
@@ -192,7 +202,7 @@ class TestComputeFeaturesInfo:
         )
         app.state.enabled_bricks = custom_bricks
 
-        _compute_features_info(app)
+        _compute_features_info(app, _svc_from_app(app))
 
         info: Any = app.state.features_info
         assert "search" in info.enabled_bricks
@@ -202,7 +212,7 @@ class TestComputeFeaturesInfo:
 
         app = FastAPI()
         # Don't set any state — should default to full
-        _compute_features_info(app)
+        _compute_features_info(app, _svc_from_app(app))
 
         info: Any = app.state.features_info
         assert info.profile == "full"
@@ -212,7 +222,7 @@ class TestComputeFeaturesInfo:
 
         app = FastAPI()
         app.state.deployment_profile = "unknown_profile"
-        _compute_features_info(app)
+        _compute_features_info(app, _svc_from_app(app))
 
         info: Any = app.state.features_info
         assert info.profile == "full"

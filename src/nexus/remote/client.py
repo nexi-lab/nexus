@@ -1,6 +1,6 @@
 """Remote Nexus filesystem client (sync).
 
-Implements NexusFilesystem by proxying RPC calls to a Nexus server over HTTP.
+Implements NexusFilesystemABC by proxying RPC calls to a Nexus server over HTTP.
 Uses __getattr__-based dispatch for ~170 trivial methods, with explicit
 overrides for ~30 methods requiring negative cache, content encoding,
 response decoding, dynamic timeouts, or other complex logic.
@@ -23,8 +23,6 @@ Example:
     # Backwards-compatible flat access (still works):
     nx.skills_create("my-skill", "A skill", template="basic")
 """
-
-from __future__ import annotations
 
 import builtins
 import logging
@@ -57,7 +55,7 @@ from nexus.contracts.exceptions import (
     RemoteFilesystemError,
     RemoteTimeoutError,
 )
-from nexus.core.filesystem import NexusFilesystem
+from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
 from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.remote.base_client import BaseRemoteNexusFS
 from nexus.remote.negative_cache import NegativeCache
@@ -65,7 +63,6 @@ from nexus.remote.rpc_proxy import RPCProxyBase
 from nexus.server.protocol import RPCRequest, RPCResponse
 
 logger = logging.getLogger(__name__)
-
 
 # ============================================================
 # Backwards-compat: flat method → domain delegation map
@@ -131,7 +128,6 @@ _DOMAIN_METHOD_MAP: dict[str, tuple[str, str]] = {
     "get_share_link_access_logs": ("share_links", "get_access_logs"),
 }
 
-
 # ============================================================
 # RemoteNexusFS — Sync RPC Proxy Client
 # ============================================================
@@ -140,7 +136,7 @@ _DOMAIN_METHOD_MAP: dict[str, tuple[str, str]] = {
 class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
     """Remote Nexus filesystem client.
 
-    Implements NexusFilesystem interface by making RPC calls to a remote server.
+    Implements NexusFilesystemABC interface by making RPC calls to a remote server.
     Trivial methods (~170) are auto-dispatched via __getattr__; complex methods
     (~30) are explicit overrides below.
 
@@ -236,13 +232,13 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
     # ============================================================
 
     @cached_property
-    def skills(self) -> SkillsClient:
+    def skills(self) -> "SkillsClient":
         from nexus.remote.domain.skills import SkillsClient as _SkillsClient
 
         return _SkillsClient(self._call_rpc)
 
     @cached_property
-    def sandbox(self) -> SandboxClient:
+    def sandbox(self) -> "SandboxClient":
         from nexus.remote.domain.sandbox import SandboxClient as _SandboxClient
 
         return _SandboxClient(
@@ -252,19 +248,19 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         )
 
     @cached_property
-    def oauth(self) -> OAuthClient:
+    def oauth(self) -> "OAuthClient":
         from nexus.remote.domain.oauth import OAuthClient as _OAuthClient
 
         return _OAuthClient(self._call_rpc)
 
     @cached_property
-    def mcp(self) -> MCPClient:
+    def mcp(self) -> "MCPClient":
         from nexus.remote.domain.mcp import MCPClient as _MCPClient
 
         return _MCPClient(self._call_rpc)
 
     @cached_property
-    def share_links(self) -> ShareLinksClient:
+    def share_links(self) -> "ShareLinksClient":
         from nexus.remote.domain.share_links import ShareLinksClient as _ShareLinksClient
 
         return _ShareLinksClient(self._call_rpc)
@@ -577,7 +573,7 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
     ) -> dict[str, Any]:
         serialized_edits: builtins.list[dict[str, Any]] = []
         for edit_op in edits:
-            if isinstance(edit_op, (tuple, builtins.list)) and len(edit_op) >= 2:
+            if isinstance(edit_op, tuple | builtins.list) and len(edit_op) >= 2:
                 serialized_edits.append({"old_str": edit_op[0], "new_str": edit_op[1]})
             elif isinstance(edit_op, dict):
                 serialized_edits.append(edit_op)
@@ -744,14 +740,14 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
     # ============================================================
 
     @property
-    def memory(self) -> MemoryClient:
+    def memory(self) -> "MemoryClient":
         if self._memory_api is None:
             from nexus.remote.domain.memory import MemoryClient as _MemoryClient
 
             self._memory_api = _MemoryClient(lambda *a, **kw: self._call_rpc(*a, **kw))
         return self._memory_api
 
-    def __enter__(self) -> RemoteNexusFS:
+    def __enter__(self) -> "RemoteNexusFS":
         return self
 
     def __exit__(self, *args: Any) -> None:
@@ -761,6 +757,6 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         self.session.close()
 
 
-# Register as virtual subclass of NexusFilesystem so isinstance() works at runtime
+# Register as virtual subclass of NexusFilesystemABC so isinstance() works at runtime
 # without putting abstract methods in MRO (which would shadow __getattr__ dispatch).
-NexusFilesystem.register(RemoteNexusFS)
+NexusFilesystemABC.register(RemoteNexusFS)

@@ -10,8 +10,6 @@ Usage:
     .venv/bin/python -m pytest tests/e2e/test_backfill_live_server.py -v --tb=short -p no:xdist -o "addopts=" --log-cli-level=INFO
 """
 
-from __future__ import annotations
-
 import logging
 import os
 
@@ -22,11 +20,10 @@ logger = logging.getLogger(__name__)
 
 
 def _save_app_state(monkeypatch):
-    """Record _app_state attributes so monkeypatch auto-restores them at teardown."""
+    """Record _fastapi_app state so monkeypatch auto-restores it at teardown."""
     from nexus.server import fastapi_server as fas
 
-    for attr in ("nexus_fs", "api_key", "auth_provider"):
-        monkeypatch.setattr(fas._app_state, attr, getattr(fas._app_state, attr))
+    monkeypatch.setattr(fas, "_fastapi_app", fas._fastapi_app)
 
 
 @pytest.fixture
@@ -46,7 +43,7 @@ def live_server(tmp_path, monkeypatch):
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
-    from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+    from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
     from nexus.server import fastapi_server as fas
     from nexus.storage.models import Base
 

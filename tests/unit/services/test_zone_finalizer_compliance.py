@@ -7,8 +7,6 @@ Verifies:
 - Frozen dataclasses are immutable
 """
 
-from __future__ import annotations
-
 from dataclasses import FrozenInstanceError
 from unittest.mock import MagicMock
 
@@ -20,6 +18,7 @@ from nexus.services.protocols.zone_lifecycle import (
     ZoneLifecycleStatus,
     ZonePhase,
 )
+from nexus.services.zone_finalizers.brick_drain_finalizer import BrickDrainFinalizer
 from nexus.services.zone_finalizers.cache_finalizer import CacheZoneFinalizer
 from nexus.services.zone_finalizers.mount_finalizer import MountZoneFinalizer
 from nexus.services.zone_finalizers.rebac_finalizer import ReBACZoneFinalizer
@@ -66,6 +65,10 @@ class TestZoneFinalizerProtocol:
 
     def test_rebac_finalizer_satisfies_protocol(self):
         f = ReBACZoneFinalizer(session_factory=MagicMock())
+        assert isinstance(f, ZoneFinalizerProtocol)
+
+    def test_brick_drain_finalizer_satisfies_protocol(self):
+        f = BrickDrainFinalizer(brick_lifecycle_manager=MagicMock())
         assert isinstance(f, ZoneFinalizerProtocol)
 
     def test_plain_object_does_not_satisfy_protocol(self):

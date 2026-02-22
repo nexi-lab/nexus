@@ -10,8 +10,6 @@ Batch optimization:
 - Default batch size optimized per provider for best throughput
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import os
@@ -20,7 +18,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
-    from nexus.cache.base import EmbeddingCacheProtocol
+    from nexus.core.protocols.caching import EmbeddingCacheProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -270,15 +268,12 @@ class VoyageAIEmbeddingProvider(EmbeddingProvider):
         Returns:
             List of embeddings
         """
-        # Voyage AI client is sync, so we run it in executor to not block
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            None,
-            lambda: self.client.embed(
-                texts,
-                model=self.model,
-                input_type="document",  # Optimize for document embedding
-            ),
+        # Voyage AI client is sync, so we run it in a thread to not block
+        result = await asyncio.to_thread(
+            self.client.embed,
+            texts,
+            model=self.model,
+            input_type="document",  # Optimize for document embedding
         )
         return cast(list[list[float]], result.embeddings)
 
@@ -303,14 +298,11 @@ class VoyageAIEmbeddingProvider(EmbeddingProvider):
         Returns:
             Embedding vector
         """
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            None,
-            lambda: self.client.embed(
-                [text],
-                model=self.model,
-                input_type="query",  # Optimize for query embedding
-            ),
+        result = await asyncio.to_thread(
+            self.client.embed,
+            [text],
+            model=self.model,
+            input_type="query",  # Optimize for query embedding
         )
         return cast(list[float], result.embeddings[0])
 
@@ -447,9 +439,8 @@ class FastEmbedProvider(EmbeddingProvider):
         Returns:
             List of embeddings
         """
-        # FastEmbed is sync and CPU-bound, run in executor
-        loop = asyncio.get_event_loop()
-        embeddings = await loop.run_in_executor(None, lambda: list(self.model.embed(texts)))
+        # FastEmbed is sync and CPU-bound, run in thread
+        embeddings = await asyncio.to_thread(lambda: list(self.model.embed(texts)))
         return [e.tolist() for e in embeddings]
 
     async def embed_text(self, text: str) -> list[float]:
@@ -485,10 +476,9 @@ class CachedEmbeddingProvider(EmbeddingProvider):
     - Content-hash based caching (same text = same embedding)
     - Batch deduplication (dedupe before API call)
 
-    Usage:
-        from nexus.cache import CacheFactory, CacheSettings
+    Usage::
 
-        # Initialize cache
+        # Initialize cache (CacheFactory from nexus.bricks.cache)
         settings = CacheSettings.from_env()
         factory = CacheFactory(settings)
         await factory.initialize()
@@ -506,7 +496,7 @@ class CachedEmbeddingProvider(EmbeddingProvider):
     def __init__(
         self,
         provider: EmbeddingProvider,
-        cache: EmbeddingCacheProtocol,
+        cache: "EmbeddingCacheProtocol",
     ):
         """Initialize cached embedding provider.
 
@@ -515,7 +505,7 @@ class CachedEmbeddingProvider(EmbeddingProvider):
             cache: EmbeddingCacheProtocol instance (any driver)
         """
         self._provider = provider
-        self._cache: EmbeddingCacheProtocol = cache
+        self._cache: "EmbeddingCacheProtocol" = cache
         self._model_name = self._get_model_name()
 
     def _get_model_name(self) -> str:
@@ -667,7 +657,7 @@ async def create_cached_embedding_provider(
     api_key: str | None = None,
     cache_url: str | None = None,
     cache_ttl: int = 86400,
-    embedding_cache: EmbeddingCacheProtocol | None = None,
+    embedding_cache: "EmbeddingCacheProtocol | None" = None,
 ) -> EmbeddingProvider:
     """Create an embedding provider with caching enabled.
 
@@ -717,8 +707,13 @@ async def create_cached_embedding_provider(
 
     # Try to create cached provider via CacheStoreABC
     try:
-        from nexus.cache.domain import EmbeddingCache
-        from nexus.cache.dragonfly import DragonflyCacheStore, DragonflyClient
+        import importlib as _il
+
+        _cache_domain = _il.import_module("nexus.bricks.cache.domain")
+        EmbeddingCache = _cache_domain.EmbeddingCache
+        _cache_dragonfly = _il.import_module("nexus.bricks.cache.dragonfly")
+        DragonflyCacheStore = _cache_dragonfly.DragonflyCacheStore
+        DragonflyClient = _cache_dragonfly.DragonflyClient
 
         # Connect to cache
         client = DragonflyClient(url=cache_url)

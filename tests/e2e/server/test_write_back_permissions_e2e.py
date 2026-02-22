@@ -13,8 +13,6 @@ Tests the full file CRUD pipeline as a normal (non-admin) user:
 5. Write-back service active during all operations
 """
 
-from __future__ import annotations
-
 import os
 import shutil
 import signal
@@ -85,7 +83,7 @@ def _build_startup_script(port: int, data_dir: str) -> str:
         # Setup paths
         sys.path.insert(0, os.getenv("PYTHONPATH", ""))
 
-        from nexus.auth.providers.static_key import StaticAPIKeyAuth
+        from nexus.bricks.auth.providers.static_key import StaticAPIKeyAuth
         from nexus.cli import main as cli_main
 
         # Create multi-key auth provider BEFORE starting the CLI
@@ -126,7 +124,7 @@ def _build_startup_script(port: int, data_dir: str) -> str:
         # invalidation immediately (bounded staleness ≤ 1 revision).
         # All 3 cache layers (L1 dcache, L2 mount table, L3 persistent view)
         # remain ENABLED — we're testing the real production cache path.
-        import nexus.rebac.namespace_manager as ns_mod
+        import nexus.bricks.rebac.namespace_manager as ns_mod
         _OrigNS = ns_mod.NamespaceManager
         class _TightRevisionNS(_OrigNS):
             def __init__(self, **kwargs):
@@ -135,7 +133,7 @@ def _build_startup_script(port: int, data_dir: str) -> str:
         ns_mod.NamespaceManager = _TightRevisionNS
         # Also patch the factory module which imports NamespaceManager at module
         # load time (its own binding won't see the ns_mod patch above).
-        import nexus.rebac.namespace_factory as nf_mod
+        import nexus.bricks.rebac.namespace_factory as nf_mod
         nf_mod.NamespaceManager = _TightRevisionNS
 
         cli_main([

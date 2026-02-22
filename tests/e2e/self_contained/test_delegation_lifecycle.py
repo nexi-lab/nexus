@@ -4,23 +4,21 @@ Tests with real EnhancedReBACManager + NamespaceManager backed by
 SQLite in-memory. Covers edge cases specified in the plan.
 """
 
-from __future__ import annotations
-
 import pytest
 
-from nexus.rebac.entity_registry import EntityRegistry
-from nexus.rebac.manager import EnhancedReBACManager
-from nexus.services.agents.agent_registry import AgentRegistry
-from nexus.services.delegation.derivation import derive_grants
-from nexus.services.delegation.errors import (
+from nexus.bricks.delegation.derivation import derive_grants
+from nexus.bricks.delegation.errors import (
     DelegationChainError,
     DelegationError,
     DelegationNotFoundError,
     EscalationError,
     TooManyGrantsError,
 )
-from nexus.services.delegation.models import DelegationMode, DelegationStatus
-from nexus.services.delegation.service import DelegationService
+from nexus.bricks.delegation.models import DelegationMode, DelegationStatus
+from nexus.bricks.delegation.service import DelegationService
+from nexus.bricks.rebac.entity_registry import EntityRegistry
+from nexus.bricks.rebac.manager import EnhancedReBACManager
+from nexus.services.agents.agent_registry import AgentRegistry
 from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
 # ---------------------------------------------------------------------------

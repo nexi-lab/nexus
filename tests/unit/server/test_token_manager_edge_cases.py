@@ -12,8 +12,6 @@ Covers:
 - Revoke non-existent credential
 """
 
-from __future__ import annotations
-
 import asyncio
 import gc
 import platform
@@ -25,7 +23,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nexus.auth.oauth.types import OAuthCredential
+from nexus.bricks.auth.oauth.types import OAuthCredential
 from nexus.bricks.cache.inmemory import InMemoryCacheStore
 from nexus.contracts.exceptions import AuthenticationError
 from nexus.server.auth.token_manager import TokenManager
@@ -113,7 +111,7 @@ class TestProviderRefreshTimeout:
 
         # Patch the timeout to 0.1s for fast testing
         with (
-            patch("nexus.auth.oauth.token_manager._PROVIDER_REFRESH_TIMEOUT_SECONDS", 0.1),
+            patch("nexus.bricks.auth.oauth.token_manager._PROVIDER_REFRESH_TIMEOUT_SECONDS", 0.1),
             pytest.raises(AuthenticationError, match="timed out"),
         ):
             await manager.get_valid_token("google", "alice@example.com")
@@ -452,7 +450,7 @@ class TestLockDictBehavior:
 
     def test_lock_eviction_at_capacity(self, manager):
         """Oldest unlocked entries are evicted when at capacity."""
-        with patch("nexus.auth.oauth.token_manager._MAX_REFRESH_LOCKS", 3):
+        with patch("nexus.bricks.auth.oauth.token_manager._MAX_REFRESH_LOCKS", 3):
             # Fill to capacity
             manager._get_refresh_lock(("p", "a@test.com", "z"))
             manager._get_refresh_lock(("p", "b@test.com", "z"))
@@ -475,7 +473,7 @@ class TestLockDictBehavior:
         await lock.acquire()
 
         with (
-            patch("nexus.auth.oauth.token_manager._LOCK_ACQUIRE_TIMEOUT_SECONDS", 0.1),
+            patch("nexus.bricks.auth.oauth.token_manager._LOCK_ACQUIRE_TIMEOUT_SECONDS", 0.1),
             pytest.raises(AuthenticationError, match="lock acquisition timed out"),
         ):
             await manager.get_valid_token("google", "alice@example.com")

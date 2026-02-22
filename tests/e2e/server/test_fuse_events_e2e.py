@@ -11,8 +11,6 @@ Run with:
     pytest tests/e2e/test_fuse_events_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import base64
 import json
 import threading
@@ -67,7 +65,7 @@ class MockWebhookServer:
         # Reset the queue
         WebhookHandler.received_events = Queue()
 
-    def __enter__(self) -> MockWebhookServer:
+    def __enter__(self) -> "MockWebhookServer":
         self.server = HTTPServer(("127.0.0.1", self.port), WebhookHandler)
         self.port = self.server.server_address[1]  # Get assigned port
         self.thread = threading.Thread(target=self.server.serve_forever)
@@ -186,7 +184,7 @@ class TestFUSEEventsE2E:
 
             # 2. Create webhook subscription
             response = test_app.post(
-                "/api/subscriptions",
+                "/api/v2/subscriptions",
                 json={
                     "url": webhook_server.url,
                     "event_types": ["file_write", "file_delete"],
@@ -241,7 +239,7 @@ class TestFUSEEventsE2E:
 
             # 3. Create webhook subscription (after file exists)
             response = test_app.post(
-                "/api/subscriptions",
+                "/api/v2/subscriptions",
                 json={
                     "url": webhook_server.url,
                     "event_types": ["file_delete"],
@@ -276,7 +274,7 @@ class TestFUSEEventsE2E:
 
             # 2. Create webhook subscription
             response = test_app.post(
-                "/api/subscriptions",
+                "/api/v2/subscriptions",
                 json={
                     "url": webhook_server.url,
                     "event_types": ["dir_create"],
@@ -312,7 +310,7 @@ class TestFUSEEventsE2E:
 
             # 2. Create webhook subscription
             response = test_app.post(
-                "/api/subscriptions",
+                "/api/v2/subscriptions",
                 json={
                     "url": webhook_server.url,
                     "event_types": ["file_write"],
@@ -327,7 +325,7 @@ class TestFUSEEventsE2E:
 
             # 3. Call test endpoint
             test_response = test_app.post(
-                f"/api/subscriptions/{sub_id}/test",
+                f"/api/v2/subscriptions/{sub_id}/test",
                 headers=headers,
             )
             assert test_response.status_code == 200
@@ -369,9 +367,9 @@ class TestEventBusIntegration:
 
         sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-        from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.event_bus import FileEvent, FileEventType
-        from nexus.services.event_bus.redis import RedisEventBus
+        from nexus.bricks.cache.dragonfly import DragonflyClient
+        from nexus.services.event_subsystem.bus.redis import RedisEventBus
+        from nexus.services.event_subsystem.types import FileEvent, FileEventType
 
         # Connect to Redis on port 7899
         redis_client = DragonflyClient(url="redis://127.0.0.1:1778")
@@ -416,9 +414,9 @@ class TestEventBusIntegration:
 
         sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-        from nexus.cache.dragonfly import DragonflyClient
-        from nexus.core.event_bus import FileEvent, FileEventType
-        from nexus.services.event_bus.redis import RedisEventBus
+        from nexus.bricks.cache.dragonfly import DragonflyClient
+        from nexus.services.event_subsystem.bus.redis import RedisEventBus
+        from nexus.services.event_subsystem.types import FileEvent, FileEventType
 
         # Connect to Redis on port 7899
         redis_client = DragonflyClient(url="redis://127.0.0.1:1778")

@@ -6,11 +6,10 @@ Skip if dependencies not available or Docker is down.
 Issue #1138: Event Stream Export.
 """
 
-from __future__ import annotations
-
 import pytest
 
-from nexus.core.event_bus import FileEvent, FileEventType
+from nexus.constants import ROOT_ZONE_ID
+from nexus.services.event_subsystem.types import FileEvent, FileEventType
 
 # Skip if testcontainers or nats not installed
 pytest.importorskip("testcontainers")
@@ -53,8 +52,8 @@ def nats_url(nats_container) -> str:
 
 @pytest.fixture
 def exporter(nats_url: str):
-    from nexus.services.event_log.exporters.config import NatsExporterConfig
-    from nexus.services.event_log.exporters.nats_exporter import NatsExporter
+    from nexus.services.event_subsystem.log.exporters.config import NatsExporterConfig
+    from nexus.services.event_subsystem.log.exporters.nats_exporter import NatsExporter
 
     config = NatsExporterConfig(
         servers=nats_url,
@@ -64,7 +63,7 @@ def exporter(nats_url: str):
     return NatsExporter(config)
 
 
-def _make_event(event_id: str = "test-1", zone_id: str = "default") -> FileEvent:
+def _make_event(event_id: str = "test-1", zone_id: str = ROOT_ZONE_ID) -> FileEvent:
     return FileEvent(
         type=FileEventType.FILE_WRITE,
         path="/test.txt",

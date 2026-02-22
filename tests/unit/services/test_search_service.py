@@ -7,14 +7,12 @@ SearchService uses dependency injection with MetastoreABC,
 PermissionEnforcer, PathRouter, and NexusFSGateway.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from nexus.contracts.types import OperationContext
-from nexus.services.search_service import (
+from nexus.services.search.search_service import (
     DEFAULT_IGNORE_PATTERNS,
     SearchService,
     _filter_ignored_paths,
@@ -139,8 +137,6 @@ class TestSearchServiceInit:
     def test_init_defaults(self, mock_metadata_store):
         """Service initializes internal state to defaults."""
         svc = SearchService(metadata_store=mock_metadata_store)
-        assert svc._semantic_search is None
-        assert svc._async_search is None
         assert svc._thread_pool is None
         assert svc._list_thread_pool is None
         assert svc._default_context is None

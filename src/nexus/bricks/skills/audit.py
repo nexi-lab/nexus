@@ -1,7 +1,5 @@
 """Skill audit logging and compliance tracking."""
 
-from __future__ import annotations
-
 import dataclasses
 import json
 import logging
@@ -14,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from nexus.bricks.skills.exceptions import SkillValidationError
 
 if TYPE_CHECKING:
-    from nexus.core.cache_store import CacheStoreABC
+    from nexus.contracts.cache_store import CacheStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +95,7 @@ class SkillAuditLogger:
     - Generate compliance reports
 
     Example:
-        >>> from nexus.skills import SkillAuditLogger, AuditAction
+        >>> from nexus.bricks.skills.audit import SkillAuditLogger, AuditAction
         >>>
         >>> # Initialize logger
         >>> audit = SkillAuditLogger()
@@ -120,7 +118,7 @@ class SkillAuditLogger:
         ...     print(f"{log.action.value} by {log.agent_id} at {log.timestamp}")
     """
 
-    def __init__(self, cache_store: CacheStoreABC | None = None) -> None:
+    def __init__(self, cache_store: "CacheStoreABC | None" = None) -> None:
         """Initialize audit logger.
 
         Args:
@@ -130,7 +128,7 @@ class SkillAuditLogger:
         if cache_store is not None:
             self._cache: CacheStoreABC = cache_store
         else:
-            from nexus.cache.inmemory import InMemoryCacheStore
+            from nexus.contracts.cache_store import InMemoryCacheStore
 
             self._cache = InMemoryCacheStore()
 

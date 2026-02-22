@@ -4,8 +4,6 @@ Tests protocol conformance, classification, fair-share rejection,
 HRRN dequeue, and state event handling.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
@@ -312,6 +310,38 @@ class TestAgentStateEvents:
 # =============================================================================
 # Complete with Fair-Share
 # =============================================================================
+
+
+class TestTwoPhaseInit:
+    """Test two-phase initialization pattern (Issue #2195)."""
+
+    def test_uninitialized_pool_raises_runtime_error(self):
+        """Accessing pool before initialize() raises RuntimeError."""
+        svc = SchedulerService(queue=AsyncMock(), db_pool=None)
+        assert svc._initialized is False
+        with pytest.raises(RuntimeError, match="initialize"):
+            _ = svc.pool
+
+    @pytest.mark.asyncio
+    async def test_initialize_sets_pool(self, mock_pool, mock_queue):
+        """initialize() sets the pool and marks as initialized."""
+        svc = SchedulerService(queue=mock_queue, db_pool=None)
+        await svc.initialize(mock_pool)
+        assert svc._initialized is True
+        assert svc.pool is mock_pool
+
+    def test_pool_property_succeeds_when_initialized(self, mock_pool, mock_queue):
+        """Pool property succeeds when db_pool is provided at construction."""
+        svc = SchedulerService(queue=mock_queue, db_pool=mock_pool)
+        assert svc._initialized is True
+        assert svc.pool is mock_pool
+
+    @pytest.mark.asyncio
+    async def test_initialize_calls_sync_fair_share(self, mock_pool, mock_queue):
+        """initialize() calls sync_fair_share to hydrate counters from DB."""
+        svc = SchedulerService(queue=mock_queue, db_pool=None)
+        await svc.initialize(mock_pool)
+        mock_queue.count_running_by_agent.assert_awaited_once()
 
 
 class TestCompleteWithFairShare:

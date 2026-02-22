@@ -1,8 +1,8 @@
-"""OpenTelemetry instrumentation for Nexus.
+"""OpenTelemetry instrumentation for Nexus (server layer).
 
-This module provides observability through OpenTelemetry, enabling distributed
-tracing, metrics, and logging that can be exported to any OTLP-compatible backend
-(SigNoz, Grafana Tempo, Jaeger, etc.).
+Server-specific setup and instrumentation. Tier-neutral utilities
+(get_tracer, is_telemetry_enabled, etc.) live in ``nexus.lib.telemetry``
+so that services and backends can use them without importing from server/.
 
 Environment Variables:
     OTEL_ENABLED: Enable/disable telemetry (default: "false")
@@ -13,45 +13,28 @@ Environment Variables:
     OTEL_TRACES_SAMPLER_ARG: Sampling ratio 0.0-1.0 (default: "1.0")
 
 Usage:
-    from nexus.server.telemetry import setup_telemetry, get_tracer
+    from nexus.lib.telemetry import get_tracer  # tier-neutral
+    from nexus.server.telemetry import setup_telemetry  # server-only
 
-    # Initialize once at startup
     setup_telemetry()
-
-    # Get a tracer for custom spans
     tracer = get_tracer(__name__)
-
-    with tracer.start_as_current_span("my_operation") as span:
-        span.set_attribute("custom.attribute", "value")
-        # ... your code ...
-
-Example with SigNoz:
-    OTEL_ENABLED=true
-    OTEL_SERVICE_NAME=nexus
-    OTEL_EXPORTER_OTLP_ENDPOINT=http://signoz:4317
 """
-
-from __future__ import annotations
 
 import logging
 import os
-from typing import TYPE_CHECKING
 
 from nexus.constants import DEFAULT_OTEL_ENDPOINT
 
-if TYPE_CHECKING:
-    from opentelemetry.trace import Tracer
+# Re-export tier-neutral utilities so existing server-layer callers
+# (e.g. fastapi_server.py) continue to work without import changes.
+from nexus.lib.telemetry import (  # noqa: F401
+    add_span_attribute,
+    get_tracer,
+    is_telemetry_enabled,
+    record_exception,
+)
 
 logger = logging.getLogger(__name__)
-
-# Global state
-_initialized = False
-_tracer: Tracer | None = None
-
-
-def is_telemetry_enabled() -> bool:
-    """Check if telemetry is enabled via environment variable."""
-    return os.environ.get("OTEL_ENABLED", "false").lower() in ("true", "1", "yes")
 
 
 def setup_telemetry(
@@ -75,7 +58,7 @@ def setup_telemetry(
     Returns:
         True if telemetry was initialized, False if disabled or already initialized
     """
-    global _initialized, _tracer
+    from nexus.lib.telemetry import _initialized, init_telemetry_state
 
     if _initialized:
         logger.debug("Telemetry already initialized, skipping")
@@ -141,18 +124,18 @@ def setup_telemetry(
         # Set as global tracer provider
         trace.set_tracer_provider(provider)
 
-        # Store tracer for get_tracer()
-        _tracer = trace.get_tracer(__name__)
+        # Store tracer and mark initialized in lib.telemetry
+        tracer = trace.get_tracer(__name__)
+        init_telemetry_state(True, tracer)
 
         # Auto-instrument libraries
         _instrument_libraries()
 
         # Inject rebac tracer into permission tracing module
-        from nexus.rebac.rebac_tracing import set_tracer as _set_rebac_tracer
+        from nexus.bricks.rebac.rebac_tracing import set_tracer as _set_rebac_tracer
 
         _set_rebac_tracer(trace.get_tracer("nexus.rebac"))
 
-        _initialized = True
         logger.info(
             f"OpenTelemetry initialized: service={_service_name}, "
             f"endpoint={_endpoint}, sample_ratio={_sample_ratio}"
@@ -169,9 +152,6 @@ def setup_telemetry(
 
 def _instrument_libraries() -> None:
     """Auto-instrument supported libraries."""
-    # FastAPI (will be instrumented when app is created)
-    # We don't instrument here - see instrument_fastapi_app()
-
     # HTTPX - async HTTP client
     try:
         from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
@@ -223,15 +203,14 @@ def _instrument_libraries() -> None:
 def instrument_fastapi_app(app: object) -> bool:
     """Instrument a FastAPI application.
 
-    This should be called after creating the FastAPI app but before
-    adding routes. It adds middleware for automatic request tracing.
-
     Args:
         app: FastAPI application instance
 
     Returns:
         True if instrumented, False if telemetry disabled or error
     """
+    from nexus.lib.telemetry import _initialized
+
     if not is_telemetry_enabled() or not _initialized:
         return False
 
@@ -252,82 +231,9 @@ def instrument_fastapi_app(app: object) -> bool:
         return False
 
 
-def get_tracer(name: str | None = None) -> Tracer | None:
-    """Get a tracer for creating custom spans.
-
-    Args:
-        name: Tracer name (typically __name__ of the module)
-
-    Returns:
-        Tracer instance or None if telemetry is disabled
-
-    Example:
-        tracer = get_tracer(__name__)
-        if tracer:
-            with tracer.start_as_current_span("my_operation") as span:
-                span.set_attribute("key", "value")
-                # ... your code ...
-    """
-    if not _initialized:
-        return None
-
-    try:
-        from opentelemetry import trace
-
-        return trace.get_tracer(name or __name__)
-    except Exception:
-        return None
-
-
-def add_span_attribute(key: str, value: str | int | float | bool) -> None:
-    """Add an attribute to the current span.
-
-    This is a convenience function for adding attributes without
-    needing to manage span context directly.
-
-    Args:
-        key: Attribute key
-        value: Attribute value
-    """
-    if not _initialized:
-        return
-
-    try:
-        from opentelemetry import trace
-
-        span = trace.get_current_span()
-        if span:
-            span.set_attribute(key, value)
-    except Exception:
-        pass
-
-
-def record_exception(exception: Exception) -> None:
-    """Record an exception in the current span.
-
-    Args:
-        exception: The exception to record
-    """
-    if not _initialized:
-        return
-
-    try:
-        from opentelemetry import trace
-
-        span = trace.get_current_span()
-        if span:
-            span.record_exception(exception)
-            span.set_status(trace.Status(trace.StatusCode.ERROR, str(exception)))
-    except Exception:
-        pass
-
-
 def shutdown_telemetry() -> None:
-    """Shutdown telemetry and flush pending spans.
-
-    Call this during application shutdown to ensure all spans are exported.
-    """
-    global _initialized, _tracer
+    """Shutdown telemetry and flush pending spans."""
+    from nexus.lib.telemetry import _initialized, reset_telemetry_state
 
     if not _initialized:
         return
@@ -342,9 +248,8 @@ def shutdown_telemetry() -> None:
     except Exception as e:
         logger.warning(f"Error during OpenTelemetry shutdown: {e}")
     finally:
-        _initialized = False
-        _tracer = None
+        reset_telemetry_state()
         # Reset rebac tracer
-        from nexus.rebac.rebac_tracing import reset_tracer as _reset_rebac_tracer
+        from nexus.bricks.rebac.rebac_tracing import reset_tracer as _reset_rebac_tracer
 
         _reset_rebac_tracer()

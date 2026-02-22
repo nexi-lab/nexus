@@ -11,8 +11,6 @@ Usage:
     PYTHONPATH=src python3.13 tests/benchmarks/bench_write_buffer_pg.py
 """
 
-from __future__ import annotations
-
 import statistics
 import time
 from contextlib import contextmanager

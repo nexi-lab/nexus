@@ -4,8 +4,6 @@ Tests the thin orchestrator: escalation handling, race condition paths,
 parallel verify in list_sandboxes, and disconnect_sandbox.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any

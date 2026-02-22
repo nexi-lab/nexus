@@ -6,8 +6,6 @@ and cache invalidation.
 All async service methods are tested via asyncio.run().
 """
 
-from __future__ import annotations
-
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, create_autospec
 
@@ -15,7 +13,7 @@ import pytest
 
 from nexus.contracts.types import OperationContext
 from nexus.core.protocols.connector import PassthroughProtocol
-from nexus.services.events_service import EventsService
+from nexus.system_services.lifecycle.events_service import EventsService
 
 # =============================================================================
 # Fixtures

@@ -9,8 +9,6 @@ When NEXUS_DATABASE_URL is set (e.g. in the PG CI job), that database is used
 instead.
 """
 
-from __future__ import annotations
-
 import os
 from pathlib import Path
 

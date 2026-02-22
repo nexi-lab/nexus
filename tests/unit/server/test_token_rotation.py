@@ -22,8 +22,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.auth.oauth.types import OAuthCredential
-from nexus.cache.inmemory import InMemoryCacheStore
+from nexus.bricks.auth.oauth.types import OAuthCredential
+from nexus.bricks.cache.inmemory import InMemoryCacheStore
 from nexus.contracts.exceptions import AuthenticationError
 from nexus.server.auth.token_manager import TokenManager, _hash_token
 

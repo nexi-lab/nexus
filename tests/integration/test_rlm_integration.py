@@ -9,8 +9,6 @@ Verifies:
 - End-to-end inference flow with mocked sandbox + LLM
 """
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -25,7 +23,7 @@ class TestRLMImportPaths:
 
     def test_public_api_exports(self) -> None:
         """nexus.rlm exports all public types and errors."""
-        from nexus.rlm import (
+        from nexus.bricks.rlm import (
             REPLResult,
             RLMBrickManifest,
             RLMBudgetExceededError,
@@ -59,25 +57,25 @@ class TestRLMImportPaths:
 
     def test_service_import(self) -> None:
         """RLMInferenceService is importable from the service module."""
-        from nexus.rlm.service import RLMInferenceService
+        from nexus.bricks.rlm.service import RLMInferenceService
 
         assert RLMInferenceService is not None
 
     def test_environment_import(self) -> None:
         """NexusREPL is importable from the environment module."""
-        from nexus.rlm.environment import NexusREPL
+        from nexus.bricks.rlm.environment import NexusREPL
 
         assert NexusREPL is not None
 
     def test_lm_client_import(self) -> None:
         """NexusLMClient is importable from the lm_client module."""
-        from nexus.rlm.lm_client import NexusLMClient
+        from nexus.bricks.rlm.lm_client import NexusLMClient
 
         assert NexusLMClient is not None
 
     def test_tools_import(self) -> None:
         """Tool functions are importable."""
-        from nexus.rlm.tools import (
+        from nexus.bricks.rlm.tools import (
             build_tools_injection_code,
             nexus_list,
             nexus_read,
@@ -106,7 +104,7 @@ class TestRLMBrickManifest:
 
     def test_manifest_fields(self) -> None:
         """Manifest has required fields."""
-        from nexus.rlm.manifest import RLMBrickManifest
+        from nexus.bricks.rlm.manifest import RLMBrickManifest
 
         m = RLMBrickManifest()
         assert m.name == "rlm"
@@ -126,7 +124,7 @@ class TestRLMServiceConstruction:
 
     def test_construct_with_mocks(self) -> None:
         """Service accepts mock sandbox_manager and llm_provider."""
-        from nexus.rlm.service import RLMInferenceService
+        from nexus.bricks.rlm.service import RLMInferenceService
 
         service = RLMInferenceService(
             sandbox_manager=MagicMock(),
@@ -138,7 +136,7 @@ class TestRLMServiceConstruction:
 
     def test_shutdown_is_safe(self) -> None:
         """shutdown() doesn't raise even with no active jobs."""
-        from nexus.rlm.service import RLMInferenceService
+        from nexus.bricks.rlm.service import RLMInferenceService
 
         service = RLMInferenceService(
             sandbox_manager=MagicMock(),
@@ -185,8 +183,8 @@ class TestRLMInferenceFlow:
     @pytest.mark.asyncio
     async def test_non_streaming_inference(self) -> None:
         """Non-streaming inference returns a completed result."""
-        from nexus.rlm.service import RLMInferenceService
-        from nexus.rlm.types import RLMInferenceRequest, RLMStatus
+        from nexus.bricks.rlm.service import RLMInferenceService
+        from nexus.bricks.rlm.types import RLMInferenceRequest, RLMStatus
 
         # Mock sandbox_manager
         mock_sandbox = MagicMock()
@@ -226,8 +224,8 @@ class TestRLMInferenceFlow:
     @pytest.mark.asyncio
     async def test_streaming_inference_yields_events(self) -> None:
         """Streaming inference yields SSE events."""
-        from nexus.rlm.service import RLMInferenceService
-        from nexus.rlm.types import RLMInferenceRequest, SSEEventType
+        from nexus.bricks.rlm.service import RLMInferenceService
+        from nexus.bricks.rlm.types import RLMInferenceRequest, SSEEventType
 
         # Mock sandbox + LLM (same as above)
         mock_sandbox = MagicMock()

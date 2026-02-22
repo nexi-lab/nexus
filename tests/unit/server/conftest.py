@@ -3,8 +3,6 @@
 Issue #1002: Structured JSON logging with request correlation.
 """
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock
 
 # ---------------------------------------------------------------------------

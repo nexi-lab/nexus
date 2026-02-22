@@ -495,10 +495,10 @@ Names explain the **"What"** and **"Why"**, not the **"How"**.
 | **Metastore** | `MetastoreABC` | "The Structure" — inodes, dentries, config, topology | redb (local PyO3 / gRPC Raft) | **Required** init param |
 | **RecordStore** | `RecordStoreABC` | "The Truth" — entities, relationships, logs, vectors | PostgreSQL (prod), SQLite (dev) | **Optional** — injected for Services |
 | **ObjectStore** | `ObjectStoreABC` (= current `Backend`) | "The Content" — raw file bytes, immutable objects | S3, GCS, Local Disk | **Mounted** dynamically (like Linux `mount`) |
-| **CacheStore** | `CacheStoreABC` (future) | "The Reflexes" — sessions, signals, ephemeral data | Dragonfly (prod), In-Memory (dev) | **Future** — optional |
+| **CacheStore** | `CacheStoreABC` (in `contracts/cache_store.py`) | "The Reflexes" — sessions, signals, ephemeral data | Dragonfly (prod), In-Memory (dev) | **Optional** — ABC in contracts/ (like `include/linux/fscache.h`), kernel accepts via DI, services consume |
 
 **Naming Note**: The Metastore pillar class is `MetastoreABC` (in `core/metastore.py`), providing typed FileMetadata CRUD.
-Data classes (`FileMetadata`, `PaginatedResult`) live in `core/metadata.py`. Issue #1525 completed the rename.
+Data classes (`FileMetadata`, `PaginatedResult`) live in `contracts/metadata.py`. Issue #1525 completed the rename.
 
 ### Complete Data Type → Pillar Mapping
 

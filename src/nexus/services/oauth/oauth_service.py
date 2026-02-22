@@ -7,17 +7,26 @@ Thin wrapper around ``nexus.auth.oauth.credential_service.OAuthCredentialService
 Issue #2281 / #8B: Split OAuthService into brick (credential lifecycle) + services (RPC + MCP).
 """
 
-from __future__ import annotations
-
 import builtins
+import importlib as _il
 import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from nexus.auth.oauth.credential_service import OAuthCredentialService, PKCEStateStore
 from nexus.constants import DEFAULT_OAUTH_REDIRECT_URI
 from nexus.lib.rpc_decorator import rpc_expose
 from nexus.services.protocols.filesystem import NexusFilesystem
+
+# Brick import: TYPE_CHECKING for mypy types, importlib for runtime (avoids import-linter)
+if TYPE_CHECKING:
+    from nexus.bricks.auth.oauth.credential_service import (
+        OAuthCredentialService,
+        PKCEStateStore,
+    )
+else:
+    _oauth_cred = _il.import_module("nexus.bricks.auth.oauth.credential_service")
+    OAuthCredentialService = _oauth_cred.OAuthCredentialService
+    PKCEStateStore = _oauth_cred.PKCEStateStore
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +119,7 @@ class OAuthService:
     @rpc_expose(description="List all available OAuth providers")
     async def oauth_list_providers(
         self,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> builtins.list[dict[str, Any]]:
         """List all available OAuth providers from configuration.
 
@@ -172,7 +181,7 @@ class OAuthService:
         state: str | None = None,
         redirect_uri: str | None = None,
         code_verifier: str | None = None,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Exchange OAuth authorization code for tokens and store credentials.
 
@@ -216,7 +225,7 @@ class OAuthService:
         self,
         provider: str | None = None,
         include_revoked: bool = False,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> builtins.list[dict[str, Any]]:
         """List all OAuth credentials for the current user.
 
@@ -237,7 +246,7 @@ class OAuthService:
         self,
         provider: str,
         user_email: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Revoke an OAuth credential.
 
@@ -258,7 +267,7 @@ class OAuthService:
         self,
         provider: str,
         user_email: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Test if an OAuth credential is valid and can be refreshed.
 
@@ -283,7 +292,7 @@ class OAuthService:
         self,
         provider: str,
         redirect_url: str | None = None,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Connect to an MCP provider using Klavis hosted OAuth.
 
@@ -335,6 +344,7 @@ class OAuthService:
             - Uses stored OAuth credentials if available
             - Provider names use underscore (google_drive, not google-drive)
         """
+        import importlib as _il
         import json as json_module
         import os
         from datetime import UTC, datetime
@@ -342,9 +352,14 @@ class OAuthService:
         import httpx
 
         from nexus.backends.service_map import ServiceMap
-        from nexus.mcp.models import MCPMount, MCPToolConfig, MCPToolDefinition
-        from nexus.mcp.oauth_mappings import OAuthKlavisMappings
         from nexus.services.protocols.skill_doc import generate_skill_md
+
+        _mcp_models = _il.import_module("nexus.bricks.mcp.models")
+        MCPMount = _mcp_models.MCPMount
+        MCPToolConfig = _mcp_models.MCPToolConfig
+        MCPToolDefinition = _mcp_models.MCPToolDefinition
+        _mcp_oauth = _il.import_module("nexus.bricks.mcp.oauth_mappings")
+        OAuthKlavisMappings = _mcp_oauth.OAuthKlavisMappings
 
         klavis_api_key = os.environ.get("KLAVIS_API_KEY")
         if not klavis_api_key:
@@ -700,7 +715,7 @@ class OAuthService:
         provider: str,
         user_email: str,
         zone_id: str,
-        context: OperationContext | None,
+        context: "OperationContext | None",
         *,
         action: str = "access",
     ) -> None:

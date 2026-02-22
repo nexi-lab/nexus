@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from nexus.rebac.cache.result_cache import ReBACPermissionCache
+from nexus.bricks.rebac.cache.result_cache import ReBACPermissionCache
 
 
 class TestReBACPermissionCache:

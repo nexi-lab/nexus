@@ -12,8 +12,6 @@ Validates the __getattr__-based proxy dispatch works end-to-end:
 Issue #1289: Protocol + RPC Proxy pattern.
 """
 
-from __future__ import annotations
-
 import os
 import signal
 import socket
@@ -468,9 +466,9 @@ class TestVirtualSubclass:
     """Test that isinstance works with virtual subclass registration."""
 
     def test_isinstance_nexus_filesystem(self, admin_client: RemoteNexusFS) -> None:
-        from nexus.core.filesystem import NexusFilesystem
+        from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
 
-        assert isinstance(admin_client, NexusFilesystem)
+        assert isinstance(admin_client, NexusFilesystemABC)
 
     def test_isinstance_remote_nexusfs(self, admin_client: RemoteNexusFS) -> None:
         assert isinstance(admin_client, RemoteNexusFS)

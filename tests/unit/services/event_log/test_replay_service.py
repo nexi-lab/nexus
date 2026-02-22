@@ -13,8 +13,6 @@ Tests cover:
 - Boundary conditions
 """
 
-from __future__ import annotations
-
 import tempfile
 import uuid
 from collections.abc import Generator
@@ -23,7 +21,8 @@ from pathlib import Path
 
 import pytest
 
-from nexus.services.event_log.replay_service import (
+from nexus.constants import ROOT_ZONE_ID
+from nexus.services.event_subsystem.log.replay import (
     EventReplayService,
     _decode_cursor,
     _encode_cursor,
@@ -54,7 +53,7 @@ def _insert_event(
     session_factory,
     path: str = "/test.txt",
     operation_type: str = "write",
-    zone_id: str = "default",
+    zone_id: str = ROOT_ZONE_ID,
     agent_id: str | None = None,
     sequence_number: int | None = None,
     created_at: datetime | None = None,

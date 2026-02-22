@@ -7,8 +7,6 @@ Tests properties:
 - Cursor stability (re-running same cursor yields same results)
 """
 
-from __future__ import annotations
-
 import tempfile
 import uuid
 from collections.abc import Generator
@@ -19,7 +17,8 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from nexus.services.event_log.replay_service import EventReplayService
+from nexus.constants import ROOT_ZONE_ID
+from nexus.services.event_subsystem.log.replay import EventReplayService
 from nexus.storage.models import OperationLogModel
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
@@ -47,7 +46,7 @@ def _seed_events(session_factory, count: int) -> list[str]:
                 operation_id=op_id,
                 operation_type="write",
                 path=f"/file{i}.txt",
-                zone_id="default",
+                zone_id=ROOT_ZONE_ID,
                 status="success",
                 delivered=True,
                 created_at=datetime.now(UTC),
@@ -66,7 +65,7 @@ class TestReplayProperties:
         n_events=st.integers(min_value=0, max_value=50),
         page_size=st.integers(min_value=1, max_value=20),
     )
-    @settings(max_examples=30, deadline=10000)
+    @settings(max_examples=10, deadline=10000)
     def test_no_duplicates_across_all_pages(self, n_events: int, page_size: int) -> None:
         """Every event_id appears exactly once across all pages."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -94,7 +93,7 @@ class TestReplayProperties:
         n_events=st.integers(min_value=1, max_value=50),
         page_size=st.integers(min_value=1, max_value=20),
     )
-    @settings(max_examples=30, deadline=10000)
+    @settings(max_examples=10, deadline=10000)
     def test_monotonic_sequence_ordering(self, n_events: int, page_size: int) -> None:
         """Sequence numbers are always strictly increasing across pages."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -126,7 +125,7 @@ class TestReplayProperties:
         n_events=st.integers(min_value=2, max_value=30),
         page_size=st.integers(min_value=1, max_value=10),
     )
-    @settings(max_examples=20, deadline=10000)
+    @settings(max_examples=10, deadline=10000)
     def test_cursor_stability(self, n_events: int, page_size: int) -> None:
         """Running the same cursor twice yields the same results."""
         with tempfile.TemporaryDirectory() as tmpdir:

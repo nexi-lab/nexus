@@ -6,8 +6,6 @@ in-memory event bus mock, and ExporterRegistry.
 Issue #1241, #1138.
 """
 
-from __future__ import annotations
-
 import tempfile
 import time
 import uuid
@@ -18,8 +16,9 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock
 
 import pytest
 
-from nexus.services.event_log.delivery_worker import EventDeliveryWorker
-from nexus.services.event_log.exporter_registry import ExporterRegistry
+from nexus.constants import ROOT_ZONE_ID
+from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
+from nexus.services.event_subsystem.log.exporter_registry import ExporterRegistry
 from nexus.storage.models import DeadLetterModel, OperationLogModel
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
@@ -41,7 +40,7 @@ def _insert_undelivered(
     session_factory,
     path: str = "/test.txt",
     operation_type: str = "write",
-    zone_id: str = "default",
+    zone_id: str = ROOT_ZONE_ID,
     sequence_number: int | None = None,
 ) -> str:
     op_id = str(uuid.uuid4())

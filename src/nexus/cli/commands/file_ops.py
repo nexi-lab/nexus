@@ -1,7 +1,5 @@
 """File operation commands - read, write, cat, cp, mv, rm, sync."""
 
-from __future__ import annotations
-
 import sys
 from pathlib import Path
 from typing import Any
@@ -17,7 +15,6 @@ from nexus.cli.utils import (
     console,
     get_filesystem,
     handle_error,
-    is_standalone,
 )
 
 
@@ -116,28 +113,13 @@ def cat(
 
         if at_operation:
             # Time-travel: Read file at historical operation point
-            # Import at function level to avoid scoping issues
-            try:
-                from nexus.storage.time_travel import TimeTravelReader
-            except ImportError as e:
-                console.print(f"[red]Error:[/red] Failed to import time-travel modules: {e}")
-                nx.close()
-                return
-
-            if not is_standalone(nx):
+            time_travel = getattr(nx, "time_travel_service", None)
+            if time_travel is None:
                 console.print("[red]Error:[/red] Time-travel is only supported with local NexusFS")
                 nx.close()
                 return
 
-            # Create time-travel reader with a session
-            with nx.SessionLocal() as session:
-                time_travel = TimeTravelReader(session, nx.backend)
-
-                # Get file state at operation
-                state = time_travel.get_file_at_operation(
-                    path, at_operation, zone_id=nx._default_context.zone_id
-                )
-
+            state = time_travel.get_file_at_operation(path, at_operation)
             nx.close()
 
             # Display time-travel info

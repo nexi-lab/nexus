@@ -5,8 +5,6 @@ Calls ``BrickLifecycleManager.mount_all()`` during server startup and
 lifecycle manager are absent.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import time
@@ -15,17 +13,17 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
+    from nexus.server.lifespan.services_container import LifespanServices
+
 logger = logging.getLogger(__name__)
 
 
-async def startup_bricks(app: FastAPI) -> list[asyncio.Task[None]]:
+async def startup_bricks(_app: "FastAPI", svc: "LifespanServices") -> list[asyncio.Task[None]]:
     """Mount all registered bricks via BrickLifecycleManager."""
-    nx = getattr(app.state, "nexus_fs", None)
-    if nx is None:
+    if svc.nexus_fs is None:
         return []
 
-    _sys = getattr(nx, "_system_services", None)
-    manager = getattr(_sys, "brick_lifecycle_manager", None) if _sys else None
+    manager = svc.brick_lifecycle_manager
     if manager is None:
         return []
 
@@ -44,7 +42,7 @@ async def startup_bricks(app: FastAPI) -> list[asyncio.Task[None]]:
         logger.error("[LIFECYCLE] mount_all failed: %s", exc)
 
     # Start brick reconciler (Issue #2060)
-    reconciler = getattr(_sys, "brick_reconciler", None)
+    reconciler = svc.brick_reconciler
     if reconciler is not None:
         try:
             await reconciler.start()
@@ -54,19 +52,17 @@ async def startup_bricks(app: FastAPI) -> list[asyncio.Task[None]]:
     return []
 
 
-async def shutdown_bricks(app: FastAPI) -> None:
+async def shutdown_bricks(_app: "FastAPI", svc: "LifespanServices") -> None:
     """Unmount all active bricks in reverse-DAG order."""
-    nx = getattr(app.state, "nexus_fs", None)
-    if nx is None:
+    if svc.nexus_fs is None:
         return
 
-    _sys = getattr(nx, "_system_services", None)
-    manager = getattr(_sys, "brick_lifecycle_manager", None) if _sys else None
+    manager = svc.brick_lifecycle_manager
     if manager is None:
         return
 
     # Stop brick reconciler before unmounting (Issue #2060)
-    reconciler = getattr(_sys, "brick_reconciler", None)
+    reconciler = svc.brick_reconciler
     if reconciler is not None:
         try:
             await reconciler.stop()

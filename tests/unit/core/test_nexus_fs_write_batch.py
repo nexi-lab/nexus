@@ -8,8 +8,6 @@ Tests cover:
 - Version incrementing for existing files
 """
 
-from __future__ import annotations
-
 import pytest
 
 from tests.conftest import make_test_nexus

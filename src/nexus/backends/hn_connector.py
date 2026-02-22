@@ -45,9 +45,10 @@ import httpx
 
 from nexus.backends.backend import Backend
 from nexus.backends.cache_mixin import CacheConnectorMixin, SyncResult
+from nexus.backends.connectors.base import SkillDocMixin
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
-from nexus.connectors.base import SkillDocMixin
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
+from nexus.core.protocols.capabilities import ConnectorCapability
 from nexus.lib.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:
@@ -107,6 +108,15 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
     - Fixed virtual directory structure
     - External article content not included (just URLs)
     """
+
+    _CAPABILITIES = frozenset(
+        {
+            ConnectorCapability.VIRTUAL_FILESYSTEM,
+            ConnectorCapability.CACHE_BULK_READ,
+            ConnectorCapability.CACHE_SYNC,
+            ConnectorCapability.SKILL_DOC,
+        }
+    )
 
     # Skill documentation settings
     SKILL_NAME = "hn"
@@ -181,7 +191,7 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
 
         try:
             content = (
-                resources.files("nexus.connectors.hn")
+                resources.files("nexus.backends.connectors.hn")
                 .joinpath("SKILL.md")
                 .read_text(encoding="utf-8")
             )

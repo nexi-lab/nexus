@@ -8,8 +8,6 @@ Lives in lib/ (tier-neutral utility) because it has zero nexus-specific
 dependencies — only stdlib threading + abc.
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 from abc import ABC, abstractmethod
@@ -48,7 +46,7 @@ class RevisionNotifier(RevisionNotifierBase):
         self._conditions: dict[str, threading.Condition] = {}
         self._lock = threading.Lock()
 
-    def _get_condition(self, zone_id: str) -> threading.Condition:
+    def _get_condition(self, zone_id: str) -> "threading.Condition":
         """Get or create the Condition for a zone (guarded by _lock)."""
         if zone_id not in self._conditions:
             with self._lock:

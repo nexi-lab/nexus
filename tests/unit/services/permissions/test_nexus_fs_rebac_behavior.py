@@ -10,16 +10,18 @@ exist on NexusFS (rebac_create, rebac_check, etc.) are bound from NexusFS and ro
 through rebac_service.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock, Mock
 
 import pytest
 
+from nexus.bricks.rebac.rebac_service import ReBACService
 from nexus.core.nexus_fs import NexusFS
-from nexus.services.rebac_service import ReBACService
+
+# NOTE (Issue #2440): rebac_create, rebac_check, rebac_delete, rebac_list_tuples
+# were deleted from NexusFS (Phase 3: kernel surface reduction). MockNexusFS now
+# delegates to self.rebac_service sync methods instead of binding from NexusFS.
 
 ROOT_ZONE_ID = "default"
 
@@ -55,12 +57,21 @@ class MockNexusFS:
             raise RuntimeError("ReBAC manager not available")
         return mgr
 
-    # --- Methods bound from NexusFS (delegate to rebac_service) ---
+    # --- Methods bound from NexusFS ---
     _get_subject_from_context = NexusFS._get_subject_from_context
-    rebac_create = NexusFS.rebac_create
-    rebac_check = NexusFS.rebac_check
-    rebac_delete = NexusFS.rebac_delete
-    rebac_list_tuples = NexusFS.rebac_list_tuples
+
+    # --- Delegation to rebac_service (Issue #2440: methods deleted from NexusFS) ---
+    def rebac_create(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self.rebac_service.rebac_create_sync(*args, **kwargs)
+
+    def rebac_check(self, *args: Any, **kwargs: Any) -> bool:
+        return self.rebac_service.rebac_check_sync(*args, **kwargs)
+
+    def rebac_delete(self, tuple_id: str) -> bool:
+        return self.rebac_service.rebac_delete_sync(tuple_id)
+
+    def rebac_list_tuples(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return self.rebac_service.rebac_list_tuples_sync(**kwargs)
 
     # --- Methods implemented here (extracted from NexusFS to ReBACService) ---
 
@@ -288,7 +299,7 @@ class MockNexusFS:
         offset: int = 0,
         cursor: str | None = None,
     ) -> dict[str, Any]:
-        from nexus.rebac.cache.iterator import CursorExpiredError
+        from nexus.bricks.rebac.cache.iterator import CursorExpiredError
 
         relation_to_level = {
             "shared-viewer": "viewer",
@@ -358,7 +369,7 @@ class MockNexusFS:
         offset: int = 0,
         cursor: str | None = None,
     ) -> dict[str, Any]:
-        from nexus.rebac.cache.iterator import CursorExpiredError
+        from nexus.bricks.rebac.cache.iterator import CursorExpiredError
 
         relation_to_level = {
             "shared-viewer": "viewer",

@@ -4,8 +4,6 @@ Tests that ReadaheadConfig.from_io_profile() produces correct values
 and that on_open() with io_profile creates sessions with profile-derived params.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest

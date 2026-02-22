@@ -3,10 +3,7 @@
 Issue #1286: Extracted from monolithic __init__.py.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     Boolean,
@@ -24,9 +21,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from nexus.contracts.exceptions import ValidationError
 from nexus.storage.models._base import Base, ResourceConfigMixin, uuid_pk
-
-if TYPE_CHECKING:
-    pass
 
 
 class MemoryModel(Base):
@@ -289,19 +283,19 @@ class EntityModel(Base):
         onupdate=lambda: datetime.now(UTC),
     )
 
-    source_relationships: Mapped[list[RelationshipModel]] = relationship(
+    source_relationships: "Mapped[list[RelationshipModel]]" = relationship(
         "RelationshipModel",
         foreign_keys="RelationshipModel.source_entity_id",
         back_populates="source_entity",
         cascade="all, delete-orphan",
     )
-    target_relationships: Mapped[list[RelationshipModel]] = relationship(
+    target_relationships: "Mapped[list[RelationshipModel]]" = relationship(
         "RelationshipModel",
         foreign_keys="RelationshipModel.target_entity_id",
         back_populates="target_entity",
         cascade="all, delete-orphan",
     )
-    mentions: Mapped[list[EntityMentionModel]] = relationship(
+    mentions: "Mapped[list[EntityMentionModel]]" = relationship(
         "EntityMentionModel",
         back_populates="entity",
         cascade="all, delete-orphan",

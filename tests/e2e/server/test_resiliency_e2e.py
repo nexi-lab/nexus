@@ -5,8 +5,6 @@ when the server is running with services enabled, and that there
 is no performance regression.
 """
 
-from __future__ import annotations
-
 import time
 
 import httpx

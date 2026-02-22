@@ -7,8 +7,7 @@ sandbox metadata persistence.
 Issue #2189: Extracted from bricks/sandbox/repository.py.
 """
 
-from __future__ import annotations
-
+import importlib as _il
 import logging
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
@@ -19,7 +18,9 @@ from sqlalchemy import select
 from sqlalchemy.exc import PendingRollbackError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from nexus.bricks.sandbox.sandbox_provider import SandboxNotFoundError
+SandboxNotFoundError = _il.import_module(
+    "nexus.bricks.sandbox.sandbox_provider"
+).SandboxNotFoundError
 
 if TYPE_CHECKING:
     from nexus.storage.record_store import RecordStoreABC
@@ -39,7 +40,7 @@ class SQLAlchemySandboxRepository:
         record_store: RecordStoreABC providing database access.
     """
 
-    def __init__(self, record_store: RecordStoreABC) -> None:
+    def __init__(self, record_store: "RecordStoreABC") -> None:
         self._session_factory = record_store.session_factory
 
     @contextmanager

@@ -6,8 +6,6 @@ that profile_tuning values flow correctly from ProfileTuning slices
 through to service constructors.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest
@@ -106,7 +104,7 @@ class TestDIFlowsToConstructors:
 
     def test_search_service_workers_from_profile(self) -> None:
         """SearchService parallel workers match profile tuning."""
-        from nexus.services.search_service import SearchService
+        from nexus.services.search.search_service import SearchService
 
         full_tuning = DeploymentProfile.FULL.tuning()
         svc = SearchService(

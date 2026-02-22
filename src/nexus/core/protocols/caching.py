@@ -1,26 +1,34 @@
-"""Caching connector contract protocol (Issue #1628).
+"""Caching protocol contracts (Issue #1628, #2362, #2364).
 
-Documents the implicit contract that CacheService relies on when
-interacting with connectors. The 14+ getattr() calls in cache_mixin.py
-previously relied on duck typing; this protocol makes the contract explicit.
+Caching contracts:
+
+- ``CacheConfigContract`` — the 3-attribute mixin contract that CacheService
+  relies on (session_factory, zone_id, l1_only). Formerly ``CachingConnectorContract``.
+
+- ``CachingConnectorContract`` — wrapping-chain cache methods for
+  CachingBackendWrapper (get_cache_stats, clear_cache, describe).
+
+- ``TigerCacheProtocol`` — protocol for Tiger bitmap cache backends (cross-brick).
+
+- ``EmbeddingCacheProtocol`` — protocol for embedding vector caches (cross-brick).
 
 References:
     - Issue #1628: Split CacheConnectorMixin into focused units
+    - Issue #2362: ConnectorProtocol wrapping chains
+    - Issue #2364: Consolidate duplicate top-level modules
     - docs/design/cache-layer.md
 """
 
-from __future__ import annotations
-
+from collections.abc import Awaitable, Callable
 from typing import Any, Protocol, runtime_checkable
 
-
 @runtime_checkable
-class CachingConnectorContract(Protocol):
-    """Contract for connectors that support caching.
+class CacheConfigContract(Protocol):
+    """Contract for connectors that support caching via CacheService.
 
-    Documents the attributes and methods that CacheService expects
-    from its connector reference. Connectors inheriting CacheConnectorMixin
-    implicitly satisfy this contract.
+    Documents the attributes that CacheService expects from its connector
+    reference. Connectors inheriting CacheConnectorMixin implicitly satisfy
+    this contract.
 
     Attributes:
         session_factory: SQLAlchemy session factory (None for L1-only mode)
@@ -31,3 +39,126 @@ class CachingConnectorContract(Protocol):
     session_factory: Any | None
     zone_id: str | None
     l1_only: bool
+
+@runtime_checkable
+class CachingConnectorContract(Protocol):
+    """Wrapping-chain cache capability protocol.
+
+    Satisfied by CachingBackendWrapper and any other wrapper that provides
+    cache introspection and management at the connector level.
+
+    Methods:
+        get_cache_stats: Return cache hit/miss/error counters.
+        clear_cache: Clear all cached entries and reset stats.
+        describe: Return the wrapper chain description string.
+    """
+
+    def get_cache_stats(self) -> dict[str, Any]: ...
+
+    def clear_cache(self) -> None: ...
+
+    def describe(self) -> str: ...
+
+@runtime_checkable
+class TigerCacheProtocol(Protocol):
+    """Protocol for Tiger cache backends (cross-brick contract).
+
+    Tiger cache stores pre-materialized permission bitmaps for O(1) list filtering.
+    Each bitmap represents all resources a subject can access with a given permission.
+
+    Canonical implementation lives in ``nexus.bricks.cache``; this protocol is
+    defined here so that ``nexus.bricks.rebac`` can type-reference it without
+    a cross-brick import.
+    """
+
+    async def get_bitmap(
+        self,
+        subject_type: str,
+        subject_id: str,
+        permission: str,
+        resource_type: str,
+        zone_id: str,
+    ) -> tuple[bytes, int] | None:
+        """Get Tiger bitmap for a subject."""
+        ...
+
+    async def set_bitmap(
+        self,
+        subject_type: str,
+        subject_id: str,
+        permission: str,
+        resource_type: str,
+        zone_id: str,
+        bitmap_data: bytes,
+        revision: int,
+    ) -> None:
+        """Store Tiger bitmap for a subject."""
+        ...
+
+    async def invalidate(
+        self,
+        subject_type: str | None = None,
+        subject_id: str | None = None,
+        permission: str | None = None,
+        resource_type: str | None = None,
+        zone_id: str | None = None,
+    ) -> int:
+        """Invalidate Tiger cache entries matching criteria."""
+        ...
+
+    async def health_check(self) -> bool:
+        """Check if the cache backend is healthy."""
+        ...
+
+@runtime_checkable
+class EmbeddingCacheProtocol(Protocol):
+    """Protocol for embedding vector caches (cross-brick contract).
+
+    Caches embedding vectors by content hash to avoid redundant API calls.
+    Supports batch operations with deduplication for efficiency.
+
+    Canonical implementation lives in ``nexus.bricks.cache``; this protocol is
+    defined here so that ``nexus.bricks.search`` can type-reference it without
+    a cross-brick import.
+    """
+
+    async def get(self, text: str, model: str) -> list[float] | None:
+        """Get cached embedding for text."""
+        ...
+
+    async def set(self, text: str, model: str, embedding: list[float]) -> None:
+        """Cache embedding for text."""
+        ...
+
+    async def get_batch(self, texts: list[str], model: str) -> dict[str, list[float] | None]:
+        """Get cached embeddings for multiple texts."""
+        ...
+
+    async def set_batch(self, embeddings: dict[str, list[float]], model: str) -> None:
+        """Cache multiple embeddings."""
+        ...
+
+    async def get_or_embed_batch(
+        self,
+        texts: list[str],
+        model: str,
+        embed_fn: Callable[[list[str]], Awaitable[list[list[float]]]],
+    ) -> list[list[float]]:
+        """Get cached embeddings or generate new ones."""
+        ...
+
+    async def invalidate(self, text: str, model: str) -> bool:
+        """Invalidate cached embedding. Returns True if key existed."""
+        ...
+
+    async def clear(self, model: str | None = None) -> int:
+        """Clear cached embeddings. Returns number of entries deleted."""
+        ...
+
+    async def health_check(self) -> bool:
+        """Check if cache backend is healthy."""
+        ...
+
+    def get_metrics(self) -> dict[str, Any]:
+        """Get cache statistics (hits, misses, errors, hit_rate, etc.)."""
+        ...

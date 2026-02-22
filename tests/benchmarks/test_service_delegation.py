@@ -10,8 +10,6 @@ Measures the cost of NexusFS → service delegation patterns:
 Run with: pytest tests/benchmarks/test_service_delegation.py -v --benchmark-only
 """
 
-from __future__ import annotations
-
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
@@ -309,14 +307,14 @@ class TestServiceInstantiation:
 
     def test_share_link_service_construction(self, benchmark):
         """Benchmark ShareLinkService construction."""
-        from nexus.services.share_link_service import ShareLinkService
+        from nexus.services.share_link.share_link_service import ShareLinkService
 
         mock_gw = MagicMock()
         benchmark(ShareLinkService, gateway=mock_gw, enforce_permissions=True)
 
     def test_events_service_construction(self, benchmark):
         """Benchmark EventsService construction."""
-        from nexus.services.events_service import EventsService
+        from nexus.system_services.lifecycle.events_service import EventsService
 
         mock_backend = MagicMock()
         mock_backend.is_passthrough = False
@@ -324,7 +322,7 @@ class TestServiceInstantiation:
 
     def test_version_service_construction(self, benchmark):
         """Benchmark VersionService construction."""
-        from nexus.services.version_service import VersionService
+        from nexus.services.versioning.version_service import VersionService
 
         mock_metadata = MagicMock()
         mock_cas = MagicMock()
@@ -346,13 +344,13 @@ class TestContextExtractionOverhead:
 
     def test_extract_context_info(self, benchmark, context):
         """Benchmark ShareLinkService._extract_context_info."""
-        from nexus.services.share_link_service import ShareLinkService
+        from nexus.services.share_link.share_link_service import ShareLinkService
 
         benchmark(ShareLinkService._extract_context_info, context)
 
     def test_extract_context_info_none(self, benchmark):
         """Benchmark _extract_context_info with None context."""
-        from nexus.services.share_link_service import ShareLinkService
+        from nexus.services.share_link.share_link_service import ShareLinkService
 
         benchmark(ShareLinkService._extract_context_info, None)
 

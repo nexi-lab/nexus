@@ -8,8 +8,6 @@ Issue #1457: Validates that:
 Uses FastAPI TestClient with real create_app + API key auth.
 """
 
-from __future__ import annotations
-
 import logging
 from unittest.mock import MagicMock
 
@@ -52,11 +50,14 @@ class _FakeNexusFS:
 
 
 def _save_app_state(monkeypatch):
-    """Record _app_state attributes so monkeypatch auto-restores them at teardown."""
+    """Record _fastapi_app state so monkeypatch auto-restores it at teardown.
+
+    Since create_app() sets module-level _fastapi_app, we snapshot it so
+    teardown reverts to the pre-test state.
+    """
     from nexus.server import fastapi_server as fas
 
-    for attr in ("nexus_fs", "api_key", "auth_provider"):
-        monkeypatch.setattr(fas._app_state, attr, getattr(fas._app_state, attr))
+    monkeypatch.setattr(fas, "_fastapi_app", fas._fastapi_app)
 
 
 @pytest.fixture

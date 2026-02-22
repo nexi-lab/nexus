@@ -12,8 +12,6 @@ Tests the full round-trip:
 Uses: in-process WriteBackService, real SQLite, real LocalConnectorBackend.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -21,13 +19,13 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from nexus.backends.local_connector import LocalConnectorBackend
-from nexus.core.event_bus import FileEvent, FileEventType
-from nexus.services.change_log_store import ChangeLogStore
-from nexus.services.conflict_log_store import ConflictLogStore
-from nexus.services.conflict_resolution import ConflictStrategy
-from nexus.services.sync_backlog_store import SyncBacklogEntry, SyncBacklogStore
-from nexus.services.write_back_service import WriteBackService
+from nexus.services.event_subsystem.types import FileEvent, FileEventType
 from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.system_services.sync.change_log_store import ChangeLogStore
+from nexus.system_services.sync.conflict_log_store import ConflictLogStore
+from nexus.system_services.sync.conflict_resolution import ConflictStrategy
+from nexus.system_services.sync.sync_backlog_store import SyncBacklogEntry, SyncBacklogStore
+from nexus.system_services.sync.write_back_service import WriteBackService
 
 # =============================================================================
 # Helpers

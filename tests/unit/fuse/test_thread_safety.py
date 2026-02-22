@@ -1,7 +1,5 @@
 """Tests for thread safety of FUSE operations."""
 
-from __future__ import annotations
-
 import os
 import threading
 from typing import Any

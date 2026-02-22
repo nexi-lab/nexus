@@ -4,15 +4,13 @@ Covers filter modes, metadata loading, error paths, and edge cases
 that will be touched by the Phase 3 pipeline refactor (Issue #1400).
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest
 import yaml
 
+from nexus.bricks.skills.skill_service_adapter import SkillService
 from nexus.contracts.types import OperationContext
-from nexus.services.skill_service import SkillService
 
 # =============================================================================
 # Fixtures
@@ -61,7 +59,6 @@ def ctx():
 SKILL_MD = (
     b"---\nname: Test Skill\ndescription: A test\nversion: '1.0'\ntags:\n  - test\n---\n# Test"
 )
-
 
 # =============================================================================
 # Filter: "subscribed"

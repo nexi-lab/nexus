@@ -1,7 +1,5 @@
 """Learning loop - main ACE integration."""
 
-from __future__ import annotations
-
 import asyncio
 import traceback
 from collections.abc import Callable

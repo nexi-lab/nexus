@@ -15,8 +15,6 @@ Run with:
     uv run pytest tests/e2e/test_lego_decomp_e2e.py -v --override-ini="addopts=" -x
 """
 
-from __future__ import annotations
-
 import base64
 import json
 import uuid
@@ -27,6 +25,7 @@ import pytest
 
 from nexus.contracts.types import OperationContext
 from nexus.core.config import (
+    AuditConfig,
     DistributedConfig,
     MemoryConfig,
     ParseConfig,
@@ -60,7 +59,6 @@ def _pg_available() -> bool:
 pytestmark.append(
     pytest.mark.skipif(not _pg_available(), reason="PostgreSQL not available at localhost:5433")
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures — factory-wired NexusFS + PostgreSQL + FastAPI
@@ -97,10 +95,10 @@ def _create_factory_nexus_fs(
         is_admin=is_admin,
         permissions=PermissionConfig(
             enforce=enforce_permissions,
-            audit_strict_mode=False,
             enforce_zone_isolation=False,
             enable_tiger_cache=enable_tiger_cache,
         ),
+        audit=AuditConfig(strict_mode=False),
         parsing=ParseConfig(auto_parse=False),
         distributed=DistributedConfig(
             enable_events=False,

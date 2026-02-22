@@ -7,11 +7,11 @@ These are characterization tests — they document current behavior
 before the vector_db split refactoring.
 """
 
-from __future__ import annotations
-
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
-import pytest
+if TYPE_CHECKING:
+    from nexus.bricks.search.vector_db import VectorDatabase
 
 # =============================================================================
 # VectorDatabase construction and init
@@ -21,10 +21,9 @@ import pytest
 class TestVectorDatabaseConstruction:
     """Test VectorDatabase constructor and basic properties."""
 
-    def test_constructor_sets_db_type_from_engine(self) -> None:
-        """db_type should come from engine.dialect.name."""
+    def test_constructor_defaults_to_sqlite(self) -> None:
+        """Default is_postgresql=False should set db_type to sqlite."""
         engine = MagicMock()
-        engine.dialect.name = "sqlite"
 
         from nexus.bricks.search.vector_db import VectorDatabase
 
@@ -35,16 +34,14 @@ class TestVectorDatabaseConstruction:
 
     def test_constructor_postgresql(self) -> None:
         engine = MagicMock()
-        engine.dialect.name = "postgresql"
 
         from nexus.bricks.search.vector_db import VectorDatabase
 
-        vdb = VectorDatabase(engine)
+        vdb = VectorDatabase(engine, is_postgresql=True)
         assert vdb.db_type == "postgresql"
 
     def test_constructor_with_hnsw_config(self) -> None:
         engine = MagicMock()
-        engine.dialect.name = "postgresql"
 
         from nexus.bricks.search.hnsw_config import HNSWConfig
         from nexus.bricks.search.vector_db import VectorDatabase
@@ -66,7 +63,6 @@ class TestSQLiteInitPath:
     def test_sqlite_init_without_sqlite_vec(self) -> None:
         """When sqlite_vec not installed, vec_available should be False."""
         engine = MagicMock()
-        engine.dialect.name = "sqlite"
 
         from nexus.bricks.search.vector_db import VectorDatabase
 
@@ -79,17 +75,6 @@ class TestSQLiteInitPath:
             # Can't easily test _init_sqlite directly because it catches ImportError
             # Just verify initial state
             assert vdb.vec_available is False
-
-    def test_unsupported_dialect_raises(self) -> None:
-        """Unsupported db_type should raise ValueError."""
-        engine = MagicMock()
-        engine.dialect.name = "mysql"
-
-        from nexus.bricks.search.vector_db import VectorDatabase
-
-        vdb = VectorDatabase(engine)
-        with pytest.raises(ValueError, match="Unsupported database type"):
-            vdb.initialize()
 
 
 # =============================================================================
@@ -105,7 +90,6 @@ class TestStoreEmbedding:
         import struct
 
         engine = MagicMock()
-        engine.dialect.name = "sqlite"
 
         from nexus.bricks.search.vector_db import VectorDatabase
 
@@ -126,11 +110,10 @@ class TestStoreEmbedding:
     def test_postgres_store_embedding_uses_array(self) -> None:
         """PostgreSQL embeddings should be stored as array."""
         engine = MagicMock()
-        engine.dialect.name = "postgresql"
 
         from nexus.bricks.search.vector_db import VectorDatabase
 
-        vdb = VectorDatabase(engine)
+        vdb = VectorDatabase(engine, is_postgresql=True)
 
         session = MagicMock()
         embedding = [0.1, 0.2, 0.3]
@@ -167,7 +150,6 @@ class TestResultDictShape:
     def test_keyword_search_result_shape(self) -> None:
         """keyword_search results should have standard keys."""
         engine = MagicMock()
-        engine.dialect.name = "sqlite"
 
         from nexus.bricks.search.vector_db import VectorDatabase
 
@@ -202,19 +184,6 @@ class TestResultDictShape:
         for key in self._expected_keys():
             assert key in result, f"Missing key: {key}"
 
-    def test_vector_search_unsupported_dialect(self) -> None:
-        """vector_search should raise for unsupported db_type."""
-        engine = MagicMock()
-        engine.dialect.name = "mysql"
-
-        from nexus.bricks.search.vector_db import VectorDatabase
-
-        vdb = VectorDatabase(engine)
-        session = MagicMock()
-
-        with pytest.raises(ValueError, match="Unsupported database type"):
-            vdb.vector_search(session, [0.1, 0.2], limit=10)
-
 
 # =============================================================================
 # _run_sync helper
@@ -222,26 +191,39 @@ class TestResultDictShape:
 
 
 class TestRunSync:
-    """Test the _run_sync() helper for sync/async bridging."""
+    """Test the _run_sync() instance method for sync/async bridging."""
+
+    @staticmethod
+    def _make_vdb() -> "VectorDatabase":
+        """Create a minimal VectorDatabase with a mock engine."""
+        from unittest.mock import MagicMock
+
+        from nexus.bricks.search.vector_db import VectorDatabase as _VDB
+
+        engine = MagicMock()
+        engine.dialect.name = "sqlite"
+        return _VDB(engine)
 
     def test_run_sync_outside_event_loop(self) -> None:
         """_run_sync should work when no event loop is running."""
-        from nexus.bricks.search.vector_db import _run_sync
+        vdb = self._make_vdb()
 
         async def async_add(a: int, b: int) -> int:
             return a + b
 
-        result = _run_sync(async_add(1, 2))
+        result = vdb._run_sync(async_add(1, 2))
         assert result == 3
+        vdb.close()
 
     def test_run_sync_returns_value(self) -> None:
-        from nexus.bricks.search.vector_db import _run_sync
+        vdb = self._make_vdb()
 
         async def async_identity(x: str) -> str:
             return x
 
-        result = _run_sync(async_identity("hello"))
+        result = vdb._run_sync(async_identity("hello"))
         assert result == "hello"
+        vdb.close()
 
 
 # =============================================================================
@@ -254,7 +236,6 @@ class TestVectorDatabaseProperties:
 
     def test_properties_reflect_init_state(self) -> None:
         engine = MagicMock()
-        engine.dialect.name = "sqlite"
 
         from nexus.bricks.search.vector_db import VectorDatabase
 
@@ -263,3 +244,11 @@ class TestVectorDatabaseProperties:
         assert vdb.db_type == "sqlite"
         assert vdb.vec_available is False
         assert vdb.bm25_available is False
+
+    def test_postgresql_db_type_property(self) -> None:
+        engine = MagicMock()
+
+        from nexus.bricks.search.vector_db import VectorDatabase
+
+        vdb = VectorDatabase(engine, is_postgresql=True)
+        assert vdb.db_type == "postgresql"

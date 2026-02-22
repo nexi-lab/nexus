@@ -8,8 +8,6 @@ Tests cover:
 - Edge cases: self-transitions, exhaustive coverage of transition table
 """
 
-from __future__ import annotations
-
 import types
 from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime

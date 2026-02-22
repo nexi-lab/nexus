@@ -1,26 +1,21 @@
-"""Search brick manifest and startup validation (Issue #1520).
+"""Search brick manifest (Issue #1520).
 
-Declares the search brick's metadata and provides verify_imports()
-for validating required and optional modules at startup.
+Extends :class:`~nexus.contracts.brick_manifest.BrickManifest` with
+search-specific configuration and module declarations.
 """
 
-from __future__ import annotations
-
-import importlib
-import logging
 from dataclasses import dataclass, field
 
-logger = logging.getLogger(__name__)
+from nexus.contracts.brick_manifest import BrickManifest
 
 
 @dataclass(frozen=True)
-class SearchBrickManifest:
+class SearchBrickManifest(BrickManifest):
     """Brick manifest for the search module."""
 
     name: str = "search"
     protocol: str = "SearchBrickProtocol"
-    version: str = "1.0.0"
-    config_schema: dict = field(
+    config_schema: dict[str, dict[str, object]] = field(
         default_factory=lambda: {
             "embedding_provider": {"type": "str", "default": "openai"},
             "search_mode": {"type": "str", "default": "hybrid"},
@@ -32,19 +27,7 @@ class SearchBrickManifest:
             "pool_recycle": {"type": "int", "default": 3600},
         }
     )
-    dependencies: list[str] = field(default_factory=list)
-
-
-def verify_imports() -> dict[str, bool]:
-    """Validate required and optional search imports at startup.
-
-    Returns:
-        Dict mapping module name to import success status.
-    """
-    results: dict[str, bool] = {}
-
-    # Required modules
-    for mod in [
+    required_modules: tuple[str, ...] = (
         "nexus.bricks.search.query_service",
         "nexus.bricks.search.indexing_service",
         "nexus.bricks.search.fusion",
@@ -54,25 +37,14 @@ def verify_imports() -> dict[str, bool]:
         "nexus.bricks.search.config",
         "nexus.bricks.search.protocols",
         "nexus.bricks.search.result_builders",
-    ]:
-        try:
-            importlib.import_module(mod)
-            results[mod] = True
-        except ImportError:
-            results[mod] = False
-            logger.error("Required search module missing: %s", mod)
-
-    # Optional modules
-    for mod in [
+    )
+    optional_modules: tuple[str, ...] = (
         "nexus.bricks.search.bm25s_search",
         "nexus.bricks.search.zoekt_client",
         "nexus.bricks.search.graph_store",
-    ]:
-        try:
-            importlib.import_module(mod)
-            results[mod] = True
-        except ImportError:
-            results[mod] = False
-            logger.warning("Optional search module unavailable: %s", mod)
+    )
 
-    return results
+
+def verify_imports() -> dict[str, bool]:
+    """Convenience wrapper — instantiates manifest and verifies imports."""
+    return SearchBrickManifest().verify_imports()

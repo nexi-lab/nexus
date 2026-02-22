@@ -67,8 +67,6 @@ from nexus.bricks.search.daemon import (
     SearchDaemon,
     SearchResult,
     create_and_start_daemon,
-    get_search_daemon,
-    set_search_daemon,
 )
 from nexus.bricks.search.embeddings import (
     CachedEmbeddingProvider,
@@ -188,10 +186,8 @@ from nexus.bricks.search.strategies import (
 from nexus.bricks.search.vector_db import VectorDatabase
 from nexus.bricks.search.zoekt_client import (
     ZoektClient,
+    ZoektIndexManager,
     ZoektMatch,
-    get_zoekt_client,
-    is_zoekt_available,
-    zoekt_search,
 )
 
 __all__ = [
@@ -305,14 +301,10 @@ __all__ = [
     "DaemonStats",
     "SearchResult",
     "create_and_start_daemon",
-    "get_search_daemon",
-    "set_search_daemon",
     # Zoekt Code Search
     "ZoektClient",
+    "ZoektIndexManager",
     "ZoektMatch",
-    "get_zoekt_client",
-    "is_zoekt_available",
-    "zoekt_search",
     # Mobile/Edge Search Config (Issue #1213)
     "DeviceTier",
     "SearchMode",

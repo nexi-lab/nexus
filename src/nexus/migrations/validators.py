@@ -9,14 +9,12 @@ This module provides utilities for validating:
 Issue #165: Migration Tools & Upgrade Paths
 """
 
-from __future__ import annotations
-
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from nexus.core.nexus_fs import NexusFilesystem
+    from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
 
 
 @dataclass
@@ -51,7 +49,7 @@ class ValidationResult:
             f"warnings={len(self.warnings)})"
         )
 
-    def merge(self, other: ValidationResult) -> ValidationResult:
+    def merge(self, other: "ValidationResult") -> "ValidationResult":
         """Merge another validation result into this one.
 
         Args:
@@ -86,7 +84,7 @@ class IntegrityValidator:
             print("Validation failed:", result.errors)
     """
 
-    def __init__(self, nx: NexusFilesystem) -> None:
+    def __init__(self, nx: "NexusFilesystemABC") -> None:
         """Initialize validator.
 
         Args:
@@ -97,7 +95,7 @@ class IntegrityValidator:
     def full_validation(
         self,
         progress_callback: Callable[[str, int, int], None] | None = None,
-    ) -> ValidationResult:
+    ) -> "ValidationResult":
         """Run all validation checks.
 
         Args:
@@ -123,7 +121,7 @@ class IntegrityValidator:
 
         return result
 
-    def validate_metadata_integrity(self) -> ValidationResult:
+    def validate_metadata_integrity(self) -> "ValidationResult":
         """Validate metadata store consistency.
 
         Checks:
@@ -166,7 +164,7 @@ class IntegrityValidator:
     def validate_content_integrity(
         self,
         sample_size: int = 100,
-    ) -> ValidationResult:
+    ) -> "ValidationResult":
         """Validate content checksums.
 
         Checks a sample of files to verify content matches stored checksums.
@@ -239,7 +237,7 @@ class IntegrityValidator:
 
         return result
 
-    def check_orphaned_content(self) -> ValidationResult:
+    def check_orphaned_content(self) -> "ValidationResult":
         """Check for content blocks without metadata references.
 
         Returns:
@@ -272,7 +270,7 @@ class IntegrityValidator:
 
         return result
 
-    def check_missing_content(self) -> ValidationResult:
+    def check_missing_content(self) -> "ValidationResult":
         """Check for metadata entries without corresponding content.
 
         Returns:
@@ -306,7 +304,7 @@ class IntegrityValidator:
 
         return result
 
-    def validate_rebac_integrity(self) -> ValidationResult:
+    def validate_rebac_integrity(self) -> "ValidationResult":
         """Validate ReBAC permission consistency.
 
         Checks:

@@ -5,8 +5,6 @@ Tests cover:
 - BaseSearchResult: consolidated type produces identical output to subclasses
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.bricks.search.results import BaseSearchResult, detect_matched_field

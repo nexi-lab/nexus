@@ -1,14 +1,12 @@
-"""Tests for SearchDaemon async lifecycle (Issue #1520).
+"""Tests for SearchDaemon async lifecycle (Issue #1520, #2188).
 
 Validates:
 - SearchDaemon startup/shutdown lifecycle
 - _init_bm25s_index with bm25s unavailable
 - _init_database_pool with no URL
 - Latency tracking circular buffer
-- get_search_daemon/set_search_daemon singleton
+- DI-based ZoektClient injection (Issue #2188)
 """
-
-from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
@@ -19,8 +17,6 @@ from nexus.bricks.search.daemon import (
     DaemonStats,
     SearchDaemon,
     SearchResult,
-    get_search_daemon,
-    set_search_daemon,
 )
 
 # =============================================================================
@@ -178,38 +174,39 @@ class TestLatencyTracking:
 
 
 # =============================================================================
-# Singleton management
+# DI-based ZoektClient injection (Issue #2188)
 # =============================================================================
 
 
-class TestDaemonSingleton:
-    """Test get_search_daemon / set_search_daemon."""
+class TestDaemonZoektDI:
+    """Test ZoektClient dependency injection into SearchDaemon."""
 
-    def test_get_returns_none_initially(self) -> None:
-        """Before set, get should return None."""
-        # Save current state
-        import nexus.bricks.search.daemon as mod
+    def test_zoekt_client_none_by_default(self) -> None:
+        """Without injection, _zoekt_client should be None."""
+        daemon = SearchDaemon()
+        assert daemon._zoekt_client is None
 
-        original = mod._daemon_instance
+    def test_zoekt_client_injected(self) -> None:
+        """zoekt_client kwarg should be stored on the instance."""
+        mock_client = AsyncMock()
+        daemon = SearchDaemon(zoekt_client=mock_client)
+        assert daemon._zoekt_client is mock_client
 
-        try:
-            mod._daemon_instance = None
-            assert get_search_daemon() is None
-        finally:
-            mod._daemon_instance = original
+    @pytest.mark.asyncio
+    async def test_check_zoekt_without_client(self) -> None:
+        """_check_zoekt should set zoekt_available=False when no client."""
+        daemon = SearchDaemon()
+        await daemon._check_zoekt()
+        assert daemon.stats.zoekt_available is False
 
-    def test_set_and_get_roundtrip(self) -> None:
-        """set then get should return the same instance."""
-        import nexus.bricks.search.daemon as mod
-
-        original = mod._daemon_instance
-
-        try:
-            daemon = SearchDaemon()
-            set_search_daemon(daemon)
-            assert get_search_daemon() is daemon
-        finally:
-            mod._daemon_instance = original
+    @pytest.mark.asyncio
+    async def test_check_zoekt_with_available_client(self) -> None:
+        """_check_zoekt should set zoekt_available=True when client is up."""
+        mock_client = AsyncMock()
+        mock_client.is_available.return_value = True
+        daemon = SearchDaemon(zoekt_client=mock_client)
+        await daemon._check_zoekt()
+        assert daemon.stats.zoekt_available is True
 
 
 # =============================================================================

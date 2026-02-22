@@ -7,8 +7,6 @@ ProviderRegistry (provider discovery/selection) and SandboxRepository
 Issue #2051: Decomposed from 1,210-line god object into focused services.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from collections.abc import Callable
@@ -67,13 +65,13 @@ class SandboxManager:
 
     def __init__(
         self,
-        record_store: RecordStoreABC,
+        record_store: "RecordStoreABC",
         e2b_api_key: str | None = None,
         e2b_team_id: str | None = None,
         e2b_template_id: str | None = None,
         config: Any = None,  # NexusConfig | None
         *,
-        repository: SandboxRepositoryProtocol | None = None,
+        repository: "SandboxRepositoryProtocol | None" = None,
         registry: ProviderRegistry | None = None,
         validation_runner: Any = None,
     ):

@@ -1,0 +1,108 @@
+"""SQLAlchemy implementation of APIKeyStoreProtocol.
+
+Issue #2436: Decouples auth brick from direct ORM model imports.
+"""
+
+import logging
+from collections.abc import Callable
+from datetime import UTC, datetime
+
+from sqlalchemy import select, update
+from sqlalchemy.exc import OperationalError, ProgrammingError
+from sqlalchemy.orm import Session
+
+from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.auth_store_types import APIKeyDTO
+from nexus.storage.models import APIKeyModel
+
+logger = logging.getLogger(__name__)
+
+
+def _to_dto(key: APIKeyModel) -> APIKeyDTO:
+    return APIKeyDTO(
+        key_id=key.key_id,
+        key_hash=key.key_hash,
+        user_id=key.user_id,
+        name=key.name,
+        subject_type=key.subject_type or "user",
+        subject_id=key.subject_id,
+        zone_id=key.zone_id,
+        is_admin=bool(key.is_admin),
+        expires_at=key.expires_at,
+        revoked=bool(key.revoked),
+        inherit_permissions=bool(key.inherit_permissions),
+        last_used_at=key.last_used_at,
+        created_at=key.created_at,
+    )
+
+
+class SQLAlchemyAPIKeyStore:
+    """APIKeyStoreProtocol implementation backed by SQLAlchemy."""
+
+    def __init__(self, session_factory: Callable[[], Session]) -> None:
+        self._session_factory = session_factory
+
+    def create_key(
+        self,
+        *,
+        key_hash: str,
+        user_id: str,
+        name: str,
+        subject_type: str = "user",
+        subject_id: str | None = None,
+        zone_id: str | None = None,
+        is_admin: bool = False,
+        expires_at: datetime | None = None,
+        inherit_permissions: bool = False,
+    ) -> APIKeyDTO:
+        key = APIKeyModel(
+            key_hash=key_hash,
+            user_id=user_id,
+            name=name,
+            subject_type=subject_type,
+            subject_id=subject_id or user_id,
+            zone_id=zone_id or ROOT_ZONE_ID,
+            is_admin=int(is_admin),
+            expires_at=expires_at,
+            inherit_permissions=int(inherit_permissions),
+        )
+        with self._session_factory() as session:
+            session.add(key)
+            session.commit()
+            session.refresh(key)
+            return _to_dto(key)
+
+    def get_by_hash(self, key_hash: str) -> APIKeyDTO | None:
+        with self._session_factory() as session:
+            key = session.scalar(
+                select(APIKeyModel).where(
+                    APIKeyModel.key_hash == key_hash,
+                    APIKeyModel.revoked == 0,
+                )
+            )
+            return _to_dto(key) if key else None
+
+    def revoke_key(self, key_id: str, *, zone_id: str | None = None) -> bool:
+        with self._session_factory() as session:
+            stmt = select(APIKeyModel).where(APIKeyModel.key_id == key_id)
+            if zone_id is not None:
+                stmt = stmt.where(APIKeyModel.zone_id == zone_id)
+            key = session.scalar(stmt)
+            if not key:
+                return False
+            key.revoked = 1
+            key.revoked_at = datetime.now(UTC)
+            session.commit()
+            return True
+
+    def update_last_used(self, key_hash: str) -> None:
+        try:
+            with self._session_factory() as session:
+                session.execute(
+                    update(APIKeyModel)
+                    .where(APIKeyModel.key_hash == key_hash)
+                    .values(last_used_at=datetime.now(UTC))
+                )
+                session.commit()
+        except (OperationalError, ProgrammingError):
+            logger.warning("Failed to update last_used_at (non-critical)", exc_info=True)

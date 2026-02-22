@@ -19,6 +19,7 @@ eggs/
 .eggs/
 lib/
 !src/nexus/lib/
+!tests/unit/lib/
 lib64/
 parts/
 sdist/
@@ -205,11 +206,9 @@ secret-manager-sa-key.json
 aws-config
 aws-credentials
 
-# Claude Code local settings
-.claude/settings.json
-.claude/settings.local.json
+# Claude Code
+.claude/
 CLAUDE.md
-.claude/CLAUDE.md
 docs/plans/
 
 # Cargo local config (Windows MSVC linker path is dev-machine specific)

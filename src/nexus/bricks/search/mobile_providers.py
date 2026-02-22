@@ -32,12 +32,10 @@ GGUF Model Download:
     )
 """
 
-from __future__ import annotations
-
 import asyncio
 import concurrent.futures
 import logging
-import threading
+import os
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -54,27 +52,23 @@ logger = logging.getLogger(__name__)
 # Default cache directory for downloaded models
 DEFAULT_CACHE_DIR = Path.home() / ".cache" / "nexus" / "models"
 
-# Dedicated thread pool for ML model loading and inference.
-# Isolates CPU-bound ML work from the default asyncio thread pool,
-# preventing starvation of general I/O operations.
-_ML_EXECUTOR: concurrent.futures.ThreadPoolExecutor | None = None
-_ML_EXECUTOR_LOCK: threading.Lock = threading.Lock()
+_DEFAULT_ML_WORKERS = min(4, (os.cpu_count() or 2))
 
 
-def _get_ml_executor() -> concurrent.futures.ThreadPoolExecutor:
-    """Get or create the dedicated ML inference thread pool."""
-    global _ML_EXECUTOR
-    if _ML_EXECUTOR is not None:
-        return _ML_EXECUTOR
-    with _ML_EXECUTOR_LOCK:
-        if _ML_EXECUTOR is None:
-            import os
+def create_ml_executor(
+    max_workers: int = _DEFAULT_ML_WORKERS,
+) -> concurrent.futures.ThreadPoolExecutor:
+    """Create a dedicated ML inference thread pool (Issue #2188).
 
-            _ML_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
-                max_workers=min(4, (os.cpu_count() or 2)),
-                thread_name_prefix="ml-inference",
-            )
-        return _ML_EXECUTOR
+    Args:
+        max_workers: Thread pool size for ML inference.
+
+    Returns:
+        New ThreadPoolExecutor for ML work.
+    """
+    return concurrent.futures.ThreadPoolExecutor(
+        max_workers=max_workers, thread_name_prefix="ml-inference"
+    )
 
 
 # =============================================================================
@@ -85,10 +79,15 @@ def _get_ml_executor() -> concurrent.futures.ThreadPoolExecutor:
 class MobileEmbeddingProvider(ABC):
     """Abstract base class for mobile embedding providers."""
 
-    def __init__(self, config: EmbeddingModelConfig):
+    def __init__(
+        self,
+        config: "EmbeddingModelConfig",
+        ml_executor: concurrent.futures.ThreadPoolExecutor | None = None,
+    ):
         self.config = config
         self._model: Any = None
         self._loaded = False
+        self._ml_executor = ml_executor
 
     @property
     def is_loaded(self) -> bool:
@@ -123,10 +122,15 @@ class MobileEmbeddingProvider(ABC):
 class MobileRerankerProvider(ABC):
     """Abstract base class for mobile reranker providers."""
 
-    def __init__(self, config: RerankerModelConfig):
+    def __init__(
+        self,
+        config: "RerankerModelConfig",
+        ml_executor: concurrent.futures.ThreadPoolExecutor | None = None,
+    ):
         self.config = config
         self._model: Any = None
         self._loaded = False
+        self._ml_executor = ml_executor
 
     @property
     def is_loaded(self) -> bool:
@@ -201,7 +205,7 @@ class FastEmbedMobileProvider(MobileEmbeddingProvider):
 
         loop = asyncio.get_running_loop()
         self._model = await loop.run_in_executor(
-            _get_ml_executor(), lambda: TextEmbedding(model_name=model_name)
+            self._ml_executor, lambda: TextEmbedding(model_name=model_name)
         )
         self._loaded = True
         logger.info(f"FastEmbed model loaded: {model_name}")
@@ -221,7 +225,7 @@ class FastEmbedMobileProvider(MobileEmbeddingProvider):
 
         loop = asyncio.get_running_loop()
         embeddings = await loop.run_in_executor(
-            _get_ml_executor(), lambda: list(self._model.embed([text]))
+            self._ml_executor, lambda: list(self._model.embed([text]))
         )
         return embeddings[0].tolist()  # type: ignore[no-any-return]
 
@@ -232,7 +236,7 @@ class FastEmbedMobileProvider(MobileEmbeddingProvider):
 
         loop = asyncio.get_running_loop()
         embeddings = await loop.run_in_executor(
-            _get_ml_executor(), lambda: list(self._model.embed(texts))
+            self._ml_executor, lambda: list(self._model.embed(texts))
         )
         return [e.tolist() for e in embeddings]
 
@@ -286,7 +290,7 @@ class Model2VecProvider(MobileEmbeddingProvider):
             await self.load()
 
         loop = asyncio.get_running_loop()
-        embedding = await loop.run_in_executor(_get_ml_executor(), lambda: self._model.encode(text))
+        embedding = await loop.run_in_executor(self._ml_executor, lambda: self._model.encode(text))
         return embedding.tolist()  # type: ignore[no-any-return]
 
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
@@ -296,7 +300,7 @@ class Model2VecProvider(MobileEmbeddingProvider):
 
         loop = asyncio.get_running_loop()
         embeddings = await loop.run_in_executor(
-            _get_ml_executor(), lambda: self._model.encode(texts)
+            self._ml_executor, lambda: self._model.encode(texts)
         )
         return embeddings.tolist()  # type: ignore[no-any-return]
 
@@ -358,7 +362,7 @@ class SentenceTransformersProvider(MobileEmbeddingProvider):
             await self.load()
 
         loop = asyncio.get_running_loop()
-        embedding = await loop.run_in_executor(_get_ml_executor(), lambda: self._model.encode(text))
+        embedding = await loop.run_in_executor(self._ml_executor, lambda: self._model.encode(text))
         return embedding.tolist()  # type: ignore[no-any-return]
 
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
@@ -368,7 +372,7 @@ class SentenceTransformersProvider(MobileEmbeddingProvider):
 
         loop = asyncio.get_running_loop()
         embeddings = await loop.run_in_executor(
-            _get_ml_executor(), lambda: self._model.encode(texts)
+            self._ml_executor, lambda: self._model.encode(texts)
         )
         return embeddings.tolist()  # type: ignore[no-any-return]
 
@@ -404,11 +408,16 @@ class GGUFEmbeddingProvider(MobileEmbeddingProvider):
         >>> embedding = await provider.embed_text("hello world")
     """
 
-    def __init__(self, config: EmbeddingModelConfig):
+    def __init__(
+        self,
+        config: "EmbeddingModelConfig",
+        ml_executor: concurrent.futures.ThreadPoolExecutor | None = None,
+    ):
         """Initialize GGUF provider.
 
         Args:
             config: Embedding model configuration (must have provider=GGUF)
+            ml_executor: Thread pool for ML inference (Issue #2188).
 
         Raises:
             ValueError: If config.provider is not GGUF
@@ -418,7 +427,7 @@ class GGUFEmbeddingProvider(MobileEmbeddingProvider):
         if config.provider != ModelProvider.GGUF:
             raise ValueError(f"GGUFEmbeddingProvider requires provider=GGUF, got {config.provider}")
 
-        super().__init__(config)
+        super().__init__(config, ml_executor=ml_executor)
         self._n_threads = config.metadata.get("n_threads") or self._detect_threads()
         self._n_ctx = config.metadata.get("n_ctx", 512)
 
@@ -495,7 +504,7 @@ class GGUFEmbeddingProvider(MobileEmbeddingProvider):
             await self.load()
 
         loop = asyncio.get_running_loop()
-        embedding = await loop.run_in_executor(_get_ml_executor(), lambda: self._model.embed(text))
+        embedding = await loop.run_in_executor(self._ml_executor, lambda: self._model.embed(text))
 
         # Handle numpy arrays - convert to list[float]
         if hasattr(embedding, "tolist"):
@@ -530,7 +539,7 @@ class GGUFEmbeddingProvider(MobileEmbeddingProvider):
                     results.append(list(embedding))
             return results
 
-        return await loop.run_in_executor(_get_ml_executor(), _embed_batch)
+        return await loop.run_in_executor(self._ml_executor, _embed_batch)
 
 
 # =============================================================================
@@ -542,6 +551,7 @@ async def download_gguf_model(
     repo_id: str,
     filename: str,
     cache_dir: str | None = None,
+    ml_executor: concurrent.futures.ThreadPoolExecutor | None = None,
 ) -> str:
     """Download a GGUF model from HuggingFace Hub.
 
@@ -549,17 +559,10 @@ async def download_gguf_model(
         repo_id: HuggingFace repository ID (e.g., "ChristianAzinn/snowflake-arctic-embed-xs-gguf")
         filename: Model filename (e.g., "snowflake-arctic-embed-xs-Q8_0.gguf")
         cache_dir: Optional custom cache directory
+        ml_executor: Thread pool for download work (Issue #2188).
 
     Returns:
         Local path to the downloaded model file
-
-    Example:
-        >>> path = await download_gguf_model(
-        ...     repo_id="ChristianAzinn/snowflake-arctic-embed-xs-gguf",
-        ...     filename="snowflake-arctic-embed-xs-Q8_0.gguf",
-        ... )
-        >>> print(path)
-        /home/user/.cache/huggingface/hub/models--ChristianAzinn--snowflake-arctic-embed-xs-gguf/...
     """
     try:
         from huggingface_hub import hf_hub_download
@@ -578,7 +581,7 @@ async def download_gguf_model(
         )
         return result
 
-    return await loop.run_in_executor(_get_ml_executor(), _download)
+    return await loop.run_in_executor(ml_executor, _download)
 
 
 # =============================================================================
@@ -646,7 +649,7 @@ class CrossEncoderRerankerProvider(MobileRerankerProvider):
         pairs = [(query, doc) for doc in documents]
 
         loop = asyncio.get_running_loop()
-        scores = await loop.run_in_executor(_get_ml_executor(), lambda: self._model.predict(pairs))
+        scores = await loop.run_in_executor(self._ml_executor, lambda: self._model.predict(pairs))
 
         # Create (index, score) tuples and sort by score descending
         indexed_scores = list(enumerate(scores.tolist()))
@@ -664,7 +667,7 @@ class CrossEncoderRerankerProvider(MobileRerankerProvider):
 
 
 def _get_embedding_provider_class(
-    config: EmbeddingModelConfig,
+    config: "EmbeddingModelConfig",
 ) -> type[MobileEmbeddingProvider]:
     """Get the appropriate provider class for a config."""
     from nexus.bricks.search.mobile_config import ModelProvider
@@ -685,7 +688,7 @@ def _get_embedding_provider_class(
 
 
 def _get_reranker_provider_class(
-    config: RerankerModelConfig,
+    config: "RerankerModelConfig",
 ) -> type[MobileRerankerProvider]:
     """Get the appropriate reranker provider class for a config."""
     from nexus.bricks.search.mobile_config import ModelProvider
@@ -703,26 +706,22 @@ def _get_reranker_provider_class(
 
 
 async def create_mobile_embedding_provider(
-    config: EmbeddingModelConfig,
+    config: "EmbeddingModelConfig",
     load_immediately: bool = True,
+    ml_executor: concurrent.futures.ThreadPoolExecutor | None = None,
 ) -> MobileEmbeddingProvider:
     """Create an embedding provider from config.
 
     Args:
         config: Embedding model configuration
         load_immediately: If True, load model before returning
+        ml_executor: Thread pool for ML inference (Issue #2188).
 
     Returns:
         Configured embedding provider
-
-    Example:
-        >>> from nexus.bricks.search.mobile_config import EMBEDDING_MODELS
-        >>> config = EMBEDDING_MODELS["arctic-xs"]
-        >>> provider = await create_mobile_embedding_provider(config)
-        >>> embedding = await provider.embed_text("hello")
     """
     provider_class = _get_embedding_provider_class(config)
-    provider = provider_class(config)
+    provider = provider_class(config, ml_executor=ml_executor)
 
     if load_immediately:
         await provider.load()
@@ -731,8 +730,9 @@ async def create_mobile_embedding_provider(
 
 
 async def create_reranker_provider(
-    config: RerankerModelConfig,
+    config: "RerankerModelConfig",
     load_immediately: bool = True,
+    ml_executor: concurrent.futures.ThreadPoolExecutor | None = None,
 ) -> MobileRerankerProvider:
     """Create a reranker provider from config.
 
@@ -750,7 +750,7 @@ async def create_reranker_provider(
         >>> results = await provider.rerank("query", ["doc1", "doc2"])
     """
     provider_class = _get_reranker_provider_class(config)
-    provider = provider_class(config)
+    provider = provider_class(config, ml_executor=ml_executor)
 
     if load_immediately:
         await provider.load()
@@ -778,13 +778,19 @@ class MobileSearchService:
         >>> results = await service.rerank("query", ["doc1", "doc2"])
     """
 
-    def __init__(self, config: MobileSearchConfig):
+    def __init__(
+        self,
+        config: "MobileSearchConfig",
+        ml_executor_workers: int = _DEFAULT_ML_WORKERS,
+    ):
         """Initialize mobile search service.
 
         Args:
             config: Mobile search configuration
+            ml_executor_workers: Thread pool size for ML inference (Issue #2188).
         """
         self.config = config
+        self._ml_executor = create_ml_executor(ml_executor_workers)
         self._embedding_provider: MobileEmbeddingProvider | None = None
         self._reranker_provider: MobileRerankerProvider | None = None
         self._initialized = False
@@ -799,24 +805,26 @@ class MobileSearchService:
         if self._initialized:
             return
 
-        # Create providers (lazy_load determines if models are loaded now)
+        # Create providers with shared ML executor (Issue #2188)
         if self.config.embedding:
             self._embedding_provider = await create_mobile_embedding_provider(
                 self.config.embedding,
                 load_immediately=not self.config.lazy_load,
+                ml_executor=self._ml_executor,
             )
 
         if self.config.reranker:
             self._reranker_provider = await create_reranker_provider(
                 self.config.reranker,
                 load_immediately=not self.config.lazy_load,
+                ml_executor=self._ml_executor,
             )
 
         self._initialized = True
         logger.info(f"MobileSearchService initialized with tier={self.config.tier}")
 
     async def shutdown(self) -> None:
-        """Shutdown the service (unload models)."""
+        """Shutdown the service (unload models, release thread pool)."""
         if self._embedding_provider:
             await self._embedding_provider.unload()
             self._embedding_provider = None
@@ -825,6 +833,7 @@ class MobileSearchService:
             await self._reranker_provider.unload()
             self._reranker_provider = None
 
+        self._ml_executor.shutdown(wait=False)
         self._initialized = False
         logger.info("MobileSearchService shutdown")
 
@@ -915,7 +924,7 @@ class MobileSearchService:
 
 
 async def create_service_from_config(
-    config: MobileSearchConfig,
+    config: "MobileSearchConfig",
     initialize: bool = True,
 ) -> MobileSearchService:
     """Create and optionally initialize a MobileSearchService.
@@ -1009,12 +1018,17 @@ def check_model_available(model_name: str, provider: str) -> bool:
     return False
 
 
-async def download_model(model_name: str, provider: str) -> bool:
+async def download_model(
+    model_name: str,
+    provider: str,
+    ml_executor: concurrent.futures.ThreadPoolExecutor | None = None,
+) -> bool:
     """Download a model for offline use.
 
     Args:
         model_name: Model name/ID
         provider: Provider type
+        ml_executor: Thread pool for download work (Issue #2188).
 
     Returns:
         True if download successful
@@ -1026,9 +1040,7 @@ async def download_model(model_name: str, provider: str) -> bool:
             from fastembed import TextEmbedding
 
             logger.info(f"Downloading FastEmbed model: {model_name}")
-            await loop.run_in_executor(
-                _get_ml_executor(), lambda: TextEmbedding(model_name=model_name)
-            )
+            await loop.run_in_executor(ml_executor, lambda: TextEmbedding(model_name=model_name))
             logger.info(f"FastEmbed model downloaded: {model_name}")
             return True
 
@@ -1036,9 +1048,7 @@ async def download_model(model_name: str, provider: str) -> bool:
             from model2vec import StaticModel
 
             logger.info(f"Downloading Model2Vec model: {model_name}")
-            await loop.run_in_executor(
-                _get_ml_executor(), lambda: StaticModel.from_pretrained(model_name)
-            )
+            await loop.run_in_executor(ml_executor, lambda: StaticModel.from_pretrained(model_name))
             logger.info(f"Model2Vec model downloaded: {model_name}")
             return True
 
@@ -1046,7 +1056,7 @@ async def download_model(model_name: str, provider: str) -> bool:
             from sentence_transformers import SentenceTransformer
 
             logger.info(f"Downloading SentenceTransformers model: {model_name}")
-            await loop.run_in_executor(_get_ml_executor(), lambda: SentenceTransformer(model_name))
+            await loop.run_in_executor(ml_executor, lambda: SentenceTransformer(model_name))
             logger.info(f"SentenceTransformers model downloaded: {model_name}")
             return True
 

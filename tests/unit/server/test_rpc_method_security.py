@@ -6,8 +6,6 @@ Ensures that:
 - Valid method names still dispatch correctly
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest

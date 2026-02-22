@@ -5,8 +5,6 @@ resolution, query, create, and delete operations — before the Memory
 service gets moved to the brick structure.
 """
 
-from __future__ import annotations
-
 from types import SimpleNamespace
 
 import pytest
@@ -14,9 +12,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from nexus.backends.local import LocalBackend
-from nexus.rebac.entity_registry import EntityRegistry
-from nexus.services.memory.memory_api import Memory
-from nexus.services.memory.memory_router import MemoryViewRouter
+from nexus.bricks.memory.router import MemoryViewRouter
+from nexus.bricks.memory.service import Memory
+from nexus.bricks.rebac.entity_registry import EntityRegistry
 from nexus.storage.models import Base
 
 # ---------------------------------------------------------------------------

@@ -1,7 +1,5 @@
 """File I/O operations: open, read, write, release."""
 
-from __future__ import annotations
-
 import errno
 import logging
 from typing import cast
@@ -20,7 +18,7 @@ from nexus.fuse.ops._shared import (
 
 # Import event types
 try:
-    from nexus.core.event_bus import FileEventType
+    from nexus.core.file_events import FileEventType
 
     HAS_EVENT_BUS = True
 except ImportError:

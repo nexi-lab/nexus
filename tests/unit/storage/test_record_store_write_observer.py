@@ -4,8 +4,6 @@ Tests happy paths, SQL failure injection, partial failures, and session exhausti
 Phase 1.1 of #1246/#1330 consolidation plan.
 """
 
-from __future__ import annotations
-
 import tempfile
 from collections.abc import Generator
 from datetime import UTC, datetime
@@ -16,7 +14,7 @@ import pytest
 from sqlalchemy.exc import OperationalError
 
 from nexus.contracts.exceptions import AuditLogError
-from nexus.core.metadata import FileMetadata
+from nexus.contracts.metadata import FileMetadata
 from nexus.storage.models import FilePathModel, OperationLogModel, VersionHistoryModel
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.storage.record_store_write_observer import RecordStoreWriteObserver

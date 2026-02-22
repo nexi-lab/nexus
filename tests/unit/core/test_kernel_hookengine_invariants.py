@@ -9,8 +9,6 @@ Invariants proven:
   4. Registered hooks are discoverable (fire calls them)
 """
 
-from __future__ import annotations
-
 import asyncio
 import uuid
 from collections.abc import Awaitable, Callable
@@ -73,7 +71,6 @@ class InMemoryHookEngine:
 
 # Verify protocol conformance at import time
 assert isinstance(InMemoryHookEngine(), HookEngineProtocol)
-
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -6,8 +6,6 @@ validating integrity, and managing rollbacks.
 Issue #165: Migration Tools & Upgrade Paths
 """
 
-from __future__ import annotations
-
 import sys
 from typing import TYPE_CHECKING
 
@@ -707,7 +705,7 @@ def validate(
         handle_error(e)
 
 
-def _print_import_result(result: ImportResult, dry_run: bool) -> None:
+def _print_import_result(result: "ImportResult", dry_run: bool) -> None:
     """Print import result summary.
 
     Args:

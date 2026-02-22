@@ -9,8 +9,6 @@ Patterns with ``**`` are compiled to regex and cached via ``lru_cache``
 for hot-path performance.
 """
 
-from __future__ import annotations
-
 import fnmatch
 import functools
 import re

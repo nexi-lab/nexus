@@ -1,4 +1,4 @@
-"""KernelDispatch — unified two-phase VFS notification dispatch.
+"""KernelDispatch -- unified two-phase VFS notification dispatch.
 
 Single dispatch point for all kernel VFS operation notifications.
 Every VFS operation (read/write/delete/rename/mkdir/rmdir) passes
@@ -11,7 +11,7 @@ through two ordered phases:
     └── Registered interceptor hooks (service-layer side effects).
         Can modify the operation context (e.g. filter CSV columns,
         update cache bitmaps).  Failures are caught and appended
-        as OperationWarning — never abort the operation.
+        as OperationWarning -- never abort the operation.
 
     OBSERVE  (fire-and-forget)
     └── Registered mutation observers receive a frozen MutationEvent.
@@ -36,7 +36,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from nexus.contracts.types import OperationWarning
+from nexus.core.operation_result import OperationWarning
 from nexus.contracts.vfs_hooks import (
     DeleteHookContext,
     MkdirHookContext,
@@ -275,7 +275,7 @@ class KernelDispatch:
     # ── OBSERVE dispatch ───────────────────────────────────────────────
 
     def notify(self, event: MutationEvent) -> None:
-        """OBSERVE phase — fire-and-forget to all registered observers."""
+        """OBSERVE phase -- fire-and-forget to all registered observers."""
         for obs in self._observers:
             try:
                 obs.on_mutation(event)

@@ -4,14 +4,13 @@ Verifies that FileMetadata (proto) and FilePathModel (SQLAlchemy) stay in sync.
 Catches field additions/removals that aren't reflected in both representations.
 """
 
-from __future__ import annotations
-
 import dataclasses
 from datetime import datetime
 
 from sqlalchemy import inspect as sa_inspect
 
-from nexus.core.metadata import FileMetadata
+from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.metadata import FileMetadata
 from nexus.storage.models import FilePathModel
 
 # ---------------------------------------------------------------------------
@@ -175,7 +174,7 @@ class TestRoundtripConsistency:
         assert values["physical_path"] == "/test/file.txt"  # fallback to path
         assert values["content_hash"] is None
         assert values["file_type"] is None
-        assert values["zone_id"] == "default"  # default
+        assert values["zone_id"] == ROOT_ZONE_ID  # default
         assert values["posix_uid"] is None
 
     def test_fields_not_yet_in_sql_are_documented(self) -> None:

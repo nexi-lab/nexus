@@ -7,10 +7,10 @@ Extracted from ``nexus.core.nexus_fs._has_descendant_access`` and
 ``_has_descendant_access_bulk`` as part of the NexusFS slim-down (#2033).
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
+
+from nexus.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext, Permission
@@ -47,8 +47,8 @@ class DescendantAccessChecker:
     def has_access(
         self,
         path: str,
-        permission: Permission,
-        context: OperationContext,
+        permission: "Permission",
+        context: "OperationContext",
     ) -> bool:
         """Check if user has access to *path* OR any of its descendants.
 
@@ -115,7 +115,7 @@ class DescendantAccessChecker:
             Permission.TRAVERSE: "traverse",
         }
         rebac_permission = permission_map.get(permission, "read")
-        zone_id = context.zone_id or "root"
+        zone_id = context.zone_id or ROOT_ZONE_ID
 
         # =============================================================
         # Issue #919 OPTIMIZATION 1: Check DirectoryVisibilityCache (O(1))
@@ -242,7 +242,7 @@ class DescendantAccessChecker:
             try:
                 # Perform bulk permission check
                 results = self._rebac_manager.rebac_check_bulk(
-                    checks, zone_id=context.zone_id or "root"
+                    checks, zone_id=context.zone_id or ROOT_ZONE_ID
                 )
 
                 # OPTIMIZATION 5: Early exit on first accessible descendant
@@ -312,8 +312,8 @@ class DescendantAccessChecker:
     def has_access_bulk(
         self,
         paths: list[str],
-        permission: Permission,
-        context: OperationContext,
+        permission: "Permission",
+        context: "OperationContext",
     ) -> dict[str, bool]:
         """Check if user has access to any descendant for multiple paths in bulk.
 
@@ -449,7 +449,7 @@ class DescendantAccessChecker:
         # PHASE 2: Perform ONE bulk permission check for everything
         try:
             results = self._rebac_manager.rebac_check_bulk(
-                all_checks, zone_id=context.zone_id or "root"
+                all_checks, zone_id=context.zone_id or ROOT_ZONE_ID
             )
         except Exception as e:
             logger.warning(f"has_access_bulk: Bulk check failed, falling back: {e}")

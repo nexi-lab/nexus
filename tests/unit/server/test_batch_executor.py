@@ -1,14 +1,11 @@
 """Unit tests for BatchExecutor (Issue #1242).
 
-Tests the batch operation executor in isolation with a mock AsyncNexusFS.
+Tests the batch operation executor in isolation with a mock NexusFS.
 Covers all 13 edge case scenarios identified in the architecture review.
 """
 
-from __future__ import annotations
-
-import asyncio
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 from pydantic import ValidationError
@@ -32,9 +29,9 @@ from nexus.server.batch_executor import (
 
 
 @pytest.fixture()
-def mock_fs() -> AsyncMock:
-    """Create a mock AsyncNexusFS with default behaviors."""
-    fs = AsyncMock()
+def mock_fs() -> MagicMock:
+    """Create a mock NexusFS with default behaviors."""
+    fs = MagicMock()
     # Default behaviors for each operation
     fs.read.return_value = b"file content"
     fs.write.return_value = {
@@ -46,7 +43,7 @@ def mock_fs() -> AsyncMock:
     }
     fs.delete.return_value = {"deleted": True, "path": "/test.txt"}
     fs.exists.return_value = True
-    fs.list_dir.return_value = ["file1.txt", "file2.txt"]
+    fs.list.return_value = ["/file1.txt", "/file2.txt"]
     fs.mkdir.return_value = None
 
     # Metadata mock
@@ -75,7 +72,7 @@ def mock_context() -> MagicMock:
 
 
 @pytest.fixture()
-def executor(mock_fs: AsyncMock) -> BatchExecutor:
+def executor(mock_fs: MagicMock) -> BatchExecutor:
     """Create a BatchExecutor with mock FS."""
     return BatchExecutor(fs=mock_fs)
 
@@ -190,7 +187,7 @@ class TestHappyPath:
 class TestPartialFailure:
     @pytest.mark.asyncio()
     async def test_read_succeeds_write_fails_stat_succeeds(
-        self, mock_fs: AsyncMock, mock_context: MagicMock
+        self, mock_fs: MagicMock, mock_context: MagicMock
     ) -> None:
         """Read succeeds, write fails (permission), stat succeeds."""
         mock_fs.write.side_effect = NexusPermissionError("No write permission")
@@ -218,7 +215,7 @@ class TestPartialFailure:
 class TestStopOnError:
     @pytest.mark.asyncio()
     async def test_first_op_fails_remaining_skipped(
-        self, mock_fs: AsyncMock, mock_context: MagicMock
+        self, mock_fs: MagicMock, mock_context: MagicMock
     ) -> None:
         mock_fs.read.side_effect = NexusPermissionError("No read permission")
         executor = BatchExecutor(fs=mock_fs)
@@ -241,12 +238,12 @@ class TestStopOnError:
 
     @pytest.mark.asyncio()
     async def test_middle_op_fails_earlier_kept_later_skipped(
-        self, mock_fs: AsyncMock, mock_context: MagicMock
+        self, mock_fs: MagicMock, mock_context: MagicMock
     ) -> None:
         """First op succeeds, second fails, third skipped."""
         call_count = 0
 
-        async def failing_on_second_read(path: str, **kwargs: Any) -> bytes:
+        def failing_on_second_read(path: str, **kwargs: Any) -> bytes:
             nonlocal call_count
             call_count += 1
             if call_count == 2:
@@ -307,7 +304,7 @@ class TestValidation:
 
 class TestAllFailures:
     @pytest.mark.asyncio()
-    async def test_all_operations_fail(self, mock_fs: AsyncMock, mock_context: MagicMock) -> None:
+    async def test_all_operations_fail(self, mock_fs: MagicMock, mock_context: MagicMock) -> None:
         mock_fs.read.side_effect = NexusFileNotFoundError(path="/missing.txt")
         mock_fs.write.side_effect = NexusPermissionError("denied")
         mock_fs.delete.side_effect = NexusFileNotFoundError(path="/missing.txt")
@@ -339,12 +336,12 @@ class TestAllFailures:
 class TestPerOperationPermissions:
     @pytest.mark.asyncio()
     async def test_mixed_permission_results(
-        self, mock_fs: AsyncMock, mock_context: MagicMock
+        self, mock_fs: MagicMock, mock_context: MagicMock
     ) -> None:
         """First read succeeds, second read denied by permission."""
         call_count = 0
 
-        async def permission_gated_read(path: str, **kwargs: Any) -> bytes:
+        def permission_gated_read(path: str, **kwargs: Any) -> bytes:
             nonlocal call_count
             call_count += 1
             if path == "/protected.txt":
@@ -373,12 +370,12 @@ class TestPerOperationPermissions:
 class TestSequentialDependency:
     @pytest.mark.asyncio()
     async def test_write_then_read_same_file(
-        self, mock_fs: AsyncMock, mock_context: MagicMock
+        self, mock_fs: MagicMock, mock_context: MagicMock
     ) -> None:
         """Write and read should execute in order."""
         execution_order: list[str] = []
 
-        async def tracking_write(path: str, content: Any, **kwargs: Any) -> dict:
+        def tracking_write(path: str, content: Any, **kwargs: Any) -> dict:
             execution_order.append(f"write:{path}")
             return {
                 "etag": "new",
@@ -388,7 +385,7 @@ class TestSequentialDependency:
                 "path": path,
             }
 
-        async def tracking_read(path: str, **kwargs: Any) -> bytes:
+        def tracking_read(path: str, **kwargs: Any) -> bytes:
             execution_order.append(f"read:{path}")
             return b"written content"
 
@@ -432,7 +429,7 @@ class TestInvalidOpType:
 class TestBase64Encoding:
     @pytest.mark.asyncio()
     async def test_write_with_base64_encoding(
-        self, executor: BatchExecutor, mock_fs: AsyncMock, mock_context: MagicMock
+        self, executor: BatchExecutor, mock_fs: MagicMock, mock_context: MagicMock
     ) -> None:
         """Base64-encoded content should be decoded before writing."""
         import base64
@@ -462,12 +459,13 @@ class TestBase64Encoding:
 class TestOperationTimeout:
     @pytest.mark.asyncio()
     async def test_slow_operation_times_out(
-        self, mock_fs: AsyncMock, mock_context: MagicMock
+        self, mock_fs: MagicMock, mock_context: MagicMock
     ) -> None:
         """Operation exceeding timeout gets status 504."""
+        import time
 
-        async def slow_read(path: str, **kwargs: Any) -> bytes:
-            await asyncio.sleep(10)  # Way past the timeout
+        def slow_read(path: str, **kwargs: Any) -> bytes:
+            time.sleep(10)  # Way past the timeout
             return b"content"
 
         mock_fs.read.side_effect = slow_read
@@ -546,7 +544,7 @@ class TestIndexCorrelation:
 class TestStatMissingFile:
     @pytest.mark.asyncio()
     async def test_stat_missing_file_returns_404(
-        self, mock_fs: AsyncMock, mock_context: MagicMock
+        self, mock_fs: MagicMock, mock_context: MagicMock
     ) -> None:
         """Stat on a non-existent file should return 404."""
         mock_fs.get_metadata.return_value = None
@@ -578,7 +576,7 @@ class TestErrorMapping:
     )
     async def test_exception_to_status_mapping(
         self,
-        mock_fs: AsyncMock,
+        mock_fs: MagicMock,
         mock_context: MagicMock,
         exception: Exception,
         expected_status: int,

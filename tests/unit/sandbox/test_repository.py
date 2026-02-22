@@ -3,8 +3,6 @@
 Tests DB operations in isolation using an in-memory SQLite database.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime, timedelta
 
 import pytest

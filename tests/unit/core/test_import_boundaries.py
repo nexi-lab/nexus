@@ -11,8 +11,6 @@ Tier hierarchy (Liedtke minimality):
     - services/ must NOT import from server/ (except via protocols)
 """
 
-from __future__ import annotations
-
 import ast
 from pathlib import Path
 
@@ -106,8 +104,6 @@ class TestKernelTopLevelImports:
 
     # Pre-existing violations that are tracked for cleanup (Issue #1519)
     KNOWN_CORE_SERVICES_IMPORTS = {
-        "core/async_bridge.py",  # async_rebac_manager (TYPE_CHECKING)
-        "core/async_nexus_fs.py",  # async_permissions (TYPE_CHECKING)
         "core/config.py",  # NamespaceManagerProtocol, namespace_manager (TYPE_CHECKING)
         "core/nexus_fs.py",  # memory_api, entity_registry (TYPE_CHECKING)
     }
@@ -139,12 +135,6 @@ class TestKernelTopLevelImports:
 class TestServicesDoNotImportServer:
     """Verify services/ modules don't import from server/ (except via protocols)."""
 
-    # Known exceptions: lazy imports for backward compat that are being cleaned up
-    KNOWN_EXCEPTIONS = {
-        # These are in the process of being migrated (Issue #1519)
-        "services/oauth_service.py",
-    }
-
     def test_no_top_level_server_imports_in_services(self):
         """Services should not have top-level imports from server/."""
         services_dir = NEXUS_ROOT / "services"
@@ -152,9 +142,6 @@ class TestServicesDoNotImportServer:
 
         for py_file in _get_python_files_recursive(services_dir):
             rel = str(py_file.relative_to(NEXUS_ROOT))
-            if rel in self.KNOWN_EXCEPTIONS:
-                continue
-
             for module, lineno, _kind in _collect_top_level_imports(py_file):
                 if module.startswith("nexus.server"):
                     violations.append(f"{rel}:{lineno} top-level imports {module}")
@@ -195,7 +182,7 @@ class TestFourStoragePillars:
         ("nexus.core.metastore", "MetastoreABC"),
         ("nexus.backends.backend", "Backend"),
         ("nexus.storage.record_store", "RecordStoreABC"),
-        ("nexus.core.cache_store", "CacheStoreABC"),
+        ("nexus.contracts.cache_store", "CacheStoreABC"),
     ]
 
     @pytest.mark.parametrize(
@@ -268,18 +255,12 @@ class TestConfigDoesNotImportServer:
             f"  - {v}" for v in violations
         )
 
-    def test_auth_config_importable_from_package_level(self):
-        """OAuthConfig should be importable from nexus.auth_config (not server/)."""
-        from nexus.auth_config import OAuthConfig, OAuthProviderConfig
+    def test_auth_config_canonical_import(self):
+        """OAuthConfig canonical path is nexus.bricks.auth.oauth.config (#2281)."""
+        from nexus.bricks.auth.oauth.config import OAuthConfig, OAuthProviderConfig
 
         assert OAuthConfig is not None
         assert OAuthProviderConfig is not None
-
-    def test_auth_config_canonical_import(self):
-        """OAuthConfig canonical path is nexus.auth_config (Issue #2281: shim removed)."""
-        from nexus.auth_config import OAuthConfig
-
-        assert OAuthConfig is not None
 
 
 class TestZoneHelpersInLib:

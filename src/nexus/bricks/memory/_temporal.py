@@ -5,8 +5,6 @@ Provides ISO-8601 date parsing with support for partial dates
 (year, year-month) for temporal query operators.
 """
 
-from __future__ import annotations
-
 import re
 from datetime import UTC, datetime, timedelta
 from typing import NamedTuple

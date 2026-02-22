@@ -6,14 +6,13 @@ Optimized for recency queries: "What happened recently?", "Show last 50 messages
 Thread-safe: Each operation creates its own session from the session factory.
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Callable
 from datetime import datetime
 from typing import TYPE_CHECKING
 
 from nexus.bricks.memory.memory_paging.namespace_util import strip_tier_prefix
+from nexus.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -39,8 +38,8 @@ class RecallStore:
 
     def __init__(
         self,
-        session_factory: Callable[[], Session],
-        zone_id: str = "root",
+        session_factory: "Callable[[], Session]",
+        zone_id: str = ROOT_ZONE_ID,
         namespace: str = "recall",
     ):
         """Initialize recall store.
@@ -54,7 +53,7 @@ class RecallStore:
         self.zone_id = zone_id
         self.namespace = namespace
 
-    def append(self, memory: MemoryModel) -> None:
+    def append(self, memory: "MemoryModel") -> None:
         """Append memory to recall storage.
 
         Merges the (possibly detached) memory into a fresh session, updates
@@ -78,7 +77,7 @@ class RecallStore:
         finally:
             session.close()
 
-    def append_batch(self, memories: list[MemoryModel]) -> None:
+    def append_batch(self, memories: "list[MemoryModel]") -> None:
         """Append multiple memories to recall in a single transaction.
 
         Merges all memories, updates namespaces, and commits once.
@@ -103,7 +102,7 @@ class RecallStore:
         finally:
             session.close()
 
-    def get_recent(self, limit: int = 100) -> list[MemoryModel]:
+    def get_recent(self, limit: int = 100) -> "list[MemoryModel]":
         """Get most recent memories from recall.
 
         Args:
@@ -131,7 +130,7 @@ class RecallStore:
         after: datetime | None = None,
         before: datetime | None = None,
         limit: int | None = None,
-    ) -> list[MemoryModel]:
+    ) -> "list[MemoryModel]":
         """Query recall by time range.
 
         Args:

@@ -4,8 +4,6 @@ TDD-first tests for the extracted handler module.  Tests verify
 pure async handler functions in isolation (no HTTP layer).
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 import pytest
@@ -21,7 +19,7 @@ from nexus.bricks.a2a.handlers import dispatch, handle_cancel, handle_get, handl
 from nexus.bricks.a2a.models import Message, TaskState, TextPart
 from nexus.bricks.a2a.stores.in_memory import CacheBackedTaskStore
 from nexus.bricks.a2a.task_manager import TaskManager
-from nexus.cache.inmemory import InMemoryCacheStore
+from nexus.bricks.cache.inmemory import InMemoryCacheStore
 
 
 @pytest.fixture

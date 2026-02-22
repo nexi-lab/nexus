@@ -7,8 +7,6 @@ Tests cover:
   fallback to LRU within same class, mixed QoS ordering
 """
 
-from __future__ import annotations
-
 import types
 from datetime import UTC, datetime, timedelta
 

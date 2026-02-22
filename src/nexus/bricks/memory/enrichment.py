@@ -15,8 +15,6 @@ Usage:
     # result.embedding_json, result.entities_json, etc.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from dataclasses import dataclass
@@ -173,7 +171,7 @@ class EnrichmentPipeline:
         try:
             import importlib
 
-            _mod = importlib.import_module("nexus.core.temporal_resolver")
+            _mod = importlib.import_module("nexus.bricks.memory.temporal_resolver")
             resolve_temp = _mod.resolve_temporal
             return resolve_temp(  # type: ignore[no-any-return]
                 text=text,
@@ -189,17 +187,6 @@ class EnrichmentPipeline:
     ) -> None:
         """Generate embedding vector (#406)."""
         provider = embedding_provider
-        if provider is None:
-            try:
-                from nexus.bricks.search.embeddings import create_embedding_provider
-
-                try:
-                    provider = create_embedding_provider(provider="openrouter")
-                except Exception as e:
-                    logger.debug("Failed to create embedding provider: %s", e)
-            except ImportError:
-                return
-
         if not provider:
             return
 
@@ -216,7 +203,10 @@ class EnrichmentPipeline:
     def _enrich_entities(self, text: str, result: EnrichmentResult) -> None:
         """Extract named entities (#1025)."""
         try:
-            from nexus.rebac.entity_extractor import EntityExtractor
+            import importlib
+
+            _mod = importlib.import_module("nexus.bricks.rebac.entity_extractor")
+            EntityExtractor: Any = _mod.EntityExtractor
 
             extractor = EntityExtractor(use_spacy=False)
             entities = extractor.extract(text)
@@ -234,7 +224,7 @@ class EnrichmentPipeline:
         try:
             import importlib
 
-            _mod = importlib.import_module("nexus.core.temporal_resolver")
+            _mod = importlib.import_module("nexus.bricks.memory.temporal_resolver")
             extract_temporal_metadata = _mod.extract_temporal_metadata
 
             temporal_meta = extract_temporal_metadata(text, reference_time=reference_time)

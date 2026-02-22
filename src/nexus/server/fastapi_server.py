@@ -22,8 +22,6 @@ Example:
     run_server(app, host="0.0.0.0", port=2026)
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import os
@@ -75,16 +73,16 @@ logger = logging.getLogger(__name__)
 limiter: Limiter
 
 # Lock API Models — re-exported for backward compatibility with tests/consumers.
-# Canonical location: api/v1/models/locks.py (Issue #1288).
-from nexus.server.api.v1.models.locks import LOCK_MAX_TTL as LOCK_MAX_TTL  # noqa: E402
-from nexus.server.api.v1.models.locks import LockAcquireRequest as LockAcquireRequest  # noqa: E402
-from nexus.server.api.v1.models.locks import LockExtendRequest as LockExtendRequest  # noqa: E402
-from nexus.server.api.v1.models.locks import LockHolderResponse as LockHolderResponse  # noqa: E402
-from nexus.server.api.v1.models.locks import LockInfoMutex as LockInfoMutex  # noqa: E402
-from nexus.server.api.v1.models.locks import LockInfoSemaphore as LockInfoSemaphore  # noqa: E402
-from nexus.server.api.v1.models.locks import LockListResponse as LockListResponse  # noqa: E402
-from nexus.server.api.v1.models.locks import LockResponse as LockResponse  # noqa: E402
-from nexus.server.api.v1.models.locks import LockStatusResponse as LockStatusResponse  # noqa: E402
+# Canonical location: api/v2/models/locks.py (Issue #2056).
+from nexus.server.api.v2.models.locks import LOCK_MAX_TTL as LOCK_MAX_TTL  # noqa: E402
+from nexus.server.api.v2.models.locks import LockAcquireRequest as LockAcquireRequest  # noqa: E402
+from nexus.server.api.v2.models.locks import LockExtendRequest as LockExtendRequest  # noqa: E402
+from nexus.server.api.v2.models.locks import LockHolderResponse as LockHolderResponse  # noqa: E402
+from nexus.server.api.v2.models.locks import LockInfoMutex as LockInfoMutex  # noqa: E402
+from nexus.server.api.v2.models.locks import LockInfoSemaphore as LockInfoSemaphore  # noqa: E402
+from nexus.server.api.v2.models.locks import LockListResponse as LockListResponse  # noqa: E402
+from nexus.server.api.v2.models.locks import LockResponse as LockResponse  # noqa: E402
+from nexus.server.api.v2.models.locks import LockStatusResponse as LockStatusResponse  # noqa: E402
 
 # ============================================================================
 # Thread Pool Utilities (Issue #932)
@@ -146,9 +144,7 @@ async def to_thread_with_timeout(
 # Set once during ``create_app()``.
 _fastapi_app: FastAPI | None = None
 
-
 # Lifespan is now managed by the modular lifespan/ package (Issue #2049).
-
 
 # ============================================================================
 # Application Factory
@@ -156,7 +152,7 @@ _fastapi_app: FastAPI | None = None
 
 
 def create_app(
-    nexus_fs: NexusFS,
+    nexus_fs: "NexusFS",
     api_key: str | None = None,
     auth_provider: Any = None,
     database_url: str | None = None,
@@ -194,29 +190,34 @@ def create_app(
     # Set module-level reference for kernel code access
     _fastapi_app = app
 
-    # Store application state on app.state (replaces AppState class)
-    app.state.nexus_fs = nexus_fs
-    app.state.api_key = api_key
-    app.state.auth_provider = auth_provider
+    # Initialize all app.state fields with typed defaults (Issue #2135)
+    from nexus.server.app_state import init_app_state
+
+    init_app_state(
+        app,
+        nexus_fs=nexus_fs,
+        api_key=api_key,
+        auth_provider=auth_provider,
+        database_url=database_url,
+        data_dir=data_dir,
+    )
 
     # Issue #1399: BrickContainer for DI (auth brick + future bricks)
     from nexus.lib.brick_container import BrickContainer
 
     app.state.brick_container = BrickContainer()
     if auth_provider is not None:
-        from nexus.auth.protocol import AuthBrickProtocol
+        from nexus.bricks.auth.protocol import AuthBrickProtocol
 
         if isinstance(auth_provider, AuthBrickProtocol):
             app.state.brick_container.register(AuthBrickProtocol, auth_provider)
-    app.state.database_url = database_url
-    app.state.data_dir = data_dir  # Issue #1412: A2A task persistence
 
     # Deployment profile (Issue #1389, #1708): resolve enabled bricks from NEXUS_PROFILE env
     from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_bricks
 
     _profile_str = os.environ.get("NEXUS_PROFILE", "full")
     if _profile_str == "auto":
-        from nexus.lib.device_capabilities import detect_capabilities, suggest_profile
+        from nexus.core.device_capabilities import detect_capabilities, suggest_profile
 
         _caps = detect_capabilities()
         _profile = suggest_profile(_caps)
@@ -234,10 +235,10 @@ def create_app(
             logger.warning("Unknown NEXUS_PROFILE '%s', defaulting to 'full'", _profile_str)
             _profile = DeploymentProfile.FULL
         # Warn if explicit profile may exceed device capabilities
-        from nexus.lib.device_capabilities import (
+        from nexus.core.device_capabilities import (
             detect_capabilities as _detect_caps,
         )
-        from nexus.lib.device_capabilities import (
+        from nexus.core.device_capabilities import (
             warn_if_profile_exceeds_device,
         )
 
@@ -326,6 +327,10 @@ def create_app(
         _brick_svc = getattr(nexus_fs, _attr_name, None)
         if _brick_svc is not None:
             _brick_sources.append(_brick_svc)
+    # AgentRPCService: stored as private attr _agent_rpc_service on NexusFS
+    _agent_rpc = getattr(nexus_fs, "_agent_rpc_service", None)
+    if _agent_rpc is not None:
+        _brick_sources.append(_agent_rpc)
     # Issue #12: MemoryService lives outside kernel — created by factory, not on NexusFS
     try:
         from nexus.factory import create_memory_service
@@ -345,46 +350,14 @@ def create_app(
             _brick_sources.append(_meta_export_svc)
     except Exception as _exc:
         logger.debug("MetadataExportService unavailable: %s", _exc)
-    # Task #634: AgentService lives outside kernel — created by factory, not on NexusFS
-    try:
-        from nexus.services.agents.agent_service import create_agent_service
-
-        _agent_svc = create_agent_service(nexus_fs)
-        if _agent_svc is not None:
-            _brick_sources.append(_agent_svc)
-            app.state.agent_service = _agent_svc
-    except Exception as _exc:
-        logger.debug("AgentService unavailable: %s", _exc)
     app.state.exposed_methods = _discover_exposed_methods(nexus_fs, *_brick_sources)
 
-    # Initialize defaults for optional services (set during lifespan)
-    app.state.async_nexus_fs = None
-    app.state.async_rebac_manager = None
-    app.state.subscription_manager = None
-    app.state.search_daemon = None
-    app.state.search_daemon_enabled = False
-    app.state.directory_grant_expander = None
-    app.state.cache_brick = None
-    app.state.websocket_manager = None
-    app.state.reactive_subscription_manager = None
-    app.state.agent_registry = None
-    app.state.async_agent_registry = None
-    app.state.agent_event_log = None
-    app.state.sandbox_auth_service = None
-    app.state.write_back_service = None
-    app.state.task_runner = None
-    app.state.event_log = None
-    app.state.key_service = None
-    app.state.rebac_circuit_breaker = None
-    app.state.chunked_upload_service = None
-    app.state.delegation_service = None
-    app.state.reputation_service = None
-    app.state.rlm_service = None  # Issue #1306: RLM inference brick
-    app.state.manifest_resolver = None  # Issue #2130: context manifest brick
-    app.state.governance_anomaly_service = None  # Issue #2129: governance brick
-    app.state.governance_collusion_service = None
-    app.state.governance_graph_service = None
-    app.state.governance_response_service = None
+    # Defaults for optional services are set by init_app_state() above (Issue #2135)
+
+    # Issue #2168: startup tracker for k8s health probes
+    from nexus.server.health import StartupTracker
+
+    app.state.startup_tracker = StartupTracker()
 
     # Issue #2168: startup tracker for k8s health probes
     from nexus.server.health import StartupTracker
@@ -409,6 +382,12 @@ def create_app(
             wds = getattr(app.state, "workflow_dispatch", None)
             if wds is not None and hasattr(wds, "set_subscription_manager"):
                 wds.set_subscription_manager(app.state.subscription_manager)
+            # Issue #914: Inject getter into delivery worker (fixes services→server import)
+            from nexus.server.subscriptions import get_subscription_manager
+
+            _dw = nexus_fs.exposed_services().get("delivery_worker")
+            if _dw is not None:
+                _dw._subscription_manager_getter = get_subscription_manager
             logger.info("Subscription manager initialized and injected into NexusFS")
     except Exception as e:
         logger.warning(f"Failed to initialize subscription manager: {e}")
@@ -482,9 +461,9 @@ def create_app(
     if auth_provider is not None:
         try:
             # Extract DatabaseLocalAuth from DiscriminatingAuthProvider if needed
-            from nexus.auth.providers.base import AuthProvider
-            from nexus.auth.providers.database_local import DatabaseLocalAuth
-            from nexus.auth.providers.discriminator import DiscriminatingAuthProvider
+            from nexus.bricks.auth.providers.base import AuthProvider
+            from nexus.bricks.auth.providers.database_local import DatabaseLocalAuth
+            from nexus.bricks.auth.providers.discriminator import DiscriminatingAuthProvider
             from nexus.server.auth.auth_routes import set_auth_provider
 
             local_auth_provider: AuthProvider | None = None
@@ -510,14 +489,7 @@ def create_app(
     # Register routes
     _register_routes(app)
 
-    # Register extracted v1 domain routers (#1288)
-    try:
-        from nexus.server.api.v1.versioning import build_v1_registry, register_v1_routers
-
-        v1_registry = build_v1_registry()
-        register_v1_routers(app, v1_registry)
-    except Exception as e:
-        logger.warning("Failed to register v1 routers: %s", e)
+    # V1 API has been sunset (#2056) — all endpoints moved to v2
 
     # Register NexusFS instance for zone routes, migration, and user provisioning.
     # This must happen unconditionally (not only when OAuth is configured).
@@ -547,8 +519,7 @@ def create_app(
 
         from nexus.server.pg_metrics_collector import QueryObserverCollector
 
-        _sys = getattr(nexus_fs, "_system_services", None)
-        obs_sub = getattr(_sys, "observability_subsystem", None)
+        obs_sub = app.state.observability_subsystem
         if obs_sub is not None:
             REGISTRY.register(QueryObserverCollector(obs_sub.observer))
     except ImportError:
@@ -562,9 +533,8 @@ def create_app(
 
         from nexus.server.wb_metrics_collector import WriteBufferCollector
 
-        _wo = getattr(nexus_fs, "_write_observer", None)
-        if _wo is not None and hasattr(_wo, "metrics"):
-            REGISTRY.register(WriteBufferCollector(_wo))
+        if app.state.write_observer is not None and hasattr(app.state.write_observer, "metrics"):
+            REGISTRY.register(WriteBufferCollector(app.state.write_observer))
     except ImportError:
         pass
     except Exception:
@@ -630,7 +600,7 @@ def _register_routes(app: FastAPI) -> None:
     )
 
     v2_registry = build_v2_registry(
-        async_nexus_fs_getter=lambda: app.state.async_nexus_fs,
+        nexus_fs_getter=lambda: app.state.nexus_fs,
         chunked_upload_service_getter=lambda: app.state.chunked_upload_service,
     )
     register_v2_routers(app, v2_registry)
@@ -656,7 +626,7 @@ def _register_routes(app: FastAPI) -> None:
 
     # A2A Protocol Endpoint (Issue #1256, brick-extracted #1401)
     try:
-        from nexus.bricks.a2a import create_a2a_router
+        from nexus.server.api.v2.routers.a2a import create_a2a_router
 
         a2a_base_url = os.environ.get("NEXUS_A2A_BASE_URL", DEFAULT_NEXUS_URL)
         a2a_auth_required = bool(
@@ -682,6 +652,13 @@ def _register_routes(app: FastAPI) -> None:
             except Exception:
                 return None
 
+        # Extract hook engine for artifact auto-indexing (Issue #1861)
+        _a2a_hook_engine = getattr(
+            getattr(app.state.nexus_fs, "_system_services", None),
+            "scoped_hook_engine",
+            None,
+        )
+
         a2a_router, a2a_task_manager = create_a2a_router(
             nexus_fs=app.state.nexus_fs,
             config=None,
@@ -689,6 +666,7 @@ def _register_routes(app: FastAPI) -> None:
             auth_required=a2a_auth_required,
             auth_fn=_a2a_auth_adapter,
             data_dir=getattr(app.state, "data_dir", None),
+            hook_engine=_a2a_hook_engine,
         )
         app.state.a2a_task_manager = a2a_task_manager  # Expose for gRPC transport
         app.include_router(a2a_router)
@@ -864,7 +842,7 @@ def run_server(
 
 
 def run_server_from_config(
-    nexus_fs: NexusFS,
+    nexus_fs: "NexusFS",
     host: str = "0.0.0.0",
     port: int = 2026,
     api_key: str | None = None,

@@ -25,12 +25,20 @@ References:
     - Issue #1383: Define 6 kernel protocol interfaces
 """
 
-from nexus.rebac.namespace_manager import NamespaceMount
-from nexus.services.event_log.protocol import EventLogConfig, EventLogProtocol
+import importlib as _il
+
+from nexus.services.event_subsystem.log.protocol import EventLogConfig, EventLogProtocol
 from nexus.services.protocols.adaptive_k import AdaptiveKProtocol
 from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
 from nexus.services.protocols.auth import APIKeyCreatorProtocol
+from nexus.services.protocols.brick_lifecycle import (
+    BrickReconcileOutcome,
+    LifecycleManagerProtocol,
+    ReconcileContext,
+    ReconcilerProtocol,
+)
 from nexus.services.protocols.chunked_upload import ChunkedUploadProtocol
+from nexus.services.protocols.entity_registry import EntityRegistryProtocol
 from nexus.services.protocols.file_reader import FileReaderProtocol
 from nexus.services.protocols.filesystem import NexusFilesystem
 from nexus.services.protocols.hook_engine import (
@@ -44,9 +52,11 @@ from nexus.services.protocols.hook_engine import (
     PRE_MKDIR,
     PRE_READ,
     PRE_WRITE,
+    FailurePolicy,
     HookContext,
     HookEngineProtocol,
     HookId,
+    HookPhaseType,
     HookResult,
     HookSpec,
 )
@@ -68,6 +78,7 @@ from nexus.services.protocols.operation_log import OperationLogProtocol
 from nexus.services.protocols.parse import ParseProtocol
 from nexus.services.protocols.payment import PaymentProtocol
 from nexus.services.protocols.permission import PermissionProtocol
+from nexus.services.protocols.permission_enforcer import PermissionEnforcerProtocol
 from nexus.services.protocols.rebac import ReBACBrickProtocol
 from nexus.services.protocols.rpc import rpc_expose
 from nexus.services.protocols.sandbox import SandboxProtocol
@@ -80,6 +91,7 @@ from nexus.services.protocols.skills import SkillsProtocol
 from nexus.services.protocols.sync import SyncContext, SyncResult, SyncServiceProtocol
 from nexus.services.protocols.sync_job import SyncJobProtocol
 from nexus.services.protocols.task_queue import TaskQueueProtocol
+from nexus.services.protocols.time_travel import TimeTravelProtocol
 from nexus.services.protocols.trajectory import TrajectoryProtocol
 from nexus.services.protocols.version import VersionProtocol
 from nexus.services.protocols.watch import WatchProtocol
@@ -88,23 +100,32 @@ from nexus.services.protocols.workflow import (
     NexusOperationsProtocol,
 )
 from nexus.services.protocols.workflow_dispatch import WorkflowDispatchProtocol
+from nexus.services.protocols.workspace_manager import WorkspaceManagerProtocol
 from nexus.services.protocols.write_back import WriteBackProtocol
+
+# Brick import via importlib to avoid services→bricks tier violation
+NamespaceMount = _il.import_module("nexus.bricks.rebac.namespace_manager").NamespaceMount
 
 __all__ = [
     "APIKeyCreatorProtocol",
     "AdaptiveKProtocol",
+    "BrickReconcileOutcome",
     "AgentInfo",
     "AgentRegistryProtocol",
     "AgentRequest",
     "ChunkedUploadProtocol",
+    "EntityRegistryProtocol",
     "EventLogConfig",
     "FileReaderProtocol",
     "EventLogProtocol",
+    "FailurePolicy",
     "HookContext",
     "HookEngineProtocol",
     "HookId",
+    "HookPhaseType",
     "HookResult",
     "HookSpec",
+    "LifecycleManagerProtocol",
     "LLMProviderProtocol",
     "LLMServiceProtocol",
     "LockProtocol",
@@ -133,9 +154,12 @@ __all__ = [
     "PRE_WRITE",
     "ParseProtocol",
     "PaymentProtocol",
+    "PermissionEnforcerProtocol",
     "PermissionProtocol",
     "ProgressCallback",
     "ReBACBrickProtocol",
+    "ReconcileContext",
+    "ReconcilerProtocol",
     "SandboxProtocol",
     "SchedulerProtocol",
     "SearchBrickProtocol",
@@ -153,9 +177,11 @@ __all__ = [
     "SyncResult",
     "SyncServiceProtocol",
     "TaskQueueProtocol",
+    "TimeTravelProtocol",
     "TrajectoryProtocol",
     "VersionProtocol",
     "WatchProtocol",
     "WorkflowDispatchProtocol",
+    "WorkspaceManagerProtocol",
     "WriteBackProtocol",
 ]

@@ -17,8 +17,6 @@ Example:
     ```
 """
 
-from __future__ import annotations
-
 import bisect
 import logging
 import re
@@ -67,7 +65,7 @@ class SyncService:
     # Memory-efficient chunking: flush batch every N paths
     PATHS_CHUNK_SIZE = 10000
 
-    def __init__(self, gateway: NexusFSGateway):
+    def __init__(self, gateway: "NexusFSGateway"):
         """Initialize sync service.
 
         Args:
@@ -82,7 +80,7 @@ class SyncService:
         self._mount_locks: dict[str, threading.Lock] = {}
         self._lock_guard = threading.Lock()
 
-    def _get_mount_lock(self, mount_point: str) -> threading.Lock:
+    def _get_mount_lock(self, mount_point: str) -> "threading.Lock":
         """Get or create a lock for a specific mount point.
 
         Thread-safe: uses a guard lock to protect the mount_locks dict.
@@ -493,7 +491,7 @@ class SyncService:
             cached_entries: Pre-fetched change log entries (batch optimization)
             pending_upserts: Accumulator for batch upsert (batch optimization)
         """
-        from nexus.core.metadata import FileMetadata
+        from nexus.contracts.metadata import FileMetadata
 
         # Apply pattern filtering
         if not self._matches_patterns(virtual_path, ctx):
@@ -627,7 +625,7 @@ class SyncService:
         path: str,
         backend_name: str,
         zone_id: str,
-        file_info: FileInfo,
+        file_info: "FileInfo",
     ) -> None:
         """Enqueue a change log upsert for batch flush, or upsert immediately.
 
@@ -662,7 +660,7 @@ class SyncService:
                 content_hash=file_info.content_hash,
             )
 
-    def _file_unchanged(self, file_info: FileInfo, cached: ChangeLogEntry) -> bool:
+    def _file_unchanged(self, file_info: "FileInfo", cached: ChangeLogEntry) -> bool:
         """Check if file is unchanged based on rsync-style comparison (Issue #1127).
 
         Uses tiered comparison strategy:
@@ -729,7 +727,7 @@ class SyncService:
             files_found: Set to track found paths
             paths_needing_tuples: List for batch tuple creation
         """
-        from nexus.core.metadata import FileMetadata
+        from nexus.contracts.metadata import FileMetadata
 
         files_found.add(virtual_path)
 
@@ -1110,7 +1108,9 @@ class SyncService:
         Returns:
             True if file should be included
         """
-        from nexus.bricks.search.primitives import glob_fast
+        import importlib as _il
+
+        glob_fast = _il.import_module("nexus.bricks.search.primitives").glob_fast
 
         # Check include patterns
         if ctx.include_patterns and not glob_fast.glob_match(file_path, list(ctx.include_patterns)):
@@ -1131,7 +1131,7 @@ class SyncService:
         include_patterns: list[str] | None = None,
         exclude_patterns: list[str] | None = None,
         generate_embeddings: bool = False,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
         progress_callback: ProgressCallback | None = None,
         full_sync: bool = False,
     ) -> dict[str, Any]:
@@ -1175,7 +1175,7 @@ class SyncService:
         self,
         path: str,
         permission: str,
-        context: OperationContext | None,
+        context: "OperationContext | None",
     ) -> bool:
         """Check if user has permission on path.
 

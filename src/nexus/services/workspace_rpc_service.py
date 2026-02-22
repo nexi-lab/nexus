@@ -5,19 +5,18 @@ operations behind ``@rpc_expose`` methods.  Wired via
 ``rpc_server.register_service()`` at server startup.
 """
 
-from __future__ import annotations
-
 import logging
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.contracts.rpc import rpc_expose
 from nexus.contracts.types import OperationContext, parse_operation_context
 
 if TYPE_CHECKING:
+    from nexus.bricks.workspace.workspace_registry import WorkspaceRegistry
     from nexus.contracts.types import VFSOperations
-    from nexus.services.workspace.workspace_registry import WorkspaceRegistry
     from nexus.system_services.workspace.workspace_manager import WorkspaceManager
 
 logger = logging.getLogger(__name__)
@@ -33,9 +32,9 @@ class WorkspaceRPCService:
 
     def __init__(
         self,
-        workspace_manager: WorkspaceManager,
-        workspace_registry: WorkspaceRegistry,
-        vfs: VFSOperations,
+        workspace_manager: "WorkspaceManager",
+        workspace_registry: "WorkspaceRegistry",
+        vfs: "VFSOperations",
         default_context: OperationContext,
         snapshot_service: Any | None = None,
     ) -> None:
@@ -199,7 +198,7 @@ class WorkspaceRPCService:
         self,
         paths: list[str],
         agent_id: str | None = None,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Begin a transactional snapshot for the specified paths."""

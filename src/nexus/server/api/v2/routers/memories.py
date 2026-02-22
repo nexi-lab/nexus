@@ -18,8 +18,6 @@ Provides 14 endpoints for memory CRUD, search, and version operations:
 - GET    /api/v2/memories/{id}/lineage         - Append-only lineage chain (#1188)
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 
@@ -45,7 +43,6 @@ from nexus.server.api.v2.models import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/memories", tags=["memories"])
-
 
 # =============================================================================
 # Endpoints

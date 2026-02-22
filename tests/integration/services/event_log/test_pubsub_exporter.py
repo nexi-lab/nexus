@@ -6,13 +6,12 @@ Skip if dependencies not available or Docker is down.
 Issue #1138: Event Stream Export.
 """
 
-from __future__ import annotations
-
 import os
 
 import pytest
 
-from nexus.core.event_bus import FileEvent, FileEventType
+from nexus.constants import ROOT_ZONE_ID
+from nexus.services.event_subsystem.types import FileEvent, FileEventType
 
 # Skip if testcontainers or gcloud-aio-pubsub not installed
 pytest.importorskip("testcontainers")
@@ -71,8 +70,8 @@ def set_emulator_env(pubsub_host: str):
 
 @pytest.fixture
 def exporter():
-    from nexus.services.event_log.exporters.config import PubSubExporterConfig
-    from nexus.services.event_log.exporters.pubsub_exporter import PubSubExporter
+    from nexus.services.event_subsystem.log.exporters.config import PubSubExporterConfig
+    from nexus.services.event_subsystem.log.exporters.pubsub_exporter import PubSubExporter
 
     config = PubSubExporterConfig(
         project_id="test-project",
@@ -81,7 +80,7 @@ def exporter():
     return PubSubExporter(config)
 
 
-def _make_event(event_id: str = "test-1", zone_id: str = "default") -> FileEvent:
+def _make_event(event_id: str = "test-1", zone_id: str = ROOT_ZONE_ID) -> FileEvent:
     return FileEvent(
         type=FileEventType.FILE_WRITE,
         path="/test.txt",

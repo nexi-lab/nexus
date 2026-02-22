@@ -5,8 +5,6 @@ gets identical coverage.  Restored from #1699 prune and extended for
 §17.6 convergence (agent-scoped paths + MessageEnvelope format).
 """
 
-from __future__ import annotations
-
 import asyncio
 from datetime import UTC, datetime
 from typing import Any
@@ -145,7 +143,7 @@ def store(request: pytest.FixtureRequest) -> TaskStoreProtocol:
     """Create a TaskStore instance for each backend."""
     if request.param == "in_memory":
         from nexus.bricks.a2a.stores.in_memory import CacheBackedTaskStore
-        from nexus.cache.inmemory import InMemoryCacheStore
+        from nexus.bricks.cache.inmemory import InMemoryCacheStore
 
         return CacheBackedTaskStore(InMemoryCacheStore())
     elif request.param == "vfs":
@@ -521,7 +519,7 @@ class TestVFSEnvelopeFormat:
 
     @pytest.mark.asyncio
     async def test_stored_as_message_envelope(self, vfs_store: tuple[Any, Any]) -> None:
-        from nexus.ipc.envelope import MessageEnvelope
+        from nexus.bricks.ipc.envelope import MessageEnvelope
 
         store, driver = vfs_store
         task = _make_task("t-env")

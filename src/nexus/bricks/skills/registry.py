@@ -1,7 +1,5 @@
 """Skill registry with progressive disclosure and lazy loading."""
 
-from __future__ import annotations
-
 import logging
 from collections import defaultdict
 from pathlib import Path
@@ -15,11 +13,11 @@ from nexus.bricks.skills.exceptions import (
 from nexus.bricks.skills.models import Skill, SkillMetadata
 from nexus.bricks.skills.parser import SkillParseError, SkillParser
 from nexus.bricks.skills.protocols import NexusFilesystem
-from nexus.constants import ROOT_ZONE_ID
+from nexus.lib.zone import normalize_zone_id
 
 if TYPE_CHECKING:
     from nexus.bricks.skills.types import SkillOperationContext as OperationContext
-    from nexus.rebac.manager import ReBACManager
+    from nexus.services.protocols.rebac import ReBACBrickProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +59,7 @@ class SkillRegistry:
     }
 
     @classmethod
-    def get_tier_paths(cls, context: OperationContext | None = None) -> dict[str, str]:
+    def get_tier_paths(cls, context: "OperationContext | None" = None) -> dict[str, str]:
         """Get context-aware tier paths for skill discovery.
 
         Always includes TIER_PATHS as baseline defaults. When a context is
@@ -86,7 +84,7 @@ class SkillRegistry:
         paths: dict[str, str] = {**cls.TIER_PATHS}
 
         if context:
-            zone_id = context.zone_id or ROOT_ZONE_ID
+            zone_id = normalize_zone_id(context.zone_id)
 
             # Zone-level skills: /zone/{tid}/skill/
             paths["zone"] = f"/zone/{zone_id}/skill/"
@@ -102,7 +100,9 @@ class SkillRegistry:
         return paths
 
     def __init__(
-        self, filesystem: NexusFilesystem | None = None, rebac_manager: ReBACManager | None = None
+        self,
+        filesystem: NexusFilesystem | None = None,
+        rebac_manager: "ReBACBrickProtocol | None" = None,
     ):
         """Initialize skill registry.
 
@@ -126,7 +126,7 @@ class SkillRegistry:
         self._tier_index: dict[str, list[str]] = defaultdict(list)
 
     async def discover(
-        self, context: OperationContext | None = None, tiers: list[str] | None = None
+        self, context: "OperationContext | None" = None, tiers: list[str] | None = None
     ) -> int:
         """Discover skills from filesystem (metadata only).
 
@@ -170,7 +170,7 @@ class SkillRegistry:
         return discovered_count
 
     async def _discover_tier(
-        self, tier: str, tier_path: str, context: OperationContext | None = None
+        self, tier: str, tier_path: str, context: "OperationContext | None" = None
     ) -> int:
         """Discover skills from a single tier.
 
@@ -291,7 +291,7 @@ class SkillRegistry:
         return count
 
     def _parse_metadata(
-        self, file_path: str, tier: str, context: OperationContext | None = None
+        self, file_path: str, tier: str, context: "OperationContext | None" = None
     ) -> SkillMetadata | None:
         """Parse skill metadata from file.
 
@@ -323,7 +323,7 @@ class SkillRegistry:
     async def get_skill(
         self,
         name: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
         load_dependencies: bool = False,
     ) -> Skill:
         """Get a skill by name (loads full content on-demand).

@@ -177,7 +177,7 @@ Critical, always-started, but CAN run outside the kernel (no hardware privilege 
 |---------|---------|---------------|
 | `AgentRegistryProtocol` | Who exists, API keys, capabilities | `services/protocols/agent_registry.py` |
 | `NamespaceManagerProtocol` | Who sees what, mount table | `services/protocols/namespace_manager.py` |
-| `EventLogProtocol` | What happened, append-only audit | `services/protocols/event_log.py` |
+| `EventLogProtocol` | What happened, append-only audit | `services/event_subsystem/log/protocol.py` |
 | `HookEngineProtocol` | Intercept & transform, pre/post | `services/protocols/hook_engine.py` |
 | `SchedulerProtocol` | Who goes next, fair-share | `services/protocols/scheduler.py` |
 

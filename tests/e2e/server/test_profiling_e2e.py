@@ -10,8 +10,6 @@ Validates the complete profiling pipeline end-to-end:
 Following the pattern of tests/e2e/test_pg_metrics_e2e.py.
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 from unittest.mock import patch
 

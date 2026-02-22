@@ -31,8 +31,6 @@ Inspired by:
 - n8n node discovery system and credentials separation
 """
 
-from __future__ import annotations
-
 import inspect
 import logging
 from collections.abc import Callable
@@ -40,6 +38,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
+from nexus.core.protocols.capabilities import ConnectorCapability
 from nexus.lib.registry import BaseRegistry
 
 if TYPE_CHECKING:
@@ -76,6 +75,9 @@ _CONNECTOR_PROTOCOL_MEMBERS: frozenset[str] = frozenset(
         "has_root_path",
         "has_virtual_filesystem",
         "has_token_manager",
+        # CapabilityAwareProtocol (Issue #2069)
+        "capabilities",
+        "has_capability",
     }
 )
 
@@ -176,7 +178,7 @@ class ConnectorInfo:
     name: str
     """Unique identifier for the connector (e.g., 'gcs_connector', 's3_connector')."""
 
-    connector_class: type[Backend]
+    connector_class: "type[Backend]"
     """The connector class."""
 
     description: str = ""
@@ -204,6 +206,9 @@ class ConnectorInfo:
     eliminating manual synchronization between ConnectorRegistry and SERVICE_REGISTRY.
     """
 
+    capabilities: frozenset[ConnectorCapability] = field(default_factory=frozenset)
+    """Capabilities declared by this connector (Issue #2069)."""
+
     @property
     def connection_args(self) -> dict[str, ConnectionArg]:
         """Get CONNECTION_ARGS from the connector class if defined.
@@ -230,7 +235,7 @@ class ConnectorInfo:
         return [name for name, arg in self.connection_args.items() if arg.secret]
 
 
-def derive_config_mapping(connector_class: type[Backend]) -> dict[str, str]:
+def derive_config_mapping(connector_class: "type[Backend]") -> dict[str, str]:
     """Auto-derive config key -> constructor param mapping from CONNECTION_ARGS.
 
     For each ``(param_name, connection_arg)`` in ``CONNECTION_ARGS``:
@@ -294,7 +299,7 @@ class ConnectorRegistry:
     def register(
         cls,
         name: str,
-        connector_class: type[Backend],
+        connector_class: "type[Backend]",
         description: str = "",
         category: str = "storage",
         requires: list[str] | None = None,
@@ -344,6 +349,11 @@ class ConnectorRegistry:
 
         config_mapping = derive_config_mapping(connector_class)
 
+        # Extract capabilities from class (Issue #2069)
+        capabilities: frozenset[ConnectorCapability] = getattr(
+            connector_class, "_CAPABILITIES", frozenset()
+        )
+
         info = ConnectorInfo(
             name=name,
             connector_class=connector_class,
@@ -353,11 +363,12 @@ class ConnectorRegistry:
             user_scoped=user_scoped,
             config_mapping=config_mapping,
             service_name=service_name,
+            capabilities=capabilities,
         )
         cls._base.register(name, info, allow_overwrite=True)
 
     @classmethod
-    def get(cls, name: str) -> type[Backend]:
+    def get(cls, name: str) -> "type[Backend]":
         """Get a connector class by name.
 
         Args:
@@ -452,6 +463,33 @@ class ConnectorRegistry:
         return name in cls._base
 
     @classmethod
+    def get_capabilities(cls, name: str) -> frozenset[ConnectorCapability]:
+        """Get capabilities for a connector by name (Issue #2069).
+
+        Args:
+            name: Connector identifier
+
+        Returns:
+            frozenset of ConnectorCapability values
+
+        Raises:
+            KeyError: If connector is not found
+        """
+        return cls.get_info(name).capabilities
+
+    @classmethod
+    def list_by_capability(cls, cap: ConnectorCapability) -> list[ConnectorInfo]:
+        """List all connectors with a specific capability (Issue #2069).
+
+        Args:
+            cap: Capability to filter by
+
+        Returns:
+            List of ConnectorInfo objects that declare the given capability
+        """
+        return [info for info in cls._base.list_all() if cap in info.capabilities]
+
+    @classmethod
     def get_by_service_name(cls, service_name: str) -> ConnectorInfo | None:
         """Get connector info by unified service name.
 
@@ -478,7 +516,7 @@ def register_connector(
     category: str = "storage",
     requires: list[str] | None = None,
     service_name: str | None = None,
-) -> Callable[[type[Backend]], type[Backend]]:
+) -> "Callable[[type[Backend]], type[Backend]]":
     """Decorator to register a connector class.
 
     Use this decorator on connector classes to automatically register them
@@ -506,7 +544,7 @@ def register_connector(
         ...     pass
     """
 
-    def decorator(cls: type[Backend]) -> type[Backend]:
+    def decorator(cls: "type[Backend]") -> "type[Backend]":
         ConnectorRegistry.register(
             name=name,
             connector_class=cls,
@@ -527,7 +565,7 @@ def _ensure_optional_backends_registered() -> None:
     _register_optional_backends()
 
 
-def create_connector(name: str, **config: Any) -> Backend:
+def create_connector(name: str, **config: Any) -> "Backend":
     """Factory function to create a connector instance by name.
 
     This is a convenience function that looks up the connector class
@@ -555,7 +593,7 @@ def create_connector(name: str, **config: Any) -> Backend:
     return BackendFactory.create(name, config)
 
 
-def create_connector_from_config(name: str, backend_config: dict[str, Any]) -> Backend:
+def create_connector_from_config(name: str, backend_config: dict[str, Any]) -> "Backend":
     """Factory function to create a connector from a config dict.
 
     This maps config dict keys to constructor parameters using the

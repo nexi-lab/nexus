@@ -4,6 +4,7 @@ Decouples Raft writes from PostgreSQL writes so the hot path returns immediately
 Events are buffered in memory and flushed to PostgreSQL periodically in batches.
 
 Issue #1246: Implements the post-commit retry mechanism (Decision 4B, 13A).
+Issue #2426: Per-event urgency with immediate flush for HIGH urgency.
 
 Architecture:
     Raft commit → kernel returns immediately
@@ -21,11 +22,12 @@ Usage:
     # Hot path — returns immediately
     buffer.enqueue_write(metadata, is_new=True, path="/file.txt", zone_id="root")
 
+    # Sync-mode write — flushes immediately via HIGH urgency
+    buffer.enqueue_write(metadata, is_new=True, path="/f.txt", urgency=Urgency.HIGH)
+
     # Graceful shutdown — drains remaining events
     buffer.stop()
 """
-
-from __future__ import annotations
 
 import logging
 import threading
@@ -34,10 +36,16 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
+from nexus.constants import ROOT_ZONE_ID
+
 if TYPE_CHECKING:
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
+
+# Coalescing window for HIGH urgency events (seconds).
+# Prevents many 1-event transactions when rapid-fire HIGH events arrive.
+_URGENT_COALESCE_SECONDS = 0.005  # 5ms
 
 
 class EventType(Enum):
@@ -48,6 +56,20 @@ class EventType(Enum):
     RENAME = "rename"
     MKDIR = "mkdir"
     RMDIR = "rmdir"
+
+
+class Urgency(Enum):
+    """Per-event urgency level for flush scheduling.
+
+    HIGH:   Triggers immediate flush (with 5ms coalescing window).
+            Use for sync-mode writes (IOProfile.EDIT) where durability matters.
+    NORMAL: Default. Flush at threshold or interval.
+    LOW:    Same as NORMAL (reserved for future relaxed thresholds).
+    """
+
+    HIGH = "high"
+    NORMAL = "normal"
+    LOW = "low"
 
 
 @dataclass(frozen=True)
@@ -73,17 +95,23 @@ class WriteEvent:
     # Rmdir-specific
     recursive: bool = False
 
+    # Urgency (Issue #2426)
+    urgency: Urgency = Urgency.NORMAL
+
 
 class WriteBuffer:
     """Thread-safe write-behind buffer for PostgreSQL materialized view sync.
 
     Collects write events and flushes them in periodic batches to reduce
     per-write PostgreSQL overhead from ~2-10ms to amortized ~0.1ms.
+
+    Supports per-event urgency: HIGH urgency events trigger immediate flush
+    (with 5ms coalescing window to batch rapid-fire urgent events).
     """
 
     def __init__(
         self,
-        record_store: RecordStoreABC,
+        record_store: "RecordStoreABC",
         *,
         flush_interval_ms: int = 100,
         max_buffer_size: int = 100,
@@ -107,8 +135,9 @@ class WriteBuffer:
         self._flush_event = threading.Event()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
+        self._urgent_pending = False  # Flag for coalescing window
 
-        # Metrics
+        # Metrics — all 5 event types tracked
         self._total_enqueued = 0
         self._total_flushed = 0
         self._total_failed = 0
@@ -116,7 +145,13 @@ class WriteBuffer:
         self._flush_count = 0
         self._flush_duration_sum = 0.0
         self._flush_batch_size_sum = 0
-        self._enqueued_by_type: dict[str, int] = {"write": 0, "delete": 0, "rename": 0}
+        self._enqueued_by_type: dict[str, int] = {
+            "write": 0,
+            "delete": 0,
+            "rename": 0,
+            "mkdir": 0,
+            "rmdir": 0,
+        }
 
     def start(self) -> None:
         """Start the background flush thread."""
@@ -192,6 +227,7 @@ class WriteBuffer:
         agent_id: str | None = None,
         snapshot_hash: str | None = None,
         metadata_snapshot: dict[str, Any] | None = None,
+        urgency: Urgency = Urgency.NORMAL,
     ) -> None:
         """Enqueue a write event. Returns immediately."""
         event = WriteEvent(
@@ -203,6 +239,7 @@ class WriteBuffer:
             agent_id=agent_id,
             snapshot_hash=snapshot_hash,
             metadata_snapshot=metadata_snapshot,
+            urgency=urgency,
         )
         self._enqueue(event)
 
@@ -286,7 +323,7 @@ class WriteBuffer:
     # -- Internal ----------------------------------------------------------
 
     def _enqueue(self, event: WriteEvent) -> None:
-        """Add event to buffer, trigger flush if threshold reached."""
+        """Add event to buffer, trigger flush if threshold or urgency demands."""
         with self._lock:
             self._buffer.append(event)
             self._total_enqueued += 1
@@ -294,15 +331,25 @@ class WriteBuffer:
                 self._enqueued_by_type.get(event.event_type.value, 0) + 1
             )
             buffer_size = len(self._buffer)
+            is_urgent = event.urgency == Urgency.HIGH
 
-        if buffer_size >= self._max_buffer_size:
+        if is_urgent:
+            self._urgent_pending = True
+            self._flush_event.set()
+        elif buffer_size >= self._max_buffer_size:
             self._flush_event.set()
 
     def _flush_loop(self) -> None:
-        """Background loop: flush buffer periodically or on threshold."""
+        """Background loop: flush buffer periodically or on threshold/urgency."""
         while not self._stop_event.is_set():
             self._flush_event.wait(timeout=self._flush_interval)
             self._flush_event.clear()
+
+            # Coalescing window: if urgent, wait briefly to batch rapid-fire events
+            if self._urgent_pending:
+                self._urgent_pending = False
+                time.sleep(_URGENT_COALESCE_SECONDS)
+
             self._flush_buffer()
 
     def _flush_buffer(self) -> None:
@@ -327,7 +374,7 @@ class WriteBuffer:
                 recorder = VersionRecorder(session)
 
                 for event in events:
-                    zone = event.zone_id or "root"
+                    zone = event.zone_id or ROOT_ZONE_ID
 
                     if event.event_type == EventType.WRITE:
                         op_logger.log_operation(

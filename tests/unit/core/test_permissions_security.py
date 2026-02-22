@@ -10,19 +10,17 @@ This module covers critical security properties:
 - Read set tracking for cache invalidation
 """
 
-from __future__ import annotations
-
 import uuid
 from unittest.mock import MagicMock
 
 import pytest
 
+from nexus.bricks.rebac.enforcer import PermissionEnforcer
 from nexus.contracts.types import (
     OperationContext,
     Permission,
 )
-from nexus.core.read_set import enable_read_tracking
-from nexus.rebac.enforcer import PermissionEnforcer
+from nexus.storage.read_set import enable_read_tracking
 
 # ---------------------------------------------------------------------------
 # OperationContext creation and validation
@@ -282,7 +280,7 @@ class TestAdminBypassBehaviour:
 
     def test_admin_with_manage_zones_can_access_cross_zone(self):
         """Admin with MANAGE_ZONES capability can access any zone path."""
-        from nexus.rebac.permissions_enhanced import AdminCapability
+        from nexus.bricks.rebac.permissions_enhanced import AdminCapability
 
         enforcer = PermissionEnforcer(allow_admin_bypass=True)
         ctx = OperationContext(
@@ -405,7 +403,7 @@ class TestZoneIdPropagation:
         assert call_kwargs[1]["zone_id"] == "org_acme" or call_kwargs[0][3] == "org_acme"
 
     def test_missing_zone_id_defaults_to_default(self):
-        """When zone_id is None, 'default' is passed to rebac_manager."""
+        """When zone_id is None, ROOT_ZONE_ID ('root') is passed to rebac_manager."""
         rebac = MagicMock()
         rebac.rebac_check.return_value = True
         enforcer = PermissionEnforcer(rebac_manager=rebac)
@@ -753,8 +751,8 @@ class TestCheckStaleSessionHelper:
 
     def test_stale_generation_raises(self):
         """Mismatched generation should raise StaleSessionError."""
+        from nexus.bricks.rebac.enforcer import check_stale_session
         from nexus.contracts.exceptions import StaleSessionError
-        from nexus.rebac.enforcer import check_stale_session
 
         registry = MagicMock()
         record = MagicMock()
@@ -774,7 +772,7 @@ class TestCheckStaleSessionHelper:
 
     def test_current_generation_passes(self):
         """Matching generation should not raise."""
-        from nexus.rebac.enforcer import check_stale_session
+        from nexus.bricks.rebac.enforcer import check_stale_session
 
         registry = MagicMock()
         record = MagicMock()
@@ -793,8 +791,8 @@ class TestCheckStaleSessionHelper:
 
     def test_missing_agent_raises(self):
         """Agent not found in registry should raise StaleSessionError."""
+        from nexus.bricks.rebac.enforcer import check_stale_session
         from nexus.contracts.exceptions import StaleSessionError
-        from nexus.rebac.enforcer import check_stale_session
 
         registry = MagicMock()
         registry.get.return_value = None
@@ -812,7 +810,7 @@ class TestCheckStaleSessionHelper:
 
     def test_none_registry_skips(self):
         """None agent_registry should skip check entirely."""
-        from nexus.rebac.enforcer import check_stale_session
+        from nexus.bricks.rebac.enforcer import check_stale_session
 
         ctx = OperationContext(
             user_id="alice",
@@ -826,7 +824,7 @@ class TestCheckStaleSessionHelper:
 
     def test_none_generation_skips(self):
         """None agent_generation should skip check entirely."""
-        from nexus.rebac.enforcer import check_stale_session
+        from nexus.bricks.rebac.enforcer import check_stale_session
 
         registry = MagicMock()
         ctx = OperationContext(
@@ -842,7 +840,7 @@ class TestCheckStaleSessionHelper:
 
     def test_user_subject_skips(self):
         """Non-agent subject_type should skip check entirely."""
-        from nexus.rebac.enforcer import check_stale_session
+        from nexus.bricks.rebac.enforcer import check_stale_session
 
         registry = MagicMock()
         ctx = OperationContext(

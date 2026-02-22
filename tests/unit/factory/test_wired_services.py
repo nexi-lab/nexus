@@ -1,7 +1,5 @@
 """Tests for WiredServices dataclass and _boot_wired_services typing (Issue #2133)."""
 
-from __future__ import annotations
-
 import dataclasses
 from typing import Any
 from unittest.mock import MagicMock
@@ -39,7 +37,7 @@ class TestWiredServicesDataclass:
 
     def test_field_count(self) -> None:
         """WiredServices should have 25 service fields."""
-        assert len(dataclasses.fields(WiredServices)) == 25
+        assert len(dataclasses.fields(WiredServices)) == 27
 
 
 class TestNexusFSBindWiredServices:

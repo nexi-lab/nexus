@@ -7,8 +7,6 @@ All search backends produce dicts with the same shape; this module provides
 build_semantic_result() to eliminate the 5x duplication.
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 

@@ -11,8 +11,6 @@ pulling in the LLM brick.
 Backward-compat shim: ``nexus.llm.message`` re-exports everything from here.
 """
 
-from __future__ import annotations
-
 from enum import StrEnum
 from typing import Any, Literal
 
@@ -152,7 +150,7 @@ class Message(BaseModel):
         return result
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Message:
+    def from_dict(cls, data: dict[str, Any]) -> "Message":
         """Create a Message from a dict."""
         role = MessageRole(data["role"])
         content = data.get("content")

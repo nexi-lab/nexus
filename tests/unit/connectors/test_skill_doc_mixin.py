@@ -5,12 +5,10 @@ generate_errors_section, get_field_example) have been migrated to
 test_schema_generator.py which tests SkillDocGenerator directly.
 """
 
-from __future__ import annotations
-
 import pytest
 from pydantic import BaseModel
 
-from nexus.connectors.base import (
+from nexus.backends.connectors.base import (
     ConfirmLevel,
     ErrorDef,
     OpTraits,

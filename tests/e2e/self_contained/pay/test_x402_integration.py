@@ -6,8 +6,6 @@ These tests verify the complete x402 flow with a real FastAPI app:
 3. Full topup flow from request to credit
 """
 
-from __future__ import annotations
-
 import base64
 import json
 from decimal import Decimal

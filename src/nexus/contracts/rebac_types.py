@@ -8,12 +8,10 @@ so bricks, services, and backends can depend on it without pulling in the
 ReBAC brick.
 
 Backward-compat shims:
-    - ``nexus.rebac.types`` re-exports consistency/graph types
-    - ``nexus.rebac.domain`` re-exports Entity, WILDCARD_SUBJECT
-    - ``nexus.rebac.cross_zone`` re-exports CROSS_ZONE_ALLOWED_RELATIONS
+    - ``nexus.bricks.rebac.types`` re-exports consistency/graph types
+    - ``nexus.bricks.rebac.domain`` re-exports Entity, WILDCARD_SUBJECT
+    - ``nexus.bricks.rebac.cross_zone`` re-exports CROSS_ZONE_ALLOWED_RELATIONS
 """
-
-from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
@@ -35,7 +33,6 @@ __all__ = [
     # Cross-zone (from rebac.cross_zone)
     "CROSS_ZONE_ALLOWED_RELATIONS",
 ]
-
 
 # ============================================================================
 # Consistency Levels and Version Tokens (from rebac.types)
@@ -183,7 +180,7 @@ class CheckResult:
     cache_age_ms: float | None = None
     traversal_stats: TraversalStats | None = None
     indeterminate: bool = False  # BUGFIX (Issue #5): Track limit-driven denials
-    limit_exceeded: GraphLimitExceeded | None = None  # BUGFIX (Issue #5): Which limit was hit
+    limit_exceeded: "GraphLimitExceeded | None" = None  # BUGFIX (Issue #5): Which limit was hit
 
 
 # ============================================================================
@@ -275,7 +272,7 @@ class Entity:
         return (self.entity_type, self.entity_id)
 
     @classmethod
-    def from_tuple(cls, tup: tuple[str, str]) -> Entity:
+    def from_tuple(cls, tup: tuple[str, str]) -> "Entity":
         """Create entity from (type, id) tuple."""
         return cls(entity_type=tup[0], entity_id=tup[1])
 
@@ -285,7 +282,6 @@ class Entity:
 
 # Wildcard subject for public access
 WILDCARD_SUBJECT: tuple[str, str] = ("*", "*")
-
 
 # ============================================================================
 # Cross-zone (from rebac.cross_zone)

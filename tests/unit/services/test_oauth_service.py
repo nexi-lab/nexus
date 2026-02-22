@@ -13,8 +13,6 @@ Covers:
 - _check_credential_ownership permission enforcement
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -22,7 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nexus.services.oauth_service import OAuthService, PKCEStateStore
+from nexus.services.oauth.oauth_service import OAuthService, PKCEStateStore
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -612,7 +610,7 @@ class TestLazyCreation:
     def test_get_oauth_factory_creates_on_demand(self) -> None:
         service = OAuthService(oauth_factory=None, oauth_config=None)
 
-        with patch("nexus.auth.oauth.factory.OAuthProviderFactory") as MockFactory:
+        with patch("nexus.bricks.auth.oauth.factory.OAuthProviderFactory") as MockFactory:
             MockFactory.return_value = MagicMock()
             factory = service._get_oauth_factory()
             assert factory is not None
@@ -627,7 +625,7 @@ class TestLazyCreation:
     def test_get_token_manager_with_db_url(self) -> None:
         service = OAuthService(token_manager=None, database_url="sqlite:///test.db")
 
-        with patch("nexus.auth.oauth.token_manager.TokenManager") as MockTM:
+        with patch("nexus.bricks.auth.oauth.token_manager.TokenManager") as MockTM:
             MockTM.return_value = MagicMock()
             tm = service._get_token_manager()
             assert tm is not None

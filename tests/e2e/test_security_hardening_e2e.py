@@ -7,8 +7,6 @@ Starts a real nexus server and verifies:
 - Health endpoint still responds quickly (no performance regression)
 """
 
-from __future__ import annotations
-
 import time
 
 import httpx
@@ -71,7 +69,7 @@ class TestAdminEndpointsE2E:
 
     def test_admin_hotspot_stats_requires_auth(self, test_app: httpx.Client) -> None:
         """Unauthenticated request to admin endpoint gets 401."""
-        resp = test_app.get("/api/v1/admin/hotspot-stats")
+        resp = test_app.get("/api/v2/governance/hotspot-stats")
         assert resp.status_code in (401, 403, 422), (
             f"Admin endpoint without auth should fail, got {resp.status_code}"
         )

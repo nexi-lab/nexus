@@ -1,7 +1,5 @@
 """Auto-discoverable brick factory for DelegationService (Issue #2180)."""
 
-from __future__ import annotations
-
 from typing import Any
 
 BRICK_NAME: str | None = None  # No deployment profile gate (always enabled)
@@ -19,4 +17,5 @@ def create(ctx: Any, system: dict[str, Any]) -> Any:
         record_store=ctx.record_store,
         rebac_manager=system["rebac_manager"],
         entity_registry=system.get("entity_registry"),
+        reputation_service=system.get("reputation_service"),
     )

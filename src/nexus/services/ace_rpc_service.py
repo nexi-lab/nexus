@@ -6,8 +6,6 @@ No dependency on NexusFS.
 Issue #2033 — Phase 3 of LEGO microkernel decomposition.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any, Literal
 
@@ -40,7 +38,9 @@ class ACERPCService:
 
     def _get_memory_api(self, context: dict | None = None) -> Any:
         """Get Memory API instance with context-specific configuration."""
-        from nexus.services.memory.memory_api import Memory
+        import importlib as _il
+
+        Memory = _il.import_module("nexus.bricks.memory.service").Memory
 
         if self._ensure_entity_registry_fn is not None:
             self._ensure_entity_registry_fn()

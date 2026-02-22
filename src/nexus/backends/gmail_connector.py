@@ -42,10 +42,7 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.backends.backend import Backend
 from nexus.backends.cache_mixin import IMMUTABLE_VERSION, CacheConnectorMixin
-from nexus.backends.gmail_connector_utils import fetch_emails_batch, list_emails_by_folder
-from nexus.backends.oauth_mixin import OAuthConnectorMixin
-from nexus.backends.registry import ArgType, ConnectionArg, register_connector
-from nexus.connectors.base import (
+from nexus.backends.connectors.base import (
     CheckpointMixin,
     ConfirmLevel,
     OpTraits,
@@ -54,8 +51,12 @@ from nexus.connectors.base import (
     TraitBasedMixin,
     ValidatedMixin,
 )
-from nexus.connectors.gmail.errors import ERROR_REGISTRY
+from nexus.backends.connectors.gmail.errors import ERROR_REGISTRY
+from nexus.backends.gmail_connector_utils import fetch_emails_batch, list_emails_by_folder
+from nexus.backends.oauth_mixin import OAuthConnectorMixin
+from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.contracts.exceptions import BackendError
+from nexus.core.protocols.capabilities import OAUTH_CONNECTOR_CAPABILITIES, ConnectorCapability
 from nexus.lib.response import HandlerResponse, timed_response
 
 try:
@@ -121,6 +122,14 @@ class GmailConnectorBackend(
     - Rate limited by Gmail API quotas
     - Emails are stored as YAML files (not editable)
     """
+
+    _CAPABILITIES = OAUTH_CONNECTOR_CAPABILITIES | frozenset(
+        {
+            ConnectorCapability.CACHE_BULK_READ,
+            ConnectorCapability.CACHE_SYNC,
+            ConnectorCapability.SKILL_DOC,
+        }
+    )
 
     # Gmail system labels to expose as folders (in priority order)
     # Each email appears in exactly ONE folder based on priority
@@ -250,7 +259,11 @@ class GmailConnectorBackend(
         logger = logging.getLogger(__name__)
 
         try:
-            from nexus.auth.oauth.factory import OAuthProviderFactory
+            import importlib as _il
+
+            OAuthProviderFactory = _il.import_module(
+                "nexus.bricks.auth.oauth.factory"
+            ).OAuthProviderFactory
 
             # Create factory (loads from oauth.yaml config)
             factory = OAuthProviderFactory()
@@ -304,7 +317,7 @@ class GmailConnectorBackend(
         try:
             # Load static SKILL.md from package resources
             skill_md_content = (
-                resources.files("nexus.connectors.gmail")
+                resources.files("nexus.backends.connectors.gmail")
                 .joinpath("SKILL.md")
                 .read_text(encoding="utf-8")
             )

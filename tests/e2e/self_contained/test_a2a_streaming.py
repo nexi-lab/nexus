@@ -9,8 +9,6 @@ Error cases use regular client.post() since errors return JSON responses
 (not SSE streams).
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 from typing import Any
@@ -19,8 +17,8 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
-from nexus.bricks.a2a.router import build_router
 from nexus.bricks.a2a.task_manager import TaskManager
+from nexus.server.api.v2.routers.a2a import build_router
 
 # ======================================================================
 # Fixtures

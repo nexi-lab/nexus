@@ -7,8 +7,6 @@ Each exception mirrors the semantics of its nexus.contracts counterpart
 but lives locally within the skills module boundary.
 """
 
-from __future__ import annotations
-
 
 class SkillValidationError(Exception):
     """Raised when skill validation fails (invalid input, bad format)."""

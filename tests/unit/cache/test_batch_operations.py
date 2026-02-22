@@ -4,13 +4,11 @@ Tests MGET/pipeline optimizations for DragonflyCacheStore.
 Also tests batch fallback behavior on errors.
 """
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.cache.inmemory import InMemoryCacheStore
+from nexus.bricks.cache.inmemory import InMemoryCacheStore
 
 # ---------------------------------------------------------------------------
 # Batch get operations
@@ -101,7 +99,7 @@ class TestDragonflyBatchOps:
     @pytest.mark.asyncio
     async def test_get_many_uses_mget(self) -> None:
         """DragonflyCacheStore.get_many() should use MGET."""
-        from nexus.cache.dragonfly import DragonflyCacheStore
+        from nexus.bricks.cache.dragonfly import DragonflyCacheStore
 
         mock_client = MagicMock()
         mock_redis = AsyncMock()
@@ -117,7 +115,7 @@ class TestDragonflyBatchOps:
     @pytest.mark.asyncio
     async def test_set_many_uses_pipeline(self) -> None:
         """DragonflyCacheStore.set_many() should use pipeline."""
-        from nexus.cache.dragonfly import DragonflyCacheStore
+        from nexus.bricks.cache.dragonfly import DragonflyCacheStore
 
         mock_client = MagicMock()
         mock_redis = AsyncMock()
@@ -135,7 +133,7 @@ class TestDragonflyBatchOps:
     @pytest.mark.asyncio
     async def test_delete_by_pattern_uses_pipeline(self) -> None:
         """DragonflyCacheStore.delete_by_pattern() should pipeline deletes."""
-        from nexus.cache.dragonfly import DragonflyCacheStore
+        from nexus.bricks.cache.dragonfly import DragonflyCacheStore
 
         mock_client = MagicMock()
         mock_redis = AsyncMock()
@@ -161,7 +159,7 @@ class TestDragonflyBatchOps:
     @pytest.mark.asyncio
     async def test_get_many_fallback_on_error(self) -> None:
         """get_many should fall back to sequential gets on MGET error."""
-        from nexus.cache.dragonfly import DragonflyCacheStore
+        from nexus.bricks.cache.dragonfly import DragonflyCacheStore
 
         mock_client = MagicMock()
         mock_redis = AsyncMock()

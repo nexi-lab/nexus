@@ -3,14 +3,12 @@
 Tests the full server-level flow:
 1. Create FastAPI app with NexusFS (enforce_permissions=True, database auth)
 2. Register agent via RPC → verify identity auto-provisioned
-3. GET /api/agents/{id}/identity → returns DID, public key
-4. POST /api/agents/{id}/verify → verifies signature round-trip
+3. GET /api/v2/agents/{id}/identity → returns DID, public key
+4. POST /api/v2/agents/{id}/verify → verifies signature round-trip
 5. Unauthenticated requests → 401
 
 Run: pytest tests/e2e/test_identity_e2e.py -v
 """
-
-from __future__ import annotations
 
 import base64
 import shutil
@@ -21,8 +19,8 @@ from typing import Any
 
 import pytest
 
+from nexus.contracts.metadata import FileMetadata, PaginatedResult
 from nexus.core.config import ParseConfig, PermissionConfig
-from nexus.core.metadata import FileMetadata, PaginatedResult
 from nexus.core.metastore import MetastoreABC
 from nexus.storage.models import Base
 
@@ -116,7 +114,7 @@ def session_factory(db_path: Any) -> Any:
 @pytest.fixture
 def api_keys(session_factory: Any) -> dict[str, Any]:
     """Create admin + normal API keys for the test."""
-    from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+    from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
 
     with session_factory() as session:
         admin_key_id, admin_raw = DatabaseAPIKeyAuth.create_key(
@@ -150,9 +148,9 @@ def app(tmp_path: Any, db_path: Any, session_factory: Any, api_keys: Any) -> Any
     Uses RaftMetadataStore.embedded() for realistic filesystem operations
     (mkdir, write) that the identity layer needs for DID document writing.
     """
-    from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
-    from nexus.auth.providers.discriminator import DiscriminatingAuthProvider
     from nexus.backends.local import LocalBackend
+    from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
+    from nexus.bricks.auth.providers.discriminator import DiscriminatingAuthProvider
     from nexus.core.nexus_fs import NexusFS
     from nexus.server.fastapi_server import create_app
     from nexus.storage.record_store import SQLAlchemyRecordStore
@@ -274,7 +272,7 @@ class TestIdentityE2EServerLevel:
         assert "key_id" in result
 
     def test_get_agent_identity_endpoint(self, client: Any, admin_headers: Any) -> None:
-        """GET /api/agents/{id}/identity returns DID and public key."""
+        """GET /api/v2/agents/{id}/identity returns DID and public key."""
         agent_id = f"e2e-admin,identity-agent-{uuid.uuid4().hex[:8]}"
         reg_result = rpc_call(
             client,
@@ -288,7 +286,7 @@ class TestIdentityE2EServerLevel:
         )
 
         # Query identity endpoint
-        resp = client.get(f"/api/agents/{agent_id}/identity", headers=admin_headers)
+        resp = client.get(f"/api/v2/agents/{agent_id}/identity", headers=admin_headers)
         assert resp.status_code == 200, f"Identity query failed: {resp.text}"
         data = resp.json()
 
@@ -299,7 +297,7 @@ class TestIdentityE2EServerLevel:
         assert len(data["public_key_hex"]) == 64  # 32 bytes hex = 64 chars
 
     def test_verify_signature_round_trip(self, client: Any, admin_headers: Any, app: Any) -> None:
-        """POST /api/agents/{id}/verify correctly validates a signature."""
+        """POST /api/v2/agents/{id}/verify correctly validates a signature."""
         from nexus.server.fastapi_server import _fastapi_app
 
         agent_id = f"e2e-admin,verify-agent-{uuid.uuid4().hex[:8]}"
@@ -327,7 +325,7 @@ class TestIdentityE2EServerLevel:
 
         # Verify via REST endpoint
         resp = client.post(
-            f"/api/agents/{agent_id}/verify",
+            f"/api/v2/agents/{agent_id}/verify",
             json={
                 "message": base64.b64encode(message).decode(),
                 "signature": base64.b64encode(signature).decode(),
@@ -365,7 +363,7 @@ class TestIdentityE2EServerLevel:
 
         # Tamper with the message
         resp = client.post(
-            f"/api/agents/{agent_id}/verify",
+            f"/api/v2/agents/{agent_id}/verify",
             json={
                 "message": base64.b64encode(b"Tampered message").decode(),
                 "signature": base64.b64encode(signature).decode(),
@@ -409,7 +407,7 @@ class TestIdentityE2EServerLevel:
 
         # Try to verify agent_b's endpoint with agent_a's key_id
         resp = client.post(
-            f"/api/agents/{agent_b}/verify",
+            f"/api/v2/agents/{agent_b}/verify",
             json={
                 "message": base64.b64encode(b"test").decode(),
                 "signature": base64.b64encode(b"\x00" * 64).decode(),
@@ -421,13 +419,13 @@ class TestIdentityE2EServerLevel:
 
     def test_unauthenticated_identity_request_rejected(self, client: Any) -> None:
         """Identity endpoint rejects unauthenticated requests."""
-        resp = client.get("/api/agents/some-agent/identity")
+        resp = client.get("/api/v2/agents/some-agent/identity")
         assert resp.status_code == 401
 
     def test_unauthenticated_verify_request_rejected(self, client: Any) -> None:
         """Verify endpoint rejects unauthenticated requests."""
         resp = client.post(
-            "/api/agents/some-agent/verify",
+            "/api/v2/agents/some-agent/verify",
             json={"message": "dGVzdA==", "signature": "AAAA"},
         )
         assert resp.status_code == 401
@@ -435,7 +433,7 @@ class TestIdentityE2EServerLevel:
     def test_identity_for_unknown_agent_returns_404(self, client: Any, admin_headers: Any) -> None:
         """Querying identity for non-existent agent returns 404."""
         resp = client.get(
-            "/api/agents/nonexistent-agent/identity",
+            "/api/v2/agents/nonexistent-agent/identity",
             headers=admin_headers,
         )
         assert resp.status_code == 404
@@ -457,7 +455,7 @@ class TestIdentityE2EServerLevel:
         )
 
         # Normal user can query identity
-        resp = client.get(f"/api/agents/{agent_id}/identity", headers=normal_headers)
+        resp = client.get(f"/api/v2/agents/{agent_id}/identity", headers=normal_headers)
         assert resp.status_code == 200
         data = resp.json()
         assert data["did"].startswith("did:key:z")
@@ -486,7 +484,7 @@ class TestNormalUserIdentityFlow:
         assert "key_id" in result
 
         # Verify via identity endpoint
-        resp = client.get(f"/api/agents/{agent_id}/identity", headers=normal_headers)
+        resp = client.get(f"/api/v2/agents/{agent_id}/identity", headers=normal_headers)
         assert resp.status_code == 200
         data = resp.json()
         assert data["did"] == result["did"]
@@ -517,7 +515,7 @@ class TestNormalUserIdentityFlow:
 
         # Verify via endpoint (normal user auth)
         resp = client.post(
-            f"/api/agents/{agent_id}/verify",
+            f"/api/v2/agents/{agent_id}/verify",
             json={
                 "message": base64.b64encode(message).decode(),
                 "signature": base64.b64encode(signature).decode(),
@@ -550,7 +548,7 @@ class TestNormalUserIdentityFlow:
 
         # Verify with different message → should fail
         resp = client.post(
-            f"/api/agents/{agent_id}/verify",
+            f"/api/v2/agents/{agent_id}/verify",
             json={
                 "message": base64.b64encode(b"tampered").decode(),
                 "signature": base64.b64encode(signature).decode(),
@@ -587,7 +585,7 @@ class TestNormalUserIdentityFlow:
 
         # Normal user tries to verify user_agent endpoint with admin_agent's key_id
         resp = client.post(
-            f"/api/agents/{user_agent}/verify",
+            f"/api/v2/agents/{user_agent}/verify",
             json={
                 "message": base64.b64encode(b"test").decode(),
                 "signature": base64.b64encode(b"\x00" * 64).decode(),
@@ -599,8 +597,8 @@ class TestNormalUserIdentityFlow:
 
     def test_normal_user_did_resolves_correctly(self, client: Any, normal_headers: Any) -> None:
         """Normal user's agent DID resolves to the correct public key."""
-        from nexus.identity.crypto import IdentityCrypto
-        from nexus.identity.did import resolve_did_key
+        from nexus.bricks.identity.crypto import IdentityCrypto
+        from nexus.bricks.identity.did import resolve_did_key
 
         agent_id = f"e2e-user,didresolve-{uuid.uuid4().hex[:8]}"
 
@@ -620,7 +618,7 @@ class TestNormalUserIdentityFlow:
         resolved_bytes = IdentityCrypto.public_key_to_bytes(resolved_pk)
 
         # Verify via identity endpoint
-        resp = client.get(f"/api/agents/{agent_id}/identity", headers=normal_headers)
+        resp = client.get(f"/api/v2/agents/{agent_id}/identity", headers=normal_headers)
         assert resp.status_code == 200
         data = resp.json()
         assert data["did"] == did

@@ -1,14 +1,9 @@
 """Search and discovery commands - glob, grep, find-duplicates."""
 
-from __future__ import annotations
-
 import sys
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 import click
-
-if TYPE_CHECKING:
-    from nexus.core.nexus_fs import NexusFS
 
 from nexus.cli.utils import (
     BackendConfig,
@@ -16,7 +11,6 @@ from nexus.cli.utils import (
     console,
     get_filesystem,
     handle_error,
-    is_standalone,
 )
 
 
@@ -256,10 +250,12 @@ def find_duplicates(path: str, json_output: bool, backend_config: BackendConfig)
         nexus find-duplicates --json
     """
     try:
+        from nexus.core.nexus_fs import NexusFS
+
         nx = get_filesystem(backend_config)
 
         # Only standalone mode supports batch_get_content_ids
-        if not is_standalone(nx):
+        if not isinstance(nx, NexusFS):
             console.print("[red]Error:[/red] find-duplicates is only available in standalone mode")
             nx.close()
             sys.exit(1)
@@ -419,6 +415,8 @@ def search_init(
     import asyncio
 
     try:
+        from nexus.core.nexus_fs import NexusFS
+
         nx = get_filesystem(backend_config)
 
         with console.status("[yellow]Initializing search engine...[/yellow]", spinner="dots"):
@@ -436,7 +434,7 @@ def search_init(
             asyncio.run(init_search())
 
         console.print("[green]✓ Search engine initialized successfully![/green]")
-        if is_standalone(nx):
+        if isinstance(nx, NexusFS):
             db_name = nx._record_store.engine.dialect.name if nx._record_store else "N/A"
             console.print(f"  Database: [cyan]{db_name}[/cyan]")
         else:
@@ -482,15 +480,15 @@ def search_index(
     import asyncio
 
     try:
+        from nexus.core.nexus_fs import NexusFS
+
         nx = get_filesystem(backend_config)
 
         with console.status(f"[yellow]Indexing {path}...[/yellow]", spinner="dots"):
 
             async def do_index() -> dict[str, int]:
                 # Auto-initialize semantic search if not already initialized (standalone mode)
-                if is_standalone(nx) and (
-                    not hasattr(nx, "_semantic_search") or nx._semantic_search is None
-                ):
+                if isinstance(nx, NexusFS):
                     await nx.ainitialize_semantic_search()
                 nxfs = cast("NexusFS", nx)
                 result: dict[str, int] = await nxfs.asemantic_search_index(
@@ -575,15 +573,15 @@ def search_query(
     import asyncio
 
     try:
+        from nexus.core.nexus_fs import NexusFS
+
         nx = get_filesystem(backend_config)
 
         with console.status(f"[yellow]Searching for: {query}[/yellow]", spinner="dots"):
 
             async def do_search() -> list[dict[str, Any]]:
                 # Auto-initialize semantic search if not already initialized (standalone mode)
-                if is_standalone(nx) and (
-                    not hasattr(nx, "_semantic_search") or nx._semantic_search is None
-                ):
+                if isinstance(nx, NexusFS):
                     await nx.ainitialize_semantic_search(
                         embedding_provider=provider, api_key=api_key
                     )
@@ -639,13 +637,13 @@ def search_stats(backend_config: BackendConfig) -> None:
     import asyncio
 
     try:
+        from nexus.core.nexus_fs import NexusFS
+
         nx = get_filesystem(backend_config)
 
         async def get_stats() -> dict[str, Any]:
             # Auto-initialize semantic search if not already initialized (standalone mode)
-            if is_standalone(nx) and (
-                not hasattr(nx, "_semantic_search") or nx._semantic_search is None
-            ):
+            if isinstance(nx, NexusFS):
                 await nx.ainitialize_semantic_search()
             nxfs = cast("NexusFS", nx)
             result: dict[str, Any] = await nxfs.asemantic_search_stats()

@@ -1,4 +1,4 @@
-"""Request classification policy (Issue #1274).
+"""Request classification policy (Issue #1274, #2360).
 
 Pure functions that map (tier, request_state, cost) → PriorityClass.
 No I/O, no side effects — suitable for unit testing without mocks.
@@ -8,9 +8,16 @@ Classification rules:
 2. Cost demotion: INTERACTIVE → BATCH if accumulated_cost > threshold
 3. IO promotion: BACKGROUND → BATCH if request_state == IO_WAIT
 4. Starvation promotion: BACKGROUND → BATCH if wait > threshold
+
+``classify_agent_request()`` is the single source of truth for
+AgentRequest → PriorityClass conversion, shared by both
+SchedulerService and InMemoryScheduler (DRY).
+
+``parse_request_enums()`` centralises the try/except fallback
+parsing of AgentRequest.priority and AgentRequest.request_state.
 """
 
-from __future__ import annotations
+from typing import TYPE_CHECKING
 
 from nexus.services.scheduler.constants import (
     STARVATION_PROMOTION_THRESHOLD_SECS,
@@ -19,6 +26,9 @@ from nexus.services.scheduler.constants import (
     PriorityTier,
     RequestState,
 )
+
+if TYPE_CHECKING:
+    from nexus.services.protocols.scheduler import AgentRequest
 
 
 def classify_request(
@@ -50,6 +60,42 @@ def classify_request(
         base_class = PriorityClass.BATCH
 
     return base_class
+
+
+def parse_request_enums(
+    request: "AgentRequest",
+) -> tuple[PriorityTier, RequestState]:
+    """Parse AgentRequest.priority and .request_state into typed enums.
+
+    Falls back to NORMAL / PENDING for unknown values.
+    Single source of truth for this parsing — used by both
+    ``classify_agent_request`` and ``SchedulerService.submit()``.
+    """
+    try:
+        tier = PriorityTier(request.priority)
+    except ValueError:
+        tier = PriorityTier.NORMAL
+
+    try:
+        req_state = RequestState(request.request_state)
+    except ValueError:
+        req_state = RequestState.PENDING
+
+    return tier, req_state
+
+
+def classify_agent_request(request: "AgentRequest") -> str:
+    """Classify an AgentRequest into a PriorityClass string.
+
+    Single source of truth for AgentRequest → PriorityClass conversion.
+    Delegates to ``classify_request()`` for the actual tier/state logic,
+    handling AgentRequest field parsing (tier, request_state) in one place.
+
+    Used by both ``InMemoryScheduler.classify()`` and
+    ``SchedulerService.classify()`` to avoid duplicated logic.
+    """
+    tier, req_state = parse_request_enums(request)
+    return classify_request(tier, req_state)
 
 
 def should_promote_for_starvation(

@@ -6,8 +6,6 @@ SHA-256 self-hash per record for tamper detection, with SQLAlchemy
 event guards to reject UPDATE/DELETE at the ORM level.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from enum import StrEnum
 

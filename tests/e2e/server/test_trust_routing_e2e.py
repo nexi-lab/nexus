@@ -8,21 +8,20 @@ Full integration test with real services (SQLite in-memory):
 5. Query reputation again — verify score updated
 """
 
-from __future__ import annotations
-
 import pytest
 
-from nexus.rebac.entity_registry import EntityRegistry
-from nexus.rebac.manager import EnhancedReBACManager
-from nexus.services.agents.agent_registry import AgentRegistry
-from nexus.services.delegation.errors import InsufficientTrustError
-from nexus.services.delegation.models import (
+from nexus.bricks.delegation.errors import InsufficientTrustError
+from nexus.bricks.delegation.models import (
     DelegationMode,
     DelegationOutcome,
     DelegationStatus,
 )
-from nexus.services.delegation.service import DelegationService
-from nexus.services.reputation.reputation_service import ReputationService
+from nexus.bricks.delegation.service import DelegationService
+from nexus.bricks.rebac.entity_registry import EntityRegistry
+from nexus.bricks.rebac.manager import EnhancedReBACManager
+from nexus.bricks.reputation.reputation_service import ReputationService
+from nexus.constants import ROOT_ZONE_ID
+from nexus.services.agents.agent_registry import AgentRegistry
 from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
 # ---------------------------------------------------------------------------
@@ -107,13 +106,13 @@ def _setup_coordinator(entity_registry, rebac_manager, agent_id="coordinator_age
                 "subject": ("agent", agent_id),
                 "relation": "direct_editor",
                 "object": ("file", "/workspace/project/src/main.py"),
-                "zone_id": "default",
+                "zone_id": ROOT_ZONE_ID,
             },
             {
                 "subject": ("agent", agent_id),
                 "relation": "direct_editor",
                 "object": ("file", "/workspace/project/src/utils.py"),
-                "zone_id": "default",
+                "zone_id": ROOT_ZONE_ID,
             },
         ]
     )
@@ -143,7 +142,7 @@ class TestTrustRoutingE2E:
                 rater_agent_id=f"rater-{i}",
                 rated_agent_id="coordinator_agent",
                 exchange_id=f"exchange-{i}",
-                zone_id="default",
+                zone_id=ROOT_ZONE_ID,
                 outcome="positive",
                 reliability_score=1.0,
                 quality_score=0.9,
@@ -161,7 +160,7 @@ class TestTrustRoutingE2E:
             worker_id="worker-trust-ok",
             worker_name="Trusted Worker",
             delegation_mode=DelegationMode.COPY,
-            zone_id="default",
+            zone_id=ROOT_ZONE_ID,
             min_trust_score=0.5,
         )
 
@@ -184,7 +183,7 @@ class TestTrustRoutingE2E:
                 rater_agent_id=f"rater-{i}",
                 rated_agent_id="coordinator_agent",
                 exchange_id=f"neg-exchange-{i}",
-                zone_id="default",
+                zone_id=ROOT_ZONE_ID,
                 outcome="negative",
                 reliability_score=0.0,
             )
@@ -197,7 +196,7 @@ class TestTrustRoutingE2E:
                 worker_id="worker-trust-fail",
                 worker_name="Untrusted Worker",
                 delegation_mode=DelegationMode.COPY,
-                zone_id="default",
+                zone_id=ROOT_ZONE_ID,
                 min_trust_score=0.7,
             )
 
@@ -220,7 +219,7 @@ class TestTrustRoutingE2E:
                 worker_id="worker-no-rep",
                 worker_name="Unknown Worker",
                 delegation_mode=DelegationMode.COPY,
-                zone_id="default",
+                zone_id=ROOT_ZONE_ID,
                 min_trust_score=0.5,
             )
 
@@ -243,7 +242,7 @@ class TestTrustRoutingE2E:
             worker_id="worker-complete",
             worker_name="Completable Worker",
             delegation_mode=DelegationMode.COPY,
-            zone_id="default",
+            zone_id=ROOT_ZONE_ID,
         )
 
         # Complete the delegation with positive outcome
@@ -276,7 +275,7 @@ class TestTrustRoutingE2E:
             worker_id="worker-fail",
             worker_name="Failing Worker",
             delegation_mode=DelegationMode.COPY,
-            zone_id="default",
+            zone_id=ROOT_ZONE_ID,
         )
 
         updated = delegation_service.complete_delegation(
@@ -306,7 +305,7 @@ class TestTrustRoutingE2E:
                 rater_agent_id=f"external-{i}",
                 rated_agent_id="coordinator_agent",
                 exchange_id=f"lifecycle-{i}",
-                zone_id="default",
+                zone_id=ROOT_ZONE_ID,
                 outcome="positive",
                 reliability_score=1.0,
                 quality_score=0.9,
@@ -324,7 +323,7 @@ class TestTrustRoutingE2E:
             worker_id="worker-lifecycle",
             worker_name="Lifecycle Worker",
             delegation_mode=DelegationMode.COPY,
-            zone_id="default",
+            zone_id=ROOT_ZONE_ID,
             min_trust_score=0.5,
         )
 

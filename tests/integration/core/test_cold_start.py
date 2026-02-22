@@ -4,8 +4,6 @@ Verifies that the complete NexusFS + factory import chain resolves without
 circular import errors or missing dependencies. Does NOT require a database.
 """
 
-from __future__ import annotations
-
 import importlib
 
 
@@ -32,25 +30,26 @@ class TestColdStartImports:
         mod = importlib.import_module("nexus.factory.orchestrator")
         assert mod is not None
 
-    def test_all_protocols_importable_from_init(self) -> None:
-        """All kernel protocols should be importable from the protocols package."""
-        from nexus.core.protocols import (
-            EntityRegistryProtocol,
-            PermissionEnforcerProtocol,
-            ReBACManagerProtocol,
-            VFSRouterProtocol,
-            WirableFS,
-            WorkspaceManagerProtocol,
-        )
+    def test_all_protocols_importable_from_new_locations(self) -> None:
+        """Protocols should be importable from their new canonical locations."""
+        from nexus.contracts.describable import Describable
+        from nexus.contracts.wirable_fs import WirableFS
+        from nexus.core.protocols import VFSCoreProtocol, VFSRouterProtocol
+        from nexus.services.protocols.entity_registry import EntityRegistryProtocol
+        from nexus.services.protocols.permission_enforcer import PermissionEnforcerProtocol
+        from nexus.services.protocols.rebac import ReBACBrickProtocol
+        from nexus.services.protocols.workspace_manager import WorkspaceManagerProtocol
 
         # runtime_checkable means isinstance() works
         for proto in (
-            ReBACManagerProtocol,
+            ReBACBrickProtocol,
             PermissionEnforcerProtocol,
             EntityRegistryProtocol,
             WorkspaceManagerProtocol,
             WirableFS,
+            Describable,
             VFSRouterProtocol,
+            VFSCoreProtocol,
         ):
             assert (
                 hasattr(proto, "__protocol_attrs__")

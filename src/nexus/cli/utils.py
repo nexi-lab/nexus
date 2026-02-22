@@ -1,14 +1,9 @@
 """CLI utilities - Common helpers for Nexus CLI commands."""
 
-from __future__ import annotations
-
 import os
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeGuard, cast
-
-if TYPE_CHECKING:
-    from nexus.core.nexus_fs import NexusFS
+from typing import Any, cast
 
 import click
 from rich.console import Console
@@ -363,19 +358,6 @@ def get_default_filesystem() -> NexusFilesystem:
         sys.exit(1)
 
 
-def is_standalone(nx: NexusFilesystem) -> TypeGuard[NexusFS]:
-    """Check whether *nx* is a local NexusFS instance (not a remote client).
-
-    Many CLI features (time-travel, metadata export, zone portability, etc.)
-    require direct access to the local metadata store and are unavailable
-    when connected to a remote server.  This helper centralises the runtime
-    check so individual commands don't need to import the concrete class.
-    """
-    from nexus.core.nexus_fs import NexusFS as _NexusFS
-
-    return isinstance(nx, _NexusFS)
-
-
 def get_subject_from_env() -> tuple[str, str] | None:
     """Get subject from environment variables.
 
@@ -569,7 +551,7 @@ def handle_error(e: Exception) -> None:
     # Import exception types here to avoid circular imports
     from nexus.contracts.exceptions import AccessDeniedError, NexusPermissionError
 
-    if isinstance(e, (PermissionError, AccessDeniedError, NexusPermissionError)):
+    if isinstance(e, PermissionError | AccessDeniedError | NexusPermissionError):
         console.print(f"[red]Permission Denied:[/red] {e}")
         sys.exit(3)  # Exit code 3 for permission errors
     elif isinstance(e, NexusFileNotFoundError):

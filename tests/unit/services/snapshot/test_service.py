@@ -4,8 +4,6 @@ Tests: Init, IsTracked, Begin, TrackWrite, TrackDelete, Commit, Rollback,
        Get, List, Cleanup, Performance, FailureInjection.
 """
 
-from __future__ import annotations
-
 import json
 import time
 from datetime import UTC, datetime, timedelta
@@ -13,7 +11,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.services.snapshot.service import (
+from nexus.bricks.snapshot.service import (
     TransactionalSnapshotService,
     TransactionConflictError,
     TransactionNotActiveError,

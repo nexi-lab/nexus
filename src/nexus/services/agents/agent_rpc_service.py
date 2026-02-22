@@ -7,14 +7,13 @@ Wired via ``rpc_server.register_service()`` at server startup.
 Issue #2033 — Phase 2.1 of LEGO microkernel decomposition.
 """
 
-from __future__ import annotations
-
 import contextlib
 import json
 import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.rpc import rpc_expose
 from nexus.contracts.types import VFSOperations, parse_operation_context
 
@@ -36,7 +35,7 @@ class AgentRPCService:
         self,
         *,
         vfs: VFSOperations,
-        metastore: MetastoreABC,
+        metastore: "MetastoreABC",
         session_factory: Any,
         record_store: Any | None = None,
         agent_registry: Any | None = None,
@@ -139,7 +138,7 @@ class AgentRPCService:
             self._write_agent_config(config_path, config_data, context)
 
             if self._rebac_manager:
-                zone_id = self._extract_zone_id(context) or "root"
+                zone_id = self._extract_zone_id(context) or ROOT_ZONE_ID
                 try:
                     self._rebac_manager.rebac_write(
                         subject=("agent", agent_id),
@@ -315,7 +314,9 @@ class AgentRPCService:
         _logger: logging.Logger,
     ) -> None:
         try:
-            from nexus.identity.did import create_did_document
+            import importlib as _il
+
+            create_did_document = _il.import_module("nexus.bricks.identity.did").create_did_document
 
             assert self._key_service is not None
             key_record = self._key_service.get_active_keys(agent_id)[0]
@@ -344,8 +345,6 @@ class AgentRPCService:
             raise RuntimeError("record_store is required to initialize AgentRegistry")
         from nexus.services.agents.agent_registry import AgentRegistry
 
-        if self._record_store is None:
-            raise RuntimeError("record_store is required to initialize AgentRegistry")
         self._agent_registry = AgentRegistry(
             record_store=self._record_store,
             entity_registry=self._entity_registry,
@@ -387,7 +386,7 @@ class AgentRPCService:
         user_id = self._extract_user_id(context)
         if not user_id:
             raise ValueError("user_id required in context to register agent")
-        zone_id = self._extract_zone_id(context) or "root"
+        zone_id = self._extract_zone_id(context) or ROOT_ZONE_ID
 
         agent_name_part = agent_id.split(",", 1)[1] if "," in agent_id else agent_id
         agent_dir = f"/zone/{zone_id}/user/{user_id}/agent/{agent_name_part}"
@@ -462,7 +461,7 @@ class AgentRPCService:
         user_id = self._extract_user_id(context)
         if not user_id:
             raise ValueError("user_id required in context to update agent")
-        zone_id = self._extract_zone_id(context) or "root"
+        zone_id = self._extract_zone_id(context) or ROOT_ZONE_ID
 
         agent_name_part = agent_id.split(",", 1)[1] if "," in agent_id else agent_id
         agent_dir = f"/zone/{zone_id}/user/{user_id}/agent/{agent_name_part}"
@@ -646,7 +645,7 @@ class AgentRPCService:
         try:
             if "," in agent_id:
                 user_id, agent_name_part = agent_id.split(",", 1)
-                zone_id = self._extract_zone_id(_context) or "root"
+                zone_id = self._extract_zone_id(_context) or ROOT_ZONE_ID
                 agent_dir = f"/zone/{zone_id}/user/{user_id}/agent/{agent_name_part}"
 
                 # Delete directory
@@ -718,7 +717,7 @@ class AgentRPCService:
 
         # Wallet cleanup
         if self._wallet_provisioner is not None:
-            zone_id_for_wallet = self._extract_zone_id(_context) or "root"
+            zone_id_for_wallet = self._extract_zone_id(_context) or ROOT_ZONE_ID
             try:
                 cleanup_fn = getattr(self._wallet_provisioner, "cleanup", None)
                 if cleanup_fn is not None:
@@ -823,7 +822,7 @@ class AgentRPCService:
             if "," not in entity_id:
                 return None
             user_id, agent_name = entity_id.split(",", 1)
-            zone_id = self._extract_zone_id(context) or "root"
+            zone_id = self._extract_zone_id(context) or ROOT_ZONE_ID
             config_path = f"/zone/{zone_id}/user/{user_id}/agent/{agent_name}/config.yaml"
             ctx = parse_operation_context(context)
             content = self._vfs.read(config_path, context=ctx)
@@ -849,7 +848,7 @@ class AgentRPCService:
             if "," not in entity.entity_id:
                 return
             user_id, agent_name = entity.entity_id.split(",", 1)
-            zone_id = self._extract_zone_id(context) or "root"
+            zone_id = self._extract_zone_id(context) or ROOT_ZONE_ID
             config_path = f"/zone/{zone_id}/user/{user_id}/agent/{agent_name}/config.yaml"
             ctx = parse_operation_context(context)
             content = self._vfs.read(config_path, context=ctx)

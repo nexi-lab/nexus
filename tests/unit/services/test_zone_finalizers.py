@@ -7,13 +7,12 @@ Tests each concrete zone finalizer in isolation:
 - ReBACZoneFinalizer: bulk tuple deletion
 """
 
-from __future__ import annotations
-
 from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from nexus.services.zone_finalizers.brick_drain_finalizer import BrickDrainFinalizer
 from nexus.services.zone_finalizers.cache_finalizer import CacheZoneFinalizer
 from nexus.services.zone_finalizers.mount_finalizer import MountZoneFinalizer
 from nexus.services.zone_finalizers.rebac_finalizer import ReBACZoneFinalizer
@@ -127,11 +126,11 @@ class TestMountZoneFinalizer:
         assert f.finalizer_key == "nexus.core/mount"
 
     @pytest.mark.asyncio
-    async def test_removes_zone_mounts(self):
+    async def test_removes_zone_mounts_by_path_prefix(self):
         mount_svc = MagicMock()
         mount_svc.list_mounts.return_value = [
-            {"path": "/zone-1/data", "zone_id": "zone-1"},
-            {"path": "/zone-2/data", "zone_id": "zone-2"},
+            {"mount_point": "/zone-1/data"},
+            {"mount_point": "/zone-2/data"},
         ]
         f = MountZoneFinalizer(mount_service=mount_svc)
 
@@ -143,7 +142,7 @@ class TestMountZoneFinalizer:
     async def test_no_mounts_for_zone(self):
         mount_svc = MagicMock()
         mount_svc.list_mounts.return_value = [
-            {"path": "/other/data", "zone_id": "other-zone"},
+            {"mount_point": "/other/data"},
         ]
         f = MountZoneFinalizer(mount_service=mount_svc)
 
@@ -155,7 +154,7 @@ class TestMountZoneFinalizer:
     async def test_mount_removal_failure_raises(self):
         mount_svc = MagicMock()
         mount_svc.list_mounts.return_value = [
-            {"path": "/zone-1/data", "zone_id": "zone-1"},
+            {"mount_point": "/zone-1/data"},
         ]
         mount_svc.remove_mount.side_effect = RuntimeError("mount busy")
         f = MountZoneFinalizer(mount_service=mount_svc)
@@ -164,13 +163,13 @@ class TestMountZoneFinalizer:
             await f.finalize_zone("zone-1")
 
     @pytest.mark.asyncio
-    async def test_path_prefix_matching(self):
-        """Mounts without zone_id matched by path prefix."""
+    async def test_multiple_zone_mounts(self):
+        """Multiple mounts for same zone all get removed."""
         mount_svc = MagicMock()
         mount_svc.list_mounts.return_value = [
-            {"path": "/zone-1/uploads"},
-            {"path": "/zone-1/cache"},
-            {"path": "/zone-2/uploads"},
+            {"mount_point": "/zone-1/uploads"},
+            {"mount_point": "/zone-1/cache"},
+            {"mount_point": "/zone-2/uploads"},
         ]
         f = MountZoneFinalizer(mount_service=mount_svc)
 
@@ -219,4 +218,76 @@ class TestReBACZoneFinalizer:
             yield mock_session
 
         f = ReBACZoneFinalizer(session_factory=factory)
+        await f.finalize_zone("empty-zone")  # Should not raise
+
+
+# ---------------------------------------------------------------------------
+# BrickDrainFinalizer (#10A — Issue #2070)
+# ---------------------------------------------------------------------------
+
+
+class TestBrickDrainFinalizer:
+    def test_finalizer_key(self):
+        blm = MagicMock()
+        f = BrickDrainFinalizer(brick_lifecycle_manager=blm)
+        assert f.finalizer_key == "nexus.core/brick-drain"
+
+    @pytest.mark.asyncio
+    async def test_delegates_to_blm_deprovision(self):
+        """BrickDrainFinalizer delegates to BrickLifecycleManager.deprovision_zone()."""
+        blm = MagicMock()
+        report = MagicMock()
+        report.bricks_drained = 3
+        report.bricks_finalized = 3
+        report.drain_errors = 0
+        report.finalize_errors = 0
+        blm.deprovision_zone = AsyncMock(return_value=report)
+
+        f = BrickDrainFinalizer(brick_lifecycle_manager=blm)
+        await f.finalize_zone("zone-1")
+
+        blm.deprovision_zone.assert_awaited_once_with("zone-1")
+
+    @pytest.mark.asyncio
+    async def test_raises_on_drain_errors(self):
+        """BrickDrainFinalizer raises RuntimeError when drain has errors."""
+        blm = MagicMock()
+        report = MagicMock()
+        report.bricks_drained = 2
+        report.bricks_finalized = 1
+        report.drain_errors = 1
+        report.finalize_errors = 0
+        blm.deprovision_zone = AsyncMock(return_value=report)
+
+        f = BrickDrainFinalizer(brick_lifecycle_manager=blm)
+        with pytest.raises(RuntimeError, match="1 error"):
+            await f.finalize_zone("zone-1")
+
+    @pytest.mark.asyncio
+    async def test_raises_on_finalize_errors(self):
+        """BrickDrainFinalizer raises RuntimeError when finalize has errors."""
+        blm = MagicMock()
+        report = MagicMock()
+        report.bricks_drained = 2
+        report.bricks_finalized = 0
+        report.drain_errors = 0
+        report.finalize_errors = 2
+        blm.deprovision_zone = AsyncMock(return_value=report)
+
+        f = BrickDrainFinalizer(brick_lifecycle_manager=blm)
+        with pytest.raises(RuntimeError, match="2 error"):
+            await f.finalize_zone("zone-1")
+
+    @pytest.mark.asyncio
+    async def test_no_errors_no_raise(self):
+        """BrickDrainFinalizer does not raise when drain/finalize succeed."""
+        blm = MagicMock()
+        report = MagicMock()
+        report.bricks_drained = 0
+        report.bricks_finalized = 0
+        report.drain_errors = 0
+        report.finalize_errors = 0
+        blm.deprovision_zone = AsyncMock(return_value=report)
+
+        f = BrickDrainFinalizer(brick_lifecycle_manager=blm)
         await f.finalize_zone("empty-zone")  # Should not raise

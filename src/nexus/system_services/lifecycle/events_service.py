@@ -13,13 +13,11 @@ Phase 2: Core Refactoring (Issue #1287)
 Extracted from: nexus_fs_events.py (836 lines)
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import logging
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from nexus.constants import ROOT_ZONE_ID
 from nexus.core.path_utils import validate_path
@@ -31,11 +29,11 @@ from .dedup_work_queue import DedupWorkQueue, ShutdownError
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from nexus.bricks.watch.file_watcher import FileWatcher
     from nexus.contracts.types import OperationContext
-    from nexus.core.distributed_lock import LockManagerBase
     from nexus.core.protocols.connector import ConnectorProtocol
+    from nexus.lib.distributed_lock import LockManagerBase
     from nexus.services.event_bus.base import EventBusBase
-    from nexus.services.watch.file_watcher import FileWatcher
 
 
 class EventsService:
@@ -53,9 +51,9 @@ class EventsService:
 
     def __init__(
         self,
-        backend: ConnectorProtocol,
-        event_bus: EventBusBase | None = None,
-        lock_manager: LockManagerBase | None = None,
+        backend: "ConnectorProtocol",
+        event_bus: "EventBusBase | None" = None,
+        lock_manager: "LockManagerBase | None" = None,
         zone_id: str | None = None,
         metadata_cache: Any = None,
     ):
@@ -96,7 +94,7 @@ class EventsService:
         """Check if distributed lock manager is available."""
         return self._lock_manager is not None
 
-    def _get_file_watcher(self) -> FileWatcher:
+    def _get_file_watcher(self) -> "FileWatcher":
         """Get or create the file watcher instance for same-box mode."""
         if not self._is_same_box():
             raise NotImplementedError(
@@ -105,13 +103,14 @@ class EventsService:
             )
 
         if self._file_watcher is None:
-            from nexus.services.watch.file_watcher import FileWatcher
+            import importlib as _il
 
+            FileWatcher = _il.import_module("nexus.bricks.watch.file_watcher").FileWatcher
             self._file_watcher = FileWatcher()
 
         return self._file_watcher
 
-    def _get_zone_id(self, context: OperationContext | None) -> str:
+    def _get_zone_id(self, context: "OperationContext | None") -> str:
         """Get zone ID from context or default."""
         if context and hasattr(context, "zone_id") and context.zone_id:
             return context.zone_id
@@ -155,7 +154,7 @@ class EventsService:
         path: str,
         timeout: float = 30.0,
         since_revision: int | None = None,
-        _context: OperationContext | None = None,
+        _context: "OperationContext | None" = None,
     ) -> dict[str, Any] | None:
         """Wait for file system changes on a path.
 
@@ -188,12 +187,12 @@ class EventsService:
             )
             if event is None:
                 return None
-            return event.to_dict()
+            return cast(dict[str, Any], event.to_dict())
 
         # Layer 1: Same-box local watching (fallback)
         if self._is_same_box():
             logger.debug(f"Using same-box file watcher for {path}")
-            from nexus.core.event_bus import FileEvent
+            from nexus.services.event_subsystem.types import FileEvent
 
             assert isinstance(self._backend, PassthroughProtocol), (
                 "Backend must implement PassthroughProtocol for this operation"
@@ -257,7 +256,7 @@ class EventsService:
         timeout: float = 30.0,
         ttl: float = 30.0,
         max_holders: int = 1,
-        _context: OperationContext | None = None,
+        _context: "OperationContext | None" = None,
     ) -> str | None:
         """Acquire an advisory lock on a path.
 
@@ -322,7 +321,7 @@ class EventsService:
         lock_id: str,
         path: str,
         ttl: float = 30.0,
-        _context: OperationContext | None = None,
+        _context: "OperationContext | None" = None,
     ) -> bool:
         """Extend a lock's TTL (heartbeat for long-running operations).
 
@@ -367,7 +366,7 @@ class EventsService:
         self,
         lock_id: str,
         path: str | None = None,
-        _context: OperationContext | None = None,
+        _context: "OperationContext | None" = None,
     ) -> bool:
         """Release an advisory lock.
 
@@ -425,7 +424,7 @@ class EventsService:
         path: str,
         timeout: float = 30.0,
         ttl: float = 30.0,
-        _context: OperationContext | None = None,
+        _context: "OperationContext | None" = None,
     ) -> AsyncIterator[str]:
         """Acquire a distributed lock as an async context manager.
 
@@ -478,7 +477,7 @@ class EventsService:
         self, event_type: Any, path: str, old_path: str | None
     ) -> None:
         """Handle cache invalidation for any event source."""
-        from nexus.core.event_bus import FileEventType
+        from nexus.services.event_subsystem.types import FileEventType
 
         if isinstance(event_type, str):
             try:
@@ -501,7 +500,7 @@ class EventsService:
 
     def _on_file_change(self, change: Any) -> None:
         """Callback for Layer 1 (FileWatcher) file change events."""
-        from nexus.core.event_bus import FileEvent
+        from nexus.services.event_subsystem.types import FileEvent
 
         event = FileEvent.from_file_change(change)
         self._handle_cache_invalidation_event(event.type, change.path, change.old_path)

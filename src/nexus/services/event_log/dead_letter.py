@@ -13,7 +13,7 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from nexus.core.event_bus import FileEvent
+from nexus.core.file_events import FileEvent
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session

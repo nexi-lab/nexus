@@ -10,7 +10,7 @@ import time
 
 import pytest
 
-from nexus.core.event_bus import FileEvent
+from nexus.core.file_events import FileEvent
 from nexus.core.reactive_subscriptions import (
     ReactiveSubscriptionManager,
     Subscription,

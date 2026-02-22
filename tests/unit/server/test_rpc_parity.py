@@ -322,8 +322,6 @@ def test_all_public_methods_are_exposed_or_excluded():
         "migrate_consistency_mode",  # Internal - SC↔EC migration orchestrator, exposed via PATCH endpoint
         # KernelDispatch OBSERVE registration (Issue #900) - server-side observer registration
         "register_observe",  # Internal - registers VFS observers for workflow dispatch
-        # Workflow event queue - server-side background task (Issue #1522)
-        "ensure_workflow_consumer",  # Internal - starts bounded workflow event queue consumer
         # Brick service references (Issue #2035) — object instances, not methods
         "skill_service",  # SkillService instance — RPC methods auto-discovered from brick
         "skill_package_service",  # SkillPackageService instance — RPC methods auto-discovered from brick

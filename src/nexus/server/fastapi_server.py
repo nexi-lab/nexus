@@ -376,7 +376,6 @@ def create_app(
                 nexus_fs.SessionLocal,
                 webhook_timeout=app.state.profile_tuning.network.webhook_timeout,
             )
-            nexus_fs.subscription_manager = app.state.subscription_manager
             set_subscription_manager(app.state.subscription_manager)
             # Issue #625: Forward subscription_manager to workflow dispatch service
             wds = getattr(app.state, "workflow_dispatch", None)

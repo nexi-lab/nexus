@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from nexus.core.event_bus import FileEvent
+from nexus.core.file_events import FileEvent
 
 
 @runtime_checkable

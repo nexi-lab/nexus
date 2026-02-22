@@ -44,7 +44,7 @@ from typing import TYPE_CHECKING, Any
 from nexus.core.read_set import ReadSetRegistry
 
 if TYPE_CHECKING:
-    from nexus.core.event_bus import FileEvent
+    from nexus.core.file_events import FileEvent
     from nexus.core.read_set import ReadSet
 
 logger = logging.getLogger(__name__)

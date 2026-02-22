@@ -20,6 +20,7 @@ from nexus.bricks.ipc.conventions import (
     inbox_path,
 )
 from nexus.bricks.ipc.storage.protocol import IPCStorageDriver
+from nexus.constants import ROOT_ZONE_ID
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,7 @@ class AgentProvisioner:
         zone_id: Zone ID for multi-zone isolation.
     """
 
-    def __init__(self, storage: IPCStorageDriver, zone_id: str = "root") -> None:
+    def __init__(self, storage: IPCStorageDriver, zone_id: str = ROOT_ZONE_ID) -> None:
         self._storage = storage
         self._zone_id = zone_id
 

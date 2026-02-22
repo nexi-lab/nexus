@@ -22,7 +22,7 @@ from typing import Any
 
 from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.vfs_hooks import MutationEvent
-from nexus.core.pipe_manager import PipeManager
+from nexus.system_services.pipe_manager import PipeManager
 from nexus.workflows.protocol import WorkflowProtocol
 
 logger = logging.getLogger(__name__)

@@ -25,8 +25,8 @@ import logging
 import threading
 from typing import TYPE_CHECKING, Any
 
+from nexus.contracts.operation_types import OperationType
 from nexus.core.file_events import FileEvent, FileEventType
-from nexus.core.operation_types import OperationType
 
 if TYPE_CHECKING:
     from collections.abc import Callable

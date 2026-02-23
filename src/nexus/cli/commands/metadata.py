@@ -229,7 +229,7 @@ def import_metadata(
     """
     try:
         from nexus.core.nexus_fs import NexusFS
-        from nexus.lib.export_import import ImportOptions
+        from nexus.lib.export_import import ConflictMode, ImportOptions
 
         nx = get_filesystem(backend_config)
 
@@ -242,7 +242,7 @@ def import_metadata(
         # Create import options
         import_options = ImportOptions(
             dry_run=dry_run,
-            conflict_mode=conflict_mode,  # type: ignore
+            conflict_mode=cast(ConflictMode, conflict_mode),
             preserve_ids=not no_preserve_ids,
         )
 

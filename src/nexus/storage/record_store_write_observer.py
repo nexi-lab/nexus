@@ -1,27 +1,25 @@
-"""RecordStore write observers — WriteObserverProtocol implementations.
+"""RecordStore write observer — synchronous WriteObserverProtocol implementation.
 
 Bundles OperationLogger + VersionRecorder into a single injectable observer.
 Created by factory.py, injected into NexusFS kernel as write_observer.
 
 The kernel calls on_write()/on_delete()/on_rename()/on_write_batch()/
-on_mkdir()/on_rmdir() after Metastore mutations. These observers handle
-all RecordStore side-effects in a single transaction.
+on_mkdir()/on_rmdir() after Metastore mutations. This observer handles
+all RecordStore side-effects in a single synchronous transaction.
 
-The kernel passes kernel-native ``FileMetadata``.  Observers derive
+The kernel passes kernel-native ``FileMetadata``.  The observer derives
 ``snapshot_hash`` (``metadata.etag``) and ``metadata_snapshot``
 (``metadata.to_dict()``) internally — these are RecordStore concerns.
-
-Two implementations:
-    RecordStoreWriteObserver         — synchronous, blocks hot path (~2-10ms)
-    BufferedRecordStoreWriteObserver — async via WriteBuffer (~0.1ms amortized)
 
 Architecture:
     Kernel → write_observer.on_write() → [OperationLogger + VersionRecorder]
     Kernel → write_observer.on_delete() → [OperationLogger + VersionRecorder]
     Error policy owned by observer (strict_mode). Kernel is a pure caller.
 
+For async DT_PIPE-backed implementation, see PipedRecordStoreWriteObserver
+in ``nexus.storage.piped_record_store_write_observer``.
+
 Issue #900: Replaced snapshot_hash/metadata_snapshot params with metadata.
-Issue #1246: BufferedRecordStoreWriteObserver implements Decision 13A (write-behind buffer).
 """
 
 import logging
@@ -252,156 +250,3 @@ class RecordStoreWriteObserver:
                 session.commit()
         except Exception as e:
             self._handle_error("rmdir", path, e)
-
-
-class BufferedRecordStoreWriteObserver:
-    """Async write observer backed by WriteBuffer (Issue #1246, Decision 13A).
-
-    Same WriteObserverProtocol interface as RecordStoreWriteObserver, but
-    enqueues events into a WriteBuffer instead of writing synchronously.
-    Hot path returns immediately (~0.1ms amortized vs ~2-10ms synchronous).
-
-    Must call start() before use and stop() on shutdown.
-    """
-
-    def __init__(
-        self,
-        record_store: RecordStoreABC,
-        *,
-        strict_mode: bool = True,
-        flush_interval_ms: int = 100,
-        max_buffer_size: int = 100,
-        max_retries: int = 3,
-    ) -> None:
-        from nexus.storage.write_buffer import WriteBuffer
-
-        self._strict_mode = strict_mode
-        self._buffer = WriteBuffer(
-            record_store,
-            flush_interval_ms=flush_interval_ms,
-            max_buffer_size=max_buffer_size,
-            max_retries=max_retries,
-        )
-
-    def start(self) -> None:
-        """Start the background flush thread."""
-        self._buffer.start()
-
-    def stop(self, timeout: float = 5.0) -> None:
-        """Stop and drain remaining events."""
-        self._buffer.stop(timeout=timeout)
-
-    @property
-    def metrics(self) -> dict[str, int | float | dict[str, int]]:
-        """Return buffer metrics."""
-        return self._buffer.metrics
-
-    def on_write(
-        self,
-        metadata: FileMetadata,
-        *,
-        is_new: bool,
-        path: str,
-        old_metadata: FileMetadata | None = None,
-        zone_id: str | None = None,
-        agent_id: str | None = None,
-        urgency: str | None = None,
-    ) -> None:
-        """Enqueue a write event. Returns immediately."""
-        from nexus.storage.write_buffer import Urgency
-
-        resolved_urgency = Urgency.NORMAL
-        if urgency is not None:
-            try:
-                resolved_urgency = Urgency(urgency)
-            except ValueError:
-                resolved_urgency = Urgency.NORMAL
-
-        self._buffer.enqueue_write(
-            metadata,
-            is_new=is_new,
-            path=path,
-            zone_id=zone_id,
-            agent_id=agent_id,
-            snapshot_hash=old_metadata.etag if old_metadata else None,
-            metadata_snapshot=old_metadata.to_dict() if old_metadata else None,
-            urgency=resolved_urgency,
-        )
-
-    def on_write_batch(
-        self,
-        items: list[tuple[FileMetadata, bool]],
-        *,
-        zone_id: str | None = None,
-        agent_id: str | None = None,
-        urgency: str | None = None,  # noqa: ARG002
-    ) -> None:
-        """Enqueue a batch of write events. Returns immediately."""
-        for metadata, is_new in items:
-            self._buffer.enqueue_write(
-                metadata,
-                is_new=is_new,
-                path=metadata.path,
-                zone_id=zone_id,
-                agent_id=agent_id,
-                snapshot_hash=metadata.etag,
-            )
-
-    def on_rename(
-        self,
-        old_path: str,
-        new_path: str,
-        *,
-        metadata: FileMetadata | None = None,
-        zone_id: str | None = None,
-        agent_id: str | None = None,
-    ) -> None:
-        """Enqueue a rename event. Returns immediately."""
-        self._buffer.enqueue_rename(
-            old_path=old_path,
-            new_path=new_path,
-            zone_id=zone_id,
-            agent_id=agent_id,
-            snapshot_hash=metadata.etag if metadata else None,
-            metadata_snapshot=metadata.to_dict() if metadata else None,
-        )
-
-    def on_delete(
-        self,
-        path: str,
-        *,
-        metadata: FileMetadata | None = None,
-        zone_id: str | None = None,
-        agent_id: str | None = None,
-    ) -> None:
-        """Enqueue a delete event. Returns immediately."""
-        self._buffer.enqueue_delete(
-            path=path,
-            zone_id=zone_id,
-            agent_id=agent_id,
-            snapshot_hash=metadata.etag if metadata else None,
-            metadata_snapshot=metadata.to_dict() if metadata else None,
-        )
-
-    def on_mkdir(
-        self,
-        path: str,
-        *,
-        zone_id: str | None = None,
-        agent_id: str | None = None,
-    ) -> None:
-        """Enqueue a mkdir event. Returns immediately."""
-        self._buffer.enqueue_mkdir(path=path, zone_id=zone_id, agent_id=agent_id)
-
-    def on_rmdir(
-        self,
-        path: str,
-        *,
-        zone_id: str | None = None,
-        agent_id: str | None = None,
-        recursive: bool = False,
-    ) -> None:
-        """Enqueue a rmdir event. Returns immediately."""
-        self._buffer.enqueue_rmdir(
-            path=path, zone_id=zone_id, agent_id=agent_id, recursive=recursive
-        )

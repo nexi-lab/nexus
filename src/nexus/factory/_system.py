@@ -117,14 +117,13 @@ def _boot_system_services(
                 use_buffer = ctx.db_url.startswith(("postgres", "postgresql"))
 
         if use_buffer:
-            from nexus.storage.record_store_write_observer import BufferedRecordStoreWriteObserver
+            from nexus.storage.piped_record_store_write_observer import (
+                PipedRecordStoreWriteObserver,
+            )
 
-            _st = ctx.profile_tuning.storage
-            write_observer = BufferedRecordStoreWriteObserver(
+            write_observer = PipedRecordStoreWriteObserver(
                 ctx.record_store,
                 strict_mode=ctx.audit.strict_mode,
-                flush_interval_ms=_st.write_buffer_flush_ms,
-                max_buffer_size=_st.write_buffer_max_size,
             )
         else:
             from nexus.storage.record_store_write_observer import RecordStoreWriteObserver
@@ -450,6 +449,16 @@ def _boot_system_services(
         except Exception as exc:
             logger.warning("[BOOT:SYSTEM] ZoneLifecycleService unavailable: %s", exc)
 
+    # --- PipeManager (Issue #809: DT_PIPE kernel IPC for write observer + zoekt) ---
+    pipe_manager: Any = None
+    try:
+        from nexus.system_services.pipe_manager import PipeManager
+
+        pipe_manager = PipeManager(ctx.metadata_store, zone_id=ctx.zone_id or ROOT_ZONE_ID)
+        logger.debug("[BOOT:SYSTEM] PipeManager created")
+    except Exception as exc:
+        logger.warning("[BOOT:SYSTEM] PipeManager unavailable: %s", exc)
+
     # =====================================================================
     # Assemble result
     # =====================================================================
@@ -461,6 +470,7 @@ def _boot_system_services(
         "entity_registry": entity_registry,
         "permission_enforcer": permission_enforcer,
         "write_observer": write_observer,
+        "pipe_manager": pipe_manager,
         # Former-kernel degradable
         "dir_visibility_cache": dir_visibility_cache,
         "hierarchy_manager": hierarchy_manager,

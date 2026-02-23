@@ -593,21 +593,10 @@ disable_error_code = ["no-any-return"]
 [[tool.mypy.overrides]]
 module = [
     "nexus.server.auth.oidc",
-    "nexus.auth.providers.oidc",
+    "nexus.bricks.auth.providers.oidc",
 ]
 # requests stubs
 disable_error_code = ["import-untyped"]
-
-[[tool.mypy.overrides]]
-module = "nexus.auth.cache"
-# cachetools library has complex generic types
-disable_error_code = ["import-untyped", "no-any-return"]
-
-[[tool.mypy.overrides]]
-module = "nexus.auth.tests.*"
-# Test files — relaxed type checking (consistent with project test conventions)
-disallow_untyped_defs = false
-disable_error_code = ["func-returns-value"]
 
 [[tool.mypy.overrides]]
 module = [

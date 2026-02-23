@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 
-from nexus.core.router import MountConfig
+from nexus.services.mount.mount_manager import MountConfig
 from nexus.storage.models import MountConfigModel
 
 if TYPE_CHECKING:

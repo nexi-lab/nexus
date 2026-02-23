@@ -43,7 +43,6 @@ __all__ = [
     "ExistsBatchParams",
     "ExistsParams",
     "GetAgentParams",
-    "GetAvailableNamespacesParams",
     "GetEtagParams",
     "GetMemoryInfoParams",
     "GetMetadataParams",
@@ -449,8 +448,8 @@ class GetAgentParams:
 
 
 @dataclass
-class GetAvailableNamespacesParams:
-    """Parameters for get_available_namespaces(): Get list of available namespace directories."""
+class GetTopLevelMountsParams:
+    """Parameters for get_top_level_mounts(): Get top-level mount names."""
 
     pass
 
@@ -1518,7 +1517,7 @@ METHOD_PARAMS: dict[str, type] = {
     "exists": ExistsParams,
     "exists_batch": ExistsBatchParams,
     "get_agent": GetAgentParams,
-    "get_available_namespaces": GetAvailableNamespacesParams,
+    "get_top_level_mounts": GetTopLevelMountsParams,
     "get_etag": GetEtagParams,
     "get_memory_info": GetMemoryInfoParams,
     "get_metadata": GetMetadataParams,

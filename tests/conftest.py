@@ -97,6 +97,7 @@ if _HAS_STRUCTLOG:
 def make_test_nexus(
     tmp_path,
     *,
+    backend=None,
     permissions=None,
     parsing=None,
     cache=None,
@@ -107,7 +108,6 @@ def make_test_nexus(
     is_admin=False,
     record_store=None,
     use_raft=False,
-    backend=None,
     metadata_store=None,
 ):
     """Create a NexusFS instance for testing with sensible defaults.
@@ -115,8 +115,13 @@ def make_test_nexus(
     Defaults: permissions off, no auto-parse, no distributed features.
     Avoids heavy I/O (event bus, lock manager, workflows) for fast tests.
 
+    A default LocalBackend is created and mounted at ``/`` (root) unless
+    a custom ``backend`` is provided. This mirrors ``create_nexus_fs()``
+    in the factory (``router.add_mount("/", backend)``).
+
     Args:
         tmp_path: pytest tmp_path fixture for backend/metadata storage.
+        backend: Backend to mount at ``/``. Default: LocalBackend(tmp_path / "data").
         permissions: PermissionConfig override. Default: enforce=False.
         parsing: ParseConfig override. Default: auto_parse=False.
         cache: CacheConfig override.
@@ -127,7 +132,6 @@ def make_test_nexus(
         is_admin: Admin flag.
         record_store: Optional RecordStoreABC.
         use_raft: Use RaftMetadataStore (requires Python 3.13).
-        backend: Override backend. Default: LocalBackend(tmp_path / "data").
         metadata_store: Override metadata store. Default: InMemory or Raft.
 
     Returns:
@@ -151,13 +155,6 @@ def make_test_nexus(
             enable_workflows=False,
         )
 
-    if backend is None:
-        from nexus.backends.local import LocalBackend
-
-        data_dir = tmp_path / "data"
-        data_dir.mkdir(exist_ok=True)
-        backend = LocalBackend(root_path=data_dir)
-
     if metadata_store is None:
         if use_raft:
             from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -169,7 +166,6 @@ def make_test_nexus(
             metadata_store = InMemoryMetastore()
 
     nx = NexusFS(
-        backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,
         is_admin=is_admin,
@@ -181,6 +177,17 @@ def make_test_nexus(
         kernel_services=services,
         system_services=system_services,
     )
+
+    # Mount backend at root (same as factory/orchestrator.py: router.add_mount("/", backend))
+    if backend is None:
+        from pathlib import Path
+
+        from nexus.backends.local import LocalBackend
+
+        data_dir = Path(tmp_path) / "data"
+        data_dir.mkdir(exist_ok=True)
+        backend = LocalBackend(root_path=str(data_dir))
+    nx.router.add_mount("/", backend)
 
     # Wire PermissionChecker via DI (same as factory/orchestrator.py, Issue #874)
     from nexus.services.permissions.checker import PermissionChecker

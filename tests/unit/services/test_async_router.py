@@ -5,8 +5,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from nexus.core.protocols.vfs_router import MountInfo, ResolvedPath, VFSRouterProtocol
-from nexus.core.router import MountConfig, PathNotMountedError, RouteResult
-from nexus.services.routing.async_router import AsyncVFSRouter, _to_mount_info, _to_resolved_path
+from nexus.core.router import PathNotMountedError, RouteResult
+from nexus.services.routing.async_router import AsyncVFSRouter, _to_resolved_path
 from tests.unit.core.protocols.test_conformance import assert_protocol_conformance
 
 # ---------------------------------------------------------------------------
@@ -50,49 +50,22 @@ class TestToResolvedPath:
             mount_point="/workspace",
             readonly=False,
         )
-        resolved = _to_resolved_path(result, "/workspace/project/file.txt", "zone-1")
+        resolved = _to_resolved_path(result, "/workspace/project/file.txt")
         assert isinstance(resolved, ResolvedPath)
         assert resolved.virtual_path == "/workspace/project/file.txt"
         assert resolved.backend_path == "project/file.txt"
         assert resolved.mount_point == "/workspace"
         assert resolved.readonly is False
-        assert resolved.zone_id == "zone-1"
 
-    def test_none_zone(self) -> None:
+    def test_readonly(self) -> None:
         result = RouteResult(
             backend=MagicMock(),
             backend_path="f.txt",
             mount_point="/",
             readonly=True,
         )
-        resolved = _to_resolved_path(result, "/f.txt", None)
-        assert resolved.zone_id is None
+        resolved = _to_resolved_path(result, "/f.txt")
         assert resolved.readonly is True
-
-
-class TestToMountInfo:
-    def test_basic_conversion(self) -> None:
-        config = MountConfig(
-            mount_point="/workspace",
-            backend=MagicMock(),
-            priority=10,
-            readonly=False,
-        )
-        info = _to_mount_info(config)
-        assert isinstance(info, MountInfo)
-        assert info.mount_point == "/workspace"
-        assert info.priority == 10
-        assert info.readonly is False
-
-    def test_readonly_mount(self) -> None:
-        config = MountConfig(
-            mount_point="/archives",
-            backend=MagicMock(),
-            priority=0,
-            readonly=True,
-        )
-        info = _to_mount_info(config)
-        assert info.readonly is True
 
 
 # ---------------------------------------------------------------------------
@@ -111,15 +84,13 @@ class TestRoute:
             mount_point="/workspace",
             readonly=False,
         )
-        resolved = await wrapper.route("/workspace/file.txt", zone_id="z1", is_admin=True)
+        resolved = await wrapper.route("/workspace/file.txt", is_admin=True)
         mock_inner.route.assert_called_once_with(
             "/workspace/file.txt",
-            zone_id="z1",
             is_admin=True,
             check_write=False,
         )
         assert isinstance(resolved, ResolvedPath)
-        assert resolved.zone_id == "z1"
 
     @pytest.mark.asyncio()
     async def test_propagates_not_mounted(
@@ -134,12 +105,12 @@ class TestAddMount:
     @pytest.mark.asyncio()
     async def test_delegates(self, wrapper: AsyncVFSRouter, mock_inner: MagicMock) -> None:
         backend = MagicMock()
-        await wrapper.add_mount("/data", backend, priority=5, readonly=True)
+        await wrapper.add_mount("/data", backend, readonly=True)
         mock_inner.add_mount.assert_called_once_with(
             "/data",
             backend,
-            priority=5,
             readonly=True,
+            admin_only=False,
             io_profile="balanced",
         )
 
@@ -158,10 +129,12 @@ class TestRemoveMount:
 
 class TestListMounts:
     @pytest.mark.asyncio()
-    async def test_converts_list(self, wrapper: AsyncVFSRouter, mock_inner: MagicMock) -> None:
+    async def test_returns_mount_info_list(
+        self, wrapper: AsyncVFSRouter, mock_inner: MagicMock
+    ) -> None:
         mock_inner.list_mounts.return_value = [
-            MountConfig(mount_point="/workspace", backend=MagicMock(), priority=10, readonly=False),
-            MountConfig(mount_point="/shared", backend=MagicMock(), priority=5, readonly=True),
+            MountInfo(mount_point="/workspace", readonly=False, admin_only=False),
+            MountInfo(mount_point="/shared", readonly=True, admin_only=False),
         ]
         result = await wrapper.list_mounts()
         assert len(result) == 2

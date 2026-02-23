@@ -1,627 +1,340 @@
-"""Path routing for mapping virtual paths to storage backends."""
+"""Path routing for mapping virtual paths to storage backends.
+
+PathRouter = Linux VFS mount table. Routes virtual paths to storage backends
+using longest-prefix matching with mount-level access control (readonly,
+admin_only). No namespace or zone concepts — those belong in ReBAC and
+federation layers respectively.
+
+Mount table is persisted in MetastoreABC as DT_MOUNT entries (source of truth).
+The only in-memory state is ``_backends`` — a registry of runtime backend
+instances that cannot be serialized to metastore.
+
+route() performs LPM by walking path components from deepest to shallowest,
+checking metastore for DT_MOUNT at each level. Metastore's Rust-level
+in-memory cache (redb) provides ~5 μs reads — no Python cache needed.
+
+Architecture:
+    global_path → ZonePathResolver → (zone_id, local_path) → PathRouter.route() → (backend, backend_path)
+"""
 
 import posixpath
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.exceptions import AccessDeniedError, InvalidPathError, PathNotMountedError
+from nexus.contracts.metadata import DT_MOUNT, FileMetadata
 
 if TYPE_CHECKING:
-    from nexus.core.protocols.connector import ConnectorProtocol
+    from nexus.core.metastore import MetastoreABC
+    from nexus.core.protocols.vfs_router import MountInfo
 
 
-@dataclass
-class MountConfig:
-    """Mount configuration for path routing."""
+@dataclass(frozen=True, slots=True)
+class _MountEntry:
+    """Runtime mount entry — holds Python objects that cannot be serialized.
 
-    mount_point: str  # Virtual path prefix, e.g., "/workspace"
-    backend: "ConnectorProtocol"  # Backend instance
-    priority: int = 0  # For tie-breaking (higher = preferred)
-    readonly: bool = False
-    conflict_strategy: str | None = None  # Per-mount override (Issue #1130)
-    io_profile: str = "balanced"  # I/O tuning profile (Issue #1413)
+    The ``backend`` field is opaque to the router (typed ``Any``). PathRouter
+    stores and returns it without invoking any interface — the caller
+    (NexusFSCoreMixin) knows the concrete type.  Like Linux ``struct
+    super_block *`` in the mount table.
+    """
+
+    backend: Any
+    readonly: bool
+    admin_only: bool
+    io_profile: str
 
 
 @dataclass
 class RouteResult:
     """Result of path routing."""
 
-    backend: "ConnectorProtocol"
+    backend: Any  # Opaque to router — caller knows concrete type
     backend_path: str  # Path relative to backend root
     mount_point: str  # Matched mount point
     readonly: bool
     io_profile: str = "balanced"  # I/O tuning profile (Issue #1413)
 
 
-@dataclass
-class PathInfo:
-    """Parsed path information with namespace and zone details."""
-
-    namespace: str  # e.g., "workspace", "shared", "external", "system", "archives"
-    zone_id: str | None  # Zone identifier (if applicable)
-    relative_path: str  # Remaining path after namespace/zone
-
-
-@dataclass
-class NamespaceConfig:
-    """Configuration for a namespace."""
-
-    name: str  # Namespace name (e.g., "workspace", "shared")
-    readonly: bool = False  # Whether namespace is read-only
-    admin_only: bool = False  # Whether namespace requires admin access
-    requires_zone: bool = True  # Whether namespace requires zone isolation
-
-
 class PathRouter:
-    """
-    Route virtual paths to storage backends using mount table.
+    """Route virtual paths to storage backends using mount table.
 
     Design Principles:
-    1. **Longest Prefix Match**: Like IP routing - most specific mount wins
-    2. **Mount Priority**: Explicit priority for overlapping mounts
-    3. **Namespace Awareness**: Understands /workspace, /shared, /external, etc.
-    4. **Zone Isolation**: Enforces access control based on zone/agent identity
+    1. **Longest Prefix Match**: most specific mount wins (deepest path).
+    2. **Mount-level access control**: ``readonly`` and ``admin_only`` as mount options.
+    3. **Metastore-backed**: DT_MOUNT entries in MetastoreABC are the source of truth.
+       Only backend instances live in-memory (``_backends`` registry).
 
-    Example Mounts:
+    Example Mounts::
+
         /workspace  → LocalFS (/var/nexus/workspace)
         /shared     → LocalFS (/var/nexus/shared)
-        /external   → Could be S3, GDrive, etc.
+        /system     → LocalFS (/var/nexus/system)  [readonly=True, admin_only=True]
+        /external   → S3, GDrive, etc.
     """
 
-    def __init__(self) -> None:
-        """Initialize path router with empty mount table and default namespaces."""
-        self._mounts: list[MountConfig] = []
-        self._namespaces: dict[str, NamespaceConfig] = {}
+    def __init__(self, metastore: "MetastoreABC") -> None:
+        """Initialize path router with metastore-backed mount table.
 
-        # Register default namespaces
-        self._register_default_namespaces()
+        Args:
+            metastore: MetastoreABC instance (the kernel's inode layer).
+        """
+        self._metastore = metastore
+        self._backends: dict[str, _MountEntry] = {}
 
     def add_mount(
         self,
         mount_point: str,
-        backend: "ConnectorProtocol",
-        priority: int = 0,
+        backend: Any,
+        *,
         readonly: bool = False,
-        replace: bool = False,
+        admin_only: bool = False,
         io_profile: str = "balanced",
     ) -> None:
-        """
-        Add a mount to the router.
+        """Add a mount to the router.
+
+        Writes a DT_MOUNT entry to metastore and registers the backend.
+        If a mount already exists at the same path, it is replaced.
 
         Args:
-            mount_point: Virtual path prefix (must start with /)
-            backend: Backend instance to use for this mount
-            priority: Priority for overlapping mounts (higher = preferred)
-            readonly: Whether mount is readonly
-            replace: If True, remove any existing mount at this mount_point first (default: False)
-            io_profile: I/O tuning profile (Issue #1413)
+            mount_point: Virtual path prefix (must start with /).
+            backend: Backend instance (opaque — must have ``.name`` attribute).
+            readonly: Whether mount is readonly.
+            admin_only: Whether mount requires admin privileges.
+            io_profile: I/O tuning profile.
 
         Raises:
-            ValueError: If mount_point is invalid
+            ValueError: If mount_point is invalid.
         """
         mount_point = self._normalize_path(mount_point)
 
-        # Remove existing mount at this path if replace=True
-        if replace:
-            self._mounts = [m for m in self._mounts if m.mount_point != mount_point]
+        # Persist DT_MOUNT entry in metastore (source of truth)
+        meta = FileMetadata(
+            path=mount_point,
+            backend_name=backend.name,
+            physical_path=mount_point,
+            size=0,
+            entry_type=DT_MOUNT,
+        )
+        self._metastore.put(meta)
 
-        mount = MountConfig(
-            mount_point=mount_point,
+        # Register runtime backend (Python objects, not a cache)
+        self._backends[mount_point] = _MountEntry(
             backend=backend,
-            priority=priority,
             readonly=readonly,
+            admin_only=admin_only,
             io_profile=io_profile,
         )
-
-        self._mounts.append(mount)
-
-        # Sort mounts by priority (DESC) then by prefix length (DESC)
-        self._mounts.sort(key=lambda m: (m.priority, len(m.mount_point)), reverse=True)
 
     def route(
         self,
         virtual_path: str,
-        zone_id: str | None = None,
+        *,
         is_admin: bool = False,
         check_write: bool = False,
     ) -> RouteResult:
-        """
-        Route virtual path to backend with access control.
+        """Route virtual path to backend with mount-level access control.
 
-        Algorithm:
-        1. Normalize path (remove trailing slashes, collapse //)
-        2. Check access control (namespace permissions, zone isolation)
-        3. Find longest matching prefix
-        4. Strip mount_point prefix to get backend-relative path
-        5. Return RouteResult
-
-        Example:
-            Input: "/workspace/my-project/file.txt"
-            Mounts: [("/workspace", localfs)]
-            Match: "/workspace"
-            Backend Path: "my-project/file.txt"
+        Algorithm: walk path components from deepest to shallowest, checking
+        metastore for DT_MOUNT at each level (longest prefix match).  Each
+        metastore.get() is ~5 μs with redb's Rust in-memory cache.
 
         Args:
-            virtual_path: Virtual path to route
-            zone_id: Current zone identifier (for access control)
-            is_admin: Whether requester has admin privileges
-            check_write: Whether to check write permissions
+            virtual_path: Virtual path to route.
+            is_admin: Whether requester has admin privileges.
+            check_write: Whether to check write permissions.
 
         Returns:
-            RouteResult with backend and relative path
+            RouteResult with backend and relative path.
 
         Raises:
-            PathNotMountedError: No mount found for path
-            AccessDeniedError: Access denied based on namespace rules
-            InvalidPathError: Path validation failed
+            PathNotMountedError: No mount found for path.
+            AccessDeniedError: Access denied by mount-level rules.
+            InvalidPathError: Path validation failed.
         """
-        # Normalize and validate path
         virtual_path = self.validate_path(virtual_path)
 
-        # Parse path to extract namespace and zone info
-        # Pass zone_id context to handle single-zone vs multi-zone path formats
-        path_info = self.parse_path(virtual_path, _zone_id=zone_id)
+        # LPM: walk from deepest prefix to shallowest
+        current = virtual_path
+        while True:
+            meta = self._metastore.get(current)
+            if meta is not None and meta.is_mount:
+                entry = self._backends.get(current)
+                if entry is None:
+                    # DT_MOUNT in metastore but backend not loaded
+                    # (stale mount from previous session or remote zone)
+                    raise PathNotMountedError(virtual_path)
 
-        # Check access control
-        self._check_access(path_info, zone_id, is_admin, check_write)
+                # Mount-level access control (like Linux mount options)
+                if entry.admin_only and not is_admin:
+                    raise AccessDeniedError(f"Mount '{current}' requires admin privileges")
+                if entry.readonly and check_write:
+                    raise AccessDeniedError(f"Mount '{current}' is read-only")
 
-        # Find longest matching prefix
-        matched_mount = self._match_longest_prefix(virtual_path)
-        if not matched_mount:
-            raise PathNotMountedError(virtual_path)
+                backend_path = self._strip_mount_prefix(virtual_path, current)
+                return RouteResult(
+                    backend=entry.backend,
+                    backend_path=backend_path,
+                    mount_point=current,
+                    readonly=entry.readonly,
+                    io_profile=entry.io_profile,
+                )
 
-        # Strip prefix
-        backend_path = self._strip_mount_prefix(virtual_path, matched_mount.mount_point)
+            if current == "/":
+                break
+            current = posixpath.dirname(current)
 
-        # Determine if readonly (from mount or namespace)
-        readonly = matched_mount.readonly
-        if path_info.namespace in self._namespaces:
-            ns_config = self._namespaces[path_info.namespace]
-            readonly = readonly or ns_config.readonly
+        raise PathNotMountedError(virtual_path)
 
-        return RouteResult(
-            backend=matched_mount.backend,
-            backend_path=backend_path,
-            mount_point=matched_mount.mount_point,
-            readonly=readonly,
-            io_profile=matched_mount.io_profile,
-        )
+    # ------------------------------------------------------------------
+    # Mount table queries
+    # ------------------------------------------------------------------
 
-    def _check_access(
-        self,
-        path_info: PathInfo,
-        zone_id: str | None,
-        is_admin: bool,
-        check_write: bool,
-    ) -> None:
+    def get_mount_points(self) -> list[str]:
+        """Return all active mount point paths.
+
+        Returns paths from the ``_backends`` registry (active mounts with
+        loaded backends). DT_MOUNT entries in metastore without a loaded
+        backend are excluded (stale/remote mounts).
         """
-        Check access control for a path.
+        return sorted(self._backends.keys())
 
-        Args:
-            path_info: Parsed path information
-            zone_id: Current zone identifier
-            is_admin: Whether requester has admin privileges
-            check_write: Whether to check write permissions
+    def has_mount(self, mount_point: str) -> bool:
+        """Check if an active mount exists at the given mount point."""
+        try:
+            normalized = self._normalize_path(mount_point)
+            return normalized in self._backends
+        except ValueError:
+            return False
 
-        Raises:
-            AccessDeniedError: If access is denied
-        """
-        # Get namespace config
-        if path_info.namespace not in self._namespaces:
-            # Unknown namespace - allow access
-            return
+    def get_mount(self, mount_point: str) -> "MountInfo | None":
+        """Get mount info for a specific mount point, or None if not found."""
+        from nexus.core.protocols.vfs_router import MountInfo
 
-        ns_config = self._namespaces[path_info.namespace]
-
-        # Check admin-only namespaces
-        if ns_config.admin_only and not is_admin:
-            raise AccessDeniedError(f"Namespace '{path_info.namespace}' requires admin privileges")
-
-        # Check write access to read-only namespaces
-        if ns_config.readonly and check_write:
-            raise AccessDeniedError(f"Namespace '{path_info.namespace}' is read-only")
-
-        # Check zone isolation (only if path contains zone_id)
-        # NOTE: With API key authentication, zone comes from the key, not the path.
-        # For simple paths like /workspace/file.txt, ReBAC handles permissions - don't double-check zone.
-        if (
-            ns_config.requires_zone
-            and path_info.zone_id
-            and not is_admin
-            and zone_id
-            and path_info.zone_id != zone_id
-        ):
-            raise AccessDeniedError(
-                f"Access denied: zone '{zone_id}' cannot access "
-                f"zone '{path_info.zone_id}' resources"
+        try:
+            normalized = self._normalize_path(mount_point)
+            entry = self._backends.get(normalized)
+            if entry is None:
+                return None
+            return MountInfo(
+                mount_point=normalized,
+                readonly=entry.readonly,
+                admin_only=entry.admin_only,
             )
+        except ValueError:
+            return None
 
-        # Note: Workspace isolation is now handled by ReBAC, not path-based agent_id checks
-        # Permissions on workspace files are managed through explicit ReBAC tuples
+    def remove_mount(self, mount_point: str) -> bool:
+        """Remove a mount by its mount point.
 
-    def _match_longest_prefix(self, virtual_path: str) -> MountConfig | None:
-        """
-        Find mount with longest matching prefix.
-
-        Note: mounts already sorted by (priority DESC, prefix_length DESC)
-        so first match is the winner.
-
-        Args:
-            virtual_path: Normalized virtual path
+        Deletes the DT_MOUNT entry from metastore and unregisters the backend.
 
         Returns:
-            MountConfig if match found, None otherwise
+            True if mount was removed, False if not found.
         """
-        for mount in self._mounts:
-            # Exact match
-            if virtual_path == mount.mount_point:
-                return mount
+        try:
+            normalized = self._normalize_path(mount_point)
+            if normalized not in self._backends:
+                return False
+            del self._backends[normalized]
+            self._metastore.delete(normalized)
+            return True
+        except ValueError:
+            return False
 
-            # Prefix match - check that mount_point is a directory boundary
-            # For "/workspace", it should match "/workspace/..." but not "/workspace2/..."
-            if mount.mount_point == "/":
-                # Root mount matches everything
-                return mount
-            elif virtual_path.startswith(mount.mount_point + "/"):
-                return mount
+    def list_mounts(self) -> "list[MountInfo]":
+        """List all active mounts as MountInfo protocol objects."""
+        from nexus.core.protocols.vfs_router import MountInfo
 
+        return [
+            MountInfo(
+                mount_point=mp,
+                readonly=entry.readonly,
+                admin_only=entry.admin_only,
+            )
+            for mp, entry in sorted(self._backends.items())
+        ]
+
+    def get_backend_by_name(self, name: str) -> Any:
+        """Look up backend by name.
+
+        Useful for operations that need a specific backend
+        (e.g., CLI undo needs to read from the backend that stored content).
+        """
+        for entry in self._backends.values():
+            if entry.backend.name == name:
+                return entry.backend
         return None
 
-    def _strip_mount_prefix(self, virtual_path: str, mount_point: str) -> str:
-        """
-        Strip mount prefix to get backend-relative path.
-
-        Examples:
-            ("/workspace/data/file.txt", "/workspace") → "data/file.txt"
-            ("/workspace", "/workspace") → ""
-            ("/shared/docs/report.pdf", "/shared") → "docs/report.pdf"
-            ("/workspace/data/file.txt", "/") → "workspace/data/file.txt"
-
-        Args:
-            virtual_path: Full virtual path
-            mount_point: Mount point prefix
-
-        Returns:
-            Backend-relative path
-        """
-        if virtual_path == mount_point:
-            return ""
-
-        # Special case for root mount
-        if mount_point == "/":
-            return virtual_path.lstrip("/")
-
-        # Remove mount_point prefix and leading slash
-        relative = virtual_path[len(mount_point) :].lstrip("/")
-        return relative
-
-    def _register_default_namespaces(self) -> None:
-        """Register default namespace configurations."""
-        # Workspace - Registered workspace directories (ReBAC-based permissions)
-        # Workspaces are explicitly registered via register_workspace() API
-        # Permissions are managed through ReBAC, not path-based zone/agent parsing
-        self.register_namespace(
-            NamespaceConfig(name="workspace", readonly=False, admin_only=False, requires_zone=False)
-        )
-
-        # Shared - Shared zone data (persistent, zone-wide access)
-        self.register_namespace(
-            NamespaceConfig(name="shared", readonly=False, admin_only=False, requires_zone=True)
-        )
-
-        # External - Pass-through backends (no special restrictions)
-        self.register_namespace(
-            NamespaceConfig(name="external", readonly=False, admin_only=False, requires_zone=False)
-        )
-
-        # System - System metadata (admin-only, immutable)
-        self.register_namespace(
-            NamespaceConfig(name="system", readonly=True, admin_only=True, requires_zone=False)
-        )
-
-        # Archives - Cold storage (read-only)
-        self.register_namespace(
-            NamespaceConfig(name="archives", readonly=True, admin_only=False, requires_zone=True)
-        )
-
-    def register_namespace(self, config: NamespaceConfig) -> None:
-        """
-        Register a namespace configuration.
-
-        Args:
-            config: Namespace configuration
-        """
-        self._namespaces[config.name] = config
+    # ------------------------------------------------------------------
+    # Path validation and normalization (kept — security-critical)
+    # ------------------------------------------------------------------
 
     def validate_path(self, path: str) -> str:
-        """
-        Validate path format and check for security issues.
+        """Validate path format and check for security issues.
 
         Rules:
-        - Must start with /
+        - Must start with ``/``
         - No null bytes or control characters
         - No path traversal (..)
-        - Valid namespace (if configured)
-
-        Args:
-            path: Path to validate
-
-        Returns:
-            Normalized path
-
-        Raises:
-            InvalidPathError: If path is invalid or has security issues
         """
-        # Ensure absolute path
         if not path.startswith("/"):
             raise InvalidPathError(path, "Path must be absolute")
 
-        # Check for null bytes
         if "\0" in path:
             raise InvalidPathError(path, "Path contains null byte")
 
-        # Check for control characters
         if any(ord(c) < 32 for c in path if c not in ("\t", "\n")):
             raise InvalidPathError(path, "Path contains control characters")
 
-        # Normalize first - this resolves . and .. segments
-        # SECURITY: Must normalize BEFORE checking for path traversal
-        # to handle cases like /foo/./bar or complex traversal attempts
+        # SECURITY: Normalize BEFORE checking for path traversal
         normalized = self._normalize_path(path)
 
-        # After normalization, check for path traversal
-        # If normalized path doesn't start with /, it escaped root
         if not normalized.startswith("/"):
             raise InvalidPathError(path, "Path traversal detected")
 
-        # Additional security check: detect if path traversal changed the namespace
-        # Extract first path component (namespace) before and after normalization
-        # to detect attempts to escape namespace boundaries
+        # Detect if path traversal changed the top-level component
         if ".." in path:
-            # Path contained .. - verify normalization didn't change namespace
             orig_parts = path.lstrip("/").split("/", 1)
             norm_parts = normalized.lstrip("/").split("/", 1)
 
             if len(orig_parts) > 0 and len(norm_parts) > 0:
-                orig_namespace = orig_parts[0]
-                norm_namespace = norm_parts[0]
-
-                # If namespace changed or normalized to empty, path traversal occurred
-                if orig_namespace != norm_namespace or norm_namespace == "":
+                orig_top = orig_parts[0]
+                norm_top = norm_parts[0]
+                if orig_top != norm_top or norm_top == "":
                     raise InvalidPathError(
-                        path, "Path traversal detected (attempted to escape namespace)"
+                        path, "Path traversal detected (attempted to escape mount boundary)"
                     )
 
         return normalized
 
-    def parse_path(self, path: str, _zone_id: str | None = None) -> PathInfo:
-        """
-        Parse virtual path to extract namespace, zone, and agent information.
-
-        Supported formats:
-        - /workspace/{path}                   → workspace namespace (ReBAC-based permissions)
-        - /shared/{zone}/{path}               → shared namespace
-        - /external/{backend}/{path}          → external namespace
-        - /system/{path}                      → system namespace
-        - /archives/{zone}/{path}             → archives namespace
-
-        Args:
-            path: Virtual path to parse (must be normalized)
-            _zone_id: Reserved for future use (single-zone vs multi-zone mode)
-
-        Returns:
-            PathInfo with extracted components
-
-        Raises:
-            InvalidPathError: If path format is invalid
-        """
-        # Normalize path first
-        path = self._normalize_path(path)
-
-        # Split path into components
-        parts = path.lstrip("/").split("/")
-
-        if not parts or parts[0] == "":
-            raise InvalidPathError(path, "Cannot parse root path")
-
-        namespace = parts[0]
-
-        # Check if namespace is registered
-        if namespace not in self._namespaces:
-            # If no specific namespace, treat first component as namespace
-            # This allows for dynamic namespaces
-            return PathInfo(
-                namespace=namespace,
-                zone_id=None,
-                relative_path="/".join(parts[1:]) if len(parts) > 1 else "",
-            )
-
-        # Get namespace config
-        ns_config = self._namespaces[namespace]
-
-        # Parse based on namespace type
-        if namespace in ("shared", "archives"):
-            # Format: /shared/{zone}/{path} or /archives/{zone}/{path}
-            # Allow partial paths for directory creation
-            if len(parts) >= 2:
-                return PathInfo(
-                    namespace=namespace,
-                    zone_id=parts[1],
-                    relative_path="/".join(parts[2:]) if len(parts) > 2 else "",
-                )
-            else:
-                # Just the namespace root
-                return PathInfo(
-                    namespace=namespace,
-                    zone_id=None,
-                    relative_path="",
-                )
-
-        elif namespace in ("external", "system", "workspace"):
-            # Format: /external/{path} or /system/{path} or /workspace/{path}
-            # No zone/agent parsing - ReBAC handles permissions
-            return PathInfo(
-                namespace=namespace,
-                zone_id=None,
-                relative_path="/".join(parts[1:]) if len(parts) > 1 else "",
-            )
-
-        else:
-            # Custom namespace - check config for zone requirement
-            if ns_config.requires_zone:
-                # Format: /{namespace}/{zone}/{path}
-                # Similar to shared/archives
-                if len(parts) >= 2:
-                    return PathInfo(
-                        namespace=namespace,
-                        zone_id=parts[1],
-                        relative_path="/".join(parts[2:]) if len(parts) > 2 else "",
-                    )
-                else:
-                    # Just the namespace root
-                    return PathInfo(
-                        namespace=namespace,
-                        zone_id=None,
-                        relative_path="",
-                    )
-            else:
-                # No zone isolation required
-                return PathInfo(
-                    namespace=namespace,
-                    zone_id=None,
-                    relative_path="/".join(parts[1:]) if len(parts) > 1 else "",
-                )
-
     def _normalize_path(self, path: str) -> str:
+        """Normalize virtual path.
+
+        Rules: absolute, collapse ``//``, remove trailing ``/``, resolve ``.`` and ``..``.
         """
-        Normalize virtual path.
-
-        Rules:
-        - Must start with /
-        - Collapse multiple slashes (// -> /)
-        - Remove trailing slash (except root /)
-        - Resolve . and .. (security)
-
-        Args:
-            path: Path to normalize
-
-        Returns:
-            Normalized path
-
-        Raises:
-            ValueError: If path is invalid
-        """
-        # Ensure absolute
         if not path.startswith("/"):
             raise ValueError(f"Path must be absolute: {path}")
 
-        # Normalize using posixpath
         normalized = posixpath.normpath(path)
 
-        # Security: Prevent path traversal outside root
         if not normalized.startswith("/"):
             raise ValueError(f"Path traversal detected: {path}")
 
         return normalized
 
-    def has_mount(self, mount_point: str) -> bool:
+    def _strip_mount_prefix(self, virtual_path: str, mount_point: str) -> str:
+        """Strip mount prefix to get backend-relative path.
+
+        Examples::
+
+            ("/workspace/data/file.txt", "/workspace") → "data/file.txt"
+            ("/workspace", "/workspace") → ""
+            ("/shared/docs/report.pdf", "/shared") → "docs/report.pdf"
+            ("/workspace/data/file.txt", "/") → "workspace/data/file.txt"
         """
-        Check if a mount exists at the given mount point.
-
-        Args:
-            mount_point: Virtual path to check
-
-        Returns:
-            True if mount exists, False otherwise
-
-        Example:
-            >>> router.has_mount("/personal/alice")
-            True
-        """
-        try:
-            normalized = self._normalize_path(mount_point)
-            return any(m.mount_point == normalized for m in self._mounts)
-        except ValueError:
-            return False
-
-    def get_mount(self, mount_point: str) -> MountConfig | None:
-        """
-        Get mount configuration for a specific mount point.
-
-        Args:
-            mount_point: Virtual path to get mount config for
-
-        Returns:
-            MountConfig if found, None otherwise
-
-        Example:
-            >>> mount = router.get_mount("/personal/alice")
-            >>> if mount:
-            ...     print(f"Backend: {mount.backend}, Priority: {mount.priority}")
-        """
-        try:
-            normalized = self._normalize_path(mount_point)
-            for m in self._mounts:
-                if m.mount_point == normalized:
-                    return m
-            return None
-        except ValueError:
-            return None
-
-    def remove_mount(self, mount_point: str) -> bool:
-        """
-        Remove a mount by its mount point.
-
-        Args:
-            mount_point: Virtual path to unmount
-
-        Returns:
-            True if mount was removed, False if not found
-
-        Example:
-            >>> router.remove_mount("/personal/alice")
-            True
-        """
-        try:
-            normalized = self._normalize_path(mount_point)
-            original_len = len(self._mounts)
-            self._mounts = [m for m in self._mounts if m.mount_point != normalized]
-            return len(self._mounts) < original_len
-        except ValueError:
-            return False
-
-    def list_mounts(self) -> list[MountConfig]:
-        """
-        List all registered mounts.
-
-        Returns:
-            List of MountConfig objects (sorted by priority and prefix length)
-
-        Example:
-            >>> for mount in router.list_mounts():
-            ...     print(f"{mount.mount_point} -> {mount.backend}")
-        """
-        return self._mounts.copy()
-
-    def get_backend_by_name(self, name: str) -> "ConnectorProtocol | None":
-        """
-        Look up backend by name.
-
-        Useful for operations that need to access a specific backend
-        (e.g., CLI undo needs to read from the backend that stored content).
-
-        Args:
-            name: Backend name (e.g., "local", "gcs", "postgres")
-
-        Returns:
-            Backend instance if found, None otherwise
-
-        Example:
-            >>> backend = router.get_backend_by_name("local")
-            >>> if backend:
-            ...     content = backend.read_content(content_hash)
-        """
-        for mount in self._mounts:
-            if mount.backend.name == name:
-                return mount.backend
-        return None
+        if virtual_path == mount_point:
+            return ""
+        if mount_point == "/":
+            return virtual_path.lstrip("/")
+        return virtual_path[len(mount_point) :].lstrip("/")

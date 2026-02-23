@@ -51,6 +51,7 @@ def mock_gateway(record_store):
     # Mock backend that records write_content calls
     mock_backend = MagicMock()
     mock_backend.name = "test_gcs"
+    mock_backend.has_virtual_filesystem = False
     write_response = MagicMock()
     write_response.success = True
     write_response.data = "new_content_hash"
@@ -507,3 +508,84 @@ class TestMultiZoneIntegration:
 
         backend = mock_gateway.get_mount_for_path.return_value["backend"]
         assert backend.write_content.call_count == 2
+
+
+# =============================================================================
+# Virtual Filesystem (Reference-Mode) Skip Tests
+# =============================================================================
+
+
+class TestVirtualFilesystemSkip:
+    """Write-back should skip reference-mode backends like LocalConnector."""
+
+    @pytest.mark.asyncio
+    async def test_skip_virtual_filesystem_backends(self, mock_event_bus):
+        """Write-back should skip events from reference-mode backends (LocalConnector)."""
+        # Setup gateway where mount returns a backend with has_virtual_filesystem=True
+        gw = MagicMock()
+        store = SQLAlchemyRecordStore(db_url="sqlite:///:memory:", create_tables=True)
+
+        mock_backend = MagicMock()
+        mock_backend.name = "test_local"
+        mock_backend.has_virtual_filesystem = True
+
+        gw.get_mount_for_path.return_value = {
+            "mount_point": "/mnt/local",
+            "backend": mock_backend,
+            "backend_path": "docs/readme.md",
+            "readonly": False,
+            "backend_name": "test_local",
+            "conflict_strategy": None,
+        }
+
+        backlog_store = SyncBacklogStore(record_store=store)
+        change_log_store = ChangeLogStore(record_store=store)
+
+        service = WriteBackService(
+            gateway=gw,
+            event_bus=mock_event_bus,
+            backlog_store=backlog_store,
+            change_log_store=change_log_store,
+        )
+
+        # Fire a FILE_WRITE event
+        event = FileEvent(
+            type=FileEventType.FILE_WRITE,
+            path="/mnt/local/docs/readme.md",
+            zone_id="root",
+            etag="abc123",
+        )
+        await service._on_file_event(event)
+
+        # Assert backlog_store.enqueue() was NOT called — no pending entries
+        entries = backlog_store.fetch_pending("test_local", "root")
+        assert len(entries) == 0
+
+        store.close()
+
+    @pytest.mark.asyncio
+    async def test_non_virtual_filesystem_backends_still_enqueued(
+        self, mock_gateway, mock_event_bus
+    ):
+        """Write-back should still enqueue events from non-virtual backends (e.g. GCS)."""
+        backlog_store = SyncBacklogStore(record_store=mock_gateway.record_store)
+        change_log_store = ChangeLogStore(record_store=mock_gateway.record_store)
+
+        service = WriteBackService(
+            gateway=mock_gateway,
+            event_bus=mock_event_bus,
+            backlog_store=backlog_store,
+            change_log_store=change_log_store,
+        )
+
+        # Default mock_gateway backend does NOT have has_virtual_filesystem
+        event = FileEvent(
+            type=FileEventType.FILE_WRITE,
+            path="/mnt/gcs/project/file.txt",
+            zone_id="root",
+            etag="abc123",
+        )
+        await service._on_file_event(event)
+
+        entries = backlog_store.fetch_pending("test_gcs", "root")
+        assert len(entries) == 1

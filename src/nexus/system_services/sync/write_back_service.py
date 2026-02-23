@@ -161,6 +161,12 @@ class WriteBackService:
         if mount_info["readonly"]:
             return
 
+        # Skip reference-mode backends (e.g. LocalConnector) — content is already
+        # written directly to the physical filesystem, write-back would double-write.
+        backend = mount_info["backend"]
+        if getattr(backend, "has_virtual_filesystem", False):
+            return
+
         # Map event type to operation type
         op_type = self._event_to_operation(event_type)
         if op_type is None:

@@ -329,62 +329,6 @@ class TestFunctionPairComponent:
 
 
 # ---------------------------------------------------------------------------
-# WriteBufferComponent tests (Issue #2072)
-# ---------------------------------------------------------------------------
-
-
-class TestWriteBufferComponent:
-    """Tests for WriteBufferComponent."""
-
-    def test_satisfies_lifecycle_protocol(self) -> None:
-        from nexus.server.observability.components import WriteBufferComponent
-
-        comp = WriteBufferComponent(write_observer=None)
-        assert isinstance(comp, LifecycleComponent)
-
-    @pytest.mark.asyncio
-    async def test_start_marks_started(self) -> None:
-        from nexus.server.observability.components import WriteBufferComponent
-
-        comp = WriteBufferComponent(write_observer=None)
-        await comp.start()
-        assert comp.is_healthy()
-
-    @pytest.mark.asyncio
-    async def test_shutdown_calls_stop(self) -> None:
-        from unittest.mock import MagicMock
-
-        from nexus.server.observability.components import WriteBufferComponent
-
-        wo = MagicMock()
-        comp = WriteBufferComponent(write_observer=wo)
-        await comp.start()
-        await comp.shutdown()
-        wo.stop.assert_called_once()
-        assert not comp.is_healthy()
-
-    @pytest.mark.asyncio
-    async def test_shutdown_noop_when_write_observer_none(self) -> None:
-        from nexus.server.observability.components import WriteBufferComponent
-
-        comp = WriteBufferComponent(write_observer=None)
-        await comp.start()
-        await comp.shutdown()  # Should not raise
-        assert not comp.is_healthy()
-
-    @pytest.mark.asyncio
-    async def test_shutdown_noop_before_start(self) -> None:
-        from unittest.mock import MagicMock
-
-        from nexus.server.observability.components import WriteBufferComponent
-
-        wo = MagicMock()
-        comp = WriteBufferComponent(write_observer=wo)
-        await comp.shutdown()
-        wo.stop.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
 # create_registry() wiring tests (Issue #2072)
 # ---------------------------------------------------------------------------
 
@@ -403,17 +347,7 @@ class TestCreateRegistry:
         assert "sentry" in names
         assert "pyroscope" in names
         assert "prometheus" in names
-        assert len(names) == 5  # No write-buffer when write_observer=None
-
-    def test_registers_write_buffer_when_observer_provided(self) -> None:
-        from unittest.mock import MagicMock
-
-        from nexus.server.lifespan.observability import create_registry
-
-        registry = create_registry(write_observer=MagicMock())
-        names = [name for name, _, _ in registry._components]
-        assert "write-buffer" in names
-        assert len(names) == 6
+        assert len(names) == 5
 
     def test_registration_order_matches_dependency_order(self) -> None:
         from nexus.server.lifespan.observability import create_registry

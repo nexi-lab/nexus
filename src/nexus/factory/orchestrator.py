@@ -66,7 +66,7 @@ def create_nexus_services(
         distributed: Distributed config (for event bus/locks).
         zone_id: Default zone ID (for WorkspaceManager, embedded mode only).
         agent_id: Default agent ID (for WorkspaceManager, embedded mode only).
-        enable_write_buffer: Use async WriteBuffer for PG sync (Issue #1246).
+        enable_write_buffer: Use async DT_PIPE observer for PG sync (Issue #809).
         resiliency_raw: Raw resiliency policy dict from YAML config.
         enabled_bricks: Set of brick names to enable. When None, all bricks
             are enabled (backward-compatible default = FULL profile).
@@ -198,6 +198,8 @@ def create_nexus_services(
         resiliency_manager=system_dict["resiliency_manager"],
         eviction_manager=system_dict.get("eviction_manager"),
         zone_lifecycle=system_dict.get("zone_lifecycle"),
+        # DT_PIPE manager (Issue #809)
+        pipe_manager=system_dict.get("pipe_manager"),
     )
 
     brick_services = _BrickServices(
@@ -234,6 +236,8 @@ def create_nexus_services(
         governance_collusion_service=brick_dict["governance_collusion_service"],
         governance_graph_service=brick_dict["governance_graph_service"],
         governance_response_service=brick_dict["governance_response_service"],
+        # Search Brick (Issue #810)
+        zoekt_pipe_consumer=brick_dict.get("zoekt_pipe_consumer"),
     )
 
     return kernel_services, system_services, brick_services
@@ -279,7 +283,7 @@ def create_nexus_fs(
         kernel_services: Pre-built KernelServices (skips create_nexus_services).
         system_services: Pre-built SystemServices.
         brick_services: Pre-built BrickServices.
-        enable_write_buffer: Use async WriteBuffer for PG sync.
+        enable_write_buffer: Use async DT_PIPE observer for PG sync.
         enabled_bricks: Set of brick names to enable.
         zone_id: Default zone ID (for WorkspaceManager, embedded mode).
         agent_id: Default agent ID (for WorkspaceManager, embedded mode).

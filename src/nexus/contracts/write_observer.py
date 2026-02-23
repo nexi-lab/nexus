@@ -11,7 +11,7 @@ derive whatever they need (e.g. snapshot_hash = metadata.etag).
 
 Current implementations:
 - RecordStoreWriteObserver: synchronous audit trail + versioning (strict_mode)
-- BufferedRecordStoreWriteObserver: async via WriteBuffer (fire-and-forget)
+- PipedRecordStoreWriteObserver: async via DT_PIPE kernel IPC (Issue #809)
 
 The kernel is a pure caller — it never catches observer exceptions.
 Each implementation decides its own failure handling strategy.

@@ -457,15 +457,6 @@ class TestStartBackgroundServices:
         # Should not raise
         _start_background_services(system)
 
-    def test_buffered_syncer_started(self) -> None:
-        from nexus.factory import _start_background_services
-        from nexus.storage.record_store_write_observer import BufferedRecordStoreWriteObserver
-
-        wo = MagicMock(spec=BufferedRecordStoreWriteObserver)
-        system = {"deferred_permission_buffer": None, "write_observer": wo, "delivery_worker": None}
-        _start_background_services(system)
-        wo.start.assert_called_once()
-
     def test_zone_lifecycle_loads_terminating_zones(self) -> None:
         """Issue #2061: load_terminating_zones called on startup."""
         from nexus.factory import _start_background_services

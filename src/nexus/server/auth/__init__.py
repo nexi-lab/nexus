@@ -6,22 +6,23 @@ Auth providers live in nexus.auth brick.
 
 import warnings
 
+from nexus.auth_config import OAuthConfig, OAuthProviderConfig  # noqa: F401
+
 # OAuth components — now in nexus.auth.oauth brick (re-exported for backward compat)
-from nexus.auth.oauth.crypto import OAuthCrypto  # noqa: F401
-from nexus.auth.oauth.factory import OAuthProviderFactory  # noqa: F401
-from nexus.auth.oauth.providers.google import GoogleOAuthProvider  # noqa: F401
-from nexus.auth.oauth.providers.microsoft import MicrosoftOAuthProvider  # noqa: F401
+from nexus.bricks.auth.oauth.crypto import OAuthCrypto  # noqa: F401
+from nexus.bricks.auth.oauth.factory import OAuthProviderFactory  # noqa: F401
+from nexus.bricks.auth.oauth.providers.google import GoogleOAuthProvider  # noqa: F401
+from nexus.bricks.auth.oauth.providers.microsoft import MicrosoftOAuthProvider  # noqa: F401
+from nexus.bricks.auth.oauth.token_manager import TokenManager  # noqa: F401
 
 # Auth brick re-exports (moved to nexus.auth in Issue #1399)
-from nexus.auth.providers.base import AuthProvider, AuthResult  # noqa: F401
-from nexus.auth.providers.database_key import DatabaseAPIKeyAuth  # noqa: F401
-from nexus.auth.providers.database_local import DatabaseLocalAuth  # noqa: F401
-from nexus.auth.providers.discriminator import DiscriminatingAuthProvider  # noqa: F401
-from nexus.auth.providers.local import LocalAuth  # noqa: F401
-from nexus.auth.providers.oidc import MultiOIDCAuth, OIDCAuth  # noqa: F401
-from nexus.auth.providers.static_key import StaticAPIKeyAuth  # noqa: F401
-from nexus.auth_config import OAuthConfig, OAuthProviderConfig  # noqa: F401
-from nexus.bricks.auth.oauth.token_manager import TokenManager  # noqa: F401
+from nexus.bricks.auth.providers.base import AuthProvider, AuthResult  # noqa: F401
+from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth  # noqa: F401
+from nexus.bricks.auth.providers.database_local import DatabaseLocalAuth  # noqa: F401
+from nexus.bricks.auth.providers.discriminator import DiscriminatingAuthProvider  # noqa: F401
+from nexus.bricks.auth.providers.local import LocalAuth  # noqa: F401
+from nexus.bricks.auth.providers.oidc import MultiOIDCAuth, OIDCAuth  # noqa: F401
+from nexus.bricks.auth.providers.static_key import StaticAPIKeyAuth  # noqa: F401
 
 # Factory function — stays here but delegates to brick providers
 from nexus.server.auth.factory import create_auth_provider  # noqa: F401

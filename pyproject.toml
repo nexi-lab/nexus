@@ -981,8 +981,6 @@ ignore_imports = [
     "nexus.services.permissions.namespace_manager -> nexus.rebac.manager",
     "nexus.services.permissions.permission_cache -> nexus.rebac.manager",
     "nexus.services.permissions.permission_filter_chain -> nexus.rebac.manager",
-    "nexus.services.permissions.rebac_manager -> nexus.rebac.manager",
-    "nexus.services.permissions.rebac_manager_enhanced -> nexus.rebac.manager",
     # --- non-layer module chain hops (transitively reaching bricks) ---
     "nexus.rebac.manager -> nexus.rebac.rebac_tracing",
     "nexus.rebac.rebac_tracing -> nexus.server.telemetry",

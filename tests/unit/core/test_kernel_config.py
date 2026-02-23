@@ -329,7 +329,6 @@ class TestSystemServices:
             "delivery_worker",
             "observability_subsystem",
             "resiliency_manager",
-            "tiger_cache_manager",
             "zone_lifecycle",
         }
         assert field_names == expected_fields, (

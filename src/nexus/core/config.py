@@ -220,9 +220,6 @@ class SystemServices:
     mount_manager: Any = None
     workspace_manager: WorkspaceManagerProtocol | None = None
 
-    # Tiger Cache manager (Issue #2133: injected via factory)
-    tiger_cache_manager: Any = None
-
     # =================================================================
     # Original system services (all degradable)
     # =================================================================

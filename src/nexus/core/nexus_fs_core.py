@@ -1810,26 +1810,6 @@ class NexusFSCoreMixin:
             )
         )
 
-        # Leopard-style: Add new file to ancestor directory grants
-        # When a file is created in a directory that has been granted to users,
-        # the file should inherit those permissions (if include_future_files=True)
-        is_new_file = meta is None
-        if is_new_file and hasattr(self, "_rebac_manager") and self._rebac_manager:
-            try:
-                tiger_cache = getattr(self._rebac_manager, "_tiger_cache", None)
-                if tiger_cache:
-                    added_count = tiger_cache.add_file_to_ancestor_grants(
-                        file_path=path,
-                        zone_id=zone_id or "root",
-                    )
-                    if added_count > 0:
-                        logger.debug(
-                            f"[LEOPARD] New file {path} added to {added_count} ancestor directory grants"
-                        )
-            except Exception as e:
-                # Log but don't fail the write operation
-                logger.warning(f"[LEOPARD] Failed to add new file to ancestor grants: {e}")
-
         # Invalidate cached parsed_text when file is updated
         # This ensures read(parsed=True) re-parses the new content
         if meta is not None:  # File existed before (update, not create)

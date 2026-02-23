@@ -13,6 +13,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.core.file_events import FileEvent
 
 if TYPE_CHECKING:
@@ -55,7 +56,7 @@ class PubSubExporter:
     async def publish(self, event: FileEvent) -> None:
         """Publish a single event to Pub/Sub."""
         publisher = await self._ensure_publisher()
-        zone = event.zone_id or "default"
+        zone = event.zone_id or ROOT_ZONE_ID
         topic = self._topic_path(zone)
         data = json.dumps(event.to_dict()).encode("utf-8")
 
@@ -77,7 +78,7 @@ class PubSubExporter:
         # Group events by zone for efficient batching
         by_zone: dict[str, list[FileEvent]] = {}
         for event in events:
-            zone = event.zone_id or "default"
+            zone = event.zone_id or ROOT_ZONE_ID
             by_zone.setdefault(zone, []).append(event)
 
         for zone, zone_events in by_zone.items():

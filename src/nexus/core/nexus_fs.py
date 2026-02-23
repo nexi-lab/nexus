@@ -768,7 +768,7 @@ class NexusFS(  # type: ignore[misc]
         if hasattr(self, "_hierarchy_manager"):
             try:
                 logger.debug(
-                    f"mkdir: Calling ensure_parent_tuples for {path}, zone_id={ctx.zone_id or 'default'}"
+                    f"mkdir: Calling ensure_parent_tuples for {path}, zone_id={ctx.zone_id or ROOT_ZONE_ID}"
                 )
                 created_count = self._hierarchy_manager.ensure_parent_tuples(
                     path, zone_id=ctx.zone_id or ROOT_ZONE_ID

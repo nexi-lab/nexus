@@ -1843,7 +1843,7 @@ class NexusFSCoreMixin:
             if hasattr(self, "_hierarchy_manager"):
                 try:
                     logger.info(
-                        f"write: Calling ensure_parent_tuples for {path}, zone_id={ctx.zone_id or 'default'}"
+                        f"write: Calling ensure_parent_tuples for {path}, zone_id={ctx.zone_id or ROOT_ZONE_ID}"
                     )
                     created_count = self._hierarchy_manager.ensure_parent_tuples(
                         path, zone_id=ctx.zone_id or "root"

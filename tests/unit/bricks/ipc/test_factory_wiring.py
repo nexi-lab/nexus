@@ -90,9 +90,11 @@ class TestIPCVFSDriverMount:
         storage = InMemoryStorageDriver()
         driver = IPCVFSDriver(storage=storage, zone_id="test-zone")
 
-        router = PathRouter()
+        from tests.helpers.in_memory_metadata_store import InMemoryMetastore
+
+        router = PathRouter(InMemoryMetastore())
         # Should not raise — IPCVFSDriver extends Backend
-        router.add_mount("/agents", driver, priority=10)
+        router.add_mount("/agents", driver)
 
         # Verify it's mounted
         assert driver.name == "ipc"

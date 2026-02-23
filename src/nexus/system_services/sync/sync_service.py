@@ -190,11 +190,11 @@ class SyncService:
         """
         assert ctx.mount_point is not None
 
-        mount = self._gw.router.get_mount(ctx.mount_point)
-        if not mount:
+        if not self._gw.router.has_mount(ctx.mount_point):
             raise ValueError(f"Mount not found: {ctx.mount_point}")
 
-        backend = mount.backend
+        route = self._gw.router.route(ctx.mount_point)
+        backend = route.backend
         backend_name = type(backend).__name__
 
         if not hasattr(backend, "list_dir"):

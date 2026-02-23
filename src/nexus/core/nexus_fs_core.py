@@ -8,6 +8,8 @@ This module contains the fundamental file operations:
 - exists: Check file existence
 """
 
+from __future__ import annotations
+
 import asyncio
 import contextlib
 import logging
@@ -28,7 +30,6 @@ from nexus.lib.rpc_decorator import rpc_expose
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from nexus.backends.backend import Backend
     from nexus.core.router import PathRouter
     from nexus.parsers.registry import ParserRegistry
 
@@ -50,7 +51,6 @@ class NexusFSCoreMixin:
         from nexus.core.protocols.permission_enforcer import PermissionEnforcerProtocol
 
         metadata: MetastoreABC
-        backend: Backend
         router: PathRouter
         is_admin: bool
         auto_parse: bool
@@ -723,7 +723,6 @@ class NexusFSCoreMixin:
             zone_id, agent_id, is_admin = self._get_routing_params(context)
             route = self.router.route(
                 original_path,
-                zone_id=zone_id,
                 is_admin=is_admin,
                 check_write=False,
             )
@@ -770,7 +769,6 @@ class NexusFSCoreMixin:
         zone_id, agent_id, is_admin = self._get_routing_params(context)
         route = self.router.route(
             path,
-            zone_id=zone_id,
             is_admin=is_admin,
             check_write=False,
         )
@@ -1007,7 +1005,6 @@ class NexusFSCoreMixin:
 
                 route = self.router.route(
                     path,
-                    zone_id=zone_id,
                     is_admin=is_admin,
                     check_write=False,
                 )
@@ -1324,7 +1321,6 @@ class NexusFSCoreMixin:
         zone_id, agent_id, is_admin = self._get_routing_params(context)
         route = self.router.route(
             path,
-            zone_id=zone_id,
             is_admin=is_admin,
             check_write=False,
         )
@@ -1392,7 +1388,6 @@ class NexusFSCoreMixin:
         zone_id, agent_id, is_admin = self._get_routing_params(context)
         route = self.router.route(
             path,
-            zone_id=zone_id,
             is_admin=is_admin,
             check_write=False,
         )
@@ -1436,7 +1431,6 @@ class NexusFSCoreMixin:
         zone_id, agent_id, is_admin = self._get_routing_params(context)
         route = self.router.route(
             path,
-            zone_id=zone_id,
             is_admin=is_admin,
             check_write=False,
         )
@@ -1495,7 +1489,6 @@ class NexusFSCoreMixin:
         zone_id, agent_id, is_admin = self._get_routing_params(context)
         route = self.router.route(
             path,
-            zone_id=zone_id,
             is_admin=is_admin,
             check_write=True,
         )
@@ -1684,7 +1677,6 @@ class NexusFSCoreMixin:
 
         route = self.router.route(
             path,
-            zone_id=zone_id,
             is_admin=is_admin,
             check_write=True,
         )
@@ -2377,7 +2369,6 @@ class NexusFSCoreMixin:
         for path, _ in validated_files:
             route = self.router.route(
                 path,
-                zone_id=zone_id,
                 is_admin=is_admin,
                 check_write=True,
             )
@@ -2703,7 +2694,6 @@ class NexusFSCoreMixin:
         zone_id, agent_id, is_admin = self._get_routing_params(context)
         route = self.router.route(
             path,
-            zone_id=zone_id,
             is_admin=is_admin,
             check_write=True,
         )
@@ -2829,13 +2819,11 @@ class NexusFSCoreMixin:
         zone_id, agent_id, is_admin = self._get_routing_params(context)
         old_route = self.router.route(
             old_path,
-            zone_id=zone_id,
             is_admin=is_admin,
             check_write=True,  # Need write access to source
         )
         new_route = self.router.route(
             new_path,
-            zone_id=zone_id,
             is_admin=is_admin,
             check_write=True,  # Need write access to destination
         )
@@ -3065,7 +3053,6 @@ class NexusFSCoreMixin:
             zone_id, agent_id, is_admin = self._get_routing_params(context)
             route = self.router.route(
                 path,
-                zone_id=zone_id,
                 is_admin=is_admin,
                 check_write=False,
             )
@@ -3439,8 +3426,9 @@ class NexusFSCoreMixin:
         if not memory:
             raise NexusFileNotFoundError(f"Memory not found at path: {path}")
 
-        # Read content from CAS
-        content = self.backend.read_content(memory.content_hash, context=context).unwrap()
+        # Read content from CAS — route the memory path to find the backend
+        route = self.router.route(path, is_admin=True)
+        content = route.backend.read_content(memory.content_hash, context=context).unwrap()
 
         if return_metadata:
             return {
@@ -3523,7 +3511,8 @@ class NexusFSCoreMixin:
         router.delete_memory(memory.memory_id)
 
         # Also delete content from CAS (decrement ref count)
-        self.backend.delete_content(memory.content_hash, context=context).unwrap()
+        route = self.router.route(path, is_admin=True)
+        route.backend.delete_content(memory.content_hash, context=context).unwrap()
 
     @rpc_expose(description="Shutdown background parser threads")
     def shutdown_parser_threads(self, timeout: float = 10.0) -> dict[str, Any]:
@@ -3683,7 +3672,6 @@ class NexusFSCoreMixin:
 
         route = self.router.route(
             path,
-            zone_id=zone_id,
             is_admin=is_admin,
             check_write=True,
         )

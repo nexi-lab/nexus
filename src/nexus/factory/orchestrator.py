@@ -250,7 +250,6 @@ def create_nexus_fs(
     *,
     cache_store: Any = None,
     is_admin: bool = False,
-    custom_namespaces: list[Any] | None = None,
     cache: "CacheConfig | None" = None,
     permissions: "PermissionConfig | None" = None,
     distributed: "DistributedConfig | None" = None,
@@ -274,7 +273,6 @@ def create_nexus_fs(
             (ReBAC, Audit, Permissions, etc.) are created and injected.
         cache_store: CacheStoreABC instance for ephemeral cache.
         is_admin: Whether the instance has admin privileges.
-        custom_namespaces: Custom namespace configurations.
         cache: CacheConfig object.
         permissions: PermissionConfig object.
         distributed: DistributedConfig object.
@@ -303,17 +301,12 @@ def create_nexus_fs(
     from nexus.core.config import KernelServices as _KernelServices
     from nexus.core.config import SystemServices as _SystemServices
     from nexus.core.nexus_fs import NexusFS
-    from nexus.core.router import NamespaceConfig, PathRouter
+    from nexus.core.router import PathRouter
     from nexus.factory._wired import _boot_wired_services
 
     # Create and configure router
-    router = PathRouter()
-    if custom_namespaces:
-        for ns_config in custom_namespaces:
-            if isinstance(ns_config, dict):
-                ns_config = NamespaceConfig(**ns_config)
-            router.register_namespace(ns_config)
-    router.add_mount("/", backend, priority=0)
+    router = PathRouter(metadata_store)
+    router.add_mount("/", backend)
 
     # KERNEL-ARCHITECTURE §2: No CacheStore → EventBus disabled.
     _has_real_cache = cache_store is not None
@@ -410,12 +403,10 @@ def create_nexus_fs(
     brick_services = _dc_replace(brick_services, **_brick_updates)
 
     nx = NexusFS(
-        backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,
         cache_store=cache_store,
         is_admin=is_admin,
-        custom_namespaces=custom_namespaces,
         cache=cache,
         permissions=permissions,
         distributed=distributed,

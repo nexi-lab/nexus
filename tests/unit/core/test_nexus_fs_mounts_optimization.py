@@ -65,7 +65,7 @@ class TestMountSyncOptimization:
         backend_dir = temp_dir / "mock_backend"
         backend_dir.mkdir()
         nx_with_hierarchy._mount_core_service.add_mount(
-            "/mnt/test", "local", {"data_dir": str(backend_dir)}, priority=10
+            "/mnt/test", "local", {"data_dir": str(backend_dir)}
         )
 
         # Mock hierarchy manager to track tuple creation calls
@@ -97,7 +97,7 @@ class TestMountSyncOptimization:
         backend_dir = temp_dir / "mock_backend2"
         backend_dir.mkdir()
         nx_with_hierarchy._mount_core_service.add_mount(
-            "/mnt/test", "local", {"data_dir": str(backend_dir)}, priority=10
+            "/mnt/test", "local", {"data_dir": str(backend_dir)}
         )
 
         # Mock hierarchy manager to track tuple creation
@@ -141,7 +141,7 @@ class TestMountSyncOptimization:
         backend_dir = temp_dir / "mock_backend3"
         backend_dir.mkdir()
         nx_with_hierarchy._mount_core_service.add_mount(
-            "/mnt/test", "local", {"data_dir": str(backend_dir)}, priority=10
+            "/mnt/test", "local", {"data_dir": str(backend_dir)}
         )
 
         # Track tuple creation calls
@@ -197,9 +197,7 @@ class TestMountDatabaseVsConfig:
         # Create a mount
         backend1_dir = temp_dir / "backend1"
         backend1_dir.mkdir()
-        nx._mount_core_service.add_mount(
-            "/mnt/test", "local", {"data_dir": str(backend1_dir)}, priority=10
-        )
+        nx._mount_core_service.add_mount("/mnt/test", "local", {"data_dir": str(backend1_dir)})
 
         # Save to database
         if hasattr(nx, "mount_manager") and nx.mount_manager:
@@ -207,7 +205,6 @@ class TestMountDatabaseVsConfig:
                 mount_point="/mnt/test",
                 backend_type="local",
                 backend_config={"data_dir": str(temp_dir / "backend1")},
-                priority=10,
                 readonly=False,
             )
 
@@ -215,7 +212,6 @@ class TestMountDatabaseVsConfig:
             saved_mount = nx.mount_manager.get_mount("/mnt/test")
             assert saved_mount is not None
             assert saved_mount["mount_point"] == "/mnt/test"
-            assert saved_mount["priority"] == 10
 
         nx.close()
 

@@ -84,7 +84,6 @@ if TYPE_CHECKING:
     from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC as NexusFilesystem
     from nexus.core.metastore import MetastoreABC
     from nexus.core.nexus_fs import NexusFS
-    from nexus.core.router import NamespaceConfig
     from nexus.remote import RemoteNexusFS
 
 # =============================================================================
@@ -119,7 +118,6 @@ _LAZY_IMPORTS = {
     # Core - heavy
     "NexusFilesystem": ("nexus.contracts.filesystem.filesystem_abc", "NexusFilesystemABC"),
     "NexusFS": ("nexus.core.nexus_fs", "NexusFS"),
-    "NamespaceConfig": ("nexus.core.router", "NamespaceConfig"),
     # Remote - needed for FUSE mount
     "RemoteNexusFS": ("nexus.remote", "RemoteNexusFS"),
     # Skills - very heavy
@@ -220,7 +218,6 @@ def connect(
     from nexus.backends.local import LocalBackend
     from nexus.config import NexusConfig, load_config
     from nexus.core.nexus_fs import NexusFS
-    from nexus.core.router import NamespaceConfig
     from nexus.remote import RemoteNexusFS
     from nexus.storage.raft_metadata_store import RaftMetadataStore
 
@@ -250,19 +247,6 @@ def connect(
         raise ValueError(
             f"Unknown mode: '{cfg.mode}'. Must be one of: standalone, remote, federation"
         )
-
-    # Parse custom namespaces from config
-    custom_namespaces = None
-    if cfg.namespaces:
-        custom_namespaces = [
-            NamespaceConfig(
-                name=ns["name"],
-                readonly=ns.get("readonly", False),
-                admin_only=ns.get("admin_only", False),
-                requires_zone=ns.get("requires_zone", True),
-            )
-            for ns in cfg.namespaces
-        ]
 
     # Create backend based on configuration
     backend: Backend
@@ -440,7 +424,6 @@ def connect(
         metadata_store=metadata_store,
         record_store=record_store,
         is_admin=cfg.is_admin,
-        custom_namespaces=custom_namespaces,
         cache=cache_cfg,
         permissions=perm_cfg,
         distributed=dist_cfg,
@@ -527,8 +510,6 @@ __all__ = [
     "BackendError",
     "InvalidPathError",
     "MetadataError",
-    # Router
-    "NamespaceConfig",
     # Skills System
     "SkillRegistry",
     "SkillExporter",

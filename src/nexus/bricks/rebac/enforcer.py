@@ -525,7 +525,6 @@ class PermissionEnforcer:
                 # Route path to backend to get object type
                 route = self.router.route(
                     path,
-                    zone_id=context.zone_id,
                     is_admin=context.is_admin,
                     check_write=False,
                 )

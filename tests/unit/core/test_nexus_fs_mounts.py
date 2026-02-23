@@ -81,9 +81,8 @@ class TestListMounts:
 
         mount = mounts[0]
         assert "mount_point" in mount
-        assert "priority" in mount
         assert "readonly" in mount
-        assert "backend_type" in mount
+        assert "admin_only" in mount
 
     def test_list_mounts_after_add_mount(self, nx: NexusFS, temp_dir: Path) -> None:
         """Test list_mounts includes newly added mounts."""
@@ -96,7 +95,6 @@ class TestListMounts:
             mount_point="/mnt/test",
             backend_type="local",
             backend_config={"data_dir": str(mount_data_dir)},
-            priority=10,
         )
 
         assert mount_id == "/mnt/test"
@@ -107,9 +105,8 @@ class TestListMounts:
 
         # Verify mount properties
         test_mount = next(m for m in mounts if m["mount_point"] == "/mnt/test")
-        assert test_mount["priority"] == 10
         assert test_mount["readonly"] is False
-        assert test_mount["backend_type"] == "LocalBackend"
+        assert test_mount["admin_only"] is False
 
 
 class TestGetMount:
@@ -135,14 +132,12 @@ class TestGetMount:
             mount_point="/mnt/test",
             backend_type="local",
             backend_config={"data_dir": str(mount_data_dir)},
-            priority=5,
             readonly=True,
         )
 
         mount = nx.get_mount("/mnt/test")
         assert mount is not None
         assert mount["mount_point"] == "/mnt/test"
-        assert mount["priority"] == 5
         assert mount["readonly"] is True
 
 
@@ -190,21 +185,20 @@ class TestAddMount:
         assert mount_id == "/mnt/local"
         assert nx.has_mount("/mnt/local")
 
-    def test_add_mount_with_priority(self, nx: NexusFS, temp_dir: Path) -> None:
-        """Test adding a mount with custom priority."""
-        mount_data_dir = temp_dir / "priority_mount"
+    def test_add_mount_with_io_profile(self, nx: NexusFS, temp_dir: Path) -> None:
+        """Test adding a mount with custom io_profile."""
+        mount_data_dir = temp_dir / "profile_mount"
         mount_data_dir.mkdir()
 
         nx.add_mount(
-            mount_point="/mnt/high_priority",
+            mount_point="/mnt/fast_read",
             backend_type="local",
             backend_config={"data_dir": str(mount_data_dir)},
-            priority=100,
+            io_profile="fast_read",
         )
 
-        mount = nx.get_mount("/mnt/high_priority")
+        mount = nx.get_mount("/mnt/fast_read")
         assert mount is not None
-        assert mount["priority"] == 100
 
     def test_add_mount_readonly(self, nx: NexusFS, temp_dir: Path) -> None:
         """Test adding a read-only mount."""
@@ -344,7 +338,6 @@ class TestSaveMount:
             mount_point="/mnt/saved",
             backend_type="local",
             backend_config={"data_dir": str(mount_data_dir)},
-            priority=5,
             readonly=False,
             owner_user_id="alice",
             zone_id="test_zone",
@@ -807,14 +800,12 @@ class TestMountIntegration:
             mount_point="/mnt/one",
             backend_type="local",
             backend_config={"data_dir": str(mount1_dir)},
-            priority=1,
         )
 
         nx.add_mount(
             mount_point="/mnt/two",
             backend_type="local",
             backend_config={"data_dir": str(mount2_dir)},
-            priority=2,
         )
 
         # Both mounts should exist
@@ -910,8 +901,16 @@ class TestMountContextUtilsIntegration:
         # Set up database path
         nx.db_path = temp_dir / "token_manager.db"
 
-        # Patch at source since gateway does local import inside method
-        with patch("nexus.lib.context_utils.get_database_url") as mock_get_db_url:
+        # Patch _needs_token_manager_db to return True (gdrive_connector not in registry)
+        # and patch get_database_url at the source module
+        with (
+            patch.object(
+                type(nx._mount_core_service),
+                "_needs_token_manager_db",
+                return_value=True,
+            ),
+            patch("nexus.lib.context_utils.get_database_url") as mock_get_db_url,
+        ):
             mock_get_db_url.return_value = str(temp_dir / "token_manager.db")
 
             # This should use get_database_url for gdrive_connector

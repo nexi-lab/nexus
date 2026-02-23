@@ -70,7 +70,6 @@ class TestListMountsPermissionFiltering:
             mount_point="/mnt/test",
             backend_type="local",
             backend_config={"data_dir": str(mount_data_dir)},
-            priority=10,
         )
 
         # Call without context - should return all mounts
@@ -115,7 +114,6 @@ class TestListMountsPermissionFiltering:
             mount_point="/mnt/alice",
             backend_type="local",
             backend_config={"data_dir": str(mount_data_dir1)},
-            priority=10,
             context=context_alice_admin,
         )
 
@@ -143,7 +141,6 @@ class TestListMountsPermissionFiltering:
             mount_point="/mnt/bob",
             backend_type="local",
             backend_config={"data_dir": str(mount_data_dir2)},
-            priority=10,
             context=context_bob_admin,
         )
 
@@ -188,7 +185,6 @@ class TestListMountsPermissionFiltering:
             mount_point="/mnt/shared",
             backend_type="local",
             backend_config={"data_dir": str(mount_data_dir)},
-            priority=10,
             context=context_alice_admin,
         )
 
@@ -243,7 +239,6 @@ class TestListMountsPermissionFiltering:
             mount_point="/mnt/test",
             backend_type="local",
             backend_config={"data_dir": str(mount_data_dir)},
-            priority=10,
             context=context_alice_admin,
         )
 
@@ -483,7 +478,6 @@ class TestCrossZoneIsolation:
             mount_point="/mnt/zone1",
             backend_type="local",
             backend_config={"data_dir": str(mount_dir1)},
-            priority=10,
             context=context_zone1_admin,
         )
 
@@ -523,7 +517,6 @@ class TestCrossZoneIsolation:
             mount_point="/mnt/zone2",
             backend_type="local",
             backend_config={"data_dir": str(mount_dir2)},
-            priority=10,
             context=context_zone2_admin,
         )
 

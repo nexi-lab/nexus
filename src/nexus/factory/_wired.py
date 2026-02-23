@@ -48,6 +48,14 @@ def _boot_wired_services(
     t0 = time.perf_counter()
     _on = _make_gate(brick_on)
 
+    # Resolve the root backend from the router.
+    # NexusFS no longer has a .backend attribute — all backends live on the router.
+    _root_backend: Any = None
+    try:
+        _root_backend = nx.router.route("/").backend
+    except Exception:
+        logger.debug("[BOOT:WIRED] No root backend mounted — services needing backend will degrade")
+
     # --- NexusFSGateway: adapter breaking circular dep (Issue #1287) ---
     gateway: Any = None
     try:
@@ -121,8 +129,7 @@ def _boot_wired_services(
                 database_url=os.getenv("TOKEN_MANAGER_DB"),
                 oauth_config=getattr(nx._config, "oauth", None) if nx._config else None,
                 mount_lister=lambda: [
-                    (m.mount_point, type(m.backend).__name__)
-                    for m in kernel_services.router.list_mounts()
+                    (m.mount_point, "mounted") for m in kernel_services.router.list_mounts()
                 ],
             )
             logger.debug("[BOOT:WIRED] OAuthService created")
@@ -277,7 +284,7 @@ def _boot_wired_services(
                 metadata_cache = nx.metadata._cache
 
             events_service = EventsService(
-                backend=nx.backend,
+                backend=_root_backend,
                 event_bus=brick_services.event_bus,
                 lock_manager=brick_services.lock_manager,
                 zone_id=None,
@@ -343,7 +350,7 @@ def _boot_wired_services(
             session_factory=_nx_session_factory,
             entity_registry=system_services.entity_registry,
             api_key_creator=brick_services.api_key_creator,
-            backend=nx.backend,
+            backend=_root_backend,
             rebac_manager=system_services.rebac_manager,
             rmdir_fn=nx.rmdir if hasattr(nx, "rmdir") else None,
             rebac_create_fn=(rebac_service.rebac_create_sync if rebac_service else None),
@@ -391,7 +398,7 @@ def _boot_wired_services(
 
         ace_rpc_service = ACERPCService(
             session_factory=_nx_session_factory,
-            backend=nx.backend,
+            backend=_root_backend,
             default_context=_nx_default_context,
             entity_registry=system_services.entity_registry,
             ensure_entity_registry_fn=getattr(nx, "_ensure_entity_registry", None),
@@ -421,7 +428,7 @@ def _boot_wired_services(
 
         memory_provider = MemoryProvider(
             session_factory=_nx_session_factory,
-            backend=nx.backend,
+            backend=_root_backend,
             entity_registry=system_services.entity_registry,
             enable_paging=getattr(nx, "_enable_memory_paging", True),
             main_capacity=getattr(nx, "_memory_main_capacity", 100),
@@ -440,7 +447,7 @@ def _boot_wired_services(
 
             time_travel_service = TimeTravelService(
                 session_factory=_nx_session_factory,
-                backend=nx.backend,
+                backend=_root_backend,
                 default_zone_id=getattr(_nx_default_context, "zone_id", None),
             )
             logger.debug("[BOOT:WIRED] TimeTravelService created")

@@ -56,12 +56,14 @@ def async_registry(sqlite_registry: AgentRegistry) -> AsyncAgentRegistry:
 def real_router(tmp_path: Path) -> PathRouter:
     """Real PathRouter with a local backend mount."""
     from nexus.backends.local import LocalBackend
+    from tests.helpers.in_memory_metadata_store import InMemoryMetastore
 
     storage = tmp_path / "storage"
     storage.mkdir()
-    router = PathRouter()
+    metastore = InMemoryMetastore()
+    router = PathRouter(metastore)
     backend = LocalBackend(root_path=str(storage))
-    router.add_mount("/workspace", backend, priority=10)
+    router.add_mount("/workspace", backend)
     return router
 
 
@@ -183,11 +185,10 @@ class TestAsyncVFSRouterE2E:
     async def test_route_resolves(self, async_router: AsyncVFSRouter) -> None:
         from nexus.core.protocols.vfs_router import ResolvedPath
 
-        resolved = await async_router.route("/workspace/project/file.txt", zone_id="z1")
+        resolved = await async_router.route("/workspace/project/file.txt")
         assert isinstance(resolved, ResolvedPath)
         assert resolved.backend_path == "project/file.txt"
         assert resolved.mount_point == "/workspace"
-        assert resolved.zone_id == "z1"
 
     @pytest.mark.asyncio()
     async def test_not_mounted_raises(self, async_router: AsyncVFSRouter) -> None:
@@ -202,7 +203,7 @@ class TestAsyncVFSRouterE2E:
         assert len(mounts) >= 1
         assert all(isinstance(m, MountInfo) for m in mounts)
         workspace_mount = next(m for m in mounts if m.mount_point == "/workspace")
-        assert workspace_mount.priority == 10
+        assert workspace_mount.readonly is False
 
     @pytest.mark.asyncio()
     async def test_add_and_remove_mount(self, async_router: AsyncVFSRouter) -> None:
@@ -210,7 +211,7 @@ class TestAsyncVFSRouterE2E:
 
         mock_backend = MagicMock()
         mock_backend.name = "test-backend"
-        await async_router.add_mount("/test-mount", mock_backend, priority=5, readonly=True)
+        await async_router.add_mount("/test-mount", mock_backend, readonly=True)
 
         mounts = await async_router.list_mounts()
         test_mount = next((m for m in mounts if m.mount_point == "/test-mount"), None)
@@ -352,8 +353,10 @@ class TestServerLifespanWiring:
         # 3. PathRouter + AsyncVFSRouter (real LocalBackend)
         storage = tmp_path / "storage"
         storage.mkdir()
-        sync_router = PathRouter()
-        sync_router.add_mount("/workspace", LocalBackend(root_path=str(storage)), priority=10)
+        from tests.helpers.in_memory_metadata_store import InMemoryMetastore
+
+        sync_router = PathRouter(InMemoryMetastore())
+        sync_router.add_mount("/workspace", LocalBackend(root_path=str(storage)))
         async_router = AsyncVFSRouter(sync_router)
 
         # All satisfy their protocols
@@ -366,9 +369,8 @@ class TestServerLifespanWiring:
             agent_info = await async_registry.register("cross-agent", "admin", zone_id="z1")
             assert agent_info.agent_id == "cross-agent"
 
-            resolved = await async_router.route("/workspace/doc.txt", zone_id="z1")
+            resolved = await async_router.route("/workspace/doc.txt")
             assert resolved.backend_path == "doc.txt"
-            assert resolved.zone_id == "z1"
 
             # Cleanup
             await async_registry.unregister("cross-agent")

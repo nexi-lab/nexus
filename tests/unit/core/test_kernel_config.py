@@ -278,6 +278,8 @@ class TestSystemServices:
         assert ss.delivery_worker is None
         assert ss.observability_subsystem is None
         assert ss.resiliency_manager is None
+        # DT_PIPE manager (Issue #809)
+        assert ss.pipe_manager is None
 
     def test_frozen(self) -> None:
         ss = SystemServices()
@@ -330,6 +332,7 @@ class TestSystemServices:
             "observability_subsystem",
             "resiliency_manager",
             "zone_lifecycle",
+            "pipe_manager",
         }
         assert field_names == expected_fields, (
             f"Extra: {field_names - expected_fields}, Missing: {expected_fields - field_names}"
@@ -367,6 +370,8 @@ class TestBrickServices:
         assert bs.api_key_creator is None
         assert bs.snapshot_service is None
         assert bs.task_queue_service is None
+        # DT_PIPE consumer (Issue #810)
+        assert bs.zoekt_pipe_consumer is None
 
     def test_frozen(self) -> None:
         bs = BrickServices()
@@ -427,6 +432,8 @@ class TestBrickServices:
             "governance_collusion_service",
             "governance_graph_service",
             "governance_response_service",
+            # DT_PIPE consumer (Issue #810)
+            "zoekt_pipe_consumer",
         }
         assert field_names == expected_fields, (
             f"Extra: {field_names - expected_fields}, Missing: {expected_fields - field_names}"

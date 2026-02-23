@@ -839,7 +839,6 @@ def serve(
                             backend_type = backend_def.get("type")
                             mount_point = backend_def.get("mount_point")
                             backend_cfg = backend_def.get("config", {})
-                            priority = backend_def.get("priority", 0)
                             readonly = backend_def.get("readonly", False)
 
                             if not backend_type or not mount_point:
@@ -868,13 +867,6 @@ def serve(
                                     continue
 
                                 # No database override - use config version
-                                # Check if mount already exists in router (shouldn't happen, but be safe)
-                                _mount_svc = cast(Any, nx).mount_service
-                                existing_mounts = run_sync(_mount_svc.list_mounts())
-                                mount_already_loaded = any(
-                                    m["mount_point"] == mount_point for m in existing_mounts
-                                )
-
                                 # Create backend instance with record store for caching
                                 backend = create_backend_from_config(
                                     backend_type,
@@ -886,9 +878,7 @@ def serve(
                                 nx.router.add_mount(
                                     mount_point,
                                     backend,
-                                    priority,
-                                    readonly,
-                                    replace=mount_already_loaded,
+                                    readonly=readonly,
                                 )
 
                                 readonly_str = " (read-only)" if readonly else ""
@@ -925,6 +915,7 @@ def serve(
                                         backend, "list_dir"
                                     ):
                                         try:
+                                            _mount_svc = cast(Any, nx).mount_service
                                             console.print(
                                                 f"    [dim]→ Syncing metadata from {backend_type}...[/dim]"
                                             )

@@ -12,7 +12,7 @@ Reference: arXiv:2512.24601 (Zhang, Kraska, Khattab — MIT OASYS Lab)
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 # ---------------------------------------------------------------------------
 # Error hierarchy

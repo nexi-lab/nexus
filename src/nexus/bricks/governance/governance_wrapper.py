@@ -10,7 +10,7 @@ Wrapper chain: GovernanceEnforcedPayment -> PolicyEnforcedPayment -> CreditsPaym
 import logging
 from typing import TYPE_CHECKING, Any
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import TransactionProtocol
 from nexus.utils.async_helpers import fire_and_forget
 

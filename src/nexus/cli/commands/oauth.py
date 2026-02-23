@@ -28,7 +28,7 @@ from rich.console import Console
 from rich.table import Table
 
 from nexus.cli.utils import console
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 # Brick imports via importlib to avoid cli→bricks tier violation
 if TYPE_CHECKING:

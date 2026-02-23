@@ -27,7 +27,7 @@ from nexus.bricks.a2a.models import (
     TaskStatusUpdateEvent,
     is_valid_transition,
 )
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 # Callback type: (artifact, task_id, zone_id) -> None
 ArtifactCallback = Callable[[Any, str, str], Awaitable[None]]

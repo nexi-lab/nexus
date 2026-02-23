@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock
 
 import pytest
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.services.event_subsystem.log.exporter_registry import ExporterRegistry
 from nexus.services.event_subsystem.types import FileEvent, FileEventType
 

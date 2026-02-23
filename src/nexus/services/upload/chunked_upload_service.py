@@ -17,7 +17,7 @@ import zlib
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import (
     BackendError,
     UploadChecksumMismatchError,

@@ -24,7 +24,7 @@ from _core.constants import (
 )
 
 import nexus
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext
 
 

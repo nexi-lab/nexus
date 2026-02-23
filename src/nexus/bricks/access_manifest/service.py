@@ -16,12 +16,12 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select, update
 
 from nexus.bricks.access_manifest.evaluator import ManifestEvaluator
-from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.access_manifest_types import (
     AccessManifest,
     ManifestEntry,
     ToolPermission,
 )
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.models.access_manifest import AccessManifestModel
 
 # Inlined from nexus.mcp.profiles to avoid cross-brick import (LEGO compliance)

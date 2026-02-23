@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.services.event_subsystem.log.replay import (
     EventReplayService,
     _decode_cursor,

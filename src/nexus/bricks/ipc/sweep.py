@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from nexus.bricks.ipc.conventions import AGENTS_ROOT, dead_letter_path, inbox_path
 from nexus.bricks.ipc.envelope import MessageEnvelope
 from nexus.bricks.ipc.storage.protocol import IPCStorageDriver
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 logger = logging.getLogger(__name__)
 

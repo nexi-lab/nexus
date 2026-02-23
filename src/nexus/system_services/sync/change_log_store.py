@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import delete, func, select
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import DatabaseError
 from nexus.storage.sync_store_base import SyncStoreBase
 

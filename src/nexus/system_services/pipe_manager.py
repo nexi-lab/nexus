@@ -25,7 +25,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.pipe import (
     PipeClosedError,
     PipeEmptyError,

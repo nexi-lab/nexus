@@ -159,7 +159,7 @@ def search_config_from_env() -> SearchConfig:
         Frozen SearchConfig instance.
     """
     # Import here to avoid circular dependency
-    from nexus.constants import DEFAULT_ZOEKT_URL
+    from nexus.contracts.constants import DEFAULT_ZOEKT_URL
 
     return SearchConfig(
         chunk_size=get_env_int("NEXUS_CHUNK_SIZE", 1024),

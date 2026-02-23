@@ -39,7 +39,7 @@ from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.gzip import GZipMiddleware
 
-from nexus.constants import DEFAULT_NEXUS_URL, ROOT_ZONE_ID
+from nexus.contracts.constants import DEFAULT_NEXUS_URL, ROOT_ZONE_ID
 from nexus.contracts.exceptions import (
     NexusError,
 )

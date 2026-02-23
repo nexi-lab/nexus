@@ -17,7 +17,7 @@ All zones share one gRPC port (zone_id routing in transport layer).
 import logging
 from typing import TYPE_CHECKING
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.metadata import DT_DIR, DT_MOUNT, FileMetadata
 
 if TYPE_CHECKING:

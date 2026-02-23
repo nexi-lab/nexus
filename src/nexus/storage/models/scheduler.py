@@ -12,7 +12,7 @@ from decimal import Decimal
 from sqlalchemy import DateTime, Index, Numeric, SmallInteger, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.models._base import Base, uuid_pk
 
 

@@ -23,7 +23,7 @@ from nexus.bricks.delegation.models import DelegationMode, DelegationStatus
 from nexus.bricks.delegation.service import DelegationService
 from nexus.bricks.rebac.entity_registry import EntityRegistry
 from nexus.bricks.rebac.manager import EnhancedReBACManager
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.services.agents.agent_registry import AgentRegistry
 from tests.helpers.in_memory_record_store import InMemoryRecordStore
 

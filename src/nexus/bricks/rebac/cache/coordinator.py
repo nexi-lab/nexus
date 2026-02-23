@@ -29,7 +29,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from nexus.bricks.rebac.domain import RELATION_TO_PERMISSIONS
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from collections.abc import Callable, MutableMapping

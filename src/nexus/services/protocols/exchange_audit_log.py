@@ -16,7 +16,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Protocol, runtime_checkable
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 
 @runtime_checkable

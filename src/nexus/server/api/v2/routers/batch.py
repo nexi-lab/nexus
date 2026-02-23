@@ -20,7 +20,7 @@ from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext
 from nexus.server.batch_executor import BatchExecutor, BatchRequest, BatchResponse
 

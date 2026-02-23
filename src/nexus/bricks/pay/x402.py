@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Any
 from cachetools import TTLCache
 from starlette.responses import Response
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     import httpx

@@ -13,7 +13,7 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from nexus.constants import DEFAULT_OAUTH_REDIRECT_URI
+from nexus.contracts.constants import DEFAULT_OAUTH_REDIRECT_URI
 from nexus.lib.rpc_decorator import rpc_expose
 from nexus.services.protocols.filesystem import NexusFilesystem
 

@@ -19,7 +19,7 @@ from nexus.bricks.a2a.proto_converter import (
     send_request_from_proto,
     task_to_proto,
 )
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 logger = logging.getLogger(__name__)
 

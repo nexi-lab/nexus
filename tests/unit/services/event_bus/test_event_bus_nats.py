@@ -21,7 +21,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.services.event_subsystem.bus.protocol import AckableEvent
 from nexus.services.event_subsystem.types import FileEvent, FileEventType
 

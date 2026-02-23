@@ -331,6 +331,7 @@ class TestSystemServices:
             "resiliency_manager",
             "tiger_cache_manager",
             "zone_lifecycle",
+            "pipe_manager",
         }
         assert field_names == expected_fields, (
             f"Extra: {field_names - expected_fields}, Missing: {expected_fields - field_names}"
@@ -428,6 +429,7 @@ class TestBrickServices:
             "governance_collusion_service",
             "governance_graph_service",
             "governance_response_service",
+            "zoekt_pipe_consumer",
         }
         assert field_names == expected_fields, (
             f"Extra: {field_names - expected_fields}, Missing: {expected_fields - field_names}"

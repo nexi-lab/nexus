@@ -74,6 +74,7 @@ EXPECTED_SYSTEM_KEYS = frozenset(
         "brick_reconciler",
         "tiger_cache_manager",
         "zone_lifecycle",
+        "pipe_manager",
     }
 )
 

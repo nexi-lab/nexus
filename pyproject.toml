@@ -766,10 +766,6 @@ module = "nexus.core.metadata"
 disable_error_code = ["arg-type", "return-value"]
 
 [[tool.mypy.overrides]]
-module = "nexus.core.read_set"
-disable_error_code = ["assignment"]
-
-[[tool.mypy.overrides]]
 module = "nexus.mcp.server"
 disable_error_code = ["arg-type", "assignment"]
 

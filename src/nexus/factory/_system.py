@@ -478,7 +478,6 @@ def _boot_system_services(
         "workspace_registry": workspace_registry,
         "mount_manager": mount_manager,
         "workspace_manager": workspace_manager,
-        "tiger_cache_manager": tiger_cache_manager,
         # Original system services
         "agent_registry": agent_registry,
         "async_agent_registry": async_agent_registry,

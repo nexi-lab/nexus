@@ -232,7 +232,7 @@ def main():
         print_section("8. Server Information")
 
         try:
-            namespaces = nx.get_available_namespaces()
+            namespaces = nx.get_top_level_mounts()
             print(f"📋 Available namespaces: {', '.join(namespaces)}")
         except Exception as e:
             print(f"⚠️  Namespace listing: {e}")

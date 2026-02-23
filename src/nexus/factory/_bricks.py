@@ -439,7 +439,7 @@ def _boot_independent_bricks(
             )
 
             # Mount at /agents in the PathRouter (higher priority than default /)
-            ctx.router.add_mount("/agents", ipc_vfs_driver, priority=10)
+            ctx.router.add_mount("/agents", ipc_vfs_driver)
 
             ipc_provisioner = AgentProvisioner(
                 storage=ipc_storage_driver,

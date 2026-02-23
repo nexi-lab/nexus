@@ -2,10 +2,9 @@
 
 Invariants proven:
   1. Path normalization is idempotent: normalize(normalize(p)) == normalize(p)
-  2. Path traversal never escapes namespace boundaries
-  3. Zone isolation: non-admin cross-zone access always denied
-  4. Longest prefix match is deterministic and correct
-  5. Read-only namespaces reject writes, accept reads
+  2. Path traversal never escapes mount boundaries
+  3. Longest prefix match is deterministic and correct
+  4. Read-only mounts reject writes, accept reads
 """
 
 import tempfile
@@ -20,6 +19,7 @@ from nexus.core.router import (
     PathNotMountedError,
     PathRouter,
 )
+from tests.helpers.in_memory_metadata_store import InMemoryMetastore
 from tests.strategies.kernel import (
     path_traversal_attempt,
     valid_mount_point,
@@ -36,12 +36,13 @@ def _make_router_with_mounts() -> tuple[PathRouter, LocalBackend]:
     """Create a PathRouter with standard mounts for testing."""
     tmpdir = tempfile.mkdtemp()
     backend = LocalBackend(tmpdir)
-    router = PathRouter()
+    metastore = InMemoryMetastore()
+    router = PathRouter(metastore)
     router.add_mount("/workspace", backend)
     router.add_mount("/shared", backend)
     router.add_mount("/external", backend)
-    router.add_mount("/system", backend)
-    router.add_mount("/archives", backend)
+    router.add_mount("/system", backend, admin_only=True, readonly=True)
+    router.add_mount("/archives", backend, readonly=True)
     return router, backend
 
 
@@ -59,7 +60,8 @@ class TestPathNormalizationInvariants:
     @example(path="/workspace/data/file.txt")
     def test_normalize_is_idempotent(self, path: str) -> None:
         """normalize(normalize(p)) == normalize(p) for all valid paths."""
-        router = PathRouter()
+        metastore = InMemoryMetastore()
+        router = PathRouter(metastore)
         once = router._normalize_path(path)
         twice = router._normalize_path(once)
         assert once == twice
@@ -67,28 +69,31 @@ class TestPathNormalizationInvariants:
     @given(path=valid_path())
     def test_normalized_path_starts_with_slash(self, path: str) -> None:
         """All normalized paths are absolute (start with /)."""
-        router = PathRouter()
+        metastore = InMemoryMetastore()
+        router = PathRouter(metastore)
         normalized = router._normalize_path(path)
         assert normalized.startswith("/")
 
     @given(path=valid_path())
     def test_normalized_path_has_no_double_slashes(self, path: str) -> None:
         """Normalized paths never contain //."""
-        router = PathRouter()
+        metastore = InMemoryMetastore()
+        router = PathRouter(metastore)
         normalized = router._normalize_path(path)
         assert "//" not in normalized
 
     @given(path=valid_path())
     def test_normalized_path_has_no_trailing_slash(self, path: str) -> None:
         """Normalized paths have no trailing slash (except root /)."""
-        router = PathRouter()
+        metastore = InMemoryMetastore()
+        router = PathRouter(metastore)
         normalized = router._normalize_path(path)
         if normalized != "/":
             assert not normalized.endswith("/")
 
 
 # ---------------------------------------------------------------------------
-# Invariant 2: Path traversal never escapes namespace
+# Invariant 2: Path traversal never escapes mount boundary
 # ---------------------------------------------------------------------------
 
 
@@ -98,7 +103,8 @@ class TestPathTraversalInvariants:
     @given(attempt=path_traversal_attempt())
     def test_traversal_attempts_rejected(self, attempt: str) -> None:
         """All path traversal attempts are rejected by validate_path."""
-        router = PathRouter()
+        metastore = InMemoryMetastore()
+        router = PathRouter(metastore)
         try:
             result = router.validate_path(attempt)
             # If validation succeeds, the path must still be within the
@@ -118,7 +124,8 @@ class TestPathTraversalInvariants:
     @example(path="/workspace/./../../etc")
     def test_arbitrary_strings_never_escape_root(self, path: str) -> None:
         """No arbitrary string can produce a path outside /."""
-        router = PathRouter()
+        metastore = InMemoryMetastore()
+        router = PathRouter(metastore)
         try:
             result = router.validate_path(path)
             assert result.startswith("/"), f"Escaped root: {path!r} -> {result!r}"
@@ -128,7 +135,8 @@ class TestPathTraversalInvariants:
     @given(path=valid_path())
     def test_validate_roundtrip(self, path: str) -> None:
         """validate_path is idempotent: validate(validate(p)) == validate(p)."""
-        router = PathRouter()
+        metastore = InMemoryMetastore()
+        router = PathRouter(metastore)
         try:
             once = router.validate_path(path)
             twice = router.validate_path(once)
@@ -138,75 +146,7 @@ class TestPathTraversalInvariants:
 
 
 # ---------------------------------------------------------------------------
-# Invariant 3: Zone isolation enforcement
-# ---------------------------------------------------------------------------
-
-
-class TestZoneIsolationInvariants:
-    """Zone isolation security properties."""
-
-    @given(
-        zone_a=st.text(
-            alphabet=st.characters(whitelist_categories=("L", "N")),
-            min_size=1,
-            max_size=20,
-        ),
-        zone_b=st.text(
-            alphabet=st.characters(whitelist_categories=("L", "N")),
-            min_size=1,
-            max_size=20,
-        ),
-    )
-    def test_cross_zone_access_denied_for_non_admin(self, zone_a: str, zone_b: str) -> None:
-        """Non-admin from zone_a cannot access zone_b's shared namespace.
-
-        The PathRouter parses /shared/{zone_b}/data.txt and extracts zone_b
-        as the path's zone_id. When context zone_id != path zone_id and the
-        caller is not admin, AccessDeniedError must be raised.
-        """
-        if zone_a == zone_b:
-            return  # Same zone, access is allowed
-
-        router, _ = _make_router_with_mounts()
-
-        try:
-            router.route(
-                f"/shared/{zone_b}/data.txt",
-                zone_id=zone_a,
-                is_admin=False,
-            )
-            # route() succeeded — zone isolation was NOT enforced
-            raise AssertionError(f"Zone isolation bypassed: zone_a={zone_a}, zone_b={zone_b}")
-        except AccessDeniedError:
-            pass  # Correctly denied — this is the expected path
-
-    @given(
-        zone_a=st.text(
-            alphabet=st.characters(whitelist_categories=("L", "N")),
-            min_size=1,
-            max_size=20,
-        ),
-        zone_b=st.text(
-            alphabet=st.characters(whitelist_categories=("L", "N")),
-            min_size=1,
-            max_size=20,
-        ),
-    )
-    def test_admin_can_access_any_zone(self, zone_a: str, zone_b: str) -> None:
-        """Admin from any zone can access any other zone."""
-        router, backend = _make_router_with_mounts()
-
-        # Admin should never get AccessDeniedError for zone mismatch
-        result = router.route(
-            f"/shared/{zone_b}/data.txt",
-            zone_id=zone_a,
-            is_admin=True,
-        )
-        assert result.backend == backend
-
-
-# ---------------------------------------------------------------------------
-# Invariant 4: Longest prefix match determinism
+# Invariant 3: Longest prefix match determinism
 # ---------------------------------------------------------------------------
 
 
@@ -233,7 +173,7 @@ class TestLongestPrefixMatchInvariants:
     )
     @settings(deadline=None)
     def test_longer_prefix_preferred_over_shorter(self, mount1: str, mount2: str) -> None:
-        """When two mounts overlap, the longer prefix wins (at equal priority)."""
+        """When two mounts overlap, the longer prefix wins."""
         if mount1 == mount2:
             return
 
@@ -245,9 +185,10 @@ class TestLongestPrefixMatchInvariants:
         backend_shallow = LocalBackend(tmpdir)
         backend_deep = LocalBackend(tmpdir)
 
-        router = PathRouter()
-        router.add_mount(mount1, backend_shallow, priority=0)
-        router.add_mount(deeper_path, backend_deep, priority=0)
+        metastore = InMemoryMetastore()
+        router = PathRouter(metastore)
+        router.add_mount(mount1, backend_shallow)
+        router.add_mount(deeper_path, backend_deep)
 
         try:
             result = router.route(query_path)
@@ -258,22 +199,22 @@ class TestLongestPrefixMatchInvariants:
 
 
 # ---------------------------------------------------------------------------
-# Invariant 5: Read-only namespace enforcement
+# Invariant 4: Read-only mount enforcement
 # ---------------------------------------------------------------------------
 
 
-class TestReadOnlyNamespaceInvariants:
-    """Read-only namespace properties."""
+class TestReadOnlyMountInvariants:
+    """Read-only mount properties."""
 
     @given(path=valid_path(max_depth=3))
     @settings(deadline=None)
-    def test_system_namespace_rejects_writes(self, path: str) -> None:
-        """System namespace always rejects write access."""
+    def test_system_mount_rejects_writes(self, path: str) -> None:
+        """System mount (admin_only + readonly) always rejects write access."""
         router, _ = _make_router_with_mounts()
         full_path = f"/system{path}"
         try:
             router.route(full_path, is_admin=True, check_write=True)
-            raise AssertionError(f"System namespace accepted write: {full_path}")
+            raise AssertionError(f"System mount accepted write: {full_path}")
         except AccessDeniedError:
             pass  # Correctly rejected
         except (InvalidPathError, PathNotMountedError):
@@ -281,13 +222,13 @@ class TestReadOnlyNamespaceInvariants:
 
     @given(path=valid_path(max_depth=3))
     @settings(deadline=None)
-    def test_archives_namespace_rejects_writes(self, path: str) -> None:
-        """Archives namespace always rejects write access."""
+    def test_archives_mount_rejects_writes(self, path: str) -> None:
+        """Archives mount (readonly) always rejects write access."""
         router, _ = _make_router_with_mounts()
         full_path = f"/archives{path}"
         try:
             router.route(full_path, is_admin=False, check_write=True)
-            raise AssertionError(f"Archives namespace accepted write: {full_path}")
+            raise AssertionError(f"Archives mount accepted write: {full_path}")
         except AccessDeniedError:
             pass  # Correctly rejected
         except (InvalidPathError, PathNotMountedError):

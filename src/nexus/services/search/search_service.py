@@ -226,9 +226,24 @@ class SearchService(SemanticSearchMixin):
         return self._list_thread_pool
 
     def _get_namespace_prefixes(self) -> tuple[str, ...]:
-        """Get known namespace prefixes from router (dynamic) or fallback (static)."""
-        if self.router and hasattr(self.router, "_namespaces"):
-            return tuple(f"{ns}/" for ns in self.router._namespaces)
+        """Get known mount-point prefixes from router (dynamic) or fallback (static).
+
+        Uses ``get_mount_points()`` to derive top-level prefixes from active
+        mounts.  Falls back to hardcoded defaults when no router is available.
+        """
+        if self.router and hasattr(self.router, "get_mount_points"):
+            try:
+                mount_points = self.router.get_mount_points()
+                # Extract top-level segments from mount points (e.g. "/workspace" -> "workspace/")
+                prefixes: set[str] = set()
+                for mp in mount_points:
+                    top = mp.lstrip("/").split("/")[0]
+                    if top:
+                        prefixes.add(f"{top}/")
+                if prefixes:
+                    return tuple(sorted(prefixes))
+            except Exception:
+                pass
         return ("workspace/", "shared/", "external/", "system/", "archives/")
 
     def _should_prepend_recursive_wildcard(self, pattern: str) -> bool:
@@ -378,7 +393,6 @@ class SearchService(SemanticSearchMixin):
                 zone_id, _agent_id, is_admin = self._get_routing_params(context)
                 route = self.router.route(
                     path,
-                    zone_id=zone_id,
                     is_admin=is_admin,
                     check_write=False,
                 )

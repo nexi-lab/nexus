@@ -50,7 +50,7 @@ def test_mount_creates_directory_entry(nx_with_mount):
     mount_backend.name = "test_mount"
 
     # Add mount directly to router (simulating config-based mount)
-    nx.router.add_mount("/mnt/test", mount_backend, priority=0, readonly=False)
+    nx.router.add_mount("/mnt/test", mount_backend, readonly=False)
 
     # Create directory entry (this is what server.py now does)
     nx.mkdir("/mnt/test", parents=True, exist_ok=True)
@@ -78,7 +78,7 @@ def test_mount_appears_in_listing(nx_with_mount):
     mount_backend.name = "test_mount"
 
     # Add mount and create directory
-    nx.router.add_mount("/mnt/gcs_demo", mount_backend, priority=0, readonly=False)
+    nx.router.add_mount("/mnt/gcs_demo", mount_backend, readonly=False)
     nx.mkdir("/mnt/gcs_demo", parents=True, exist_ok=True)
 
     # List root directory (non-recursive)
@@ -103,7 +103,7 @@ def test_mount_appears_in_detailed_listing(nx_with_mount):
     mount_backend.name = "test_mount"
 
     # Add mount and create directory
-    nx.router.add_mount("/personal/alice", mount_backend, priority=0, readonly=False)
+    nx.router.add_mount("/personal/alice", mount_backend, readonly=False)
     nx.mkdir("/personal/alice", parents=True, exist_ok=True)
 
     # List with details
@@ -132,7 +132,7 @@ def test_nested_mount_creates_all_parents(nx_with_mount):
     mount_backend.name = "deep_mount"
 
     # Add mount and create directory with parents
-    nx.router.add_mount("/a/b/c/mount", mount_backend, priority=0, readonly=False)
+    nx.router.add_mount("/a/b/c/mount", mount_backend, readonly=False)
     nx.mkdir("/a/b/c/mount", parents=True, exist_ok=True)
 
     # Verify all parents exist
@@ -167,7 +167,6 @@ def test_sync_mount_ensures_directory_exists(nx_with_mount):
         mount_point="/zone/test/old/mount",
         backend_type="local",
         backend_config={"data_dir": str(mount_dir)},
-        priority=0,
         readonly=False,
         context=ctx,
     )
@@ -202,7 +201,6 @@ def test_add_mount_via_api_creates_directory(nx_with_mount):
         mount_point="/api/mount",
         backend_type="local",
         backend_config={"data_dir": str(mount_dir)},
-        priority=5,
         readonly=False,
     )
 
@@ -239,7 +237,7 @@ def test_multiple_mounts_in_same_parent(nx_with_mount):
     for name in ["mount1", "mount2", "mount3"]:
         mount_backend = MagicMock()
         mount_backend.name = name
-        nx.router.add_mount(f"/mnt/{name}", mount_backend, priority=0, readonly=False)
+        nx.router.add_mount(f"/mnt/{name}", mount_backend, readonly=False)
         nx.mkdir(f"/mnt/{name}", parents=True, exist_ok=True)
 
     # List /mnt

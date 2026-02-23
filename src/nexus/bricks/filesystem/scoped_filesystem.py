@@ -233,12 +233,12 @@ class ScopedFilesystem(ScopedPathMixin):
         return self._fs.is_directory(self._scope_path(path), context)
 
     # ============================================================
-    # Namespace Operations
+    # Mount Operations
     # ============================================================
 
-    def get_available_namespaces(self) -> builtins.list[str]:
-        """Get list of available namespace directories."""
-        return self._fs.get_available_namespaces()
+    def get_top_level_mounts(self) -> builtins.list[str]:
+        """Get list of top-level mount names."""
+        return self._fs.get_top_level_mounts()
 
     # ============================================================
     # Service method forwarding

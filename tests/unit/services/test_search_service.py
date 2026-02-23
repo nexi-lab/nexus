@@ -47,7 +47,13 @@ def mock_permission_enforcer():
 def mock_router():
     """Create a mock PathRouter."""
     router = MagicMock()
-    router._namespaces = {"workspace", "shared", "external", "system", "archives"}
+    router.get_mount_points.return_value = [
+        "/archives",
+        "/external",
+        "/shared",
+        "/system",
+        "/workspace",
+    ]
     return router
 
 
@@ -342,7 +348,7 @@ class TestGlobHelpers:
         assert service._should_prepend_recursive_wildcard("shared/docs/readme.md") is False
 
     def test_get_namespace_prefixes_from_router(self, service, mock_router):
-        """_get_namespace_prefixes reads from router's _namespaces."""
+        """_get_namespace_prefixes reads from router's get_mount_points."""
         prefixes = service._get_namespace_prefixes()
         assert "workspace/" in prefixes
         assert "shared/" in prefixes

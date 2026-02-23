@@ -125,10 +125,8 @@ class TestListMounts:
         """Without context, all mounts are returned (backward compat)."""
         mount_info = MagicMock()
         mount_info.mount_point = "/mnt/test"
-        mount_info.priority = 10
         mount_info.readonly = False
-        mount_info.backend = MagicMock()
-        type(mount_info.backend).__name__ = "GCSConnectorBackend"
+        mount_info.admin_only = False
 
         mock_router.list_mounts.return_value = [mount_info]
 
@@ -136,9 +134,8 @@ class TestListMounts:
 
         assert len(result) == 1
         assert result[0]["mount_point"] == "/mnt/test"
-        assert result[0]["priority"] == 10
         assert result[0]["readonly"] is False
-        assert result[0]["backend_type"] == "GCSConnectorBackend"
+        assert result[0]["admin_only"] is False
 
     def test_list_mounts_filters_by_permission(
         self, mount_service, mock_router, mock_nexus_fs, operation_context
@@ -146,17 +143,13 @@ class TestListMounts:
         """Mounts without read permission are excluded."""
         mount_a = MagicMock()
         mount_a.mount_point = "/mnt/allowed"
-        mount_a.priority = 0
         mount_a.readonly = False
-        mount_a.backend = MagicMock()
-        type(mount_a.backend).__name__ = "TestBackend"
+        mount_a.admin_only = False
 
         mount_b = MagicMock()
         mount_b.mount_point = "/mnt/denied"
-        mount_b.priority = 0
         mount_b.readonly = False
-        mount_b.backend = MagicMock()
-        type(mount_b.backend).__name__ = "TestBackend"
+        mount_b.admin_only = False
 
         mock_router.list_mounts.return_value = [mount_a, mount_b]
 
@@ -175,10 +168,8 @@ class TestListMounts:
         """Admin users see all mounts regardless of permissions."""
         mount_info = MagicMock()
         mount_info.mount_point = "/mnt/restricted"
-        mount_info.priority = 0
         mount_info.readonly = False
-        mount_info.backend = MagicMock()
-        type(mount_info.backend).__name__ = "TestBackend"
+        mount_info.admin_only = False
 
         mock_router.list_mounts.return_value = [mount_info]
         mock_nexus_fs.rebac_check.return_value = False
@@ -256,10 +247,8 @@ class TestGetMount:
         """Getting an existing mount returns its details."""
         mount_info = MagicMock()
         mount_info.mount_point = "/mnt/test"
-        mount_info.priority = 5
         mount_info.readonly = True
-        mount_info.backend = MagicMock()
-        type(mount_info.backend).__name__ = "LocalBackend"
+        mount_info.admin_only = False
 
         mock_router.get_mount.return_value = mount_info
 
@@ -267,9 +256,8 @@ class TestGetMount:
 
         assert result is not None
         assert result["mount_point"] == "/mnt/test"
-        assert result["priority"] == 5
         assert result["readonly"] is True
-        assert result["backend_type"] == "LocalBackend"
+        assert result["admin_only"] is False
 
     def test_get_mount_not_found(self, mount_service, mock_router):
         """Getting a non-existent mount returns None."""

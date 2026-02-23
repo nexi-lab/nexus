@@ -20,8 +20,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
+    from nexus.bricks.rebac.manager import ReBACManager
     from nexus.contracts.types import OperationContext
-    from nexus.rebac.manager import ReBACManager
     from nexus.services.permissions.permission_cache import PermissionCacheCoordinator
 
 logger = logging.getLogger(__name__)

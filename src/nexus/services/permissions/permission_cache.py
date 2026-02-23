@@ -20,9 +20,9 @@ from typing import TYPE_CHECKING, Any
 from cachetools import TTLCache
 
 if TYPE_CHECKING:
-    from nexus.rebac.cache.boundary import PermissionBoundaryCache
-    from nexus.rebac.hotspot_detector import HotspotDetector
-    from nexus.rebac.manager import ReBACManager
+    from nexus.bricks.rebac.cache.boundary import PermissionBoundaryCache
+    from nexus.bricks.rebac.hotspot_detector import HotspotDetector
+    from nexus.bricks.rebac.manager import ReBACManager
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ class PermissionCacheCoordinator:
         if boundary_cache is not None:
             self._boundary_cache = boundary_cache
         elif enable_boundary_cache:
-            from nexus.rebac.cache.boundary import (
+            from nexus.bricks.rebac.cache.boundary import (
                 PermissionBoundaryCache,
             )
 
@@ -65,7 +65,7 @@ class PermissionCacheCoordinator:
         if hotspot_detector is not None:
             self._hotspot_detector = hotspot_detector
         elif enable_hotspot_tracking:
-            from nexus.rebac.hotspot_detector import HotspotDetector
+            from nexus.bricks.rebac.hotspot_detector import HotspotDetector
 
             self._hotspot_detector = HotspotDetector()
 

@@ -21,8 +21,8 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, Literal
 
+from nexus.bricks.rebac.memory_permission_enforcer import MemoryPermissionEnforcer
 from nexus.contracts.types import OperationContext, Permission
-from nexus.rebac.memory_permission_enforcer import MemoryPermissionEnforcer
 from nexus.services.memory.memory_router import MemoryViewRouter
 
 logger = logging.getLogger(__name__)

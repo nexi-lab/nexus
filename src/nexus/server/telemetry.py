@@ -134,7 +134,7 @@ def setup_telemetry(
         # Inject rebac tracer into permission tracing module
         from nexus.bricks.rebac.rebac_tracing import set_tracer as _set_rebac_tracer
 
-        _set_rebac_tracer(trace.get_tracer("nexus.rebac"))
+        _set_rebac_tracer(trace.get_tracer("nexus.bricks.rebac"))
 
         logger.info(
             f"OpenTelemetry initialized: service={_service_name}, "

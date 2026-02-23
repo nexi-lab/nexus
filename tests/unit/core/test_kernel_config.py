@@ -278,6 +278,7 @@ class TestSystemServices:
         assert ss.delivery_worker is None
         assert ss.observability_subsystem is None
         assert ss.resiliency_manager is None
+        assert ss.pipe_manager is None
 
     def test_frozen(self) -> None:
         ss = SystemServices()
@@ -368,6 +369,7 @@ class TestBrickServices:
         assert bs.api_key_creator is None
         assert bs.snapshot_service is None
         assert bs.task_queue_service is None
+        assert bs.zoekt_pipe_consumer is None
 
     def test_frozen(self) -> None:
         bs = BrickServices()

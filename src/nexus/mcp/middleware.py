@@ -42,7 +42,7 @@ from nexus.mcp.tool_utils import tool_error
 if TYPE_CHECKING:
     import mcp.types as mt
 
-    from nexus.rebac.manager import EnhancedReBACManager
+    from nexus.bricks.rebac.manager import EnhancedReBACManager
 
 logger = logging.getLogger(__name__)
 

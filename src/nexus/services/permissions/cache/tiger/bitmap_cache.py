@@ -35,8 +35,8 @@ from nexus.storage.models.permissions import TigerResourceMapModel as TRM
 if TYPE_CHECKING:
     from sqlalchemy.engine import Connection, Engine
 
+    from nexus.bricks.rebac.manager import EnhancedReBACManager
     from nexus.cache.base import TigerCacheProtocol
-    from nexus.rebac.manager import EnhancedReBACManager
     from nexus.services.permissions.cache.tiger.resource_map import TigerResourceMap
 
 logger = logging.getLogger(__name__)

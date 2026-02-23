@@ -83,7 +83,6 @@ class MountCoreService:
         mount_point: str,
         backend_type: str,
         backend_config: dict[str, Any],
-        priority: int = 0,
         readonly: bool = False,
         io_profile: str = "balanced",
         context: "OperationContext | None" = None,
@@ -94,7 +93,6 @@ class MountCoreService:
             mount_point: Virtual path where backend is mounted
             backend_type: Backend type identifier
             backend_config: Backend-specific configuration
-            priority: Mount priority (higher takes precedence)
             readonly: Whether mount is read-only
             io_profile: I/O tuning profile (Issue #1413)
             context: Operation context for permissions
@@ -129,11 +127,10 @@ class MountCoreService:
         # Create backend instance
         backend = self._create_backend(backend_type, config)
 
-        # Add to router
+        # Add to router (priority removed — router no longer supports it)
         self._gw.router.add_mount(
             mount_point=mount_point,
             backend=backend,
-            priority=priority,
             readonly=readonly,
             io_profile=io_profile,
         )
@@ -261,10 +258,8 @@ class MountCoreService:
                 mounts.append(
                     {
                         "mount_point": mount_info.mount_point,
-                        "priority": mount_info.priority,
                         "readonly": mount_info.readonly,
-                        "backend_type": type(mount_info.backend).__name__,
-                        "io_profile": mount_info.io_profile,
+                        "admin_only": mount_info.admin_only,
                     }
                 )
 
@@ -292,9 +287,8 @@ class MountCoreService:
         if mount_info:
             return {
                 "mount_point": mount_info.mount_point,
-                "priority": mount_info.priority,
                 "readonly": mount_info.readonly,
-                "backend_type": type(mount_info.backend).__name__,
+                "admin_only": mount_info.admin_only,
             }
         return None
 

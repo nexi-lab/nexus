@@ -7,7 +7,6 @@ import threading
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
-from nexus.backends.backend import Backend
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import InvalidPathError, NexusFileNotFoundError
 from nexus.contracts.types import OperationContext, Permission
@@ -33,7 +32,7 @@ from nexus.core.config import (
 )
 from nexus.core.metastore import MetastoreABC
 from nexus.core.nexus_fs_core import NexusFSCoreMixin
-from nexus.core.router import NamespaceConfig, PathRouter
+from nexus.core.router import PathRouter
 from nexus.lib.rpc_decorator import rpc_expose
 from nexus.storage.record_store import RecordStoreABC
 
@@ -62,13 +61,11 @@ class NexusFS(  # type: ignore[misc]
 
     def __init__(
         self,
-        backend: Backend,
         metadata_store: MetastoreABC,
         record_store: RecordStoreABC | None = None,
         cache_store: CacheStoreABC | None = None,
         *,
         is_admin: bool = False,
-        custom_namespaces: list[NamespaceConfig] | None = None,
         cache: CacheConfig | None = None,
         permissions: PermissionConfig | None = None,
         distributed: DistributedConfig | None = None,
@@ -78,7 +75,12 @@ class NexusFS(  # type: ignore[misc]
         system_services: SystemServices | None = None,
         brick_services: BrickServices | None = None,
     ):
-        """Initialize NexusFS kernel."""
+        """Initialize NexusFS kernel.
+
+        Kernel boots with MetastoreABC (inode layer) and an optional router
+        (via KernelServices). Backends are mounted externally via
+        ``router.add_mount()`` — like Linux VFS, no global backend.
+        """
         # Config defaults
         cache = cache or CacheConfig()
         permissions = permissions or PermissionConfig()
@@ -109,12 +111,8 @@ class NexusFS(  # type: ignore[misc]
         self.auto_parse = parsing.auto_parse
         self.is_admin = is_admin
 
-        # Content cache (Issue #2134: from BrickServices)
-        if brk_svc.content_cache is not None:
-            backend.content_cache = brk_svc.content_cache
-
-        # Four pillars: backend, metadata, record store, cache store
-        self.backend = backend
+        # Three pillars: metadata (required), record store, cache store
+        # No self.backend — all I/O goes through router.route().backend
         self.metadata: MetastoreABC = metadata_store
         self._record_store = record_store
         self._sql_engine: Any = None
@@ -130,15 +128,11 @@ class NexusFS(  # type: ignore[misc]
             cache_store if cache_store is not None else NullCacheStore()
         )
 
-        # Path router
+        # Path router (metastore-backed mount table)
         if ksvc.router is not None:
             self.router = ksvc.router
         else:
-            self.router = PathRouter()
-            if custom_namespaces:
-                for ns_config in custom_namespaces:
-                    self.router.register_namespace(ns_config)
-        self.router.add_mount("/", self.backend, priority=0)
+            self.router = PathRouter(metadata_store)
 
         # Parser registries (Issue #2134: from BrickServices, fallback for tests)
         if brk_svc.parser_registry is not None:
@@ -639,9 +633,12 @@ class NexusFS(  # type: ignore[misc]
         # We use an empty content hash as a placeholder
         empty_hash = hash_content(b"")
 
+        # Route to find which backend owns this path
+        route = self.router.route(path, is_admin=ctx.is_admin)
+
         metadata = FileMetadata(
             path=path,
-            backend_name=self.backend.name,
+            backend_name=route.backend.name,
             physical_path=empty_hash,  # Placeholder for directory
             size=0,  # Directories have size 0
             etag=empty_hash,
@@ -692,7 +689,6 @@ class NexusFS(  # type: ignore[misc]
         # Route to backend with write access check (mkdir requires write permission)
         route = self.router.route(
             path,
-            zone_id=ctx.zone_id,
             is_admin=ctx.is_admin,
             check_write=True,
         )
@@ -896,7 +892,6 @@ class NexusFS(  # type: ignore[misc]
         # Route to backend with write access check (rmdir requires write permission)
         route = self.router.route(
             path,
-            zone_id=ctx.zone_id,
             is_admin=ctx.is_admin,
             check_write=True,
         )
@@ -1017,7 +1012,6 @@ class NexusFS(  # type: ignore[misc]
             # Route with access control (read permission needed to check)
             route = self.router.route(
                 path,
-                zone_id=ctx.zone_id,
                 is_admin=ctx.is_admin,
                 check_write=False,
             )
@@ -1030,30 +1024,27 @@ class NexusFS(  # type: ignore[misc]
             return False
 
     @rpc_expose(description="Get available namespaces")
-    def get_available_namespaces(self) -> builtins.list[str]:
-        """Get list of available namespace directories."""
-        import time
+    def get_top_level_mounts(self) -> builtins.list[str]:
+        """Return top-level mount names visible to the current user.
 
-        start = time.time()
-        logger.warning(
-            f"[PERF-IMPL] get_available_namespaces: START, is_admin={self.is_admin}, namespace_count={len(self.router._namespaces)}"
-        )
+        Reads DT_MOUNT entries from metastore (kernel's single source of
+        truth for mount points). Admin-only filtering uses the runtime
+        mount table which carries mount options.
+        """
+        # Build admin_only set from runtime mount table (mount options)
+        admin_only = {m.mount_point for m in self.router.list_mounts() if m.admin_only}
 
-        namespaces = []
-
-        for name, config in self.router._namespaces.items():
-            # Include namespace if it's not admin-only OR user is admin
-            # Note: We show all namespaces regardless of zone_id.
-            # Zone filtering happens when accessing files within the namespace.
-            if not config.admin_only or self.is_admin:
-                namespaces.append(name)
-
-        result = sorted(namespaces)
-        elapsed = time.time() - start
-        logger.warning(
-            f"[PERF-IMPL] get_available_namespaces: DONE in {elapsed:.3f}s, returned {len(result)} namespaces: {result}"
-        )
-        return result
+        names: set[str] = set()
+        for meta in self.metadata.list("/"):
+            if not meta.is_mount:
+                continue
+            top = meta.path.lstrip("/").split("/")[0]
+            if not top:
+                continue
+            if meta.path in admin_only and not self.is_admin:
+                continue
+            names.add(top)
+        return sorted(names)
 
     @rpc_expose(description="Get file metadata for FUSE operations")
     def get_metadata(
@@ -1124,27 +1115,25 @@ class NexusFS(  # type: ignore[misc]
         directories = set()
 
         try:
-            # For root path, directly use the backend (router doesn't handle "/" well)
+            # For root path, try routing "/" to find the root mount's backend
             if path == "/":
                 try:
-                    entries = self.backend.list_dir("")
+                    zone_id, _agent_id, is_admin = self._get_routing_params(context)
+                    root_route = self.router.route("/", is_admin=is_admin, check_write=False)
+                    entries = root_route.backend.list_dir(root_route.backend_path)
                     for entry in entries:
                         if entry.endswith("/"):  # Directory marker
                             dir_name = entry.rstrip("/")
                             dir_path = "/" + dir_name
                             directories.add(dir_path)
-                except NotImplementedError:
-                    # Backend doesn't support list_dir - skip
-                    pass
-                except (OSError, PermissionError, TypeError):
-                    # I/O, permission, or type errors - skip silently (best-effort directory listing)
+                except (NotImplementedError, Exception):
+                    # No root mount, backend doesn't support list_dir, or other error
                     pass
             else:
                 # Non-root path - use router with context
                 zone_id, _agent_id, is_admin = self._get_routing_params(context)
                 route = self.router.route(
                     path.rstrip("/"),
-                    zone_id=zone_id,
                     is_admin=is_admin,
                     check_write=False,
                 )
@@ -1598,7 +1587,6 @@ class NexusFS(  # type: ignore[misc]
         mount_point: str,
         backend_type: str,
         backend_config: dict[str, Any],
-        priority: int = 0,
         readonly: bool = False,
         io_profile: str = "balanced",
         context: Any = None,
@@ -1607,7 +1595,6 @@ class NexusFS(  # type: ignore[misc]
             mount_point=mount_point,
             backend_type=backend_type,
             backend_config=backend_config,
-            priority=priority,
             readonly=readonly,
             io_profile=io_profile,
             context=context,
@@ -1897,10 +1884,11 @@ class NexusFS(  # type: ignore[misc]
         if hasattr(self, "router"):
             from nexus.core.protocols.connector import OAuthCapableProtocol
 
-            for mount in self.router.list_mounts():
+            for mp in self.router.get_mount_points():
                 try:
-                    if isinstance(mount.backend, OAuthCapableProtocol):
-                        mount.backend.token_manager.close()
+                    route = self.router.route(mp, is_admin=True)
+                    if isinstance(route.backend, OAuthCapableProtocol):
+                        route.backend.token_manager.close()
                 except Exception as e:
                     logger.debug("Failed to close backend token manager: %s", e)
 

@@ -1,6 +1,6 @@
 """Integration tests for mount I/O profiles (Issue #1413).
 
-Tests that io_profile propagates through the PathRouter → RouteResult pipeline
+Tests that io_profile propagates through the PathRouter -> RouteResult pipeline
 and that MountConfigModel round-trips io_profile through the database.
 """
 
@@ -9,29 +9,34 @@ from unittest.mock import MagicMock
 import pytest
 
 from nexus.contracts.io_profile import IOProfile
-from nexus.core.router import MountConfig, PathRouter, RouteResult
+from nexus.core.router import PathRouter, RouteResult
+from tests.helpers.in_memory_metadata_store import InMemoryMetastore
 
 
 class TestPathRouterIOProfile:
     """Test io_profile propagation through PathRouter and RouteResult."""
 
     def _make_backend(self) -> MagicMock:
-        return MagicMock()
+        backend = MagicMock()
+        backend.name = "mock-backend"
+        return backend
+
+    def _make_router(self) -> PathRouter:
+        return PathRouter(InMemoryMetastore())
 
     def test_add_mount_with_io_profile(self) -> None:
-        router = PathRouter()
+        router = self._make_router()
         backend = self._make_backend()
-        router.add_mount("/weights", backend, priority=1, io_profile="fast_read")
+        router.add_mount("/weights", backend, io_profile="fast_read")
 
         mounts = list(router.list_mounts())
         weight_mount = [m for m in mounts if m.mount_point == "/weights"]
         assert len(weight_mount) == 1
-        assert weight_mount[0].io_profile == "fast_read"
 
     def test_route_propagates_io_profile(self) -> None:
-        router = PathRouter()
+        router = self._make_router()
         backend = self._make_backend()
-        router.add_mount("/models", backend, priority=1, io_profile="fast_read")
+        router.add_mount("/models", backend, io_profile="fast_read")
 
         result = router.route("/models/gpt4/weights.bin")
         assert result is not None
@@ -39,23 +44,26 @@ class TestPathRouterIOProfile:
         assert result.io_profile == "fast_read"
 
     def test_route_default_io_profile(self) -> None:
-        router = PathRouter()
+        router = self._make_router()
         backend = self._make_backend()
-        router.add_mount("/data", backend, priority=1)
+        router.add_mount("/data", backend)
 
         result = router.route("/data/file.txt")
         assert result is not None
         assert result.io_profile == "balanced"
 
     def test_multiple_mounts_different_profiles(self) -> None:
-        router = PathRouter()
+        router = self._make_router()
         backend_read = self._make_backend()
+        backend_read.name = "read-backend"
         backend_write = self._make_backend()
+        backend_write.name = "write-backend"
         backend_edit = self._make_backend()
+        backend_edit.name = "edit-backend"
 
-        router.add_mount("/models", backend_read, priority=1, io_profile="fast_read")
-        router.add_mount("/logs", backend_write, priority=1, io_profile="fast_write")
-        router.add_mount("/workspace", backend_edit, priority=1, io_profile="edit")
+        router.add_mount("/models", backend_read, io_profile="fast_read")
+        router.add_mount("/logs", backend_write, io_profile="fast_write")
+        router.add_mount("/workspace", backend_edit, io_profile="edit")
 
         result_models = router.route("/models/weights.bin")
         result_logs = router.route("/logs/app.log")
@@ -67,21 +75,6 @@ class TestPathRouterIOProfile:
         assert result_logs.io_profile == "fast_write"
         assert result_ws is not None
         assert result_ws.io_profile == "edit"
-
-    def test_mountconfig_io_profile_field(self) -> None:
-        backend = self._make_backend()
-        mc = MountConfig(
-            mount_point="/archive",
-            backend=backend,
-            priority=0,
-            io_profile="archive",
-        )
-        assert mc.io_profile == "archive"
-
-    def test_mountconfig_default_io_profile(self) -> None:
-        backend = self._make_backend()
-        mc = MountConfig(mount_point="/data", backend=backend)
-        assert mc.io_profile == "balanced"
 
     def test_route_result_io_profile_field(self) -> None:
         backend = self._make_backend()
@@ -137,7 +130,7 @@ class TestMountConfigModelIOProfile:
 
 
 class TestIOProfileEndToEnd:
-    """Test IOProfile → config → ReadaheadConfig → cache_priority pipeline."""
+    """Test IOProfile -> config -> ReadaheadConfig -> cache_priority pipeline."""
 
     def test_fast_read_full_pipeline(self) -> None:
         """FAST_READ: high readahead, high cache priority."""

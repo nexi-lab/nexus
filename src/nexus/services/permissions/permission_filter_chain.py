@@ -266,11 +266,11 @@ class BulkReBACStrategy:
                 try:
                     route = ctx.router.route(
                         path,
-                        zone_id=ctx.context.zone_id,
                         is_admin=ctx.context.is_admin,
                     )
-                    if hasattr(route, "namespace") and route.namespace:
-                        obj_type = route.namespace
+                    # RouteResult no longer has .namespace — use mount_point as obj_type hint
+                    if route.mount_point and route.mount_point != "/":
+                        obj_type = route.mount_point.strip("/").split("/")[0]
                 except Exception as e:
                     logger.debug("Route resolution failed for path %s: %s", path, e)
             checks.append((subject, "read", (obj_type, path)))

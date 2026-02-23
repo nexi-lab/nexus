@@ -12,13 +12,31 @@ Supports:
 
 import json
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 
-from nexus.core.router import MountConfig
 from nexus.storage.models import MountConfigModel
+
+
+@dataclass
+class MountConfig:
+    """Mount configuration for restore_mounts() return type.
+
+    This is a service-layer data transfer object. The kernel PathRouter no
+    longer exposes MountConfig (it uses _MountEntry internally). This DTO
+    carries the fields needed by callers of ``restore_mounts()`` to call
+    ``router.add_mount()``.
+    """
+
+    mount_point: str
+    backend: Any
+    priority: int = 0
+    readonly: bool = False
+    io_profile: str = "balanced"
+
 
 if TYPE_CHECKING:
     from nexus.storage.record_store import RecordStoreABC

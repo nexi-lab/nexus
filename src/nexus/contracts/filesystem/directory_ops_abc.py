@@ -3,7 +3,7 @@
 Extracted from core/filesystem.py (Issue #2424) following the
 ``collections.abc`` composition pattern.
 
-Contains: mkdir, rmdir, is_directory, get_available_namespaces
+Contains: mkdir, rmdir, is_directory, get_top_level_mounts
 """
 
 import builtins
@@ -13,7 +13,7 @@ from nexus.contracts.types import OperationContext
 
 
 class DirectoryOpsABC(ABC):
-    """Directory operations: mkdir, rmdir, is_directory, get_available_namespaces."""
+    """Directory operations: mkdir, rmdir, is_directory, get_top_level_mounts."""
 
     @abstractmethod
     def mkdir(self, path: str, parents: bool = False, exist_ok: bool = False) -> None:
@@ -64,8 +64,8 @@ class DirectoryOpsABC(ABC):
         ...
 
     @abstractmethod
-    def get_available_namespaces(self) -> builtins.list[str]:
-        """Get list of available namespace directories.
+    def get_top_level_mounts(self) -> builtins.list[str]:
+        """Get list of top-level mount names.
 
         Returns:
             List of namespace names (e.g., ['workspace', 'shared', 'external'])

@@ -44,7 +44,7 @@ def mounts_group() -> None:
         nexus mounts list
 
         # Add a new mount
-        nexus mounts add /personal/alice google_drive '{"access_token":"..."}' --priority 10
+        nexus mounts add /personal/alice google_drive '{"access_token":"..."}'
 
         # Remove a mount
         nexus mounts remove /personal/alice
@@ -59,7 +59,6 @@ def mounts_group() -> None:
 @click.argument("mount_point", type=str)
 @click.argument("backend_type", type=str)
 @click.argument("config_json", type=str)
-@click.option("--priority", type=int, default=0, help="Mount priority (higher = preferred)")
 @click.option("--readonly", is_flag=True, help="Mount as read-only")
 @click.option(
     "--io-profile",
@@ -74,7 +73,6 @@ def add_mount(
     mount_point: str,
     backend_type: str,
     config_json: str,
-    priority: int,
     readonly: bool,
     io_profile: str,
     owner: str | None,
@@ -96,7 +94,7 @@ def add_mount(
         nexus mounts add /external/data local '{"root_path":"/path/to/data"}'
 
         # Mount Google Cloud Storage
-        nexus mounts add /cloud/bucket gcs '{"bucket_name":"my-bucket"}' --priority 10
+        nexus mounts add /cloud/bucket gcs '{"bucket_name":"my-bucket"}'
 
         # Mount with ownership
         nexus mounts add /personal/alice google_drive '{"access_token":"..."}' \\
@@ -123,7 +121,6 @@ def add_mount(
                     mount_point=mount_point,
                     backend_type=backend_type,
                     backend_config=config_dict,
-                    priority=priority,
                     readonly=readonly,
                     io_profile=io_profile,
                 )
@@ -139,7 +136,6 @@ def add_mount(
         console.print("[bold cyan]Mount Details:[/bold cyan]")
         console.print(f"  Mount Point: [cyan]{mount_point}[/cyan]")
         console.print(f"  Backend Type: [cyan]{backend_type}[/cyan]")
-        console.print(f"  Priority: [cyan]{priority}[/cyan]")
         console.print(f"  Read-Only: [cyan]{readonly}[/cyan]")
         console.print(f"  IO Profile: [cyan]{io_profile}[/cyan]")
         if owner:
@@ -251,11 +247,10 @@ def list_mounts(
 
             for mount in mounts:
                 console.print(f"[bold]{mount['mount_point']}[/bold]")
-                console.print(
-                    f"  Backend Type: [cyan]{mount.get('backend_type', 'unknown')}[/cyan]"
-                )
-                console.print(f"  Priority: [cyan]{mount['priority']}[/cyan]")
                 console.print(f"  Read-Only: [cyan]{'Yes' if mount['readonly'] else 'No'}[/cyan]")
+                console.print(
+                    f"  Admin-Only: [cyan]{'Yes' if mount.get('admin_only') else 'No'}[/cyan]"
+                )
                 console.print()
 
     except Exception as e:
@@ -295,9 +290,8 @@ def mount_info(mount_point: str, show_config: bool, backend_config: BackendConfi
         # Display mount info
         console.print(f"\n[bold cyan]Mount Information: {mount_point}[/bold cyan]\n")
 
-        console.print(f"[bold]Backend Type:[/bold] {mount.get('backend_type', 'unknown')}")
-        console.print(f"[bold]Priority:[/bold] {mount['priority']}")
         console.print(f"[bold]Read-Only:[/bold] {'Yes' if mount['readonly'] else 'No'}")
+        console.print(f"[bold]Admin-Only:[/bold] {'Yes' if mount.get('admin_only') else 'No'}")
 
         # Note: show_config not supported yet for active mounts (config not returned by router)
         if show_config:

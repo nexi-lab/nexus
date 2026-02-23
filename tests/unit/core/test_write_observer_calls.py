@@ -36,13 +36,15 @@ def temp_dir() -> Generator[Path, None, None]:
 
 @pytest.fixture
 def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
+    metastore = InMemoryMetastore()
+    backend = LocalBackend(str(temp_dir / "data"))
     nx = NexusFS(
-        backend=LocalBackend(str(temp_dir / "data")),
-        metadata_store=InMemoryMetastore(),
+        metadata_store=metastore,
         permissions=PermissionConfig(enforce=False),
         parsing=ParseConfig(auto_parse=False),
         system_services=SystemServices(),
     )
+    nx.router.add_mount("/", backend)
     yield nx
     nx.close()
 
@@ -243,13 +245,15 @@ class TestVFSObserverCoverage:
 
     @pytest.fixture
     def nx_with_hook(self, temp_dir: Path, hook: MagicMock) -> Generator[NexusFS, None, None]:
+        metastore = InMemoryMetastore()
+        backend = LocalBackend(str(temp_dir / "data"))
         nx = NexusFS(
-            backend=LocalBackend(str(temp_dir / "data")),
-            metadata_store=InMemoryMetastore(),
+            metadata_store=metastore,
             permissions=PermissionConfig(enforce=False),
             parsing=ParseConfig(auto_parse=False),
             system_services=SystemServices(),
         )
+        nx.router.add_mount("/", backend)
         nx.register_observe(hook)
         yield nx
         nx.close()

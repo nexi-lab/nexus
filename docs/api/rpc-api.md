@@ -3628,11 +3628,11 @@ Delete a namespace configuration.
 
 ---
 
-### get_available_namespaces
+### get_top_level_mounts
 
-Get all available ReBAC namespaces.
+Get all top-level mount names.
 
-**Endpoint**: `POST /api/nfs/get_available_namespaces`
+**Endpoint**: `POST /api/nfs/get_top_level_mounts`
 
 **Parameters:** None
 
@@ -3937,7 +3937,7 @@ Test if an OAuth credential is valid and can be refreshed.
 | `namespace_get` | Namespace | Get namespace |
 | `namespace_list` | Namespace | List namespaces |
 | `namespace_delete` | Namespace | Delete namespace |
-| `get_available_namespaces` | Namespace | Get available namespaces |
+| `get_top_level_mounts` | Mount | Get top-level mounts |
 
 **Total: 83 RPC Methods** (7 Memory State Management methods added in #368)
 

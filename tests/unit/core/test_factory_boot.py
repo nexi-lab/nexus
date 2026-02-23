@@ -73,6 +73,7 @@ EXPECTED_SYSTEM_KEYS = frozenset(
         "brick_lifecycle_manager",
         "brick_reconciler",
         "zone_lifecycle",
+        "pipe_manager",
     }
 )
 

@@ -67,6 +67,7 @@ _FACTORY_SKIP: frozenset[str] = frozenset(
         "governance_collusion_service",  # governance brick, no lifecycle (Issue #2129)
         "governance_graph_service",  # governance brick, no lifecycle (Issue #2129)
         "governance_response_service",  # governance brick, no lifecycle (Issue #2129)
+        "zoekt_pipe_consumer",  # DT_PIPE consumer, no lifecycle (Issue #810)
     }
 )
 

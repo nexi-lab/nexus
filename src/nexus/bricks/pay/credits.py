@@ -43,7 +43,7 @@ from nexus.bricks.pay.constants import (
     make_tb_account_id,
     micro_to_credits,
 )
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from nexus.bricks.pay.protocols import AuditLoggerProtocol

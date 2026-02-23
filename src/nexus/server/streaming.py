@@ -9,7 +9,7 @@ import os
 import secrets
 import time
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 # Secret key for signing stream tokens (persistent across restarts if set via env)
 _STREAM_SECRET: bytes | None = None

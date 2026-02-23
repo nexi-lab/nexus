@@ -25,7 +25,7 @@ import uuid
 import httpx
 import pytest
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.metadata import FileMetadata
 from nexus.raft.client import RaftClient
 

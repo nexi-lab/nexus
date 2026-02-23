@@ -38,7 +38,7 @@ from nats.js.api import (
 )
 from nats.js.errors import NotFoundError
 
-from nexus.constants import DEFAULT_NATS_URL
+from nexus.contracts.constants import DEFAULT_NATS_URL
 from nexus.core.file_events import FileEvent, FileEventType
 from nexus.services.event_bus.base import EventBusBase
 from nexus.services.event_bus.protocol import AckableEvent

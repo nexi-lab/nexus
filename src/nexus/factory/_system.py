@@ -19,7 +19,7 @@ import time
 from collections.abc import Callable
 from typing import Any, cast
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.factory._boot_context import _BootContext
 from nexus.factory._helpers import _make_gate
 

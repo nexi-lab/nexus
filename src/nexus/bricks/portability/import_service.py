@@ -26,7 +26,7 @@ from nexus.bricks.portability.models import (
     PermissionRecord,
     ZoneImportOptions,
 )
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from nexus.contracts.portability_types import PortabilityFSProtocol

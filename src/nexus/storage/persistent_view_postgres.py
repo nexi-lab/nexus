@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import text
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.persistent_view import PersistentView
 
 if TYPE_CHECKING:

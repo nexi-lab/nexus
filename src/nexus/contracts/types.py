@@ -18,8 +18,7 @@ from dataclasses import asdict, dataclass, field
 from enum import IntFlag, StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-# Inlined from nexus.constants to keep this module a zero-dependency leaf (Issue #1501).
-ROOT_ZONE_ID: str = "root"
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from nexus.storage.read_set import ReadSet

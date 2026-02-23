@@ -36,7 +36,7 @@ from typing import Any
 
 from cachetools import TTLCache
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 logger = logging.getLogger(__name__)
 

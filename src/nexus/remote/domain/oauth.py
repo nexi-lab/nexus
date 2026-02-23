@@ -6,7 +6,7 @@ Issue #1603: Decompose remote/client.py into domain clients.
 import builtins
 from typing import Any
 
-from nexus.constants import DEFAULT_OAUTH_REDIRECT_URI
+from nexus.contracts.constants import DEFAULT_OAUTH_REDIRECT_URI
 
 
 class OAuthClient:

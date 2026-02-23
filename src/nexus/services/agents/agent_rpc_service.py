@@ -13,7 +13,7 @@ import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.rpc import rpc_expose
 from nexus.contracts.types import VFSOperations, parse_operation_context
 

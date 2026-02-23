@@ -10,7 +10,7 @@ Extracted from ``nexus.core.nexus_fs._has_descendant_access`` and
 import logging
 from typing import TYPE_CHECKING, Any
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext, Permission

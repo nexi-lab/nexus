@@ -8,7 +8,7 @@ import pytest
 
 from nexus.bricks.skills.exceptions import SkillPermissionDeniedError
 from nexus.bricks.skills.importer import SkillImporter, SkillImportError
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext
 
 # Mock SKILL.md content with valid YAML frontmatter

@@ -10,7 +10,7 @@ References:
 
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from nexus.services.upload.upload_session import UploadSession

@@ -25,7 +25,7 @@ from pyroaring import BitMap as RoaringBitmap
 from sqlalchemy import delete, insert, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.models.permissions import ReBACVersionSequenceModel as RVS
 from nexus.storage.models.permissions import TigerCacheModel as TC
 from nexus.storage.models.permissions import TigerDirectoryGrantsModel as TDG

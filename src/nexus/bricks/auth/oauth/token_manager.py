@@ -37,7 +37,7 @@ if TYPE_CHECKING:
 
 from nexus.bricks.auth.oauth.crypto import OAuthCrypto
 from nexus.bricks.auth.oauth.types import OAuthCredential, OAuthError
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import AuthenticationError
 from nexus.storage.models import OAuthCredentialModel
 from nexus.storage.token_rotation_store import TokenRotationStore

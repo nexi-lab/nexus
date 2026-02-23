@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from nexus.backends.backend import Backend
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import InvalidPathError, NexusFileNotFoundError
 from nexus.contracts.types import OperationContext, Permission
 from nexus.core.file_events import FileEvent, FileEventType

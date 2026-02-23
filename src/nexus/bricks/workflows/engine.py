@@ -21,7 +21,7 @@ from nexus.bricks.workflows.types import (
     WorkflowExecution,
     WorkflowStatus,
 )
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 logger = logging.getLogger(__name__)
 

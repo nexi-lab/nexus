@@ -301,7 +301,7 @@ def connect(
     metadata_store: MetastoreABC
     if cfg.mode == "federation":
         try:
-            from nexus.constants import DEFAULT_GRPC_BIND_ADDR
+            from nexus.contracts.constants import DEFAULT_GRPC_BIND_ADDR
             from nexus.raft import FederatedMetadataProxy
             from nexus.raft.zone_manager import ZoneManager
         except ImportError as err:

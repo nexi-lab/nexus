@@ -36,7 +36,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from nexus.constants import DEFAULT_ZOEKT_URL
+from nexus.contracts.constants import DEFAULT_ZOEKT_URL
 
 if TYPE_CHECKING:
     pass

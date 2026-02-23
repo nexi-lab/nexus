@@ -380,7 +380,7 @@ def main():
 
     # Import after path setup
     from nexus.backends.gcalendar_connector import GoogleCalendarConnectorBackend
-    from nexus.constants import ROOT_ZONE_ID
+    from nexus.contracts.constants import ROOT_ZONE_ID
     from nexus.contracts.types import OperationContext
 
     # Create backend

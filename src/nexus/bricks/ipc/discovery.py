@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.bricks.ipc.conventions import AGENTS_ROOT, agent_card_path
 from nexus.bricks.ipc.storage.protocol import IPCStorageDriver
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from nexus.contracts.cache_store import CacheStoreABC

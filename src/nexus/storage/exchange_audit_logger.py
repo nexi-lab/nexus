@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import desc, event, func, select
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.models.exchange_audit_log import ExchangeAuditLogModel
 
 if TYPE_CHECKING:

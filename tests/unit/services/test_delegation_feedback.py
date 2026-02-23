@@ -21,7 +21,7 @@ from nexus.bricks.delegation.models import (
     DelegationStatus,
 )
 from nexus.bricks.delegation.service import DelegationService
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 
 def _make_record(

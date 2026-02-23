@@ -18,7 +18,7 @@ from typing import Any, cast
 from nexus.bricks.rebac.domain import Entity
 from nexus.bricks.rebac.tuples.repository import TupleRepository
 from nexus.bricks.rebac.utils.changelog import insert_changelog_entry
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.lib.zone import normalize_zone_id
 
 logger = logging.getLogger(__name__)

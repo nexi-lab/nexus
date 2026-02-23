@@ -23,12 +23,12 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import or_, select
 
-from nexus.core.rebac import WILDCARD_SUBJECT, Entity
-from nexus.rebac.types import (
+from nexus.bricks.rebac.types import (
     GraphLimitExceeded,
     GraphLimits,
     TraversalStats,
 )
+from nexus.core.rebac import WILDCARD_SUBJECT, Entity
 from nexus.storage.models.permissions import ReBACTupleModel as RT
 
 if TYPE_CHECKING:

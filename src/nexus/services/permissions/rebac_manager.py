@@ -1,3 +1,3 @@
-"""Backward-compat shim — canonical: nexus.rebac.manager."""
+"""Backward-compat shim — canonical: nexus.bricks.rebac.manager."""
 
-from nexus.rebac.manager import ReBACManager  # noqa: F401
+from nexus.bricks.rebac.manager import ReBACManager  # noqa: F401

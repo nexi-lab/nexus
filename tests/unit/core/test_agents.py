@@ -6,13 +6,13 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from nexus.bricks.rebac.entity_registry import EntityRegistry
 from nexus.core.agents import (
     create_agent_with_api_key,
     register_agent,
     unregister_agent,
     validate_agent_ownership,
 )
-from nexus.rebac.entity_registry import EntityRegistry
 from nexus.storage.models import Base
 
 

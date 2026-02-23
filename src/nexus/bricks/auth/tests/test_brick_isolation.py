@@ -83,7 +83,7 @@ def test_auth_brick_no_rebac_import() -> None:
         importlib.import_module("nexus.bricks.auth.protocol")
 
         new_modules = set(sys.modules.keys()) - modules_before
-        rebac_imports = [m for m in new_modules if m.startswith("nexus.rebac")]
+        rebac_imports = [m for m in new_modules if m.startswith("nexus.bricks.rebac")]
         assert not rebac_imports, f"Auth brick pulled in rebac modules: {rebac_imports}"
     finally:
         for mod in auth_modules:

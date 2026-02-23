@@ -90,7 +90,9 @@ class TestZeroCoreImports:
         # For now, just report top-level non-TYPE_CHECKING ones
         # The router.py has lazy rebac imports inside methods — those are acceptable
         if violations:
-            print(f"Note: {len(violations)} nexus.rebac imports found (may be lazy/acceptable):")
+            print(
+                f"Note: {len(violations)} nexus.bricks.rebac imports found (may be lazy/acceptable):"
+            )
             for v in violations:
                 print(f"  - {v}")
 

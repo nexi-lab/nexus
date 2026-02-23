@@ -72,7 +72,7 @@ def test_auth_brick_imports_without_server():
 
 
 def test_auth_brick_no_rebac_import():
-    """Auth brick does not import from nexus.rebac."""
+    """Auth brick does not import from nexus.bricks.rebac."""
     modules_before = set(sys.modules.keys())
 
     auth_modules = [k for k in sys.modules if k.startswith("nexus.auth")]
@@ -85,7 +85,7 @@ def test_auth_brick_no_rebac_import():
         importlib.import_module("nexus.auth.protocol")
 
         new_modules = set(sys.modules.keys()) - modules_before
-        rebac_imports = [m for m in new_modules if m.startswith("nexus.rebac")]
+        rebac_imports = [m for m in new_modules if m.startswith("nexus.bricks.rebac")]
         assert not rebac_imports, f"Auth brick pulled in rebac modules: {rebac_imports}"
     finally:
         for mod in auth_modules:

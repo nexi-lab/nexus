@@ -54,8 +54,8 @@ from typing import TYPE_CHECKING, Any
 from cachetools import TTLCache
 
 if TYPE_CHECKING:
+    from nexus.bricks.rebac.manager import EnhancedReBACManager
     from nexus.core.persistent_view_store import PersistentViewStore
-    from nexus.rebac.manager import EnhancedReBACManager
 
 logger = logging.getLogger(__name__)
 

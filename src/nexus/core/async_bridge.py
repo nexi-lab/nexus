@@ -30,7 +30,7 @@ from concurrent.futures import Future
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.rebac.async_manager import AsyncReBACManager
+    from nexus.bricks.rebac.async_manager import AsyncReBACManager
 
 logger = logging.getLogger(__name__)
 
@@ -160,8 +160,8 @@ class AsyncReBACBridge:
         Issue #621: Engine creation delegates to RecordStoreABC instead of
         calling create_engine() directly.
         """
-        from nexus.rebac.async_manager import AsyncReBACManager
-        from nexus.rebac.manager import ReBACManager
+        from nexus.bricks.rebac.async_manager import AsyncReBACManager
+        from nexus.bricks.rebac.manager import ReBACManager
 
         if self._injected_engine is not None:
             sync_engine = self._injected_engine

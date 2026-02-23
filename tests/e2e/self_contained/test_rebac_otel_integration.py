@@ -140,7 +140,7 @@ def otel_exporter():
     provider.add_span_processor(SimpleSpanProcessor(exporter))
 
     # Inject tracer via set_tracer (DI pattern)
-    tracer = provider.get_tracer("nexus.rebac")
+    tracer = provider.get_tracer("nexus.bricks.rebac")
     _rebac_tracing_mod.set_tracer(tracer)
 
     yield exporter

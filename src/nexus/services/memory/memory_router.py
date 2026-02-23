@@ -9,12 +9,12 @@ Includes version tracking (#1184) for memory audit trails.
 
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from nexus.rebac.entity_registry import EntityRegistry
+from nexus.bricks.rebac.entity_registry import EntityRegistry
 from nexus.storage.models import MemoryModel, VersionHistoryModel
 
 
@@ -29,7 +29,7 @@ class MemoryViewRouter:
             entity_registry: Entity registry instance (creates new if None).
         """
         self.session = session
-        self.entity_registry = entity_registry or EntityRegistry(session)
+        self.entity_registry = entity_registry or EntityRegistry(cast(Any, session))
 
     @staticmethod
     def is_memory_path(path: str) -> bool:
@@ -550,7 +550,7 @@ class MemoryViewRouter:
             if owner_id:
                 from sqlalchemy import Engine
 
-                from nexus.rebac.manager import EnhancedReBACManager
+                from nexus.bricks.rebac.manager import EnhancedReBACManager
 
                 bind = self.session.get_bind()
                 assert isinstance(bind, Engine), "Expected Engine, got Connection"
@@ -622,7 +622,7 @@ class MemoryViewRouter:
             if user_id:
                 from sqlalchemy import Engine
 
-                from nexus.rebac.manager import EnhancedReBACManager
+                from nexus.bricks.rebac.manager import EnhancedReBACManager
 
                 bind = self.session.get_bind()
                 assert isinstance(bind, Engine), "Expected Engine, got Connection"

@@ -13,14 +13,14 @@ import builtins
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from sqlalchemy.orm import Session
 
+from nexus.bricks.rebac.entity_registry import EntityRegistry
+from nexus.bricks.rebac.memory_permission_enforcer import MemoryPermissionEnforcer
 from nexus.contracts.types import OperationContext, Permission
 from nexus.core.temporal import parse_datetime, validate_temporal_params
-from nexus.rebac.entity_registry import EntityRegistry
-from nexus.rebac.memory_permission_enforcer import MemoryPermissionEnforcer
 from nexus.services.memory.memory_router import MemoryViewRouter
 
 logger = logging.getLogger(__name__)
@@ -119,13 +119,13 @@ class Memory:
         self.llm_provider = llm_provider
 
         # Initialize components
-        self.entity_registry = entity_registry or EntityRegistry(session)
+        self.entity_registry = entity_registry or EntityRegistry(cast(Any, session))
         self.memory_router = MemoryViewRouter(session, self.entity_registry)
 
         # Initialize ReBAC manager for permission checks
         from sqlalchemy import Engine
 
-        from nexus.rebac.manager import EnhancedReBACManager
+        from nexus.bricks.rebac.manager import EnhancedReBACManager
 
         bind = session.get_bind()
         assert isinstance(bind, Engine), "Expected Engine, got Connection"

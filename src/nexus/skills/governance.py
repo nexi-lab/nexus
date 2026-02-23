@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 from nexus.skills.exceptions import SkillPermissionDeniedError, SkillValidationError
 
 if TYPE_CHECKING:
-    from nexus.rebac.manager import ReBACManager
+    from nexus.bricks.rebac.manager import ReBACManager
 
 logger = logging.getLogger(__name__)
 

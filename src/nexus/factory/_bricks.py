@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Any
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.factory._boot_context import _BootContext
 from nexus.factory._helpers import _make_gate, _resolve_tasks_db_path, _safe_create
 

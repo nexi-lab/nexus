@@ -11,8 +11,8 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import Session
 
-from nexus.constants import ROOT_ZONE_ID
 from nexus.contracts.auth_store_types import APIKeyDTO
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.models import APIKeyModel
 
 logger = logging.getLogger(__name__)

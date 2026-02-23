@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from nexus.bricks.pay.audit_types import TransactionProtocol
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.services.protocols.payment import (
     ProtocolTransferRequest,
     ProtocolTransferResult,

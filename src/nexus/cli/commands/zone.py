@@ -31,7 +31,7 @@ from nexus.cli.utils import (
     get_filesystem,
     handle_error,
 )
-from nexus.constants import DEFAULT_GRPC_BIND_ADDR
+from nexus.contracts.constants import DEFAULT_GRPC_BIND_ADDR
 
 
 @click.group()

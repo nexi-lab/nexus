@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from cachetools import TTLCache
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import PermissionDeniedError
 from nexus.contracts.search_types import (
     GLOB_RUST_THRESHOLD,

@@ -20,7 +20,7 @@ from collections.abc import Iterator, Sequence
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.metadata import FileMetadata, PaginatedResult
 from nexus.core.metastore import CasResult, MetastoreABC
 

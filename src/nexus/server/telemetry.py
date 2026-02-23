@@ -23,7 +23,7 @@ Usage:
 import logging
 import os
 
-from nexus.constants import DEFAULT_OTEL_ENDPOINT
+from nexus.contracts.constants import DEFAULT_OTEL_ENDPOINT
 
 # Re-export tier-neutral utilities so existing server-layer callers
 # (e.g. fastapi_server.py) continue to work without import changes.

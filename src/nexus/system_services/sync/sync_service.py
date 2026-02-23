@@ -26,7 +26,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import ProgressCallback, SyncContext, SyncResult
 from nexus.lib.context_utils import get_zone_id
 from nexus.services.permission_utils import check_permission

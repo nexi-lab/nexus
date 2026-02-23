@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from cachetools import TTLCache
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.services.event_subsystem.bus.base import EventBusBase
 from nexus.services.event_subsystem.bus.decorators import requires_started
 from nexus.services.event_subsystem.bus.protocol import AckableEvent, PubSubClientProtocol

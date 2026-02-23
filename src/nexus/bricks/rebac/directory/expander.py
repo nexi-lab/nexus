@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy.exc import OperationalError
 
 from nexus.bricks.rebac.consistency.revision import get_zone_revision_for_grant
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine

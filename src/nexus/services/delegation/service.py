@@ -31,6 +31,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.services.delegation.derivation import MAX_DELEGATABLE_GRANTS, GrantSpec, derive_grants
 from nexus.services.delegation.errors import (
     DelegationChainError,
@@ -502,7 +503,7 @@ class DelegationService:
         if self._reputation_service is None:
             return  # Caller should have checked; defensive no-op
 
-        zone_id = record.zone_id or "default"
+        zone_id = record.zone_id or ROOT_ZONE_ID
 
         try:
             if outcome == DelegationOutcome.COMPLETED:

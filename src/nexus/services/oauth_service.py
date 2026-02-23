@@ -18,7 +18,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-from nexus.constants import DEFAULT_OAUTH_REDIRECT_URI
+from nexus.contracts.constants import DEFAULT_OAUTH_REDIRECT_URI
 from nexus.core.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)

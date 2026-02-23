@@ -24,7 +24,7 @@ from nexus.cli.utils import (
     get_filesystem,
     handle_error,
 )
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 
 def register_commands(cli: click.Group) -> None:

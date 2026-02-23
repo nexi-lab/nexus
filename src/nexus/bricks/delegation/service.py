@@ -45,7 +45,7 @@ from nexus.bricks.delegation.models import (
     DelegationScope,
     DelegationStatus,
 )
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session

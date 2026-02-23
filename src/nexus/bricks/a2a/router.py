@@ -28,7 +28,7 @@ from nexus.bricks.a2a.handlers import dispatch
 from nexus.bricks.a2a.models import A2AErrorData, A2ARequest, A2AResponse
 from nexus.bricks.a2a.streaming import handle_streaming
 from nexus.bricks.a2a.task_manager import TaskManager
-from nexus.constants import DEFAULT_NEXUS_URL
+from nexus.contracts.constants import DEFAULT_NEXUS_URL
 
 logger = logging.getLogger(__name__)
 

@@ -8,7 +8,7 @@ import logging
 import os
 from typing import TYPE_CHECKING, Any
 
-from nexus.constants import DEFAULT_GOOGLE_REDIRECT_URI
+from nexus.contracts.constants import DEFAULT_GOOGLE_REDIRECT_URI
 
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS

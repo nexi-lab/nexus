@@ -20,7 +20,7 @@ from nexus.bricks.ipc.conventions import (
     inbox_path,
 )
 from nexus.bricks.ipc.storage.protocol import IPCStorageDriver
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 logger = logging.getLogger(__name__)
 

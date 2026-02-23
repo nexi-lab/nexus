@@ -84,7 +84,7 @@ from nexus.bricks.rebac.utils.fast import (
     is_rust_available,
 )
 from nexus.bricks.rebac.zone_graph_loader import ZoneGraphLoader
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.rebac_types import CROSS_ZONE_ALLOWED_RELATIONS
 from nexus.lib.zone import normalize_zone_id
 

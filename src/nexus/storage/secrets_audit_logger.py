@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import event, select
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.models.secrets_audit_log import SecretsAuditLogModel
 
 if TYPE_CHECKING:

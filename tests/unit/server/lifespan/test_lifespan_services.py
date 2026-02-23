@@ -133,7 +133,6 @@ class TestFromAppSystemServices:
             eviction_manager="em",
             write_observer="write_obs",
             zone_lifecycle="zl",
-            write_observer="write_obs",
             pipe_manager="pipe_mgr",
         )
         nx = _make_nexus_fs(_system_services=sys_svc)
@@ -145,7 +144,6 @@ class TestFromAppSystemServices:
         assert svc.eviction_manager == "em"
         assert svc.write_observer == "write_obs"
         assert svc.zone_lifecycle == "zl"
-        assert svc.write_observer == "write_obs"
         assert svc.pipe_manager == "pipe_mgr"
 
     def test_missing_system_services_yields_none(self) -> None:

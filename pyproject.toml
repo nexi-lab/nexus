@@ -702,7 +702,6 @@ module = [
     "nexus.services.gateway",
     "nexus.server.fastapi_server",
     "nexus.storage.database",
-    "nexus.core.distributed_lock",
     "nexus.factory.orchestrator",
 ]
 # Raft module uses follow_imports=skip (PyO3), so callers get Any - suppress no-any-return
@@ -939,7 +938,6 @@ ignore_imports = [
     "nexus.core.nexus_fs -> nexus.bricks.rebac.tiger_cache_manager",
     "nexus.core.nexus_fs_core -> nexus.bricks.rebac.entity_registry",
     "nexus.core.nexus_fs_core -> nexus.bricks.memory.router",
-    "nexus.core.async_bridge -> nexus.rebac.manager",
     # --- services importing bricks ---
     # filesystem backward-compat re-exports from bricks/ (Issue #2424)
     "nexus.services.filesystem -> nexus.bricks.filesystem._scoped_base",

@@ -225,6 +225,7 @@ class TestBootSystemServices:
             "delivery_worker",
             "observability_subsystem",
             "workspace_registry",  # degradable — None with mock session_factory
+            "pipe_manager",  # degradable — None if PipeManager unavailable
         }
         for key, value in result.items():
             if key in _NULLABLE_KEYS:

@@ -111,7 +111,7 @@ Multi-layer permission enforcement engine:
 
 ```python
 from nexus.contracts.types import Permission
-from nexus.services.permissions.enforcer import PermissionEnforcer
+from nexus.rebac.enforcer import PermissionEnforcer
 
 enforcer = PermissionEnforcer(
     metadata_store=metadata,

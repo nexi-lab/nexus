@@ -15,8 +15,19 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
 from nexus.storage.models import APIKeyModel, Base
+
+# ── Helpers ───────────────────────────────────────────────
+
+
+def _make_mock_record_store(sf: sessionmaker) -> MagicMock:
+    """Create a MagicMock that satisfies the RecordStoreABC interface expected
+    by DatabaseAPIKeyAuth (only ``session_factory`` is needed)."""
+    mock_rs = MagicMock()
+    mock_rs.session_factory = sf
+    return mock_rs
+
 
 # ── Fixtures ──────────────────────────────────────────────
 
@@ -39,7 +50,9 @@ def session_factory(db_engine):
 @pytest.fixture()
 def auth_provider(session_factory):
     """DatabaseAPIKeyAuth provider for tests."""
-    return DatabaseAPIKeyAuth(session_factory=session_factory, require_expiry=False)
+    return DatabaseAPIKeyAuth(
+        record_store=_make_mock_record_store(session_factory), require_expiry=False
+    )
 
 
 def _create_key(
@@ -196,14 +209,14 @@ class TestUpdateLastUsedBackground:
         failing_factory.return_value = failing_session
 
         auth_provider_failing = DatabaseAPIKeyAuth(
-            session_factory=failing_factory, require_expiry=False
+            record_store=_make_mock_record_store(failing_factory), require_expiry=False
         )
 
         # Should not raise — just log WARNING
         import logging
 
         with patch.object(
-            logging.getLogger("nexus.auth.providers.database_key"), "warning"
+            logging.getLogger("nexus.bricks.auth.providers.database_key"), "warning"
         ) as mock_warn:
             auth_provider_failing._update_last_used_background("fake_hash")
             mock_warn.assert_called_once()
@@ -220,7 +233,7 @@ class TestUpdateLastUsedBackground:
         failing_factory.return_value = failing_session
 
         auth_provider_failing = DatabaseAPIKeyAuth(
-            session_factory=failing_factory, require_expiry=False
+            record_store=_make_mock_record_store(failing_factory), require_expiry=False
         )
 
         # Should raise — RuntimeError is NOT caught by the narrowed handler

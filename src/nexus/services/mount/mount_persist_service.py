@@ -139,7 +139,6 @@ class MountPersistService:
                 mount_point=mount_point,
                 backend_type=backend_type,
                 backend_config=backend_config,
-                priority=priority,
                 readonly=readonly,
                 io_profile=io_profile,
                 context=context,
@@ -190,7 +189,6 @@ class MountPersistService:
             mount_point=config["mount_point"],
             backend_type=config["backend_type"],
             backend_config=backend_config,
-            priority=config["priority"],
             readonly=bool(config["readonly"]),
             io_profile=config.get("io_profile", "balanced"),
             context=context,
@@ -241,7 +239,6 @@ class MountPersistService:
                     mount_point=mount_point,
                     backend_type=mount["backend_type"],
                     backend_config=backend_config,
-                    priority=mount["priority"],
                     readonly=bool(mount["readonly"]),
                     io_profile=mount.get("io_profile", "balanced"),
                 )

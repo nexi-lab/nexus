@@ -13,6 +13,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.core.file_events import FileEvent
 
 if TYPE_CHECKING:
@@ -62,7 +63,7 @@ class KafkaExporter:
     async def publish(self, event: FileEvent) -> None:
         """Publish a single event to Kafka."""
         producer = await self._ensure_producer()
-        topic = f"{self._config.topic_prefix}.{event.zone_id or 'default'}"
+        topic = f"{self._config.topic_prefix}.{event.zone_id or ROOT_ZONE_ID}"
         await producer.send_and_wait(
             topic,
             value=event.to_dict(),
@@ -78,7 +79,7 @@ class KafkaExporter:
         for i in range(0, len(events), chunk_size):
             chunk = events[i : i + chunk_size]
             for event in chunk:
-                topic = f"{self._config.topic_prefix}.{event.zone_id or 'default'}"
+                topic = f"{self._config.topic_prefix}.{event.zone_id or ROOT_ZONE_ID}"
                 try:
                     await producer.send_and_wait(
                         topic,

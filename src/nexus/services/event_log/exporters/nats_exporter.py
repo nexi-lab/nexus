@@ -15,6 +15,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
+from nexus.constants import ROOT_ZONE_ID
 from nexus.core.file_events import FileEvent
 
 if TYPE_CHECKING:
@@ -71,7 +72,7 @@ class NatsExporter:
 
     def _subject(self, event: FileEvent) -> str:
         """Build the NATS subject for an event."""
-        zone = event.zone_id or "default"
+        zone = event.zone_id or ROOT_ZONE_ID
         event_type = event.type.value if hasattr(event.type, "value") else str(event.type)
         return f"{self._config.subject_prefix}.{zone}.{event_type}"
 

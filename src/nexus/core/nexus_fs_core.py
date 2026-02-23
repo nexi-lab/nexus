@@ -694,7 +694,7 @@ class NexusFSCoreMixin:
         path = self._validate_path(path)
 
         # Phase 2 Integration: Intercept memory paths
-        _mr = self._kernel_services.memory_router
+        _mr = self._brick_services.memory_router
         if _mr is not None and _mr.is_memory_path(path):
             return self._read_memory_path(path, return_metadata, context=context)
 
@@ -1643,7 +1643,7 @@ class NexusFSCoreMixin:
         self._check_zone_writable(context)  # Issue #2061: write-gating
 
         # Phase 2 Integration: Intercept memory paths
-        _mr = self._kernel_services.memory_router
+        _mr = self._brick_services.memory_router
         if _mr is not None and _mr.is_memory_path(path):
             return self._write_memory_path(path, content)
 
@@ -2714,7 +2714,7 @@ class NexusFSCoreMixin:
         self._check_zone_writable(context)  # Issue #2061: write-gating
 
         # Phase 2 Integration: Intercept memory paths
-        _mr = self._kernel_services.memory_router
+        _mr = self._brick_services.memory_router
         if _mr is not None and _mr.is_memory_path(path):
             self._delete_memory_path(path, context=context)
             return {}
@@ -3451,7 +3451,7 @@ class NexusFSCoreMixin:
         Raises:
             NexusFileNotFoundError: If memory doesn't exist.
         """
-        router = self._kernel_services.memory_router
+        router = self._brick_services.memory_router
         if router is None:
             raise RuntimeError("Memory brick not available — MemoryViewRouter not injected")
 
@@ -3531,7 +3531,7 @@ class NexusFSCoreMixin:
         Raises:
             NexusFileNotFoundError: If memory doesn't exist.
         """
-        router = self._kernel_services.memory_router
+        router = self._brick_services.memory_router
         if router is None:
             raise RuntimeError("Memory brick not available — MemoryViewRouter not injected")
 

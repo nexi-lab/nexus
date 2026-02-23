@@ -547,6 +547,12 @@ def _register_vfs_hooks(nx: "NexusFS") -> None:
             )
         )
 
+    # TigerCacheWriteHook (post-write: add new files to ancestor directory grants)
+    if tiger_cache is not None:
+        from nexus.bricks.rebac.cache.tiger.write_hook import TigerCacheWriteHook
+
+        dispatch.register_intercept_write(TigerCacheWriteHook(tiger_cache=tiger_cache))
+
     # ── OBSERVE observers (Issue #900, #922) ──────────────────────────
     # ReadSetCacheObserver: invalidates ReadSetAwareCache on mutations.
     # Kernel fires FileEvent via _dispatch.notify(); observer handles

@@ -526,19 +526,6 @@ def create_app(
     except Exception:
         logger.warning("Failed to register QueryObserverCollector", exc_info=True)
 
-    # Register WriteBuffer → Prometheus collector bridge (Issue #1370)
-    try:
-        from prometheus_client import REGISTRY
-
-        from nexus.server.wb_metrics_collector import WriteBufferCollector
-
-        if app.state.write_observer is not None and hasattr(app.state.write_observer, "metrics"):
-            REGISTRY.register(WriteBufferCollector(app.state.write_observer))
-    except ImportError:
-        pass
-    except Exception:
-        logger.warning("Failed to register WriteBufferCollector", exc_info=True)
-
     # Instrument FastAPI with OpenTelemetry (Issue #764)
     try:
         from nexus.server.telemetry import instrument_fastapi_app

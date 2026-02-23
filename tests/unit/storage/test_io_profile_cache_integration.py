@@ -78,20 +78,3 @@ class TestIOProfileCachePriorityFlow:
         for profile in IOProfile:
             priority = profile.config().cache_priority
             assert 0 <= priority <= 3, f"{profile.name} has invalid cache_priority={priority}"
-
-
-class TestIOProfileWriteBufferUrgency:
-    """Integration: IOProfile write_buffer_sync_mode → urgency mapping (#2426 Phase 2)."""
-
-    def test_edit_profile_has_sync_mode_true(self):
-        """EDIT profile should have write_buffer_sync_mode=True (triggers HIGH urgency)."""
-        assert IOProfile.EDIT.config().write_buffer_sync_mode is True
-
-    def test_non_edit_profiles_have_sync_mode_false(self):
-        """All profiles except EDIT should have write_buffer_sync_mode=False."""
-        for profile in IOProfile:
-            if profile == IOProfile.EDIT:
-                continue
-            assert profile.config().write_buffer_sync_mode is False, (
-                f"{profile.name} unexpectedly has write_buffer_sync_mode=True"
-            )

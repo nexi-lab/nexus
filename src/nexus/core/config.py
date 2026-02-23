@@ -259,6 +259,9 @@ class SystemServices:
     # Zone lifecycle — ordered zone deprovisioning (Issue #2061)
     zone_lifecycle: Any = None
 
+    # DT_PIPE manager — VFS named-pipe IPC (Issue #809)
+    pipe_manager: Any = None
+
 
 # ---------------------------------------------------------------------------
 # BrickServices — Tier 2: optional, silent on failure
@@ -317,6 +320,9 @@ class BrickServices:
     # --- Memory Brick (Issue #2177) ---
     memory_router: Any = None  # MemoryViewRouter singleton
     memory_permission: Any = None  # MemoryPermissionProtocol adapter
+
+    # --- Search Brick (Issue #810) ---
+    zoekt_pipe_consumer: Any = None  # DT_PIPE consumer for Zoekt index notifications
 
     # --- Factory-created bricks (Issue #2134: moved from NexusFS flat params) ---
     parse_fn: Any = None  # Callable for parsing files (ParsersBrick)

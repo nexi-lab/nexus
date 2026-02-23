@@ -364,12 +364,12 @@ class AuditConfig:
     trails. ``strict_mode=True`` (default) ensures writes fail if audit
     logging fails, preventing silent audit gaps.
 
-    Note on buffered observers: ``strict_mode`` is enforced by the
+    Note on async observers: ``strict_mode`` is enforced by the
     synchronous ``RecordStoreWriteObserver``. The async
-    ``BufferedRecordStoreWriteObserver`` enqueues events into a
-    ``WriteBuffer`` where the enqueue path cannot fail; actual error
-    handling (retry + drop) is managed by the ``WriteBuffer`` background
-    flush thread, not by ``strict_mode``.
+    ``PipedRecordStoreWriteObserver`` enqueues events into a DT_PIPE
+    where the enqueue path cannot fail; actual error handling
+    (retry + drop) is managed by the background consumer, not by
+    ``strict_mode``.
     """
 
     strict_mode: bool = True

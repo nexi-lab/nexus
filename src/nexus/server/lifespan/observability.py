@@ -55,7 +55,7 @@ def create_registry(*, write_observer: Any = None) -> ObservabilityRegistry:
     Registration order = startup order (dependencies first).
 
     Args:
-        write_observer: Optional WriteBuffer instance for WriteBufferComponent.
+        write_observer: Optional write observer instance for WriteBufferComponent.
     """
     from nexus.server.observability.components import FunctionPairComponent, WriteBufferComponent
 

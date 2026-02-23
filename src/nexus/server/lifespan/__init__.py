@@ -215,7 +215,6 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
     await shutdown_realtime(app, svc)
 
     # Close NexusFS kernel
-    # (WriteBuffer shutdown is now handled by ObservabilityRegistry via WriteBufferComponent)
     if app.state.nexus_fs and hasattr(app.state.nexus_fs, "close"):
         app.state.nexus_fs.close()
 

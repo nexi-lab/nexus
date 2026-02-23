@@ -926,6 +926,9 @@ ignore_imports = [
     "nexus.contracts.wirable_fs -> nexus.backends.backend",
     "nexus.contracts.wirable_fs -> nexus.storage.record_store",
     "nexus.lib.context_utils -> nexus.contracts.types",
+    "nexus.lib.context_utils -> nexus.contracts.constants",
+    "nexus.lib.db_base -> nexus.contracts.constants",
+    "nexus.lib.zone -> nexus.contracts.constants",
     "nexus.lib.performance_tuning -> nexus.contracts.deployment_profile",
     "nexus.lib.performance_tuning -> nexus.contracts.qos",
     "nexus.lib.response -> nexus.contracts.exceptions",
@@ -940,6 +943,7 @@ ignore_imports = [
     "nexus.core.nexus_fs_core -> nexus.bricks.rebac.entity_registry",
     "nexus.core.nexus_fs_core -> nexus.bricks.memory.router",
     "nexus.core.async_bridge -> nexus.bricks.rebac.manager",
+    "nexus.core.async_bridge -> nexus.bricks.rebac.async_manager",
     # --- services importing bricks ---
     # filesystem backward-compat re-exports from bricks/ (Issue #2424)
     "nexus.services.filesystem -> nexus.bricks.filesystem._scoped_base",
@@ -976,6 +980,19 @@ ignore_imports = [
     "nexus.services.permissions.permission_filter_chain -> nexus.bricks.rebac.manager",
     "nexus.services.permissions.rebac_manager -> nexus.bricks.rebac.manager",
     "nexus.services.permissions.rebac_manager_enhanced -> nexus.bricks.rebac.manager",
+    # --- services importing bricks (rebac migration #1001, new modules) ---
+    "nexus.services.permissions.permission_cache -> nexus.bricks.rebac.cache.boundary",
+    "nexus.services.permissions.permission_cache -> nexus.bricks.rebac.hotspot_detector",
+    "nexus.services.permissions.enforcer -> nexus.bricks.rebac.enforcer",
+    "nexus.services.permissions.permissions_enhanced -> nexus.bricks.rebac.permissions_enhanced",
+    "nexus.services.memory.enrichment -> nexus.bricks.rebac.entity_extractor",
+    "nexus.services.memory.versioning -> nexus.bricks.rebac.memory_permission_enforcer",
+    "nexus.services.memory.memory_api -> nexus.bricks.rebac.entity_registry",
+    "nexus.services.memory.memory_api -> nexus.bricks.rebac.memory_permission_enforcer",
+    "nexus.services.memory.state -> nexus.bricks.rebac.memory_permission_enforcer",
+    "nexus.services.memory.memory_router -> nexus.bricks.rebac.entity_registry",
+    "nexus.services.delegation.service -> nexus.bricks.rebac.entity_registry",
+    "nexus.services.delegation.service -> nexus.bricks.rebac.namespace_manager",
     "nexus.server.telemetry -> nexus.bricks.rebac.rebac_tracing",
     # --- services importing non-layer modules ---
     "nexus.services.mount.mount_persist_service -> nexus.system_services.sync.sync_service",

@@ -15,7 +15,7 @@ from typing import Any, cast
 from cachetools import LRUCache
 from fastmcp import Context, FastMCP
 
-from nexus.core.filesystem import NexusFilesystem
+from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC as NexusFilesystem
 from nexus.mcp.formatters import format_response
 from nexus.mcp.tool_utils import handle_tool_errors, tool_error
 

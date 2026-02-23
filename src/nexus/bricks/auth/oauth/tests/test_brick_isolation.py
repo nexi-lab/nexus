@@ -18,7 +18,7 @@ BRICK_CORE_MODULES = [
     "providers/x.py",
 ]
 
-FORBIDDEN_PREFIXES = ("nexus.server", "nexus.core", "nexus.rebac")
+FORBIDDEN_PREFIXES = ("nexus.server", "nexus.core", "nexus.bricks.rebac")
 
 
 def _get_imports(filepath: pathlib.Path) -> list[str]:

@@ -18,8 +18,8 @@ from nexus.skills.protocols import NexusFilesystem
 from nexus.skills.registry import SkillNotFoundError, SkillRegistry
 
 if TYPE_CHECKING:
+    from nexus.bricks.rebac.manager import ReBACManager
     from nexus.contracts.types import OperationContext
-    from nexus.rebac.manager import ReBACManager
     from nexus.skills.governance import SkillGovernance
 
 logger = logging.getLogger(__name__)

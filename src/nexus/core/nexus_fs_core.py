@@ -694,9 +694,8 @@ class NexusFSCoreMixin:
         path = self._validate_path(path)
 
         # Phase 2 Integration: Intercept memory paths
-        from nexus.bricks.memory.router import MemoryViewRouter
-
-        if MemoryViewRouter.is_memory_path(path):
+        _mr = self._kernel_services.memory_router
+        if _mr is not None and _mr.is_memory_path(path):
             return self._read_memory_path(path, return_metadata, context=context)
 
         # Check read permission (handles virtual views by checking original file)
@@ -1644,9 +1643,8 @@ class NexusFSCoreMixin:
         self._check_zone_writable(context)  # Issue #2061: write-gating
 
         # Phase 2 Integration: Intercept memory paths
-        from nexus.bricks.memory.router import MemoryViewRouter
-
-        if MemoryViewRouter.is_memory_path(path):
+        _mr = self._kernel_services.memory_router
+        if _mr is not None and _mr.is_memory_path(path):
             return self._write_memory_path(path, content)
 
         # Issue #1106 Block 3: Acquire distributed lock if requested
@@ -2716,9 +2714,8 @@ class NexusFSCoreMixin:
         self._check_zone_writable(context)  # Issue #2061: write-gating
 
         # Phase 2 Integration: Intercept memory paths
-        from nexus.bricks.memory.router import MemoryViewRouter
-
-        if MemoryViewRouter.is_memory_path(path):
+        _mr = self._kernel_services.memory_router
+        if _mr is not None and _mr.is_memory_path(path):
             self._delete_memory_path(path, context=context)
             return {}
 
@@ -3454,33 +3451,28 @@ class NexusFSCoreMixin:
         Raises:
             NexusFileNotFoundError: If memory doesn't exist.
         """
-        from nexus.bricks.memory.router import MemoryViewRouter
-        from nexus.rebac.entity_registry import EntityRegistry
+        router = self._kernel_services.memory_router
+        if router is None:
+            raise RuntimeError("Memory brick not available — MemoryViewRouter not injected")
 
-        # Get memory via router
-        session = self.SessionLocal()
-        try:
-            router = MemoryViewRouter(session, EntityRegistry(session))
-            memory = router.resolve(path)
+        memory = router.resolve(path)
 
-            if not memory:
-                raise NexusFileNotFoundError(f"Memory not found at path: {path}")
+        if not memory:
+            raise NexusFileNotFoundError(f"Memory not found at path: {path}")
 
-            # Read content from CAS
-            content = self.backend.read_content(memory.content_hash, context=context).unwrap()
+        # Read content from CAS
+        content = self.backend.read_content(memory.content_hash, context=context).unwrap()
 
-            if return_metadata:
-                return {
-                    "content": content,
-                    "etag": memory.content_hash,
-                    "version": 1,  # Memories don't version like files
-                    "modified_at": memory.created_at,
-                    "size": len(content),
-                }
+        if return_metadata:
+            return {
+                "content": content,
+                "etag": memory.content_hash,
+                "version": 1,  # Memories don't version like files
+                "modified_at": memory.created_at,
+                "size": len(content),
+            }
 
-            return content
-        finally:
-            session.close()
+        return content
 
     def _write_memory_path(self, path: str, content: bytes) -> dict[str, Any]:
         """Write memory via virtual path (Phase 2 Integration).
@@ -3539,25 +3531,20 @@ class NexusFSCoreMixin:
         Raises:
             NexusFileNotFoundError: If memory doesn't exist.
         """
-        from nexus.bricks.memory.router import MemoryViewRouter
-        from nexus.rebac.entity_registry import EntityRegistry
+        router = self._kernel_services.memory_router
+        if router is None:
+            raise RuntimeError("Memory brick not available — MemoryViewRouter not injected")
 
-        # Get memory via router
-        session = self.SessionLocal()
-        try:
-            router = MemoryViewRouter(session, EntityRegistry(session))
-            memory = router.resolve(path)
+        memory = router.resolve(path)
 
-            if not memory:
-                raise NexusFileNotFoundError(f"Memory not found at path: {path}")
+        if not memory:
+            raise NexusFileNotFoundError(f"Memory not found at path: {path}")
 
-            # Delete the memory
-            router.delete_memory(memory.memory_id)
+        # Delete the memory
+        router.delete_memory(memory.memory_id)
 
-            # Also delete content from CAS (decrement ref count)
-            self.backend.delete_content(memory.content_hash, context=context).unwrap()
-        finally:
-            session.close()
+        # Also delete content from CAS (decrement ref count)
+        self.backend.delete_content(memory.content_hash, context=context).unwrap()
 
     @rpc_expose(description="Shutdown background parser threads")
     def shutdown_parser_threads(self, timeout: float = 10.0) -> dict[str, Any]:

@@ -183,7 +183,6 @@ class TestBootSystemServices:
             "context_branch_service",
             "brick_lifecycle_manager",
             "brick_reconciler",
-            "tiger_cache_manager",
             "zone_lifecycle",
             # DT_PIPE manager (Issue #809)
             "pipe_manager",

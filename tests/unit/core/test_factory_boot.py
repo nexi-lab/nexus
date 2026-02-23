@@ -72,7 +72,6 @@ EXPECTED_SYSTEM_KEYS = frozenset(
         "context_branch_service",
         "brick_lifecycle_manager",
         "brick_reconciler",
-        "tiger_cache_manager",
         "zone_lifecycle",
     }
 )
@@ -215,15 +214,13 @@ class TestBootSystemServices:
         """All system service values except nullable keys are non-None.
 
         deferred_permission_buffer is None because enable_deferred=False in the
-        test context.  tiger_cache_manager may be None if TigerCacheManager
-        is not available or tiger cache is disabled.
+        test context.
         """
         ctx = _make_boot_context()
         result = _boot_system_services(ctx)
 
         _NULLABLE_KEYS = {
             "deferred_permission_buffer",
-            "tiger_cache_manager",
             "delivery_worker",
             "observability_subsystem",
             "workspace_registry",  # degradable — None with mock session_factory

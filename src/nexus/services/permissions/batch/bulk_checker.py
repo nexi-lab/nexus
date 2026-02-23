@@ -23,9 +23,9 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
+from nexus.bricks.rebac.types import ConsistencyLevel
+from nexus.contracts.rebac_types import CROSS_ZONE_ALLOWED_RELATIONS
 from nexus.core.rebac import Entity
-from nexus.rebac.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
-from nexus.rebac.types import ConsistencyLevel
 
 if TYPE_CHECKING:
     from collections.abc import Callable

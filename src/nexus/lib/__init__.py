@@ -6,7 +6,6 @@ helpers rather than formal Protocol/ABC contracts or kernel logic.
 
 Modules:
     context_utils: Context extraction helpers (zone_id, user identity, db URL)
-    path_interner: Thread-safe string interning for memory-efficient path storage
     path_utils: Cached glob/pattern matching (path_matches_pattern)
     registry: Generic BaseRegistry[T] + BrickRegistry
     rpc_codec: JSON-RPC encode/decode with special-type handling

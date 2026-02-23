@@ -14,6 +14,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from nexus.contracts.constants import ROOT_ZONE_ID
+
 # ---------------------------------------------------------------------------
 # Error hierarchy
 # ---------------------------------------------------------------------------
@@ -106,7 +108,7 @@ class RLMInferenceRequest:
 
     query: str
     context_paths: tuple[str, ...] = ()
-    zone_id: str = "default"
+    zone_id: str = ROOT_ZONE_ID
     model: str = "claude-sonnet-4-20250514"
     sub_model: str | None = None
     max_iterations: int = 15

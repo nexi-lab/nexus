@@ -25,7 +25,7 @@ from fastapi.responses import JSONResponse
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.server.token_utils import parse_sk_token
 
 # Rate limit tiers (configurable via environment variables)

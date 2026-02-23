@@ -57,7 +57,7 @@ class TestRLMInferenceRequest:
         req = RLMInferenceRequest(query="What is X?")
         assert req.query == "What is X?"
         assert req.context_paths == ()
-        assert req.zone_id == "default"
+        assert req.zone_id == "root"
         assert req.model == "claude-sonnet-4-20250514"
         assert req.sub_model is None
         assert req.max_iterations == 15

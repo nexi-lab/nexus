@@ -9,7 +9,7 @@ import logging
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.contracts.rpc import rpc_expose
 from nexus.contracts.types import OperationContext, parse_operation_context

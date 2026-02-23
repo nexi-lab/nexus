@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.exc import OperationalError
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.rebac.consistency.revision import get_zone_revision_for_grant
 
 if TYPE_CHECKING:
@@ -315,11 +316,18 @@ class DirectoryExpander:
                 FROM file_paths
                 WHERE virtual_path LIKE :prefix
                   AND deleted_at IS NULL
-                  AND (zone_id = :zone_id OR zone_id = 'default' OR zone_id IS NULL)
+                  AND (zone_id = :zone_id OR zone_id = :root_zone_id OR zone_id IS NULL)
             """)
 
             with self._engine.connect() as conn:
-                result = conn.execute(query, {"prefix": f"{directory_path}%", "zone_id": zone_id})
+                result = conn.execute(
+                    query,
+                    {
+                        "prefix": f"{directory_path}%",
+                        "zone_id": zone_id,
+                        "root_zone_id": ROOT_ZONE_ID,
+                    },
+                )
                 return [row.virtual_path for row in result]
         except (RuntimeError, OperationalError) as e:
             logger.error("[LEOPARD] Failed to query descendants: %s", e)

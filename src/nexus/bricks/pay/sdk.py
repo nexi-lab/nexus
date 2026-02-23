@@ -38,7 +38,7 @@ from nexus.bricks.pay.protocol import (
     get_protocol_method_name,
 )
 from nexus.bricks.pay.x402 import validate_wallet_address
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator

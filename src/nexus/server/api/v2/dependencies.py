@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 from fastapi import Depends, HTTPException, Request
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.protocols.vfs_core import VFSCoreProtocol
 from nexus.server.dependencies import get_operation_context, require_auth
 from nexus.services.protocols.llm_provider import LLMProviderProtocol

@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 from nexus.bricks.pay.audit_types import TransactionProtocol
 from nexus.bricks.pay.protocol import ProtocolTransferRequest, ProtocolTransferResult
 from nexus.bricks.pay.spending_policy import ApprovalRequiredError, PolicyDeniedError
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from nexus.bricks.pay.spending_policy_service import SpendingPolicyService

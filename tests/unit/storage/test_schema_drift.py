@@ -9,7 +9,7 @@ from datetime import datetime
 
 from sqlalchemy import inspect as sa_inspect
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.metadata import FileMetadata
 from nexus.storage.models import FilePathModel
 

@@ -11,7 +11,7 @@ from pydantic import BaseModel, EmailStr, Field
 
 from nexus.bricks.auth.oauth.user_auth import OAuthUserAuth
 from nexus.bricks.auth.providers.database_local import DatabaseLocalAuth
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 logger = logging.getLogger(__name__)
 

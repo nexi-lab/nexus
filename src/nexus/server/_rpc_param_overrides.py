@@ -12,7 +12,7 @@ Categories:
 from dataclasses import dataclass
 from typing import Any
 
-from nexus.constants import DEFAULT_OAUTH_REDIRECT_URI
+from nexus.contracts.constants import DEFAULT_OAUTH_REDIRECT_URI
 
 # ============================================================
 # 1. RPC-only field overrides

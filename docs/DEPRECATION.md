@@ -173,7 +173,7 @@ tuples = nx.rebac_list_tuples(object=("file", "/file.txt"))
 
 ```python
 # ❌ DEPRECATED:
-from nexus.services.permissions.enforcer import PermissionEnforcer
+from nexus.rebac.enforcer import PermissionEnforcer
 
 enforcer = PermissionEnforcer(
     metadata_store=metadata,

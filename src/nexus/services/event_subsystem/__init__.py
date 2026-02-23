@@ -7,6 +7,7 @@ Public API:
 - ReactiveSubscriptionManager (subscriptions)
 """
 
+from nexus.core.file_events import FileEvent, FileEventType
 from nexus.services.event_subsystem.bus import (
     EventBusBase,
     EventBusProtocol,
@@ -19,7 +20,6 @@ from nexus.services.event_subsystem.log import (
     WALEventLog,
 )
 from nexus.services.event_subsystem.subscriptions import ReactiveSubscriptionManager
-from nexus.services.event_subsystem.types import FileEvent, FileEventType
 
 __all__ = [
     "FileEvent",

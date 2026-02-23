@@ -26,6 +26,11 @@ References:
 
 import importlib as _il
 
+from nexus.contracts.workflow_types import (
+    MetadataStoreProtocol,
+    NexusOperationsProtocol,
+)
+from nexus.lib.rpc_decorator import rpc_expose
 from nexus.services.event_subsystem.log.protocol import EventLogConfig, EventLogProtocol
 from nexus.services.protocols.adaptive_k import AdaptiveKProtocol
 from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
@@ -60,7 +65,6 @@ from nexus.services.protocols.payment import PaymentProtocol
 from nexus.services.protocols.permission import PermissionProtocol
 from nexus.services.protocols.permission_enforcer import PermissionEnforcerProtocol
 from nexus.services.protocols.rebac import ReBACBrickProtocol
-from nexus.services.protocols.rpc import rpc_expose
 from nexus.services.protocols.sandbox import SandboxProtocol
 from nexus.services.protocols.scheduler import AgentRequest, SchedulerProtocol
 from nexus.services.protocols.search import SearchBrickProtocol, SearchProtocol
@@ -75,10 +79,6 @@ from nexus.services.protocols.time_travel import TimeTravelProtocol
 from nexus.services.protocols.trajectory import TrajectoryProtocol
 from nexus.services.protocols.version import VersionProtocol
 from nexus.services.protocols.watch import WatchProtocol
-from nexus.services.protocols.workflow import (
-    MetadataStoreProtocol,
-    NexusOperationsProtocol,
-)
 from nexus.services.protocols.workflow_dispatch import WorkflowDispatchProtocol
 from nexus.services.protocols.workspace_manager import WorkspaceManagerProtocol
 from nexus.services.protocols.write_back import WriteBackProtocol

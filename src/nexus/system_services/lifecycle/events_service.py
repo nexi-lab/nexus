@@ -235,11 +235,13 @@ class EventsService:
                         virtual_change_path = f"{watch_path.rstrip('/')}/{virtual_change_path}"
                     event = dataclasses.replace(event, path=virtual_change_path)
                     if event.matches_path_pattern(path):
-                        return event.to_dict()
+                        result: dict[str, Any] = event.to_dict()
+                        return result
                     logger.debug(f"Event {event.path} didn't match pattern {path}, continuing...")
                     continue
 
-                return event.to_dict()
+                result_dict: dict[str, Any] = event.to_dict()
+                return result_dict
 
         raise NotImplementedError(
             "No event source available. Either configure Redis for distributed events "

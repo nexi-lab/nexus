@@ -185,6 +185,8 @@ class TestBootSystemServices:
             "brick_reconciler",
             "tiger_cache_manager",
             "zone_lifecycle",
+            # DT_PIPE manager (Issue #809)
+            "pipe_manager",
         }
         assert expected_keys == set(result.keys())
 
@@ -283,6 +285,8 @@ class TestBootBrickServices:
             "governance_collusion_service",
             "governance_graph_service",
             "governance_response_service",
+            # DT_PIPE Zoekt consumer (Issue #810)
+            "zoekt_pipe_consumer",
         }
         assert expected_keys == set(result.keys())
 

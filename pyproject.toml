@@ -939,9 +939,6 @@ ignore_imports = [
     "nexus.core.nexus_fs_core -> nexus.bricks.rebac.entity_registry",
     "nexus.core.nexus_fs_core -> nexus.bricks.memory.router",
     # --- services importing bricks ---
-    # filesystem backward-compat re-exports from bricks/ (Issue #2424)
-    "nexus.services.filesystem -> nexus.bricks.filesystem._scoped_base",
-    "nexus.services.filesystem -> nexus.bricks.filesystem.scoped_filesystem",
     "nexus.services.ace.consolidation -> nexus.bricks.search.embeddings",
     "nexus.services.oauth.oauth_service -> nexus.bricks.auth.oauth.credential_service",
     "nexus.services.oauth_service -> nexus.bricks.auth.oauth.token_manager",

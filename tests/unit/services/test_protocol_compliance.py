@@ -416,7 +416,7 @@ _PROTOCOL_FILES: list[tuple[str, str]] = [
 ]
 
 # Leaf modules that are safe to import at module level in protocol files
-_ALLOWED_LEAF_MODULES = {"nexus.constants"}
+_ALLOWED_LEAF_MODULES = {"nexus.constants", "nexus.contracts.constants"}
 
 
 @pytest.mark.parametrize(

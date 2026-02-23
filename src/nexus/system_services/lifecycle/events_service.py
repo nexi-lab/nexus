@@ -20,7 +20,7 @@ import logging
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any, cast
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.path_utils import validate_path
 from nexus.core.protocols.connector import PassthroughProtocol
 from nexus.lib.rpc_decorator import rpc_expose

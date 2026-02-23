@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from nexus.bricks.rebac.domain import Entity
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 logger = logging.getLogger(__name__)
 

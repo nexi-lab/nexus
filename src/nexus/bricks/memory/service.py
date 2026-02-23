@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from nexus.bricks.memory._temporal import parse_datetime, validate_temporal_params
 from nexus.bricks.memory.router import MemoryViewRouter
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext, Permission
 
 logger = logging.getLogger(__name__)

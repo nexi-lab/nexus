@@ -50,7 +50,7 @@ from cachetools import LRUCache
 from nexus.backends.backend import Backend
 from nexus.backends.oauth_mixin import OAuthConnectorMixin
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import BackendError
 from nexus.core.protocols.capabilities import OAUTH_CONNECTOR_CAPABILITIES
 from nexus.lib.response import HandlerResponse, timed_response

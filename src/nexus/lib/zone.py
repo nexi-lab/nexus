@@ -7,7 +7,7 @@ Replaces the 48+ inline ``zone_id or ROOT_ZONE_ID`` occurrences with a single
 canonical function so the default zone sentinel is defined in one place.
 """
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 DEFAULT_ZONE: str = ROOT_ZONE_ID
 

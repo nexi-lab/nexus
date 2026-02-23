@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from sqlalchemy import DateTime, String, Text, TextClause, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 
 def _generate_uuid() -> str:

@@ -15,7 +15,7 @@ from pydantic import ValidationError
 
 from nexus.auth.oauth.base_provider import BaseOAuthProvider
 from nexus.auth_config import OAuthConfig, OAuthProviderConfig
-from nexus.constants import DEFAULT_OAUTH_REDIRECT_URI
+from nexus.contracts.constants import DEFAULT_OAUTH_REDIRECT_URI
 
 
 class OAuthProviderFactory:

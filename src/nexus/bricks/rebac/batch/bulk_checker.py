@@ -23,7 +23,7 @@ from sqlalchemy.exc import OperationalError
 
 from nexus.bricks.rebac.domain import Entity
 from nexus.bricks.rebac.types import ConsistencyLevel
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.rebac_types import CROSS_ZONE_ALLOWED_RELATIONS
 
 if TYPE_CHECKING:

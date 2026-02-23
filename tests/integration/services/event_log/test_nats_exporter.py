@@ -8,7 +8,7 @@ Issue #1138: Event Stream Export.
 
 import pytest
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.services.event_subsystem.types import FileEvent, FileEventType
 
 # Skip if testcontainers or nats not installed

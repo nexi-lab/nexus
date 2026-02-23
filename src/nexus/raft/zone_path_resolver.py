@@ -17,7 +17,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from nexus.raft.zone_manager import ZoneManager

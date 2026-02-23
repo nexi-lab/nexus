@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import Depends, Header, HTTPException, Request
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.server.token_utils import parse_sk_token
 
 if TYPE_CHECKING:

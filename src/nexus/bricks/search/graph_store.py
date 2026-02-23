@@ -30,7 +30,7 @@ from nexus.bricks.search.models import (
     EntityModel,
     RelationshipModel,
 )
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 
 def _utcnow_naive() -> datetime:

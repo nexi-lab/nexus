@@ -1244,7 +1244,7 @@ def serve(
 
             from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
             from nexus.bricks.rebac.entity_registry import EntityRegistry
-            from nexus.constants import ROOT_ZONE_ID
+            from nexus.contracts.constants import ROOT_ZONE_ID
             from nexus.factory._record_store import create_record_store
 
             _record_store = create_record_store(db_url=db_url)

@@ -17,8 +17,7 @@ from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from nexus.constants import ROOT_ZONE_ID
-from nexus.contracts.constants import SYSTEM_PATH_PREFIX
+from nexus.contracts.constants import ROOT_ZONE_ID, SYSTEM_PATH_PREFIX
 from nexus.contracts.exceptions import BackendError, ConflictError, NexusFileNotFoundError
 from nexus.contracts.metadata import FileMetadata
 from nexus.contracts.types import OperationContext, Permission

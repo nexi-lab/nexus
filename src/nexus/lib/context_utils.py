@@ -15,7 +15,7 @@ import logging
 import os
 from typing import Any
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext
 
 logger = logging.getLogger(__name__)

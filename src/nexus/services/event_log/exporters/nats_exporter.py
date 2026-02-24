@@ -15,7 +15,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.file_events import FileEvent
 
 if TYPE_CHECKING:

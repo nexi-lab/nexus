@@ -24,8 +24,8 @@ def _create_local_backend(tmp_path: Path) -> LocalBackend:
 
 
 def _write_content(backend: LocalBackend, data: bytes) -> str:
-    resp = backend.write_content(data)
-    return resp.unwrap()
+    result = backend.write_content(data)
+    return result.content_hash
 
 
 # =============================================================================

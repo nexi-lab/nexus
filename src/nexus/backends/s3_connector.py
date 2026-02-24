@@ -36,14 +36,14 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
-from nexus.backends.backend import HandlerStatusResponse
+from nexus.backends.backend import FileInfo, HandlerStatusResponse
 from nexus.backends.base_blob_connector import BaseBlobStorageConnector
 from nexus.backends.cache_mixin import CacheConnectorMixin
 from nexus.backends.multipart_upload_mixin import MultipartUploadMixin
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
+from nexus.core.object_store import WriteResult
 from nexus.core.protocols.capabilities import BLOB_CONNECTOR_CAPABILITIES, ConnectorCapability
-from nexus.lib.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
@@ -399,12 +399,11 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
         except Exception:
             return None
 
-    @timed_response
     def get_file_info(
         self,
         path: str,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse:
+    ) -> FileInfo:
         """
         Get file metadata for delta sync change detection (Issue #1127).
 
@@ -416,13 +415,15 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
             context: Operation context with optional backend_path
 
         Returns:
-            HandlerResponse with FileInfo containing:
+            FileInfo containing:
             - size: Object size in bytes
             - mtime: Last modified time
             - backend_version: S3 version ID (if versioning enabled)
-        """
-        from nexus.backends.backend import FileInfo
 
+        Raises:
+            NexusFileNotFoundError: If file does not exist in S3
+            BackendError: If S3 returns an unexpected error
+        """
         try:
             # Get backend path
             if context and context.backend_path:
@@ -456,13 +457,13 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
                 content_hash=None,  # Not computed to avoid content download
             )
 
-            return HandlerResponse.ok(file_info, backend_name=self.name, path=path)
+            return file_info
 
         except ClientError as e:
             error_code = e.response.get("Error", {}).get("Code", "")
             if error_code == "404" or error_code == "NoSuchKey":
-                return HandlerResponse.not_found(path, backend_name=self.name)
-            return HandlerResponse.error(f"S3 error: {error_code}", backend_name=self.name)
+                raise NexusFileNotFoundError(path) from e
+            raise BackendError(f"S3 error: {error_code}") from e
 
     def generate_presigned_url(
         self,
@@ -1008,12 +1009,11 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
 
     # === Override Content Operations with Caching ===
 
-    @timed_response
     def read_content(
         self,
         content_hash: str,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[bytes]:
+    ) -> bytes:
         """
         Read content from S3 with caching support.
 
@@ -1027,15 +1027,16 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
             context: Operation context with backend_path
 
         Returns:
-            HandlerResponse with file content as bytes in data field
+            File content as bytes.
+
+        Raises:
+            BackendError: If backend_path is missing from context or S3 operation fails.
+            NexusFileNotFoundError: If the file does not exist in S3.
         """
         if not context or not context.backend_path:
-            return HandlerResponse.error(
+            raise BackendError(
                 message="S3 connector requires backend_path in OperationContext. "
                 "This backend reads files from actual paths, not CAS hashes.",
-                code=400,
-                is_expected=True,
-                backend_name=self.name,
             )
 
         # Get cache path (prefers virtual_path over backend_path)
@@ -1053,11 +1054,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
                 cached = self._read_from_cache(cache_path, original=True)
                 if cached and not cached.stale and cached.content_binary:
                     logger.info(f"[S3] Cache hit (TTL-based) for {cache_path}")
-                    return HandlerResponse.ok(
-                        data=cached.content_binary,
-                        backend_name=self.name,
-                        path=blob_path,
-                    )
+                    return cached.content_binary
             except Exception as e:
                 logger.debug("[CACHE] Cache read failed for %s: %s", cache_path, e)
 
@@ -1085,11 +1082,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
             except Exception as e:
                 logger.debug("[CACHE] Cache write failed for %s: %s", cache_path, e)
 
-        return HandlerResponse.ok(
-            data=content,
-            backend_name=self.name,
-            path=blob_path,
-        )
+        return content
 
     @property
     def batch_read_workers(self) -> int:
@@ -1131,9 +1124,12 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
 
         # Single file — skip thread pool overhead
         if len(content_hashes) == 1:
-            ctx = contexts.get(content_hashes[0], context) if contexts else context
-            response = self.read_content(content_hashes[0], context=ctx)
-            return {content_hashes[0]: response.data if response.success else None}
+            try:
+                ctx = contexts.get(content_hashes[0], context) if contexts else context
+                content = self.read_content(content_hashes[0], context=ctx)
+                return {content_hashes[0]: content}
+            except Exception:
+                return {content_hashes[0]: None}
 
         # Parallel downloads via ThreadPoolExecutor
         from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -1144,8 +1140,8 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
             """Read a single S3 object with per-hash context."""
             try:
                 ctx = contexts.get(content_hash, context) if contexts else context
-                response = self.read_content(content_hash, context=ctx)
-                return (content_hash, response.data if response.success else None)
+                content = self.read_content(content_hash, context=ctx)
+                return (content_hash, content)
             except Exception as e:
                 logger.warning(f"[S3] batch_read_content failed for {content_hash}: {e}")
                 return (content_hash, None)
@@ -1163,12 +1159,11 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
 
         return result
 
-    @timed_response
     def write_content(
         self,
         content: bytes,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[str]:
+    ) -> WriteResult:
         """
         Write content to S3 and update cache.
 
@@ -1181,15 +1176,15 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
             context: Operation context with backend_path
 
         Returns:
-            HandlerResponse with version ID (S3 version or content hash) in data field
+            WriteResult with content_hash (version ID or content hash) and size.
+
+        Raises:
+            BackendError: If backend_path is missing from context or S3 operation fails.
         """
         if not context or not context.backend_path:
-            return HandlerResponse.error(
+            raise BackendError(
                 message="S3 connector requires backend_path in OperationContext. "
                 "This backend stores files at actual paths, not CAS hashes.",
-                code=400,
-                is_expected=True,
-                backend_name=self.name,
             )
 
         # Get cache path (prefers virtual_path over backend_path)
@@ -1218,19 +1213,14 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
             except Exception as e:
                 logger.debug("[CACHE] Cache write failed for %s: %s", cache_path, e)
 
-        return HandlerResponse.ok(
-            data=new_version,
-            backend_name=self.name,
-            path=blob_path,
-        )
+        return WriteResult(content_hash=new_version, size=len(content))
 
-    @timed_response
     def write_content_with_version_check(
         self,
         content: bytes,
         context: "OperationContext | None" = None,
         expected_version: str | None = None,
-    ) -> HandlerResponse[str]:
+    ) -> WriteResult:
         """
         Write content with optimistic locking via version check.
 
@@ -1240,15 +1230,15 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
             expected_version: Expected S3 version for optimistic locking
 
         Returns:
-            HandlerResponse with new version ID (S3 version or content hash) in data field
+            WriteResult with content_hash (version ID or content hash) and size.
+
+        Raises:
+            BackendError: If backend_path is missing from context or S3 operation fails.
         """
         if not context or not context.backend_path:
-            return HandlerResponse.error(
+            raise BackendError(
                 message="S3 connector requires backend_path in OperationContext. "
                 "This backend stores files at actual paths, not CAS hashes.",
-                code=400,
-                is_expected=True,
-                backend_name=self.name,
             )
 
         # Get cache path (prefers virtual_path over backend_path)
@@ -1258,7 +1248,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
         if expected_version is not None:
             self._check_version(cache_path, expected_version, context)
 
-        # Perform the write (returns HandlerResponse)
+        # Perform the write (returns WriteResult)
         return self.write_content(content, context)
 
     # === Multipart Upload Operations (Issue #788) ===

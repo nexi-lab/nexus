@@ -1,21 +1,25 @@
-"""ObjectStoreABC — the Object Store pillar of the Four Storage Pillars.
+"""ObjectStoreABC -- the Object Store pillar of the Four Storage Pillars.
 
-Provides a content-addressed blob storage Protocol (CAS ops only).
-The BackendObjectStore adapter translates Backend → ObjectStoreABC.
+Kernel ``file_operations`` contract (Linux analogue: ``struct file_operations``).
+Exception-based errors, consistent with MetastoreABC / RecordStoreABC / CacheStoreABC.
 
 Design:
-    - Protocol (not ABC) — matches IPCStorageDriver pattern
-    - CAS ops only — no directory ops (mkdir/rmdir/list_dir/is_directory)
-    - Clean return types — raises exceptions on failure (no HandlerResponse)
-    - Sync methods — Backend is sync
-    - No capability flags — those stay on Backend
+    - ABC (not Protocol) -- concrete defaults for streaming, batch, capability flags
+    - 6 abstract methods: write_content, read_content, delete_content,
+      get_content_size, mkdir, rmdir
+    - WriteResult returned from write operations (content_hash + size)
+    - No HandlerResponse -- callers get raw types, errors are exceptions
 """
 
+from __future__ import annotations
+
 import re
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from abc import ABC, abstractmethod
+from collections.abc import Iterator
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from nexus.backends.backend import Backend
     from nexus.contracts.types import OperationContext
 
 _HASH_PATTERN = re.compile(r"^[0-9a-f]{64}$")
@@ -37,167 +41,296 @@ def _validate_hash(content_hash: str) -> None:
         )
 
 
-@runtime_checkable
-class ObjectStoreABC(Protocol):
-    """The ObjectStore pillar — content-addressed blob storage.
+@dataclass(frozen=True, slots=True)
+class WriteResult:
+    """Result of a content write operation.
 
-    All methods use clean types: str, bytes, bool, int.
-    Errors are raised as exceptions (NexusFileNotFoundError, BackendError).
+    Attributes:
+        content_hash: SHA-256 hex digest of the written content.
+        size: Content size in bytes (0 = unknown / not tracked).
     """
 
+    content_hash: str
+    size: int = 0
+
+
+class ObjectStoreABC(ABC):
+    """ObjectStore pillar -- kernel ``file_operations`` contract.
+
+    Linux analogue: ``struct file_operations``.
+    Exception-based errors (no HandlerResponse).
+
+    Subclasses must implement the 6 abstract methods.  Streaming, batch,
+    capability flags, and lifecycle have concrete defaults that work out of
+    the box.
+    """
+
+    # === Identity ===
+
     @property
+    @abstractmethod
     def name(self) -> str:
-        """Backend identifier name."""
+        """Backend identifier name (e.g. ``"local"``, ``"gcs"``, ``"s3"``)."""
         ...
 
-    def write(self, content: bytes) -> str:
-        """Write content, return content hash (SHA-256 hex).
+    # === CAS Content Operations (4 abstract) ===
 
-        If content already exists, deduplication is handled internally.
+    @abstractmethod
+    def write_content(self, content: bytes, context: OperationContext | None = None) -> WriteResult:
+        """Write content to storage and return a ``WriteResult``.
+
+        If content already exists (same hash), deduplication is handled
+        internally.
 
         Args:
-            content: File content as bytes
+            content: File content as bytes.
+            context: Operation context (optional, for user-scoped backends).
 
         Returns:
-            Content hash (SHA-256 hex string)
+            ``WriteResult`` with ``content_hash`` and ``size``.
 
         Raises:
-            BackendError: If write operation fails
+            BackendError: If write operation fails.
         """
         ...
 
-    def read(self, content_hash: str) -> bytes:
-        """Read content by hash.
+    @abstractmethod
+    def read_content(self, content_hash: str, context: OperationContext | None = None) -> bytes:
+        """Read content by its hash.
 
         Args:
-            content_hash: SHA-256 hash as hex string
+            content_hash: SHA-256 hash as hex string.
+            context: Operation context (optional).
 
         Returns:
-            File content as bytes
+            File content as bytes.
 
         Raises:
-            NexusFileNotFoundError: If content doesn't exist
-            BackendError: If read operation fails
+            NexusFileNotFoundError: If content does not exist.
+            BackendError: If read operation fails.
         """
         ...
 
-    def delete(self, content_hash: str) -> None:
+    @abstractmethod
+    def delete_content(self, content_hash: str, context: OperationContext | None = None) -> None:
         """Delete content by hash.
 
+        Decrements reference count. Only deletes actual data when the
+        reference count reaches zero.
+
         Args:
-            content_hash: SHA-256 hash as hex string
+            content_hash: SHA-256 hash as hex string.
+            context: Operation context (optional).
 
         Raises:
-            NexusFileNotFoundError: If content doesn't exist
-            BackendError: If delete operation fails
+            NexusFileNotFoundError: If content does not exist.
+            BackendError: If delete operation fails.
         """
         ...
 
-    def exists(self, content_hash: str) -> bool:
-        """Check if content exists.
-
-        Args:
-            content_hash: SHA-256 hash as hex string
-
-        Returns:
-            True if content exists, False otherwise
-        """
-        ...
-
-    def size(self, content_hash: str) -> int:
+    @abstractmethod
+    def get_content_size(self, content_hash: str, context: OperationContext | None = None) -> int:
         """Get content size in bytes.
 
         Args:
-            content_hash: SHA-256 hash as hex string
+            content_hash: SHA-256 hash as hex string.
+            context: Operation context (optional).
 
         Returns:
-            Content size in bytes
+            Content size in bytes.
 
         Raises:
-            NexusFileNotFoundError: If content doesn't exist
+            NexusFileNotFoundError: If content does not exist.
         """
         ...
 
-    def batch_read(
+    # === Streaming (concrete defaults) ===
+
+    def write_stream(
         self,
-        content_hashes: list[str],
-        *,
-        contexts: "dict[str, OperationContext] | None" = None,
-    ) -> dict[str, bytes | None]:
-        """Read multiple content items by hash.
+        chunks: Iterator[bytes],
+        context: OperationContext | None = None,
+    ) -> WriteResult:
+        """Write content from an iterator of chunks.
+
+        Default implementation collects all chunks into memory and
+        delegates to ``write_content()``.  Backends should override for
+        true streaming with incremental hashing.
 
         Args:
-            content_hashes: List of SHA-256 hashes
-            contexts: Per-hash operation contexts for path-based backends.
-                     Maps content_hash -> OperationContext with backend_path.
+            chunks: Iterator yielding byte chunks.
+            context: Operation context (optional).
 
         Returns:
-            Dict mapping hash → content bytes (None for missing items)
+            ``WriteResult`` with ``content_hash`` and ``size``.
+        """
+        content = b"".join(chunks)
+        return self.write_content(content, context=context)
+
+    def stream_content(
+        self,
+        content_hash: str,
+        chunk_size: int = 8192,
+        context: OperationContext | None = None,
+    ) -> Iterator[bytes]:
+        """Stream content by hash in chunks (generator).
+
+        Default implementation reads the full content and yields slices.
+        Backends with seekable storage should override for efficiency.
+
+        Args:
+            content_hash: SHA-256 hash as hex string.
+            chunk_size: Size of each chunk in bytes (default: 8 KiB).
+            context: Operation context (optional).
+
+        Yields:
+            Chunks of file content.
+        """
+        content = self.read_content(content_hash, context=context)
+        for i in range(0, len(content), chunk_size):
+            yield content[i : i + chunk_size]
+
+    def stream_range(
+        self,
+        content_hash: str,
+        start: int,
+        end: int,
+        chunk_size: int = 8192,
+        context: OperationContext | None = None,
+    ) -> Iterator[bytes]:
+        """Stream a byte range ``[start, end]`` inclusive from stored content.
+
+        Default implementation reads full content and slices.  Backends
+        with seekable storage should override for efficiency.
+
+        Args:
+            content_hash: Content identifier (hash).
+            start: First byte position (inclusive, 0-based).
+            end: Last byte position (inclusive, 0-based).
+            chunk_size: Size of each yielded chunk in bytes.
+            context: Operation context (optional).
+
+        Yields:
+            Chunks covering the requested range.
+        """
+        content = self.read_content(content_hash, context=context)
+        sliced = content[start : end + 1]
+        for i in range(0, len(sliced), chunk_size):
+            yield sliced[i : i + chunk_size]
+
+    # === Directory Operations (2 abstract) ===
+
+    @abstractmethod
+    def mkdir(
+        self,
+        path: str,
+        parents: bool = False,
+        exist_ok: bool = False,
+        context: OperationContext | None = None,
+    ) -> None:
+        """Create a directory.
+
+        For backends without native directory support (e.g. S3), this may
+        be a no-op or create marker objects.
+
+        Args:
+            path: Directory path (relative to backend root).
+            parents: Create parent directories if needed (like ``mkdir -p``).
+            exist_ok: Do not raise if directory already exists.
+            context: Operation context (optional).
+
+        Raises:
+            BackendError: If directory creation fails.
         """
         ...
 
-
-class BackendObjectStore:
-    """Adapts a Backend instance to the ObjectStoreABC interface.
-
-    Translates HandlerResponse[T] → T (raises on failure via .unwrap()).
-    Validates content hashes at the boundary before delegating to Backend.
-    """
-
-    def __init__(
+    @abstractmethod
+    def rmdir(
         self,
-        backend: "Backend",
-        context: "OperationContext | None" = None,
+        path: str,
+        recursive: bool = False,
+        context: OperationContext | None = None,
     ) -> None:
-        self._backend = backend
-        self._context = context
+        """Remove a directory.
 
-    @property
-    def backend(self) -> "Backend":
-        """The underlying Backend instance (read-only)."""
-        return self._backend
+        Args:
+            path: Directory path.
+            recursive: Remove non-empty directory (like ``rm -rf``).
+            context: Operation context (optional).
 
-    @property
-    def name(self) -> str:
-        return self._backend.name
+        Raises:
+            BackendError: If directory removal fails.
+        """
+        ...
 
-    def __repr__(self) -> str:
-        ctx = f", context={self._context!r}" if self._context is not None else ""
-        return f"BackendObjectStore(backend={self._backend.name!r}{ctx})"
+    # === Batch (concrete default) ===
 
-    def write(self, content: bytes) -> str:
-        return self._backend.write_content(content, context=self._context).unwrap()
-
-    def read(self, content_hash: str) -> bytes:
-        _validate_hash(content_hash)
-        return self._backend.read_content(content_hash, context=self._context).unwrap()
-
-    def delete(self, content_hash: str) -> None:
-        _validate_hash(content_hash)
-        self._backend.delete_content(content_hash, context=self._context).unwrap()
-
-    def exists(self, content_hash: str) -> bool:
-        _validate_hash(content_hash)
-        return self._backend.content_exists(content_hash, context=self._context).unwrap()
-
-    def size(self, content_hash: str) -> int:
-        _validate_hash(content_hash)
-        return self._backend.get_content_size(content_hash, context=self._context).unwrap()
-
-    def batch_read(
+    def batch_read_content(
         self,
         content_hashes: list[str],
+        context: OperationContext | None = None,
         *,
-        contexts: "dict[str, OperationContext] | None" = None,
+        contexts: dict[str, OperationContext] | None = None,
     ) -> dict[str, bytes | None]:
-        for h in content_hashes:
-            _validate_hash(h)
-        try:
-            return self._backend.batch_read_content(
-                content_hashes, context=self._context, contexts=contexts
-            )
-        except Exception:
-            # Re-raise domain exceptions (NexusFileNotFoundError, BackendError) as-is.
-            # batch_read_content should return None for missing items, but if a backend
-            # raises unexpectedly, let the caller see the real exception.
-            raise
+        """Read multiple content items by their hashes.
+
+        Default implementation calls ``read_content()`` for each hash.
+        Backends should override for better performance (e.g. batch RPCs).
+
+        Unlike ``read_content()``, missing content is indicated by
+        ``None`` values in the result dict rather than raising.
+
+        Args:
+            content_hashes: List of SHA-256 hashes.
+            context: Shared operation context (fallback).
+            contexts: Per-hash operation contexts mapping
+                ``content_hash -> OperationContext``.
+
+        Returns:
+            Dict mapping ``content_hash -> bytes | None``.
+        """
+        result: dict[str, bytes | None] = {}
+        for content_hash in content_hashes:
+            ctx = contexts.get(content_hash, context) if contexts else context
+            try:
+                result[content_hash] = self.read_content(content_hash, context=ctx)
+            except Exception:
+                result[content_hash] = None
+        return result
+
+    # === Capability Flags (concrete defaults, all False) ===
+
+    @property
+    def user_scoped(self) -> bool:
+        """Whether this backend requires per-user credentials (OAuth-based)."""
+        return False
+
+    @property
+    def has_virtual_filesystem(self) -> bool:
+        """Whether this backend uses a virtual filesystem (e.g. API-backed)."""
+        return False
+
+    @property
+    def has_token_manager(self) -> bool:
+        """Whether this backend manages OAuth tokens."""
+        return False
+
+    @property
+    def supports_rename(self) -> bool:
+        """Whether this backend supports direct file rename/move."""
+        return False
+
+    @property
+    def supports_parallel_mmap_read(self) -> bool:
+        """Whether this backend supports Rust-accelerated parallel mmap reads."""
+        return False
+
+    @property
+    def is_passthrough(self) -> bool:
+        """Whether this backend is a PassthroughBackend for same-box mode."""
+        return False
+
+    # === Lifecycle ===
+
+    def close(self) -> None:  # noqa: B027
+        """Release resources.  Consistent with MetastoreABC.close() / CacheStoreABC.close()."""

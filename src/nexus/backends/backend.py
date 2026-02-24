@@ -2,14 +2,18 @@
 
 This module provides a single, unified interface for all storage backends,
 combining content-addressable storage (CAS) with directory operations.
+
+Backend inherits from ObjectStoreABC (the kernel contract) and adds
+service-level methods (connect, disconnect, describe, capabilities, etc.).
 """
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, runtime_checkable
 
+from nexus.core.object_store import ObjectStoreABC, WriteResult
 from nexus.lib.response import HandlerResponse
 
 if TYPE_CHECKING:
@@ -71,9 +75,13 @@ class HandlerStatusResponse:
         return result
 
 
-class Backend(ABC):
+class Backend(ObjectStoreABC):
     """
     Unified backend interface for storage operations.
+
+    Inherits from ObjectStoreABC (the kernel contract) and adds service-level
+    methods: connect, disconnect, check_connection, describe, capabilities,
+    get_object_type, get_object_id, get_file_info, list_dir.
 
     All storage backends (LocalFS, S3, GCS, etc.) implement this interface.
     It combines:
@@ -115,48 +123,21 @@ class Backend(ABC):
 
         return os.getenv("TOKEN_MANAGER_DB") or db_param
 
-    @property
-    @abstractmethod
-    def name(self) -> str:
-        """
-        Backend identifier name.
+    # ------------------------------------------------------------------
+    # ``name`` is inherited as abstract from ObjectStoreABC -- subclasses
+    # must implement it.  No redeclaration needed here.
+    #
+    # Capability flags that ARE on ObjectStoreABC (user_scoped,
+    # has_virtual_filesystem, has_token_manager, supports_rename,
+    # supports_parallel_mmap_read, is_passthrough) are inherited with
+    # default False.  Subclasses override as needed.
+    # ------------------------------------------------------------------
 
-        Returns:
-            Backend name (e.g., "local", "gcs", "s3")
-        """
-        pass
-
-    @property
-    def user_scoped(self) -> bool:
-        """
-        Whether this backend requires per-user credentials (OAuth-based).
-
-        User-scoped backends (e.g., Google Drive, OneDrive) use different
-        credentials for each user. The backend will receive OperationContext
-        to determine which user's credentials to use.
-
-        Non-user-scoped backends (e.g., GCS, S3) use shared service account
-        credentials and ignore the context parameter.
-
-        Returns:
-            True if backend requires per-user credentials, False otherwise
-            Default: False (shared credentials)
-
-        Examples:
-            >>> # Shared credentials (GCS, S3)
-            >>> gcs_backend.user_scoped
-            False
-
-            >>> # Per-user OAuth (Google Drive, OneDrive)
-            >>> gdrive_backend.user_scoped
-            True
-        """
-        return False
+    # === Service-level properties (not on ObjectStoreABC) ===
 
     @property
     def is_connected(self) -> bool:
-        """
-        Whether the backend is currently connected.
+        """Whether the backend is currently connected.
 
         For stateless backends (e.g., local filesystem), this always returns True.
         For stateful backends (e.g., databases, cloud services with sessions),
@@ -170,8 +151,7 @@ class Backend(ABC):
 
     @property
     def thread_safe(self) -> bool:
-        """
-        Whether this backend is safe for concurrent access from multiple threads.
+        """Whether this backend is safe for concurrent access from multiple threads.
 
         Thread-safe backends can share a single instance across threads.
         Non-thread-safe backends require per-thread instances or connection pooling.
@@ -182,37 +162,7 @@ class Backend(ABC):
         """
         return True
 
-    # === Capability Flags ===
-    # These properties declare backend capabilities so that core code can use
-    # polymorphic dispatch instead of hasattr/isinstance/getattr checks.
-    # Each defaults to False; concrete backends override to return True.
-
-    @property
-    def supports_rename(self) -> bool:
-        """Whether this backend supports direct file rename/move.
-
-        Backends with path-based storage (e.g., blob connectors) can move
-        files at the storage level. CAS backends only need metadata rename.
-
-        Returns:
-            True if backend implements rename_file(), False otherwise
-            Default: False
-        """
-        return False
-
-    @property
-    def has_virtual_filesystem(self) -> bool:
-        """Whether this backend uses a virtual filesystem (e.g., API-backed).
-
-        Virtual filesystem backends (e.g., HackerNews, local_connector)
-        map API data or external files to virtual directory structures.
-        These backends use path-based reads instead of content-hash reads.
-
-        Returns:
-            True if backend uses virtual filesystem, False otherwise
-            Default: False
-        """
-        return False
+    # === Service-level capability flags (not on ObjectStoreABC) ===
 
     @property
     def has_root_path(self) -> bool:
@@ -228,19 +178,6 @@ class Backend(ABC):
         return False
 
     @property
-    def has_token_manager(self) -> bool:
-        """Whether this backend manages OAuth tokens.
-
-        OAuth-based connectors (Google Drive, Gmail, X, Slack, etc.)
-        use a TokenManager for credential management.
-
-        Returns:
-            True if backend has a token_manager, False otherwise
-            Default: False
-        """
-        return False
-
-    @property
     def has_data_dir(self) -> bool:
         """Whether this backend has a data_dir for ancillary data storage.
 
@@ -249,31 +186,6 @@ class Backend(ABC):
 
         Returns:
             True if backend has data_dir attribute, False otherwise
-            Default: False
-        """
-        return False
-
-    @property
-    def is_passthrough(self) -> bool:
-        """Whether this backend is a PassthroughBackend for same-box mode.
-
-        PassthroughBackend supports OS-native file watching, in-memory
-        advisory locking, and stable pointer paths.
-
-        Returns:
-            True if backend is a passthrough backend, False otherwise
-            Default: False
-        """
-        return False
-
-    @property
-    def supports_parallel_mmap_read(self) -> bool:
-        """Whether this backend supports Rust-accelerated parallel mmap reads.
-
-        Only LocalBackend supports this via the nexus_fast native module.
-
-        Returns:
-            True if backend supports parallel mmap reads, False otherwise
             Default: False
         """
         return False
@@ -331,8 +243,7 @@ class Backend(ABC):
         return HandlerStatusResponse(success=True, details={"backend": self.name})
 
     def disconnect(self, context: "OperationContext | None" = None) -> None:  # noqa: B027
-        """
-        Close connection and release resources.
+        """Close connection and release resources.
 
         For stateless backends, this is a no-op.
         For stateful backends, this closes connections and cleans up.
@@ -344,7 +255,14 @@ class Backend(ABC):
             Default implementation is no-op for stateless backends.
             Override in backends that hold connections or resources.
         """
-        pass
+
+    def close(self) -> None:
+        """Release resources (ObjectStoreABC lifecycle).
+
+        Delegates to ``disconnect()`` for backward compatibility with
+        backends that override ``disconnect()``.
+        """
+        self.disconnect()
 
     def check_connection(
         self, context: "OperationContext | None" = None
@@ -383,9 +301,9 @@ class Backend(ABC):
     @abstractmethod
     def write_content(
         self, content: bytes, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[str]":
+    ) -> WriteResult:
         """
-        Write content to storage and return its content hash.
+        Write content to storage and return a WriteResult.
 
         If content already exists (same hash), increments reference count
         instead of writing duplicate data.
@@ -395,18 +313,15 @@ class Backend(ABC):
             context: Operation context with user/zone info (optional, for user-scoped backends)
 
         Returns:
-            HandlerResponse with content hash (SHA-256 as hex string) in data field
+            WriteResult with content_hash and size.
 
-        Note:
-            For user_scoped backends, context.user_id determines which user's
-            credentials to use. Non-user-scoped backends ignore this parameter.
+        Raises:
+            BackendError: If write operation fails.
         """
         pass
 
     @abstractmethod
-    def read_content(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[bytes]":
+    def read_content(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
         """
         Read content by its hash.
 
@@ -415,11 +330,11 @@ class Backend(ABC):
             context: Operation context with user/zone info (optional, for user-scoped backends)
 
         Returns:
-            HandlerResponse with file content as bytes in data field
+            File content as bytes.
 
-        Note:
-            For user_scoped backends, context.user_id determines which user's
-            credentials to use. Non-user-scoped backends ignore this parameter.
+        Raises:
+            NexusFileNotFoundError: If content does not exist.
+            BackendError: If read operation fails.
         """
         pass
 
@@ -455,16 +370,15 @@ class Backend(ABC):
         result: dict[str, bytes | None] = {}
         for content_hash in content_hashes:
             ctx = contexts.get(content_hash, context) if contexts else context
-            response = self.read_content(content_hash, context=ctx)
-            if response.success:
-                result[content_hash] = response.data
-            else:
+            try:
+                result[content_hash] = self.read_content(content_hash, context=ctx)
+            except Exception:
                 result[content_hash] = None
         return result
 
     def stream_content(
         self, content_hash: str, chunk_size: int = 8192, context: "OperationContext | None" = None
-    ) -> Any:
+    ) -> "Iterator[bytes]":
         """
         Stream content by its hash in chunks (generator).
 
@@ -490,8 +404,7 @@ class Backend(ABC):
         """
         # Default implementation: read entire file and yield in chunks
         # Backends can override for true streaming from storage
-        response = self.read_content(content_hash, context=context)
-        content = response.unwrap()  # Raises on error
+        content = self.read_content(content_hash, context=context)
         for i in range(0, len(content), chunk_size):
             yield content[i : i + chunk_size]
 
@@ -518,8 +431,7 @@ class Backend(ABC):
         Yields:
             bytes: Chunks covering the requested range
         """
-        response = self.read_content(content_hash, context=context)
-        content = response.unwrap()
+        content = self.read_content(content_hash, context=context)
         sliced = content[start : end + 1]
         for i in range(0, len(sliced), chunk_size):
             yield sliced[i : i + chunk_size]
@@ -528,9 +440,9 @@ class Backend(ABC):
         self,
         chunks: Iterator[bytes],
         context: "OperationContext | None" = None,
-    ) -> "HandlerResponse[str]":
+    ) -> WriteResult:
         """
-        Write content from an iterator of chunks and return its content hash.
+        Write content from an iterator of chunks and return a WriteResult.
 
         This is a memory-efficient alternative to write_content() for large files.
         Instead of requiring entire content in memory, accepts chunks as an iterator.
@@ -541,16 +453,7 @@ class Backend(ABC):
             context: Operation context with user/zone info (optional, for user-scoped backends)
 
         Returns:
-            HandlerResponse with content hash (SHA-256 as hex string) in data field
-
-        Example:
-            >>> # Stream large file without loading into memory
-            >>> def file_chunks(path, chunk_size=8192):
-            ...     with open(path, 'rb') as f:
-            ...         while chunk := f.read(chunk_size):
-            ...             yield chunk
-            >>> response = backend.write_stream(file_chunks('/large/file.bin'))
-            >>> content_hash = response.unwrap()
+            WriteResult with content_hash and size.
 
         Note:
             Default implementation collects all chunks and calls write_content().
@@ -562,87 +465,72 @@ class Backend(ABC):
         return self.write_content(content, context=context)
 
     @abstractmethod
-    def delete_content(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[None]":
+    def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:
         """
         Delete content by hash.
 
-        Decrements reference count. Only deletes actual file when
+        Decrements reference count. Only deletes actual data when the
         reference count reaches zero.
 
         Args:
             content_hash: SHA-256 hash as hex string
             context: Operation context with user/zone info (optional, for user-scoped backends)
 
-        Returns:
-            HandlerResponse indicating success or failure
-
-        Note:
-            For user_scoped backends, context.user_id determines which user's
-            credentials to use. Non-user-scoped backends ignore this parameter.
+        Raises:
+            NexusFileNotFoundError: If content does not exist.
+            BackendError: If delete operation fails.
         """
         pass
 
-    @abstractmethod
-    def content_exists(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[bool]":
-        """
-        Check if content exists.
+    def content_exists(self, content_hash: str, context: "OperationContext | None" = None) -> bool:
+        """Check if content exists.
+
+        This is a service-level method, NOT part of the kernel contract.
+        The kernel uses metastore to check existence, not the backend directly.
+
+        Subclasses should override if they support existence checks.
 
         Args:
             content_hash: SHA-256 hash as hex string
-            context: Operation context with user/zone info (optional, for user-scoped backends)
+            context: Operation context (optional)
 
         Returns:
-            HandlerResponse with True if content exists, False otherwise in data field
-
-        Note:
-            For user_scoped backends, context.user_id determines which user's
-            credentials to use. Non-user-scoped backends ignore this parameter.
+            True if content exists, False otherwise.
         """
-        pass
+        raise NotImplementedError(f"Backend '{self.name}' does not implement content_exists")
 
     @abstractmethod
-    def get_content_size(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[int]":
+    def get_content_size(self, content_hash: str, context: "OperationContext | None" = None) -> int:
         """
         Get content size in bytes.
 
         Args:
             content_hash: SHA-256 hash as hex string
-            context: Operation context with user/zone info (optional, for user-scoped backends)
+            context: Operation context (optional)
 
         Returns:
-            HandlerResponse with content size in bytes in data field
+            Content size in bytes.
 
-        Note:
-            For user_scoped backends, context.user_id determines which user's
-            credentials to use. Non-user-scoped backends ignore this parameter.
+        Raises:
+            NexusFileNotFoundError: If content does not exist.
         """
         pass
 
-    @abstractmethod
-    def get_ref_count(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[int]":
-        """
-        Get reference count for content.
+    def get_ref_count(self, content_hash: str, context: "OperationContext | None" = None) -> int:
+        """Get reference count for content.
+
+        This is a service-level method, NOT part of the kernel contract.
+
+        Subclasses should override if they support reference counting.
 
         Args:
             content_hash: SHA-256 hash as hex string
-            context: Operation context with user/zone info (optional, for user-scoped backends)
+            context: Operation context (optional)
 
         Returns:
-            HandlerResponse with number of references in data field
-
-        Note:
-            For user_scoped backends, context.user_id determines which user's
-            credentials to use. Non-user-scoped backends ignore this parameter.
+            Number of references.
         """
-        pass
+        raise NotImplementedError(f"Backend '{self.name}' does not implement get_ref_count")
 
     # === Directory Operations ===
 
@@ -653,7 +541,7 @@ class Backend(ABC):
         parents: bool = False,
         exist_ok: bool = False,
         context: "OperationContext | None" = None,
-    ) -> "HandlerResponse[None]":
+    ) -> None:
         """
         Create a directory.
 
@@ -664,14 +552,10 @@ class Backend(ABC):
             path: Directory path (relative to backend root)
             parents: Create parent directories if needed (like mkdir -p)
             exist_ok: Don't raise error if directory exists
-            context: Operation context with user/zone info (optional, for user-scoped backends)
+            context: Operation context (optional)
 
-        Returns:
-            HandlerResponse indicating success or failure
-
-        Note:
-            For user_scoped backends, context.user_id determines which user's
-            credentials to use. Non-user-scoped backends ignore this parameter.
+        Raises:
+            BackendError: If directory creation fails.
         """
         pass
 
@@ -681,7 +565,7 @@ class Backend(ABC):
         path: str,
         recursive: bool = False,
         context: "OperationContext | None" = None,
-    ) -> "HandlerResponse[None]":
+    ) -> None:
         """
         Remove a directory.
 
@@ -690,26 +574,28 @@ class Backend(ABC):
             recursive: Remove non-empty directory (like rm -rf)
             context: Operation context for authentication (optional)
 
-        Returns:
-            HandlerResponse indicating success or failure
+        Raises:
+            NexusFileNotFoundError: If directory does not exist.
+            BackendError: If directory removal fails.
         """
         pass
 
-    @abstractmethod
-    def is_directory(
-        self, path: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[bool]":
-        """
-        Check if path is a directory.
+    def is_directory(self, path: str, context: "OperationContext | None" = None) -> bool:
+        """Check if path is a directory.
+
+        This is a service-level method, NOT part of the kernel contract.
+        The kernel uses ``meta.mime_type == "inode/directory"`` instead.
+
+        Subclasses should override if they support directory checks.
 
         Args:
             path: Path to check
-            context: Operation context for authentication (optional)
+            context: Operation context (optional)
 
         Returns:
-            HandlerResponse with True if path is a directory, False otherwise in data field
+            True if path is a directory, False otherwise.
         """
-        pass
+        raise NotImplementedError(f"Backend '{self.name}' does not implement is_directory")
 
     def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:
         """
@@ -859,19 +745,19 @@ class AsyncBackend(Protocol):
 
     async def write_content(
         self, content: bytes, context: "OperationContext | None" = None
-    ) -> HandlerResponse[str]: ...
+    ) -> WriteResult: ...
 
     async def read_content(
         self, content_hash: str, context: "OperationContext | None" = None
-    ) -> HandlerResponse[bytes]: ...
+    ) -> bytes: ...
 
     async def delete_content(
         self, content_hash: str, context: "OperationContext | None" = None
-    ) -> HandlerResponse[None]: ...
+    ) -> None: ...
 
     async def content_exists(
         self, content_hash: str, context: "OperationContext | None" = None
-    ) -> HandlerResponse[bool]: ...
+    ) -> bool: ...
 
     def stream_content(
         self,

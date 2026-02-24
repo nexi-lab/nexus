@@ -168,7 +168,7 @@ class WorkspaceManager:
             manifest_bytes = manifest.to_json()
 
             # Store manifest in CAS
-            manifest_hash = self.backend.write_content(manifest_bytes, context=None).unwrap()
+            manifest_hash = self.backend.write_content(manifest_bytes, context=None).content_hash
 
             # Get next snapshot number for this workspace
             stmt = (
@@ -270,9 +270,7 @@ class WorkspaceManager:
             )
 
             # Read manifest from CAS
-            manifest_bytes = self.backend.read_content(
-                snapshot.manifest_hash, context=None
-            ).unwrap()
+            manifest_bytes = self.backend.read_content(snapshot.manifest_hash, context=None)
             manifest = WorkspaceManifest.from_json(manifest_bytes)
 
             # Get workspace path and ensure it ends with /
@@ -465,10 +463,10 @@ class WorkspaceManager:
 
             # Read manifests
             manifest1 = WorkspaceManifest.from_json(
-                self.backend.read_content(snap1.manifest_hash, context=None).unwrap()
+                self.backend.read_content(snap1.manifest_hash, context=None)
             )
             manifest2 = WorkspaceManifest.from_json(
-                self.backend.read_content(snap2.manifest_hash, context=None).unwrap()
+                self.backend.read_content(snap2.manifest_hash, context=None)
             )
 
             # Compute diff
@@ -566,7 +564,7 @@ class WorkspaceManager:
         manifest_bytes = merged_manifest.to_json()
 
         # Store flattened manifest in CAS
-        manifest_hash = self.backend.write_content(manifest_bytes, context=None).unwrap()
+        manifest_hash = self.backend.write_content(manifest_bytes, context=None).content_hash
 
         return {
             "manifest_hash": manifest_hash,

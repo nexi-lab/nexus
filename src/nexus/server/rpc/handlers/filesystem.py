@@ -56,7 +56,9 @@ def generate_download_url(
         backend_path = route.backend_path
 
         # S3 or GCS connector with signed URL support
-        if backend.has_capability(ConnectorCapability.SIGNED_URL):
+        if hasattr(backend, "has_capability") and backend.has_capability(
+            ConnectorCapability.SIGNED_URL
+        ):
             from dataclasses import replace
 
             if context and hasattr(context, "backend_path"):
@@ -80,7 +82,9 @@ def generate_download_url(
             }
 
         # Local backend - use streaming endpoint with signed token
-        if backend.has_capability(ConnectorCapability.ROOT_PATH):
+        if hasattr(backend, "has_capability") and backend.has_capability(
+            ConnectorCapability.ROOT_PATH
+        ):
             from urllib.parse import quote
 
             from nexus.server.streaming import _sign_stream_token

@@ -114,7 +114,7 @@ class OverlayResolver:
         if base_hash in self._manifest_cache:
             return self._manifest_cache[base_hash]
 
-        manifest_bytes = self._backend.read_content(base_hash, context=None).unwrap()
+        manifest_bytes = self._backend.read_content(base_hash, context=None)
         manifest = WorkspaceManifest.from_json(manifest_bytes)
         self._manifest_cache[base_hash] = manifest
         return manifest

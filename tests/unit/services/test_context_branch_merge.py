@@ -21,7 +21,6 @@ from sqlalchemy.orm import sessionmaker
 
 from nexus.contracts.exceptions import BranchConflictError, BranchStateError
 from nexus.contracts.workspace_manifest import ManifestEntry, WorkspaceManifest
-from nexus.lib.response import HandlerResponse
 from nexus.storage.models._base import Base
 from nexus.storage.models.context_branch import ContextBranchModel
 from nexus.storage.models.filesystem import WorkspaceSnapshotModel
@@ -72,12 +71,12 @@ def _make_service(session_factory, manifest_store: dict[str, bytes]) -> ContextB
     wm.metadata = MagicMock()
 
     def read_content(hash_val, context=None):
-        return HandlerResponse.ok(manifest_store[hash_val])
+        return manifest_store[hash_val]
 
     def write_content(data, context=None):
         h = hashlib.sha256(data).hexdigest()
         manifest_store[h] = data
-        return HandlerResponse.ok(h)
+        return SimpleNamespace(content_hash=h)
 
     wm.backend.read_content = read_content
     wm.backend.write_content = write_content

@@ -23,7 +23,7 @@ import pytest
 
 from nexus.backends.backend import HandlerStatusResponse
 from nexus.backends.logging_wrapper import LoggingBackendWrapper
-from nexus.lib.response import HandlerResponse
+from nexus.core.object_store import WriteResult
 from tests.unit.backends.wrapper_test_helpers import make_leaf
 
 # ---------------------------------------------------------------------------
@@ -69,11 +69,10 @@ class TestContentOperationLogs:
     def test_read_content_logs(
         self, logged: LoggingBackendWrapper, mock_inner: MagicMock, caplog: pytest.LogCaptureFixture
     ) -> None:
-        mock_inner.read_content.return_value = HandlerResponse.ok(data=b"content")
+        mock_inner.read_content.return_value = b"content"
         with caplog.at_level(logging.DEBUG, logger="nexus.backends.logging_wrapper"):
             result = logged.read_content("abcdef123456")
-        assert result.success
-        assert result.data == b"content"
+        assert result == b"content"
         assert len(caplog.records) == 1
         record = caplog.records[0]
         assert record.levelno == logging.DEBUG
@@ -85,10 +84,10 @@ class TestContentOperationLogs:
     def test_write_content_logs(
         self, logged: LoggingBackendWrapper, mock_inner: MagicMock, caplog: pytest.LogCaptureFixture
     ) -> None:
-        mock_inner.write_content.return_value = HandlerResponse.ok(data="hash123456ab")
+        mock_inner.write_content.return_value = WriteResult(content_hash="hash123456ab", size=11)
         with caplog.at_level(logging.DEBUG, logger="nexus.backends.logging_wrapper"):
             result = logged.write_content(b"hello world")
-        assert result.success
+        assert isinstance(result, WriteResult)
         assert len(caplog.records) == 1
         record = caplog.records[0]
         assert "write_content" in record.message
@@ -98,7 +97,7 @@ class TestContentOperationLogs:
     def test_delete_content_logs(
         self, logged: LoggingBackendWrapper, mock_inner: MagicMock, caplog: pytest.LogCaptureFixture
     ) -> None:
-        mock_inner.delete_content.return_value = HandlerResponse.ok(data=None)
+        mock_inner.delete_content.return_value = None
         with caplog.at_level(logging.DEBUG, logger="nexus.backends.logging_wrapper"):
             logged.delete_content("abcdef123456")
         assert len(caplog.records) == 1
@@ -107,10 +106,10 @@ class TestContentOperationLogs:
     def test_content_exists_logs(
         self, logged: LoggingBackendWrapper, mock_inner: MagicMock, caplog: pytest.LogCaptureFixture
     ) -> None:
-        mock_inner.content_exists.return_value = HandlerResponse.ok(data=True)
+        mock_inner.content_exists.return_value = True
         with caplog.at_level(logging.DEBUG, logger="nexus.backends.logging_wrapper"):
             result = logged.content_exists("abcdef123456")
-        assert result.data is True
+        assert result is True
         assert len(caplog.records) == 1
         assert "content_exists" in caplog.records[0].message
         assert "exists=True" in caplog.records[0].message
@@ -153,7 +152,7 @@ class TestDirectoryOperationLogs:
     def test_mkdir_logs(
         self, logged: LoggingBackendWrapper, mock_inner: MagicMock, caplog: pytest.LogCaptureFixture
     ) -> None:
-        mock_inner.mkdir.return_value = HandlerResponse.ok(data=None)
+        mock_inner.mkdir.return_value = None
         with caplog.at_level(logging.DEBUG, logger="nexus.backends.logging_wrapper"):
             logged.mkdir("/test/dir", parents=True)
         assert len(caplog.records) == 1
@@ -163,7 +162,7 @@ class TestDirectoryOperationLogs:
     def test_rmdir_logs(
         self, logged: LoggingBackendWrapper, mock_inner: MagicMock, caplog: pytest.LogCaptureFixture
     ) -> None:
-        mock_inner.rmdir.return_value = HandlerResponse.ok(data=None)
+        mock_inner.rmdir.return_value = None
         with caplog.at_level(logging.DEBUG, logger="nexus.backends.logging_wrapper"):
             logged.rmdir("/test/dir", recursive=True)
         assert len(caplog.records) == 1
@@ -231,7 +230,7 @@ class TestDelegationCorrectness:
     def test_read_returns_inner_response(
         self, logged: LoggingBackendWrapper, mock_inner: MagicMock
     ) -> None:
-        expected = HandlerResponse.ok(data=b"exact-data")
+        expected = b"exact-data"
         mock_inner.read_content.return_value = expected
         result = logged.read_content("hash")
         assert result is expected
@@ -239,7 +238,7 @@ class TestDelegationCorrectness:
     def test_write_returns_inner_response(
         self, logged: LoggingBackendWrapper, mock_inner: MagicMock
     ) -> None:
-        expected = HandlerResponse.ok(data="hash-result")
+        expected = WriteResult(content_hash="hash-result")
         mock_inner.write_content.return_value = expected
         result = logged.write_content(b"data")
         assert result is expected
@@ -247,12 +246,17 @@ class TestDelegationCorrectness:
     def test_failure_response_logged(
         self, logged: LoggingBackendWrapper, mock_inner: MagicMock, caplog: pytest.LogCaptureFixture
     ) -> None:
-        failed = HandlerResponse.error(message="not found")
-        mock_inner.read_content.return_value = failed
-        with caplog.at_level(logging.DEBUG, logger="nexus.backends.logging_wrapper"):
-            result = logged.read_content("missing-hash")
-        assert not result.success
-        assert "success=False" in caplog.records[0].message
+        mock_inner.read_content.side_effect = RuntimeError("not found")
+        with (
+            caplog.at_level(logging.DEBUG, logger="nexus.backends.logging_wrapper"),
+            pytest.raises(RuntimeError, match="not found"),
+        ):
+            logged.read_content("missing-hash")
+        assert len(caplog.records) == 1
+        record = caplog.records[0]
+        assert "read_content" in record.message
+        assert "error=" in record.message
+        assert "not found" in record.message
 
 
 # ---------------------------------------------------------------------------

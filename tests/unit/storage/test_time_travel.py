@@ -38,7 +38,14 @@ class TestTimeTravelDebug:
         rs.close()
 
     @pytest.fixture
-    def nx(self, temp_dir, record_store):
+    def backend(self, temp_dir):
+        """Create LocalBackend for testing."""
+        data_dir = Path(temp_dir) / "nexus-data"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        return LocalBackend(root_path=data_dir)
+
+    @pytest.fixture
+    def nx(self, temp_dir, record_store, backend):
         """Create NexusFS instance for testing.
 
         Uses RaftMetadataStore. TODO: Time travel depends on FilePathModel
@@ -46,7 +53,6 @@ class TestTimeTravelDebug:
         """
         data_dir = Path(temp_dir) / "nexus-data"
         data_dir.mkdir(parents=True, exist_ok=True)
-        backend = LocalBackend(root_path=data_dir)
         metadata_store = RaftMetadataStore.embedded(str(data_dir / "raft-metadata"))
         nx = create_nexus_fs(
             backend=backend,
@@ -58,11 +64,11 @@ class TestTimeTravelDebug:
         nx.close()
 
     @pytest.fixture
-    def time_travel(self, record_store, nx):
+    def time_travel(self, record_store, backend):
         """Create TimeTravelService for testing."""
         return TimeTravelService(
             session_factory=record_store.session_factory,
-            backend=nx.backend,
+            backend=backend,
         )
 
     def test_time_travel_read_file_history(self, nx, record_store, time_travel):

@@ -29,9 +29,9 @@ Storage structure:
 Example:
     >>> backend = LocalBackend("/data", cdc_threshold=16*1024*1024)
     >>> # Large file automatically chunked
-    >>> content_hash = backend.write_content(large_50mb_file).unwrap()
+    >>> result = backend.write_content(large_50mb_file)
     >>> # Read transparently reassembles chunks
-    >>> content = backend.read_content(content_hash).unwrap()
+    >>> content = backend.read_content(result.content_hash)
     >>> assert content == large_50mb_file
 """
 

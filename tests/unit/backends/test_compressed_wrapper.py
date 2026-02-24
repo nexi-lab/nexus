@@ -26,7 +26,7 @@ from unittest.mock import patch
 import pytest
 
 from nexus.contracts.describable import Describable
-from nexus.lib.response import HandlerResponse
+from nexus.core.object_store import WriteResult
 from tests.unit.backends.wrapper_test_helpers import make_leaf, make_storage_mock
 
 # ---------------------------------------------------------------------------
@@ -80,11 +80,10 @@ class TestCompressedRoundtrip:
 
         plaintext = b"hello world " * 100  # Compressible content
         write_resp = wrapper.write_content(plaintext)
-        assert write_resp.success
+        assert isinstance(write_resp, WriteResult)
 
-        read_resp = wrapper.read_content(write_resp.data)
-        assert read_resp.success
-        assert read_resp.data == plaintext
+        read_resp = wrapper.read_content(write_resp.content_hash)
+        assert read_resp == plaintext
 
     def test_binary_roundtrip(self) -> None:
         from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
@@ -95,11 +94,10 @@ class TestCompressedRoundtrip:
 
         plaintext = bytes(range(256)) * 100
         write_resp = wrapper.write_content(plaintext)
-        assert write_resp.success
+        assert isinstance(write_resp, WriteResult)
 
-        read_resp = wrapper.read_content(write_resp.data)
-        assert read_resp.success
-        assert read_resp.data == plaintext
+        read_resp = wrapper.read_content(write_resp.content_hash)
+        assert read_resp == plaintext
 
     def test_large_content_roundtrip(self) -> None:
         from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
@@ -110,11 +108,10 @@ class TestCompressedRoundtrip:
 
         plaintext = b"A" * (1024 * 1024)  # 1MB highly compressible
         write_resp = wrapper.write_content(plaintext)
-        assert write_resp.success
+        assert isinstance(write_resp, WriteResult)
 
-        read_resp = wrapper.read_content(write_resp.data)
-        assert read_resp.success
-        assert read_resp.data == plaintext
+        read_resp = wrapper.read_content(write_resp.content_hash)
+        assert read_resp == plaintext
 
 
 # ---------------------------------------------------------------------------
@@ -133,8 +130,8 @@ class TestCompressedCASDedup:
         wrapper = CompressedStorage(inner=mock, config=config)
 
         content = b"deterministic content " * 100
-        hash1 = wrapper.write_content(content).data
-        hash2 = wrapper.write_content(content).data
+        hash1 = wrapper.write_content(content).content_hash
+        hash2 = wrapper.write_content(content).content_hash
         assert hash1 == hash2, "zstd should produce identical output for identical input"
 
 
@@ -155,12 +152,11 @@ class TestCompressedThreshold:
 
         small_content = b"tiny"  # 4 bytes, below 1024 threshold
         write_resp = wrapper.write_content(small_content)
-        assert write_resp.success
+        assert isinstance(write_resp, WriteResult)
 
         # Read should return original content
-        read_resp = wrapper.read_content(write_resp.data)
-        assert read_resp.success
-        assert read_resp.data == small_content
+        read_resp = wrapper.read_content(write_resp.content_hash)
+        assert read_resp == small_content
 
     def test_above_threshold_compressed(self) -> None:
         from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
@@ -172,16 +168,15 @@ class TestCompressedThreshold:
         # Content above threshold — should be compressed
         large_content = b"compressible " * 100  # 1300 bytes
         write_resp = wrapper.write_content(large_content)
-        assert write_resp.success
+        assert isinstance(write_resp, WriteResult)
 
         # The stored content should be smaller than original
-        stored = storage[write_resp.data]
+        stored = storage[write_resp.content_hash]
         assert len(stored) < len(large_content)
 
         # Read should return original
-        read_resp = wrapper.read_content(write_resp.data)
-        assert read_resp.success
-        assert read_resp.data == large_content
+        read_resp = wrapper.read_content(write_resp.content_hash)
+        assert read_resp == large_content
 
 
 # ---------------------------------------------------------------------------
@@ -204,12 +199,11 @@ class TestCompressedNegativeRatio:
         # Random data won't compress well
         random_data = os.urandom(1024)
         write_resp = wrapper.write_content(random_data)
-        assert write_resp.success
+        assert isinstance(write_resp, WriteResult)
 
         # Read should return original regardless of whether compression was skipped
-        read_resp = wrapper.read_content(write_resp.data)
-        assert read_resp.success
-        assert read_resp.data == random_data
+        read_resp = wrapper.read_content(write_resp.content_hash)
+        assert read_resp == random_data
 
 
 # ---------------------------------------------------------------------------
@@ -228,11 +222,10 @@ class TestCompressedEmptyContent:
         wrapper = CompressedStorage(inner=mock, config=config)
 
         write_resp = wrapper.write_content(b"")
-        assert write_resp.success
+        assert isinstance(write_resp, WriteResult)
 
-        read_resp = wrapper.read_content(write_resp.data)
-        assert read_resp.success
-        assert read_resp.data == b""
+        read_resp = wrapper.read_content(write_resp.content_hash)
+        assert read_resp == b""
 
 
 # ---------------------------------------------------------------------------
@@ -247,25 +240,25 @@ class TestCompressedDelegation:
         from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
 
         leaf = make_leaf("local")
-        leaf.mkdir.return_value = HandlerResponse.ok(data=None)
+        leaf.mkdir.return_value = None
         config = CompressedStorageConfig(metrics_enabled=False)
         wrapper = CompressedStorage(inner=leaf, config=config)
 
         result = wrapper.mkdir("/test", parents=True)
         leaf.mkdir.assert_called_once()
-        assert result.success
+        assert result is None
 
     def test_delete_delegates(self) -> None:
         from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
 
         leaf = make_leaf("local")
-        leaf.delete_content.return_value = HandlerResponse.ok(data=None)
+        leaf.delete_content.return_value = None
         config = CompressedStorageConfig(metrics_enabled=False)
         wrapper = CompressedStorage(inner=leaf, config=config)
 
         result = wrapper.delete_content("hash123")
         leaf.delete_content.assert_called_once()
-        assert result.success
+        assert result is None
 
 
 # ---------------------------------------------------------------------------
@@ -320,9 +313,9 @@ class TestCompressedBatch:
         content_b = b"beta " * 100
         content_c = b"gamma " * 100
 
-        h1 = wrapper.write_content(content_a).data
-        h2 = wrapper.write_content(content_b).data
-        h3 = wrapper.write_content(content_c).data
+        h1 = wrapper.write_content(content_a).content_hash
+        h2 = wrapper.write_content(content_b).content_hash
+        h3 = wrapper.write_content(content_c).content_hash
 
         # Batch read
         results = wrapper.batch_read_content([h1, h2, h3])
@@ -337,7 +330,7 @@ class TestCompressedBatch:
         config = CompressedStorageConfig(min_size=0, metrics_enabled=False)
         wrapper = CompressedStorage(inner=mock, config=config)
 
-        h1 = wrapper.write_content(b"exists " * 100).data
+        h1 = wrapper.write_content(b"exists " * 100).content_hash
         results = wrapper.batch_read_content([h1, "nonexistent"])
         assert results[h1] == b"exists " * 100
         assert results["nonexistent"] is None
@@ -371,11 +364,10 @@ class TestCompressedFailureFallback:
             write_resp = wrapper.write_content(content)
 
         # Write should succeed with uncompressed content
-        assert write_resp.success
-        stored = storage[write_resp.data]
+        assert isinstance(write_resp, WriteResult)
+        stored = storage[write_resp.content_hash]
         assert stored == content  # Stored raw, no NEXZ header
 
         # Read should return original
-        read_resp = wrapper.read_content(write_resp.data)
-        assert read_resp.success
-        assert read_resp.data == content
+        read_resp = wrapper.read_content(write_resp.content_hash)
+        assert read_resp == content

@@ -61,26 +61,22 @@ class TestRunSyncWithBackend:
     def test_write_and_read_from_sync_context(self, backend: AsyncLocalBackend):
         """run_sync() should work for backend operations from sync (CLI) context."""
         content = b"hello world from sync context"
-        resp = run_sync(backend.write_content(content))
-        assert resp.success
-        content_hash = resp.data
+        result = run_sync(backend.write_content(content))
+        content_hash = result.content_hash
 
-        read_resp = run_sync(backend.read_content(content_hash))
-        assert read_resp.success
-        assert read_resp.data == content
+        data = run_sync(backend.read_content(content_hash))
+        assert data == content
 
     def test_write_and_read_from_thread_pool_worker(self, backend: AsyncLocalBackend):
         """run_sync() should work from thread pool workers (simulates FastAPI)."""
 
         def _worker():
             content = b"hello from thread pool"
-            resp = run_sync(backend.write_content(content))
-            assert resp.success
-            content_hash = resp.data
+            result = run_sync(backend.write_content(content))
+            content_hash = result.content_hash
 
-            read_resp = run_sync(backend.read_content(content_hash))
-            assert read_resp.success
-            assert read_resp.data == content
+            data = run_sync(backend.read_content(content_hash))
+            assert data == content
             return content_hash
 
         # Simulate FastAPI: run worker inside an event loop's thread pool
@@ -96,9 +92,8 @@ class TestRunSyncWithBackend:
 
         def _worker(idx: int):
             content = f"content-{idx}".encode()
-            resp = run_sync(backend.write_content(content))
-            assert resp.success, f"Worker {idx} write failed: {resp.message}"
-            return resp.data
+            result = run_sync(backend.write_content(content))
+            return result.content_hash
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
             futures = [pool.submit(_worker, i) for i in range(10)]
@@ -122,8 +117,8 @@ class TestFireAndForgetE2E:
         result_holder: list[str] = []
 
         async def _write_and_track():
-            resp = await backend.write_content(content)
-            result_holder.append(resp.data)
+            result = await backend.write_content(content)
+            result_holder.append(result.content_hash)
 
         fire_and_forget(_write_and_track())
 
@@ -133,9 +128,8 @@ class TestFireAndForgetE2E:
         assert len(result_holder) == 1
         # Verify the content was actually written
         content_hash = result_holder[0]
-        read_resp = run_sync(backend.read_content(content_hash))
-        assert read_resp.success
-        assert read_resp.data == content
+        data = run_sync(backend.read_content(content_hash))
+        assert data == content
 
 
 # === Lightweight CI concurrency test ===
@@ -151,14 +145,9 @@ class TestConcurrencySmoke:
         def _sync_worker(idx: int):
             try:
                 content = f"sync-{idx}".encode()
-                resp = run_sync(backend.write_content(content))
-                if not resp.success:
-                    errors.append(f"sync worker {idx}: write failed")
-                    return
-                read_resp = run_sync(backend.read_content(resp.data))
-                if not read_resp.success:
-                    errors.append(f"sync worker {idx}: read failed")
-                elif read_resp.data != content:
+                result = run_sync(backend.write_content(content))
+                data = run_sync(backend.read_content(result.content_hash))
+                if data != content:
                     errors.append(f"sync worker {idx}: content mismatch")
             except Exception as e:
                 errors.append(f"sync worker {idx}: {e}")
@@ -177,19 +166,16 @@ class TestConcurrencySmoke:
         """Multiple threads hitting the same content hash should not deadlock."""
         content = b"shared content"
         # Pre-write the content
-        resp = run_sync(backend.write_content(content))
-        content_hash = resp.data
+        result = run_sync(backend.write_content(content))
+        content_hash = result.content_hash
 
         errors: list[str] = []
 
         def _reader(idx: int):
             try:
                 for _ in range(5):
-                    read_resp = run_sync(backend.read_content(content_hash))
-                    if not read_resp.success:
-                        errors.append(f"reader {idx}: read failed")
-                        return
-                    if read_resp.data != content:
+                    data = run_sync(backend.read_content(content_hash))
+                    if data != content:
                         errors.append(f"reader {idx}: content mismatch")
                         return
             except Exception as e:

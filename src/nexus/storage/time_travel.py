@@ -144,7 +144,7 @@ class TimeTravelReader:
 
         if next_write and next_write.snapshot_hash:
             # The next write's snapshot contains the content from last_write
-            content = self.backend.read_content(next_write.snapshot_hash).unwrap()
+            content = self.backend.read_content(next_write.snapshot_hash)
             if next_write.metadata_snapshot:
                 metadata_dict = json.loads(next_write.metadata_snapshot)
         else:
@@ -158,7 +158,7 @@ class TimeTravelReader:
 
             if current_path:
                 # File still exists with same content from last_write
-                content = self.backend.read_content(current_path.content_hash).unwrap()
+                content = self.backend.read_content(current_path.content_hash)
                 metadata_dict = {
                     "size": current_path.size_bytes,
                     # v0.5.0: owner/group/mode removed - use ReBAC for permissions
@@ -178,7 +178,7 @@ class TimeTravelReader:
                         break
 
                 if next_delete and next_delete.snapshot_hash:
-                    content = self.backend.read_content(next_delete.snapshot_hash).unwrap()
+                    content = self.backend.read_content(next_delete.snapshot_hash)
                     if next_delete.metadata_snapshot:
                         metadata_dict = json.loads(next_delete.metadata_snapshot)
                 else:

@@ -10,7 +10,7 @@ from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
-# Kernel-local defaults — avoids importing nexus.constants (service-level module)
+# Kernel-local defaults — avoids importing nexus.contracts.constants (service-level module)
 _DEFAULT_NEXUS_URL = "http://localhost:2026"
 _DEFAULT_LANGGRAPH_URL = "http://localhost:2024"
 

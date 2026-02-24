@@ -18,7 +18,7 @@ import pytest
 
 from nexus.backends.local_connector import LocalConnectorBackend
 from nexus.backends.registry import create_connector
-from nexus.contracts.exceptions import BackendError
+from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.contracts.types import OperationContext
 
 # ============================================================================
@@ -112,8 +112,7 @@ class TestReadOperations:
 
         result = connector.read_content("", context)
 
-        assert result.success is True
-        assert result.data == b"Hello from readme"
+        assert result == b"Hello from readme"
 
     def test_read_binary_file(self, connector: LocalConnectorBackend, context: OperationContext):
         """Should read binary file content."""
@@ -122,8 +121,7 @@ class TestReadOperations:
 
         result = connector.read_content("", context)
 
-        assert result.success is True
-        assert result.data == b"\x00\x01\x02\x03"
+        assert result == b"\x00\x01\x02\x03"
 
     def test_read_nested_file(self, connector: LocalConnectorBackend, context: OperationContext):
         """Should read files in nested directories."""
@@ -132,20 +130,17 @@ class TestReadOperations:
 
         result = connector.read_content("", context)
 
-        assert result.success is True
-        assert result.data == b"Deep nested"
+        assert result == b"Deep nested"
 
     def test_read_nonexistent_returns_not_found(
         self, connector: LocalConnectorBackend, context: OperationContext
     ):
-        """Should return not_found for nonexistent file."""
+        """Should raise NexusFileNotFoundError for nonexistent file."""
         context.backend_path = "does_not_exist.txt"
         context.virtual_path = "/mnt/local/does_not_exist.txt"
 
-        result = connector.read_content("", context)
-
-        assert result.success is False
-        assert "not found" in result.error_message.lower()
+        with pytest.raises(NexusFileNotFoundError):
+            connector.read_content("", context)
 
 
 # ============================================================================
@@ -165,7 +160,7 @@ class TestWriteOperations:
 
         result = connector.write_content(b"new content", context=context)
 
-        assert result.success is True
+        assert result is not None
         assert (local_folder / "new_file.txt").read_bytes() == b"new content"
 
     def test_write_overwrites_existing(
@@ -177,7 +172,7 @@ class TestWriteOperations:
 
         result = connector.write_content(b"updated content", context=context)
 
-        assert result.success is True
+        assert result is not None
         assert (local_folder / "readme.txt").read_bytes() == b"updated content"
 
     def test_write_creates_parent_dirs(
@@ -189,31 +184,29 @@ class TestWriteOperations:
 
         result = connector.write_content(b"deeply nested", context=context)
 
-        assert result.success is True
+        assert result is not None
         assert (local_folder / "new" / "nested" / "dir" / "file.txt").exists()
 
     def test_write_returns_content_hash(
         self, connector: LocalConnectorBackend, context: OperationContext
     ):
-        """Should return content hash on successful write."""
+        """Should return WriteResult with content_hash on successful write."""
         context.backend_path = "hashed.txt"
         context.virtual_path = "/mnt/local/hashed.txt"
 
         result = connector.write_content(b"hash me", context=context)
 
-        assert result.success is True
-        assert result.data is not None  # Content hash
-        assert len(result.data) > 0
+        assert result is not None
+        assert result.content_hash is not None
+        assert len(result.content_hash) > 0
 
     def test_write_readonly_rejected(self, local_folder: Path, context: OperationContext):
-        """Should reject writes in readonly mode."""
+        """Should raise BackendError for writes in readonly mode."""
         connector = LocalConnectorBackend(local_folder, readonly=True)
         context.backend_path = "readonly.txt"
 
-        result = connector.write_content(b"should fail", context=context)
-
-        assert result.success is False
-        assert "read-only" in result.error_message
+        with pytest.raises(BackendError, match="read-only"):
+            connector.write_content(b"should fail", context=context)
 
 
 # ============================================================================
@@ -261,16 +254,14 @@ class TestDirectoryOperations:
 
     def test_mkdir(self, connector: LocalConnectorBackend, local_folder: Path):
         """Should create directory."""
-        result = connector.mkdir("newdir")
+        connector.mkdir("newdir")
 
-        assert result.success is True
         assert (local_folder / "newdir").is_dir()
 
     def test_mkdir_nested(self, connector: LocalConnectorBackend, local_folder: Path):
         """Should create nested directories."""
-        result = connector.mkdir("new/nested/path")
+        connector.mkdir("new/nested/path")
 
-        assert result.success is True
         assert (local_folder / "new" / "nested" / "path").is_dir()
 
     def test_delete_file(self, connector: LocalConnectorBackend, local_folder: Path):
@@ -315,10 +306,6 @@ class TestCacheIntegration:
         assert connector.l1_only is True
         assert connector._has_caching() is True
         assert connector._has_l2_caching() is False
-
-    def test_has_virtual_filesystem(self, connector: LocalConnectorBackend):
-        """Should have has_virtual_filesystem=True for path-based reads."""
-        assert connector.has_virtual_filesystem is True
 
 
 # ============================================================================
@@ -534,7 +521,7 @@ class TestEmptyFileHandling:
 
         result = connector.write_content(b"", context=context)
 
-        assert result.success is True
+        assert result is not None
         assert (local_folder / "empty.txt").exists()
         assert (local_folder / "empty.txt").read_bytes() == b""
 
@@ -548,8 +535,7 @@ class TestEmptyFileHandling:
 
         result = connector.read_content("", context)
 
-        assert result.success is True
-        assert result.data == b""
+        assert result == b""
 
 
 # ============================================================================
@@ -570,7 +556,7 @@ class TestLargeFileHandling:
 
         result = connector.write_content(large_content, context=context)
 
-        assert result.success is True
+        assert result is not None
         assert (local_folder / "large.bin").stat().st_size == 1024 * 1024
 
     def test_read_large_file(
@@ -584,9 +570,8 @@ class TestLargeFileHandling:
 
         result = connector.read_content("", context)
 
-        assert result.success is True
-        assert len(result.data) == 1024 * 1024
-        assert result.data == large_content
+        assert len(result) == 1024 * 1024
+        assert result == large_content
 
 
 # ============================================================================
@@ -606,7 +591,7 @@ class TestUnicodeFilenames:
 
         result = connector.write_content(b"Hello", context=context)
 
-        assert result.success is True
+        assert result is not None
         assert (local_folder / "unicode_file.txt").exists()
 
     def test_read_unicode_content(
@@ -620,8 +605,7 @@ class TestUnicodeFilenames:
 
         result = connector.read_content("", context)
 
-        assert result.success is True
-        assert result.data.decode("utf-8") == "Hello World"
+        assert result.decode("utf-8") == "Hello World"
 
     def test_list_unicode_files(self, connector: LocalConnectorBackend, local_folder: Path):
         """Should list files with unicode names."""
@@ -648,7 +632,7 @@ class TestConcurrentAccess:
 
         (local_folder / "concurrent.txt").write_text("concurrent content")
 
-        def read_file(i: int) -> tuple[int, bool, bytes]:
+        def read_file(i: int) -> tuple[int, bytes]:
             ctx = OperationContext(
                 user_id=f"user_{i}",
                 groups=[],
@@ -657,22 +641,21 @@ class TestConcurrentAccess:
             ctx.backend_path = "concurrent.txt"
             ctx.virtual_path = "/mnt/local/concurrent.txt"
             result = connector.read_content("", ctx)
-            return (i, result.success, result.data if result.success else b"")
+            return (i, result)
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
             futures = [executor.submit(read_file, i) for i in range(10)]
             results = [f.result() for f in concurrent.futures.as_completed(futures)]
 
         # All reads should succeed
-        for i, success, data in results:
-            assert success is True, f"Read {i} failed"
-            assert data == b"concurrent content"
+        for i, data in results:
+            assert data == b"concurrent content", f"Read {i} returned wrong data"
 
     def test_concurrent_writes(self, connector: LocalConnectorBackend, local_folder: Path):
         """Should handle concurrent writes to different files."""
         import concurrent.futures
 
-        def write_file(i: int) -> tuple[int, bool]:
+        def write_file(i: int) -> int:
             ctx = OperationContext(
                 user_id=f"user_{i}",
                 groups=[],
@@ -680,16 +663,15 @@ class TestConcurrentAccess:
             )
             ctx.backend_path = f"concurrent_{i}.txt"
             ctx.virtual_path = f"/mnt/local/concurrent_{i}.txt"
-            result = connector.write_content(f"content_{i}".encode(), context=ctx)
-            return (i, result.success)
+            connector.write_content(f"content_{i}".encode(), context=ctx)
+            return i
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
             futures = [executor.submit(write_file, i) for i in range(10)]
             results = [f.result() for f in concurrent.futures.as_completed(futures)]
 
-        # All writes should succeed
-        for i, success in results:
-            assert success is True, f"Write {i} failed"
+        # All writes should succeed (no exception raised)
+        for i in results:
             assert (local_folder / f"concurrent_{i}.txt").exists()
 
 
@@ -705,9 +687,8 @@ class TestDirectoryEdgeCases:
         """rmdir should work as alias for delete on directories."""
         (local_folder / "empty_dir").mkdir()
 
-        result = connector.rmdir("empty_dir")
+        connector.rmdir("empty_dir")
 
-        assert result.success is True
         assert not (local_folder / "empty_dir").exists()
 
     def test_delete_nonempty_dir_fails(self, connector: LocalConnectorBackend, local_folder: Path):
@@ -729,19 +710,16 @@ class TestDirectoryEdgeCases:
 
     def test_mkdir_existing_dir(self, connector: LocalConnectorBackend, local_folder: Path):
         """Should succeed when directory already exists."""
-        result = connector.mkdir("subdir")
+        connector.mkdir("subdir")
 
-        assert result.success is True
         assert (local_folder / "subdir").is_dir()
 
     def test_mkdir_readonly_rejected(self, local_folder: Path):
-        """Should reject mkdir in readonly mode."""
+        """Should raise BackendError for mkdir in readonly mode."""
         connector = LocalConnectorBackend(local_folder, readonly=True)
 
-        result = connector.mkdir("newdir")
-
-        assert result.success is False
-        assert "read-only" in result.error_message
+        with pytest.raises(BackendError, match="read-only"):
+            connector.mkdir("newdir")
 
 
 # ============================================================================
@@ -755,14 +733,12 @@ class TestErrorHandling:
     def test_read_directory_as_file(
         self, connector: LocalConnectorBackend, context: OperationContext
     ):
-        """Should return error when reading directory as file."""
+        """Should raise BackendError when reading directory as file."""
         context.backend_path = "subdir"
         context.virtual_path = "/mnt/local/subdir"
 
-        result = connector.read_content("", context)
-
-        assert result.success is False
-        assert "not a file" in result.error_message.lower()
+        with pytest.raises(BackendError, match="(?i)not a file"):
+            connector.read_content("", context)
 
     def test_list_file_as_dir(self, connector: LocalConnectorBackend):
         """Should return empty list when listing file as directory."""
@@ -791,13 +767,12 @@ class TestErrorHandling:
     def test_invalid_path_with_context(
         self, connector: LocalConnectorBackend, context: OperationContext
     ):
-        """Should handle missing backend_path gracefully."""
+        """Should raise BackendError for missing backend_path."""
         context.backend_path = None
         context.virtual_path = None
 
-        result = connector.read_content("", context)
-
-        assert result.success is False
+        with pytest.raises(BackendError):
+            connector.read_content("", context)
 
     def test_delete_readonly_rejected(self, local_folder: Path):
         """Should reject delete in readonly mode."""

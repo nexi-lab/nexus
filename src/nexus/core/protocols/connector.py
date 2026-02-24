@@ -32,8 +32,8 @@ if TYPE_CHECKING:
 
     from nexus.backends.backend import FileInfo, HandlerStatusResponse
     from nexus.contracts.types import OperationContext
+    from nexus.core.object_store import WriteResult
     from nexus.core.protocols.capabilities import ConnectorCapability
-    from nexus.lib.response import HandlerResponse
 
 # ---------------------------------------------------------------------------
 # SearchableConnector (Issue #2367)
@@ -92,27 +92,27 @@ class ContentStoreProtocol(Protocol):
 
     def write_content(
         self, content: bytes, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[str]": ...
+    ) -> "WriteResult": ...
 
     def read_content(
         self, content_hash: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[bytes]": ...
+    ) -> bytes: ...
 
     def delete_content(
         self, content_hash: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[None]": ...
+    ) -> None: ...
 
     def content_exists(
         self, content_hash: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[bool]": ...
+    ) -> bool: ...
 
     def get_content_size(
         self, content_hash: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[int]": ...
+    ) -> int: ...
 
     def get_ref_count(
         self, content_hash: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[int]": ...
+    ) -> int: ...
 
 @runtime_checkable
 class DirectoryOpsProtocol(Protocol):
@@ -124,18 +124,18 @@ class DirectoryOpsProtocol(Protocol):
         parents: bool = False,
         exist_ok: bool = False,
         context: "OperationContext | None" = None,
-    ) -> "HandlerResponse[None]": ...
+    ) -> None: ...
 
     def rmdir(
         self,
         path: str,
         recursive: bool = False,
         context: "OperationContext | None" = None,
-    ) -> "HandlerResponse[None]": ...
+    ) -> None: ...
 
     def is_directory(
         self, path: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[bool]": ...
+    ) -> bool: ...
 
 @runtime_checkable
 class CapabilityAwareProtocol(Protocol):
@@ -235,7 +235,7 @@ class StreamingProtocol(Protocol):
         content_hash: str,
         chunk_size: int = 8192,
         context: "OperationContext | None" = None,
-    ) -> Any: ...
+    ) -> "Iterator[bytes]": ...
 
     def stream_range(
         self,
@@ -250,7 +250,7 @@ class StreamingProtocol(Protocol):
         self,
         chunks: "Iterator[bytes]",
         context: "OperationContext | None" = None,
-    ) -> "HandlerResponse[str]": ...
+    ) -> "WriteResult": ...
 
 @runtime_checkable
 class BatchContentProtocol(Protocol):
@@ -280,7 +280,7 @@ class DirectoryListingProtocol(Protocol):
 
     def get_file_info(
         self, path: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[FileInfo]": ...
+    ) -> "FileInfo": ...
 
 @runtime_checkable
 class SignedUrlProtocol(Protocol):
@@ -308,4 +308,4 @@ class PathDeleteProtocol(Protocol):
         self,
         path: str,
         context: "OperationContext | None" = None,
-    ) -> "HandlerResponse[None]": ...
+    ) -> None: ...

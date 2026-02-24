@@ -1,8 +1,8 @@
-"""Benchmark tests for ObjectStoreABC adapter overhead.
+"""Benchmark tests for ObjectStoreABC backend overhead.
 
-Ensures the adapter + @timed_response add < 50μs per call.
-Covers: HandlerResponse creation, @timed_response decorator, and
-BackendObjectStore adapter methods (read, write, exists).
+Ensures direct Backend method calls (write, read, exists) stay fast.
+Covers: WriteResult creation, direct exception-based returns,
+and Backend methods (read_content, write_content, delete_content).
 """
 
 import hashlib
@@ -11,12 +11,12 @@ import time
 import pytest
 
 from nexus.backends.backend import Backend
-from nexus.core.object_store import BackendObjectStore, ObjectStoreABC
-from nexus.lib.response import HandlerResponse, timed_response
+from nexus.contracts.exceptions import NexusFileNotFoundError
+from nexus.core.object_store import ObjectStoreABC, WriteResult
 
 
 class _BenchBackend(Backend):
-    """Minimal zero-overhead backend for isolating adapter cost."""
+    """Minimal zero-overhead backend for isolating call cost."""
 
     def __init__(self) -> None:
         self._store: dict[str, bytes] = {}
@@ -25,142 +25,110 @@ class _BenchBackend(Backend):
     def name(self) -> str:
         return "bench"
 
-    def write_content(self, content, context=None) -> HandlerResponse[str]:
+    def write_content(self, content, context=None) -> WriteResult:
         h = hashlib.sha256(content).hexdigest()
         self._store[h] = content
-        return HandlerResponse.ok(data=h, backend_name="bench")
+        return WriteResult(content_hash=h, size=len(content))
 
-    def read_content(self, content_hash, context=None) -> HandlerResponse[bytes]:
+    def read_content(self, content_hash, context=None) -> bytes:
         data = self._store.get(content_hash)
         if data is None:
-            return HandlerResponse.not_found(path=content_hash, backend_name="bench")
-        return HandlerResponse.ok(data=data, backend_name="bench")
+            raise NexusFileNotFoundError(path=content_hash, message="Not found")
+        return data
 
     def batch_read_content(
         self, content_hashes, context=None, *, contexts=None
     ) -> dict[str, bytes | None]:
         return {h: self._store.get(h) for h in content_hashes}
 
-    def delete_content(self, content_hash, context=None) -> HandlerResponse[None]:
+    def delete_content(self, content_hash, context=None) -> None:
         self._store.pop(content_hash, None)
-        return HandlerResponse.ok(data=None, backend_name="bench")
 
-    def content_exists(self, content_hash, context=None) -> HandlerResponse[bool]:
-        return HandlerResponse.ok(data=content_hash in self._store, backend_name="bench")
-
-    def get_content_size(self, content_hash, context=None) -> HandlerResponse[int]:
+    def get_content_size(self, content_hash, context=None) -> int:
         data = self._store.get(content_hash)
         if data is None:
-            return HandlerResponse.not_found(path=content_hash, backend_name="bench")
-        return HandlerResponse.ok(data=len(data), backend_name="bench")
+            raise NexusFileNotFoundError(path=content_hash, message="Not found")
+        return len(data)
 
-    def get_ref_count(self, content_hash, context=None) -> HandlerResponse[int]:
-        return HandlerResponse.ok(
-            data=1 if content_hash in self._store else 0, backend_name="bench"
-        )
+    def mkdir(self, path, parents=False, exist_ok=False, context=None) -> None:
+        pass
 
-    def mkdir(self, path, parents=False, exist_ok=False, context=None) -> HandlerResponse[None]:
-        return HandlerResponse.ok(data=None, backend_name="bench")
-
-    def rmdir(self, path, recursive=False, context=None) -> HandlerResponse[None]:
-        return HandlerResponse.ok(data=None, backend_name="bench")
-
-    def is_directory(self, path, context=None) -> HandlerResponse[bool]:
-        return HandlerResponse.ok(data=False, backend_name="bench")
+    def rmdir(self, path, recursive=False, context=None) -> None:
+        pass
 
 
 @pytest.fixture
-def bench_store() -> BackendObjectStore:
-    backend = _BenchBackend()
-    return BackendObjectStore(backend)
+def bench_backend() -> _BenchBackend:
+    return _BenchBackend()
 
 
-class TestTimedResponseOverhead:
-    """Benchmark @timed_response decorator overhead."""
+class TestWriteResultOverhead:
+    """Benchmark WriteResult creation overhead."""
 
-    def test_handler_response_creation_speed(self) -> None:
-        """Raw HandlerResponse.ok() creation should be very fast."""
+    def test_write_result_creation_speed(self) -> None:
+        """Raw WriteResult creation should be very fast."""
         iterations = 10_000
         start = time.perf_counter()
         for _ in range(iterations):
-            HandlerResponse.ok(data="hash123", backend_name="bench")
+            WriteResult(content_hash="a" * 64, size=100)
         elapsed_us = (time.perf_counter() - start) * 1_000_000 / iterations
-        assert elapsed_us < 10, f"HandlerResponse.ok() took {elapsed_us:.2f}μs per call"
-
-    def test_timed_response_decorator_overhead(self) -> None:
-        """@timed_response overhead should be < 50μs per call."""
-
-        class Bench:
-            name = "bench"
-
-            @timed_response
-            def op(self) -> HandlerResponse[str]:
-                return HandlerResponse.ok(data="ok", backend_name=self.name)
-
-        obj = Bench()
-        for _ in range(100):
-            obj.op()
-
-        iterations = 10_000
-        start = time.perf_counter()
-        for _ in range(iterations):
-            obj.op()
-        elapsed_us = (time.perf_counter() - start) * 1_000_000 / iterations
-        assert elapsed_us < 50, f"@timed_response took {elapsed_us:.2f}μs per call"
+        assert elapsed_us < 10, f"WriteResult() took {elapsed_us:.2f}us per call"
 
 
-class TestAdapterOverhead:
-    """Benchmark BackendObjectStore adapter overhead for hot-path operations."""
+class TestBackendOverhead:
+    """Benchmark Backend direct method overhead for hot-path operations."""
 
-    def test_adapter_import_succeeds(self) -> None:
+    def test_backend_import_succeeds(self) -> None:
         """Verify ObjectStoreABC can be imported."""
         assert ObjectStoreABC is not None
-        assert BackendObjectStore is not None
+        assert Backend is not None
 
-    def test_write_overhead(self, bench_store: BackendObjectStore) -> None:
-        """write() adapter overhead: adapter + hash validation on return."""
+    def test_write_overhead(self, bench_backend: _BenchBackend) -> None:
+        """write_content() overhead: hash + WriteResult on return."""
         # Warmup
         for i in range(100):
-            bench_store.write(f"warmup-{i}".encode())
+            bench_backend.write_content(f"warmup-{i}".encode())
 
         iterations = 5_000
         content = b"benchmark write payload"
         start = time.perf_counter()
         for _ in range(iterations):
-            bench_store.write(content)
+            bench_backend.write_content(content)
         elapsed_us = (time.perf_counter() - start) * 1_000_000 / iterations
 
-        # write() includes SHA-256 hashing in backend + adapter .unwrap()
-        assert elapsed_us < 100, f"write() took {elapsed_us:.2f}μs per call"
+        # write_content() includes SHA-256 hashing + WriteResult creation
+        assert elapsed_us < 100, f"write_content() took {elapsed_us:.2f}us per call"
 
-    def test_read_overhead(self, bench_store: BackendObjectStore) -> None:
-        """read() adapter overhead: validation + unwrap."""
-        content_hash = bench_store.write(b"benchmark read payload")
+    def test_read_overhead(self, bench_backend: _BenchBackend) -> None:
+        """read_content() overhead: direct bytes return."""
+        result = bench_backend.write_content(b"benchmark read payload")
+        content_hash = result.content_hash
 
         # Warmup
         for _ in range(100):
-            bench_store.read(content_hash)
+            bench_backend.read_content(content_hash)
 
         iterations = 10_000
         start = time.perf_counter()
         for _ in range(iterations):
-            bench_store.read(content_hash)
+            bench_backend.read_content(content_hash)
         elapsed_us = (time.perf_counter() - start) * 1_000_000 / iterations
 
-        # read() = hash validation + backend.read_content + .unwrap()
-        assert elapsed_us < 50, f"read() took {elapsed_us:.2f}μs per call"
+        # read_content() = dict lookup + direct bytes return
+        assert elapsed_us < 50, f"read_content() took {elapsed_us:.2f}us per call"
 
-    def test_exists_overhead(self, bench_store: BackendObjectStore) -> None:
-        """exists() adapter overhead: validation + unwrap (lightest op)."""
-        content_hash = bench_store.write(b"benchmark exists payload")
+    def test_get_content_size_overhead(self, bench_backend: _BenchBackend) -> None:
+        """get_content_size() overhead: direct int return (lightest op)."""
+        result = bench_backend.write_content(b"benchmark size payload")
+        content_hash = result.content_hash
 
         for _ in range(100):
-            bench_store.exists(content_hash)
+            bench_backend.get_content_size(content_hash)
 
         iterations = 10_000
         start = time.perf_counter()
         for _ in range(iterations):
-            bench_store.exists(content_hash)
+            bench_backend.get_content_size(content_hash)
         elapsed_us = (time.perf_counter() - start) * 1_000_000 / iterations
 
-        assert elapsed_us < 50, f"exists() took {elapsed_us:.2f}μs per call"
+        assert elapsed_us < 50, f"get_content_size() took {elapsed_us:.2f}us per call"

@@ -203,8 +203,7 @@ class VersionService:
         )
 
         # Read content from backend using version's content hash (run in thread)
-        response = await asyncio.to_thread(route.backend.read_content, version_meta.etag)
-        return response.unwrap()
+        return await asyncio.to_thread(route.backend.read_content, version_meta.etag)
 
     @rpc_expose(description="List file versions")
     async def list_versions(

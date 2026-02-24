@@ -521,9 +521,7 @@ class MemoryVersioning:
         import json
 
         try:
-            content_bytes: bytes = self._backend.read_content(
-                content_hash, context=self._context
-            ).unwrap()
+            content_bytes: bytes = self._backend.read_content(content_hash, context=self._context)
             if parse_json:
                 try:
                     parsed: dict[str, Any] = json.loads(content_bytes.decode("utf-8"))

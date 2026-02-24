@@ -11,6 +11,7 @@ import json
 
 import pytest
 
+from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.ipc.conventions import (
     AGENTS_ROOT,
     inbox_path,
@@ -129,9 +130,8 @@ class TestIPCVFSDriverReadContent:
         driver = IPCVFSDriver(storage=storage, zone_id=ZONE)
 
         # read_content takes a "path" (virtual filesystem mode)
-        response = driver.read_content(f"{AGENTS_ROOT}/agent:bob/AGENT.json")
-        assert response.success
-        card = json.loads(response.data)
+        data = driver.read_content(f"{AGENTS_ROOT}/agent:bob/AGENT.json")
+        card = json.loads(data)
         assert card["name"] == "agent:bob"
 
     @pytest.mark.asyncio
@@ -142,18 +142,16 @@ class TestIPCVFSDriverReadContent:
         await storage.write(msg_path, msg.to_bytes(), ZONE)
         driver = IPCVFSDriver(storage=storage, zone_id=ZONE)
 
-        response = driver.read_content(msg_path)
-        assert response.success
-        restored = MessageEnvelope.from_bytes(response.data)
+        data = driver.read_content(msg_path)
+        restored = MessageEnvelope.from_bytes(data)
         assert restored.id == msg.id
 
     @pytest.mark.asyncio
-    async def test_read_nonexistent_returns_error(self, storage: InMemoryStorageDriver) -> None:
+    async def test_read_nonexistent_raises(self, storage: InMemoryStorageDriver) -> None:
         driver = IPCVFSDriver(storage=storage, zone_id=ZONE)
 
-        response = driver.read_content("/agents/nobody/inbox/ghost.json")
-        assert not response.success
-        assert response.error_code == 404
+        with pytest.raises(NexusFileNotFoundError):
+            driver.read_content("/agents/nobody/inbox/ghost.json")
 
 
 class TestIPCVFSDriverWriteContent:
@@ -169,10 +167,9 @@ class TestIPCVFSDriverWriteContent:
         driver = IPCVFSDriver(storage=storage, zone_id=ZONE)
         msg = _make_envelope()
 
-        response = driver.write_content(msg.to_bytes())
-        assert response.success
-        # write_content returns the content hash (path in virtual FS mode)
-        assert response.data is not None
+        result = driver.write_content(msg.to_bytes())
+        # write_content returns a WriteResult
+        assert result.content_hash is not None
 
     @pytest.mark.asyncio
     async def test_write_agent_card(self, storage: InMemoryStorageDriver) -> None:
@@ -181,13 +178,12 @@ class TestIPCVFSDriverWriteContent:
         card = json.dumps({"name": "agent:bob", "status": "idle"}).encode()
 
         # Writing to a specific path (via write_path helper)
-        response = driver.write_path(f"{AGENTS_ROOT}/agent:bob/AGENT.json", card)
-        assert response.success
+        content_hash = driver.write_path(f"{AGENTS_ROOT}/agent:bob/AGENT.json", card)
+        assert content_hash is not None
 
         # Verify it was written
-        read_resp = driver.read_content(f"{AGENTS_ROOT}/agent:bob/AGENT.json")
-        assert read_resp.success
-        assert json.loads(read_resp.data)["status"] == "idle"
+        data = driver.read_content(f"{AGENTS_ROOT}/agent:bob/AGENT.json")
+        assert json.loads(data)["status"] == "idle"
 
 
 class TestIPCVFSDriverMkdir:
@@ -201,21 +197,18 @@ class TestIPCVFSDriverMkdir:
     async def test_mkdir_agent_root(self, storage: InMemoryStorageDriver) -> None:
         driver = IPCVFSDriver(storage=storage, zone_id=ZONE)
 
-        response = driver.mkdir(f"{AGENTS_ROOT}/agent:new", parents=True, exist_ok=True)
-        assert response.success
+        driver.mkdir(f"{AGENTS_ROOT}/agent:new", parents=True, exist_ok=True)
 
         # Verify directory exists
-        is_dir = driver.is_directory(f"{AGENTS_ROOT}/agent:new")
-        assert is_dir.success
-        assert is_dir.data is True
+        assert driver.is_directory(f"{AGENTS_ROOT}/agent:new") is True
 
     @pytest.mark.asyncio
     async def test_mkdir_idempotent_with_exist_ok(self, storage: InMemoryStorageDriver) -> None:
         driver = IPCVFSDriver(storage=storage, zone_id=ZONE)
 
         driver.mkdir(f"{AGENTS_ROOT}/agent:bob", parents=True, exist_ok=True)
-        response = driver.mkdir(f"{AGENTS_ROOT}/agent:bob", parents=True, exist_ok=True)
-        assert response.success
+        # Second call should not raise
+        driver.mkdir(f"{AGENTS_ROOT}/agent:bob", parents=True, exist_ok=True)
 
 
 class TestIPCVFSDriverIsDirectory:
@@ -230,26 +223,20 @@ class TestIPCVFSDriverIsDirectory:
         await _provision(storage, "agent:bob")
         driver = IPCVFSDriver(storage=storage, zone_id=ZONE)
 
-        resp = driver.is_directory(inbox_path("agent:bob"))
-        assert resp.success
-        assert resp.data is True
+        assert driver.is_directory(inbox_path("agent:bob")) is True
 
     @pytest.mark.asyncio
     async def test_file_is_not_directory(self, storage: InMemoryStorageDriver) -> None:
         await _provision(storage, "agent:bob")
         driver = IPCVFSDriver(storage=storage, zone_id=ZONE)
 
-        resp = driver.is_directory(f"{AGENTS_ROOT}/agent:bob/AGENT.json")
-        assert resp.success
-        assert resp.data is False
+        assert driver.is_directory(f"{AGENTS_ROOT}/agent:bob/AGENT.json") is False
 
     @pytest.mark.asyncio
     async def test_nonexistent_path(self, storage: InMemoryStorageDriver) -> None:
         driver = IPCVFSDriver(storage=storage, zone_id=ZONE)
 
-        resp = driver.is_directory("/agents/ghost")
-        assert resp.success
-        assert resp.data is False
+        assert driver.is_directory("/agents/ghost") is False
 
 
 class TestIPCVFSDriverDeleteContent:
@@ -264,8 +251,8 @@ class TestIPCVFSDriverDeleteContent:
         """Delete should succeed (IPC doesn't hard-delete, just a no-op for CAS)."""
         driver = IPCVFSDriver(storage=storage, zone_id=ZONE)
 
-        response = driver.delete_content("some_hash")
-        assert response.success
+        # delete_content is a no-op for IPC (returns None)
+        driver.delete_content("some_hash")
 
 
 class TestIPCVFSDriverContentExists:
@@ -280,17 +267,13 @@ class TestIPCVFSDriverContentExists:
         await _provision(storage, "agent:bob")
         driver = IPCVFSDriver(storage=storage, zone_id=ZONE)
 
-        resp = driver.content_exists(f"{AGENTS_ROOT}/agent:bob/AGENT.json")
-        assert resp.success
-        assert resp.data is True
+        assert driver.content_exists(f"{AGENTS_ROOT}/agent:bob/AGENT.json") is True
 
     @pytest.mark.asyncio
     async def test_nonexistent_file(self, storage: InMemoryStorageDriver) -> None:
         driver = IPCVFSDriver(storage=storage, zone_id=ZONE)
 
-        resp = driver.content_exists("/agents/ghost/file.json")
-        assert resp.success
-        assert resp.data is False
+        assert driver.content_exists("/agents/ghost/file.json") is False
 
 
 class TestIPCVFSDriverReBAC:

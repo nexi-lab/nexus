@@ -8,8 +8,13 @@ References:
     - Issue #1383: Define 6 kernel protocol interfaces
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from nexus.core.object_store import ObjectStoreABC
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,7 +74,7 @@ class VFSRouterProtocol(Protocol):
     def add_mount(
         self,
         mount_point: str,
-        backend: Any,
+        backend: ObjectStoreABC,
         *,
         readonly: bool = False,
         admin_only: bool = False,

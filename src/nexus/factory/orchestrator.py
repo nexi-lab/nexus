@@ -200,6 +200,9 @@ def create_nexus_services(
         zone_lifecycle=system_dict.get("zone_lifecycle"),
         # DT_PIPE manager (Issue #809)
         pipe_manager=system_dict.get("pipe_manager"),
+        # EventLog + Scheduler (Issue #2195)
+        event_log=system_dict.get("event_log"),
+        scheduler_service=system_dict.get("scheduler_service"),
     )
 
     brick_services = _BrickServices(
@@ -560,3 +563,12 @@ def _register_vfs_hooks(nx: "NexusFS") -> None:
     from nexus.services.event_subsystem.bus.observer import EventBusObserver
 
     dispatch.register_observe(EventBusObserver(bus_provider=nx))
+
+    # ── Test hooks (Issue #2) ────────────────────────────────────────
+    # Only registered when NEXUS_TEST_HOOKS=true for E2E hook testing.
+    import os
+
+    if os.getenv("NEXUS_TEST_HOOKS") == "true":
+        from nexus.core.test_hooks import register_test_hooks
+
+        register_test_hooks(dispatch)

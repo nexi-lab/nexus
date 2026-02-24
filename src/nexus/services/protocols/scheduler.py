@@ -26,6 +26,7 @@ References:
 import logging
 import uuid
 from dataclasses import dataclass, field
+from datetime import UTC
 from decimal import Decimal
 from typing import Any, Protocol, runtime_checkable
 
@@ -197,14 +198,49 @@ class InMemoryScheduler:
         self._seq: int = 0
         self._completed: dict[str, dict[str, Any]] = {}
         self._task_map: dict[str, AgentRequest] = {}
+        self._enqueued_at: dict[str, str] = {}  # task_id → ISO timestamp
+
+    def _build_status(
+        self,
+        task_id: str,
+        req: AgentRequest,
+        status: str = "queued",
+        *,
+        error: str | None = None,
+    ) -> dict[str, Any]:
+        """Build a complete status dict matching TaskStatusResponse."""
+        from nexus.contracts.constants import PriorityTier
+
+        try:
+            tier_name = PriorityTier(req.priority).name.lower()
+        except ValueError:
+            tier_name = "normal"
+
+        return {
+            "id": task_id,
+            "status": status,
+            "agent_id": req.agent_id,
+            "executor_id": req.executor_id or "",
+            "task_type": req.task_type or "",
+            "priority_tier": tier_name,
+            "effective_tier": req.priority,
+            "enqueued_at": self._enqueued_at.get(task_id, ""),
+            "deadline": req.deadline,
+            "boost_amount": req.boost_amount,
+            "error_message": error,
+            "priority_class": req.priority_class,
+            "request_state": req.request_state,
+        }
 
     async def submit(self, request: AgentRequest) -> str:
         import heapq
+        from datetime import datetime
 
         task_id = str(uuid.uuid4())
         heapq.heappush(self._pending, (-request.priority, self._seq, request))
         self._seq += 1
         self._task_map[task_id] = request
+        self._enqueued_at[task_id] = datetime.now(UTC).isoformat()
         return task_id
 
     async def next(self, *, executor_id: str | None = None) -> AgentRequest | None:
@@ -236,22 +272,40 @@ class InMemoryScheduler:
         heapq.heapify(self._pending)
         return before - len(self._pending)
 
+    async def cancel_by_id(self, task_id: str) -> bool:
+        """Cancel a specific task by its task ID."""
+        import heapq
+
+        req = self._task_map.pop(task_id, None)
+        if req is None:
+            return False
+        self._pending = [(p, s, r) for p, s, r in self._pending if r is not req]
+        heapq.heapify(self._pending)
+        # Record as cancelled so get_status() still returns data
+        self._completed[task_id] = self._build_status(task_id, req, "cancelled")
+        self._enqueued_at.pop(task_id, None)
+        return True
+
     async def get_status(self, task_id: str) -> dict[str, Any] | None:
         if task_id in self._completed:
             return self._completed[task_id]
         if task_id in self._task_map:
             req = self._task_map[task_id]
-            return {"id": task_id, "status": "queued", "agent_id": req.agent_id}
+            return self._build_status(task_id, req)
         return None
 
     async def complete(self, task_id: str, *, error: str | None = None) -> None:
+        from datetime import datetime
+
         status = "failed" if error else "completed"
-        self._completed[task_id] = {
-            "id": task_id,
-            "status": status,
-            "error": error,
-        }
-        self._task_map.pop(task_id, None)
+        req = self._task_map.pop(task_id, None)
+        if req:
+            result = self._build_status(task_id, req, status, error=error)
+            result["completed_at"] = datetime.now(UTC).isoformat()
+            self._completed[task_id] = result
+        else:
+            self._completed[task_id] = {"id": task_id, "status": status, "error_message": error}
+        self._enqueued_at.pop(task_id, None)
 
         # Evict oldest entries to prevent unbounded memory growth
         if len(self._completed) > _MAX_COMPLETED:
@@ -285,6 +339,7 @@ class InMemoryScheduler:
         self._pending.clear()
         self._completed.clear()
         self._task_map.clear()
+        self._enqueued_at.clear()
 
     async def sync_fair_share(self) -> None:
         """No-op — in-memory scheduler has no persistent fair-share state."""

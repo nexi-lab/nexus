@@ -259,6 +259,12 @@ class SystemServices:
     # DT_PIPE manager — VFS named-pipe IPC (Issue #809)
     pipe_manager: Any = None
 
+    # EventLog — append-only WAL for filesystem events (Issue #2195)
+    event_log: Any = None
+
+    # Scheduler — task scheduling service (Issue #2195, #2360)
+    scheduler_service: Any = None
+
 
 # ---------------------------------------------------------------------------
 # BrickServices — Tier 2: optional, silent on failure

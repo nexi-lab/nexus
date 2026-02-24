@@ -418,8 +418,8 @@ class BulkPermissionChecker:
             if self._enforce_zone_isolation:
                 stmt = text("""
                     WITH entity_list AS (
-                        SELECT unnest(:entity_types::text[]) AS entity_type,
-                               unnest(:entity_ids::text[]) AS entity_id
+                        SELECT unnest(CAST(:entity_types AS text[])) AS entity_type,
+                               unnest(CAST(:entity_ids AS text[])) AS entity_id
                     )
                     SELECT DISTINCT
                         t.subject_type, t.subject_id, t.subject_relation,
@@ -441,8 +441,8 @@ class BulkPermissionChecker:
             else:
                 stmt = text("""
                     WITH entity_list AS (
-                        SELECT unnest(:entity_types::text[]) AS entity_type,
-                               unnest(:entity_ids::text[]) AS entity_id
+                        SELECT unnest(CAST(:entity_types AS text[])) AS entity_type,
+                               unnest(CAST(:entity_ids AS text[])) AS entity_id
                     )
                     SELECT DISTINCT
                         t.subject_type, t.subject_id, t.subject_relation,
@@ -535,14 +535,14 @@ class BulkPermissionChecker:
         if is_postgresql:
             stmt = text("""
                 WITH subject_list AS (
-                    SELECT unnest(:subject_types::text[]) AS subject_type,
-                           unnest(:subject_ids::text[]) AS subject_id
+                    SELECT unnest(CAST(:subject_types AS text[])) AS subject_type,
+                           unnest(CAST(:subject_ids AS text[])) AS subject_id
                 )
                 SELECT DISTINCT
                     t.subject_type, t.subject_id, t.subject_relation,
                     t.relation, t.object_type, t.object_id, t.conditions, t.expires_at
                 FROM rebac_tuples t
-                WHERE t.relation = ANY(:relations::text[])
+                WHERE t.relation = ANY(CAST(:relations AS text[]))
                   AND (t.expires_at IS NULL OR t.expires_at >= :now_iso)
                   AND EXISTS (
                       SELECT 1 FROM subject_list s

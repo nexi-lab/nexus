@@ -459,7 +459,7 @@ class ReBACService(ReBACShareMixin):
             # Issue #1081: Build consistency requirement from API params
             consistency = None
             if consistency_mode or min_revision is not None:
-                from nexus.bricks.rebac.types import (
+                from nexus.contracts.rebac_types import (
                     ConsistencyMode,
                     ConsistencyRequirement,
                 )

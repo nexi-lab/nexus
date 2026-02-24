@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import or_, select
 
 from nexus.bricks.rebac.domain import WILDCARD_SUBJECT, Entity
-from nexus.bricks.rebac.types import (
+from nexus.contracts.rebac_types import (
     GraphLimitExceeded,
     GraphLimits,
     TraversalStats,

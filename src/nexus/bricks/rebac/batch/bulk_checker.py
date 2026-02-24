@@ -22,9 +22,8 @@ from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
 from nexus.bricks.rebac.domain import Entity
-from nexus.bricks.rebac.types import ConsistencyLevel
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.contracts.rebac_types import CROSS_ZONE_ALLOWED_RELATIONS
+from nexus.contracts.rebac_types import CROSS_ZONE_ALLOWED_RELATIONS, ConsistencyLevel
 
 if TYPE_CHECKING:
     from collections.abc import Callable

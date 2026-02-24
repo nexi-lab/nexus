@@ -7,7 +7,7 @@ import pytest
 from nexus.backends.local import LocalBackend
 from nexus.contracts.exceptions import AccessDeniedError, InvalidPathError, PathNotMountedError
 from nexus.core.router import PathRouter
-from tests.helpers.in_memory_metadata_store import InMemoryMetastore
+from nexus.storage.in_memory_metastore import InMemoryMetastore
 
 
 @pytest.fixture

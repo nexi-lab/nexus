@@ -90,7 +90,7 @@ class TestIPCVFSDriverMount:
         storage = InMemoryStorageDriver()
         driver = IPCVFSDriver(storage=storage, zone_id="test-zone")
 
-        from tests.helpers.in_memory_metadata_store import InMemoryMetastore
+        from nexus.storage.in_memory_metastore import InMemoryMetastore
 
         router = PathRouter(InMemoryMetastore())
         # Should not raise — IPCVFSDriver extends Backend

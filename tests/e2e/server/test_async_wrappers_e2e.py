@@ -56,7 +56,7 @@ def async_registry(sqlite_registry: AgentRegistry) -> AsyncAgentRegistry:
 def real_router(tmp_path: Path) -> PathRouter:
     """Real PathRouter with a local backend mount."""
     from nexus.backends.local import LocalBackend
-    from tests.helpers.in_memory_metadata_store import InMemoryMetastore
+    from nexus.storage.in_memory_metastore import InMemoryMetastore
 
     storage = tmp_path / "storage"
     storage.mkdir()
@@ -353,7 +353,7 @@ class TestServerLifespanWiring:
         # 3. PathRouter + AsyncVFSRouter (real LocalBackend)
         storage = tmp_path / "storage"
         storage.mkdir()
-        from tests.helpers.in_memory_metadata_store import InMemoryMetastore
+        from nexus.storage.in_memory_metastore import InMemoryMetastore
 
         sync_router = PathRouter(InMemoryMetastore())
         sync_router.add_mount("/workspace", LocalBackend(root_path=str(storage)))

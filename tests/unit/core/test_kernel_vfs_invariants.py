@@ -19,7 +19,7 @@ from nexus.core.router import (
     PathNotMountedError,
     PathRouter,
 )
-from tests.helpers.in_memory_metadata_store import InMemoryMetastore
+from nexus.storage.in_memory_metastore import InMemoryMetastore
 from tests.strategies.kernel import (
     path_traversal_attempt,
     valid_mount_point,

@@ -14,7 +14,6 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, runtime_checkable
 
 from nexus.core.object_store import ObjectStoreABC, WriteResult
-from nexus.lib.response import HandlerResponse
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
@@ -629,41 +628,23 @@ class Backend(ObjectStoreABC):
 
     # === Delta Sync Support (Issue #1127) ===
 
-    def get_file_info(
-        self, path: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[FileInfo]":
-        """
-        Get file metadata for delta sync change detection (Issue #1127).
+    def get_file_info(self, path: str, context: "OperationContext | None" = None) -> "FileInfo":
+        """Get file metadata for delta sync change detection (Issue #1127).
 
         Returns file size, modification time, and backend-specific version
         identifier for efficient change detection during incremental sync.
-
-        Change Detection Strategy (rsync-inspired):
-        1. Quick check: Compare size + mtime first (fastest, no I/O)
-        2. Backend version: Compare GCS generation or S3 version ID
-        3. Content hash: Fallback if above not available
 
         Args:
             path: File path relative to backend root
             context: Operation context for authentication (optional)
 
         Returns:
-            HandlerResponse with FileInfo containing:
-            - size: File size in bytes
-            - mtime: Last modification time
-            - backend_version: Backend-specific version (GCS generation, S3 version ID)
-            - content_hash: Optional content hash if readily available
+            FileInfo with size, mtime, backend_version, content_hash.
 
-        Note:
-            Default implementation raises NotImplementedError.
-            Backends should override to provide efficient metadata retrieval
-            without reading file content.
-
-        Example:
-            >>> info = backend.get_file_info("data/file.txt").unwrap()
-            >>> if info.backend_version != cached_version:
-            ...     # File changed, needs sync
-            ...     sync_file(path)
+        Raises:
+            NotImplementedError: If backend doesn't support delta sync.
+            NexusFileNotFoundError: If file not found.
+            BackendError: If metadata retrieval fails.
         """
         raise NotImplementedError(
             f"Backend '{self.name}' does not support get_file_info for delta sync"

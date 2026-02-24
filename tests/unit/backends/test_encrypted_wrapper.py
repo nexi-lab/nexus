@@ -22,7 +22,8 @@ Design reference:
 import pytest
 
 from nexus.contracts.describable import Describable
-from nexus.lib.response import HandlerResponse
+from nexus.contracts.exceptions import NexusFileNotFoundError
+from nexus.core.object_store import WriteResult
 from tests.unit.backends.wrapper_test_helpers import make_leaf, make_storage_mock
 
 # ---------------------------------------------------------------------------
@@ -88,12 +89,11 @@ class TestEncryptedRoundtrip:
 
         plaintext = b"hello world"
         write_resp = wrapper.write_content(plaintext)
-        assert write_resp.success
-        content_hash = write_resp.data
+        assert isinstance(write_resp, WriteResult)
+        content_hash = write_resp.content_hash
 
         read_resp = wrapper.read_content(content_hash)
-        assert read_resp.success
-        assert read_resp.data == plaintext
+        assert read_resp == plaintext
 
     def test_binary_roundtrip(self) -> None:
         from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
@@ -104,11 +104,10 @@ class TestEncryptedRoundtrip:
 
         plaintext = bytes(range(256))  # All byte values
         write_resp = wrapper.write_content(plaintext)
-        assert write_resp.success
+        assert isinstance(write_resp, WriteResult)
 
-        read_resp = wrapper.read_content(write_resp.data)
-        assert read_resp.success
-        assert read_resp.data == plaintext
+        read_resp = wrapper.read_content(write_resp.content_hash)
+        assert read_resp == plaintext
 
     def test_large_content_roundtrip(self) -> None:
         from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
@@ -119,11 +118,10 @@ class TestEncryptedRoundtrip:
 
         plaintext = b"A" * (1024 * 1024)  # 1MB
         write_resp = wrapper.write_content(plaintext)
-        assert write_resp.success
+        assert isinstance(write_resp, WriteResult)
 
-        read_resp = wrapper.read_content(write_resp.data)
-        assert read_resp.success
-        assert read_resp.data == plaintext
+        read_resp = wrapper.read_content(write_resp.content_hash)
+        assert read_resp == plaintext
 
 
 # ---------------------------------------------------------------------------
@@ -143,8 +141,8 @@ class TestEncryptedCASDedup:
         wrapper = EncryptedStorage(inner=mock, config=config)
 
         plaintext = b"deterministic content"
-        hash1 = wrapper.write_content(plaintext).data
-        hash2 = wrapper.write_content(plaintext).data
+        hash1 = wrapper.write_content(plaintext).content_hash
+        hash2 = wrapper.write_content(plaintext).content_hash
         assert hash1 == hash2, "GCM-SIV should produce identical ciphertext for identical plaintext"
 
     def test_different_plaintext_different_hash(self) -> None:
@@ -154,8 +152,8 @@ class TestEncryptedCASDedup:
         config = EncryptedStorageConfig(key=_generate_key(), metrics_enabled=False)
         wrapper = EncryptedStorage(inner=mock, config=config)
 
-        hash1 = wrapper.write_content(b"content A").data
-        hash2 = wrapper.write_content(b"content B").data
+        hash1 = wrapper.write_content(b"content A").content_hash
+        hash2 = wrapper.write_content(b"content B").content_hash
         assert hash1 != hash2
 
 
@@ -176,21 +174,15 @@ class TestEncryptedErrors:
 
         # Write valid content
         write_resp = wrapper.write_content(b"valid data")
-        content_hash = write_resp.data
+        content_hash = write_resp.content_hash
 
         # Corrupt the stored ciphertext
         stored = storage[content_hash]
         storage[content_hash] = stored[:10] + b"\xff" * 10 + stored[20:]
 
-        # Read should fail with error response, not raise
-        read_resp = wrapper.read_content(content_hash)
-        assert not read_resp.success
-        assert read_resp.error_message is not None
-        assert (
-            "decrypt" in read_resp.error_message.lower()
-            or "transform" in read_resp.error_message.lower()
-            or "error" in read_resp.error_message.lower()
-        )
+        # Read should raise ValueError from failed decryption
+        with pytest.raises(ValueError):
+            wrapper.read_content(content_hash)
 
     def test_wrong_key_fails(self) -> None:
         from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
@@ -208,25 +200,22 @@ class TestEncryptedErrors:
 
         # Write with key1
         write_resp = wrapper1.write_content(b"secret data")
-        content_hash = write_resp.data
+        content_hash = write_resp.content_hash
 
-        # Read with key2 should fail
-        read_resp = wrapper2.read_content(content_hash)
-        assert not read_resp.success
-        assert read_resp.error_message is not None
+        # Read with key2 should raise ValueError
+        with pytest.raises(ValueError):
+            wrapper2.read_content(content_hash)
 
     def test_inner_read_error_propagated(self) -> None:
         from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
 
         leaf = make_leaf("local")
-        leaf.read_content.return_value = HandlerResponse.error(message="disk I/O error")
+        leaf.read_content.side_effect = NexusFileNotFoundError("disk I/O error")
         config = EncryptedStorageConfig(key=_generate_key(), metrics_enabled=False)
         wrapper = EncryptedStorage(inner=leaf, config=config)
 
-        read_resp = wrapper.read_content("some-hash")
-        assert not read_resp.success
-        assert read_resp.error_message is not None
-        assert "disk I/O error" in read_resp.error_message
+        with pytest.raises(NexusFileNotFoundError, match="disk I/O error"):
+            wrapper.read_content("some-hash")
 
 
 # ---------------------------------------------------------------------------
@@ -255,8 +244,7 @@ class TestEncryptedPassthrough:
 
         # With passthrough, should return raw content
         read_resp = wrapper.read_content(h)
-        assert read_resp.success
-        assert read_resp.data == raw
+        assert read_resp == raw
 
     def test_no_passthrough_rejects_unencrypted_content(self) -> None:
         from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
@@ -274,9 +262,9 @@ class TestEncryptedPassthrough:
         h = hashlib.sha256(raw).hexdigest()
         storage[h] = raw
 
-        # Without passthrough, should fail
-        read_resp = wrapper.read_content(h)
-        assert not read_resp.success
+        # Without passthrough, should raise ValueError
+        with pytest.raises(ValueError):
+            wrapper.read_content(h)
 
 
 # ---------------------------------------------------------------------------
@@ -295,11 +283,10 @@ class TestEncryptedEmptyContent:
         wrapper = EncryptedStorage(inner=mock, config=config)
 
         write_resp = wrapper.write_content(b"")
-        assert write_resp.success
+        assert isinstance(write_resp, WriteResult)
 
-        read_resp = wrapper.read_content(write_resp.data)
-        assert read_resp.success
-        assert read_resp.data == b""
+        read_resp = wrapper.read_content(write_resp.content_hash)
+        assert read_resp == b""
 
 
 # ---------------------------------------------------------------------------
@@ -314,25 +301,25 @@ class TestEncryptedDelegation:
         from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
 
         leaf = make_leaf("local")
-        leaf.mkdir.return_value = HandlerResponse.ok(data=None)
+        leaf.mkdir.return_value = None
         config = EncryptedStorageConfig(key=_generate_key(), metrics_enabled=False)
         wrapper = EncryptedStorage(inner=leaf, config=config)
 
         result = wrapper.mkdir("/test", parents=True)
         leaf.mkdir.assert_called_once()
-        assert result.success
+        assert result is None
 
     def test_rmdir_delegates(self) -> None:
         from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
 
         leaf = make_leaf("local")
-        leaf.rmdir.return_value = HandlerResponse.ok(data=None)
+        leaf.rmdir.return_value = None
         config = EncryptedStorageConfig(key=_generate_key(), metrics_enabled=False)
         wrapper = EncryptedStorage(inner=leaf, config=config)
 
         result = wrapper.rmdir("/test", recursive=True)
         leaf.rmdir.assert_called_once()
-        assert result.success
+        assert result is None
 
 
 # ---------------------------------------------------------------------------
@@ -372,9 +359,9 @@ class TestEncryptedBatch:
         wrapper = EncryptedStorage(inner=mock, config=config)
 
         # Write 3 items
-        h1 = wrapper.write_content(b"alpha").data
-        h2 = wrapper.write_content(b"beta").data
-        h3 = wrapper.write_content(b"gamma").data
+        h1 = wrapper.write_content(b"alpha").content_hash
+        h2 = wrapper.write_content(b"beta").content_hash
+        h3 = wrapper.write_content(b"gamma").content_hash
 
         # Batch read
         results = wrapper.batch_read_content([h1, h2, h3])
@@ -389,7 +376,7 @@ class TestEncryptedBatch:
         config = EncryptedStorageConfig(key=_generate_key(), metrics_enabled=False)
         wrapper = EncryptedStorage(inner=mock, config=config)
 
-        h1 = wrapper.write_content(b"exists").data
+        h1 = wrapper.write_content(b"exists").content_hash
         results = wrapper.batch_read_content([h1, "nonexistent"])
         assert results[h1] == b"exists"
         assert results["nonexistent"] is None

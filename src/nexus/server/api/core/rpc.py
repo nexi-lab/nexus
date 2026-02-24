@@ -45,7 +45,7 @@ def _scope_params_for_zone(params: Any, zone_id: str) -> None:
     The reverse operation (stripping the prefix from results) is handled
     by ``unscope_internal_path`` in ``path_utils.py``.
     """
-    from nexus.constants import ROOT_ZONE_ID
+    from nexus.contracts.constants import ROOT_ZONE_ID
 
     if zone_id == ROOT_ZONE_ID:
         return

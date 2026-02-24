@@ -1,14 +1,14 @@
 """Conformance test suite for ObjectStoreABC Protocol.
 
 Tests:
-- ObjectStoreABC conformance (write/read/delete/exists/size/batch_read)
-- BackendObjectStore adapter error handling
+- ObjectStoreABC conformance (write_content/read_content/delete_content/get_content_size/batch_read_content)
+- Error handling on direct backend calls
 - Protocol isinstance checks
 - Deduplication behavior
 - Edge cases (empty, binary, large content)
 - Hash validation
-- Context propagation
-- Repr and debuggability
+- Context propagation (direct method parameter)
+- Backend call overhead
 
 Parametrized across LocalBackend and MockBackend.
 """
@@ -22,8 +22,7 @@ import pytest
 from nexus.backends.backend import Backend
 from nexus.backends.local import LocalBackend
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
-from nexus.core.object_store import BackendObjectStore, ObjectStoreABC, _validate_hash
-from nexus.lib.response import HandlerResponse
+from nexus.core.object_store import ObjectStoreABC, WriteResult, _validate_hash
 
 
 class MockBackend(Backend):
@@ -38,7 +37,7 @@ class MockBackend(Backend):
     def name(self) -> str:
         return "mock"
 
-    def write_content(self, content, context=None) -> HandlerResponse[str]:
+    def write_content(self, content, context=None) -> WriteResult:
         self._last_context = context
         h = hashlib.sha256(content).hexdigest()
         if h in self._content:
@@ -46,15 +45,13 @@ class MockBackend(Backend):
         else:
             self._content[h] = content
             self._ref_counts[h] = 1
-        return HandlerResponse.ok(data=h, backend_name="mock")
+        return WriteResult(content_hash=h, size=len(content))
 
-    def read_content(self, content_hash, context=None) -> HandlerResponse[bytes]:
+    def read_content(self, content_hash, context=None) -> bytes:
         self._last_context = context
         if content_hash not in self._content:
-            return HandlerResponse.not_found(
-                path=content_hash, message="Content not found", backend_name="mock"
-            )
-        return HandlerResponse.ok(data=self._content[content_hash], backend_name="mock")
+            raise NexusFileNotFoundError(path=content_hash, message="Content not found")
+        return self._content[content_hash]
 
     def batch_read_content(
         self, content_hashes, context=None, *, contexts=None
@@ -62,47 +59,45 @@ class MockBackend(Backend):
         self._last_context = context
         return {h: self._content.get(h) for h in content_hashes}
 
-    def delete_content(self, content_hash, context=None) -> HandlerResponse[None]:
+    def delete_content(self, content_hash, context=None) -> None:
         self._last_context = context
         if content_hash not in self._content:
-            return HandlerResponse.not_found(path=content_hash, backend_name="mock")
+            raise NexusFileNotFoundError(path=content_hash, message="Content not found")
         self._ref_counts[content_hash] -= 1
         if self._ref_counts[content_hash] <= 0:
             del self._content[content_hash]
             del self._ref_counts[content_hash]
-        return HandlerResponse.ok(data=None, backend_name="mock")
 
-    def content_exists(self, content_hash, context=None) -> HandlerResponse[bool]:
+    def content_exists(self, content_hash, context=None) -> bool:
         self._last_context = context
-        return HandlerResponse.ok(data=content_hash in self._content, backend_name="mock")
+        return content_hash in self._content
 
-    def get_content_size(self, content_hash, context=None) -> HandlerResponse[int]:
+    def get_content_size(self, content_hash, context=None) -> int:
         self._last_context = context
         if content_hash not in self._content:
-            return HandlerResponse.not_found(path=content_hash, backend_name="mock")
-        return HandlerResponse.ok(data=len(self._content[content_hash]), backend_name="mock")
+            raise NexusFileNotFoundError(path=content_hash, message="Content not found")
+        return len(self._content[content_hash])
 
-    def get_ref_count(self, content_hash, context=None) -> HandlerResponse[int]:
-        return HandlerResponse.ok(data=self._ref_counts.get(content_hash, 0), backend_name="mock")
+    def get_ref_count(self, content_hash, context=None) -> int:
+        return self._ref_counts.get(content_hash, 0)
 
-    def mkdir(self, path, parents=False, exist_ok=False, context=None) -> HandlerResponse[None]:
-        return HandlerResponse.ok(data=None, backend_name="mock")
+    def mkdir(self, path, parents=False, exist_ok=False, context=None) -> None:
+        return None
 
-    def rmdir(self, path, recursive=False, context=None) -> HandlerResponse[None]:
-        return HandlerResponse.ok(data=None, backend_name="mock")
+    def rmdir(self, path, recursive=False, context=None) -> None:
+        return None
 
-    def is_directory(self, path, context=None) -> HandlerResponse[bool]:
-        return HandlerResponse.ok(data=False, backend_name="mock")
+    def is_directory(self, path, context=None) -> bool:
+        return False
 
 
 # === Fixtures ===
 
 
 @pytest.fixture
-def local_store(tmp_path) -> BackendObjectStore:
+def local_store(tmp_path) -> ObjectStoreABC:
     """ObjectStoreABC backed by LocalBackend with tmp_path."""
-    backend = LocalBackend(root_path=str(tmp_path))
-    return BackendObjectStore(backend)
+    return LocalBackend(root_path=str(tmp_path))
 
 
 @pytest.fixture
@@ -112,83 +107,79 @@ def mock_backend() -> MockBackend:
 
 
 @pytest.fixture
-def mock_store(mock_backend) -> BackendObjectStore:
-    """ObjectStoreABC backed by MockBackend."""
-    return BackendObjectStore(mock_backend)
+def mock_store() -> MockBackend:
+    """MockBackend as ObjectStoreABC (Backend IS ObjectStoreABC now)."""
+    return MockBackend()
 
 
 @pytest.fixture(params=["local", "mock"])
-def store(request, tmp_path) -> BackendObjectStore:
+def store(request, tmp_path) -> ObjectStoreABC:
     """Parametrized fixture for both local and mock stores."""
     if request.param == "local":
-        backend = LocalBackend(root_path=str(tmp_path))
-        return BackendObjectStore(backend)
+        return LocalBackend(root_path=str(tmp_path))
     else:
-        backend = MockBackend()
-        return BackendObjectStore(backend)
+        return MockBackend()
 
 
 # === Conformance Tests ===
 
 
 class TestObjectStoreConformance:
-    """Core conformance tests — must pass for all ObjectStoreABC implementations."""
+    """Core conformance tests -- must pass for all ObjectStoreABC implementations."""
 
-    def test_write_returns_hash(self, store: BackendObjectStore) -> None:
-        content_hash = store.write(b"hello world")
-        assert isinstance(content_hash, str)
-        assert len(content_hash) == 64  # SHA-256 hex
+    def test_write_returns_write_result(self, store: ObjectStoreABC) -> None:
+        result = store.write_content(b"hello world")
+        assert isinstance(result, WriteResult)
+        assert isinstance(result.content_hash, str)
+        assert result.size == len(b"hello world")
 
-    def test_read_roundtrip(self, store: BackendObjectStore) -> None:
+    def test_read_roundtrip(self, store: ObjectStoreABC) -> None:
         content = b"roundtrip test data"
-        content_hash = store.write(content)
-        result = store.read(content_hash)
-        assert result == content
+        result = store.write_content(content)
+        retrieved = store.read_content(result.content_hash)
+        assert retrieved == content
 
-    def test_read_nonexistent_raises(self, store: BackendObjectStore) -> None:
+    def test_read_nonexistent_raises(self, store: ObjectStoreABC) -> None:
         fake_hash = "a" * 64
         with pytest.raises((NexusFileNotFoundError, BackendError)):
-            store.read(fake_hash)
+            store.read_content(fake_hash)
 
-    def test_delete(self, store: BackendObjectStore) -> None:
-        content_hash = store.write(b"delete me")
-        assert store.exists(content_hash)
-        store.delete(content_hash)
-        assert not store.exists(content_hash)
+    def test_delete(self, store: ObjectStoreABC) -> None:
+        result = store.write_content(b"delete me")
+        content_hash = result.content_hash
+        # Verify content exists via read
+        store.read_content(content_hash)
+        # Delete it
+        store.delete_content(content_hash)
+        # Verify it's gone
+        with pytest.raises((NexusFileNotFoundError, BackendError)):
+            store.read_content(content_hash)
 
-    def test_exists_true(self, store: BackendObjectStore) -> None:
-        content_hash = store.write(b"I exist")
-        assert store.exists(content_hash) is True
-
-    def test_exists_false(self, store: BackendObjectStore) -> None:
-        fake_hash = "b" * 64
-        assert store.exists(fake_hash) is False
-
-    def test_size(self, store: BackendObjectStore) -> None:
+    def test_get_content_size(self, store: ObjectStoreABC) -> None:
         content = b"size check"
-        content_hash = store.write(content)
-        assert store.size(content_hash) == len(content)
+        result = store.write_content(content)
+        assert store.get_content_size(result.content_hash) == len(content)
 
-    def test_batch_read(self, store: BackendObjectStore) -> None:
-        h1 = store.write(b"item1")
-        h2 = store.write(b"item2")
-        h3 = store.write(b"item3")
-        result = store.batch_read([h1, h2, h3])
+    def test_batch_read_content(self, store: ObjectStoreABC) -> None:
+        h1 = store.write_content(b"item1").content_hash
+        h2 = store.write_content(b"item2").content_hash
+        h3 = store.write_content(b"item3").content_hash
+        result = store.batch_read_content([h1, h2, h3])
         assert result[h1] == b"item1"
         assert result[h2] == b"item2"
         assert result[h3] == b"item3"
 
-    def test_batch_read_partial(self, store: BackendObjectStore) -> None:
-        h1 = store.write(b"exists")
+    def test_batch_read_content_partial(self, store: ObjectStoreABC) -> None:
+        h1 = store.write_content(b"exists").content_hash
         fake_hash = "c" * 64
-        result = store.batch_read([h1, fake_hash])
+        result = store.batch_read_content([h1, fake_hash])
         assert result[h1] == b"exists"
         assert result[fake_hash] is None
 
-    def test_deduplication(self, store: BackendObjectStore) -> None:
+    def test_deduplication(self, store: ObjectStoreABC) -> None:
         content = b"same content twice"
-        h1 = store.write(content)
-        h2 = store.write(content)
+        h1 = store.write_content(content).content_hash
+        h2 = store.write_content(content).content_hash
         assert h1 == h2
 
 
@@ -196,106 +187,105 @@ class TestObjectStoreConformance:
 
 
 class TestEdgeCases:
-    """Edge cases that validate adapter boundary behavior."""
+    """Edge cases that validate boundary behavior."""
 
-    def test_empty_content(self, store: BackendObjectStore) -> None:
+    def test_empty_content(self, store: ObjectStoreABC) -> None:
         """Empty content (0 bytes) should hash consistently and roundtrip."""
         content = b""
-        content_hash = store.write(content)
-        assert isinstance(content_hash, str)
-        assert len(content_hash) == 64
-        retrieved = store.read(content_hash)
+        result = store.write_content(content)
+        assert isinstance(result.content_hash, str)
+        retrieved = store.read_content(result.content_hash)
         assert retrieved == b""
-        assert store.size(content_hash) == 0
+        assert store.get_content_size(result.content_hash) == 0
 
-    def test_binary_content_all_bytes(self, store: BackendObjectStore) -> None:
+    def test_binary_content_all_bytes(self, store: ObjectStoreABC) -> None:
         """Binary content with all 256 byte values should preserve exactly."""
         content = bytes(range(256))
-        content_hash = store.write(content)
-        retrieved = store.read(content_hash)
+        result = store.write_content(content)
+        retrieved = store.read_content(result.content_hash)
         assert retrieved == content
-        assert store.size(content_hash) == 256
+        assert store.get_content_size(result.content_hash) == 256
 
-    def test_large_content(self, store: BackendObjectStore) -> None:
+    def test_large_content(self, store: ObjectStoreABC) -> None:
         """Large content (1MB) should handle without memory issues."""
         content = b"X" * (1024 * 1024)
-        content_hash = store.write(content)
-        retrieved = store.read(content_hash)
+        result = store.write_content(content)
+        retrieved = store.read_content(result.content_hash)
         assert len(retrieved) == len(content)
-        assert store.size(content_hash) == 1024 * 1024
+        assert store.get_content_size(result.content_hash) == 1024 * 1024
 
-    def test_batch_read_empty_list(self, store: BackendObjectStore) -> None:
-        """batch_read([]) returns empty dict."""
-        result = store.batch_read([])
+    def test_batch_read_content_empty_list(self, store: ObjectStoreABC) -> None:
+        """batch_read_content([]) returns empty dict."""
+        result = store.batch_read_content([])
         assert result == {}
 
-    def test_batch_read_single_item(self, store: BackendObjectStore) -> None:
-        """batch_read([hash]) works like read()."""
+    def test_batch_read_content_single_item(self, store: ObjectStoreABC) -> None:
+        """batch_read_content([hash]) works like read_content()."""
         content = b"single"
-        content_hash = store.write(content)
-        result = store.batch_read([content_hash])
+        content_hash = store.write_content(content).content_hash
+        result = store.batch_read_content([content_hash])
         assert len(result) == 1
         assert result[content_hash] == content
 
-    def test_batch_read_all_missing(self, store: BackendObjectStore) -> None:
-        """batch_read with all missing hashes returns all None."""
-        result = store.batch_read(["a" * 64, "b" * 64, "c" * 64])
+    def test_batch_read_content_all_missing(self, store: ObjectStoreABC) -> None:
+        """batch_read_content with all missing hashes returns all None."""
+        result = store.batch_read_content(["a" * 64, "b" * 64, "c" * 64])
         assert len(result) == 3
         assert all(v is None for v in result.values())
 
-    def test_size_consistency_roundtrip(self, store: BackendObjectStore) -> None:
-        """size() matches len(read()) immediately after write()."""
+    def test_size_consistency_roundtrip(self, store: ObjectStoreABC) -> None:
+        """get_content_size() matches len(read_content()) immediately after write_content()."""
         content = b"consistency check content"
-        content_hash = store.write(content)
-        assert store.size(content_hash) == len(content)
-        retrieved = store.read(content_hash)
-        assert len(retrieved) == store.size(content_hash)
+        content_hash = store.write_content(content).content_hash
+        assert store.get_content_size(content_hash) == len(content)
+        retrieved = store.read_content(content_hash)
+        assert len(retrieved) == store.get_content_size(content_hash)
 
 
 # === Protocol isinstance Tests ===
 
 
 class TestProtocolConformance:
-    def test_backend_object_store_isinstance(self, mock_store: BackendObjectStore) -> None:
+    def test_mock_backend_isinstance(self, mock_store: MockBackend) -> None:
         assert isinstance(mock_store, ObjectStoreABC)
 
-    def test_name_property(self, mock_store: BackendObjectStore) -> None:
+    def test_mock_backend_name(self, mock_store: MockBackend) -> None:
         assert mock_store.name == "mock"
 
-    def test_local_store_isinstance(self, local_store: BackendObjectStore) -> None:
+    def test_local_store_isinstance(self, local_store: ObjectStoreABC) -> None:
         assert isinstance(local_store, ObjectStoreABC)
 
-    def test_local_store_name(self, local_store: BackendObjectStore) -> None:
+    def test_local_store_name(self, local_store: ObjectStoreABC) -> None:
         assert local_store.name == "local"
 
 
-# === Adapter Error Handling Tests (Issue 10A) ===
+# === Error Handling Tests (Issue 10A) ===
 
 
-class TestAdapterErrorHandling:
-    def test_read_nonexistent_raises(self, mock_store: BackendObjectStore) -> None:
+class TestErrorHandling:
+    def test_read_nonexistent_raises(self, mock_store: MockBackend) -> None:
         with pytest.raises((NexusFileNotFoundError, BackendError)):
-            mock_store.read("0" * 64)
+            mock_store.read_content("0" * 64)
 
-    def test_delete_nonexistent_raises(self, mock_store: BackendObjectStore) -> None:
+    def test_delete_nonexistent_raises(self, mock_store: MockBackend) -> None:
         with pytest.raises((NexusFileNotFoundError, BackendError)):
-            mock_store.delete("0" * 64)
+            mock_store.delete_content("0" * 64)
 
-    def test_size_nonexistent_raises(self, mock_store: BackendObjectStore) -> None:
+    def test_size_nonexistent_raises(self, mock_store: MockBackend) -> None:
         with pytest.raises((NexusFileNotFoundError, BackendError)):
-            mock_store.size("0" * 64)
+            mock_store.get_content_size("0" * 64)
 
-    def test_error_message_preserved(self, mock_store: BackendObjectStore) -> None:
+    def test_error_message_preserved(self, mock_store: MockBackend) -> None:
         try:
-            mock_store.read("0" * 64)
+            mock_store.read_content("0" * 64)
             pytest.fail("Expected exception")
         except (NexusFileNotFoundError, BackendError) as e:
             assert "not found" in str(e).lower() or "Content not found" in str(e)
 
-    def test_write_returns_consistent_hash(self, mock_store: BackendObjectStore) -> None:
+    def test_write_returns_consistent_hash(self, mock_store: MockBackend) -> None:
         content = b"deterministic"
-        h1 = mock_store.write(content)
-        h2 = mock_store.write(content)
+        h1 = mock_store.write_content(content).content_hash
+        h2 = mock_store.write_content(content).content_hash
         assert h1 == h2
 
 
@@ -303,7 +293,7 @@ class TestAdapterErrorHandling:
 
 
 class TestHashValidation:
-    """Validates _validate_hash rejects malformed hashes at adapter boundary."""
+    """Validates _validate_hash rejects malformed hashes."""
 
     def test_validate_hash_accepts_valid(self) -> None:
         _validate_hash("a" * 64)
@@ -329,122 +319,63 @@ class TestHashValidation:
         with pytest.raises(ValueError, match="Invalid SHA-256"):
             _validate_hash("a" * 65)
 
-    def test_read_rejects_invalid_hash(self, mock_store: BackendObjectStore) -> None:
-        with pytest.raises(ValueError, match="Invalid SHA-256"):
-            mock_store.read("not-a-hash")
-
-    def test_delete_rejects_invalid_hash(self, mock_store: BackendObjectStore) -> None:
-        with pytest.raises(ValueError, match="Invalid SHA-256"):
-            mock_store.delete("xyz")
-
-    def test_exists_rejects_invalid_hash(self, mock_store: BackendObjectStore) -> None:
-        with pytest.raises(ValueError, match="Invalid SHA-256"):
-            mock_store.exists("")
-
-    def test_size_rejects_invalid_hash(self, mock_store: BackendObjectStore) -> None:
-        with pytest.raises(ValueError, match="Invalid SHA-256"):
-            mock_store.size("A" * 64)
-
-    def test_batch_read_rejects_invalid_hash(self, mock_store: BackendObjectStore) -> None:
-        valid = "a" * 64
-        invalid = "ZZZZ"
-        with pytest.raises(ValueError, match="Invalid SHA-256"):
-            mock_store.batch_read([valid, invalid])
-
 
 # === Context Propagation Tests (Issue 11A) ===
 
 
 class TestContextPropagation:
-    """Verify OperationContext flows from adapter to backend."""
+    """Verify OperationContext flows through direct backend method calls."""
 
     def test_context_none_by_default(self, mock_backend: MockBackend) -> None:
-        store = BackendObjectStore(mock_backend)
-        store.write(b"test")
+        mock_backend.write_content(b"test")
         assert mock_backend._last_context is None
 
     def test_context_propagated_to_write(self, mock_backend: MockBackend) -> None:
         ctx = MagicMock()
-        store = BackendObjectStore(mock_backend, context=ctx)
-        store.write(b"test")
+        mock_backend.write_content(b"test", context=ctx)
         assert mock_backend._last_context is ctx
 
     def test_context_propagated_to_read(self, mock_backend: MockBackend) -> None:
         ctx = MagicMock()
-        store_no_ctx = BackendObjectStore(mock_backend)
-        content_hash = store_no_ctx.write(b"ctx read test")
-
-        store = BackendObjectStore(mock_backend, context=ctx)
-        store.read(content_hash)
+        result = mock_backend.write_content(b"ctx read test")
+        mock_backend.read_content(result.content_hash, context=ctx)
         assert mock_backend._last_context is ctx
 
-    def test_context_propagated_to_exists(self, mock_backend: MockBackend) -> None:
+    def test_context_propagated_to_content_exists(self, mock_backend: MockBackend) -> None:
         ctx = MagicMock()
-        store = BackendObjectStore(mock_backend, context=ctx)
-        store.exists("a" * 64)
+        mock_backend.content_exists("a" * 64, context=ctx)
         assert mock_backend._last_context is ctx
 
     def test_context_propagated_to_delete(self, mock_backend: MockBackend) -> None:
         ctx = MagicMock()
-        store_no_ctx = BackendObjectStore(mock_backend)
-        content_hash = store_no_ctx.write(b"ctx delete test")
-
-        store = BackendObjectStore(mock_backend, context=ctx)
-        store.delete(content_hash)
+        result = mock_backend.write_content(b"ctx delete test")
+        mock_backend.delete_content(result.content_hash, context=ctx)
         assert mock_backend._last_context is ctx
 
     def test_context_propagated_to_batch_read(self, mock_backend: MockBackend) -> None:
         ctx = MagicMock()
-        store = BackendObjectStore(mock_backend, context=ctx)
-        store.batch_read(["a" * 64])
+        mock_backend.batch_read_content(["a" * 64], context=ctx)
         assert mock_backend._last_context is ctx
-
-
-# === Repr and Debuggability Tests (Issue 6A) ===
-
-
-class TestReprAndDebug:
-    """Verify __repr__ and read-only properties work correctly."""
-
-    def test_repr_without_context(self, mock_store: BackendObjectStore) -> None:
-        r = repr(mock_store)
-        assert "BackendObjectStore" in r
-        assert "mock" in r
-        assert "context" not in r
-
-    def test_repr_with_context(self, mock_backend: MockBackend) -> None:
-        ctx = MagicMock()
-        store = BackendObjectStore(mock_backend, context=ctx)
-        r = repr(store)
-        assert "BackendObjectStore" in r
-        assert "mock" in r
-        assert "context=" in r
-
-    def test_backend_property_readonly(self, mock_backend: MockBackend) -> None:
-        store = BackendObjectStore(mock_backend)
-        assert store.backend is mock_backend
-
-    def test_backend_property_returns_backend_type(self, local_store: BackendObjectStore) -> None:
-        assert isinstance(local_store.backend, LocalBackend)
 
 
 # === Benchmark Tests ===
 
 
-class TestAdapterOverhead:
-    def test_adapter_overhead_under_50us(self, mock_store: BackendObjectStore) -> None:
-        """Measure adapter call overhead — should be minimal."""
-        content_hash = mock_store.write(b"benchmark data")
+class TestBackendOverhead:
+    def test_direct_call_overhead_under_50us(self, mock_store: MockBackend) -> None:
+        """Measure direct backend call overhead -- should be minimal."""
+        result = mock_store.write_content(b"benchmark data")
+        content_hash = result.content_hash
 
         # Warmup
         for _ in range(100):
-            mock_store.exists(content_hash)
+            mock_store.read_content(content_hash)
 
         iterations = 10_000
         start = time.perf_counter()
         for _ in range(iterations):
-            mock_store.exists(content_hash)
+            mock_store.read_content(content_hash)
         elapsed_us = (time.perf_counter() - start) * 1_000_000 / iterations
 
-        # Adapter overhead should be minimal (under 50μs including MockBackend + validation)
-        assert elapsed_us < 50, f"Adapter call took {elapsed_us:.2f}μs per call"
+        # Direct backend call should be minimal (under 50us including MockBackend)
+        assert elapsed_us < 50, f"Backend call took {elapsed_us:.2f}us per call"

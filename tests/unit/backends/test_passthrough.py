@@ -3,6 +3,7 @@
 import pytest
 
 from nexus.backends.passthrough import POINTER_PREFIX, PassthroughBackend
+from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 
 
@@ -38,54 +39,54 @@ class TestContentOperations:
     def test_write_and_read_content(self, temp_backend):
         """Test writing and reading content."""
         content = b"Hello, World!"
-        content_hash = temp_backend.write_content(content).unwrap()
+        result = temp_backend.write_content(content)
+        content_hash = result.content_hash
 
         # Verify hash is correct
         expected_hash = hash_content(content)
         assert content_hash == expected_hash
 
         # Read content back
-        retrieved = temp_backend.read_content(content_hash).unwrap()
+        retrieved = temp_backend.read_content(content_hash)
         assert retrieved == content
 
     def test_write_duplicate_content(self, temp_backend):
         """Test writing duplicate content returns same hash."""
         content = b"Duplicate test content"
 
-        hash1 = temp_backend.write_content(content).unwrap()
-        hash2 = temp_backend.write_content(content).unwrap()
+        hash1 = temp_backend.write_content(content).content_hash
+        hash2 = temp_backend.write_content(content).content_hash
 
         assert hash1 == hash2
 
     def test_read_nonexistent_content(self, temp_backend):
-        """Test reading non-existent content returns not_found."""
+        """Test reading non-existent content raises NexusFileNotFoundError."""
         fake_hash = "a" * 64
-        response = temp_backend.read_content(fake_hash)
-        assert not response.success
-        assert response.error_code == 404
+        with pytest.raises(NexusFileNotFoundError):
+            temp_backend.read_content(fake_hash)
 
     def test_content_exists(self, temp_backend):
         """Test checking if content exists."""
         content = b"Existence test"
-        content_hash = temp_backend.write_content(content).unwrap()
+        content_hash = temp_backend.write_content(content).content_hash
 
-        assert temp_backend.content_exists(content_hash).unwrap() is True
+        assert temp_backend.content_exists(content_hash) is True
 
         fake_hash = "b" * 64
-        assert temp_backend.content_exists(fake_hash).unwrap() is False
+        assert temp_backend.content_exists(fake_hash) is False
 
     def test_get_content_size(self, temp_backend):
         """Test getting content size."""
         content = b"Size test content"
-        content_hash = temp_backend.write_content(content).unwrap()
+        content_hash = temp_backend.write_content(content).content_hash
 
-        size = temp_backend.get_content_size(content_hash).unwrap()
+        size = temp_backend.get_content_size(content_hash)
         assert size == len(content)
 
     def test_cas_path_structure(self, temp_backend):
         """Test CAS uses two-level directory structure."""
         content = b"Path structure test"
-        content_hash = temp_backend.write_content(content).unwrap()
+        content_hash = temp_backend.write_content(content).content_hash
 
         cas_path = temp_backend._get_cas_path(content_hash)
         # Should be: cas/ab/cd/abcd...
@@ -129,7 +130,7 @@ class TestPointerOperations:
         content = b"Content with pointer"
         context = MockContext(virtual_path="/inbox/file.txt")
 
-        content_hash = temp_backend.write_content(content, context=context).unwrap()
+        content_hash = temp_backend.write_content(content, context=context).content_hash
 
         # Verify pointer was created
         pointer_path = temp_backend._get_pointer_path("/inbox/file.txt")
@@ -163,7 +164,7 @@ class TestDirectoryOperations:
 
     def test_mkdir(self, temp_backend):
         """Test creating directories."""
-        temp_backend.mkdir("/test/nested", parents=True).unwrap()
+        temp_backend.mkdir("/test/nested", parents=True)
 
         dir_path = temp_backend._get_pointer_path("/test/nested")
         assert dir_path.exists()
@@ -171,23 +172,23 @@ class TestDirectoryOperations:
 
     def test_rmdir(self, temp_backend):
         """Test removing directories."""
-        temp_backend.mkdir("/to_delete", parents=True).unwrap()
-        temp_backend.rmdir("/to_delete").unwrap()
+        temp_backend.mkdir("/to_delete", parents=True)
+        temp_backend.rmdir("/to_delete")
 
         dir_path = temp_backend._get_pointer_path("/to_delete")
         assert not dir_path.exists()
 
     def test_is_directory(self, temp_backend):
         """Test checking if path is directory."""
-        temp_backend.mkdir("/is_dir_test", parents=True).unwrap()
+        temp_backend.mkdir("/is_dir_test", parents=True)
 
-        assert temp_backend.is_directory("/is_dir_test").unwrap() is True
-        assert temp_backend.is_directory("/nonexistent").unwrap() is False
+        assert temp_backend.is_directory("/is_dir_test") is True
+        assert temp_backend.is_directory("/nonexistent") is False
 
     def test_list_dir(self, temp_backend):
         """Test listing directory contents."""
         # Create some files and directories
-        temp_backend.mkdir("/list_test/subdir", parents=True).unwrap()
+        temp_backend.mkdir("/list_test/subdir", parents=True)
         temp_backend._write_pointer("/list_test/file1.txt", "hash1" + "0" * 59)
         temp_backend._write_pointer("/list_test/file2.txt", "hash2" + "0" * 59)
 
@@ -199,7 +200,7 @@ class TestDirectoryOperations:
 
     def test_list_dir_excludes_tmp_files(self, temp_backend):
         """Test that list_dir excludes .tmp files."""
-        temp_backend.mkdir("/tmp_test", parents=True).unwrap()
+        temp_backend.mkdir("/tmp_test", parents=True)
 
         # Create a normal file and a temp file
         pointer_path = temp_backend._get_pointer_path("/tmp_test")
@@ -357,20 +358,20 @@ class TestEdgeCases:
     def test_empty_content(self, temp_backend):
         """Test writing empty content."""
         content = b""
-        content_hash = temp_backend.write_content(content).unwrap()
+        content_hash = temp_backend.write_content(content).content_hash
 
         expected_hash = hash_content(b"")
         assert content_hash == expected_hash
 
-        retrieved = temp_backend.read_content(content_hash).unwrap()
+        retrieved = temp_backend.read_content(content_hash)
         assert retrieved == b""
 
     def test_large_content(self, temp_backend):
         """Test writing large content."""
         content = b"X" * (1024 * 1024)  # 1 MB
-        content_hash = temp_backend.write_content(content).unwrap()
+        content_hash = temp_backend.write_content(content).content_hash
 
-        retrieved = temp_backend.read_content(content_hash).unwrap()
+        retrieved = temp_backend.read_content(content_hash)
         assert len(retrieved) == len(content)
         assert retrieved == content
 
@@ -390,7 +391,7 @@ class TestEdgeCases:
         content = b"Nested content"
         context = MockContext(virtual_path="/a/b/c/d/e/f/file.txt")
 
-        content_hash = temp_backend.write_content(content, context=context).unwrap()
+        content_hash = temp_backend.write_content(content, context=context).content_hash
 
         # Verify pointer exists
         read_hash = temp_backend._read_pointer("/a/b/c/d/e/f/file.txt")

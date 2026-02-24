@@ -449,6 +449,42 @@ def _boot_system_services(
         except Exception as exc:
             logger.warning("[BOOT:SYSTEM] ZoneLifecycleService unavailable: %s", exc)
 
+    # --- EventLog (Issue #2195) ---
+    event_log: Any = None
+    if not _on("eventlog"):
+        logger.debug("[BOOT:SYSTEM] EventLog disabled by profile")
+    else:
+        try:
+            from nexus.services.event_log.factory import create_event_log
+            from nexus.services.event_log.protocol import EventLogConfig
+
+            event_log = create_event_log(EventLogConfig())
+            if event_log is not None:
+                logger.debug("[BOOT:SYSTEM] EventLog created")
+            else:
+                logger.debug("[BOOT:SYSTEM] EventLog: no backend available (graceful degrade)")
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] EventLog unavailable: %s", exc)
+
+    # --- Scheduler Service (Issue #2195, #2360) ---
+    scheduler_service: Any = None
+    if not _on("scheduler"):
+        logger.debug("[BOOT:SYSTEM] SchedulerService disabled by profile")
+    else:
+        try:
+            if ctx.db_url.startswith(("postgres", "postgresql")):
+                from nexus.services.scheduler.service import SchedulerService
+
+                scheduler_service = SchedulerService(db_pool=None)
+                logger.debug("[BOOT:SYSTEM] SchedulerService created (two-phase, pool=None)")
+            else:
+                from nexus.services.protocols.scheduler import InMemoryScheduler
+
+                scheduler_service = InMemoryScheduler()
+                logger.debug("[BOOT:SYSTEM] InMemoryScheduler created (no PostgreSQL)")
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] SchedulerService unavailable: %s", exc)
+
     # --- PipeManager (Issue #809: DT_PIPE kernel IPC for write observer + zoekt) ---
     pipe_manager: Any = None
     try:
@@ -492,6 +528,8 @@ def _boot_system_services(
         "brick_reconciler": brick_reconciler,
         "eviction_manager": eviction_manager,
         "zone_lifecycle": zone_lifecycle,
+        "event_log": event_log,
+        "scheduler_service": scheduler_service,
     }
 
     elapsed = time.perf_counter() - t0

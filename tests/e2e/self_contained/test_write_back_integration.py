@@ -51,8 +51,7 @@ def mock_gateway(record_store):
     # Mock backend that records write_content calls
     mock_backend = MagicMock()
     mock_backend.name = "test_gcs"
-    mock_backend.capabilities = frozenset()
-    mock_backend.has_virtual_filesystem = False  # Not a virtual FS — eligible for write-back
+    mock_backend.capabilities = frozenset()  # No special capabilities — eligible for write-back
     from nexus.core.object_store import WriteResult
 
     mock_backend.write_content.return_value = WriteResult(content_hash="new_content_hash", size=11)
@@ -521,15 +520,17 @@ class TestExternalContentSkip:
     @pytest.mark.asyncio
     async def test_skip_external_content_backends(self, mock_event_bus):
         """Write-back should skip events from external-content backends (LocalConnector)."""
-        # Setup gateway where mount returns a backend with has_virtual_filesystem=True
-        # (virtual-filesystem backends like LocalConnector write directly to the physical
-        # filesystem, so write-back would double-write)
+        # Setup gateway where mount returns a backend with EXTERNAL_CONTENT capability
+        # (external-content backends like LocalConnector manage content externally,
+        # so write-back would double-write or be meaningless)
         gw = MagicMock()
         store = SQLAlchemyRecordStore(db_url="sqlite:///:memory:", create_tables=True)
 
         mock_backend = MagicMock()
         mock_backend.name = "test_local"
-        mock_backend.has_virtual_filesystem = True  # Triggers skip in _on_file_event
+        mock_backend.capabilities = frozenset(
+            {"external_content"}
+        )  # Triggers skip in _on_file_event
 
         gw.get_mount_for_path.return_value = {
             "mount_point": "/mnt/local",
@@ -578,7 +579,7 @@ class TestExternalContentSkip:
             change_log_store=change_log_store,
         )
 
-        # Default mock_gateway backend has has_virtual_filesystem=False — eligible for write-back
+        # Default mock_gateway backend has no EXTERNAL_CONTENT capability — eligible for write-back
         event = FileEvent(
             type=FileEventType.FILE_WRITE,
             path="/mnt/gcs/project/file.txt",

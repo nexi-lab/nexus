@@ -111,7 +111,7 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
 
     _CAPABILITIES = frozenset(
         {
-            ConnectorCapability.VIRTUAL_FILESYSTEM,
+            ConnectorCapability.EXTERNAL_CONTENT,
             ConnectorCapability.CACHE_BULK_READ,
             ConnectorCapability.CACHE_SYNC,
             ConnectorCapability.SKILL_DOC,
@@ -122,10 +122,6 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
     SKILL_NAME = "hn"
 
     user_scoped = False  # Public API, no per-user auth
-
-    @property
-    def has_virtual_filesystem(self) -> bool:  # noqa: D102
-        return True
 
     CONNECTION_ARGS: dict[str, ConnectionArg] = {
         "cache_ttl": ConnectionArg(

@@ -127,7 +127,7 @@ class Backend(ObjectStoreABC):
     # must implement it.  No redeclaration needed here.
     #
     # Capability flags that ARE on ObjectStoreABC (user_scoped,
-    # has_virtual_filesystem, has_token_manager, supports_rename,
+    # has_token_manager, supports_rename,
     # supports_parallel_mmap_read, is_passthrough) are inherited with
     # default False.  Subclasses override as needed.
     # ------------------------------------------------------------------

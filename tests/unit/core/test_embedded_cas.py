@@ -12,6 +12,9 @@ from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
+# Mount points auto-created by factory boot.
+_SYSTEM_PATHS = frozenset({"/", "/agents"})
+
 
 @pytest.fixture
 def temp_dir() -> Generator[Path, None, None]:
@@ -200,7 +203,7 @@ def test_cas_list_files(embedded_cas: NexusFS) -> None:
     embedded_cas.write("/dir1/file2.txt", b"Content 2")
     embedded_cas.write("/dir2/file3.txt", b"Content 3")
 
-    all_files = embedded_cas.list()
+    all_files = [f for f in embedded_cas.list() if f not in _SYSTEM_PATHS]
     assert len(all_files) == 3
     assert "/dir1/file1.txt" in all_files
     assert "/dir1/file2.txt" in all_files

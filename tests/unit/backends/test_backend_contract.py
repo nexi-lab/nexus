@@ -215,7 +215,6 @@ class TestBackendContract:
         assert isinstance(backend.is_connected, bool)
         assert isinstance(backend.is_passthrough, bool)
         assert isinstance(backend.has_root_path, bool)
-        assert isinstance(backend.has_virtual_filesystem, bool)
         assert isinstance(backend.has_token_manager, bool)
 
     def test_name_returns_string(self, backend: Backend) -> None:

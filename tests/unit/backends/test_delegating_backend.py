@@ -31,7 +31,6 @@ def mock_inner() -> MagicMock:
     type(mock).is_connected = PropertyMock(return_value=True)
     type(mock).thread_safe = PropertyMock(return_value=True)
     type(mock).supports_rename = PropertyMock(return_value=True)
-    type(mock).has_virtual_filesystem = PropertyMock(return_value=True)
     type(mock).has_root_path = PropertyMock(return_value=True)
     type(mock).has_token_manager = PropertyMock(return_value=True)
     type(mock).has_data_dir = PropertyMock(return_value=True)
@@ -61,7 +60,6 @@ class TestPropertyDelegation:
             "is_connected",
             "thread_safe",
             "supports_rename",
-            "has_virtual_filesystem",
             "has_root_path",
             "has_token_manager",
             "has_data_dir",

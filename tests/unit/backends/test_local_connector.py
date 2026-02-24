@@ -299,11 +299,6 @@ class TestCacheConfiguration:
         connector = LocalConnectorBackend(tmp_path)
         assert connector.l1_only is True
 
-    def test_has_virtual_filesystem_is_true(self, tmp_path: Path):
-        """LocalConnectorBackend should have has_virtual_filesystem=True."""
-        connector = LocalConnectorBackend(tmp_path)
-        assert connector.has_virtual_filesystem is True
-
     def test_has_caching_returns_true(self, tmp_path: Path):
         """_has_caching should return True (L1-only mode)."""
         connector = LocalConnectorBackend(tmp_path)

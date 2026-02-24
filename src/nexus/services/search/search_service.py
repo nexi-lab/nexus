@@ -396,9 +396,12 @@ class SearchService(SemanticSearchMixin):
                     is_admin=is_admin,
                     check_write=False,
                 )
+                from nexus.core.protocols.capabilities import ConnectorCapability
+
+                _caps: frozenset[str] = getattr(route.backend, "capabilities", frozenset())
                 is_dynamic_connector = (
                     route.backend.user_scoped and route.backend.has_token_manager
-                ) or route.backend.has_virtual_filesystem
+                ) or ConnectorCapability.EXTERNAL_CONTENT in _caps
 
                 if is_dynamic_connector:
                     return self._list_dynamic_connector(path, route, recursive, details, context)

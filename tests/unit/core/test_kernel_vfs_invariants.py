@@ -19,7 +19,7 @@ from nexus.core.router import (
     PathNotMountedError,
     PathRouter,
 )
-from nexus.storage.in_memory_metastore import InMemoryMetastore
+from tests.helpers.dict_metastore import DictMetastore
 from tests.strategies.kernel import (
     path_traversal_attempt,
     valid_mount_point,
@@ -36,7 +36,7 @@ def _make_router_with_mounts() -> tuple[PathRouter, LocalBackend]:
     """Create a PathRouter with standard mounts for testing."""
     tmpdir = tempfile.mkdtemp()
     backend = LocalBackend(tmpdir)
-    metastore = InMemoryMetastore()
+    metastore = DictMetastore()
     router = PathRouter(metastore)
     router.add_mount("/workspace", backend)
     router.add_mount("/shared", backend)
@@ -60,7 +60,7 @@ class TestPathNormalizationInvariants:
     @example(path="/workspace/data/file.txt")
     def test_normalize_is_idempotent(self, path: str) -> None:
         """normalize(normalize(p)) == normalize(p) for all valid paths."""
-        metastore = InMemoryMetastore()
+        metastore = DictMetastore()
         router = PathRouter(metastore)
         once = router._normalize_path(path)
         twice = router._normalize_path(once)
@@ -69,7 +69,7 @@ class TestPathNormalizationInvariants:
     @given(path=valid_path())
     def test_normalized_path_starts_with_slash(self, path: str) -> None:
         """All normalized paths are absolute (start with /)."""
-        metastore = InMemoryMetastore()
+        metastore = DictMetastore()
         router = PathRouter(metastore)
         normalized = router._normalize_path(path)
         assert normalized.startswith("/")
@@ -77,7 +77,7 @@ class TestPathNormalizationInvariants:
     @given(path=valid_path())
     def test_normalized_path_has_no_double_slashes(self, path: str) -> None:
         """Normalized paths never contain //."""
-        metastore = InMemoryMetastore()
+        metastore = DictMetastore()
         router = PathRouter(metastore)
         normalized = router._normalize_path(path)
         assert "//" not in normalized
@@ -85,7 +85,7 @@ class TestPathNormalizationInvariants:
     @given(path=valid_path())
     def test_normalized_path_has_no_trailing_slash(self, path: str) -> None:
         """Normalized paths have no trailing slash (except root /)."""
-        metastore = InMemoryMetastore()
+        metastore = DictMetastore()
         router = PathRouter(metastore)
         normalized = router._normalize_path(path)
         if normalized != "/":
@@ -103,7 +103,7 @@ class TestPathTraversalInvariants:
     @given(attempt=path_traversal_attempt())
     def test_traversal_attempts_rejected(self, attempt: str) -> None:
         """All path traversal attempts are rejected by validate_path."""
-        metastore = InMemoryMetastore()
+        metastore = DictMetastore()
         router = PathRouter(metastore)
         try:
             result = router.validate_path(attempt)
@@ -124,7 +124,7 @@ class TestPathTraversalInvariants:
     @example(path="/workspace/./../../etc")
     def test_arbitrary_strings_never_escape_root(self, path: str) -> None:
         """No arbitrary string can produce a path outside /."""
-        metastore = InMemoryMetastore()
+        metastore = DictMetastore()
         router = PathRouter(metastore)
         try:
             result = router.validate_path(path)
@@ -135,7 +135,7 @@ class TestPathTraversalInvariants:
     @given(path=valid_path())
     def test_validate_roundtrip(self, path: str) -> None:
         """validate_path is idempotent: validate(validate(p)) == validate(p)."""
-        metastore = InMemoryMetastore()
+        metastore = DictMetastore()
         router = PathRouter(metastore)
         try:
             once = router.validate_path(path)
@@ -185,7 +185,7 @@ class TestLongestPrefixMatchInvariants:
         backend_shallow = LocalBackend(tmpdir)
         backend_deep = LocalBackend(tmpdir)
 
-        metastore = InMemoryMetastore()
+        metastore = DictMetastore()
         router = PathRouter(metastore)
         router.add_mount(mount1, backend_shallow)
         router.add_mount(deeper_path, backend_deep)

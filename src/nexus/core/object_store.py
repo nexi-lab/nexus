@@ -306,11 +306,6 @@ class ObjectStoreABC(ABC):
         return False
 
     @property
-    def has_virtual_filesystem(self) -> bool:
-        """Whether this backend uses a virtual filesystem (e.g. API-backed)."""
-        return False
-
-    @property
     def has_token_manager(self) -> bool:
         """Whether this backend manages OAuth tokens."""
         return False

@@ -4,7 +4,7 @@ IPCVFSDriver satisfies ``ConnectorProtocol`` structurally (duck typing)
 and is mounted at ``/agents`` via the PathRouter. It intercepts all file
 operations on agent IPC paths and delegates to an ``IPCStorageDriver``.
 
-This is a **virtual filesystem driver** (``has_virtual_filesystem = True``):
+This is an **external-content driver** (``EXTERNAL_CONTENT`` capability):
 - ``read_content`` / ``write_content`` operate on paths, not content hashes
 - ``list_dir`` returns agent names, subdirectories, or message files
 - ``mkdir`` / ``rmdir`` / ``is_directory`` manage the IPC directory tree
@@ -97,10 +97,6 @@ class IPCVFSDriver:
     @property
     def name(self) -> str:
         return "ipc"
-
-    @property
-    def has_virtual_filesystem(self) -> bool:
-        return True
 
     @property
     def supports_rename(self) -> bool:

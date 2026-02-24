@@ -81,7 +81,7 @@ class TestNexusFSServiceComposition:
 
         # VersionService dependencies (injected by _make_fs, mimicking factory)
         assert fs.version_service.metadata == fs.metadata
-        assert fs.version_service.cas == fs.backend
+        assert fs.version_service.cas == fs.router.route("/").backend
 
         # ReBACService should have rebac_manager
         assert fs.rebac_service._rebac_manager == fs._rebac_manager
@@ -104,7 +104,7 @@ class TestNexusFSServiceComposition:
         assert fs.share_link_service._gw is not None
 
         # EventsService should have backend
-        assert fs.events_service._backend == fs.backend
+        assert fs.events_service._backend == fs.router.route("/").backend
 
     def test_version_service_delegation(self, tmp_path: Path):
         """Test that VersionService is available on NexusFS."""

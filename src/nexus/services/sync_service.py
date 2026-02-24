@@ -1139,7 +1139,7 @@ class SyncService:
                     backend_path=backend_path,
                 )
                 # Note: content_hash is ignored by connectors - they use backend_path from context
-                result: int = backend.get_content_size("", size_context).unwrap()
+                result: int = backend.get_content_size("", size_context)
                 return result
         except (OSError, ValueError, AttributeError) as e:
             logger.debug(f"Could not get file size for {backend_path}: {e}")

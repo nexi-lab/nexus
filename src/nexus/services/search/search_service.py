@@ -1372,7 +1372,7 @@ class SearchService(SemanticSearchMixin):
                     size = 0
                     if self._gw_backend:
                         try:
-                            size = len(self._gw_backend.read_content(mem.content_hash).unwrap())
+                            size = len(self._gw_backend.read_content(mem.content_hash))
                         except Exception:
                             logger.debug("Failed to read memory content size: %s", mem.memory_id)
                     detail_results.append(

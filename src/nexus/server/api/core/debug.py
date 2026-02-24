@@ -7,10 +7,11 @@ import asyncio
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel
 
 from nexus.server.dependencies import get_auth_result
+from nexus.server.rate_limiting import RATE_LIMIT_ANONYMOUS, limiter
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +69,10 @@ async def debug_asyncio() -> dict[str, Any]:
 
 
 @router.get("/api/auth/whoami", response_model=WhoamiResponse)
+@limiter.limit(RATE_LIMIT_ANONYMOUS)
 async def whoami(
+    request: Request,  # noqa: ARG001 — required by slowapi @limiter.limit
+    response: Response,  # noqa: ARG001 — required by slowapi for header injection
     auth_result: dict[str, Any] | None = Depends(get_auth_result),
 ) -> WhoamiResponse:
     """Authentication info endpoint."""

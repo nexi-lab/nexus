@@ -429,6 +429,7 @@ def create_app(
     limiter = Limiter(
         key_func=_get_rate_limit_key,
         default_limits=[RATE_LIMIT_AUTHENTICATED] if rate_limit_enabled else [],
+        headers_enabled=rate_limit_enabled,
         storage_uri=redis_url,
         strategy="fixed-window",
         enabled=rate_limit_enabled,
@@ -438,6 +439,13 @@ def create_app(
     _rate_limiting_mod.limiter = limiter
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+    # Add SlowAPI middleware so default_limits and rate-limit headers are applied
+    # to all endpoints (not just those with explicit @limiter.limit() decorators).
+    if rate_limit_enabled:
+        from slowapi.middleware import SlowAPIMiddleware
+
+        app.add_middleware(SlowAPIMiddleware)
 
     # Register Nexus exception handlers for error classification
 

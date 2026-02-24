@@ -52,9 +52,7 @@ _StubFS.stream_range = NexusFSCoreMixin.stream_range
 def stub_fs():
     """Create a lightweight stub with mocked backends for range testing."""
     backend = MagicMock()
-    backend.read_content.return_value = MagicMock(
-        unwrap=lambda: b"Hello, World! This is test content."
-    )
+    backend.read_content.return_value = b"Hello, World! This is test content."
     backend.stream_range.return_value = iter([b"Hello", b", Wor", b"ld!"])
 
     meta_entry = MagicMock()

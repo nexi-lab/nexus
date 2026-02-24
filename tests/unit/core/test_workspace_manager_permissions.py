@@ -9,7 +9,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from nexus.contracts.exceptions import NexusPermissionError
-from nexus.lib.response import HandlerResponse
 from nexus.storage.models import WorkspaceSnapshotModel
 from nexus.system_services.workspace.workspace_manager import WorkspaceManager
 
@@ -56,7 +55,7 @@ class TestWorkspaceManagerPermissions:
         """Test that create_snapshot succeeds when permission is granted."""
         # Setup
         mock_rebac_manager.rebac_check.return_value = True
-        mock_backend.write_content.return_value = HandlerResponse.ok("manifest_hash_123")
+        mock_backend.write_content.return_value = MagicMock(content_hash="manifest_hash_123")
 
         # Mock database session
         mock_session = MagicMock()
@@ -136,7 +135,7 @@ class TestWorkspaceManagerPermissions:
         mock_metadata.list.return_value = []
 
         # Mock manifest read
-        mock_backend.read_content.return_value = HandlerResponse.ok(b"{}")
+        mock_backend.read_content.return_value = b"{}"
 
         # Execute
         result = workspace_manager.restore_snapshot(snapshot_id="snap123")
@@ -242,8 +241,8 @@ class TestWorkspaceManagerPermissions:
 
         # Mock manifest reads
         mock_backend.read_content.side_effect = [
-            HandlerResponse.ok(b"{}"),
-            HandlerResponse.ok(b"{}"),
+            b"{}",
+            b"{}",
         ]
 
         # Execute
@@ -293,8 +292,8 @@ class TestWorkspaceManagerPermissions:
 
         # Mock manifest reads
         mock_backend.read_content.side_effect = [
-            HandlerResponse.ok(b"{}"),
-            HandlerResponse.ok(b"{}"),
+            b"{}",
+            b"{}",
         ]
 
         # Execute
@@ -353,7 +352,7 @@ class TestWorkspaceManagerPermissions:
             record_store=MagicMock(session_factory=mock_metadata.SessionLocal),
         )
 
-        mock_backend.write_content.return_value = HandlerResponse.ok("manifest_hash_123")
+        mock_backend.write_content.return_value = MagicMock(content_hash="manifest_hash_123")
         mock_session = MagicMock()
         mock_metadata.SessionLocal.return_value.__enter__.return_value = mock_session
         mock_metadata.list.return_value = []

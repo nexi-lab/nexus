@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.backends.backend import Backend, FileInfo, HandlerStatusResponse
 from nexus.contracts.exceptions import BackendError
-from nexus.lib.response import HandlerResponse
+from nexus.core.object_store import WriteResult
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
@@ -95,37 +95,27 @@ class FailingBackend(Backend):
 
     def write_content(
         self, content: bytes, context: "OperationContext | None" = None
-    ) -> HandlerResponse[str]:
+    ) -> WriteResult:
         self._maybe_fail("write_content")
         return self._inner.write_content(content, context)
 
-    def read_content(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> HandlerResponse[bytes]:
+    def read_content(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
         self._maybe_fail("read_content")
         return self._inner.read_content(content_hash, context)
 
-    def delete_content(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> HandlerResponse[None]:
+    def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:
         self._maybe_fail("delete_content")
         return self._inner.delete_content(content_hash, context)
 
-    def content_exists(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> HandlerResponse[bool]:
+    def content_exists(self, content_hash: str, context: "OperationContext | None" = None) -> bool:
         self._maybe_fail("content_exists")
         return self._inner.content_exists(content_hash, context)
 
-    def get_content_size(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> HandlerResponse[int]:
+    def get_content_size(self, content_hash: str, context: "OperationContext | None" = None) -> int:
         self._maybe_fail("get_content_size")
         return self._inner.get_content_size(content_hash, context)
 
-    def get_ref_count(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> HandlerResponse[int]:
+    def get_ref_count(self, content_hash: str, context: "OperationContext | None" = None) -> int:
         self._maybe_fail("get_ref_count")
         return self._inner.get_ref_count(content_hash, context)
 
@@ -163,7 +153,7 @@ class FailingBackend(Backend):
         self,
         chunks: Iterator[bytes],
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[str]:
+    ) -> WriteResult:
         self._maybe_fail("write_stream")
         return self._inner.write_stream(chunks, context)
 
@@ -175,7 +165,7 @@ class FailingBackend(Backend):
         parents: bool = False,
         exist_ok: bool = False,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[None]:
+    ) -> None:
         self._maybe_fail("mkdir")
         return self._inner.mkdir(path, parents, exist_ok, context)
 
@@ -184,13 +174,11 @@ class FailingBackend(Backend):
         path: str,
         recursive: bool = False,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[None]:
+    ) -> None:
         self._maybe_fail("rmdir")
         return self._inner.rmdir(path, recursive, context)
 
-    def is_directory(
-        self, path: str, context: "OperationContext | None" = None
-    ) -> HandlerResponse[bool]:
+    def is_directory(self, path: str, context: "OperationContext | None" = None) -> bool:
         self._maybe_fail("is_directory")
         return self._inner.is_directory(path, context)
 
@@ -253,9 +241,7 @@ class FailingBackend(Backend):
 
     # === Delta Sync ===
 
-    def get_file_info(
-        self, path: str, context: "OperationContext | None" = None
-    ) -> HandlerResponse[FileInfo]:
+    def get_file_info(self, path: str, context: "OperationContext | None" = None) -> FileInfo:
         self._maybe_fail("get_file_info")
         return self._inner.get_file_info(path, context)
 

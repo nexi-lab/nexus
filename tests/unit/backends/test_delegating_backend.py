@@ -13,7 +13,7 @@ import pytest
 
 from nexus.backends.backend import Backend
 from nexus.backends.delegating import DelegatingBackend
-from nexus.lib.response import HandlerResponse
+from nexus.core.object_store import WriteResult
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -90,9 +90,9 @@ class TestDescribeDelegation:
 
     def test_describe_chains_with_inner(self, mock_inner: MagicMock) -> None:
         """When inner is also a wrapper, describe() should return inner's full chain."""
-        mock_inner.describe.return_value = "cache → s3"
+        mock_inner.describe.return_value = "cache -> s3"
         wrapper = DelegatingBackend(inner=mock_inner)
-        assert wrapper.describe() == "cache → s3"
+        assert wrapper.describe() == "cache -> s3"
 
 
 # ---------------------------------------------------------------------------
@@ -104,25 +104,24 @@ class TestContentDelegation:
     """Content operations should delegate to inner backend."""
 
     def test_read_content(self, delegating: DelegatingBackend, mock_inner: MagicMock) -> None:
-        expected = HandlerResponse.ok(data=b"hello")
+        expected = b"hello"
         mock_inner.read_content.return_value = expected
         result = delegating.read_content("abc123")
         mock_inner.read_content.assert_called_once_with("abc123", context=None)
         assert result is expected
 
     def test_write_content(self, delegating: DelegatingBackend, mock_inner: MagicMock) -> None:
-        expected = HandlerResponse.ok(data="hash123")
+        expected = WriteResult(content_hash="hash123", size=4)
         mock_inner.write_content.return_value = expected
         result = delegating.write_content(b"data")
         mock_inner.write_content.assert_called_once_with(b"data", context=None)
         assert result is expected
 
     def test_delete_content(self, delegating: DelegatingBackend, mock_inner: MagicMock) -> None:
-        expected = HandlerResponse.ok(data=None)
-        mock_inner.delete_content.return_value = expected
+        mock_inner.delete_content.return_value = None
         result = delegating.delete_content("abc123")
         mock_inner.delete_content.assert_called_once_with("abc123", context=None)
-        assert result is expected
+        assert result is None
 
 
 # ---------------------------------------------------------------------------
@@ -134,18 +133,16 @@ class TestDirectoryDelegation:
     """Directory operations should delegate to inner backend."""
 
     def test_mkdir(self, delegating: DelegatingBackend, mock_inner: MagicMock) -> None:
-        expected = HandlerResponse.ok(data=None)
-        mock_inner.mkdir.return_value = expected
+        mock_inner.mkdir.return_value = None
         result = delegating.mkdir("/test", parents=True, exist_ok=True)
         mock_inner.mkdir.assert_called_once_with("/test", parents=True, exist_ok=True, context=None)
-        assert result is expected
+        assert result is None
 
     def test_rmdir(self, delegating: DelegatingBackend, mock_inner: MagicMock) -> None:
-        expected = HandlerResponse.ok(data=None)
-        mock_inner.rmdir.return_value = expected
+        mock_inner.rmdir.return_value = None
         result = delegating.rmdir("/test", recursive=True)
         mock_inner.rmdir.assert_called_once_with("/test", recursive=True, context=None)
-        assert result is expected
+        assert result is None
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +171,7 @@ class TestGetAttrFallback:
 
     def test_getattr_delegates_unknown_method(self) -> None:
         """Use a non-spec mock to verify __getattr__ forwards unknown methods."""
-        inner = MagicMock()  # No spec — allows arbitrary attributes
+        inner = MagicMock()  # No spec -- allows arbitrary attributes
         inner.name = "flexible"
         inner.describe.return_value = "flexible"
         wrapper = DelegatingBackend(inner=inner)

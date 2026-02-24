@@ -30,10 +30,10 @@ from typing import TYPE_CHECKING
 
 from nexus.backends.backend import Backend
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
-from nexus.contracts.exceptions import BackendError
+from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
+from nexus.core.object_store import WriteResult
 from nexus.core.protocols.capabilities import ConnectorCapability
-from nexus.lib.response import HandlerResponse
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
@@ -263,230 +263,172 @@ class PassthroughBackend(Backend):
         self,
         content: bytes,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[str]:
-        """Write content to CAS and create/update pointer if virtual_path in context."""
-        start_time = time.perf_counter()
+    ) -> WriteResult:
+        """Write content to CAS and create/update pointer if virtual_path in context.
 
-        try:
-            content_hash = hash_content(content)
-            cas_path = self._get_cas_path(content_hash)
+        Returns:
+            WriteResult with content_hash and size.
 
-            # Write to CAS if not exists
-            if not cas_path.exists():
-                cas_path.parent.mkdir(parents=True, exist_ok=True)
+        Raises:
+            BackendError: If write operation fails.
+        """
+        content_hash = hash_content(content)
+        cas_path = self._get_cas_path(content_hash)
 
+        # Write to CAS if not exists
+        if not cas_path.exists():
+            cas_path.parent.mkdir(parents=True, exist_ok=True)
+
+            tmp_path = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                    mode="wb",
+                    dir=cas_path.parent,
+                    delete=False,
+                ) as tmp_file:
+                    tmp_path = Path(tmp_file.name)
+                    tmp_file.write(content)
+                    tmp_file.flush()
+                    os.fsync(tmp_file.fileno())
+
+                os.replace(str(tmp_path), str(cas_path))
                 tmp_path = None
-                try:
-                    with tempfile.NamedTemporaryFile(
-                        mode="wb",
-                        dir=cas_path.parent,
-                        delete=False,
-                    ) as tmp_file:
-                        tmp_path = Path(tmp_file.name)
-                        tmp_file.write(content)
-                        tmp_file.flush()
-                        os.fsync(tmp_file.fileno())
+                logger.debug(f"Wrote CAS content: {content_hash}")
 
-                    os.replace(str(tmp_path), str(cas_path))
-                    tmp_path = None
-                    logger.debug(f"Wrote CAS content: {content_hash}")
+            except OSError as e:
+                raise BackendError(
+                    f"Failed to write CAS content: {e}",
+                    backend="passthrough",
+                    path=content_hash,
+                ) from e
+            finally:
+                if tmp_path is not None and tmp_path.exists():
+                    with contextlib.suppress(OSError):
+                        tmp_path.unlink()
 
-                except OSError as e:
-                    raise BackendError(
-                        f"Failed to write CAS content: {e}",
-                        backend="passthrough",
-                        path=content_hash,
-                    ) from e
-                finally:
-                    if tmp_path is not None and tmp_path.exists():
-                        with contextlib.suppress(OSError):
-                            tmp_path.unlink()
+        # Write pointer if virtual_path is provided in context
+        virtual_path = getattr(context, "virtual_path", None) if context else None
+        if virtual_path:
+            self._write_pointer(virtual_path, content_hash)
 
-            # Write pointer if virtual_path is provided in context
-            virtual_path = getattr(context, "virtual_path", None) if context else None
-            if virtual_path:
-                self._write_pointer(virtual_path, content_hash)
-
-            return HandlerResponse.ok(
-                data=content_hash,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
-                path=virtual_path or content_hash,
-            )
-
-        except BackendError:
-            raise
-        except Exception as e:
-            return HandlerResponse.from_exception(
-                e,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
-                path="unknown",
-            )
+        return WriteResult(content_hash=content_hash, size=len(content))
 
     def read_content(
         self,
         content_hash: str,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[bytes]:
-        """Read content from CAS by hash (or via pointer if hash is empty)."""
-        start_time = time.perf_counter()
+    ) -> bytes:
+        """Read content from CAS by hash (or via pointer if hash is empty).
+
+        Returns:
+            File content as bytes.
+
+        Raises:
+            NexusFileNotFoundError: If content does not exist.
+            BackendError: If read operation fails.
+        """
+        # If no hash provided, try to read via pointer
+        if not content_hash and context:
+            virtual_path = getattr(context, "virtual_path", None)
+            if virtual_path:
+                content_hash_from_pointer = self._read_pointer(virtual_path)
+                if content_hash_from_pointer:
+                    content_hash = content_hash_from_pointer
+                else:
+                    raise NexusFileNotFoundError(
+                        path=virtual_path,
+                        message=f"File not found: {virtual_path}",
+                    )
+
+        if not content_hash:
+            raise BackendError(
+                "No content hash provided",
+                backend="passthrough",
+            )
+
+        cas_path = self._get_cas_path(content_hash)
+
+        if not cas_path.exists():
+            raise NexusFileNotFoundError(
+                path=content_hash,
+                message=f"CAS content not found: {content_hash}",
+            )
 
         try:
-            # If no hash provided, try to read via pointer
-            if not content_hash and context:
-                virtual_path = getattr(context, "virtual_path", None)
-                if virtual_path:
-                    content_hash_from_pointer = self._read_pointer(virtual_path)
-                    if content_hash_from_pointer:
-                        content_hash = content_hash_from_pointer
-                    else:
-                        return HandlerResponse.not_found(
-                            path=virtual_path,
-                            message=f"File not found: {virtual_path}",
-                            execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                            backend_name=self.name,
-                        )
-
-            if not content_hash:
-                return HandlerResponse.error(
-                    message="No content hash provided",
-                    code=400,
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                    backend_name=self.name,
-                    path="",
-                )
-
-            cas_path = self._get_cas_path(content_hash)
-
-            if not cas_path.exists():
-                return HandlerResponse.not_found(
-                    path=content_hash,
-                    message=f"CAS content not found: {content_hash}",
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                    backend_name=self.name,
-                )
-
             content = cas_path.read_bytes()
+        except OSError as e:
+            raise BackendError(
+                f"Failed to read CAS content: {e}",
+                backend="passthrough",
+                path=content_hash,
+            ) from e
 
-            # Verify hash
-            actual_hash = hash_content(content)
-            if actual_hash != content_hash:
-                return HandlerResponse.error(
-                    message=f"Content hash mismatch: expected {content_hash}, got {actual_hash}",
-                    code=500,
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                    backend_name=self.name,
-                    path=content_hash,
-                )
-
-            return HandlerResponse.ok(
-                data=content,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
+        # Verify hash
+        actual_hash = hash_content(content)
+        if actual_hash != content_hash:
+            raise BackendError(
+                f"Content hash mismatch: expected {content_hash}, got {actual_hash}",
+                backend="passthrough",
                 path=content_hash,
             )
 
-        except Exception as e:
-            return HandlerResponse.from_exception(
-                e,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
-                path=content_hash,
-            )
+        return content
 
     def delete_content(
         self,
         content_hash: str,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[None]:
+    ) -> None:
         """Delete pointer (CAS cleanup deferred to GC)."""
-        start_time = time.perf_counter()
-
-        try:
-            virtual_path = getattr(context, "virtual_path", None) if context else None
-            if virtual_path:
-                self._delete_pointer(virtual_path)
-
-            return HandlerResponse.ok(
-                data=None,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
-                path=virtual_path or content_hash,
-            )
-
-        except Exception as e:
-            return HandlerResponse.from_exception(
-                e,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
-                path=content_hash,
-            )
+        virtual_path = getattr(context, "virtual_path", None) if context else None
+        if virtual_path:
+            self._delete_pointer(virtual_path)
 
     def content_exists(
         self,
         content_hash: str,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[bool]:
+    ) -> bool:
         """Check if content exists in CAS."""
-        start_time = time.perf_counter()
         cas_path = self._get_cas_path(content_hash)
-
-        return HandlerResponse.ok(
-            data=cas_path.exists(),
-            execution_time_ms=(time.perf_counter() - start_time) * 1000,
-            backend_name=self.name,
-            path=content_hash,
-        )
+        return cas_path.exists()
 
     def get_content_size(
         self,
         content_hash: str,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[int]:
-        """Get content size in bytes."""
-        start_time = time.perf_counter()
+    ) -> int:
+        """Get content size in bytes.
+
+        Raises:
+            NexusFileNotFoundError: If content does not exist.
+            BackendError: If stat operation fails.
+        """
         cas_path = self._get_cas_path(content_hash)
 
         if not cas_path.exists():
-            return HandlerResponse.not_found(
+            raise NexusFileNotFoundError(
                 path=content_hash,
                 message=f"CAS content not found: {content_hash}",
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
             )
 
         try:
-            size = cas_path.stat().st_size
-            return HandlerResponse.ok(
-                data=size,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
-                path=content_hash,
-            )
+            return cas_path.stat().st_size
         except OSError as e:
-            return HandlerResponse.from_exception(
-                e,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
+            raise BackendError(
+                f"Failed to get content size: {e}",
+                backend="passthrough",
                 path=content_hash,
-            )
+            ) from e
 
     def get_ref_count(
         self,
         content_hash: str,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[int]:
+    ) -> int:
         """Get reference count (returns 1 if exists, 0 otherwise)."""
-        start_time = time.perf_counter()
         cas_path = self._get_cas_path(content_hash)
-
-        return HandlerResponse.ok(
-            data=1 if cas_path.exists() else 0,
-            execution_time_ms=(time.perf_counter() - start_time) * 1000,
-            backend_name=self.name,
-            path=content_hash,
-        )
+        return 1 if cas_path.exists() else 0
 
     # === Directory Operations ===
 
@@ -496,79 +438,63 @@ class PassthroughBackend(Backend):
         parents: bool = False,
         exist_ok: bool = False,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[None]:
-        """Create a directory in the pointers layer."""
-        start_time = time.perf_counter()
+    ) -> None:
+        """Create a directory in the pointers layer.
+
+        Raises:
+            BackendError: If directory creation fails.
+        """
         dir_path = self._get_pointer_path(path)
 
         try:
             dir_path.mkdir(parents=parents, exist_ok=exist_ok)
-            return HandlerResponse.ok(
-                data=None,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
-                path=path,
-            )
         except FileExistsError:
             if exist_ok:
-                return HandlerResponse.ok(
-                    data=None,
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                    backend_name=self.name,
-                    path=path,
-                )
-            return HandlerResponse.error(
-                message=f"Directory already exists: {path}",
-                code=409,
-                is_expected=True,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
+                return
+            raise BackendError(
+                f"Directory already exists: {path}",
+                backend="passthrough",
                 path=path,
-            )
+            ) from None
         except FileNotFoundError:
-            return HandlerResponse.error(
-                message=f"Parent directory not found: {path}",
-                code=404,
-                is_expected=True,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
+            raise BackendError(
+                f"Parent directory not found: {path}",
+                backend="passthrough",
                 path=path,
-            )
-        except Exception as e:
-            return HandlerResponse.from_exception(
-                e,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
+            ) from None
+        except OSError as e:
+            raise BackendError(
+                f"Failed to create directory: {e}",
+                backend="passthrough",
                 path=path,
-            )
+            ) from e
 
     def rmdir(
         self,
         path: str,
         recursive: bool = False,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[None]:
-        """Remove a directory from the pointers layer."""
+    ) -> None:
+        """Remove a directory from the pointers layer.
+
+        Raises:
+            NexusFileNotFoundError: If directory does not exist.
+            BackendError: If path is not a directory or removal fails.
+        """
         import shutil
 
-        start_time = time.perf_counter()
         dir_path = self._get_pointer_path(path)
 
         if not dir_path.exists():
-            return HandlerResponse.not_found(
+            raise NexusFileNotFoundError(
                 path=path,
                 message=f"Directory not found: {path}",
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
             )
 
         if not dir_path.is_dir():
-            return HandlerResponse.error(
-                message=f"Path is not a directory: {path}",
-                code=400,
-                is_expected=True,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
+            raise BackendError(
+                f"Path is not a directory: {path}",
+                backend="passthrough",
                 path=path,
             )
 
@@ -577,36 +503,21 @@ class PassthroughBackend(Backend):
                 shutil.rmtree(dir_path)
             else:
                 dir_path.rmdir()
-
-            return HandlerResponse.ok(
-                data=None,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
-                path=path,
-            )
         except OSError as e:
-            return HandlerResponse.from_exception(
-                e,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
+            raise BackendError(
+                f"Failed to remove directory: {e}",
+                backend="passthrough",
                 path=path,
-            )
+            ) from e
 
     def is_directory(
         self,
         path: str,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[bool]:
+    ) -> bool:
         """Check if path is a directory."""
-        start_time = time.perf_counter()
         dir_path = self._get_pointer_path(path)
-
-        return HandlerResponse.ok(
-            data=dir_path.exists() and dir_path.is_dir(),
-            execution_time_ms=(time.perf_counter() - start_time) * 1000,
-            backend_name=self.name,
-            path=path,
-        )
+        return dir_path.exists() and dir_path.is_dir()
 
     def list_dir(
         self,

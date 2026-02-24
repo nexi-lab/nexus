@@ -25,8 +25,8 @@ from nexus.backends.local import LocalBackend
 from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
+from nexus.storage.in_memory_metastore import InMemoryMetastore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from tests.helpers.in_memory_metadata_store import InMemoryMetastore
 
 # ---------------------------------------------------------------------------
 # Fixtures

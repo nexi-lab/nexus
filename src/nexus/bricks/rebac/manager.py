@@ -471,10 +471,12 @@ class ReBACManager:
 
         # OPTIMIZATION 1: Boundary Cache (Issue #922) - O(1) inheritance shortcut
         # For file permissions, check if we have a cached boundary (nearest ancestor with grant)
+        # Skip when consistency_level is STRONG — caches must be bypassed for strong reads
         if (
             object_type == "file"
             and permission in ("read", "write", "execute")
             and self._boundary_cache
+            and consistency_level != ConsistencyLevel.STRONG
         ):
             boundary = self._boundary_cache.get_boundary(
                 effective_zone, subject_type, subject_id, permission, object_id
@@ -499,7 +501,8 @@ class ReBACManager:
 
         # OPTIMIZATION 2: Try Tiger Cache (O(1) bitmap lookup)
         # Tiger Cache stores pre-materialized permissions as Roaring Bitmaps
-        if self._tiger_cache and zone_id:
+        # Skip when consistency_level is STRONG — caches must be bypassed for strong reads
+        if self._tiger_cache and zone_id and consistency_level != ConsistencyLevel.STRONG:
             tiger_result = self.tiger_check_access(
                 subject=subject,
                 permission=permission,
@@ -1780,6 +1783,18 @@ class ReBACManager:
                     tuple_info["object_id"],
                     effective_zone,
                 )
+
+            # Boundary Cache: Invalidate cached boundaries for affected subject+object
+            if self._boundary_cache:
+                effective_zone_bc = normalize_zone_id(zone_id)
+                for perm in RELATION_TO_PERMISSIONS.get(tuple_info["relation"], []):
+                    self._boundary_cache.invalidate_permission_change(
+                        effective_zone_bc,
+                        tuple_info["subject_type"],
+                        tuple_info["subject_id"],
+                        perm,
+                        tuple_info["object_id"],
+                    )
 
             # Issue #919: Notify directory visibility cache invalidators
             object_tuple = (tuple_info["object_type"], tuple_info["object_id"])

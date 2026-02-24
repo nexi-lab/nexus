@@ -113,7 +113,7 @@ def init_identity(node_id: int, listen_port: int = WG_DEFAULT_PORT) -> dict:
     return identity
 
 
-def load_identity() -> dict:
+def load_identity() -> dict[str, object]:
     """Load saved identity from ``~/.nexus/network/identity.json``.
 
     Raises:
@@ -124,7 +124,8 @@ def load_identity() -> dict:
         raise FileNotFoundError(
             f"No identity found at {identity_path}. Run `nexus network init` first."
         )
-    return json.loads(identity_path.read_text())
+    result: dict[str, object] = json.loads(identity_path.read_text())
+    return result
 
 
 def add_peer(node_id: int, public_key: str, endpoint: str) -> dict:

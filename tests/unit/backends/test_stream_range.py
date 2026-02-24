@@ -158,7 +158,7 @@ class TestAsyncLocalBackendStreamRange:
 
         data = b"Hello, World! Async range test."
         resp = await backend.write_content(data)
-        content_hash = resp.unwrap()
+        content_hash = resp.content_hash
 
         chunks = []
         async for chunk in backend.stream_range(content_hash, 0, 9):
@@ -175,7 +175,7 @@ class TestAsyncLocalBackendStreamRange:
 
         data = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
         resp = await backend.write_content(data)
-        content_hash = resp.unwrap()
+        content_hash = resp.content_hash
 
         chunks = []
         async for chunk in backend.stream_range(content_hash, 10, 19):

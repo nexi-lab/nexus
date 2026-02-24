@@ -73,13 +73,12 @@ def test_nexus_fs_satisfies_narrow_protocol() -> None:
     import tempfile
     from pathlib import Path
 
-    from nexus import LocalBackend, NexusFS
+    from nexus import NexusFS
     from nexus.core.config import PermissionConfig
 
     with tempfile.TemporaryDirectory() as tmpdir:
         metadata_store = RaftMetadataStore.embedded(str(Path(tmpdir) / "metadata"))
         nx = NexusFS(
-            backend=LocalBackend(tmpdir),
             metadata_store=metadata_store,
             permissions=PermissionConfig(),
         )

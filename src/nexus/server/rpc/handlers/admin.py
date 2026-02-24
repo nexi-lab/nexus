@@ -77,13 +77,18 @@ def handle_admin_create_key(auth_provider: Any, params: Any, context: Any) -> di
         user_id = f"user_{uuid.uuid4().hex[:12]}"
 
     if params.subject_type == "user" or not params.subject_type:
-        entity_registry = EntityRegistry(auth_provider._record_store)
-        entity_registry.register_entity(
-            entity_type="user",
-            entity_id=user_id,
-            parent_type="zone",
-            parent_id=params.zone_id,
-        )
+        # Resolve _record_store: DiscriminatingAuthProvider delegates to api_key_provider
+        _record_store = getattr(auth_provider, "_record_store", None)
+        if _record_store is None and hasattr(auth_provider, "api_key_provider"):
+            _record_store = getattr(auth_provider.api_key_provider, "_record_store", None)
+        if _record_store is not None:
+            entity_registry = EntityRegistry(_record_store)
+            entity_registry.register_entity(
+                entity_type="user",
+                entity_id=user_id,
+                parent_type="zone",
+                parent_id=params.zone_id,
+            )
 
     expires_at = None
     if params.expires_days:

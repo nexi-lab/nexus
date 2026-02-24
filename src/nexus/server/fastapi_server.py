@@ -323,6 +323,7 @@ def create_app(
         "mount_service",
         "version_service",
         "share_link_service",
+        "rebac_service",
     ):
         _brick_svc = getattr(nexus_fs, _attr_name, None)
         if _brick_svc is not None:

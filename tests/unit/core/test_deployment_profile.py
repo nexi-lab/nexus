@@ -38,10 +38,12 @@ class TestDeploymentProfileEnum:
     """Tests for DeploymentProfile enum values."""
 
     def test_enum_values(self) -> None:
+        assert DeploymentProfile.MINIMAL == "minimal"
         assert DeploymentProfile.EMBEDDED == "embedded"
         assert DeploymentProfile.LITE == "lite"
         assert DeploymentProfile.FULL == "full"
         assert DeploymentProfile.CLOUD == "cloud"
+        assert DeploymentProfile.REMOTE == "remote"
 
     def test_enum_from_string(self) -> None:
         assert DeploymentProfile("embedded") is DeploymentProfile.EMBEDDED
@@ -55,7 +57,9 @@ class TestDeploymentProfileEnum:
         for profile in DeploymentProfile:
             bricks = profile.default_bricks()
             assert isinstance(bricks, frozenset)
-            assert len(bricks) > 0
+            # REMOTE has zero local bricks (NFS-client model)
+            if profile != DeploymentProfile.REMOTE:
+                assert len(bricks) > 0
 
 
 class TestDefaultBrickSets:
@@ -240,7 +244,7 @@ class TestNexusConfigProfile:
     def test_valid_profiles(self) -> None:
         from nexus.config import NexusConfig
 
-        for p in ["embedded", "lite", "full", "cloud"]:
+        for p in ["minimal", "embedded", "lite", "full", "cloud", "remote"]:
             cfg = NexusConfig(profile=p)
             assert cfg.profile == p
 

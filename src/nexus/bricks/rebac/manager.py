@@ -70,7 +70,14 @@ from nexus.bricks.rebac.rebac_tracing import (
 )
 from nexus.bricks.rebac.tuples.repository import TupleRepository
 from nexus.bricks.rebac.tuples.writer import TupleWriter
-from nexus.bricks.rebac.types import (
+from nexus.bricks.rebac.utils.fast import (
+    check_permissions_bulk_with_fallback,
+    is_rust_available,
+)
+from nexus.bricks.rebac.zone_graph_loader import ZoneGraphLoader
+from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.contracts.rebac_types import (
+    CROSS_ZONE_ALLOWED_RELATIONS,
     CheckResult,
     ConsistencyLevel,
     ConsistencyRequirement,
@@ -79,13 +86,6 @@ from nexus.bricks.rebac.types import (
     TraversalStats,
     WriteResult,
 )
-from nexus.bricks.rebac.utils.fast import (
-    check_permissions_bulk_with_fallback,
-    is_rust_available,
-)
-from nexus.bricks.rebac.zone_graph_loader import ZoneGraphLoader
-from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.contracts.rebac_types import CROSS_ZONE_ALLOWED_RELATIONS
 from nexus.lib.zone import normalize_zone_id
 
 if TYPE_CHECKING:

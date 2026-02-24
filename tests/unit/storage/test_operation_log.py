@@ -30,10 +30,18 @@ def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]
 
 
 @pytest.fixture
-def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore) -> Generator[NexusFS, None, None]:
+def local_backend(temp_dir: Path) -> LocalBackend:
+    """Create a LocalBackend for direct CAS operations in tests."""
+    return LocalBackend(temp_dir)
+
+
+@pytest.fixture
+def nx(
+    temp_dir: Path, local_backend: LocalBackend, record_store: SQLAlchemyRecordStore
+) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance for testing."""
     nx = create_nexus_fs(
-        backend=LocalBackend(temp_dir),
+        backend=local_backend,
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=record_store,
         parsing=ParseConfig(auto_parse=False),
@@ -254,7 +262,9 @@ def test_undo_write_new_file(nx: NexusFS) -> None:
     assert not nx.exists(path)
 
 
-def test_undo_write_update(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
+def test_undo_write_update(
+    nx: NexusFS, local_backend: LocalBackend, record_store: SQLAlchemyRecordStore
+) -> None:
     """Test undoing a write operation that updated an existing file."""
     path = "/test.txt"
     content1 = b"Version 1"
@@ -277,7 +287,7 @@ def test_undo_write_update(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> 
         assert last_op.snapshot_hash == old_hash
 
         # Undo by restoring old content
-        old_content = nx.backend.read_content(last_op.snapshot_hash).unwrap()
+        old_content = local_backend.read_content(last_op.snapshot_hash)
         nx.write(path, old_content)
 
         # Verify restoration
@@ -285,7 +295,9 @@ def test_undo_write_update(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> 
         assert restored_content == content1
 
 
-def test_undo_delete(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
+def test_undo_delete(
+    nx: NexusFS, local_backend: LocalBackend, record_store: SQLAlchemyRecordStore
+) -> None:
     """Test undoing a delete operation."""
     path = "/test.txt"
     content = b"Test content"
@@ -305,7 +317,7 @@ def test_undo_delete(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
         assert last_op.snapshot_hash == content_hash
 
         # Undo by restoring from snapshot
-        restored_content = nx.backend.read_content(last_op.snapshot_hash).unwrap()
+        restored_content = local_backend.read_content(last_op.snapshot_hash)
         nx.write(path, restored_content)
 
         # Verify restoration

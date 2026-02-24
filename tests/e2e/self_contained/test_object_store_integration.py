@@ -1,102 +1,85 @@
-"""Integration tests for ObjectStoreABC — full stack: factory → adapter → backend.
+"""Integration tests for ObjectStoreABC — Backend directly implements the ABC.
 
-Validates that BackendObjectStore works correctly when wrapping a backend
-created by BackendFactory, matching the CacheStoreABC integration test pattern.
+Validates that Backend (which extends ObjectStoreABC) works correctly as the
+kernel file_operations contract, matching the CacheStoreABC integration test pattern.
+
+Since BackendObjectStore adapter was removed (Backend now *is* the ObjectStoreABC),
+tests exercise LocalBackend directly through the ABC interface.
 """
 
 import pytest
 
 from nexus.backends.local import LocalBackend
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
-from nexus.core.object_store import BackendObjectStore, ObjectStoreABC
+from nexus.core.object_store import ObjectStoreABC
 
 
-class TestFactoryToAdapterIntegration:
-    """Tests the full chain: BackendFactory → Backend → BackendObjectStore."""
+class TestBackendAsObjectStore:
+    """Tests that Backend directly satisfies ObjectStoreABC contract."""
 
-    def test_wrap_local_backend(self, tmp_path) -> None:
-        """LocalBackend created directly wraps into ObjectStoreABC."""
+    def test_local_backend_is_object_store(self, tmp_path) -> None:
+        """LocalBackend is an ObjectStoreABC instance."""
         backend = LocalBackend(root_path=str(tmp_path))
-        store = BackendObjectStore(backend)
-        assert isinstance(store, ObjectStoreABC)
-        assert store.name == "local"
+        assert isinstance(backend, ObjectStoreABC)
+        assert backend.name == "local"
 
-    def test_write_read_roundtrip_via_factory(self, tmp_path) -> None:
-        """Full roundtrip through factory-created backend."""
+    def test_write_read_roundtrip(self, tmp_path) -> None:
+        """Full roundtrip through LocalBackend."""
         backend = LocalBackend(root_path=str(tmp_path))
-        store = BackendObjectStore(backend)
 
         content = b"integration test data"
-        content_hash = store.write(content)
-        assert len(content_hash) == 64
-        assert store.read(content_hash) == content
+        result = backend.write_content(content)
+        assert len(result.content_hash) == 64
+        assert backend.read_content(result.content_hash) == content
 
-    def test_all_ops_through_adapter(self, tmp_path) -> None:
-        """Exercises all 6 ObjectStoreABC methods through the adapter."""
+    def test_all_ops(self, tmp_path) -> None:
+        """Exercises core ObjectStoreABC methods through LocalBackend."""
         backend = LocalBackend(root_path=str(tmp_path))
-        store = BackendObjectStore(backend)
 
-        # write
-        h1 = store.write(b"first")
-        h2 = store.write(b"second")
+        # write_content
+        r1 = backend.write_content(b"first")
+        r2 = backend.write_content(b"second")
 
-        # read
-        assert store.read(h1) == b"first"
-        assert store.read(h2) == b"second"
+        # read_content
+        assert backend.read_content(r1.content_hash) == b"first"
+        assert backend.read_content(r2.content_hash) == b"second"
 
-        # exists
-        assert store.exists(h1) is True
-        assert store.exists("f" * 64) is False
+        # content_exists
+        assert backend.content_exists(r1.content_hash) is True
+        assert backend.content_exists("f" * 64) is False
 
-        # size
-        assert store.size(h1) == 5
-        assert store.size(h2) == 6
+        # get_content_size
+        assert backend.get_content_size(r1.content_hash) == 5
+        assert backend.get_content_size(r2.content_hash) == 6
 
-        # batch_read
-        result = store.batch_read([h1, h2, "f" * 64])
-        assert result[h1] == b"first"
-        assert result[h2] == b"second"
+        # batch_read_content
+        result = backend.batch_read_content([r1.content_hash, r2.content_hash, "f" * 64])
+        assert result[r1.content_hash] == b"first"
+        assert result[r2.content_hash] == b"second"
         assert result["f" * 64] is None
 
-        # delete
-        store.delete(h1)
-        assert store.exists(h1) is False
+        # delete_content
+        backend.delete_content(r1.content_hash)
+        assert backend.content_exists(r1.content_hash) is False
 
-    def test_backend_property_accessible(self, tmp_path) -> None:
-        """Read-only backend property works for introspection."""
+    def test_error_propagation(self, tmp_path) -> None:
+        """Errors from LocalBackend raise proper exceptions."""
         backend = LocalBackend(root_path=str(tmp_path))
-        store = BackendObjectStore(backend)
-        assert store.backend is backend
-        assert isinstance(store.backend, LocalBackend)
-
-    def test_repr_includes_backend_name(self, tmp_path) -> None:
-        """Repr is useful for debugging."""
-        backend = LocalBackend(root_path=str(tmp_path))
-        store = BackendObjectStore(backend)
-        r = repr(store)
-        assert "BackendObjectStore" in r
-        assert "local" in r
-
-    def test_error_propagation_through_full_stack(self, tmp_path) -> None:
-        """Errors from real LocalBackend propagate through adapter correctly."""
-        backend = LocalBackend(root_path=str(tmp_path))
-        store = BackendObjectStore(backend)
 
         with pytest.raises((NexusFileNotFoundError, BackendError)):
-            store.read("d" * 64)
+            backend.read_content("d" * 64)
 
-    def test_deduplication_through_full_stack(self, tmp_path) -> None:
-        """Deduplication works through the full adapter stack."""
+    def test_deduplication(self, tmp_path) -> None:
+        """Deduplication works — same content produces same hash."""
         backend = LocalBackend(root_path=str(tmp_path))
-        store = BackendObjectStore(backend)
 
         content = b"deduplicate me"
-        h1 = store.write(content)
-        h2 = store.write(content)
-        assert h1 == h2
+        r1 = backend.write_content(content)
+        r2 = backend.write_content(content)
+        assert r1.content_hash == r2.content_hash
 
         # Delete once — should decrement ref count
-        store.delete(h1)
+        backend.delete_content(r1.content_hash)
         # Content still accessible (ref count > 0)
-        assert store.exists(h2)
-        assert store.read(h2) == content
+        assert backend.content_exists(r2.content_hash)
+        assert backend.read_content(r2.content_hash) == content

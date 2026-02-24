@@ -15,6 +15,7 @@ Design reference:
 
 import time
 
+from nexus.core.object_store import WriteResult
 from tests.unit.backends.wrapper_test_helpers import make_storage_mock
 
 # ---------------------------------------------------------------------------
@@ -67,16 +68,15 @@ class TestCompressEncryptChain:
         # Write plaintext through entire chain
         plaintext = b"hello world from the full chain! " * 100
         write_resp = compressed.write_content(plaintext)
-        assert write_resp.success
+        assert isinstance(write_resp, WriteResult)
 
         # Verify stored content is neither plaintext nor just compressed
-        stored = storage[write_resp.data]
+        stored = storage[write_resp.content_hash]
         assert stored != plaintext, "Stored content should be encrypted"
 
         # Read back through chain
-        read_resp = compressed.read_content(write_resp.data)
-        assert read_resp.success
-        assert read_resp.data == plaintext
+        read_back = compressed.read_content(write_resp.content_hash)
+        assert read_back == plaintext
 
     def test_chain_dedup(self) -> None:
         """Same content through same chain should produce same hash."""
@@ -98,8 +98,8 @@ class TestCompressEncryptChain:
         )
 
         content = b"deduplicate me " * 100
-        h1 = compressed.write_content(content).data
-        h2 = compressed.write_content(content).data
+        h1 = compressed.write_content(content).content_hash
+        h2 = compressed.write_content(content).content_hash
         assert h1 == h2
 
     def test_chain_batch_read(self) -> None:
@@ -122,7 +122,7 @@ class TestCompressEncryptChain:
         )
 
         items = [b"item_a " * 50, b"item_b " * 50, b"item_c " * 50]
-        hashes = [compressed.write_content(item).data for item in items]
+        hashes = [compressed.write_content(item).content_hash for item in items]
 
         results = compressed.batch_read_content(hashes)
         for h, expected in zip(hashes, items):
@@ -173,11 +173,10 @@ class TestEncryptCompressChain:
 
         plaintext = b"reversed chain data " * 100
         write_resp = encrypted.write_content(plaintext)
-        assert write_resp.success
+        assert isinstance(write_resp, WriteResult)
 
-        read_resp = encrypted.read_content(write_resp.data)
-        assert read_resp.success
-        assert read_resp.data == plaintext
+        read_back = encrypted.read_content(write_resp.content_hash)
+        assert read_back == plaintext
 
 
 # ---------------------------------------------------------------------------
@@ -213,7 +212,7 @@ class TestWrapperChainPerformance:
         content = b"performance test data " * 100
 
         # Warm up
-        h = compressed.write_content(content).data
+        h = compressed.write_content(content).content_hash
         compressed.read_content(h)
 
         # Time writes
@@ -269,17 +268,15 @@ class TestCacheWrapperChain:
 
         plaintext = b"cache chain test data " * 100
         write_resp = cached.write_content(plaintext)
-        assert write_resp.success
+        assert isinstance(write_resp, WriteResult)
 
         # First read populates L1
-        read_resp = cached.read_content(write_resp.data)
-        assert read_resp.success
-        assert read_resp.data == plaintext
+        read_back = cached.read_content(write_resp.content_hash)
+        assert read_back == plaintext
 
         # Second read should hit L1 cache
-        read_resp2 = cached.read_content(write_resp.data)
-        assert read_resp2.success
-        assert read_resp2.data == plaintext
+        read_back2 = cached.read_content(write_resp.content_hash)
+        assert read_back2 == plaintext
 
     def test_cache_only_chain(self) -> None:
         """cache → leaf: verify cache hit skips inner."""
@@ -294,16 +291,15 @@ class TestCacheWrapperChain:
 
         # Write and first read
         write_resp = cached.write_content(b"hello")
-        content_hash = write_resp.data
+        content_hash = write_resp.content_hash
         cached.read_content(content_hash)
 
         # Reset mock call count
         mock.read_content.reset_mock()
 
         # Second read should hit L1, not call inner
-        resp = cached.read_content(content_hash)
-        assert resp.success
-        assert resp.data == b"hello"
+        read_back = cached.read_content(content_hash)
+        assert read_back == b"hello"
         mock.read_content.assert_not_called()
 
     def test_cache_chain_describe(self) -> None:
@@ -385,7 +381,7 @@ class TestPerformanceRegression:
         content = b"full chain perf data " * 100
 
         # Warm up
-        h = cached.write_content(content).data
+        h = cached.write_content(content).content_hash
         cached.read_content(h)
 
         # Time reads (includes L1 cache hit path)

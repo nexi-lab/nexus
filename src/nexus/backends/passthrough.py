@@ -81,7 +81,7 @@ class PassthroughBackend(Backend):
     Example:
         >>> backend = PassthroughBackend("/data/nexus")
         >>> # Write content - stores in CAS, creates pointer
-        >>> content_hash = backend.write_content(b"hello").unwrap()
+        >>> content_hash = backend.write_content(b"hello").content_hash
     """
 
     _CAPABILITIES = frozenset(

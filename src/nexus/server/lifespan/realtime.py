@@ -169,54 +169,75 @@ async def _startup_websocket(app: "FastAPI", svc: "LifespanServices") -> None:
 
 
 async def _startup_writeback(app: "FastAPI", svc: "LifespanServices") -> None:
-    """Initialize WriteBack Service for bidirectional sync (Issue #1129/#1130)."""
-    write_back_enabled = os.getenv("NEXUS_WRITE_BACK", "").lower() in ("true", "1", "yes")
-    if not (write_back_enabled and svc.nexus_fs):
+    """Initialize WriteBack Service for bidirectional sync (Issue #1129/#1130).
+
+    When ``NEXUS_WRITE_BACK=true`` and an event bus is available, the full
+    WriteBackService starts with conflict resolution and backlog stores.
+
+    Otherwise, an ``InMemoryWriteBack`` fallback is installed so that sync
+    endpoints return zero-change responses instead of 503 — this keeps
+    the API surface consistent in standalone mode.
+    """
+    if not svc.nexus_fs:
         return
 
+    write_back_enabled = os.getenv("NEXUS_WRITE_BACK", "").lower() in ("true", "1", "yes")
+
     try:
-        from nexus.services.gateway import NexusFSGateway
-        from nexus.system_services.sync.change_log_store import ChangeLogStore
-        from nexus.system_services.sync.conflict_log_store import ConflictLogStore
-        from nexus.system_services.sync.conflict_resolution import ConflictStrategy
-        from nexus.system_services.sync.sync_backlog_store import SyncBacklogStore
-        from nexus.system_services.sync.write_back_service import WriteBackService
+        if write_back_enabled:
+            from nexus.services.gateway import NexusFSGateway
+            from nexus.system_services.sync.change_log_store import ChangeLogStore
+            from nexus.system_services.sync.conflict_log_store import ConflictLogStore
+            from nexus.system_services.sync.conflict_resolution import ConflictStrategy
+            from nexus.system_services.sync.sync_backlog_store import SyncBacklogStore
+            from nexus.system_services.sync.write_back_service import WriteBackService
 
-        gw = NexusFSGateway(svc.nexus_fs)
+            gw = NexusFSGateway(svc.nexus_fs)
 
-        # ConflictLogStore is always available for the REST API
-        _is_pg = gw.is_postgresql
-        conflict_log_store = ConflictLogStore(record_store=gw.record_store, is_postgresql=_is_pg)
-        app.state.conflict_log_store = conflict_log_store
-
-        wb_event_bus = svc.event_bus
-        if wb_event_bus:
-            backlog_store = SyncBacklogStore(record_store=gw.record_store, is_postgresql=_is_pg)
-            change_log_store = ChangeLogStore(record_store=gw.record_store, is_postgresql=_is_pg)
-
-            # Map env var to ConflictStrategy (backward compat)
-            _policy_map = {
-                "lww": ConflictStrategy.KEEP_NEWER,
-                "fork": ConflictStrategy.RENAME_CONFLICT,
-            }
-            raw_policy = os.getenv("NEXUS_CONFLICT_POLICY", "keep_newer")
-            try:
-                default_strategy = ConflictStrategy(raw_policy)
-            except ValueError:
-                default_strategy = _policy_map.get(raw_policy, ConflictStrategy.KEEP_NEWER)
-
-            app.state.write_back_service = WriteBackService(
-                gateway=gw,
-                event_bus=wb_event_bus,
-                backlog_store=backlog_store,
-                change_log_store=change_log_store,
-                default_strategy=default_strategy,
-                conflict_log_store=conflict_log_store,
+            # ConflictLogStore is always available for the REST API
+            _is_pg = gw.is_postgresql
+            conflict_log_store = ConflictLogStore(
+                record_store=gw.record_store, is_postgresql=_is_pg
             )
-            await app.state.write_back_service.start()
-            logger.info("WriteBack service started for bidirectional sync")
-        else:
-            logger.debug("WriteBack service skipped: no event bus available")
+            app.state.conflict_log_store = conflict_log_store
+
+            wb_event_bus = svc.event_bus
+            if wb_event_bus:
+                backlog_store = SyncBacklogStore(record_store=gw.record_store, is_postgresql=_is_pg)
+                change_log_store = ChangeLogStore(
+                    record_store=gw.record_store, is_postgresql=_is_pg
+                )
+
+                # Map env var to ConflictStrategy (backward compat)
+                _policy_map = {
+                    "lww": ConflictStrategy.KEEP_NEWER,
+                    "fork": ConflictStrategy.RENAME_CONFLICT,
+                }
+                raw_policy = os.getenv("NEXUS_CONFLICT_POLICY", "keep_newer")
+                try:
+                    default_strategy = ConflictStrategy(raw_policy)
+                except ValueError:
+                    default_strategy = _policy_map.get(raw_policy, ConflictStrategy.KEEP_NEWER)
+
+                app.state.write_back_service = WriteBackService(
+                    gateway=gw,
+                    event_bus=wb_event_bus,
+                    backlog_store=backlog_store,
+                    change_log_store=change_log_store,
+                    default_strategy=default_strategy,
+                    conflict_log_store=conflict_log_store,
+                )
+                await app.state.write_back_service.start()
+                logger.info("WriteBack service started for bidirectional sync")
+                return
+
+        # Fallback: provide InMemoryWriteBack so sync endpoints return
+        # zero-change responses instead of 503 in standalone mode.
+        from nexus.services.protocols.write_back import InMemoryWriteBack
+
+        app.state.write_back_service = InMemoryWriteBack()
+        await app.state.write_back_service.start()
+        logger.info("WriteBack service started (in-memory fallback)")
     except Exception as e:
         logger.warning("Failed to start WriteBack service: %s", e)
 

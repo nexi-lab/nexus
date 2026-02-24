@@ -1321,6 +1321,28 @@ def serve(
                     )
                     console.print("[yellow]   You may need to manually create /workspace[/yellow]")
 
+                # Create default zones for multi-zone support
+                console.print()
+                console.print("[yellow]Creating default zones...[/yellow]")
+                try:
+                    from nexus.bricks.auth.zone_helpers import create_zone as _create_zone
+
+                    _default_zones = [
+                        ("corp", "Default Organization"),
+                        ("corp-eng", "Engineering Team"),
+                    ]
+                    with Session() as _zsession:
+                        for _zid, _zname in _default_zones:
+                            try:
+                                _create_zone(session=_zsession, zone_id=_zid, name=_zname)
+                                console.print(f"[green]✓[/green] Created zone: {_zid}")
+                            except ValueError:
+                                console.print(f"[green]✓[/green] Zone {_zid} already exists")
+                except Exception as zone_err:
+                    console.print(
+                        f"[yellow]⚠️  Warning: Could not create zones: {zone_err}[/yellow]"
+                    )
+
                 # Display API key
                 console.print()
                 console.print("[bold cyan]" + "=" * 60 + "[/bold cyan]")

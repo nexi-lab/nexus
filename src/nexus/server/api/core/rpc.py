@@ -33,6 +33,36 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Path attributes on RPC param dataclasses that must be zone-scoped.
+_ZONE_PATH_ATTRS = ("path", "old_path", "new_path")
+
+
+def _scope_params_for_zone(params: Any, zone_id: str) -> None:
+    """Prefix path attributes with ``/zone/{zone_id}/`` for zone isolation.
+
+    Mutates the params dataclass in place.  Only applies when *zone_id*
+    differs from ROOT_ZONE_ID — the root zone sees the full tree.
+    The reverse operation (stripping the prefix from results) is handled
+    by ``unscope_internal_path`` in ``path_utils.py``.
+    """
+    from nexus.constants import ROOT_ZONE_ID
+
+    if zone_id == ROOT_ZONE_ID:
+        return
+
+    prefix = f"/zone/{zone_id}"
+    for attr in _ZONE_PATH_ATTRS:
+        value = getattr(params, attr, None)
+        if not isinstance(value, str):
+            continue
+        # Don't double-scope paths that already carry a zone/tenant prefix
+        if value.startswith(("/zone/", "/tenant:")):
+            continue
+        if value.startswith("/"):
+            setattr(params, attr, f"{prefix}{value}")
+        else:
+            setattr(params, attr, f"{prefix}/{value}")
+
 
 @router.post("/api/nfs/{method}")
 @limiter.limit(RATE_LIMIT_AUTHENTICATED)
@@ -74,6 +104,9 @@ async def rpc_endpoint(
 
         # Get operation context
         context = get_operation_context(auth_result)
+
+        # Scope paths for zone isolation (prefix with /zone/{zone_id}/)
+        _scope_params_for_zone(params, context.zone_id)
 
         _setup_elapsed = (_time.time() - _rpc_start) * 1000 - _parse_elapsed
 

@@ -65,6 +65,7 @@ class ZoneResponse(BaseModel):
     is_active: bool
     created_at: str
     updated_at: str
+    limits: dict[str, Any] | None = None
 
 
 class ZoneListResponse(BaseModel):
@@ -76,6 +77,17 @@ class ZoneListResponse(BaseModel):
 
 def _zone_to_response(zone: ZoneModel) -> ZoneResponse:
     """Convert a ZoneModel to a ZoneResponse (DRY helper)."""
+    # Extract limits from zone settings (forward-compatible via extra='allow')
+    settings = zone.parsed_settings
+    limits = getattr(settings, "limits", None)
+    if limits is None:
+        # Provide default quota stub so the field is always present
+        limits = {
+            "max_storage_bytes": 0,
+            "max_files": 0,
+            "max_agents": 0,
+        }
+
     return ZoneResponse(
         zone_id=zone.zone_id,
         name=zone.name,
@@ -86,6 +98,7 @@ def _zone_to_response(zone: ZoneModel) -> ZoneResponse:
         is_active=zone.is_active,
         created_at=zone.created_at.isoformat(),
         updated_at=zone.updated_at.isoformat(),
+        limits=limits,
     )
 
 

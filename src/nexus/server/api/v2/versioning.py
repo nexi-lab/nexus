@@ -285,6 +285,14 @@ def build_v2_registry(
     except ImportError as e:
         logger.warning("Failed to import Batch routes: %s", e)
 
+    # ---- Auth keys router (key lifecycle management) ----
+    try:
+        from nexus.server.api.v2.routers.auth_keys import router as auth_keys_router
+
+        registry.add(RouterEntry(router=auth_keys_router, name="auth_keys", endpoint_count=4))
+    except ImportError as e:
+        logger.warning("Failed to import Auth keys routes: %s", e)
+
     # ---- Eviction router (Issue #2170) ----
     try:
         from nexus.server.api.v2.routers.eviction import router as eviction_router

@@ -73,6 +73,15 @@ def _compute_features_info(app: "FastAPI", svc: LifespanServices) -> None:
             asyncpg_max_size=_pt.pool.asyncpg_max_size,
         )
 
+    # Detect rate limiting status from env (same var used in fastapi_server.py)
+    import os
+
+    _rate_limit_enabled = os.environ.get("NEXUS_RATE_LIMIT_ENABLED", "").lower() in (
+        "true",
+        "1",
+        "yes",
+    )
+
     features_info = FeaturesResponse(
         profile=profile.value,
         mode=mode,
@@ -80,6 +89,7 @@ def _compute_features_info(app: "FastAPI", svc: LifespanServices) -> None:
         disabled_bricks=disabled,
         version=version,
         performance_tuning=_perf_info,
+        rate_limit_enabled=_rate_limit_enabled,
     )
     app.state.features_info = features_info
 

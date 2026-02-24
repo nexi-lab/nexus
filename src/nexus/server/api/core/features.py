@@ -45,6 +45,9 @@ class FeaturesResponse(BaseModel):
     performance_tuning: PerformanceTuningInfo | None = Field(
         default=None, description="Active performance tuning (Issue #2071)"
     )
+    rate_limit_enabled: bool = Field(
+        default=False, description="Whether rate limiting is active on this server"
+    )
 
 
 @router.get("/api/v2/features", response_model=FeaturesResponse)

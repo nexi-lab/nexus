@@ -19,6 +19,7 @@ References:
 
 from enum import StrEnum
 
+
 class ConnectorCapability(StrEnum):
     """Enumeration of all capabilities a connector backend can support.
 
@@ -33,8 +34,8 @@ class ConnectorCapability(StrEnum):
     RENAME = "rename"
     """Backend supports direct file rename/move."""
 
-    VIRTUAL_FILESYSTEM = "virtual_filesystem"
-    """Backend uses a virtual filesystem (API-backed)."""
+    EXTERNAL_CONTENT = "external_content"
+    """Content is managed by an external source (local FS, API, IPC), not CAS."""
 
     ROOT_PATH = "root_path"
     """Backend has a local root_path for physical storage."""

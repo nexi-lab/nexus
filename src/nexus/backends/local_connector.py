@@ -88,16 +88,12 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
 
     _CAPABILITIES = frozenset(
         {
-            ConnectorCapability.VIRTUAL_FILESYSTEM,
+            ConnectorCapability.EXTERNAL_CONTENT,
             ConnectorCapability.DIRECTORY_LISTING,
             ConnectorCapability.CACHE_BULK_READ,
             ConnectorCapability.CACHE_SYNC,
         }
     )
-
-    @property
-    def has_virtual_filesystem(self) -> bool:  # noqa: D102
-        return True
 
     # Cache configuration: L1 only, no L2 (PostgreSQL)
     # Local disk is already fast, no need for persistent cache layer

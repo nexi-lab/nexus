@@ -161,10 +161,17 @@ class WriteBackService:
         if mount_info["readonly"]:
             return
 
-        # Skip reference-mode backends (e.g. LocalConnector) — content is already
-        # written directly to the physical filesystem, write-back would double-write.
+        # Skip external-content backends (e.g. LocalConnector, HN, IPC) — content is
+        # managed externally, write-back would double-write or be meaningless.
+        # Also skip RemoteBackend — server handles its own persistence.
+        from nexus.core.protocols.capabilities import ConnectorCapability
+
         backend = mount_info["backend"]
-        if getattr(backend, "has_virtual_filesystem", False):
+        _caps: frozenset[str] = getattr(backend, "capabilities", frozenset())
+        if (
+            ConnectorCapability.EXTERNAL_CONTENT in _caps
+            or getattr(backend, "name", "") == "remote"
+        ):
             return
 
         # Map event type to operation type

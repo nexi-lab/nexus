@@ -132,7 +132,7 @@ def make_test_nexus(
         is_admin: Admin flag.
         record_store: Optional RecordStoreABC.
         use_raft: Use RaftMetadataStore (requires Python 3.13).
-        metadata_store: Override metadata store. Default: InMemory or Raft.
+        metadata_store: Override metadata store. Default: DictMetastore or Raft.
 
     Returns:
         NexusFS instance ready for testing.
@@ -161,9 +161,9 @@ def make_test_nexus(
 
             metadata_store = RaftMetadataStore.embedded(str(tmp_path / "raft"))
         else:
-            from nexus.storage.in_memory_metastore import InMemoryMetastore
+            from tests.helpers.dict_metastore import DictMetastore
 
-            metadata_store = InMemoryMetastore()
+            metadata_store = DictMetastore()
 
     nx = NexusFS(
         metadata_store=metadata_store,

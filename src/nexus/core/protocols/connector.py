@@ -185,9 +185,6 @@ class ConnectorProtocol(
     def has_root_path(self) -> bool: ...
 
     @property
-    def has_virtual_filesystem(self) -> bool: ...
-
-    @property
     def has_token_manager(self) -> bool: ...
 
 @runtime_checkable

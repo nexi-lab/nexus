@@ -7,17 +7,17 @@ import pytest
 from nexus.backends.local import LocalBackend
 from nexus.contracts.exceptions import AccessDeniedError, InvalidPathError, PathNotMountedError
 from nexus.core.router import PathRouter
-from nexus.storage.in_memory_metastore import InMemoryMetastore
+from tests.helpers.dict_metastore import DictMetastore
 
 
 @pytest.fixture
-def metastore() -> InMemoryMetastore:
-    """Create an InMemoryMetastore for testing."""
-    return InMemoryMetastore()
+def metastore() -> DictMetastore:
+    """Create a DictMetastore for testing."""
+    return DictMetastore()
 
 
 @pytest.fixture
-def router(metastore: InMemoryMetastore) -> PathRouter:
+def router(metastore: DictMetastore) -> PathRouter:
     """Create a PathRouter instance backed by an in-memory metastore."""
     return PathRouter(metastore)
 
@@ -143,7 +143,7 @@ def test_route_root_mount(router: PathRouter, temp_backend: LocalBackend) -> Non
     assert result.mount_point == "/"
 
 
-def test_route_longest_prefix_wins(metastore: InMemoryMetastore) -> None:
+def test_route_longest_prefix_wins(metastore: DictMetastore) -> None:
     """Test that longest matching prefix wins."""
     router = PathRouter(metastore)
     with tempfile.TemporaryDirectory() as tmpdir1, tempfile.TemporaryDirectory() as tmpdir2:

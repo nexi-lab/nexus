@@ -52,10 +52,6 @@ class TestIPCVFSDriverProperties:
         driver = IPCVFSDriver(storage=InMemoryStorageDriver(), zone_id=ZONE)
         assert driver.name == "ipc"
 
-    def test_has_virtual_filesystem(self) -> None:
-        driver = IPCVFSDriver(storage=InMemoryStorageDriver(), zone_id=ZONE)
-        assert driver.has_virtual_filesystem is True
-
     def test_supports_rename(self) -> None:
         driver = IPCVFSDriver(storage=InMemoryStorageDriver(), zone_id=ZONE)
         assert driver.supports_rename is True

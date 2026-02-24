@@ -218,7 +218,6 @@ def connect(
     from nexus.backends.local import LocalBackend
     from nexus.config import NexusConfig, load_config
     from nexus.core.nexus_fs import NexusFS
-    from nexus.remote import RemoteNexusFS
     from nexus.storage.raft_metadata_store import RaftMetadataStore
 
     # Load configuration
@@ -235,12 +234,32 @@ def connect(
         api_key = cfg.api_key or os.getenv("NEXUS_API_KEY")
         timeout = int(cfg.timeout) if hasattr(cfg, "timeout") else 30
         connect_timeout = int(cfg.connect_timeout) if hasattr(cfg, "connect_timeout") else 5
-        return RemoteNexusFS(  # type: ignore[return-value]
+
+        # RemoteBackend + RemoteMetastore — stateless proxies, server is SSOT.
+        from nexus.backends.remote import RemoteBackend
+        from nexus.factory import create_nexus_fs as _create_remote_nfs
+        from nexus.storage.remote_metastore import RemoteMetastore
+
+        remote_backend = RemoteBackend(
             server_url=server_url,
             api_key=api_key,
             timeout=timeout,
             connect_timeout=connect_timeout,
         )
+        remote_metastore = RemoteMetastore(
+            server_url=server_url,
+            api_key=api_key,
+            timeout=timeout,
+            connect_timeout=connect_timeout,
+        )
+
+        nfs = _create_remote_nfs(
+            backend=remote_backend,
+            metadata_store=remote_metastore,
+            record_store=None,
+        )
+        nfs.router.add_mount("/", remote_backend)
+        return nfs
 
     # ── Modes: standalone / federation ───────────────────────────────
     if cfg.mode not in ("standalone", "federation"):

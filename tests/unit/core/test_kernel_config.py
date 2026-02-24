@@ -333,6 +333,8 @@ class TestSystemServices:
             "resiliency_manager",
             "zone_lifecycle",
             "pipe_manager",
+            "event_log",
+            "scheduler_service",
         }
         assert field_names == expected_fields, (
             f"Extra: {field_names - expected_fields}, Missing: {expected_fields - field_names}"

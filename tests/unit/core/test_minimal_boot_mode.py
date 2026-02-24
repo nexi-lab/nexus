@@ -91,14 +91,14 @@ class TestMinimalBootViaFactory:
     def test_create_nexus_fs_no_record_store(self, tmp_path: "Path") -> None:
         from nexus.backends.local import LocalBackend
         from nexus.factory.orchestrator import create_nexus_fs
-        from nexus.storage.in_memory_metastore import InMemoryMetastore
+        from tests.helpers.dict_metastore import DictMetastore
 
         data_dir = tmp_path / "data"
         data_dir.mkdir(exist_ok=True)
 
         nx = create_nexus_fs(
             backend=LocalBackend(root_path=data_dir),
-            metadata_store=InMemoryMetastore(),
+            metadata_store=DictMetastore(),
             record_store=None,
         )
 
@@ -110,14 +110,14 @@ class TestMinimalBootViaFactory:
     def test_minimal_mode_nexus_has_router(self, tmp_path: "Path") -> None:
         from nexus.backends.local import LocalBackend
         from nexus.factory.orchestrator import create_nexus_fs
-        from nexus.storage.in_memory_metastore import InMemoryMetastore
+        from tests.helpers.dict_metastore import DictMetastore
 
         data_dir = tmp_path / "data"
         data_dir.mkdir(exist_ok=True)
 
         nx = create_nexus_fs(
             backend=LocalBackend(root_path=data_dir),
-            metadata_store=InMemoryMetastore(),
+            metadata_store=DictMetastore(),
             record_store=None,
         )
 
@@ -324,7 +324,7 @@ class TestMinimalIntegrationViaConnect:
         from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_bricks
         from nexus.core.config import PermissionConfig
         from nexus.factory.orchestrator import create_nexus_fs
-        from nexus.storage.in_memory_metastore import InMemoryMetastore
+        from tests.helpers.dict_metastore import DictMetastore
 
         data_dir = tmp_path / "data"
         data_dir.mkdir(exist_ok=True)
@@ -337,7 +337,7 @@ class TestMinimalIntegrationViaConnect:
 
         nx = create_nexus_fs(
             backend=LocalBackend(root_path=data_dir),
-            metadata_store=InMemoryMetastore(),
+            metadata_store=DictMetastore(),
             record_store=None,
             enabled_bricks=enabled_bricks,
             permissions=PermissionConfig(enforce=False),
@@ -369,7 +369,7 @@ class TestMinimalIntegrationViaConnect:
         from nexus.backends.local import LocalBackend
         from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_bricks
         from nexus.factory.orchestrator import create_nexus_fs
-        from nexus.storage.in_memory_metastore import InMemoryMetastore
+        from tests.helpers.dict_metastore import DictMetastore
 
         enabled_bricks = resolve_enabled_bricks(DeploymentProfile.MINIMAL)
 
@@ -378,7 +378,7 @@ class TestMinimalIntegrationViaConnect:
             # With record_store=None, factory path skips services entirely
             nx = create_nexus_fs(
                 backend=LocalBackend(root_path=data_dir),
-                metadata_store=InMemoryMetastore(),
+                metadata_store=DictMetastore(),
                 record_store=None,
                 enabled_bricks=enabled_bricks,
             )
@@ -390,14 +390,14 @@ class TestMinimalIntegrationViaConnect:
         from nexus.backends.local import LocalBackend
         from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_bricks
         from nexus.factory.orchestrator import create_nexus_fs
-        from nexus.storage.in_memory_metastore import InMemoryMetastore
+        from tests.helpers.dict_metastore import DictMetastore
 
         data_dir = tmp_path / "data"
         data_dir.mkdir(exist_ok=True)
 
         nx = create_nexus_fs(
             backend=LocalBackend(root_path=data_dir),
-            metadata_store=InMemoryMetastore(),
+            metadata_store=DictMetastore(),
             record_store=None,
             enabled_bricks=resolve_enabled_bricks(DeploymentProfile.MINIMAL),
         )
@@ -411,14 +411,14 @@ class TestMinimalIntegrationViaConnect:
         from nexus.backends.local import LocalBackend
         from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_bricks
         from nexus.factory.orchestrator import create_nexus_fs
-        from nexus.storage.in_memory_metastore import InMemoryMetastore
+        from tests.helpers.dict_metastore import DictMetastore
 
         data_dir = tmp_path / "data"
         data_dir.mkdir(exist_ok=True)
 
         nx = create_nexus_fs(
             backend=LocalBackend(root_path=data_dir),
-            metadata_store=InMemoryMetastore(),
+            metadata_store=DictMetastore(),
             record_store=None,
             enabled_bricks=resolve_enabled_bricks(DeploymentProfile.MINIMAL),
         )

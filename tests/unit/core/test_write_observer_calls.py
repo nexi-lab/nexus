@@ -25,7 +25,7 @@ import pytest
 from nexus import LocalBackend, NexusFS
 from nexus.core.config import ParseConfig, PermissionConfig, SystemServices
 from nexus.core.file_events import FileEventType
-from nexus.storage.in_memory_metastore import InMemoryMetastore
+from tests.helpers.dict_metastore import DictMetastore
 
 
 @pytest.fixture
@@ -36,7 +36,7 @@ def temp_dir() -> Generator[Path, None, None]:
 
 @pytest.fixture
 def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
-    metastore = InMemoryMetastore()
+    metastore = DictMetastore()
     backend = LocalBackend(str(temp_dir / "data"))
     nx = NexusFS(
         metadata_store=metastore,
@@ -245,7 +245,7 @@ class TestVFSObserverCoverage:
 
     @pytest.fixture
     def nx_with_hook(self, temp_dir: Path, hook: MagicMock) -> Generator[NexusFS, None, None]:
-        metastore = InMemoryMetastore()
+        metastore = DictMetastore()
         backend = LocalBackend(str(temp_dir / "data"))
         nx = NexusFS(
             metadata_store=metastore,

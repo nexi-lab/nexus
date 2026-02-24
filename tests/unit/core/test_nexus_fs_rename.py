@@ -57,7 +57,7 @@ class TestRenameDirectoryWithChildren:
         """Implicit directories (created by writing children) should be renameable.
 
         Note: rename() on an implicit directory only renames the directory entry
-        in metadata. The InMemoryMetastore.rename_path() does NOT recursively
+        in metadata. The DictMetastore.rename_path() does NOT recursively
         rename children. Children remain at old paths, so the old implicit
         directory still 'exists' due to those children.
         """
@@ -65,7 +65,7 @@ class TestRenameDirectoryWithChildren:
         nx.write("/files/folder/b.txt", b"b")
         # /files/folder/ is an implicit directory
         # rename_path for implicit dirs creates the new path entry
-        # but children still exist under old path in InMemoryMetastore
+        # but children still exist under old path in DictMetastore
         nx.rename("/files/folder", "/files/renamed")
         # The rename succeeded without error — that's the key assertion
         # Children are still under /files/folder/ in this implementation

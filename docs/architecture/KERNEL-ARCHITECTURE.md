@@ -353,7 +353,7 @@ Profile hierarchy: `minimal ⊂ embedded ⊂ lite ⊂ full ⊆ cloud`
 
 REMOTE is orthogonal — not in the hierarchy. It has zero local bricks because all
 operations proxy to a remote server via `RemoteBackend`. The client runs the same
-NexusFS kernel with `InMemoryMetastore` (metadata cache) + `PathRouter` (local
+NexusFS kernel with `RemoteMetastore` (metadata cache) + `PathRouter` (local
 path resolution) + `RemoteBackend` mounted at `/`. Same class, different components.
 
 **Mechanism:** `factory.py` (the init system) resolves the active profile via
@@ -371,11 +371,11 @@ profile defaults.
 | Mode | Description | Metastore | Services |
 |------|-------------|-----------|----------|
 | **Standalone** | Single process, local storage | redb (local) | Optional |
-| **Remote** | NexusFS(profile=REMOTE) with RemoteBackend | InMemoryMetastore (cache) | Zero (server-side) |
+| **Remote** | NexusFS(profile=REMOTE) with RemoteBackend | RemoteMetastore (cache) | Zero (server-side) |
 | **Federation** | Multiple nodes sharing zones via Raft | redb (Raft) | Per-node |
 
 Remote mode uses the same NexusFS class as standalone — not a separate `RemoteNexusFS`.
-The `InMemoryMetastore` serves as a read-through cache of server metadata. `PathRouter`
+The `RemoteMetastore` serves as a read-through cache of server metadata. `PathRouter`
 resolves paths locally (~5μs), only actual I/O goes to the server via `RemoteBackend`.
 This is the NFS-client model: same VFS kernel, remote storage backend.
 

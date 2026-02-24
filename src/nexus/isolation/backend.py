@@ -78,10 +78,6 @@ class IsolatedBackend(Backend):
         return bool(self._cached_prop("supports_rename"))
 
     @property
-    def has_virtual_filesystem(self) -> bool:
-        return bool(self._cached_prop("has_virtual_filesystem"))
-
-    @property
     def has_root_path(self) -> bool:
         return bool(self._cached_prop("has_root_path"))
 

@@ -25,8 +25,8 @@ from nexus.backends.local import LocalBackend
 from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
-from nexus.storage.in_memory_metastore import InMemoryMetastore
 from nexus.storage.record_store import SQLAlchemyRecordStore
+from tests.helpers.dict_metastore import DictMetastore
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -345,7 +345,7 @@ class TestCachingPermissions:
         cached_backend = CachingBackendWrapper(inner=inner_backend, config=config)
 
         # Create NexusFS with permissions enabled
-        metadata_store = InMemoryMetastore()
+        metadata_store = DictMetastore()
         record_store = SQLAlchemyRecordStore()  # in-memory SQLite
 
         nx = create_nexus_fs(
@@ -483,7 +483,7 @@ class TestCachingPermissions:
         )
         cached_backend = CachingBackendWrapper(inner=inner_backend, config=config)
 
-        metadata_store = InMemoryMetastore()
+        metadata_store = DictMetastore()
         record_store = SQLAlchemyRecordStore()
 
         nx = create_nexus_fs(
@@ -568,7 +568,7 @@ class TestCachingWithFastAPIServer:
         # Use file-based SQLite so all connections share the same DB
         # (in-memory SQLite gives each connection a separate database)
         db_path = tmp_path / "http_test.db"
-        metadata_store = InMemoryMetastore()
+        metadata_store = DictMetastore()
         record_store = SQLAlchemyRecordStore(db_path=db_path)
 
         nx = create_nexus_fs(

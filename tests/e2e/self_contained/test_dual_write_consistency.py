@@ -57,11 +57,11 @@ def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]
 def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore) -> Generator[NexusFS, None, None]:
     raft_store = _try_create_raft_store(str(temp_dir / "raft-metadata"))
     if raft_store is None:
-        # Fallback to InMemoryMetastore with factory-style wiring
-        from nexus.storage.in_memory_metastore import InMemoryMetastore
+        # Fallback to DictMetastore with factory-style wiring
         from nexus.storage.record_store_write_observer import RecordStoreWriteObserver
+        from tests.helpers.dict_metastore import DictMetastore
 
-        metadata_store = InMemoryMetastore()
+        metadata_store = DictMetastore()
         write_observer = RecordStoreWriteObserver(record_store)
 
         nx = NexusFS(

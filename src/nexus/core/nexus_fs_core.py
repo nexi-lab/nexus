@@ -786,12 +786,12 @@ class NexusFSCoreMixin:
                 user_id="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
             )
 
-        # Check if backend is a dynamic API-backed connector (e.g., x_connector) or virtual filesystem
-        # These connectors don't use metadata - they fetch data directly from APIs
-        # Also check has_virtual_filesystem for connectors like HN that have virtual directories
+        # Check if backend is a dynamic API-backed connector or external content source.
+        # TODO(#899): Move this bypass logic out of kernel into service/composition layer.
+        _caps: frozenset[str] = getattr(route.backend, "capabilities", frozenset())
         is_dynamic_connector = (
             route.backend.user_scoped is True and route.backend.has_token_manager is True
-        ) or route.backend.has_virtual_filesystem is True
+        ) or "external_content" in _caps
 
         if is_dynamic_connector:
             # Dynamic connector - read directly from backend without metadata check

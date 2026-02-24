@@ -55,9 +55,9 @@ from nexus.backends.connectors.gmail.errors import ERROR_REGISTRY
 from nexus.backends.gmail_connector_utils import fetch_emails_batch, list_emails_by_folder
 from nexus.backends.oauth_mixin import OAuthConnectorMixin
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
-from nexus.contracts.exceptions import BackendError
+from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
+from nexus.core.object_store import WriteResult
 from nexus.core.protocols.capabilities import OAUTH_CONNECTOR_CAPABILITIES, ConnectorCapability
-from nexus.lib.response import HandlerResponse, timed_response
 
 try:
     import yaml
@@ -644,7 +644,9 @@ class GmailConnectorBackend(
 
     # === Backend interface methods ===
 
-    def write_content(self, content: bytes, context: "OperationContext | None" = None) -> str:
+    def write_content(
+        self, content: bytes, context: "OperationContext | None" = None
+    ) -> WriteResult:
         """
         Write content is not supported for Gmail connector (read-only).
 
@@ -660,10 +662,7 @@ class GmailConnectorBackend(
             backend="gmail",
         )
 
-    @timed_response
-    def read_content(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[bytes]":
+    def read_content(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
         """
         Read email content from cache or Gmail API.
 
@@ -674,7 +673,7 @@ class GmailConnectorBackend(
             context: Operation context with backend_path
 
         Returns:
-            HandlerResponse with email content as YAML bytes in data field
+            Email content as YAML bytes
 
         Raises:
             NexusFileNotFoundError: If email doesn't exist
@@ -682,20 +681,16 @@ class GmailConnectorBackend(
         """
 
         if yaml is None:
-            return HandlerResponse.error(
-                message="PyYAML not installed. Install with: pip install pyyaml",
-                code=500,
-                backend_name="gmail",
-                path=content_hash,
+            raise BackendError(
+                "PyYAML not installed. Install with: pip install pyyaml",
+                backend="gmail",
             )
 
         if not context or not context.backend_path:
-            return HandlerResponse.error(
-                message="Gmail connector requires backend_path in OperationContext. "
+            raise BackendError(
+                "Gmail connector requires backend_path in OperationContext. "
                 "This backend reads files from actual paths, not CAS hashes.",
-                code=400,
-                backend_name="gmail",
-                path=content_hash,
+                backend="gmail",
             )
 
         backend_path = context.backend_path
@@ -709,28 +704,16 @@ class GmailConnectorBackend(
             # Already just a filename
             filename = path_parts[0]
         else:
-            return HandlerResponse.not_found(
-                path=backend_path,
-                message=f"Invalid Gmail path: {backend_path}",
-                backend_name="gmail",
-            )
+            raise NexusFileNotFoundError(backend_path)
 
         # Extract message_id from filename (format: thread_id-msg_id.yaml)
         if not filename.endswith(".yaml"):
-            return HandlerResponse.not_found(
-                path=backend_path,
-                message=f"Not a valid Gmail email file: {filename}",
-                backend_name="gmail",
-            )
+            raise NexusFileNotFoundError(backend_path)
 
         # Split "thread_id-msg_id.yaml" to get msg_id
         filename_parts = filename.replace(".yaml", "").split("-", 1)
         if len(filename_parts) != 2:
-            return HandlerResponse.not_found(
-                path=backend_path,
-                message=f"Invalid Gmail email filename format: {filename}",
-                backend_name="gmail",
-            )
+            raise NexusFileNotFoundError(backend_path)
 
         message_id = filename_parts[1]  # Get msg_id from "thread_id-msg_id"
 
@@ -741,22 +724,14 @@ class GmailConnectorBackend(
         if self._has_caching():
             cached = self._read_from_cache(cache_path, original=True)
             if cached and not cached.stale and cached.content_binary:
-                return HandlerResponse.ok(
-                    data=cached.content_binary,
-                    backend_name="gmail",
-                    path=backend_path,
-                )
+                return cached.content_binary
 
         # Fetch from Gmail API
         try:
             service = self._get_gmail_service(context)
             email_data = self._fetch_email(service, message_id)
         except Exception as e:
-            return HandlerResponse.not_found(
-                path=backend_path,
-                message=f"Failed to fetch email: {e}",
-                backend_name="gmail",
-            )
+            raise NexusFileNotFoundError(backend_path) from e
 
         # Format as YAML (includes both body_text and body_html)
         content = self._format_email_as_yaml(email_data)
@@ -774,11 +749,7 @@ class GmailConnectorBackend(
             except Exception as e:
                 logger.debug("Gmail cache write failed for %s: %s", cache_path, e)
 
-        return HandlerResponse.ok(
-            data=content,
-            backend_name="gmail",
-            path=backend_path,
-        )
+        return content
 
     def _bulk_download_contents(
         self,
@@ -963,9 +934,9 @@ class GmailConnectorBackend(
 
         # Fallback: Read content to get size (hits Gmail API)
         # This only happens when file is not cached
-        content_response = self.read_content(content_hash, context)
-        if content_response.data:
-            return len(content_response.data)
+        content = self.read_content(content_hash, context)
+        if content:
+            return len(content)
         return 0
 
     def get_ref_count(self, content_hash: str, context: "OperationContext | None" = None) -> int:

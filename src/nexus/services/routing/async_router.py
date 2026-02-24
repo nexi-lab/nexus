@@ -10,11 +10,12 @@ References:
     - Issue #1383: Define 6 kernel protocol interfaces
 """
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from nexus.core.protocols.vfs_router import MountInfo, ResolvedPath
 
 if TYPE_CHECKING:
+    from nexus.core.object_store import ObjectStoreABC
     from nexus.core.router import PathRouter, RouteResult
 
 
@@ -58,7 +59,7 @@ class AsyncVFSRouter:
     async def add_mount(
         self,
         mount_point: str,
-        backend: Any,
+        backend: "ObjectStoreABC",
         *,
         readonly: bool = False,
         admin_only: bool = False,

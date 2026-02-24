@@ -163,7 +163,7 @@ class TestTransactionalOutboxIntegration:
         mock_bus.publish = AsyncMock(side_effect=capture)
 
         worker = EventDeliveryWorker(
-            record_store,
+            record_store.session_factory,
             event_bus=mock_bus,
             batch_size=50,
         )
@@ -201,7 +201,7 @@ class TestTransactionalOutboxIntegration:
         failing_bus = MagicMock()
         failing_bus.publish = AsyncMock(side_effect=RuntimeError("crash!"))
 
-        worker1 = EventDeliveryWorker(record_store, event_bus=failing_bus)
+        worker1 = EventDeliveryWorker(record_store.session_factory, event_bus=failing_bus)
         count1 = worker1._poll_and_dispatch()
         assert count1 == 0  # Nothing delivered
 
@@ -214,7 +214,7 @@ class TestTransactionalOutboxIntegration:
         success_bus = MagicMock()
         success_bus.publish = AsyncMock()
 
-        worker2 = EventDeliveryWorker(record_store, event_bus=success_bus)
+        worker2 = EventDeliveryWorker(record_store.session_factory, event_bus=success_bus)
         count2 = worker2._poll_and_dispatch()
         assert count2 == 1
 

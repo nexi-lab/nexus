@@ -15,7 +15,7 @@ Issue #2133: Extracted from NexusFSCoreMixin inline code (Leopard-style grants).
 import logging
 from typing import Any
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.vfs_hooks import WriteHookContext
 
 logger = logging.getLogger(__name__)

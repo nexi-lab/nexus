@@ -23,7 +23,7 @@ from nexus.backends.registry import (
     create_connector_from_config,
     register_connector,
 )
-from nexus.core.object_store import BackendObjectStore, ObjectStoreABC
+from nexus.core.object_store import ObjectStoreABC, WriteResult
 
 # Optional backends — loaded on first access via __getattr__.
 # Maps attribute name → (module_path, class_name).
@@ -91,9 +91,9 @@ def _register_optional_backends() -> None:
 __all__ = [
     # Base classes
     "Backend",
-    "BackendObjectStore",
     "HandlerStatusResponse",
     "ObjectStoreABC",
+    "WriteResult",
     "BaseBlobStorageConnector",
     "CacheConnectorMixin",
     "CacheEntry",

@@ -1135,7 +1135,7 @@ class ContextBranchService:
         # Build merged manifest
         merged_manifest = WorkspaceManifest(entries=merged_entries)
         merged_bytes = merged_manifest.to_json()
-        merged_hash = self._wm.backend.write_content(merged_bytes, context=None).unwrap()
+        merged_hash = self._wm.backend.write_content(merged_bytes, context=None).content_hash
 
         # C3: Create merge snapshot with retry on IntegrityError (duplicate snapshot_number)
         merge_snap_id = self._create_merge_snapshot(
@@ -1252,7 +1252,7 @@ class ContextBranchService:
             raise NexusFileNotFoundError(
                 path=f"snapshot:{snapshot_id}", message="Snapshot not found"
             )
-        manifest_bytes = self._wm.backend.read_content(snap.manifest_hash, context=None).unwrap()
+        manifest_bytes = self._wm.backend.read_content(snap.manifest_hash, context=None)
         return WorkspaceManifest.from_json(manifest_bytes)
 
     @staticmethod

@@ -24,8 +24,8 @@ def _create_local_backend(tmp_path: Path) -> LocalBackend:
 
 
 def _write_content(backend: LocalBackend, data: bytes) -> str:
-    resp = backend.write_content(data)
-    return resp.unwrap()
+    result = backend.write_content(data)
+    return result.content_hash
 
 
 # =============================================================================
@@ -158,7 +158,7 @@ class TestAsyncLocalBackendStreamRange:
 
         data = b"Hello, World! Async range test."
         resp = await backend.write_content(data)
-        content_hash = resp.unwrap()
+        content_hash = resp.content_hash
 
         chunks = []
         async for chunk in backend.stream_range(content_hash, 0, 9):
@@ -175,7 +175,7 @@ class TestAsyncLocalBackendStreamRange:
 
         data = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
         resp = await backend.write_content(data)
-        content_hash = resp.unwrap()
+        content_hash = resp.content_hash
 
         chunks = []
         async for chunk in backend.stream_range(content_hash, 10, 19):

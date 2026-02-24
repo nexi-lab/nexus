@@ -163,17 +163,13 @@ class TestLocalBackendChunkedWriteRead:
     def test_small_file_not_chunked(self, backend: LocalBackend) -> None:
         """Test that small files use single-blob storage."""
         small_content = b"This is a small file that should not be chunked."
-        result = backend.write_content(small_content)
-        assert result.success
-        content_hash = result.unwrap()
+        content_hash = backend.write_content(small_content).content_hash
 
         # Verify not chunked
         assert not backend._is_chunked_content(content_hash)
 
         # Read back
-        read_result = backend.read_content(content_hash)
-        assert read_result.success
-        assert read_result.unwrap() == small_content
+        assert backend.read_content(content_hash) == small_content
 
     def test_large_file_chunked_write_read(self, backend: LocalBackend) -> None:
         """Test that large files are chunked and can be read back."""
@@ -181,25 +177,19 @@ class TestLocalBackendChunkedWriteRead:
         large_content = os.urandom(CDC_THRESHOLD_BYTES + 1024 * 1024)  # ~17MB
 
         # Write
-        result = backend.write_content(large_content)
-        assert result.success
-        content_hash = result.unwrap()
+        content_hash = backend.write_content(large_content).content_hash
 
         # Verify chunked
         assert backend._is_chunked_content(content_hash)
 
         # Read back
-        read_result = backend.read_content(content_hash)
-        assert read_result.success
-        assert read_result.unwrap() == large_content
+        assert backend.read_content(content_hash) == large_content
 
     def test_large_file_chunks_exist(self, backend: LocalBackend) -> None:
         """Test that individual chunks are created in CAS."""
         large_content = os.urandom(CDC_THRESHOLD_BYTES + 1024 * 1024)
 
-        result = backend.write_content(large_content)
-        assert result.success
-        content_hash = result.unwrap()
+        content_hash = backend.write_content(large_content).content_hash
 
         # Read manifest
         manifest_path = backend._hash_to_path(content_hash)
@@ -222,12 +212,8 @@ class TestLocalBackendChunkedWriteRead:
         content2 = prefix + suffix2
 
         # Write both
-        result1 = backend.write_content(content1)
-        result2 = backend.write_content(content2)
-        assert result1.success and result2.success
-
-        hash1 = result1.unwrap()
-        hash2 = result2.unwrap()
+        hash1 = backend.write_content(content1).content_hash
+        hash2 = backend.write_content(content2).content_hash
 
         # Read manifests
         manifest1 = ChunkedReference.from_json(backend._hash_to_path(hash1).read_bytes())
@@ -247,8 +233,7 @@ class TestLocalBackendChunkedWriteRead:
         large_content = os.urandom(CDC_THRESHOLD_BYTES + 1024 * 1024)
 
         # Write
-        result = backend.write_content(large_content)
-        content_hash = result.unwrap()
+        content_hash = backend.write_content(large_content).content_hash
 
         # Get chunk hashes
         manifest = ChunkedReference.from_json(backend._hash_to_path(content_hash).read_bytes())
@@ -259,8 +244,7 @@ class TestLocalBackendChunkedWriteRead:
             assert backend._hash_to_path(ch).exists()
 
         # Delete
-        delete_result = backend.delete_content(content_hash)
-        assert delete_result.success
+        backend.delete_content(content_hash)
 
         # Manifest should be deleted
         assert not backend._hash_to_path(content_hash).exists()
@@ -275,11 +259,8 @@ class TestLocalBackendChunkedWriteRead:
         large_content = os.urandom(CDC_THRESHOLD_BYTES + 1024 * 1024)
 
         # Write twice (same content = same chunks)
-        result1 = backend.write_content(large_content)
-        result2 = backend.write_content(large_content)
-
-        hash1 = result1.unwrap()
-        hash2 = result2.unwrap()
+        hash1 = backend.write_content(large_content).content_hash
+        hash2 = backend.write_content(large_content).content_hash
 
         # Both should have same manifest hash (same content)
         assert hash1 == hash2
@@ -292,42 +273,32 @@ class TestLocalBackendChunkedWriteRead:
         backend.delete_content(hash1)
 
         # Should still be readable (ref_count was 2, now 1)
-        read_result = backend.read_content(hash2)
-        assert read_result.success
-        assert read_result.unwrap() == large_content
+        assert backend.read_content(hash2) == large_content
 
     def test_get_content_size_chunked(self, backend: LocalBackend) -> None:
         """Test that get_content_size returns original size for chunked content."""
         large_content = os.urandom(CDC_THRESHOLD_BYTES + 500_000)
         original_size = len(large_content)
 
-        result = backend.write_content(large_content)
-        content_hash = result.unwrap()
+        content_hash = backend.write_content(large_content).content_hash
 
         # Get size
-        size_result = backend.get_content_size(content_hash)
-        assert size_result.success
-        assert size_result.unwrap() == original_size
+        assert backend.get_content_size(content_hash) == original_size
 
     def test_content_exists_chunked(self, backend: LocalBackend) -> None:
         """Test that content_exists works for chunked content."""
         large_content = os.urandom(CDC_THRESHOLD_BYTES + 100_000)
 
-        result = backend.write_content(large_content)
-        content_hash = result.unwrap()
+        content_hash = backend.write_content(large_content).content_hash
 
         # Should exist
-        exists_result = backend.content_exists(content_hash)
-        assert exists_result.success
-        assert exists_result.unwrap() is True
+        assert backend.content_exists(content_hash) is True
 
         # Delete
         backend.delete_content(content_hash)
 
         # Should not exist
-        exists_result2 = backend.content_exists(content_hash)
-        assert exists_result2.success
-        assert exists_result2.unwrap() is False
+        assert backend.content_exists(content_hash) is False
 
 
 class TestBackwardCompatibility:
@@ -354,9 +325,7 @@ class TestBackwardCompatibility:
         assert not backend._is_chunked_content(content_hash)
 
         # Should be readable
-        result = backend.read_content(content_hash)
-        assert result.success
-        assert result.unwrap() == content
+        assert backend.read_content(content_hash) == content
 
     def test_mixed_storage_operations(self, backend: LocalBackend) -> None:
         """Test that mixed chunked and single-blob operations work together."""
@@ -364,24 +333,24 @@ class TestBackwardCompatibility:
         large_content = os.urandom(CDC_THRESHOLD_BYTES + 100_000)
 
         # Write both
-        small_hash = backend.write_content(small_content).unwrap()
-        large_hash = backend.write_content(large_content).unwrap()
+        small_hash = backend.write_content(small_content).content_hash
+        large_hash = backend.write_content(large_content).content_hash
 
         # Verify types
         assert not backend._is_chunked_content(small_hash)
         assert backend._is_chunked_content(large_hash)
 
         # Read both
-        assert backend.read_content(small_hash).unwrap() == small_content
-        assert backend.read_content(large_hash).unwrap() == large_content
+        assert backend.read_content(small_hash) == small_content
+        assert backend.read_content(large_hash) == large_content
 
         # Delete both
         backend.delete_content(small_hash)
         backend.delete_content(large_hash)
 
         # Verify deleted
-        assert not backend.content_exists(small_hash).unwrap()
-        assert not backend.content_exists(large_hash).unwrap()
+        assert not backend.content_exists(small_hash)
+        assert not backend.content_exists(large_hash)
 
 
 class TestCDCChunking:
@@ -397,8 +366,7 @@ class TestCDCChunking:
         # Create content with some patterns that CDC should detect
         large_content = os.urandom(CDC_THRESHOLD_BYTES * 2)
 
-        result = backend.write_content(large_content)
-        content_hash = result.unwrap()
+        content_hash = backend.write_content(large_content).content_hash
 
         manifest = ChunkedReference.from_json(backend._hash_to_path(content_hash).read_bytes())
 
@@ -421,8 +389,7 @@ class TestCDCChunking:
         """Test that CDC chunk offsets are contiguous (no gaps/overlaps)."""
         large_content = os.urandom(CDC_THRESHOLD_BYTES + 1024 * 1024)
 
-        result = backend.write_content(large_content)
-        content_hash = result.unwrap()
+        content_hash = backend.write_content(large_content).content_hash
 
         manifest = ChunkedReference.from_json(backend._hash_to_path(content_hash).read_bytes())
 

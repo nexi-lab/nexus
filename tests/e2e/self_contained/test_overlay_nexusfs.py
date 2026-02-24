@@ -113,7 +113,7 @@ def base_manifest(local_backend: LocalBackend, base_content: dict[str, bytes]) -
     entries: dict[str, ManifestEntry] = {}
     for rel_path, content in base_content.items():
         result = local_backend.write_content(content)
-        content_hash = result.unwrap()
+        content_hash = result.content_hash
         entries[rel_path] = ManifestEntry(
             content_hash=content_hash,
             size=len(content),
@@ -127,7 +127,7 @@ def stored_manifest_hash(local_backend: LocalBackend, base_manifest: WorkspaceMa
     """Store base manifest in CAS and return its hash."""
     manifest_json = base_manifest.to_json()
     result = local_backend.write_content(manifest_json)
-    return result.unwrap()
+    return result.content_hash
 
 
 @pytest.fixture
@@ -173,7 +173,11 @@ def nexus_fs(
     if nx._workspace_registry is None:
         from nexus.services.workspace.workspace_registry import WorkspaceRegistry
 
-        nx._workspace_registry = WorkspaceRegistry(metadata=metadata_store, rebac_manager=None)
+        nx._workspace_registry = WorkspaceRegistry(
+            metadata=metadata_store,
+            rebac_manager=None,
+            session_factory=record_store.session_factory,
+        )
 
     # Register workspace with overlay config so _get_overlay_config() finds it
     nx._workspace_registry.register_workspace(
@@ -214,7 +218,7 @@ class TestNexusFSOverlayRead:
     def test_read_upper_layer_overrides_base(self, nexus_fs, metadata_store, local_backend):
         """File written to upper layer overrides base layer on read."""
         new_content = b"def main():\n    print('updated!')\n"
-        new_hash = local_backend.write_content(new_content).unwrap()
+        new_hash = local_backend.write_content(new_content).content_hash
 
         # Write to upper layer (metadata store)
         metadata_store.put(

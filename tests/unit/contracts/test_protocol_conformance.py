@@ -45,12 +45,9 @@ class TestWirableFSConformance:
         assert hasattr(WirableFS, "__protocol_attrs__") or True
 
         # Verify an instance satisfies the protocol structurally
-        mock_backend = MagicMock()
-        mock_backend.content_cache = None
         mock_metadata = MagicMock()
         mock_metadata.list = MagicMock(return_value=[])
         nx = NexusFS(
-            backend=mock_backend,
             metadata_store=mock_metadata,
             parsing=ParseConfig(auto_parse=False),
         )

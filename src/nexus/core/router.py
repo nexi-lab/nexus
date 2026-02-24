@@ -19,13 +19,14 @@ Architecture:
 
 import posixpath
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from nexus.contracts.exceptions import AccessDeniedError, InvalidPathError, PathNotMountedError
 from nexus.contracts.metadata import DT_MOUNT, FileMetadata
 
 if TYPE_CHECKING:
     from nexus.core.metastore import MetastoreABC
+    from nexus.core.object_store import ObjectStoreABC
     from nexus.core.protocols.vfs_router import MountInfo
 
 
@@ -33,13 +34,13 @@ if TYPE_CHECKING:
 class _MountEntry:
     """Runtime mount entry — holds Python objects that cannot be serialized.
 
-    The ``backend`` field is opaque to the router (typed ``Any``). PathRouter
-    stores and returns it without invoking any interface — the caller
-    (NexusFSCoreMixin) knows the concrete type.  Like Linux ``struct
-    super_block *`` in the mount table.
+    The ``backend`` field is typed ``ObjectStoreABC`` — the kernel's file
+    operations contract.  PathRouter stores and returns it; the caller
+    (NexusFSCoreMixin) invokes CAS / directory methods directly.  Like
+    Linux ``struct super_block *`` in the mount table.
     """
 
-    backend: Any
+    backend: "ObjectStoreABC"
     readonly: bool
     admin_only: bool
     io_profile: str
@@ -49,7 +50,7 @@ class _MountEntry:
 class RouteResult:
     """Result of path routing."""
 
-    backend: Any  # Opaque to router — caller knows concrete type
+    backend: "ObjectStoreABC"
     backend_path: str  # Path relative to backend root
     mount_point: str  # Matched mount point
     readonly: bool
@@ -85,7 +86,7 @@ class PathRouter:
     def add_mount(
         self,
         mount_point: str,
-        backend: Any,
+        backend: "ObjectStoreABC",
         *,
         readonly: bool = False,
         admin_only: bool = False,
@@ -98,7 +99,7 @@ class PathRouter:
 
         Args:
             mount_point: Virtual path prefix (must start with /).
-            backend: Backend instance (opaque — must have ``.name`` attribute).
+            backend: ObjectStoreABC instance (kernel file_operations contract).
             readonly: Whether mount is readonly.
             admin_only: Whether mount requires admin privileges.
             io_profile: I/O tuning profile.
@@ -255,7 +256,7 @@ class PathRouter:
             for mp, entry in sorted(self._backends.items())
         ]
 
-    def get_backend_by_name(self, name: str) -> Any:
+    def get_backend_by_name(self, name: str) -> "ObjectStoreABC | None":
         """Look up backend by name.
 
         Useful for operations that need a specific backend

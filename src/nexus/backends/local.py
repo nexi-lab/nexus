@@ -16,8 +16,8 @@ from nexus.backends.multipart_upload_mixin import MultipartUploadMixin
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
+from nexus.core.object_store import WriteResult
 from nexus.core.protocols.capabilities import ConnectorCapability
-from nexus.lib.response import HandlerResponse, timed_response
 from nexus.storage.content_cache import ContentCache
 
 if TYPE_CHECKING:
@@ -258,12 +258,11 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
 
         self._cas.write_meta(content_hash, CASMeta.from_dict(metadata))
 
-    @timed_response
     def write_content(
         self, content: bytes, context: "OperationContext | None" = None
-    ) -> HandlerResponse[str]:
+    ) -> WriteResult:
         """
-        Write content to CAS storage and return its hash.
+        Write content to CAS storage and return a WriteResult.
 
         Large files (>=16MB by default) are automatically chunked using
         Content-Defined Chunking (CDC) for better deduplication across
@@ -276,16 +275,12 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
             context: Operation context (ignored for local backend)
 
         Returns:
-            HandlerResponse with content hash in data field
+            WriteResult with content_hash and size.
         """
         # Route large files to chunked storage (Issue #1074)
         if self._should_chunk(content):
             content_hash = self._write_chunked(content, context)
-            return HandlerResponse.ok(
-                data=content_hash,
-                backend_name=self.name,
-                path=content_hash,
-            )
+            return WriteResult(content_hash=content_hash, size=len(content))
 
         # Small files: lock-free CAS via CASBlobStore
         content_hash = self._compute_hash(content)
@@ -304,16 +299,9 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
             content_path = self._hash_to_path(content_hash)
             self.on_write_callback(str(content_path))
 
-        return HandlerResponse.ok(
-            data=content_hash,
-            backend_name=self.name,
-            path=content_hash,
-        )
+        return WriteResult(content_hash=content_hash, size=len(content))
 
-    @timed_response
-    def read_content(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> HandlerResponse[bytes]:
+    def read_content(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
         """Read content by its hash with retry for Windows file locking.
 
         Transparently handles both single-blob and chunked content.
@@ -326,17 +314,17 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
             context: Operation context (ignored for local backend)
 
         Returns:
-            HandlerResponse with file content in data field
+            File content as bytes.
+
+        Raises:
+            NexusFileNotFoundError: If content does not exist.
+            BackendError: If read operation fails.
         """
         # Check cache first for fast path
         if self.content_cache is not None:
             cached_content = self.content_cache.get(content_hash)
             if cached_content is not None:
-                return HandlerResponse.ok(
-                    data=cached_content,
-                    backend_name=self.name,
-                    path=content_hash,
-                )
+                return cached_content
 
         # Check if this is chunked content (Issue #1074)
         if self._is_chunked_content(content_hash):
@@ -345,17 +333,12 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
                 # Add to cache for future reads
                 if self.content_cache is not None:
                     self.content_cache.put(content_hash, content)
-                return HandlerResponse.ok(
-                    data=content,
-                    backend_name=self.name,
-                    path=content_hash,
-                )
+                return content
             except FileNotFoundError:
-                return HandlerResponse.not_found(
+                raise NexusFileNotFoundError(
                     path=content_hash,
                     message=f"Chunked content not found: {content_hash}",
-                    backend_name=self.name,
-                )
+                ) from None
 
         # Note: We intentionally do NOT use Bloom filter for early rejection here
         # because another process/instance sharing the same root may have written
@@ -378,10 +361,9 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
                     time.sleep(retry_delay)
                     continue
                 # File genuinely doesn't exist
-                return HandlerResponse.not_found(
+                raise NexusFileNotFoundError(
                     path=content_hash,
                     message=f"CAS content not found: {content_hash}",
-                    backend_name=self.name,
                 )
 
             try:
@@ -394,10 +376,9 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
                         if attempt < max_retries - 1:
                             time.sleep(retry_delay)
                             continue
-                        return HandlerResponse.not_found(
+                        raise NexusFileNotFoundError(
                             path=content_hash,
                             message=f"CAS content not found: {content_hash}",
-                            backend_name=self.name,
                         )
                 except ImportError:
                     # Fallback to standard read
@@ -406,11 +387,9 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
                 # Verify hash
                 actual_hash = self._compute_hash(content)
                 if actual_hash != content_hash:
-                    msg = f"Content hash mismatch: expected {content_hash}, got {actual_hash}"
-                    return HandlerResponse.error(
-                        message=msg,
-                        code=500,
-                        backend_name=self.name,
+                    raise BackendError(
+                        f"Content hash mismatch: expected {content_hash}, got {actual_hash}",
+                        backend="local",
                         path=content_hash,
                     )
 
@@ -418,28 +397,25 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
                 if self.content_cache is not None:
                     self.content_cache.put(content_hash, content)
 
-                return HandlerResponse.ok(
-                    data=content,
-                    backend_name=self.name,
-                    path=content_hash,
-                )
+                return content
 
+            except (NexusFileNotFoundError, BackendError):
+                raise
             except OSError as e:
                 # File might be locked on Windows - retry
                 if attempt < max_retries - 1:
                     time.sleep(retry_delay)
                     continue
-                return HandlerResponse.from_exception(
-                    e,
-                    backend_name=self.name,
+                raise BackendError(
+                    f"Failed to read content: {e}",
+                    backend="local",
                     path=content_hash,
-                )
+                ) from e
 
         # Should never reach here
-        return HandlerResponse.error(
-            message=f"Failed to read content after {max_retries} retries",
-            code=500,
-            backend_name=self.name,
+        raise BackendError(
+            f"Failed to read content after {max_retries} retries",
+            backend="local",
             path=content_hash,
         )
 
@@ -489,8 +465,12 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
 
             if max_workers == 1:
                 # Single file - no need for thread pool overhead
-                response = self.read_content(uncached_hashes[0], context=context)
-                result[uncached_hashes[0]] = response.data if response.success else None
+                try:
+                    result[uncached_hashes[0]] = self.read_content(
+                        uncached_hashes[0], context=context
+                    )
+                except Exception:
+                    result[uncached_hashes[0]] = None
             else:
                 # Multiple files - use parallel reads
                 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -498,8 +478,7 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
                 def read_one(content_hash: str) -> tuple[str, bytes | None]:
                     """Read a single file, returning (hash, content) or (hash, None) on error."""
                     try:
-                        response = self.read_content(content_hash, context=context)
-                        return (content_hash, response.data if response.success else None)
+                        return (content_hash, self.read_content(content_hash, context=context))
                     except Exception:
                         return (content_hash, None)
 
@@ -593,17 +572,16 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
                 f"Failed to stream range: {e}", backend="local", path=content_hash
             ) from e
 
-    @timed_response
     def write_stream(
         self,
         chunks: "Iterator[bytes]",
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[str]:
+    ) -> WriteResult:
         """
         Write content from an iterator of chunks with true streaming.
 
         Streams chunks directly to disk via CASBlobStore.store_streaming()
-        with incremental hashing — no full-content buffer in memory.
+        with incremental hashing -- no full-content buffer in memory.
 
         For files above the CDC threshold (16 MB), a two-phase approach
         is used: store as single blob first, then re-chunk via CDC.
@@ -613,40 +591,32 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
             context: Operation context (ignored for local backend)
 
         Returns:
-            HandlerResponse with content hash in data field
+            WriteResult with content_hash and size.
         """
-        result = self._cas.store_streaming(chunks)
+        cas_result = self._cas.store_streaming(chunks)
 
         # CDC routing: if the file is large enough, re-chunk it
-        if result.size >= self.cdc_threshold and result.is_new:
+        if cas_result.size >= self.cdc_threshold and cas_result.is_new:
             # Read the blob back and write through CDC chunking
-            content = self._cas.read_blob(result.content_hash)
+            content = self._cas.read_blob(cas_result.content_hash)
             cdc_hash = self._write_chunked(content, context)
             # Release the single-blob version (CDC manifest now owns the data)
-            self._cas.release(result.content_hash)
+            self._cas.release(cas_result.content_hash)
             content_hash = cdc_hash
         else:
-            content_hash = result.content_hash
+            content_hash = cas_result.content_hash
 
         # Update Bloom filter
         self._cas_bloom_add(content_hash)
 
         # Notify search brick of write (e.g., Zoekt reindex) via callback
-        if result.is_new and self.on_write_callback is not None:
+        if cas_result.is_new and self.on_write_callback is not None:
             content_path = self._hash_to_path(content_hash)
             self.on_write_callback(str(content_path))
 
-        return HandlerResponse.ok(
-            data=content_hash,
-            backend_name=self.name,
-            path=content_hash,
-            affected_rows=result.size,
-        )
+        return WriteResult(content_hash=content_hash, size=cas_result.size)
 
-    @timed_response
-    def delete_content(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> HandlerResponse[None]:
+    def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:
         """Delete content by hash with reference counting.
 
         Handles both single-blob and chunked content. For chunked content,
@@ -656,40 +626,26 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
             content_hash: SHA-256/BLAKE3 hash as hex string
             context: Operation context (ignored for local backend)
 
-        Returns:
-            HandlerResponse indicating success or failure
+        Raises:
+            NexusFileNotFoundError: If content does not exist.
         """
         content_path = self._hash_to_path(content_hash)
 
         if not content_path.exists():
-            return HandlerResponse.not_found(
+            raise NexusFileNotFoundError(
                 path=content_hash,
                 message=f"CAS content not found: {content_hash}",
-                backend_name=self.name,
             )
 
         # Handle chunked content (Issue #1074)
         if self._is_chunked_content(content_hash):
             self._delete_chunked(content_hash, context)
-            return HandlerResponse.ok(
-                data=None,
-                backend_name=self.name,
-                path=content_hash,
-            )
+            return
 
         # Single-blob: delegate to CASBlobStore (no FileLock)
         self._cas.release(content_hash)
 
-        return HandlerResponse.ok(
-            data=None,
-            backend_name=self.name,
-            path=content_hash,
-        )
-
-    @timed_response
-    def content_exists(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> HandlerResponse[bool]:
+    def content_exists(self, content_hash: str, context: "OperationContext | None" = None) -> bool:
         """Check if content exists.
 
         Uses Bloom filter for fast miss detection - avoids disk I/O
@@ -697,32 +653,19 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
 
         Args:
             content_hash: SHA-256 hash as hex string
-            _context: Operation context (ignored for local backend)
+            context: Operation context (ignored for local backend)
 
         Returns:
-            HandlerResponse with True if content exists, False otherwise
+            True if content exists, False otherwise.
         """
         # Fast path: Bloom filter says content definitely doesn't exist
         if not self._cas_bloom_check(content_hash):
-            return HandlerResponse.ok(
-                data=False,
-                backend_name=self.name,
-                path=content_hash,
-            )
+            return False
 
         content_path = self._hash_to_path(content_hash)
-        exists = content_path.exists()
+        return content_path.exists()
 
-        return HandlerResponse.ok(
-            data=exists,
-            backend_name=self.name,
-            path=content_hash,
-        )
-
-    @timed_response
-    def get_content_size(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> HandlerResponse[int]:
+    def get_content_size(self, content_hash: str, context: "OperationContext | None" = None) -> int:
         """Get content size in bytes.
 
         For chunked content, returns the original file size (not manifest size).
@@ -732,32 +675,25 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
             context: Operation context (ignored for local backend)
 
         Returns:
-            HandlerResponse with content size in bytes
+            Content size in bytes.
+
+        Raises:
+            NexusFileNotFoundError: If content does not exist.
         """
         content_path = self._hash_to_path(content_hash)
 
         if not content_path.exists():
-            return HandlerResponse.not_found(
+            raise NexusFileNotFoundError(
                 path=content_hash,
                 message=f"CAS content not found: {content_hash}",
-                backend_name=self.name,
             )
 
         # For chunked content, size is stored in metadata (original file size)
         if self._is_chunked_content(content_hash):
-            size = self._get_content_size_chunked(content_hash)
-        else:
-            size = content_path.stat().st_size
-        return HandlerResponse.ok(
-            data=size,
-            backend_name=self.name,
-            path=content_hash,
-        )
+            return self._get_content_size_chunked(content_hash)
+        return content_path.stat().st_size
 
-    @timed_response
-    def get_ref_count(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> HandlerResponse[int]:
+    def get_ref_count(self, content_hash: str, context: "OperationContext | None" = None) -> int:
         """Get reference count for content.
 
         Args:
@@ -765,44 +701,39 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
             context: Operation context (ignored for local backend)
 
         Returns:
-            HandlerResponse with reference count
+            Number of references to this content.
+
+        Raises:
+            NexusFileNotFoundError: If content does not exist.
         """
-        exists_response = self.content_exists(content_hash, context=context)
-        if not exists_response.success or not exists_response.data:
-            return HandlerResponse.not_found(
+        if not self.content_exists(content_hash, context=context):
+            raise NexusFileNotFoundError(
                 path=content_hash,
                 message=f"CAS content not found: {content_hash}",
-                backend_name=self.name,
             )
 
         metadata = self._read_metadata(content_hash)
-        ref_count = int(metadata.get("ref_count", 0))
-        return HandlerResponse.ok(
-            data=ref_count,
-            backend_name=self.name,
-            path=content_hash,
-        )
+        return int(metadata.get("ref_count", 0))
 
     # === Directory Operations ===
 
-    @timed_response
     def mkdir(
         self,
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[None]:
+    ) -> None:
         """Create directory in virtual directory structure.
 
         Args:
             path: Directory path (relative to backend root)
             parents: Create parent directories if needed (like mkdir -p)
             exist_ok: Don't raise error if directory exists
-            _context: Operation context (ignored for local backend)
+            context: Operation context (ignored for local backend)
 
-        Returns:
-            HandlerResponse indicating success or failure
+        Raises:
+            BackendError: If directory creation fails.
         """
         full_path = self.dir_root / path.lstrip("/")
 
@@ -811,61 +742,45 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
                 full_path.mkdir(parents=True, exist_ok=exist_ok)
             else:
                 full_path.mkdir(exist_ok=exist_ok)
-            return HandlerResponse.ok(
-                data=None,
-                backend_name=self.name,
-                path=path,
-            )
         except FileExistsError:
             if exist_ok:
-                return HandlerResponse.ok(
-                    data=None,
-                    backend_name=self.name,
-                    path=path,
-                )
-            return HandlerResponse.error(
-                message=f"Directory already exists: {path}",
-                code=409,
-                is_expected=True,
-                backend_name=self.name,
+                return
+            raise BackendError(
+                f"Directory already exists: {path}",
+                backend="local",
                 path=path,
-            )
+            ) from None
         except FileNotFoundError:
-            return HandlerResponse.error(
-                message=f"Parent directory not found: {path}",
-                code=404,
-                is_expected=True,
-                backend_name=self.name,
+            raise BackendError(
+                f"Parent directory not found: {path}",
+                backend="local",
                 path=path,
-            )
+            ) from None
 
-    @timed_response
     def rmdir(
         self,
         path: str,
         recursive: bool = False,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[None]:
+    ) -> None:
         """Remove directory from virtual directory structure.
 
-        Returns:
-            HandlerResponse indicating success or failure
+        Raises:
+            NexusFileNotFoundError: If directory does not exist.
+            BackendError: If path is not a directory or removal fails.
         """
         full_path = self.dir_root / path.lstrip("/")
 
         if not full_path.exists():
-            return HandlerResponse.not_found(
+            raise NexusFileNotFoundError(
                 path=path,
                 message=f"Directory not found: {path}",
-                backend_name=self.name,
             )
 
         if not full_path.is_dir():
-            return HandlerResponse.error(
-                message=f"Path is not a directory: {path}",
-                code=400,
-                is_expected=True,
-                backend_name=self.name,
+            raise BackendError(
+                f"Path is not a directory: {path}",
+                backend="local",
                 path=path,
             )
 
@@ -874,39 +789,24 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
                 shutil.rmtree(full_path)
             else:
                 full_path.rmdir()
-            return HandlerResponse.ok(
-                data=None,
-                backend_name=self.name,
-                path=path,
-            )
         except OSError as e:
             # Directory not empty
             if e.errno in (errno.ENOTEMPTY, 66):  # errno.ENOTEMPTY or macOS errno 66
-                return HandlerResponse.error(
-                    message=f"Directory not empty: {path}",
-                    code=400,
-                    is_expected=True,
-                    backend_name=self.name,
+                raise BackendError(
+                    f"Directory not empty: {path}",
+                    backend="local",
                     path=path,
-                )
+                ) from e
             raise
 
-    @timed_response
-    def is_directory(
-        self, path: str, context: "OperationContext | None" = None
-    ) -> HandlerResponse[bool]:
+    def is_directory(self, path: str, context: "OperationContext | None" = None) -> bool:
         """Check if path is a directory.
 
         Returns:
-            HandlerResponse with True if path is a directory, False otherwise
+            True if path is a directory, False otherwise.
         """
         full_path = self.dir_root / path.lstrip("/")
-        is_dir = full_path.exists() and full_path.is_dir()
-        return HandlerResponse.ok(
-            data=is_dir,
-            backend_name=self.name,
-            path=path,
-        )
+        return full_path.exists() and full_path.is_dir()
 
     def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:
         """List directory contents using local filesystem."""
@@ -1040,15 +940,8 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
 
         # Write assembled content to CAS
         content = bytes(assembled)
-        response = self.write_content(content)
-        if not response.success or response.data is None:
-            raise BackendError(
-                "Failed to write assembled content",
-                backend="local",
-                path=backend_path,
-            )
-
-        content_hash: str = response.data
+        result = self.write_content(content)
+        content_hash = result.content_hash
 
         # Clean up temp directory
         shutil.rmtree(upload_dir, ignore_errors=True)

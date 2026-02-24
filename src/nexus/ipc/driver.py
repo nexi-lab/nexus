@@ -26,7 +26,8 @@ import threading
 from typing import TYPE_CHECKING, Any
 
 from nexus.backends.backend import Backend, HandlerStatusResponse
-from nexus.core.response import HandlerResponse, timed_response
+from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
+from nexus.core.object_store import WriteResult
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
@@ -112,13 +113,12 @@ class IPCVFSDriver(Backend):
 
     # === Content Operations (path-oriented virtual FS) ===
 
-    @timed_response
     def write_content(
         self,
         content: bytes,
         context: OperationContext | None = None,
-    ) -> HandlerResponse[str]:
-        """Write content and return a hash.
+    ) -> WriteResult:
+        """Write content and return a WriteResult.
 
         For IPC, we store content at a generated path and return a
         content hash. Callers that need path-specific writes should
@@ -126,15 +126,14 @@ class IPCVFSDriver(Backend):
         """
         content_hash = hashlib.sha256(content).hexdigest()
         self._run_async(self._storage.write(f"/_cas/{content_hash}", content, self._zone_id))
-        return HandlerResponse.ok(data=content_hash, backend_name="ipc")
+        return WriteResult(content_hash=content_hash, size=len(content))
 
-    @timed_response
     def write_path(
         self,
         path: str,
         content: bytes,
         context: OperationContext | None = None,
-    ) -> HandlerResponse[str]:
+    ) -> str:
         """Write content to a specific VFS path.
 
         This is the primary write method for the IPC driver — messages
@@ -143,129 +142,106 @@ class IPCVFSDriver(Backend):
         try:
             self._run_async(self._storage.write(path, content, self._zone_id))
             content_hash = hashlib.sha256(content).hexdigest()
-            return HandlerResponse.ok(data=content_hash, backend_name="ipc", path=path)
+            return content_hash
         except Exception as exc:
             logger.error("IPC write failed at %s: %s", path, exc)
             raise
 
-    @timed_response
     def read_content(
         self,
         content_hash: str,
         context: OperationContext | None = None,
-    ) -> HandlerResponse[bytes]:
+    ) -> bytes:
         """Read content by path (virtual filesystem mode).
 
         In VFS mode, ``content_hash`` is actually the virtual path.
         """
         path = content_hash  # In virtual FS mode, hash IS the path
         try:
-            data = self._run_async(self._storage.read(path, self._zone_id))
-            return HandlerResponse.ok(data=data, backend_name="ipc", path=path)
-        except FileNotFoundError:
-            return HandlerResponse.error(
-                message=f"Not found: {path}",
-                code=404,
-                is_expected=True,
-                backend_name="ipc",
-                path=path,
-            )
+            data: bytes = self._run_async(self._storage.read(path, self._zone_id))
+            return data
+        except FileNotFoundError as exc:
+            raise NexusFileNotFoundError(path) from exc
 
-    @timed_response
     def delete_content(
         self,
         content_hash: str,
         context: OperationContext | None = None,
-    ) -> HandlerResponse[None]:
+    ) -> None:
         """Delete content — IPC never hard-deletes (moves to dead_letter)."""
-        return HandlerResponse.ok(data=None, backend_name="ipc")
+        return
 
-    @timed_response
     def content_exists(
         self,
         content_hash: str,
         context: OperationContext | None = None,
-    ) -> HandlerResponse[bool]:
+    ) -> bool:
         """Check if a path exists (virtual FS mode)."""
         path = content_hash
-        exists = self._run_async(self._storage.exists(path, self._zone_id))
-        return HandlerResponse.ok(data=exists, backend_name="ipc", path=path)
+        exists: bool = self._run_async(self._storage.exists(path, self._zone_id))
+        return exists
 
-    @timed_response
     def get_content_size(
         self,
         content_hash: str,
         context: OperationContext | None = None,
-    ) -> HandlerResponse[int]:
+    ) -> int:
         """Get file size by reading the content (no separate size API)."""
         path = content_hash
         try:
             data = self._run_async(self._storage.read(path, self._zone_id))
-            return HandlerResponse.ok(data=len(data), backend_name="ipc", path=path)
-        except FileNotFoundError:
-            return HandlerResponse.error(
-                message=f"Not found: {path}",
-                code=404,
-                is_expected=True,
-                backend_name="ipc",
-                path=path,
-            )
+            return len(data)
+        except FileNotFoundError as exc:
+            raise NexusFileNotFoundError(path) from exc
 
-    @timed_response
     def get_ref_count(
         self,
         content_hash: str,
         context: OperationContext | None = None,
-    ) -> HandlerResponse[int]:
+    ) -> int:
         """Reference count — always 1 for path-based storage."""
-        return HandlerResponse.ok(data=1, backend_name="ipc")
+        return 1
 
     # === Directory Operations ===
 
-    @timed_response
     def mkdir(
         self,
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
         context: OperationContext | None = None,
-    ) -> HandlerResponse[None]:
+    ) -> None:
         """Create a directory in IPC storage."""
         self._run_async(self._storage.mkdir(path, self._zone_id))
-        return HandlerResponse.ok(data=None, backend_name="ipc", path=path)
+        return
 
-    @timed_response
     def rmdir(
         self,
         path: str,
         recursive: bool = False,
         context: OperationContext | None = None,
-    ) -> HandlerResponse[None]:
+    ) -> None:
         """Remove directory — not supported for IPC (audit preservation)."""
-        return HandlerResponse.error(
-            message="IPC directories cannot be removed (audit trail preservation)",
-            code=403,
-            is_expected=True,
-            backend_name="ipc",
-            path=path,
+        raise BackendError(
+            "IPC directories cannot be removed (audit trail preservation)",
+            backend="ipc",
         )
 
-    @timed_response
     def is_directory(
         self,
         path: str,
         context: OperationContext | None = None,
-    ) -> HandlerResponse[bool]:
+    ) -> bool:
         """Check if a path is a directory in IPC storage."""
         try:
             # If list_dir succeeds, the path is a directory
             self._run_async(self._storage.list_dir(path, self._zone_id))
-            return HandlerResponse.ok(data=True, backend_name="ipc", path=path)
+            return True
         except FileNotFoundError:
             # Not a directory — could be a file or nonexistent
-            return HandlerResponse.ok(data=False, backend_name="ipc", path=path)
+            return False
         except Exception:
-            return HandlerResponse.ok(data=False, backend_name="ipc", path=path)
+            return False
 
     def list_dir(
         self,

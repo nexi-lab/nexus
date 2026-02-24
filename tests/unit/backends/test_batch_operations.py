@@ -14,8 +14,9 @@ from unittest.mock import MagicMock, patch
 from nexus.backends.backend import Backend
 from nexus.backends.base_blob_connector import BaseBlobStorageConnector
 from nexus.backends.cache_mixin import CacheConnectorMixin
+from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.contracts.types import OperationContext
-from nexus.lib.response import HandlerResponse
+from nexus.core.object_store import WriteResult
 
 
 class MockBlobConnector(BaseBlobStorageConnector, CacheConnectorMixin):
@@ -420,20 +421,18 @@ class MockGCSBackend(Backend):
     def name(self) -> str:
         return "gcs"
 
-    def write_content(self, content, context=None) -> HandlerResponse[str]:
+    def write_content(self, content, context=None) -> WriteResult:
         from nexus.core.hash_fast import hash_content
 
         h = hash_content(content)
         self._content[h] = content
-        return HandlerResponse.ok(data=h, backend_name="gcs")
+        return WriteResult(content_hash=h, size=len(content))
 
-    def read_content(self, content_hash, context=None) -> HandlerResponse[bytes]:
+    def read_content(self, content_hash, context=None) -> bytes:
         self.read_count += 1
         if content_hash not in self._content:
-            return HandlerResponse.not_found(
-                path=content_hash, message="Not found", backend_name="gcs"
-            )
-        return HandlerResponse.ok(data=self._content[content_hash], backend_name="gcs")
+            raise NexusFileNotFoundError(content_hash)
+        return self._content[content_hash]
 
     def batch_read_content(
         self, content_hashes, context=None, *, contexts=None
@@ -445,16 +444,22 @@ class MockGCSBackend(Backend):
         result: dict[str, bytes | None] = {}
 
         if len(content_hashes) == 1:
-            response = self.read_content(content_hashes[0], context=context)
-            return {content_hashes[0]: response.data if response.success else None}
+            try:
+                data = self.read_content(content_hashes[0], context=context)
+                return {content_hashes[0]: data}
+            except (NexusFileNotFoundError, BackendError):
+                return {content_hashes[0]: None}
 
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
         max_workers = min(self.batch_read_workers, len(content_hashes))
 
         def read_one(content_hash: str) -> tuple[str, bytes | None]:
-            response = self.read_content(content_hash, context=context)
-            return (content_hash, response.data if response.success else None)
+            try:
+                data = self.read_content(content_hash, context=context)
+                return (content_hash, data)
+            except (NexusFileNotFoundError, BackendError):
+                return (content_hash, None)
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {executor.submit(read_one, h): h for h in content_hashes}
@@ -464,29 +469,28 @@ class MockGCSBackend(Backend):
 
         return result
 
-    def delete_content(self, content_hash, context=None) -> HandlerResponse[None]:
+    def delete_content(self, content_hash, context=None) -> None:
         self._content.pop(content_hash, None)
-        return HandlerResponse.ok(data=None, backend_name="gcs")
 
-    def content_exists(self, content_hash, context=None) -> HandlerResponse[bool]:
-        return HandlerResponse.ok(data=content_hash in self._content, backend_name="gcs")
+    def content_exists(self, content_hash, context=None) -> bool:
+        return content_hash in self._content
 
-    def get_content_size(self, content_hash, context=None) -> HandlerResponse[int]:
+    def get_content_size(self, content_hash, context=None) -> int:
         if content_hash not in self._content:
-            return HandlerResponse.not_found(path=content_hash, backend_name="gcs")
-        return HandlerResponse.ok(data=len(self._content[content_hash]), backend_name="gcs")
+            raise NexusFileNotFoundError(content_hash)
+        return len(self._content[content_hash])
 
-    def get_ref_count(self, content_hash, context=None) -> HandlerResponse[int]:
-        return HandlerResponse.ok(data=1, backend_name="gcs")
+    def get_ref_count(self, content_hash, context=None) -> int:
+        return 1
 
-    def mkdir(self, path, parents=False, exist_ok=False, context=None) -> HandlerResponse[None]:
-        return HandlerResponse.ok(data=None, backend_name="gcs")
+    def mkdir(self, path, parents=False, exist_ok=False, context=None) -> None:
+        pass
 
-    def rmdir(self, path, recursive=False, context=None) -> HandlerResponse[None]:
-        return HandlerResponse.ok(data=None, backend_name="gcs")
+    def rmdir(self, path, recursive=False, context=None) -> None:
+        pass
 
-    def is_directory(self, path, context=None) -> HandlerResponse[bool]:
-        return HandlerResponse.ok(data=False, backend_name="gcs")
+    def is_directory(self, path, context=None) -> bool:
+        return False
 
 
 class TestGCSBatchReadContent:
@@ -495,9 +499,9 @@ class TestGCSBatchReadContent:
     def test_basic_batch_read(self):
         """Test reading multiple CAS objects in parallel."""
         backend = MockGCSBackend()
-        h1 = backend.write_content(b"file1").data
-        h2 = backend.write_content(b"file2").data
-        h3 = backend.write_content(b"file3").data
+        h1 = backend.write_content(b"file1").content_hash
+        h2 = backend.write_content(b"file2").content_hash
+        h3 = backend.write_content(b"file3").content_hash
 
         result = backend.batch_read_content([h1, h2, h3])
 
@@ -508,7 +512,7 @@ class TestGCSBatchReadContent:
     def test_partial_failures_return_none(self):
         """Test missing hashes return None, not exceptions."""
         backend = MockGCSBackend()
-        h1 = backend.write_content(b"exists").data
+        h1 = backend.write_content(b"exists").content_hash
         fake_hash = "a" * 64
 
         result = backend.batch_read_content([h1, fake_hash])
@@ -524,7 +528,7 @@ class TestGCSBatchReadContent:
     def test_single_item_skips_thread_pool(self):
         """Test single-item optimization (no ThreadPoolExecutor overhead)."""
         backend = MockGCSBackend()
-        h1 = backend.write_content(b"single").data
+        h1 = backend.write_content(b"single").content_hash
 
         result = backend.batch_read_content([h1])
 
@@ -536,7 +540,7 @@ class TestGCSBatchReadContent:
         backend = MockGCSBackend()
         hashes = []
         for i in range(20):
-            h = backend.write_content(f"content{i}".encode()).data
+            h = backend.write_content(f"content{i}".encode()).content_hash
             hashes.append(h)
 
         backend.read_count = 0
@@ -549,7 +553,7 @@ class TestGCSBatchReadContent:
     def test_deduplication(self):
         """Test requesting same hash multiple times."""
         backend = MockGCSBackend()
-        h1 = backend.write_content(b"dedup").data
+        h1 = backend.write_content(b"dedup").content_hash
 
         result = backend.batch_read_content([h1, h1, h1])
 
@@ -587,8 +591,6 @@ class MockS3ConnectorForBatch(BaseBlobStorageConnector, CacheConnectorMixin):
 
     def _download_blob(self, blob_path, version_id=None) -> tuple[bytes, str | None]:
         if blob_path not in self.files:
-            from nexus.contracts.exceptions import NexusFileNotFoundError
-
             raise NexusFileNotFoundError(blob_path)
         return self.files[blob_path], "v1"
 
@@ -612,22 +614,18 @@ class MockS3ConnectorForBatch(BaseBlobStorageConnector, CacheConnectorMixin):
         if source_path in self.files:
             self.files[dest_path] = self.files[source_path]
 
-    def read_content(self, content_hash, context=None) -> HandlerResponse[bytes]:
+    def read_content(self, content_hash, context=None) -> bytes:
         """S3-style read that requires context.backend_path."""
         self.read_count += 1
         if not context or not context.backend_path:
-            return HandlerResponse.error(
-                message="S3 connector requires backend_path",
-                code=400,
-                is_expected=True,
-                backend_name=self.name,
+            raise BackendError(
+                "S3 connector requires backend_path",
+                backend=self.name,
             )
         blob_path = self._get_blob_path(context.backend_path)
         if blob_path not in self.files:
-            return HandlerResponse.not_found(
-                path=blob_path, message="Not found", backend_name=self.name
-            )
-        return HandlerResponse.ok(data=self.files[blob_path], backend_name=self.name)
+            raise NexusFileNotFoundError(blob_path)
+        return self.files[blob_path]
 
     def batch_read_content(
         self, content_hashes, context=None, *, contexts=None
@@ -640,8 +638,11 @@ class MockS3ConnectorForBatch(BaseBlobStorageConnector, CacheConnectorMixin):
 
         if len(content_hashes) == 1:
             ctx = contexts.get(content_hashes[0], context) if contexts else context
-            response = self.read_content(content_hashes[0], context=ctx)
-            return {content_hashes[0]: response.data if response.success else None}
+            try:
+                data = self.read_content(content_hashes[0], context=ctx)
+                return {content_hashes[0]: data}
+            except (NexusFileNotFoundError, BackendError):
+                return {content_hashes[0]: None}
 
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -649,8 +650,11 @@ class MockS3ConnectorForBatch(BaseBlobStorageConnector, CacheConnectorMixin):
 
         def read_one(content_hash: str) -> tuple[str, bytes | None]:
             ctx = contexts.get(content_hash, context) if contexts else context
-            response = self.read_content(content_hash, context=ctx)
-            return (content_hash, response.data if response.success else None)
+            try:
+                data = self.read_content(content_hash, context=ctx)
+                return (content_hash, data)
+            except (NexusFileNotFoundError, BackendError):
+                return (content_hash, None)
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {executor.submit(read_one, h): h for h in content_hashes}
@@ -702,7 +706,7 @@ class TestS3BatchReadContent:
             "hash1": self._make_context("data/file1.txt"),
         }
 
-        # hash2 has no context and no fallback — read_content will fail
+        # hash2 has no context and no fallback -- read_content will fail
         result = backend.batch_read_content(["hash1", "hash2"], contexts=contexts)
 
         assert result["hash1"] == b"content1"
@@ -829,7 +833,7 @@ class TestBatchReadContentContextsParam:
     def test_backward_compat_no_contexts(self):
         """Test that batch_read_content still works without contexts param."""
         backend = MockGCSBackend()
-        h1 = backend.write_content(b"compat").data
+        h1 = backend.write_content(b"compat").content_hash
 
         # Call without contexts (backward compatible)
         result = backend.batch_read_content([h1])

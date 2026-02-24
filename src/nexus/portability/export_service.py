@@ -297,10 +297,7 @@ class ZoneExportService:
         for idx, content_hash in enumerate(content_hashes):
             try:
                 # Read content from backend
-                response = self.backend.read_content(content_hash)
-                if not response.success or response.data is None:
-                    logger.warning(f"Failed to read content {content_hash}: {response.error}")
-                    continue
+                content = self.backend.read_content(content_hash)
 
                 # Write to CAS structure (2-char prefix directories)
                 if len(content_hash) >= 2:
@@ -308,7 +305,7 @@ class ZoneExportService:
                     blob_dir = output_dir / prefix
                     blob_dir.mkdir(parents=True, exist_ok=True)
                     blob_path = blob_dir / content_hash
-                    blob_path.write_bytes(response.data)
+                    blob_path.write_bytes(content)
                     blob_count += 1
 
                 # Progress callback

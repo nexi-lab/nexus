@@ -176,10 +176,10 @@ class OperationUndoService:
         """Read content from CAS via router, with optional fallback."""
         try:
             route = self._router.route(path)
-            result: bytes = route.backend.read_content(content_hash).unwrap()
+            result: bytes = route.backend.read_content(content_hash)
             return result
         except Exception:
             if self._fallback_backend is not None:
-                fallback_result: bytes = self._fallback_backend.read_content(content_hash).unwrap()
+                fallback_result: bytes = self._fallback_backend.read_content(content_hash)
                 return fallback_result
             raise

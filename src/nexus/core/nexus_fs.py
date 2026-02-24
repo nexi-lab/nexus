@@ -711,9 +711,7 @@ class NexusFS(  # type: ignore[misc]
                 return
 
         # Create directory in backend
-        route.backend.mkdir(
-            route.backend_path, parents=parents, exist_ok=True, context=ctx
-        ).unwrap()
+        route.backend.mkdir(route.backend_path, parents=parents, exist_ok=True, context=ctx)
 
         # Create metadata entries for parent directories if parents=True
         if parents:
@@ -920,7 +918,7 @@ class NexusFS(  # type: ignore[misc]
             for file_meta in files_in_dir:
                 if file_meta.etag:
                     try:
-                        route.backend.delete_content(file_meta.etag).unwrap()
+                        route.backend.delete_content(file_meta.etag)
                     except Exception as e:
                         if len(_errors) < 100:
                             _errors.append(f"{file_meta.path}: {e}")
@@ -937,7 +935,7 @@ class NexusFS(  # type: ignore[misc]
         # Remove directory in backend (if it still exists)
         # In CAS systems, the directory may no longer exist after deleting its contents
         with contextlib.suppress(NexusFileNotFoundError):
-            route.backend.rmdir(route.backend_path, recursive=recursive).unwrap()
+            route.backend.rmdir(route.backend_path, recursive=recursive)
 
         # Also delete the directory's own metadata entry if it exists
         # Directories can have metadata entries (created by mkdir)
@@ -1016,7 +1014,7 @@ class NexusFS(  # type: ignore[misc]
                 check_write=False,
             )
             # Check if it's an explicit directory in the backend
-            if route.backend.is_directory(route.backend_path).unwrap():
+            if route.backend.is_directory(route.backend_path):
                 return True
             # Return cached implicit directory status
             return is_implicit_dir

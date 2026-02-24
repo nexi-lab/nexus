@@ -426,6 +426,13 @@ class SearchService(SemanticSearchMixin):
             path = path + "/"
         list_prefix = path if path != "/" else ""
 
+        # Zone-scope the list prefix when called from internal methods (e.g., glob)
+        # that bypass the RPC layer's _scope_params_for_zone path prefixing.
+        if list_zone_id and list_zone_id != ROOT_ZONE_ID:
+            zone_scope = f"/zone/{list_zone_id}"
+            if list_prefix and not list_prefix.startswith(zone_scope):
+                list_prefix = f"{zone_scope}{list_prefix}"
+
         # OPTIMIZATION: For non-recursive, try sparse directory index + Tiger bitmap
         _use_fast_path = False
         _revision_before: int | None = None
@@ -950,7 +957,8 @@ class SearchService(SemanticSearchMixin):
                 all_files = [
                     f
                     for f in all_files
-                    if tiger_cache.get_or_create_int_id("file", f.path) in _accessible_int_ids
+                    if tiger_cache._resource_map.get_or_create_int_id("file", f.path)
+                    in _accessible_int_ids
                 ]
                 logger.info(
                     f"[PREDICATE-PUSHDOWN] Service-layer filter: "
@@ -1499,7 +1507,10 @@ class SearchService(SemanticSearchMixin):
                 full_pattern = "**/" + full_pattern
         else:
             base_path = path[1:] if path.startswith("/") else path
-            full_pattern = base_path + pattern
+            # Strip leading "/" from pattern to avoid double-slash when
+            # base_path already ends with "/" (e.g., zone-scoped paths).
+            pattern_part = pattern.lstrip("/") if pattern.startswith("/") else pattern
+            full_pattern = base_path + pattern_part
 
         # Phase 4: Execute strategy-specific matching
         match_start = time.time()

@@ -907,6 +907,7 @@ class RebacCreateParams:
     zone_id: str | None = None
     context: Any = None
     column_config: dict[str, Any] | None = None
+    conditions: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         """Convert lists to tuples (JSON deserializes tuples as lists)."""
@@ -924,11 +925,63 @@ class RebacDeleteParams:
 
 
 @dataclass
+class RebacCheckBatchParams:
+    """Parameters for rebac_check_batch(): Batch permission checks."""
+
+    checks: list[Any]
+    zone_id: str | None = None
+
+    def __post_init__(self) -> None:
+        """Convert list-of-dicts to list-of-tuples for service compatibility."""
+        normalized: list[Any] = []
+        extracted_zone_id: str | None = self.zone_id
+        for check in self.checks:
+            if isinstance(check, dict):
+                subj = (
+                    tuple(check["subject"])
+                    if isinstance(check.get("subject"), list)
+                    else check.get("subject")
+                )
+                perm = check.get("permission", "")
+                obj = (
+                    tuple(check["object"])
+                    if isinstance(check.get("object"), list)
+                    else check.get("object")
+                )
+                # Extract zone_id from the first check dict if not set at top level
+                if extracted_zone_id is None and "zone_id" in check:
+                    extracted_zone_id = check["zone_id"]
+                normalized.append((subj, perm, obj))
+            elif isinstance(check, (list, tuple)):
+                normalized.append(tuple(tuple(c) if isinstance(c, list) else c for c in check))
+            else:
+                normalized.append(check)
+        object.__setattr__(self, "checks", normalized)
+        if extracted_zone_id is not None:
+            object.__setattr__(self, "zone_id", extracted_zone_id)
+
+
+@dataclass
+class RebacListObjectsParams:
+    """Parameters for rebac_list_objects(): List objects a subject has a relation to."""
+
+    relation: str
+    subject: tuple[str, str]
+    zone_id: str | None = None
+
+    def __post_init__(self) -> None:
+        """Convert lists to tuples (JSON deserializes tuples as lists)."""
+        if isinstance(self.subject, list):
+            object.__setattr__(self, "subject", tuple(self.subject))
+
+
+@dataclass
 class RebacExpandParams:
     """Parameters for rebac_expand(): Find all subjects that have a permission on an object."""
 
     permission: str
     object: tuple[str, str]
+    zone_id: str | None = None
 
     def __post_init__(self) -> None:
         """Convert lists to tuples (JSON deserializes tuples as lists)."""
@@ -1568,10 +1621,12 @@ METHOD_PARAMS: dict[str, type] = {
     "provision_user": ProvisionUserParams,
     "read_bulk": ReadBulkParams,
     "rebac_check": RebacCheckParams,
+    "rebac_check_batch": RebacCheckBatchParams,
     "rebac_create": RebacCreateParams,
     "rebac_delete": RebacDeleteParams,
     "rebac_expand": RebacExpandParams,
     "rebac_explain": RebacExplainParams,
+    "rebac_list_objects": RebacListObjectsParams,
     "rebac_list_tuples": RebacListTuplesParams,
     "register_agent": RegisterAgentParams,
     "register_memory": RegisterMemoryParams,

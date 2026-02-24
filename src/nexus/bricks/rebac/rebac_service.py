@@ -171,6 +171,7 @@ class ReBACService(ReBACShareMixin):
         zone_id: str | None = None,
         context: Any = None,
         column_config: dict[str, Any] | None = None,
+        conditions: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Create a ReBAC relationship tuple (Issue #1081).
 
@@ -254,7 +255,7 @@ class ReBACService(ReBACShareMixin):
             self._check_share_permission(resource=object, context=context)
 
             # Validate column_config for dynamic_viewer relation
-            conditions = None
+            effective_conditions = conditions
             if relation == "dynamic_viewer":
                 # Check if object is a CSV file
                 if object[0] == "file" and not object[1].lower().endswith(".csv"):
@@ -335,7 +336,7 @@ class ReBACService(ReBACShareMixin):
                         )
 
                 # Store column_config as conditions
-                conditions = {"type": "dynamic_viewer", "column_config": column_config}
+                effective_conditions = {"type": "dynamic_viewer", "column_config": column_config}
             elif column_config is not None:
                 # column_config provided but relation is not dynamic_viewer
                 raise ValueError(
@@ -350,7 +351,7 @@ class ReBACService(ReBACShareMixin):
                 object=object,
                 expires_at=expires_at,
                 zone_id=effective_zone_id,
-                conditions=conditions,
+                conditions=effective_conditions,
             )
 
             # NOTE: Tiger Cache queue update is handled in ReBACManager.rebac_write()
@@ -509,7 +510,7 @@ class ReBACService(ReBACShareMixin):
         self,
         permission: str,
         object: tuple[str, str],
-        _zone_id: str | None = None,
+        zone_id: str | None = None,
         _limit: int = 100,
     ) -> list[tuple[str, str]]:
         """Find all subjects that have a permission on an object.
@@ -552,9 +553,10 @@ class ReBACService(ReBACShareMixin):
 
             # Expand permission (manager guaranteed by _run_in_thread)
             assert self._rebac_manager is not None
-            expanded: list[tuple[str, str]] = self._rebac_manager.rebac_expand(
-                permission=permission, object=object
-            )
+            kwargs: dict[str, Any] = {"permission": permission, "object": object}
+            if zone_id is not None:
+                kwargs["zone_id"] = zone_id
+            expanded: list[tuple[str, str]] = self._rebac_manager.rebac_expand(**kwargs)
             return expanded
 
         return await self._run_in_thread(_expand_sync)
@@ -643,7 +645,7 @@ class ReBACService(ReBACShareMixin):
     async def rebac_check_batch(
         self,
         checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
-        _zone_id: str | None = None,
+        zone_id: str | None = None,
     ) -> list[bool]:
         """Check multiple permissions in a single call for efficiency.
 
@@ -690,10 +692,25 @@ class ReBACService(ReBACShareMixin):
                 if not isinstance(obj, tuple) or len(obj) != 2:
                     raise ValueError(f"Check {i}: object must be (type, id) tuple, got {obj}")
 
-            # Perform batch check with Rust acceleration (manager guaranteed by _run_in_thread)
             assert self._rebac_manager is not None
-            batch_results: list[bool] = self._rebac_manager.rebac_check_batch_fast(checks=checks)
-            return batch_results
+
+            # When zone_id is available, use individual rebac_check calls which
+            # properly scope tuple lookups to the zone. rebac_check_batch_fast
+            # does not support zone_id and would query with zone_id IS NULL.
+            if zone_id is not None:
+                batch_results: list[bool] = []
+                for subj, perm, obj in checks:
+                    result: bool = self._rebac_manager.rebac_check(
+                        subject=subj,
+                        permission=perm,
+                        object=obj,
+                        zone_id=zone_id,
+                    )
+                    batch_results.append(result)
+                return batch_results
+
+            # No zone_id: use optimized batch path (Rust acceleration)
+            return self._rebac_manager.rebac_check_batch_fast(checks=checks)
 
         # Issue #702: Wrap batch check in a summary span
         import time as _time
@@ -849,6 +866,57 @@ class ReBACService(ReBACShareMixin):
             return tuples
 
         return await self._run_in_thread(_list_tuples_sync)
+
+    @rpc_expose(description="List objects a subject has a specific relation to")
+    async def rebac_list_objects(
+        self,
+        relation: str,
+        subject: tuple[str, str],
+        zone_id: str | None = None,
+    ) -> list[list[str]]:
+        """List objects that a subject has a given relation to.
+
+        This is useful for queries like "show all files user X can view" filtered
+        by a specific relation (e.g., direct_viewer, direct_editor).
+
+        Args:
+            relation: The relation to filter by (e.g., "direct_viewer", "direct_editor")
+            subject: (subject_type, subject_id) tuple, e.g., ("user", "alice")
+            zone_id: Optional zone ID for multi-zone isolation
+
+        Returns:
+            List of [object_type, object_id] pairs matching the relation
+
+        Examples:
+            # List all files a user has direct_viewer on
+            objects = await rebac.rebac_list_objects(
+                relation="direct_viewer",
+                subject=("user", "alice"),
+                zone_id="corp",
+            )
+        """
+
+        def _list_objects_sync() -> list[list[str]]:
+            assert self._rebac_manager is not None
+            tuples: list[dict[str, Any]] = self._rebac_manager.list_tuples(
+                subject=subject,
+                relation=relation,
+            )
+            seen: set[tuple[str, str]] = set()
+            result: list[list[str]] = []
+            for t in tuples:
+                # Filter by zone_id if specified
+                if zone_id is not None and t.get("zone_id") != zone_id:
+                    continue
+                obj_type = t.get("object_type", "file")
+                obj_id = t.get("object_id", "")
+                key = (obj_type, obj_id)
+                if key not in seen:
+                    seen.add(key)
+                    result.append([obj_type, obj_id])
+            return result
+
+        return await self._run_in_thread(_list_objects_sync)
 
     # =========================================================================
     # Public API: Configuration & Namespaces

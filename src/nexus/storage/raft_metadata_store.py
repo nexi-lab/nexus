@@ -514,10 +514,11 @@ class RaftMetadataStore(MetastoreABC):
         # zone_id parameter accepted for API consistency but filtering is inherent.
         # RaftMetadataStore is zone-local. Non-zoned stores serve the "root" zone,
         # so zone_id="root" is always allowed. Only assert on specific zone_ids.
+        # When prefix is already zone-scoped (e.g. /zone/corp/...), zone_id is
+        # redundant — path prefix already constrains to the zone namespace.
         if zone_id is not None and zone_id != ROOT_ZONE_ID:
-            assert self._zone_id is not None, (
-                f"zone_id filter '{zone_id}' passed to a non-zone-scoped store"
-            )
+            if self._zone_id is None and not prefix.startswith(f"/zone/{zone_id}"):
+                raise ValueError(f"zone_id filter '{zone_id}' passed to a non-zone-scoped store")
         if self._has_engine:
             return self._list_engine(prefix, recursive)
         else:
@@ -578,12 +579,10 @@ class RaftMetadataStore(MetastoreABC):
         Memory usage is O(limit) instead of O(total).
         """
         # RaftMetadataStore is zone-local: zone_id accepted for API consistency.
-        # RaftMetadataStore is zone-local. Non-zoned stores serve the "root" zone,
-        # so zone_id="root" is always allowed. Only assert on specific zone_ids.
+        # When prefix is already zone-scoped, zone_id is redundant.
         if zone_id is not None and zone_id != ROOT_ZONE_ID:
-            assert self._zone_id is not None, (
-                f"zone_id filter '{zone_id}' passed to a non-zone-scoped store"
-            )
+            if self._zone_id is None and not prefix.startswith(f"/zone/{zone_id}"):
+                raise ValueError(f"zone_id filter '{zone_id}' passed to a non-zone-scoped store")
         from itertools import islice
 
         # Decode cursor if it's base64-encoded
@@ -1139,12 +1138,10 @@ class RaftMetadataStore(MetastoreABC):
             List of file metadata
         """
         # RaftMetadataStore is zone-local: zone_id accepted for API consistency.
-        # RaftMetadataStore is zone-local. Non-zoned stores serve the "root" zone,
-        # so zone_id="root" is always allowed. Only assert on specific zone_ids.
+        # When prefix is already zone-scoped, zone_id is redundant.
         if zone_id is not None and zone_id != ROOT_ZONE_ID:
-            assert self._zone_id is not None, (
-                f"zone_id filter '{zone_id}' passed to a non-zone-scoped store"
-            )
+            if self._zone_id is None and not prefix.startswith(f"/zone/{zone_id}"):
+                raise ValueError(f"zone_id filter '{zone_id}' passed to a non-zone-scoped store")
         if self._has_engine:
             return self._list_engine(prefix, recursive)
         else:

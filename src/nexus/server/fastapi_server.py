@@ -577,6 +577,18 @@ def _register_routes(app: FastAPI) -> None:
     except ImportError as e:
         logger.warning(f"Failed to import zone routes: {e}. Zone management unavailable.")
 
+    # Test hooks REST API (Issue #2) — only when NEXUS_TEST_HOOKS=true
+    import os
+
+    if os.getenv("NEXUS_TEST_HOOKS") == "true":
+        try:
+            from nexus.core.test_hooks import build_test_hooks_router
+
+            app.include_router(build_test_hooks_router())
+            logger.info("Test hooks routes registered (NEXUS_TEST_HOOKS=true)")
+        except ImportError as e:
+            logger.warning(f"Failed to import test hooks router: {e}")
+
     # API v2 routes — centralized registration via versioning module (#995)
     from nexus.server.api.v2.versioning import (
         DeprecationMiddleware,

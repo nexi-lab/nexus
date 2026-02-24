@@ -161,7 +161,7 @@ def app(tmp_path: Any, db_path: Any, record_store: Any) -> Any:
     from sqlalchemy.orm import sessionmaker
 
     from nexus.backends.local import LocalBackend
-    from nexus.core.nexus_fs import NexusFS
+    from nexus.factory import create_nexus_fs
     from nexus.server.fastapi_server import create_app
 
     engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
@@ -184,7 +184,7 @@ def app(tmp_path: Any, db_path: Any, record_store: Any) -> Any:
     backend = LocalBackend(root_path=tmpdir)
     metadata_store = InMemoryMetadataStore()
 
-    nx = NexusFS(
+    nx = create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,

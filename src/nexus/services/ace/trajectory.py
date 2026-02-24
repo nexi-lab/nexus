@@ -115,7 +115,7 @@ class TrajectoryManager:
 
         # Store trace in CAS
         trace_json = json.dumps(trace_data, indent=2).encode("utf-8")
-        trace_hash = self.backend.write_content(trace_json).unwrap()
+        trace_hash = self.backend.write_content(trace_json).content_hash
 
         # Create trajectory record in database immediately with in_progress status
         now = datetime.now(UTC)
@@ -191,7 +191,7 @@ class TrajectoryManager:
                 raise ValueError(f"Trajectory {trajectory_id} not found or already completed")
 
             # Load trace from CAS
-            trace_bytes = self.backend.read_content(db_traj.trace_hash).unwrap()
+            trace_bytes = self.backend.read_content(db_traj.trace_hash)
             trace_data = json.loads(trace_bytes.decode("utf-8"))
 
             # Store in memory
@@ -225,7 +225,7 @@ class TrajectoryManager:
 
         # Update trace in CAS and database
         trace_json = json.dumps(trace, indent=2).encode("utf-8")
-        new_trace_hash = self.backend.write_content(trace_json).unwrap()
+        new_trace_hash = self.backend.write_content(trace_json).content_hash
         self._active_trajectories[trajectory_id]["trace_hash"] = new_trace_hash
 
         # Update database
@@ -283,7 +283,7 @@ class TrajectoryManager:
                 raise ValueError(f"Trajectory {trajectory_id} not found or already completed")
 
             # Load trace from CAS
-            trace_bytes = self.backend.read_content(db_traj.trace_hash).unwrap()
+            trace_bytes = self.backend.read_content(db_traj.trace_hash)
             trace_data = json.loads(trace_bytes.decode("utf-8"))
 
             # Store in memory temporarily
@@ -307,7 +307,7 @@ class TrajectoryManager:
 
         # Store trace in CAS
         trace_json = json.dumps(trace, indent=2).encode("utf-8")
-        trace_hash = self.backend.write_content(trace_json).unwrap()
+        trace_hash = self.backend.write_content(trace_json).content_hash
 
         # Calculate duration
         start_time = traj_data["start_time"]
@@ -390,7 +390,7 @@ class TrajectoryManager:
             return None
 
         # Read trace from CAS
-        trace_bytes = self.backend.read_content(trajectory.trace_hash).unwrap()
+        trace_bytes = self.backend.read_content(trajectory.trace_hash)
         trace_data = json.loads(trace_bytes.decode("utf-8"))
 
         return {

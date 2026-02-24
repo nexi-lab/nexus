@@ -227,9 +227,7 @@ class Memory:
         import json as _json
 
         try:
-            content_bytes: bytes = self.backend.read_content(
-                content_hash, context=self.context
-            ).unwrap()
+            content_bytes: bytes = self.backend.read_content(content_hash, context=self.context)
             if parse_json:
                 try:
                     parsed: dict[str, Any] = _json.loads(content_bytes.decode("utf-8"))
@@ -410,7 +408,7 @@ class Memory:
             backend_context = context if context else self.context
             content_hash = self.backend.write_content(
                 content_bytes, context=backend_context
-            ).unwrap()
+            ).content_hash
         except Exception as e:
             raise RuntimeError(f"Failed to store content in backend: {e}") from e
 
@@ -1020,7 +1018,7 @@ class Memory:
                     try:
                         content_bytes = self.backend.read_content(
                             memory.content_hash, context=self.context
-                        ).unwrap()
+                        )
                         content = content_bytes.decode("utf-8")
                         keyword_score = self._compute_keyword_score(query, content)
                     except Exception as e:
@@ -2088,7 +2086,7 @@ class Memory:
                         # Read content
                         content_bytes = self.backend.read_content(
                             memory.content_hash, context=self.context
-                        ).unwrap()
+                        )
                         content = content_bytes.decode("utf-8")
 
                         # Generate embedding

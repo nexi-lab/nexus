@@ -49,13 +49,10 @@ class TestNexusFSBindWiredServices:
         from nexus.core.config import KernelServices, ParseConfig
         from nexus.core.nexus_fs import NexusFS
 
-        mock_backend = MagicMock()
-        mock_backend.content_cache = None
         mock_metadata = MagicMock()
         mock_metadata.list = MagicMock(return_value=[])
 
         nx = NexusFS(
-            backend=mock_backend,
             metadata_store=mock_metadata,
             kernel_services=KernelServices(),
             parsing=ParseConfig(auto_parse=False),

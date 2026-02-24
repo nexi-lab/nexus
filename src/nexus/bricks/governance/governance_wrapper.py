@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import TransactionProtocol
-from nexus.utils.async_helpers import fire_and_forget
+from nexus.lib.sync_bridge import fire_and_forget
 
 if TYPE_CHECKING:
     from nexus.bricks.governance.protocols import AnomalyServiceProtocol, GovernanceGraphProtocol

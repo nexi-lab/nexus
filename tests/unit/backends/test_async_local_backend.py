@@ -74,15 +74,14 @@ async def test_write_and_read_content(temp_backend: AsyncLocalBackend) -> None:
     """Test writing and reading content asynchronously."""
     content = b"Hello, World!"
     result = await temp_backend.write_content(content)
-    content_hash = result.unwrap()
+    content_hash = result.content_hash
 
     # Verify hash is correct (using BLAKE3)
     expected_hash = hash_content(content)
     assert content_hash == expected_hash
 
     # Read content back
-    read_result = await temp_backend.read_content(content_hash)
-    retrieved = read_result.unwrap()
+    retrieved = await temp_backend.read_content(content_hash)
     assert retrieved == content
 
 
@@ -92,20 +91,18 @@ async def test_write_duplicate_content(temp_backend: AsyncLocalBackend) -> None:
     content = b"Duplicate test content"
 
     result1 = await temp_backend.write_content(content)
-    hash1 = result1.unwrap()
+    hash1 = result1.content_hash
     result2 = await temp_backend.write_content(content)
-    hash2 = result2.unwrap()
+    hash2 = result2.content_hash
 
     assert hash1 == hash2
 
     # Verify content can be read
-    read_result = await temp_backend.read_content(hash1)
-    retrieved = read_result.unwrap()
+    retrieved = await temp_backend.read_content(hash1)
     assert retrieved == content
 
     # Verify ref count was incremented
-    ref_result = await temp_backend.get_ref_count(hash1)
-    ref_count = ref_result.unwrap()
+    ref_count = await temp_backend.get_ref_count(hash1)
     assert ref_count == 2
 
 
@@ -115,8 +112,7 @@ async def test_read_nonexistent_content(temp_backend: AsyncLocalBackend) -> None
     fake_hash = "a" * 64
 
     with pytest.raises(NexusFileNotFoundError):
-        result = await temp_backend.read_content(fake_hash)
-        result.unwrap()
+        await temp_backend.read_content(fake_hash)
 
 
 @pytest.mark.asyncio
@@ -124,15 +120,14 @@ async def test_write_empty_content(temp_backend: AsyncLocalBackend) -> None:
     """Test writing empty content."""
     content = b""
     result = await temp_backend.write_content(content)
-    content_hash = result.unwrap()
+    content_hash = result.content_hash
 
     # Verify hash is correct for empty content (using BLAKE3)
     expected_hash = hash_content(b"")
     assert content_hash == expected_hash
 
     # Read it back
-    read_result = await temp_backend.read_content(content_hash)
-    retrieved = read_result.unwrap()
+    retrieved = await temp_backend.read_content(content_hash)
     assert retrieved == b""
 
 
@@ -142,11 +137,10 @@ async def test_write_large_content(temp_backend: AsyncLocalBackend) -> None:
     # 10 MB of data (below default 16MB CDC threshold)
     content = b"X" * (10 * 1024 * 1024)
     result = await temp_backend.write_content(content)
-    content_hash = result.unwrap()
+    content_hash = result.content_hash
 
     # Verify it can be read back
-    read_result = await temp_backend.read_content(content_hash)
-    retrieved = read_result.unwrap()
+    retrieved = await temp_backend.read_content(content_hash)
     assert len(retrieved) == len(content)
     assert retrieved == content
 
@@ -156,10 +150,9 @@ async def test_binary_content(temp_backend: AsyncLocalBackend) -> None:
     """Test handling of binary content with all byte values."""
     content = bytes(range(256))
     result = await temp_backend.write_content(content)
-    content_hash = result.unwrap()
+    content_hash = result.content_hash
 
-    read_result = await temp_backend.read_content(content_hash)
-    retrieved = read_result.unwrap()
+    retrieved = await temp_backend.read_content(content_hash)
     assert retrieved == content
 
 
@@ -171,21 +164,18 @@ async def test_delete_content(temp_backend: AsyncLocalBackend) -> None:
     """Test deleting content with reference counting."""
     content = b"Content to delete"
     result = await temp_backend.write_content(content)
-    content_hash = result.unwrap()
+    content_hash = result.content_hash
 
     # Verify content exists
-    read_result = await temp_backend.read_content(content_hash)
-    retrieved = read_result.unwrap()
+    retrieved = await temp_backend.read_content(content_hash)
     assert retrieved == content
 
     # Delete content
-    delete_result = await temp_backend.delete_content(content_hash)
-    delete_result.unwrap()
+    await temp_backend.delete_content(content_hash)
 
     # Verify content is deleted
     with pytest.raises(NexusFileNotFoundError):
-        read_result = await temp_backend.read_content(content_hash)
-        read_result.unwrap()
+        await temp_backend.read_content(content_hash)
 
 
 @pytest.mark.asyncio
@@ -195,29 +185,28 @@ async def test_delete_with_multiple_references(temp_backend: AsyncLocalBackend) 
 
     # Write same content twice to create ref_count=2
     result1 = await temp_backend.write_content(content)
-    hash1 = result1.unwrap()
+    hash1 = result1.content_hash
     await temp_backend.write_content(content)
 
     # Verify ref count is 2
-    ref_result = await temp_backend.get_ref_count(hash1)
-    assert ref_result.unwrap() == 2
+    ref_count = await temp_backend.get_ref_count(hash1)
+    assert ref_count == 2
 
     # Delete once - should decrement ref count
     await temp_backend.delete_content(hash1)
 
     # Content should still exist with ref_count=1
-    read_result = await temp_backend.read_content(hash1)
-    assert read_result.unwrap() == content
+    retrieved = await temp_backend.read_content(hash1)
+    assert retrieved == content
 
-    ref_result = await temp_backend.get_ref_count(hash1)
-    assert ref_result.unwrap() == 1
+    ref_count = await temp_backend.get_ref_count(hash1)
+    assert ref_count == 1
 
     # Delete again - should remove content
     await temp_backend.delete_content(hash1)
 
     with pytest.raises(NexusFileNotFoundError):
-        result = await temp_backend.read_content(hash1)
-        result.unwrap()
+        await temp_backend.read_content(hash1)
 
 
 @pytest.mark.asyncio
@@ -225,8 +214,8 @@ async def test_delete_nonexistent_content(temp_backend: AsyncLocalBackend) -> No
     """Test deleting non-existent content returns not found."""
     fake_hash = "b" * 64
 
-    result = await temp_backend.delete_content(fake_hash)
-    assert not result.success
+    with pytest.raises(NexusFileNotFoundError):
+        await temp_backend.delete_content(fake_hash)
 
 
 # === Content Exists Tests ===
@@ -237,14 +226,14 @@ async def test_content_exists(temp_backend: AsyncLocalBackend) -> None:
     """Test checking if content exists."""
     content = b"Existence test"
     result = await temp_backend.write_content(content)
-    content_hash = result.unwrap()
+    content_hash = result.content_hash
 
-    exists_result = await temp_backend.content_exists(content_hash)
-    assert exists_result.unwrap() is True
+    exists = await temp_backend.content_exists(content_hash)
+    assert exists is True
 
     fake_hash = "c" * 64
-    exists_result = await temp_backend.content_exists(fake_hash)
-    assert exists_result.unwrap() is False
+    exists = await temp_backend.content_exists(fake_hash)
+    assert exists is False
 
 
 @pytest.mark.asyncio
@@ -252,18 +241,18 @@ async def test_content_exists_after_delete(temp_backend: AsyncLocalBackend) -> N
     """Test content_exists returns False after deletion."""
     content = b"Delete and check existence"
     result = await temp_backend.write_content(content)
-    content_hash = result.unwrap()
+    content_hash = result.content_hash
 
     # Initially exists
-    exists_result = await temp_backend.content_exists(content_hash)
-    assert exists_result.unwrap() is True
+    exists = await temp_backend.content_exists(content_hash)
+    assert exists is True
 
     # Delete it
     await temp_backend.delete_content(content_hash)
 
     # Should no longer exist
-    exists_result = await temp_backend.content_exists(content_hash)
-    assert exists_result.unwrap() is False
+    exists = await temp_backend.content_exists(content_hash)
+    assert exists is False
 
 
 # === Content Size Tests ===
@@ -274,10 +263,9 @@ async def test_get_content_size(temp_backend: AsyncLocalBackend) -> None:
     """Test getting content size."""
     content = b"Test content for size"
     result = await temp_backend.write_content(content)
-    content_hash = result.unwrap()
+    content_hash = result.content_hash
 
-    size_result = await temp_backend.get_content_size(content_hash)
-    size = size_result.unwrap()
+    size = await temp_backend.get_content_size(content_hash)
     assert size == len(content)
 
 
@@ -286,8 +274,8 @@ async def test_get_content_size_nonexistent(temp_backend: AsyncLocalBackend) -> 
     """Test getting size of non-existent content."""
     fake_hash = "d" * 64
 
-    result = await temp_backend.get_content_size(fake_hash)
-    assert not result.success
+    with pytest.raises(NexusFileNotFoundError):
+        await temp_backend.get_content_size(fake_hash)
 
 
 # === Reference Count Tests ===
@@ -298,16 +286,16 @@ async def test_get_ref_count(temp_backend: AsyncLocalBackend) -> None:
     """Test getting reference count."""
     content = b"Ref count test"
     result = await temp_backend.write_content(content)
-    content_hash = result.unwrap()
+    content_hash = result.content_hash
 
     # Initial ref count should be 1
-    ref_result = await temp_backend.get_ref_count(content_hash)
-    assert ref_result.unwrap() == 1
+    ref_count = await temp_backend.get_ref_count(content_hash)
+    assert ref_count == 1
 
     # Write again - ref count should increase
     await temp_backend.write_content(content)
-    ref_result = await temp_backend.get_ref_count(content_hash)
-    assert ref_result.unwrap() == 2
+    ref_count = await temp_backend.get_ref_count(content_hash)
+    assert ref_count == 2
 
 
 @pytest.mark.asyncio
@@ -315,8 +303,8 @@ async def test_get_ref_count_nonexistent(temp_backend: AsyncLocalBackend) -> Non
     """Test getting ref count of non-existent content."""
     fake_hash = "e" * 64
 
-    result = await temp_backend.get_ref_count(fake_hash)
-    assert not result.success
+    with pytest.raises(NexusFileNotFoundError):
+        await temp_backend.get_ref_count(fake_hash)
 
 
 # === Streaming Tests ===
@@ -327,7 +315,7 @@ async def test_stream_content_small_file(temp_backend: AsyncLocalBackend) -> Non
     """Test streaming a small file asynchronously."""
     content = b"Small file content for streaming test"
     result = await temp_backend.write_content(content)
-    content_hash = result.unwrap()
+    content_hash = result.content_hash
 
     # Stream content using async generator
     chunks = []
@@ -348,7 +336,7 @@ async def test_stream_content_large_file(temp_backend: AsyncLocalBackend) -> Non
     # Create 1MB test file
     content = b"X" * (1024 * 1024)
     result = await temp_backend.write_content(content)
-    content_hash = result.unwrap()
+    content_hash = result.content_hash
 
     # Stream in 64KB chunks
     chunk_size = 64 * 1024
@@ -388,15 +376,15 @@ async def test_write_stream_basic(temp_backend: AsyncLocalBackend) -> None:
             yield chunk
 
     result = await temp_backend.write_stream(chunk_generator())
-    content_hash = result.unwrap()
+    content_hash = result.content_hash
 
     # Verify hash matches expected content
     expected_hash = hash_content(expected_content)
     assert content_hash == expected_hash
 
     # Verify content can be read back
-    read_result = await temp_backend.read_content(content_hash)
-    assert read_result.unwrap() == expected_content
+    retrieved = await temp_backend.read_content(content_hash)
+    assert retrieved == expected_content
 
 
 @pytest.mark.asyncio
@@ -413,11 +401,11 @@ async def test_write_stream_large_content(temp_backend: AsyncLocalBackend) -> No
             remaining -= size
 
     result = await temp_backend.write_stream(chunk_generator())
-    content_hash = result.unwrap()
+    content_hash = result.content_hash
 
     # Verify size
-    size_result = await temp_backend.get_content_size(content_hash)
-    assert size_result.unwrap() == total_size
+    size = await temp_backend.get_content_size(content_hash)
+    assert size == total_size
 
 
 # === Batch Read Tests ===
@@ -431,9 +419,9 @@ async def test_batch_read_content_basic(temp_backend: AsyncLocalBackend) -> None
     content2 = b"Content 2"
     content3 = b"Content 3"
 
-    hash1 = (await temp_backend.write_content(content1)).unwrap()
-    hash2 = (await temp_backend.write_content(content2)).unwrap()
-    hash3 = (await temp_backend.write_content(content3)).unwrap()
+    hash1 = (await temp_backend.write_content(content1)).content_hash
+    hash2 = (await temp_backend.write_content(content2)).content_hash
+    hash3 = (await temp_backend.write_content(content3)).content_hash
 
     # Batch read all content
     result = await temp_backend.batch_read_content([hash1, hash2, hash3])
@@ -449,7 +437,7 @@ async def test_batch_read_content_missing_hashes(temp_backend: AsyncLocalBackend
     """Test batch read with some missing content hashes."""
     # Write one content item
     content1 = b"Content 1"
-    hash1 = (await temp_backend.write_content(content1)).unwrap()
+    hash1 = (await temp_backend.write_content(content1)).content_hash
 
     # Create fake hashes that don't exist
     fake_hash1 = "0" * 64
@@ -479,7 +467,7 @@ async def test_batch_read_content_concurrent(temp_backend: AsyncLocalBackend) ->
     hashes = []
     for content in contents:
         result = await temp_backend.write_content(content)
-        hashes.append(result.unwrap())
+        hashes.append(result.content_hash)
 
     # Batch read all files (should be concurrent)
     result = await temp_backend.batch_read_content(hashes)
@@ -497,8 +485,7 @@ async def test_batch_read_content_concurrent(temp_backend: AsyncLocalBackend) ->
 async def test_mkdir(temp_backend: AsyncLocalBackend) -> None:
     """Test creating directories asynchronously."""
     dir_path = "/test/nested/directory"
-    result = await temp_backend.mkdir(dir_path, parents=True)
-    result.unwrap()
+    await temp_backend.mkdir(dir_path, parents=True)
 
     # Check that directory was created
     physical_path = temp_backend.dir_root / dir_path.lstrip("/")
@@ -510,12 +497,10 @@ async def test_mkdir(temp_backend: AsyncLocalBackend) -> None:
 async def test_mkdir_existing(temp_backend: AsyncLocalBackend) -> None:
     """Test creating directory that already exists with exist_ok=True."""
     dir_path = "/test/existing"
-    result1 = await temp_backend.mkdir(dir_path, parents=True, exist_ok=True)
-    result1.unwrap()
+    await temp_backend.mkdir(dir_path, parents=True, exist_ok=True)
 
     # Create again - should not raise
-    result2 = await temp_backend.mkdir(dir_path, exist_ok=True)
-    result2.unwrap()
+    await temp_backend.mkdir(dir_path, exist_ok=True)
 
 
 @pytest.mark.asyncio
@@ -524,8 +509,8 @@ async def test_is_directory(temp_backend: AsyncLocalBackend) -> None:
     dir_path = "/test/directory"
     await temp_backend.mkdir(dir_path, parents=True)
 
-    result = await temp_backend.is_directory(dir_path)
-    assert result.unwrap() is True
+    is_dir = await temp_backend.is_directory(dir_path)
+    assert is_dir is True
 
 
 @pytest.mark.asyncio
@@ -556,16 +541,16 @@ async def test_concurrent_writes_same_content(temp_backend: AsyncLocalBackend) -
     results = await asyncio.gather(*tasks)
 
     # All should return same hash
-    hashes = [r.unwrap() for r in results]
+    hashes = [r.content_hash for r in results]
     assert len(set(hashes)) == 1  # All same hash
 
     # Ref count should be 10
-    ref_result = await temp_backend.get_ref_count(hashes[0])
-    assert ref_result.unwrap() == 10
+    ref_count = await temp_backend.get_ref_count(hashes[0])
+    assert ref_count == 10
 
     # Content should be readable
-    read_result = await temp_backend.read_content(hashes[0])
-    assert read_result.unwrap() == content
+    retrieved = await temp_backend.read_content(hashes[0])
+    assert retrieved == content
 
 
 @pytest.mark.asyncio
@@ -578,13 +563,13 @@ async def test_concurrent_writes_different_content(temp_backend: AsyncLocalBacke
     results = await asyncio.gather(*tasks)
 
     # All should succeed with unique hashes
-    hashes = [r.unwrap() for r in results]
+    hashes = [r.content_hash for r in results]
     assert len(set(hashes)) == 20  # All unique
 
     # All content should be readable
     for content, h in zip(contents, hashes):
-        read_result = await temp_backend.read_content(h)
-        assert read_result.unwrap() == content
+        retrieved = await temp_backend.read_content(h)
+        assert retrieved == content
 
 
 @pytest.mark.asyncio
@@ -592,16 +577,15 @@ async def test_concurrent_read_write(temp_backend: AsyncLocalBackend) -> None:
     """Test concurrent reads and writes don't interfere."""
     content = b"Read-write test content"
     result = await temp_backend.write_content(content)
-    content_hash = result.unwrap()
+    content_hash = result.content_hash
 
     # Perform concurrent reads and writes
     async def read_task():
-        result = await temp_backend.read_content(content_hash)
-        return result.unwrap()
+        return await temp_backend.read_content(content_hash)
 
     async def write_task():
         result = await temp_backend.write_content(content)
-        return result.unwrap()
+        return result.content_hash
 
     tasks = [read_task() for _ in range(10)] + [write_task() for _ in range(5)]
     results = await asyncio.gather(*tasks)
@@ -623,18 +607,18 @@ async def test_cache_hit_on_read(backend_with_cache: AsyncLocalBackend) -> None:
     """Test that cache is used on read."""
     content = b"Cached content"
     result = await backend_with_cache.write_content(content)
-    content_hash = result.unwrap()
+    content_hash = result.content_hash
 
     # First read - should populate cache
-    read_result = await backend_with_cache.read_content(content_hash)
-    assert read_result.unwrap() == content
+    retrieved = await backend_with_cache.read_content(content_hash)
+    assert retrieved == content
 
     # Verify cache was populated
     assert backend_with_cache.content_cache.get(content_hash) == content
 
     # Second read - should hit cache
-    read_result = await backend_with_cache.read_content(content_hash)
-    assert read_result.unwrap() == content
+    retrieved = await backend_with_cache.read_content(content_hash)
+    assert retrieved == content
 
 
 @pytest.mark.asyncio
@@ -642,8 +626,8 @@ async def test_batch_read_uses_cache(backend_with_cache: AsyncLocalBackend) -> N
     """Test that batch read uses cache."""
     content1 = b"Cached content 1"
     content2 = b"Cached content 2"
-    hash1 = (await backend_with_cache.write_content(content1)).unwrap()
-    hash2 = (await backend_with_cache.write_content(content2)).unwrap()
+    hash1 = (await backend_with_cache.write_content(content1)).content_hash
+    hash2 = (await backend_with_cache.write_content(content2)).content_hash
 
     # First batch read (populates cache)
     result1 = await backend_with_cache.batch_read_content([hash1, hash2])
@@ -700,11 +684,10 @@ async def test_multiple_backends_same_root(tmp_path: Path) -> None:
         # Write with first backend
         content = b"Shared content"
         result = await backend1.write_content(content)
-        hash1 = result.unwrap()
+        hash1 = result.content_hash
 
         # Read with second backend
-        read_result = await backend2.read_content(hash1)
-        retrieved = read_result.unwrap()
+        retrieved = await backend2.read_content(hash1)
         assert retrieved == content
     finally:
         await backend1.close()

@@ -15,6 +15,10 @@ from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
+# Mount points auto-created by factory boot (root + IPC /agents).
+# These are system entries, not user files.
+_SYSTEM_PATHS = frozenset({"/", "/agents"})
+
 
 @pytest.fixture
 def temp_dir() -> Generator[Path, None, None]:
@@ -198,8 +202,8 @@ def test_list_files(embedded: NexusFS) -> None:
     embedded.write("/dir/file2.txt", b"Content 2")
     embedded.write("/dir/subdir/file3.txt", b"Content 3")
 
-    # List all files
-    files = embedded.list()
+    # List all files (filter out system mount-point entries)
+    files = [f for f in embedded.list() if f not in _SYSTEM_PATHS]
 
     assert len(files) == 3
     assert "/file1.txt" in files
@@ -226,8 +230,8 @@ def test_list_with_prefix(embedded: NexusFS) -> None:
 
 
 def test_list_empty(embedded: NexusFS) -> None:
-    """Test listing when no files exist."""
-    files = embedded.list()
+    """Test listing when no user files exist."""
+    files = [f for f in embedded.list() if f not in _SYSTEM_PATHS]
     assert len(files) == 0
 
 
@@ -462,8 +466,8 @@ def test_overwrite_preserves_path(embedded: NexusFS) -> None:
     assert embedded.exists(path)
     assert embedded.read(path) == b"Content 2"
 
-    # Should only be one file in list
-    files = embedded.list()
+    # Should only be one user file in list
+    files = [f for f in embedded.list() if f not in _SYSTEM_PATHS]
     assert len(files) == 1
     assert files[0] == path
 
@@ -480,14 +484,14 @@ def test_list_recursive(embedded: NexusFS) -> None:
     embedded.write("/dir2/file4.txt", b"Content 4")
 
     # Non-recursive list of root (includes directories now)
-    files = embedded.list("/", recursive=False)
+    files = [f for f in embedded.list("/", recursive=False) if f not in _SYSTEM_PATHS]
     assert len(files) == 3  # file1.txt + dir1 + dir2
     assert "/file1.txt" in files
     assert "/dir1" in files
     assert "/dir2" in files
 
     # Recursive list of root
-    files = embedded.list("/", recursive=True)
+    files = [f for f in embedded.list("/", recursive=True) if f not in _SYSTEM_PATHS]
     assert len(files) == 4
     assert "/file1.txt" in files
     assert "/dir1/file2.txt" in files
@@ -513,8 +517,12 @@ def test_list_with_details(embedded: NexusFS) -> None:
     embedded.write("/file1.txt", b"Hello")
     embedded.write("/file2.txt", b"World!")
 
-    # List with details
-    files = embedded.list("/", recursive=True, details=True)
+    # List with details (filter out system mount-point entries)
+    files = [
+        f
+        for f in embedded.list("/", recursive=True, details=True)
+        if isinstance(f, dict) and f.get("path") not in _SYSTEM_PATHS
+    ]
 
     assert len(files) == 2
     assert isinstance(files[0], dict)
@@ -572,8 +580,8 @@ def test_glob_recursive_pattern(embedded: NexusFS) -> None:
     assert "/src/utils/helper.py" in files
     assert "/tests/test_main.py" in files
 
-    # Find all files recursively
-    files = embedded.glob("**/*")
+    # Find all files recursively (filter out system entries)
+    files = [f for f in embedded.glob("**/*") if f not in _SYSTEM_PATHS]
     assert len(files) == 4
 
 
@@ -701,13 +709,12 @@ def test_grep_empty_results(embedded: NexusFS) -> None:
     assert len(results) == 0
 
 
-def test_list_backward_compatibility(embedded: NexusFS) -> None:
-    """Test that list() maintains backward compatibility."""
-    # Create files
+def test_list_returns_list_type(embedded: NexusFS) -> None:
+    """Test that list() returns a list."""
     embedded.write("/file1.txt", b"Content")
     embedded.write("/file2.txt", b"Content")
 
-    # Old-style usage (should work with new parameter defaults)
     files = embedded.list()
     assert isinstance(files, list)
-    assert len(files) == 2
+    user_files = [f for f in files if f not in _SYSTEM_PATHS]
+    assert len(user_files) == 2

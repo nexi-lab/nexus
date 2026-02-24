@@ -90,10 +90,6 @@ class DelegatingBackend(Backend):
         return self._inner.supports_rename
 
     @property
-    def has_virtual_filesystem(self) -> bool:
-        return self._inner.has_virtual_filesystem
-
-    @property
     def has_root_path(self) -> bool:
         return self._inner.has_root_path
 

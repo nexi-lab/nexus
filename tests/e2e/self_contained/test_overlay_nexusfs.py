@@ -5,11 +5,8 @@ using real LocalBackend, real SQLAlchemyRecordStore, and real WorkspaceRegistry.
 This verifies the overlay hooks in nexus_fs_core.py (read/delete) work
 correctly when wired through the full dependency injection pipeline.
 
-No Raft required — uses InMemoryMetadata implementing MetastoreABC.
+No Raft required — uses DictMetastore implementing MetastoreABC.
 """
-
-from collections.abc import Sequence
-from typing import Any
 
 import pytest
 
@@ -17,59 +14,8 @@ from nexus.backends.local import LocalBackend
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.contracts.metadata import FileMetadata
 from nexus.contracts.workspace_manifest import ManifestEntry, WorkspaceManifest
-from nexus.core.metastore import CasResult, MetastoreABC
 from nexus.system_services.workspace.overlay_resolver import OverlayResolver
-
-
-class InMemoryMetastore(MetastoreABC):
-    """Full MetastoreABC implementation using an in-memory dict.
-
-    Replaces RaftMetadataStore for tests that don't need the Rust extension.
-    """
-
-    def __init__(self) -> None:
-        self._store: dict[str, FileMetadata] = {}
-
-    def get(self, path: str) -> FileMetadata | None:
-        return self._store.get(path)
-
-    def put(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:
-        self._store[metadata.path] = metadata
-        return None
-
-    def put_if_version(
-        self,
-        metadata: FileMetadata,
-        expected_version: int,
-        *,
-        consistency: str = "sc",
-    ) -> CasResult:
-        current = self._store.get(metadata.path)
-        current_ver = current.version if current else 0
-        if current_ver != expected_version:
-            return CasResult(success=False, current_version=current_ver)
-        self._store[metadata.path] = metadata
-        return CasResult(success=True, current_version=metadata.version)
-
-    def delete(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
-        if path in self._store:
-            del self._store[path]
-            return {"deleted": path}
-        return None
-
-    def exists(self, path: str) -> bool:
-        return path in self._store
-
-    def list(self, prefix: str = "", recursive: bool = True, **kwargs: Any) -> list[FileMetadata]:
-        return [meta for path, meta in self._store.items() if path.startswith(prefix)]
-
-    def delete_batch(self, paths: Sequence[str]) -> None:
-        for path in paths:
-            self._store.pop(path, None)
-
-    def close(self) -> None:
-        self._store.clear()
-
+from tests.helpers.dict_metastore import DictMetastore
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -91,9 +37,9 @@ def local_backend(storage_dir) -> LocalBackend:
 
 
 @pytest.fixture
-def metadata_store() -> InMemoryMetastore:
+def metadata_store() -> DictMetastore:
     """In-memory metadata store (replaces Raft)."""
-    return InMemoryMetastore()
+    return DictMetastore()
 
 
 @pytest.fixture
@@ -132,7 +78,7 @@ def stored_manifest_hash(local_backend: LocalBackend, base_manifest: WorkspaceMa
 
 @pytest.fixture
 def overlay_resolver(
-    metadata_store: InMemoryMetastore,
+    metadata_store: DictMetastore,
     local_backend: LocalBackend,
 ) -> OverlayResolver:
     """Real OverlayResolver wired to real backend and metadata store."""
@@ -142,7 +88,7 @@ def overlay_resolver(
 @pytest.fixture
 def nexus_fs(
     local_backend: LocalBackend,
-    metadata_store: InMemoryMetastore,
+    metadata_store: DictMetastore,
     overlay_resolver: OverlayResolver,
     stored_manifest_hash: str,
 ):

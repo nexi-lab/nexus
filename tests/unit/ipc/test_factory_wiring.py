@@ -92,16 +92,14 @@ class TestIPCVFSDriverMount:
         storage = InMemoryStorageDriver()
         driver = IPCVFSDriver(storage=storage, zone_id="test-zone")
 
-        from nexus.storage.in_memory_metastore import InMemoryMetastore
+        from tests.helpers.dict_metastore import DictMetastore
 
-        router = PathRouter(InMemoryMetastore())
+        router = PathRouter(DictMetastore())
         # Should not raise — IPCVFSDriver extends Backend
         router.add_mount("/agents", driver)
 
         # Verify it's mounted
         assert driver.name == "ipc"
-        assert driver.has_virtual_filesystem is True
-
         # Clean up background loop
         driver.close()
 

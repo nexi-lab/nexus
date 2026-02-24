@@ -117,7 +117,7 @@ class GoogleDriveConnectorBackend(Backend):
 
     _CAPABILITIES = OAUTH_CONNECTOR_CAPABILITIES | frozenset(
         {
-            ConnectorCapability.VIRTUAL_FILESYSTEM,
+            ConnectorCapability.EXTERNAL_CONTENT,
         }
     )
 

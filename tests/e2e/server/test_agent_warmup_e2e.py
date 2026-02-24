@@ -22,14 +22,14 @@ def _create_test_app(tmp_path: Path, enforce_permissions: bool = False):
     from nexus.core.config import PermissionConfig
     from nexus.factory import create_nexus_fs
     from nexus.server.fastapi_server import create_app
-    from nexus.storage.in_memory_metastore import InMemoryMetastore
+    from tests.helpers.dict_metastore import DictMetastore
 
     os.environ.setdefault("NEXUS_JWT_SECRET", "test-secret-warmup-e2e")
 
     storage_dir = tmp_path / "storage"
     storage_dir.mkdir(exist_ok=True)
     backend = LocalBackend(root_path=str(storage_dir))
-    metadata_store = InMemoryMetastore()
+    metadata_store = DictMetastore()
 
     db_url = f"sqlite:///{tmp_path / 'records.db'}"
 

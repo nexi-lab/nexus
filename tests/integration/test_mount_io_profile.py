@@ -10,7 +10,7 @@ import pytest
 
 from nexus.contracts.io_profile import IOProfile
 from nexus.core.router import PathRouter, RouteResult
-from nexus.storage.in_memory_metastore import InMemoryMetastore
+from tests.helpers.dict_metastore import DictMetastore
 
 
 class TestPathRouterIOProfile:
@@ -22,7 +22,7 @@ class TestPathRouterIOProfile:
         return backend
 
     def _make_router(self) -> PathRouter:
-        return PathRouter(InMemoryMetastore())
+        return PathRouter(DictMetastore())
 
     def test_add_mount_with_io_profile(self) -> None:
         router = self._make_router()

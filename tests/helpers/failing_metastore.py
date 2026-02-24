@@ -4,12 +4,12 @@ Used in tests to simulate metadata store failures on specific operations,
 enabling verification of error handling when the inode layer fails.
 
 Usage:
-    store = FailingMetastore(InMemoryMetastore(), fail_on=["put"])
+    store = FailingMetastore(DictMetastore(), fail_on=["put"])
     store.get("/file.txt")  # OK
     store.put(metadata)     # raises RuntimeError
 
     # Or fail on nth call to any method:
-    store = FailingMetastore(InMemoryMetastore(), fail_on_nth=2)
+    store = FailingMetastore(DictMetastore(), fail_on_nth=2)
     store.get("/a.txt")     # OK (call 1)
     store.get("/b.txt")     # raises RuntimeError (call 2)
 """

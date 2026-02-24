@@ -15,8 +15,8 @@ from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.core.hash_fast import create_hasher, hash_content
 from nexus.core.object_store import WriteResult as ObjectStoreWriteResult
 from nexus.factory import create_nexus_fs
-from nexus.storage.in_memory_metastore import InMemoryMetastore
 from nexus.storage.record_store import SQLAlchemyRecordStore
+from tests.helpers.dict_metastore import DictMetastore
 
 
 class TestBackendWriteStreamDefault:
@@ -542,7 +542,7 @@ class TestReadRangeRPC:
         db_path = tmp_path / "metadata.db"
         nx = create_nexus_fs(
             backend=LocalBackend(data_dir),
-            metadata_store=InMemoryMetastore(),
+            metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             parsing=ParseConfig(auto_parse=False),
             permissions=PermissionConfig(enforce=False),
@@ -568,7 +568,7 @@ class TestReadRangeRPC:
         db_path = tmp_path / "metadata.db"
         nx = create_nexus_fs(
             backend=LocalBackend(data_dir),
-            metadata_store=InMemoryMetastore(),
+            metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             parsing=ParseConfig(auto_parse=False),
             permissions=PermissionConfig(enforce=False),
@@ -595,7 +595,7 @@ class TestReadRangeRPC:
         db_path = tmp_path / "metadata.db"
         nx = create_nexus_fs(
             backend=LocalBackend(data_dir),
-            metadata_store=InMemoryMetastore(),
+            metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             parsing=ParseConfig(auto_parse=False),
             permissions=PermissionConfig(enforce=False),
@@ -617,7 +617,7 @@ class TestReadRangeRPC:
         db_path = tmp_path / "metadata.db"
         nx = create_nexus_fs(
             backend=LocalBackend(data_dir),
-            metadata_store=InMemoryMetastore(),
+            metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             parsing=ParseConfig(auto_parse=False),
             permissions=PermissionConfig(enforce=False),
@@ -645,7 +645,7 @@ class TestStatRPC:
         db_path = tmp_path / "metadata.db"
         nx = create_nexus_fs(
             backend=LocalBackend(data_dir),
-            metadata_store=InMemoryMetastore(),
+            metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             parsing=ParseConfig(auto_parse=False),
             permissions=PermissionConfig(enforce=False),
@@ -675,7 +675,7 @@ class TestStatRPC:
         db_path = tmp_path / "metadata.db"
         nx = create_nexus_fs(
             backend=LocalBackend(data_dir),
-            metadata_store=InMemoryMetastore(),
+            metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             parsing=ParseConfig(auto_parse=False),
             permissions=PermissionConfig(enforce=False),
@@ -695,7 +695,7 @@ class TestStatRPC:
         db_path = tmp_path / "metadata.db"
         nx = create_nexus_fs(
             backend=LocalBackend(data_dir),
-            metadata_store=InMemoryMetastore(),
+            metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             parsing=ParseConfig(auto_parse=False),
             permissions=PermissionConfig(enforce=False),

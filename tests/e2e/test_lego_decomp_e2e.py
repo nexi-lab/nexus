@@ -81,12 +81,12 @@ def _create_factory_nexus_fs(
     """
     from nexus.backends.local import LocalBackend
     from nexus.factory import create_nexus_fs, create_record_store
-    from nexus.storage.in_memory_metastore import InMemoryMetastore
+    from tests.helpers.dict_metastore import DictMetastore
 
     data_dir = tmp_path / "data"
     data_dir.mkdir(exist_ok=True)
     backend = LocalBackend(root_path=data_dir)
-    metadata_store = InMemoryMetastore()
+    metadata_store = DictMetastore()
 
     record_store = create_record_store(db_url=PG_URL, create_tables=True)
 

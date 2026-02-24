@@ -206,10 +206,6 @@ class TestRegistryCapabilities:
                 return False
 
             @property
-            def has_virtual_filesystem(self) -> bool:
-                return False
-
-            @property
             def has_token_manager(self) -> bool:
                 return False
 

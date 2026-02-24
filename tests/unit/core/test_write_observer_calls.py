@@ -25,7 +25,7 @@ import pytest
 from nexus import LocalBackend, NexusFS
 from nexus.core.config import ParseConfig, PermissionConfig, SystemServices
 from nexus.core.file_events import FileEventType
-from tests.helpers.in_memory_metadata_store import InMemoryMetastore
+from nexus.storage.in_memory_metastore import InMemoryMetastore
 
 
 @pytest.fixture

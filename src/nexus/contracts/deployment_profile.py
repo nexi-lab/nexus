@@ -1,7 +1,8 @@
 """Deployment profiles for Nexus feature gating.
 
 Issue #1389: Feature flags for deployment modes (full/lite/embedded).
-Issue #2194: Kernel-only boot mode for minimal deployments.
+Issue #2194: Minimal boot mode for minimal deployments.
+Issue #844:  REMOTE profile for client-side deployment (RemoteBackend proxy).
 
 Each DeploymentProfile defines a default set of enabled bricks.
 Individual brick overrides are supported via FeaturesConfig or env vars.
@@ -10,7 +11,10 @@ The profile sets the *defaults*; explicit overrides always win.
 Lego Architecture reference: Part 10 — Edge Deployment.
 
 Profile hierarchy (superset relationship):
-    kernel ⊂ embedded ⊂ lite ⊂ full ⊆ cloud
+    minimal ⊂ embedded ⊂ lite ⊂ full ⊆ cloud
+
+REMOTE is orthogonal — zero local bricks, all operations proxy via RemoteBackend:
+    remote  (no local bricks — NFS-client model)
 """
 
 import logging
@@ -95,18 +99,20 @@ class DeploymentProfile(StrEnum):
     """Deployment profile controlling which bricks are enabled by default.
 
     Profiles define capability tiers for different deployment targets:
-    - kernel: Bare VFS kernel — storage only, no system services (Issue #2194)
+    - minimal: Bare minimum runnable — storage only, no system services (Issue #2194)
     - embedded: MCU / WASM (<1 MB) — storage + eventlog only
     - lite: Pi, Jetson, mobile (512 MB–4 GB) — core services, no LLM/Pay
     - full: Desktop, laptop (4–32 GB) — all bricks, local inference
     - cloud: k8s, serverless (unlimited) — all + federation + multi-tenant
+    - remote: Client-side proxy — zero local bricks, NFS-client model (Issue #844)
     """
 
-    KERNEL = "kernel"
+    MINIMAL = "minimal"
     EMBEDDED = "embedded"
     LITE = "lite"
     FULL = "full"
     CLOUD = "cloud"
+    REMOTE = "remote"
 
     def default_bricks(self) -> frozenset[str]:
         """Return the default set of enabled bricks for this profile."""
@@ -130,13 +136,13 @@ class DeploymentProfile(StrEnum):
 # Profile-to-brick mappings (frozen — immutable at runtime)
 # ---------------------------------------------------------------------------
 
-_KERNEL_BRICKS: frozenset[str] = frozenset(
+_MINIMAL_BRICKS: frozenset[str] = frozenset(
     {
         BRICK_STORAGE,
     }
 )
 
-_EMBEDDED_BRICKS: frozenset[str] = _KERNEL_BRICKS | frozenset(
+_EMBEDDED_BRICKS: frozenset[str] = _MINIMAL_BRICKS | frozenset(
     {
         BRICK_EVENTLOG,
     }
@@ -177,12 +183,15 @@ _CLOUD_BRICKS: frozenset[str] = _FULL_BRICKS | frozenset(
     }
 )
 
+_REMOTE_BRICKS: frozenset[str] = frozenset()  # no local bricks — NFS-client model
+
 _PROFILE_BRICKS: dict[DeploymentProfile, frozenset[str]] = {
-    DeploymentProfile.KERNEL: _KERNEL_BRICKS,
+    DeploymentProfile.MINIMAL: _MINIMAL_BRICKS,
     DeploymentProfile.EMBEDDED: _EMBEDDED_BRICKS,
     DeploymentProfile.LITE: _LITE_BRICKS,
     DeploymentProfile.FULL: _FULL_BRICKS,
     DeploymentProfile.CLOUD: _CLOUD_BRICKS,
+    DeploymentProfile.REMOTE: _REMOTE_BRICKS,
 }
 
 

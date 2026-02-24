@@ -342,12 +342,19 @@ the same codebase. Two orthogonal axes:
 
 | Profile | Target | Bricks | Linux Analogue |
 |---------|--------|--------|----------------|
+| **minimal** | Bare minimum runnable (Issue #2194) | 1 (storage only) | initramfs |
 | **embedded** | MCU, WASM (<1 MB) | 2 (storage + eventlog) | BusyBox |
 | **lite** | Pi, Jetson, mobile (512 MB-4 GB) | 8 (+namespace, agent, permissions, cache, ipc, scheduler) | Alpine |
 | **full** | Desktop, laptop (4-32 GB) | 21 (all except federation) | Ubuntu Desktop |
 | **cloud** | k8s, serverless (unlimited) | 22 (all) | Ubuntu Server |
+| **remote** | Client-side proxy (Issue #844) | 0 (zero local bricks) | NFS client |
 
-Profile hierarchy: `embedded ⊂ lite ⊂ full ⊆ cloud`
+Profile hierarchy: `minimal ⊂ embedded ⊂ lite ⊂ full ⊆ cloud`
+
+REMOTE is orthogonal — not in the hierarchy. It has zero local bricks because all
+operations proxy to a remote server via `RemoteBackend`. The client runs the same
+NexusFS kernel with `InMemoryMetastore` (metadata cache) + `PathRouter` (local
+path resolution) + `RemoteBackend` mounted at `/`. Same class, different components.
 
 **Mechanism:** `factory.py` (the init system) resolves the active profile via
 `NEXUS_PROFILE` env var -> `DeploymentProfile` enum -> `resolve_enabled_bricks()`
@@ -356,17 +363,21 @@ Profile hierarchy: `embedded ⊂ lite ⊂ full ⊆ cloud`
 construction. Individual brick overrides via `FeaturesConfig` YAML always win over
 profile defaults.
 
-**Source of truth:** `src/nexus/core/deployment_profile.py` (22 canonical brick names,
-4 profile-to-brick mappings, `resolve_enabled_bricks()` merge function).
+**Source of truth:** `src/nexus/contracts/deployment_profile.py` (22 canonical brick names,
+6 profile-to-brick mappings, `resolve_enabled_bricks()` merge function).
 
 ### 5.2 Network Modes
 
 | Mode | Description | Metastore | Services |
 |------|-------------|-----------|----------|
 | **Standalone** | Single process, local storage | redb (local) | Optional |
-| **Client-Server** | RemoteNexusFS connects to a NexusFS server | redb (local) on server | On server |
+| **Remote** | NexusFS(profile=REMOTE) with RemoteBackend | InMemoryMetastore (cache) | Zero (server-side) |
 | **Federation** | Multiple nodes sharing zones via Raft | redb (Raft) | Per-node |
-| **Embedded** | Minimal kernel on constrained devices | redb (local) | None (profile: embedded) |
+
+Remote mode uses the same NexusFS class as standalone — not a separate `RemoteNexusFS`.
+The `InMemoryMetastore` serves as a read-through cache of server metadata. `PathRouter`
+resolves paths locally (~5μs), only actual I/O goes to the server via `RemoteBackend`.
+This is the NFS-client model: same VFS kernel, remote storage backend.
 
 Driver selection is config-time: same binary, different `NEXUS_METASTORE`, `NEXUS_RECORD_STORE`, etc.
 

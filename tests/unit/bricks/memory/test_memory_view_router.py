@@ -86,7 +86,7 @@ def memory_api(session, backend, entity_registry):
 
 def _write_content(backend, data: bytes) -> str:
     """Write bytes to the backend and return the content hash."""
-    return backend.write_content(data).unwrap()
+    return backend.write_content(data).content_hash
 
 
 # ---------------------------------------------------------------------------

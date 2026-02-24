@@ -14,8 +14,8 @@ from nexus.backends.local import LocalBackend
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.core.hash_fast import create_hasher, hash_content
 from nexus.factory import create_nexus_fs
+from nexus.storage.in_memory_metastore import InMemoryMetastore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from tests.helpers.in_memory_metadata_store import InMemoryMetastore
 
 
 class TestBackendWriteStreamDefault:

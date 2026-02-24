@@ -10,7 +10,7 @@ import pytest
 
 from nexus.contracts.io_profile import IOProfile
 from nexus.core.router import PathRouter, RouteResult
-from tests.helpers.in_memory_metadata_store import InMemoryMetastore
+from nexus.storage.in_memory_metastore import InMemoryMetastore
 
 
 class TestPathRouterIOProfile:

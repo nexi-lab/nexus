@@ -8,7 +8,7 @@ import threading
 
 from nexus.contracts.metadata import FileMetadata
 from nexus.core.metastore import CasResult
-from tests.helpers.in_memory_metadata_store import InMemoryMetastore
+from nexus.storage.in_memory_metastore import InMemoryMetastore
 
 
 def _make_metadata(path: str, version: int = 1) -> FileMetadata:

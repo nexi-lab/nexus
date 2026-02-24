@@ -55,51 +55,39 @@ class SysModulesMutator:
         present = "__isolation_test_marker__" in sys.modules
         return HandlerStatusResponse(success=present)
 
-    # Stubs for abstract methods (unused in boundary tests)
+    # Stubs for abstract methods (unused in boundary tests).
+    # Return direct values per ObjectStoreABC contract.
     def write_content(self, content, context=None):
-        from nexus.lib.response import HandlerResponse
+        import hashlib
 
-        return HandlerResponse.ok(data="hash", backend_name=self.name)
+        from nexus.core.object_store import WriteResult
+
+        h = hashlib.sha256(content).hexdigest()
+        return WriteResult(content_hash=h, size=len(content))
 
     def read_content(self, h, context=None):
-        from nexus.lib.response import HandlerResponse
-
-        return HandlerResponse.ok(data=b"", backend_name=self.name)
+        return b""
 
     def delete_content(self, h, context=None):
-        from nexus.lib.response import HandlerResponse
-
-        return HandlerResponse.ok(data=None, backend_name=self.name)
+        pass
 
     def content_exists(self, h, context=None):
-        from nexus.lib.response import HandlerResponse
-
-        return HandlerResponse.ok(data=False, backend_name=self.name)
+        return False
 
     def get_content_size(self, h, context=None):
-        from nexus.lib.response import HandlerResponse
-
-        return HandlerResponse.ok(data=0, backend_name=self.name)
+        return 0
 
     def get_ref_count(self, h, context=None):
-        from nexus.lib.response import HandlerResponse
-
-        return HandlerResponse.ok(data=0, backend_name=self.name)
+        return 0
 
     def mkdir(self, path, parents=False, exist_ok=False, context=None):
-        from nexus.lib.response import HandlerResponse
-
-        return HandlerResponse.ok(data=None, backend_name=self.name)
+        pass
 
     def rmdir(self, path, recursive=False, context=None):
-        from nexus.lib.response import HandlerResponse
-
-        return HandlerResponse.ok(data=None, backend_name=self.name)
+        pass
 
     def is_directory(self, path, context=None):
-        from nexus.lib.response import HandlerResponse
-
-        return HandlerResponse.ok(data=False, backend_name=self.name)
+        return False
 
 
 class GlobalMutator(SysModulesMutator):
@@ -197,11 +185,11 @@ class TestCrossBrickIsolation:
         b2 = IsolatedBackend(_cfg())
         try:
             wr1 = b1.write_content(b"only-in-b1")
-            assert wr1.success is True
+            assert wr1.content_hash  # WriteResult with content_hash
 
             # b2's worker has a fresh MockBackend — it should not have b1's data
-            exists = b2.content_exists(wr1.data)
-            assert exists.data is False
+            exists = b2.content_exists(wr1.content_hash)
+            assert exists is False
         finally:
             b1.disconnect()
             b2.disconnect()

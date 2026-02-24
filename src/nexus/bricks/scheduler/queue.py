@@ -39,6 +39,7 @@ INSERT INTO scheduled_tasks (
     zone_id, idempotency_key,
     request_state, priority_class, estimated_service_time
 ) VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+ON CONFLICT (idempotency_key) DO UPDATE SET agent_id = EXCLUDED.agent_id
 RETURNING id::text
 """
 

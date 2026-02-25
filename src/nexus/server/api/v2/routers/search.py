@@ -286,26 +286,45 @@ async def search_expand(
     """Expand a search query using LLM-based query expansion."""
     import os
 
-    from nexus.bricks.search.query_expansion import OpenRouterQueryExpander, QueryExpansionConfig
+    from nexus.bricks.search.query_expansion import (
+        OpenAIQueryExpander,
+        OpenRouterQueryExpander,
+        QueryExpansionConfig,
+    )
 
-    api_key = os.environ.get("OPENROUTER_API_KEY")
-    if not api_key:
+    # Try OpenRouter first, fall back to OpenAI
+    openrouter_key = os.environ.get("OPENROUTER_API_KEY")
+    openai_key = os.environ.get("OPENAI_API_KEY")
+    if not openrouter_key and not openai_key:
         raise HTTPException(
             status_code=503,
-            detail="OPENROUTER_API_KEY not configured for query expansion",
+            detail="No API key configured for query expansion (need OPENROUTER_API_KEY or OPENAI_API_KEY)",
         )
 
     start_time = time.perf_counter()
 
     try:
-        config = QueryExpansionConfig(
-            model=model,
-            max_lex_variants=max_lex,
-            max_vec_variants=max_vec,
-            max_hyde_passages=max_hyde,
-            timeout=15.0,
-        )
-        expander = OpenRouterQueryExpander(config=config, api_key=api_key)
+        if openrouter_key:
+            config = QueryExpansionConfig(
+                model=model,
+                max_lex_variants=max_lex,
+                max_vec_variants=max_vec,
+                max_hyde_passages=max_hyde,
+                timeout=15.0,
+            )
+            expander = OpenRouterQueryExpander(config=config, api_key=openrouter_key)
+        else:
+            # Use OpenAI directly with gpt-4o-mini
+            openai_model = model if "/" not in model else "gpt-4o-mini"
+            config = QueryExpansionConfig(
+                model=openai_model,
+                max_lex_variants=max_lex,
+                max_vec_variants=max_vec,
+                max_hyde_passages=max_hyde,
+                timeout=15.0,
+                fallback_models=[],
+            )
+            expander = OpenAIQueryExpander(config=config, api_key=openai_key)
         expansions = await expander.expand(q, context=context)
         await expander.close()
 

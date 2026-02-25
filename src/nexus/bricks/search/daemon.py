@@ -133,6 +133,7 @@ class SearchDaemon:
         *,
         async_session_factory: Any | None = None,
         zoekt_client: Any | None = None,
+        cache_brick: Any | None = None,
     ):
         """Initialize the search daemon.
 
@@ -141,10 +142,12 @@ class SearchDaemon:
             async_session_factory: Injected async_sessionmaker from RecordStoreABC.
                 When provided, skips creating a private engine (Issue #1597).
             zoekt_client: Injected ZoektClient instance (Issue #2188).
+            cache_brick: Injected CacheBrick for embedding cache health checks.
         """
         self.config = config or DaemonConfig()
         self.stats = DaemonStats()
         self._zoekt_client = zoekt_client
+        self._cache_brick = cache_brick
 
         # Search components (initialized on startup)
         self._bm25s_index: BM25SIndex | None = None
@@ -334,6 +337,11 @@ class SearchDaemon:
         """Initialize and warm the database connection pool."""
         # If session factory was injected via __init__, skip engine creation
         if self._async_session is not None:
+            # Extract engine reference from the injected session factory
+            # so db_pool_ready reports correctly.
+            _bind = getattr(self._async_session, "kw", {}).get("bind")
+            if _bind is not None:
+                self._async_engine = _bind
             logger.info("Using injected async_session_factory (RecordStoreABC)")
             return
 
@@ -429,12 +437,13 @@ class SearchDaemon:
             self.stats.zoekt_available = False
 
     async def _check_embedding_cache(self) -> None:
-        """Check if embedding cache (Dragonfly) is connected.
-
-        NOTE: Embedding cache health is now checked via CacheBrick.health_check().
-        This method is kept for backward compat but always reports False until
-        a CacheBrick reference is wired in (follow-up).
-        """
+        """Check if embedding cache (Dragonfly) is connected."""
+        if self._cache_brick is not None:
+            try:
+                self.stats.embedding_cache_connected = await self._cache_brick.health_check()
+                return
+            except Exception:
+                pass
         self.stats.embedding_cache_connected = False
 
     # =========================================================================

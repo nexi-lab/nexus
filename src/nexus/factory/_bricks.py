@@ -570,7 +570,6 @@ def _boot_independent_bricks(
         "reputation_service": reputation_service,
         "version_service": version_service,
         "rebac_circuit_breaker": rebac_circuit_breaker,
-        "memory_router": memory_router,
         "memory_permission": memory_permission,
         # Governance Brick (Issue #2129)
         "governance_anomaly_service": governance_anomaly_service,

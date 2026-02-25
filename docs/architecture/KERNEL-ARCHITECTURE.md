@@ -219,7 +219,8 @@ checked in order; the first whose `matches(path)` returns True handles
 the entire operation (read/write/delete). Each resolver owns its own
 permission semantics — like procfs has `proc_pid_permission` separate
 from ext4's `ext4_permission`. Current resolvers: `MemoryIOHandler`
-(memory virtual paths). Empty resolver chain = no-op = zero overhead.
+(memory virtual paths), `VirtualViewResolver` (parsed views like
+`report_parsed.pdf.md`). Empty resolver chain = no-op = zero overhead.
 
 INTERCEPT phase dispatches registered interceptor hooks — per-operation
 hook lists (`register_intercept_read/write/delete/rename/mkdir/rmdir`).

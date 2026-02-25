@@ -231,7 +231,6 @@ def create_nexus_services(
         # Version Brick (Issue #2034: moved from kernel)
         version_service=brick_dict["version_service"],
         # Memory Brick (Issue #2177)
-        memory_router=brick_dict["memory_router"],
         memory_permission=brick_dict["memory_permission"],
         # Governance Brick (Issue #2129)
         governance_anomaly_service=brick_dict["governance_anomaly_service"],
@@ -547,7 +546,9 @@ def _register_vfs_hooks(nx: "NexusFS") -> None:
         dispatch.register_intercept_write(TigerCacheWriteHook(tiger_cache=tiger_cache))
 
     # ── PRE-DISPATCH: Memory virtual path resolver (Issue #889) ────────
-    _mem_router = getattr(nx._brick_services, "memory_router", None)
+    # memory_router removed from BrickServices — get it from MemoryPermissionEnforcer
+    _mem_perm = getattr(nx._brick_services, "memory_permission", None)
+    _mem_router = getattr(_mem_perm, "memory_router", None) if _mem_perm else None
     _mem_provider = getattr(nx, "_memory_provider", None)
     if _mem_router is not None and _mem_provider is not None:
         from nexus.bricks.memory.io_handler import MemoryIOHandler
@@ -559,6 +560,20 @@ def _register_vfs_hooks(nx: "NexusFS") -> None:
                 path_router=nx.router,
             )
         )
+
+    # ── PRE-DISPATCH: Virtual view resolver (Issue #332, #889) ────────
+    from nexus.lib.virtual_view_resolver import VirtualViewResolver
+
+    dispatch.register_resolver(
+        VirtualViewResolver(
+            metadata=nx.metadata,
+            path_router=nx.router,
+            permission_checker=nx._permission_checker,
+            parse_fn=getattr(nx, "_virtual_view_parse_fn", None),
+            viewer_filter_fn=getattr(nx, "_apply_dynamic_viewer_filter_if_needed", None),
+            read_tracker_fn=getattr(nx, "_record_read_if_tracking", None),
+        )
+    )
 
     # ── OBSERVE observers (Issue #900, #922) ──────────────────────────
     # EventBusObserver: forwards FileEvents to distributed EventBus (Redis/NATS).

@@ -93,7 +93,6 @@ class MountConfigModel(TimestampMixin, Base):
 
     mount_point: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     backend_type: Mapped[str] = mapped_column(String(50), nullable=False)
-    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     readonly: Mapped[bool] = mapped_column(Integer, nullable=False, default=0)
 
     backend_config: Mapped[str] = mapped_column(Text, nullable=False)
@@ -129,8 +128,6 @@ class MountConfigModel(TimestampMixin, Base):
             json.loads(self.backend_config)
         except json.JSONDecodeError as e:
             raise ValidationError(f"backend_config must be valid JSON: {e}") from None
-        if self.priority is not None and self.priority < 0:
-            raise ValidationError(f"priority must be non-negative, got {self.priority}")
 
 
 class SystemSettingsModel(TimestampMixin, Base):

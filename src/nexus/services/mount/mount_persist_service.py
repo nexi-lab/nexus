@@ -81,7 +81,6 @@ class MountPersistService:
         mount_point: str,
         backend_type: str,
         backend_config: dict[str, Any],
-        priority: int = 0,
         readonly: bool = False,
         io_profile: str = "balanced",
         owner_user_id: str | None = None,
@@ -95,7 +94,6 @@ class MountPersistService:
             mount_point: Virtual path where backend is mounted
             backend_type: Backend type identifier
             backend_config: Backend-specific configuration
-            priority: Mount priority (default: 0)
             readonly: Read-only flag (default: False)
             io_profile: I/O tuning profile (Issue #1413)
             owner_user_id: Owner user ID (auto-populated from context)
@@ -125,7 +123,6 @@ class MountPersistService:
             mount_point=mount_point,
             backend_type=backend_type,
             backend_config=backend_config,
-            priority=priority,
             readonly=readonly,
             io_profile=io_profile,
             owner_user_id=owner_user_id,

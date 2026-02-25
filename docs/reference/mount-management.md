@@ -33,8 +33,7 @@ manager.save_mount(
     mount_point="/personal/alice",
     backend_type="google_drive",
     backend_config={"access_token": "...", "user_email": "..."},
-    priority=10,
-    owner_user_id="google:alice123"
+owner_user_id="google:alice123"
 )
 
 # List mounts
@@ -67,8 +66,7 @@ mount_id = manager.save_mount(
     mount_point="/personal/alice",
     backend_type="google_drive",
     backend_config={"access_token": "...", "user_email": "..."},
-    priority=10,
-    readonly=False,
+readonly=False,
     owner_user_id="google:alice123",
     zone_id="acme",
     description="Alice's Google Drive"
@@ -86,7 +84,7 @@ mount = manager.get_mount("/personal/alice")  # → dict | None
 # List mounts with filtering
 all_mounts = manager.list_mounts()
 user_mounts = manager.list_mounts(owner_user_id="alice")
-tenant_mounts = manager.list_mounts(zone_id="acme")
+zone_mounts = manager.list_mounts(zone_id="acme")
 
 # Remove mount from database
 manager.remove_mount("/personal/alice")  # → bool
@@ -94,7 +92,7 @@ manager.remove_mount("/personal/alice")  # → bool
 # Restore mounts on startup
 mount_configs = manager.restore_mounts(backend_factory)
 for mc in mount_configs:
-    nx.router.add_mount(mc.mount_point, mc.backend, mc.priority)
+    nx.router.add_mount(mc.mount_point, mc.backend, mc.readonly)
 ```
 
 ### CLI Commands
@@ -104,14 +102,14 @@ nexus mounts list
 
 # List with filtering
 nexus mounts list --owner "google:alice123"
-nexus mounts list --tenant "acme"
+nexus mounts list --zone "acme"
 
 # JSON output
 nexus mounts list --json
 
 # Add mount
 nexus mounts add MOUNT_POINT BACKEND_TYPE CONFIG_JSON [OPTIONS]
-# Options: --priority N, --readonly, --owner USER, --tenant TENANT, --description TEXT
+# Options: --readonly, --owner USER, --zone ZONE, --description TEXT
 
 # Show mount details
 nexus mounts info MOUNT_POINT
@@ -140,7 +138,6 @@ def on_user_login(user_id, user_email, google_token, refresh_token):
                 "refresh_token": refresh_token,
                 "user_email": user_email
             },
-            priority=10,
             owner_user_id=user_id
         )
 
@@ -149,7 +146,6 @@ def on_user_login(user_id, user_email, google_token, refresh_token):
         nx.router.add_mount(
             mount_point,
             GoogleDriveBackend(access_token=google_token, user_email=user_email),
-            priority=10
         )
 ```
 
@@ -177,7 +173,6 @@ def on_user_login(user_id, user_email, google_token, refresh_token):
         nx.router.add_mount(
             mount_point,
             GoogleDriveBackend(access_token=google_token, user_email=user_email),
-            priority=10
         )
 ```
 
@@ -203,7 +198,7 @@ def restore_all_mounts():
     mount_configs = manager.restore_mounts(backend_factory)
 
     for mc in mount_configs:
-        nx.router.add_mount(mc.mount_point, mc.backend, mc.priority, mc.readonly)
+        nx.router.add_mount(mc.mount_point, mc.backend, mc.readonly)
         print(f"✓ Restored: {mc.mount_point}")
 ```
 

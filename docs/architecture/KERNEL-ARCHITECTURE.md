@@ -353,8 +353,8 @@ Profile hierarchy: `minimal ⊂ embedded ⊂ lite ⊂ full ⊆ cloud`
 
 REMOTE is orthogonal — not in the hierarchy. It has zero local bricks because all
 operations proxy to a remote server via `RemoteBackend`. The client runs the same
-NexusFS kernel with `RemoteMetastore` (metadata cache) + `PathRouter` (local
-path resolution) + `RemoteBackend` mounted at `/`. Same class, different components.
+NexusFS kernel with `RemoteMetastore` (stateless proxy to server SSOT) + `PathRouter`
+(local path resolution) + `RemoteBackend` mounted at `/`. Same class, different components.
 
 **Mechanism:** `factory.py` (the init system) resolves the active profile via
 `NEXUS_PROFILE` env var -> `DeploymentProfile` enum -> `resolve_enabled_bricks()`
@@ -371,12 +371,13 @@ profile defaults.
 | Mode | Description | Metastore | Services |
 |------|-------------|-----------|----------|
 | **Standalone** | Single process, local storage | redb (local) | Optional |
-| **Remote** | NexusFS(profile=REMOTE) with RemoteBackend | RemoteMetastore (cache) | Zero (server-side) |
+| **Remote** | NexusFS(profile=REMOTE) with RemoteBackend | RemoteMetastore (stateless proxy) | Zero (server-side) |
 | **Federation** | Multiple nodes sharing zones via Raft | redb (Raft) | Per-node |
 
 Remote mode uses the same NexusFS class as standalone — not a separate `RemoteNexusFS`.
-The `RemoteMetastore` serves as a read-through cache of server metadata. `PathRouter`
-resolves paths locally (~5μs), only actual I/O goes to the server via `RemoteBackend`.
+`RemoteMetastore` is a stateless proxy — all metadata queries go directly to the server
+(SSOT), no local cache or invalidation. `PathRouter` resolves mount paths locally,
+actual I/O goes to the server via `RemoteBackend`.
 This is the NFS-client model: same VFS kernel, remote storage backend.
 
 Driver selection is config-time: same binary, different `NEXUS_METASTORE`, `NEXUS_RECORD_STORE`, etc.

@@ -797,6 +797,20 @@ class NexusFSCoreMixin:
             if overlay_config:
                 meta = self._overlay_resolver.resolve_read(path, overlay_config)
 
+        # Zone fallback: if zone-scoped path not found, try unscoped (root-zone) path.
+        # Admin-created files live at unscoped paths; zone-scoped users should still
+        # be able to read them (ReBAC permission check already passed above).
+        if (meta is None or meta.etag is None) and path.startswith("/zone/"):
+            from nexus.server.path_utils import unscope_internal_path
+
+            unscoped = unscope_internal_path(path)
+            if unscoped != path:
+                fallback_meta = self.metadata.get(unscoped)
+                if fallback_meta is not None and fallback_meta.etag is not None:
+                    meta = fallback_meta
+                    route = self.router.route(unscoped, is_admin=is_admin, check_write=False)
+                    path = unscoped
+
         if meta is None or meta.etag is None:
             raise NexusFileNotFoundError(path)
 

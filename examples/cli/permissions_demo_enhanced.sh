@@ -200,12 +200,10 @@ nexus rebac create user admin direct_owner file $DEMO_BASE
 print_success "Admin has ownership of $DEMO_BASE"
 
 print_subsection "1.1 Understanding Permission Roles"
-echo "  NOTE: In this ReBAC implementation:"
-echo "    OWNER:  read ✗  write ✓  execute ✓  (can write & manage, but not read!)"
+echo "  NOTE: In this ReBAC implementation (Zanzibar-style):"
+echo "    OWNER:  read ✓  write ✓  execute ✓  (full access including manage)"
 echo "    EDITOR: read ✓  write ✓  execute ✗  (can read & write, but can't manage)"
 echo "    VIEWER: read ✓  write ✗  execute ✗  (read-only)"
-echo ""
-echo "  This is the actual behavior - owners need editor/viewer role for read!"
 echo ""
 
 # Create test users
@@ -221,15 +219,11 @@ nexus rebac create user alice direct_owner file $DEMO_BASE/test-file.txt
 nexus rebac create user bob direct_editor file $DEMO_BASE/test-file.txt
 nexus rebac create user charlie direct_viewer file $DEMO_BASE/test-file.txt
 
-print_test "Verify alice (owner) has write+execute (but NOT read in this model)"
-if nexus rebac check user alice write file $DEMO_BASE/test-file.txt 2>&1 | grep -q "GRANTED" && \
+print_test "Verify alice (owner) has read+write+execute"
+if nexus rebac check user alice read file $DEMO_BASE/test-file.txt 2>&1 | grep -q "GRANTED" && \
+   nexus rebac check user alice write file $DEMO_BASE/test-file.txt 2>&1 | grep -q "GRANTED" && \
    nexus rebac check user alice execute file $DEMO_BASE/test-file.txt 2>&1 | grep -q "GRANTED"; then
-    print_success "✅ Owner has write + execute (as expected in this ReBAC model)"
-
-    # Verify owner does NOT have read (unless explicitly granted)
-    if nexus rebac check user alice read file $DEMO_BASE/test-file.txt 2>&1 | grep -q "DENIED"; then
-        print_info "Note: Owner does NOT have read (needs editor/viewer role for that)"
-    fi
+    print_success "Owner has read + write + execute"
 else
     print_error "Owner permissions incorrect!"
 fi
@@ -359,9 +353,9 @@ sys.path.insert(0, 'src')
 import nexus
 nx = nexus.connect(config={"mode": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')})
 base = os.getenv('DEMO_BASE')
-nx.rebac_create(("file", f"{base}/project1/docs"), "parent", ("file", f"{base}/project1"))
-nx.rebac_create(("file", f"{base}/project1/docs/guides"), "parent", ("file", f"{base}/project1/docs"))
-nx.rebac_create(("file", f"{base}/project1/docs/guides/advanced"), "parent", ("file", f"{base}/project1/docs/guides"))
+nx.rebac_create(subject=("file", f"{base}/project1/docs"), relation="parent", object=("file", f"{base}/project1"))
+nx.rebac_create(subject=("file", f"{base}/project1/docs/guides"), relation="parent", object=("file", f"{base}/project1/docs"))
+nx.rebac_create(subject=("file", f"{base}/project1/docs/guides/advanced"), relation="parent", object=("file", f"{base}/project1/docs/guides"))
 print("✓ Parent relations created")
 nx.close()
 PYTHON_PARENTS
@@ -439,9 +433,9 @@ print_section "5. Audit & List Permissions"
 print_subsection "5.1 List all users with access to a resource"
 print_info "Finding all users with 'write' permission on $DEMO_BASE/test-file.txt"
 
-# BUGFIX: More robust regex for usernames (digits, underscores, dashes)
+# Parse user names from rich table output (│ user │ alice │)
 WRITERS=$(nexus rebac expand write file $DEMO_BASE/test-file.txt 2>/dev/null \
-    | grep -oE "user:[A-Za-z0-9._-]+" | cut -d: -f2 | sort -u)
+    | grep "│.*user.*│" | awk -F'│' '{gsub(/^[ \t]+|[ \t]+$/, "", $3); print $3}' | sort -u)
 
 print_test "Expected writers: alice (owner), bob (editor)"
 if echo "$WRITERS" | grep -q "alice" && echo "$WRITERS" | grep -q "bob"; then
@@ -487,8 +481,8 @@ import nexus
 nx = nexus.connect(config={"mode": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')})
 base = os.getenv('DEMO_BASE')
 try:
-    nx.rebac_create(("file", f"{base}/cycleA"), "parent", ("file", f"{base}/cycleB"))
-    nx.rebac_create(("file", f"{base}/cycleB"), "parent", ("file", f"{base}/cycleA"))
+    nx.rebac_create(subject=("file", f"{base}/cycleA"), relation="parent", object=("file", f"{base}/cycleB"))
+    nx.rebac_create(subject=("file", f"{base}/cycleB"), relation="parent", object=("file", f"{base}/cycleA"))
     print("❌ Cycle was allowed (should be prevented!)")
 except Exception as e:
     # BUGFIX: Backend might not include "cycle" in error text

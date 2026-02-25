@@ -10,6 +10,7 @@ import argparse
 import os
 import sys
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
@@ -48,7 +49,12 @@ def main() -> None:
         expires_at = datetime.now(UTC) + timedelta(days=args.days)
 
     # Register user in entity registry (for agent permission inheritance)
-    entity_registry = EntityRegistry(SessionFactory)
+    # EntityRegistry expects an object with .session_factory attribute
+    class _SessionFactoryWrapper:
+        def __init__(self, sf: Any) -> None:
+            self.session_factory = sf
+
+    entity_registry = EntityRegistry(_SessionFactoryWrapper(SessionFactory))
     entity_registry.register_entity(
         entity_type="user",
         entity_id=args.user_id,

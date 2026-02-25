@@ -189,15 +189,30 @@ def make_test_nexus(
         backend = LocalBackend(root_path=str(data_dir))
     nx.router.add_mount("/", backend)
 
-    # Wire PermissionChecker via DI (same as factory/orchestrator.py, Issue #874)
+    # Wire PermissionCheckHook via DI (same as factory/orchestrator.py, Issue #899)
     from nexus.services.permissions.checker import PermissionChecker
+    from nexus.services.permissions.permission_hook import PermissionCheckHook
 
-    nx._permission_checker = PermissionChecker(
+    _checker = PermissionChecker(
         permission_enforcer=nx._permission_enforcer,
         metadata_store=nx.metadata,
         default_context=nx._default_context,
         enforce_permissions=nx._enforce_permissions,
     )
+    _perm_hook = PermissionCheckHook(
+        checker=_checker,
+        metadata_store=nx.metadata,
+        default_context=nx._default_context,
+        enforce_permissions=nx._enforce_permissions,
+        permission_enforcer=nx._permission_enforcer,
+        descendant_checker=getattr(nx, "_descendant_checker", None),
+    )
+    nx._dispatch.register_intercept_read(_perm_hook)
+    nx._dispatch.register_intercept_write(_perm_hook)
+    nx._dispatch.register_intercept_delete(_perm_hook)
+    nx._dispatch.register_intercept_rename(_perm_hook)
+    nx._dispatch.register_intercept_mkdir(_perm_hook)
+    nx._dispatch.register_intercept_rmdir(_perm_hook)
 
     return nx
 

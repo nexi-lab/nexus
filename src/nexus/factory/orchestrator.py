@@ -435,12 +435,11 @@ def create_nexus_fs(
     if _mds is not None:
         cast(Any, nx)._metadata_export_service = _mds
 
-    # Wire PermissionChecker from services/ (not core/) — Issue #874
-    # Factory DI: kernel calls self._permission_checker.check() duck-typed,
-    # without importing or knowing the concrete class.
+    # Create PermissionChecker (services layer) — Issue #899
+    # Not stored on NexusFS; passed to hook registration below.
     from nexus.services.permissions.checker import PermissionChecker as _PC
 
-    cast(Any, nx)._permission_checker = _PC(
+    _permission_checker = _PC(
         permission_enforcer=nx._permission_enforcer,
         metadata_store=nx.metadata,
         default_context=nx._default_context,
@@ -454,12 +453,12 @@ def create_nexus_fs(
         _blm.register("cache", _cache_brick, protocol_name="CacheProtocol")
 
     # --- Register INTERCEPT hooks on KernelDispatch (Issue #900) ---
-    _register_vfs_hooks(nx)
+    _register_vfs_hooks(nx, permission_checker=_permission_checker)
 
     return nx
 
 
-def _register_vfs_hooks(nx: "NexusFS") -> None:
+def _register_vfs_hooks(nx: "NexusFS", *, permission_checker: Any = None) -> None:
     """Register hooks + observers into kernel-owned dispatch (Issue #900).
 
     Kernel creates KernelDispatch with empty callback lists at init.
@@ -470,6 +469,25 @@ def _register_vfs_hooks(nx: "NexusFS") -> None:
     services binding, keeping the kernel free of service-layer imports.
     """
     dispatch = nx._dispatch
+
+    # ── Permission pre-intercept hook (Issue #899) ────────────────
+    if permission_checker is not None:
+        from nexus.services.permissions.permission_hook import PermissionCheckHook
+
+        _perm_hook = PermissionCheckHook(
+            checker=permission_checker,
+            metadata_store=nx.metadata,
+            default_context=nx._default_context,
+            enforce_permissions=nx._enforce_permissions,
+            permission_enforcer=nx._permission_enforcer,
+            descendant_checker=getattr(nx, "_descendant_checker", None),
+        )
+        dispatch.register_intercept_read(_perm_hook)
+        dispatch.register_intercept_write(_perm_hook)
+        dispatch.register_intercept_delete(_perm_hook)
+        dispatch.register_intercept_rename(_perm_hook)
+        dispatch.register_intercept_mkdir(_perm_hook)
+        dispatch.register_intercept_rmdir(_perm_hook)
 
     # ── Audit write observer as interceptor (Issue #900) ──────────
     # Registered FIRST so it runs before other hooks (audit before side effects).
@@ -568,7 +586,7 @@ def _register_vfs_hooks(nx: "NexusFS") -> None:
         VirtualViewResolver(
             metadata=nx.metadata,
             path_router=nx.router,
-            permission_checker=nx._permission_checker,
+            permission_checker=permission_checker,
             parse_fn=getattr(nx, "_virtual_view_parse_fn", None),
             viewer_filter_fn=getattr(nx, "_apply_dynamic_viewer_filter_if_needed", None),
             read_tracker_fn=getattr(nx, "_record_read_if_tracking", None),

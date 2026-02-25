@@ -38,7 +38,7 @@ TIER_ALIASES: dict[str, PriorityTier] = {
 
 # Kernel-reserved path prefix for internal system entries (zone revisions, etc.).
 # These entries are stored in MetastoreABC but filtered from user-visible operations.
-# Originally in ``nexus.core.nexus_fs_core``; moved to contracts because both
+# Moved to contracts because both
 # core and services depend on it.
 SYSTEM_PATH_PREFIX = "/__sys__/"
 

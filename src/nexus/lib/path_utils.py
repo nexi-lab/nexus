@@ -1,17 +1,89 @@
-"""Path glob-matching utilities — tier-neutral, zero-kernel-dependency.
+"""Path utilities — tier-neutral, zero-kernel-dependency.
 
-Provides ``path_matches_pattern``, a cached glob matcher supporting
-``*``, ``**``, and ``?`` wildcards.  Analogous to POSIX ``fnmatch`` /
-Linux ``lib/glob.c`` — shared across kernel (``FileEvent``) and
-services (reactive subscriptions) without creating cross-tier imports.
+Provides:
+  - ``validate_path``: Validate and normalize a virtual path.
+  - ``path_matches_pattern``: Cached glob matcher supporting ``*``,
+    ``**``, and ``?`` wildcards.
 
-Patterns with ``**`` are compiled to regex and cached via ``lru_cache``
-for hot-path performance.
+Analogous to POSIX ``fnmatch`` / Linux ``lib/glob.c`` — shared across
+kernel (``FileEvent``), services (reactive subscriptions), and core VFS
+without creating cross-tier imports.
 """
+
+from __future__ import annotations
 
 import fnmatch
 import functools
 import re
+
+from nexus.contracts.exceptions import InvalidPathError
+
+# Pre-compiled regex for normalizing consecutive slashes (hot path)
+_MULTI_SLASH_RE = re.compile(r"/+")
+
+
+def validate_path(path: str, *, allow_root: bool = False) -> str:
+    """Validate and normalize a virtual path.
+
+    Raises :class:`InvalidPathError` on invalid input.
+
+    This is a **free function** so that both kernel (NexusFS) and services
+    can validate paths without importing core.
+
+    Args:
+        path: Raw path string to validate.
+        allow_root: If *True*, ``"/"`` is accepted (needed for ``list("/")``).
+
+    Returns:
+        Normalized path string.
+
+    Raises:
+        InvalidPathError: If *path* is empty, contains invalid characters,
+            or violates security constraints.
+    """
+    original_path = path
+    path = path.strip() if isinstance(path, str) else path
+
+    if not path:
+        raise InvalidPathError(original_path, "Path cannot be empty or whitespace-only")
+
+    if path == "/" and not allow_root:
+        raise InvalidPathError(
+            "/",
+            "Root path '/' not allowed for file operations. Use list('/') for directory listings.",
+        )
+
+    if not path.startswith("/"):
+        path = "/" + path
+
+    # Normalize multiple consecutive slashes
+    path = _MULTI_SLASH_RE.sub("/", path)
+
+    # Remove trailing slash (except for root, but we already rejected that)
+    if path.endswith("/") and len(path) > 1:
+        path = path.rstrip("/")
+
+    # Invalid character check (null, newline, carriage return, tab)
+    invalid_chars = ["\0", "\n", "\r", "\t"]
+    for char in invalid_chars:
+        if char in path:
+            raise InvalidPathError(path, f"Path contains invalid character: {repr(char)}")
+
+    # Check for leading/trailing whitespace in path components
+    parts = path.split("/")
+    for part in parts:
+        if part and (part != part.strip()):
+            raise InvalidPathError(
+                path,
+                f"Path component '{part}' has leading/trailing whitespace. "
+                f"Path components must not contain spaces at start/end.",
+            )
+
+    # Check for parent directory traversal
+    if ".." in path:
+        raise InvalidPathError(path, "Path contains '..' segments")
+
+    return path
 
 
 @functools.lru_cache(maxsize=256)

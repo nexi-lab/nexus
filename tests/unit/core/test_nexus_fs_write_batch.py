@@ -1,4 +1,4 @@
-"""Unit tests for NexusFSCoreMixin.write_batch() (Phase 0.3 — TDD safety net).
+"""Unit tests for NexusFS.write_batch() (Phase 0.3 — TDD safety net).
 
 Tests cover:
 - Happy path: batch write multiple files

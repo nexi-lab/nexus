@@ -68,12 +68,12 @@ class ScopedFilesystem(ScopedPathMixin):
     @property
     def agent_id(self) -> str | None:
         """Agent ID for this filesystem instance."""
-        return self._fs.agent_id
+        return getattr(self._fs, "agent_id", None)
 
     @property
     def zone_id(self) -> str | None:
         """Zone ID for this filesystem instance."""
-        return self._fs.zone_id
+        return getattr(self._fs, "zone_id", None)
 
     # ============================================================
     # Core File Operations (path-scoped)

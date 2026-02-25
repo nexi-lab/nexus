@@ -94,7 +94,7 @@ class SnapshotServiceProtocol(Protocol):
 
     Async methods are used for DB-backed operations.
     Sync methods (track_write, track_delete, is_tracked) are called
-    from the synchronous write path in nexus_fs_core.py.
+    from the synchronous write path in nexus_fs.py.
     """
 
     async def begin(

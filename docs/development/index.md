@@ -96,7 +96,7 @@ graph TB
 | Component | Purpose | Location |
 |-----------|---------|----------|
 | **Router** | Request routing and orchestration | `src/nexus/core/router.py` |
-| **Filesystem Core** | File operations and tree management | `src/nexus/core/nexus_fs_core.py` |
+| **Filesystem Core** | File operations and tree management | `src/nexus/core/nexus_fs.py` |
 | **Permission Enforcer** | ReBAC authorization | `src/nexus/core/memory_permission_enforcer.py` |
 | **Memory Manager** | Agent memory APIs | `src/nexus/core/memory_api.py` |
 | **Metadata Store** | Metadata persistence | `src/nexus/storage/sqlalchemy_metadata_store.py` |

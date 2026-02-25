@@ -9,7 +9,7 @@ Same architectural pattern as TigerCacheRenameHook:
     factory registers at boot via KernelDispatch →
     kernel dispatches without knowing tiger cache exists.
 
-Issue #2133: Extracted from NexusFSCoreMixin inline code (Leopard-style grants).
+Issue #2133: Leopard-style directory grants.
 """
 
 import logging

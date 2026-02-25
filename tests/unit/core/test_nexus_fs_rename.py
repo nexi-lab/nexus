@@ -1,4 +1,4 @@
-"""Unit tests for NexusFSCoreMixin.rename() (Phase 0.3 — TDD safety net).
+"""Unit tests for NexusFS.rename() (Phase 0.3 — TDD safety net).
 
 Tests cover:
 - Happy path: rename file, rename directory

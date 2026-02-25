@@ -10,10 +10,12 @@ through three ordered phases:
         the entire operation — normal VFS pipeline is skipped.
         Each resolver owns its own permission semantics.
 
-    INTERCEPT  (synchronous, ordered)
+    INTERCEPT  (synchronous, ordered — pre + post sub-phases)
     └── Registered interceptor hooks (per-operation hook lists).
-        Hooks can modify context, or raise AuditLogError to abort.
-        Other failures are caught as OperationWarning — never abort.
+        PRE:  ``intercept_pre_*()`` — hooks may abort by raising
+              (e.g. PermissionError).  All exceptions propagate.
+        POST: ``intercept_post_*()`` — hooks modify context or audit.
+              Only AuditLogError aborts; others become warnings.
 
     OBSERVE  (fire-and-forget)
     └── Registered mutation observers receive a frozen FileEvent.
@@ -66,18 +68,20 @@ logger = logging.getLogger(__name__)
 
 
 class KernelDispatch:
-    """Unified two-phase VFS notification dispatch.
+    """Unified three-phase VFS dispatch (PRE-DISPATCH / INTERCEPT / OBSERVE).
 
-    Construction (kernel):
+    Construction (kernel __init__):
         self._dispatch = KernelDispatch()   # empty callback lists
 
-    Registration (factory at boot):
-        dispatch.register_intercept_write(AuditWriteInterceptor(...))
-        dispatch.register_intercept_read(DynamicViewerReadHook(...))
-        dispatch.register_observe(CacheInvalidationObserver(...))
+    Registration (factory at boot — NOT kernel code):
+        dispatch.register_intercept_read(some_hook)
+        dispatch.register_observe(some_observer)
 
     Dispatch (kernel VFS call sites):
-        dispatch.intercept_post_read(ctx)   # phase 1: INTERCEPT
+        dispatch.resolve_read(path)          # phase 0: PRE-DISPATCH
+        dispatch.intercept_pre_read(ctx)     # phase 1a: INTERCEPT (pre)
+        ...actual VFS operation...
+        dispatch.intercept_post_read(ctx)    # phase 1b: INTERCEPT (post)
         dispatch.notify(event)               # phase 2: OBSERVE
     """
 
@@ -179,7 +183,54 @@ class KernelDispatch:
     def register_observe(self, obs: VFSObserver) -> None:
         self._observers.append(obs)
 
-    # ── INTERCEPT dispatch ─────────────────────────────────────────────
+    # ── PRE-INTERCEPT dispatch (Issue #899) ───────────────────────────
+    # Reuses existing hook lists — calls on_pre_* via getattr.
+    # Hooks that don't implement on_pre_* are silently skipped.
+    # Exceptions propagate (abort operation) — LSM semantics.
+
+    def intercept_pre_read(self, ctx: ReadHookContext) -> None:
+        """PRE-INTERCEPT phase for read — hooks may abort by raising."""
+        for hook in self._read_hooks:
+            pre_fn = getattr(hook, "on_pre_read", None)
+            if pre_fn is not None:
+                pre_fn(ctx)
+
+    def intercept_pre_write(self, ctx: WriteHookContext) -> None:
+        """PRE-INTERCEPT phase for write — hooks may abort by raising."""
+        for hook in self._write_hooks:
+            pre_fn = getattr(hook, "on_pre_write", None)
+            if pre_fn is not None:
+                pre_fn(ctx)
+
+    def intercept_pre_delete(self, ctx: DeleteHookContext) -> None:
+        """PRE-INTERCEPT phase for delete — hooks may abort by raising."""
+        for hook in self._delete_hooks:
+            pre_fn = getattr(hook, "on_pre_delete", None)
+            if pre_fn is not None:
+                pre_fn(ctx)
+
+    def intercept_pre_rename(self, ctx: RenameHookContext) -> None:
+        """PRE-INTERCEPT phase for rename — hooks may abort by raising."""
+        for hook in self._rename_hooks:
+            pre_fn = getattr(hook, "on_pre_rename", None)
+            if pre_fn is not None:
+                pre_fn(ctx)
+
+    def intercept_pre_mkdir(self, ctx: MkdirHookContext) -> None:
+        """PRE-INTERCEPT phase for mkdir — hooks may abort by raising."""
+        for hook in self._mkdir_hooks:
+            pre_fn = getattr(hook, "on_pre_mkdir", None)
+            if pre_fn is not None:
+                pre_fn(ctx)
+
+    def intercept_pre_rmdir(self, ctx: RmdirHookContext) -> None:
+        """PRE-INTERCEPT phase for rmdir — hooks may abort by raising."""
+        for hook in self._rmdir_hooks:
+            pre_fn = getattr(hook, "on_pre_rmdir", None)
+            if pre_fn is not None:
+                pre_fn(ctx)
+
+    # ── POST-INTERCEPT dispatch ────────────────────────────────────────
 
     def intercept_post_read(self, ctx: ReadHookContext) -> None:
         """INTERCEPT phase for read."""

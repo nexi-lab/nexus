@@ -39,7 +39,10 @@ def _get_memory_api_with_context(nexus_fs: NexusFS, context: Any) -> Any:
         if hasattr(context, "agent_id") and context.agent_id:
             context_dict["agent_id"] = context.agent_id
 
-    return nexus_fs._get_memory_api(context_dict if context_dict else None)
+    provider = nexus_fs._memory_provider
+    if provider is None:
+        raise RuntimeError("Memory provider not configured")
+    return provider.get_for_context(context_dict if context_dict else None)
 
 
 def handle_store_memory(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:

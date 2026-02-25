@@ -6,10 +6,10 @@ Supports E2B and other sandbox providers.
 
 import json
 import sys
+from typing import Any
 
 import click
 
-from nexus import NexusFilesystem
 from nexus.cli.utils import get_default_filesystem
 
 
@@ -73,7 +73,7 @@ def create_sandbox(
         nexus sandbox create docker-box --provider docker --template python:3.11-slim
     """
     try:
-        nx: NexusFilesystem = get_default_filesystem()
+        nx: Any = get_default_filesystem()
 
         result = nx.sandbox_create(
             name=name,
@@ -173,7 +173,7 @@ def get_or_create_sandbox(
         nexus sandbox get-or-create my-sandbox --json
     """
     try:
-        nx: NexusFilesystem = get_default_filesystem()
+        nx: Any = get_default_filesystem()
 
         result = nx.sandbox_get_or_create(
             name=name,
@@ -282,7 +282,7 @@ def run_code(
             click.echo("Error: Must provide --code/-c or --file/-f")
             sys.exit(1)
 
-        nx: NexusFilesystem = get_default_filesystem()
+        nx: Any = get_default_filesystem()
 
         result = nx.sandbox_run(
             sandbox_id=sandbox_id,
@@ -346,7 +346,7 @@ def pause_sandbox(
         nexus sandbox pause sb_123 --json
     """
     try:
-        nx: NexusFilesystem = get_default_filesystem()
+        nx: Any = get_default_filesystem()
         result = nx.sandbox_pause(sandbox_id=sandbox_id)
 
         if json_output:
@@ -388,7 +388,7 @@ def resume_sandbox(
         nexus sandbox resume sb_123 --json
     """
     try:
-        nx: NexusFilesystem = get_default_filesystem()
+        nx: Any = get_default_filesystem()
         result = nx.sandbox_resume(sandbox_id=sandbox_id)
 
         if json_output:
@@ -432,7 +432,7 @@ def stop_sandbox(
         nexus sandbox stop sb_123 --json
     """
     try:
-        nx: NexusFilesystem = get_default_filesystem()
+        nx: Any = get_default_filesystem()
         result = nx.sandbox_stop(sandbox_id=sandbox_id)
 
         if json_output:
@@ -522,7 +522,7 @@ def list_sandboxes(
         nexus sandbox list --json
     """
     try:
-        nx: NexusFilesystem = get_default_filesystem()
+        nx: Any = get_default_filesystem()
 
         # Call with filter parameters (not context)
         result = nx.sandbox_list(
@@ -600,7 +600,7 @@ def sandbox_status(
         nexus sandbox status sb_123 --json
     """
     try:
-        nx: NexusFilesystem = get_default_filesystem()
+        nx: Any = get_default_filesystem()
         result = nx.sandbox_status(sandbox_id=sandbox_id)
 
         if json_output:
@@ -709,7 +709,7 @@ def connect_sandbox(
         nexus sandbox connect sb_xxx --json
     """
     try:
-        nx: NexusFilesystem = get_default_filesystem()
+        nx: Any = get_default_filesystem()
 
         result = nx.sandbox_connect(
             sandbox_id=sandbox_id,
@@ -798,7 +798,7 @@ def disconnect_sandbox(
         nexus sandbox disconnect sb_xxx --json
     """
     try:
-        nx: NexusFilesystem = get_default_filesystem()
+        nx: Any = get_default_filesystem()
 
         result = nx.sandbox_disconnect(
             sandbox_id=sandbox_id,

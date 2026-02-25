@@ -36,7 +36,7 @@ class _MountEntry:
 
     The ``backend`` field is typed ``ObjectStoreABC`` — the kernel's file
     operations contract.  PathRouter stores and returns it; the caller
-    (NexusFSCoreMixin) invokes CAS / directory methods directly.  Like
+    (NexusFS) invokes CAS / directory methods directly.  Like
     Linux ``struct super_block *`` in the mount table.
     """
 

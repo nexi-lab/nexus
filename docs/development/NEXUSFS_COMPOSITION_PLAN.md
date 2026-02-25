@@ -11,7 +11,6 @@
 
 ```python
 class NexusFS(
-    NexusFSCoreMixin,          # Core file operations
     NexusFSSearchMixin,        # Search operations → SearchService (partial)
     NexusFSReBACMixin,         # Permission operations → ReBACService
     NexusFSVersionsMixin,      # Version operations → VersionService
@@ -244,7 +243,6 @@ def __getattr__(self, name: str) -> Any:
 ```python
 # Before
 class NexusFS(
-    NexusFSCoreMixin,
     NexusFSSearchMixin,
     NexusFSReBACMixin,
     # ... 9 mixins
@@ -348,7 +346,7 @@ SkillService(nexus_fs=self)  # Needs read/write for skill files
 8. `src/nexus/core/nexus_fs_search.py` (SearchMixin - partial, semantic methods only)
 
 ### Files NOT to Delete (Yet)
-- `src/nexus/core/nexus_fs_core.py` (CoreMixin) - Contains essential file operations
+- (CoreMixin deleted — VFS ops merged into `nexus_fs.py`, Issue #899)
 
 ---
 

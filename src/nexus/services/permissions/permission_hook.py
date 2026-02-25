@@ -1,0 +1,169 @@
+"""PermissionCheckHook — VFS pre-intercept hook for permission enforcement.
+
+Registered by factory on all KernelDispatch hook lists (read, write,
+delete, rename, mkdir, rmdir).  Implements ``on_pre_*`` methods that
+run before each VFS operation; raises ``PermissionError`` to abort.
+
+The kernel never imports this module — factory creates and registers it.
+Kernel just calls generic ``dispatch.intercept_pre_*()`` which iterates
+the existing hook lists and calls ``on_pre_*`` via getattr.
+
+Issue #899: Extracted from NexusFS kernel (was ``self._permission_checker``).
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING, Any
+
+from nexus.contracts.types import Permission
+
+if TYPE_CHECKING:
+    from nexus.contracts.vfs_hooks import (
+        DeleteHookContext,
+        MkdirHookContext,
+        ReadHookContext,
+        RenameHookContext,
+        RmdirHookContext,
+        WriteHookContext,
+    )
+
+logger = logging.getLogger(__name__)
+
+
+class PermissionCheckHook:
+    """VFS pre-intercept permission gate (Issue #899).
+
+    Wraps ``PermissionChecker`` and provides ``on_pre_*`` / ``on_post_*``
+    methods so it can sit in the standard ``_read_hooks`` / ``_write_hooks``
+    lists alongside other hooks.
+
+    Pre methods check permission and raise ``PermissionError`` to abort.
+    Post methods are no-ops (required for protocol compatibility with
+    ``intercept_post_*`` which calls ``on_post_*`` directly).
+    """
+
+    name = "permission_check"
+
+    def __init__(
+        self,
+        *,
+        checker: Any,
+        metadata_store: Any,
+        default_context: Any,
+        enforce_permissions: bool = True,
+        permission_enforcer: Any = None,
+        descendant_checker: Any = None,
+    ) -> None:
+        self._checker = checker
+        self._metadata_store = metadata_store
+        self._default_context = default_context
+        self._enforce_permissions = enforce_permissions
+        self._permission_enforcer = permission_enforcer
+        self._descendant_checker = descendant_checker
+
+    # ------------------------------------------------------------------
+    # PRE hooks — permission gating (raise PermissionError to abort)
+    # ------------------------------------------------------------------
+
+    def on_pre_read(self, ctx: ReadHookContext) -> None:
+        """Check READ permission before read/stream/stat operations."""
+        if not self._enforce_permissions:
+            return
+        # stat() for implicit directories uses TRAVERSE — signalled via extra
+        if ctx.extra.get("is_implicit_directory"):
+            self._check_traverse(ctx)
+            return
+        self._checker.check(ctx.path, Permission.READ, ctx.context)
+
+    def on_pre_write(self, ctx: WriteHookContext) -> None:
+        """Check WRITE permission before write operations."""
+        if not self._enforce_permissions:
+            return
+        context = ctx.context or self._default_context
+        if ctx.old_metadata is not None:
+            # Existing file — check on file with owner fast-path
+            self._checker.check(ctx.path, Permission.WRITE, context, file_metadata=ctx.old_metadata)
+        else:
+            # New file — check WRITE on parent directory
+            parent = self._get_parent_path(ctx.path)
+            if parent:
+                self._checker.check(parent, Permission.WRITE, context)
+
+    def on_pre_delete(self, ctx: DeleteHookContext) -> None:
+        """Check WRITE permission before delete."""
+        self._checker.check(ctx.path, Permission.WRITE, ctx.context)
+
+    def on_pre_rename(self, ctx: RenameHookContext) -> None:
+        """Check WRITE permission on both source and destination."""
+        self._checker.check(ctx.old_path, Permission.WRITE, ctx.context)
+
+    def on_pre_mkdir(self, ctx: MkdirHookContext) -> None:
+        """Check WRITE permission on nearest existing ancestor."""
+        if not self._enforce_permissions:
+            return
+        # Find nearest existing ancestor (kernel populates extra if needed)
+        check_path = ctx.extra.get("check_path")
+        if check_path is None:
+            # Fallback: resolve ancestor ourselves
+            check_path = ctx.path
+            while check_path and check_path != "/" and not self._metadata_store.exists(check_path):
+                check_path = self._get_parent_path(check_path)
+        if check_path and self._metadata_store.exists(check_path):
+            context = ctx.context or self._default_context
+            self._checker.check(check_path, Permission.WRITE, context)
+
+    def on_pre_rmdir(self, ctx: RmdirHookContext) -> None:
+        """Check WRITE permission before rmdir."""
+        self._checker.check(ctx.path, Permission.WRITE, ctx.context)
+
+    # ------------------------------------------------------------------
+    # POST hooks — no-op (protocol compatibility)
+    # ------------------------------------------------------------------
+
+    def on_post_read(self, ctx: ReadHookContext) -> None:
+        pass
+
+    def on_post_write(self, ctx: WriteHookContext) -> None:
+        pass
+
+    def on_post_delete(self, ctx: DeleteHookContext) -> None:
+        pass
+
+    def on_post_rename(self, ctx: RenameHookContext) -> None:
+        pass
+
+    def on_post_mkdir(self, ctx: MkdirHookContext) -> None:
+        pass
+
+    def on_post_rmdir(self, ctx: RmdirHookContext) -> None:
+        pass
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    def _check_traverse(self, ctx: ReadHookContext) -> None:
+        """TRAVERSE permission check for implicit directories (stat)."""
+        context = ctx.context or self._default_context
+        if self._permission_enforcer is None:
+            return
+        has_permission = self._permission_enforcer.check(ctx.path, Permission.TRAVERSE, context)
+        if not has_permission and self._descendant_checker is not None:
+            has_permission = self._descendant_checker.has_access(ctx.path, Permission.READ, context)
+        if not has_permission:
+            raise PermissionError(
+                f"Access denied: User '{getattr(context, 'user_id', '?')}' does not have "
+                f"TRAVERSE permission for '{ctx.path}'"
+            )
+
+    @staticmethod
+    def _get_parent_path(path: str) -> str | None:
+        """Get parent directory path, or None if root."""
+        if path == "/":
+            return None
+        path = path.rstrip("/")
+        last_slash = path.rfind("/")
+        if last_slash == 0:
+            return "/"
+        return path[:last_slash] if last_slash > 0 else None

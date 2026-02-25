@@ -79,10 +79,7 @@ class VirtualViewResolver(VFSPathResolver):
     def read(
         self, path: str, *, return_metadata: bool = False, context: Any = None
     ) -> bytes | dict[str, Any]:
-        """Read virtual parsed view.
-
-        Extracted from ``NexusFSCoreMixin.read`` (lines 686-741).
-        """
+        """Read virtual parsed view."""
         from nexus.lib.virtual_views import get_parsed_content, parse_virtual_path
 
         original_path, view_type = parse_virtual_path(path, self._metadata.exists)

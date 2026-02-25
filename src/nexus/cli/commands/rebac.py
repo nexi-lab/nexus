@@ -360,6 +360,7 @@ def rebac_delete_cmd(
 @click.argument("object_type", type=str)
 @click.argument("object_id", type=str)
 @add_backend_options
+@add_context_options
 def rebac_check_cmd(
     subject_type: str,
     subject_id: str,
@@ -367,10 +368,12 @@ def rebac_check_cmd(
     object_type: str,
     object_id: str,
     backend_config: BackendConfig,
+    operation_context: dict[str, Any],
 ) -> None:
     """Check if subject has permission on object.
 
     Uses graph traversal and caching to determine if permission is granted.
+    Supports multi-zone isolation via --zone-id or NEXUS_ZONE_ID env var.
 
     Examples:
         # Does alice have read permission on file123?
@@ -385,11 +388,15 @@ def rebac_check_cmd(
     try:
         nx = get_filesystem(backend_config)
 
+        # Get zone_id from operation_context (set by @add_context_options)
+        zone = operation_context.get("zone")
+
         # Check permission
         granted = nx.rebac_service.rebac_check_sync(  # type: ignore[attr-defined]
             subject=(subject_type, subject_id),
             permission=permission,
             object=(object_type, object_id),
+            zone_id=zone,
         )
 
         nx.close()
@@ -415,15 +422,18 @@ def rebac_check_cmd(
 @click.argument("object_type", type=str)
 @click.argument("object_id", type=str)
 @add_backend_options
+@add_context_options
 def rebac_expand_cmd(
     permission: str,
     object_type: str,
     object_id: str,
     backend_config: BackendConfig,
+    operation_context: dict[str, Any],
 ) -> None:
     """Find all subjects with a given permission on an object.
 
     Uses recursive graph traversal to find all subjects.
+    Supports multi-zone isolation via --zone-id or NEXUS_ZONE_ID env var.
 
     Examples:
         # Who has read permission on file123?
@@ -438,10 +448,14 @@ def rebac_expand_cmd(
     try:
         nx = get_filesystem(backend_config)
 
+        # Get zone_id from operation_context (set by @add_context_options)
+        zone = operation_context.get("zone")
+
         # Expand permission
         subjects = nx.rebac_service.rebac_expand_sync(  # type: ignore[attr-defined]
             permission=permission,
             object=(object_type, object_id),
+            zone_id=zone,
         )
 
         nx.close()

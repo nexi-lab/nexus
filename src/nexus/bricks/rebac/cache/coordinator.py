@@ -360,6 +360,9 @@ class CacheCoordinator:
         """
         effective_zone_id = zone_id if zone_id is not None else ROOT_ZONE_ID
 
+        # Zone graph cache must be invalidated so fresh computes see the new tuples
+        self._invalidate_zone_graph(effective_zone_id)
+
         # Track write for adaptive TTL (Phase 4)
         if self._l1_cache:
             self._l1_cache.track_write(obj.entity_id)

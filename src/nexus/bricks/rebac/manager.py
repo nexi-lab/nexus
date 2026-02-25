@@ -1524,6 +1524,15 @@ class ReBACManager:
             return
         visited.add(visit_key)
 
+        # Resolve computed permissions (e.g. "write" -> ["editor", "owner"])
+        # These live in the "permissions" section, not "relations"
+        if namespace.has_permission(permission):
+            for userset_rel in namespace.get_permission_usersets(permission):
+                self._expand_permission_zone_aware(
+                    userset_rel, obj, namespace, zone_id, subjects, visited.copy(), depth + 1
+                )
+            return
+
         rel_config = namespace.get_relation_config(permission)
         if not rel_config:
             direct_subjects = self._get_direct_subjects_zone_aware(permission, obj, zone_id)

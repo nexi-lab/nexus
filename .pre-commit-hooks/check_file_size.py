@@ -32,6 +32,7 @@ EXCEPTIONS = [
     "src/nexus/services/permissions/tiger_cache.py",  # 2,896 lines - Leopard-style directory grants
     "src/nexus/services/permissions/nexus_fs_rebac.py",  # 2,192 lines - NexusFS mixin
     "src/nexus/services/rebac_service.py",  # 2,400 lines - sync + async methods for ReBAC delegation
+    "src/nexus/bricks/rebac/rebac_service.py",  # 2,356 lines - sync + async methods for ReBAC delegation
     "src/nexus/services/search_service.py",  # 2,290 lines - Issue #954 trigram index additions
     "src/nexus/services/search/search_service.py",  # 2,001 lines - Issue #2188 DI param added
     "src/nexus/remote/client.py",  # 5,000 lines - Phase 4 splitting

@@ -61,29 +61,40 @@ class TestRemoteBackendProperties:
 
 
 class TestRemoteBackendRPC:
-    """Each method calls _call_rpc with correct args."""
+    """Each method calls _call_rpc with correct args.
+
+    The kernel sets ``virtual_path`` (absolute) and ``backend_path``
+    (mount-stripped) on OperationContext before calling backend methods.
+    RemoteBackend prefers ``virtual_path`` for server calls.
+    """
+
+    @staticmethod
+    def _make_ctx(virtual_path: str = "/file.txt", backend_path: str = "file.txt") -> MagicMock:
+        ctx = MagicMock()
+        ctx.virtual_path = virtual_path
+        ctx.backend_path = backend_path
+        return ctx
 
     def test_write_content_calls_rpc(self, backend: RemoteBackend) -> None:
-        """write_content should call _call_rpc('write', ...)."""
+        """write_content should call _call_rpc('write', ...) with absolute path."""
         with patch.object(
             backend,
             "_call_rpc",
             return_value={"etag": "abc123", "size": 5},
         ) as mock_rpc:
-            ctx = MagicMock()
-            ctx.backend_path = "path/to/file.txt"
+            ctx = self._make_ctx("/path/to/file.txt", "path/to/file.txt")
             result = backend.write_content(b"hello", context=ctx)
 
             mock_rpc.assert_called_once_with(
                 "write",
-                {"path": "path/to/file.txt", "content": b"hello"},
+                {"path": "/path/to/file.txt", "content": b"hello"},
             )
             assert isinstance(result, WriteResult)
             assert result.content_hash == "abc123"
             assert result.size == 5
 
     def test_read_content_calls_rpc(self, backend: RemoteBackend) -> None:
-        """read_content should call _call_rpc('read', ...)."""
+        """read_content should call _call_rpc('read', ...) with absolute path."""
         with (
             patch.object(backend, "_call_rpc") as mock_rpc,
             patch.object(
@@ -92,49 +103,70 @@ class TestRemoteBackendRPC:
                 return_value=b"content",
             ),
         ):
-            ctx = MagicMock()
-            ctx.backend_path = "file.txt"
+            ctx = self._make_ctx("/file.txt", "file.txt")
             result = backend.read_content("hash", context=ctx)
 
-            mock_rpc.assert_called_once_with("read", {"path": "file.txt"})
+            mock_rpc.assert_called_once_with("read", {"path": "/file.txt"})
             assert result == b"content"
 
-    def test_delete_content_calls_rpc(self, backend: RemoteBackend) -> None:
-        """delete_content should call _call_rpc('delete', ...)."""
+    def test_delete_content_is_noop(self, backend: RemoteBackend) -> None:
+        """delete_content is a no-op — server-side delete via RemoteMetastore."""
         with patch.object(backend, "_call_rpc") as mock_rpc:
-            ctx = MagicMock()
-            ctx.backend_path = "file.txt"
+            ctx = self._make_ctx("/file.txt", "file.txt")
             backend.delete_content("hash", context=ctx)
 
-            mock_rpc.assert_called_once_with("delete", {"path": "file.txt"})
+            mock_rpc.assert_not_called()
 
     def test_content_exists_calls_rpc(self, backend: RemoteBackend) -> None:
-        """content_exists should call _call_rpc('exists', ...)."""
+        """content_exists should call _call_rpc('exists', ...) with absolute path."""
         with patch.object(
             backend,
             "_call_rpc",
             return_value={"exists": True},
         ) as mock_rpc:
-            ctx = MagicMock()
-            ctx.backend_path = "file.txt"
+            ctx = self._make_ctx("/file.txt", "file.txt")
             result = backend.content_exists("hash", context=ctx)
 
-            mock_rpc.assert_called_once_with("exists", {"path": "file.txt"})
+            mock_rpc.assert_called_once_with("exists", {"path": "/file.txt"})
             assert result is True
 
     def test_get_content_size_calls_rpc(self, backend: RemoteBackend) -> None:
-        """get_content_size should call _call_rpc('stat', ...)."""
+        """get_content_size should call _call_rpc('stat', ...) with absolute path."""
         with patch.object(
             backend,
             "_call_rpc",
             return_value={"size": 1024},
         ) as mock_rpc:
-            ctx = MagicMock()
-            ctx.backend_path = "file.txt"
+            ctx = self._make_ctx("/file.txt", "file.txt")
             result = backend.get_content_size("hash", context=ctx)
 
-            mock_rpc.assert_called_once_with("stat", {"path": "file.txt"})
+            mock_rpc.assert_called_once_with("stat", {"path": "/file.txt"})
             assert result == 1024
+
+    def test_backend_path_fallback(self, backend: RemoteBackend) -> None:
+        """When virtual_path is None, fall back to backend_path with / prefix."""
+        with patch.object(
+            backend,
+            "_call_rpc",
+            return_value={"size": 512},
+        ) as mock_rpc:
+            ctx = MagicMock()
+            ctx.virtual_path = None
+            ctx.backend_path = "workspace/data.txt"
+            backend.get_content_size("hash", context=ctx)
+
+            mock_rpc.assert_called_once_with("stat", {"path": "/workspace/data.txt"})
+
+    def test_no_context_defaults_to_root(self, backend: RemoteBackend) -> None:
+        """When context is None, use root path /."""
+        with patch.object(
+            backend,
+            "_call_rpc",
+            return_value={"size": 0},
+        ) as mock_rpc:
+            backend.get_content_size("hash", context=None)
+
+            mock_rpc.assert_called_once_with("stat", {"path": "/"})
 
     def test_mkdir_calls_rpc(self, backend: RemoteBackend) -> None:
         """mkdir should call _call_rpc('mkdir', ...)."""

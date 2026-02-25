@@ -410,7 +410,6 @@ class TestBrickServices:
             "task_queue_service",
             "cache_brick",
             "ipc_storage_driver",
-            "ipc_vfs_driver",
             "ipc_provisioner",
             "agent_event_log",
             "skill_service",

@@ -3,7 +3,7 @@
 Two pluggable backends:
 
 - ``CacheBackedTaskStore`` — CacheStoreABC-backed, for dev/test and embedded mode
-- ``VFSTaskStore`` — file-based via IPCStorageDriver, Lego-compliant
+- ``VFSTaskStore`` — file-based via VFSOperations, Lego-compliant
 """
 
 from nexus.bricks.a2a.stores.in_memory import CacheBackedTaskStore

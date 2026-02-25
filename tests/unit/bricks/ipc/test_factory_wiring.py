@@ -1,10 +1,9 @@
 """Integration test: IPC brick wiring through factory.py.
 
 Validates that the factory correctly creates and wires IPC services
-(RecordStoreStorageDriver, IPCVFSDriver, AgentProvisioner) when
-a RecordStore with session_factory is available.
+(KernelVFSAdapter, AgentProvisioner) when the IPC brick is enabled.
 
-Issue: #1727
+Issue: #1727, #1178
 """
 
 
@@ -12,15 +11,13 @@ class TestIPCBrickWiring:
     """Verify IPC brick is correctly wired in _boot_brick_services."""
 
     def test_ipc_fields_exist_on_brick_services(self) -> None:
-        """BrickServices dataclass has ipc_storage_driver, ipc_vfs_driver, ipc_provisioner."""
+        """BrickServices dataclass has ipc_storage_driver and ipc_provisioner."""
         from nexus.core.config import BrickServices
 
         bs = BrickServices()
         assert hasattr(bs, "ipc_storage_driver")
-        assert hasattr(bs, "ipc_vfs_driver")
         assert hasattr(bs, "ipc_provisioner")
         assert bs.ipc_storage_driver is None
-        assert bs.ipc_vfs_driver is None
         assert bs.ipc_provisioner is None
 
     def test_brick_ipc_in_deployment_profiles(self) -> None:
@@ -42,17 +39,11 @@ class TestIPCBrickWiring:
         # IPC should NOT be in EMBEDDED (too resource-constrained)
         assert not DeploymentProfile.EMBEDDED.is_brick_enabled(BRICK_IPC)
 
-    def test_ipc_storage_driver_importable(self) -> None:
-        """RecordStoreStorageDriver is importable (validates no circular deps)."""
-        from nexus.bricks.ipc.storage.recordstore_driver import RecordStoreStorageDriver
+    def test_kernel_vfs_adapter_importable(self) -> None:
+        """KernelVFSAdapter is importable (validates no circular deps)."""
+        from nexus.bricks.ipc.kernel_adapter import KernelVFSAdapter
 
-        assert RecordStoreStorageDriver is not None
-
-    def test_ipc_vfs_driver_importable(self) -> None:
-        """IPCVFSDriver is importable (validates no circular deps)."""
-        from nexus.bricks.ipc.driver import IPCVFSDriver
-
-        assert IPCVFSDriver is not None
+        assert KernelVFSAdapter is not None
 
     def test_ipc_provisioner_importable(self) -> None:
         """AgentProvisioner is importable (validates no circular deps)."""
@@ -78,35 +69,29 @@ class TestIPCBrickWiring:
         assert callable(shutdown_ipc)
 
 
-class TestIPCVFSDriverMount:
-    """Verify IPCVFSDriver can be mounted on a PathRouter."""
+class TestKernelVFSAdapter:
+    """Verify KernelVFSAdapter satisfies VFSOperations protocol."""
 
-    def test_ipc_driver_mounts_at_agents(self) -> None:
-        """IPCVFSDriver can be mounted at /agents on the PathRouter."""
-        from nexus.bricks.ipc.driver import IPCVFSDriver
-        from nexus.core.router import PathRouter
-        from tests.unit.bricks.ipc.fakes import InMemoryStorageDriver
+    def test_adapter_unbound_raises(self) -> None:
+        """Calling methods before bind() raises RuntimeError."""
+        import asyncio
 
-        storage = InMemoryStorageDriver()
-        driver = IPCVFSDriver(storage=storage, zone_id="test-zone")
+        from nexus.bricks.ipc.kernel_adapter import KernelVFSAdapter
 
-        from tests.helpers.dict_metastore import DictMetastore
+        adapter = KernelVFSAdapter(zone_id="test-zone")
+        assert not adapter.is_bound
 
-        router = PathRouter(DictMetastore())
-        # Should not raise — IPCVFSDriver extends Backend
-        router.add_mount("/agents", driver)
+        with __import__("pytest").raises(RuntimeError, match="bind"):
+            asyncio.get_event_loop().run_until_complete(adapter.read("/test", "test-zone"))
 
-        # Verify it's mounted
-        assert driver.name == "ipc"
-        # Clean up background loop
-        driver.close()
+    def test_adapter_satisfies_vfs_operations_protocol(self) -> None:
+        """KernelVFSAdapter structurally satisfies VFSOperations."""
+        from nexus.bricks.ipc.kernel_adapter import KernelVFSAdapter
+        from nexus.bricks.ipc.protocols import VFSOperations
 
-    def test_ipc_driver_close_is_idempotent(self) -> None:
-        """Calling close() multiple times is safe."""
-        from nexus.bricks.ipc.driver import IPCVFSDriver
-        from tests.unit.bricks.ipc.fakes import InMemoryStorageDriver
-
-        storage = InMemoryStorageDriver()
-        driver = IPCVFSDriver(storage=storage, zone_id="test-zone")
-        driver.close()
-        driver.close()  # Should not raise
+        adapter = KernelVFSAdapter(zone_id="test-zone")
+        # Protocol check: all required methods exist
+        for method in ("read", "write", "list_dir", "count_dir", "rename", "mkdir", "exists"):
+            assert hasattr(adapter, method), f"Missing method: {method}"
+        # Runtime checkable protocol
+        assert isinstance(adapter, VFSOperations)

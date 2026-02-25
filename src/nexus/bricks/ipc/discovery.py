@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from nexus.bricks.ipc.conventions import AGENTS_ROOT, agent_card_path
-from nexus.bricks.ipc.storage.protocol import IPCStorageDriver
+from nexus.bricks.ipc.protocols import VFSOperations
 from nexus.contracts.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
@@ -61,7 +61,7 @@ class AgentDiscovery:
 
     def __init__(
         self,
-        storage: IPCStorageDriver,
+        storage: VFSOperations,
         zone_id: str = ROOT_ZONE_ID,
         cache_ttl_seconds: float = 10.0,
         cache_store: "CacheStoreABC | None" = None,

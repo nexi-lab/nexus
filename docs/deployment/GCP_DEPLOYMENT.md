@@ -411,13 +411,10 @@ gsutil rm -r gs://your-nexus-bucket
 ### From Python
 
 ```python
-from nexus import RemoteNexusFS
+import nexus
 
 # Connect to your GCP server
-nx = RemoteNexusFS(
-    server_url="http://YOUR-EXTERNAL-IP:2026",
-    api_key="your-api-key"
-)
+nx = nexus.connect(config={"mode": "remote", "url": "http://YOUR-EXTERNAL-IP:2026", "api_key": "your-api-key"})
 
 # Use normally
 nx.write("/workspace/hello.txt", b"Hello from GCP!")

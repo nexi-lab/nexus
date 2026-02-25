@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from nexus.remote.client import RemoteNexusFS
+import nexus
 
 NEXUS_URL = os.getenv("NEXUS_URL", "http://localhost:2026")
 NEXUS_API_KEY = os.getenv(
@@ -74,7 +74,7 @@ def main():
     print(f"Server: {NEXUS_URL}")
     print(f"Files: {NUM_FILES}")
 
-    client = RemoteNexusFS(server_url=NEXUS_URL, api_key=NEXUS_API_KEY)
+    client = nexus.connect(config={"mode": "remote", "url": NEXUS_URL, "api_key": NEXUS_API_KEY})
 
     # Create unique test directory
     test_dir = f"/batch_test_{uuid.uuid4().hex[:8]}"

@@ -12,7 +12,7 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from nexus.remote.client import RemoteNexusFS
+import nexus
 
 DATA_DIR = Path("/tmp/nexus_perf_data")
 NEXUS_URL = os.getenv("NEXUS_URL", "http://localhost:2026")
@@ -165,7 +165,7 @@ def test_nexus(file_count=1000):
     print(f"NEXUS - {file_count} NESTED FILES")
     print(f"{'=' * 70}")
 
-    client = RemoteNexusFS(server_url=NEXUS_URL, api_key=NEXUS_API_KEY)
+    client = nexus.connect(config={"mode": "remote", "url": NEXUS_URL, "api_key": NEXUS_API_KEY})
     source_dir = DATA_DIR / "nested_50k"
     nexus_path = f"/perf_test/nested_{file_count}"
 
@@ -282,7 +282,7 @@ def test_sandbox_bash(file_count=1000):
     print(f"SANDBOX BASH - {file_count} NESTED FILES (FUSE-mounted)")
     print(f"{'=' * 70}")
 
-    client = RemoteNexusFS(server_url=NEXUS_URL, api_key=NEXUS_API_KEY)
+    client = nexus.connect(config={"mode": "remote", "url": NEXUS_URL, "api_key": NEXUS_API_KEY})
     nexus_path = "/perf_test/nested_1000" if file_count == 1000 else "/perf_test/nested_10000"
     mount_path = "/mnt/nexus"
 
@@ -397,7 +397,7 @@ def test_sandbox_python(file_count=1000):
     print(f"SANDBOX PYTHON - {file_count} NESTED FILES (FUSE-mounted)")
     print(f"{'=' * 70}")
 
-    client = RemoteNexusFS(server_url=NEXUS_URL, api_key=NEXUS_API_KEY)
+    client = nexus.connect(config={"mode": "remote", "url": NEXUS_URL, "api_key": NEXUS_API_KEY})
     nexus_path = "/perf_test/nested_1000" if file_count == 1000 else "/perf_test/nested_10000"
     mount_path = "/mnt/nexus"
 

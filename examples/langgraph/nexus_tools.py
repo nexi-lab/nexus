@@ -22,7 +22,7 @@ data, and run code across agent runs.
 Authentication:
     API key is REQUIRED via metadata.x_auth: "Bearer <token>"
     Frontend automatically passes the authenticated user's API key in request metadata.
-    Each tool creates an authenticated RemoteNexusFS instance using the extracted token.
+    Each tool creates an authenticated nexus.connect() instance using the extracted token.
 """
 
 import logging

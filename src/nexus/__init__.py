@@ -7,7 +7,7 @@ and seamless deployment across three modes.
 
 Three Deployment Modes, One Codebase:
 - Standalone: Single-node redb, no Raft (like SQLite) — default mode
-- Remote: Thin HTTP client via RemoteNexusFS
+- Remote: NexusFS with RemoteBackend + RemoteServiceProxy (thin HTTP client)
 - Federation: ZoneManager + Raft consensus for multi-node clusters
 
 SDK vs CLI:
@@ -84,7 +84,6 @@ if TYPE_CHECKING:
     from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC as NexusFilesystem
     from nexus.core.metastore import MetastoreABC
     from nexus.core.nexus_fs import NexusFS
-    from nexus.remote import RemoteNexusFS
 
 # =============================================================================
 # Lightweight imports (always loaded) - these are fast
@@ -118,8 +117,6 @@ _LAZY_IMPORTS = {
     # Core - heavy
     "NexusFilesystem": ("nexus.contracts.filesystem.filesystem_abc", "NexusFilesystemABC"),
     "NexusFS": ("nexus.core.nexus_fs", "NexusFS"),
-    # Remote - needed for FUSE mount
-    "RemoteNexusFS": ("nexus.remote", "RemoteNexusFS"),
     # Skills - very heavy
     "Skill": ("nexus.bricks.skills.models", "Skill"),
     "SkillDependencyError": ("nexus.bricks.skills.registry", "SkillDependencyError"),
@@ -173,7 +170,7 @@ def connect(
     deployment mode in configuration:
 
     - **standalone** (default): Single-node redb, no Raft. Like SQLite.
-    - **remote**: Thin HTTP client via RemoteNexusFS.
+    - **remote**: NexusFS with RemoteBackend + RemoteServiceProxy (thin HTTP client).
     - **federation**: ZoneManager + Raft consensus for multi-node clusters.
 
     Args:
@@ -185,7 +182,7 @@ def connect(
 
     Returns:
         NexusFilesystem instance (mode-dependent):
-            - remote: Returns RemoteNexusFS (thin HTTP client)
+            - remote: Returns NexusFS with RemoteBackend + RemoteServiceProxy
             - standalone/federation: Returns NexusFS with local backend
 
         All modes implement the NexusFilesystem interface, ensuring consistent
@@ -525,7 +522,6 @@ __all__ = [
     "NexusFilesystem",  # Abstract base class for all filesystem modes
     # Filesystem implementation
     "NexusFS",
-    "RemoteNexusFS",  # Remote filesystem client
     # Backends
     "LocalBackend",
     "GCSBackend",

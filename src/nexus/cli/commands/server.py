@@ -302,7 +302,7 @@ def _mount_fuse(
         nx: NexusFilesystem = get_filesystem(backend_config)
 
         # Set agent_id on remote filesystem for version attribution (issue #418)
-        # Only RemoteNexusFS has a settable agent_id property
+        # Only REMOTE profile NexusFS has a settable agent_id property
         if agent_id and hasattr(nx, "_agent_id"):
             nx.agent_id = agent_id  # type: ignore[misc]
 
@@ -587,8 +587,8 @@ def serve(
         nexus serve --auth-type database --init --port 2026 --admin-user alice
 
         # Connect from Python
-        from nexus.remote import RemoteNexusFS
-        nx = RemoteNexusFS("http://localhost:2026", api_key="<admin-key>")
+        import nexus
+        nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": "<admin-key>"})
         nx.write("/workspace/file.txt", b"Hello, World!")
 
         # Mount with FUSE
@@ -783,7 +783,7 @@ def serve(
             enforce_zone_isolation = True
 
         # Determine server deployment mode from NEXUS_MODE env var
-        # Server always runs local NexusFS (never RemoteNexusFS)
+        # Server always runs local NexusFS (never REMOTE profile)
         raw_server_mode = os.getenv("NEXUS_MODE", "standalone")
 
         if raw_server_mode == "remote":
@@ -827,7 +827,7 @@ def serve(
                 if isinstance(nx, NexusFS):
                     nx._config = cfg
                 if cfg.backends:
-                    # Type check: backends can only be mounted on NexusFS, not RemoteNexusFS
+                    # Type check: backends can only be mounted on NexusFS, not remote NexusFS
                     if not isinstance(nx, NexusFS):
                         console.print(
                             "[yellow]⚠️  Warning: Multi-backend configuration is only supported for local NexusFS instances[/yellow]"
@@ -944,13 +944,13 @@ def serve(
                     f"[yellow]⚠️  Warning: Could not load backends from config: {e}[/yellow]"
                 )
 
-        # Safety check: Server should never use RemoteNexusFS (would create circular dependency)
+        # Safety check: Server should never use a remote NexusFS (would create circular dependency)
         # This should never trigger due to NEXUS_URL clearing above, but kept as defensive check
-        from nexus.remote import RemoteNexusFS
+        from nexus.storage.remote_metastore import RemoteMetastore
 
-        if isinstance(nx, RemoteNexusFS):
+        if hasattr(nx, "metadata") and isinstance(nx.metadata, RemoteMetastore):
             console.print(
-                "[red]Error:[/red] Server cannot use RemoteNexusFS (circular dependency detected)"
+                "[red]Error:[/red] Server cannot use remote NexusFS (circular dependency detected)"
             )
             console.print("[yellow]This is unexpected - please report this bug.[/yellow]")
             console.print("[yellow]Workaround:[/yellow] Unset NEXUS_URL environment variable:")
@@ -1409,12 +1409,15 @@ def serve(
         console.print(f"  RPC methods: [cyan]http://{host}:{port}/api/nfs/{{method}}[/cyan]")
         console.print()
         console.print("[yellow]Connect from Python:[/yellow]")
-        console.print("  from nexus.remote import RemoteNexusFS")
-        console.print(f'  nx = RemoteNexusFS("http://{host}:{port}"', end="")
+        console.print("  import nexus")
         if api_key or auth_provider:
-            console.print(', api_key="<your-key>")')
+            console.print(
+                f'  nx = nexus.connect(config={{"mode": "remote", "url": "http://{host}:{port}", "api_key": "<your-key>"}})'
+            )
         else:
-            console.print(")")
+            console.print(
+                f'  nx = nexus.connect(config={{"mode": "remote", "url": "http://{host}:{port}"}})'
+            )
         console.print("  nx.write('/workspace/file.txt', b'Hello!')")
         console.print()
 

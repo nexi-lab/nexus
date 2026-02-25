@@ -63,10 +63,10 @@ Your agents (CrewAI, LangGraph, Claude SDK, OpenAI Agents) call simple memory AP
 Every memory has an **identity triple** that determines ownership and access:
 
 ```python
-from nexus.remote import RemoteNexusFS
+import nexus
 
 # Connect to server
-nx = RemoteNexusFS(server_url="http://localhost:2026")
+nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026"})
 
 # Set identity context
 nx.zone_id = "acme"      # Organization
@@ -99,10 +99,10 @@ Scopes control sharing across organizational levels:
 **Real Usage Example:**
 
 ```python
-from nexus.remote import RemoteNexusFS
+import nexus
 
 # Connect and set identity
-nx = RemoteNexusFS(server_url="http://localhost:2026")
+nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026"})
 nx.zone_id = "acme"
 nx.user_id = "alice"
 nx.agent_id = "agent1"
@@ -145,9 +145,9 @@ Organize memories hierarchically like filesystems:
 Creates new memory each time - useful for logs, events, facts.
 
 ```python
-from nexus.remote import RemoteNexusFS
+import nexus
 
-nx = RemoteNexusFS(server_url="http://localhost:2026")
+nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026"})
 nx.agent_id = "geography-agent"
 
 # Creates 3 separate memories
@@ -160,9 +160,9 @@ nx.memory.store("Berlin is capital of Germany", namespace="knowledge/geography/f
 Updates if exists, creates if new - perfect for settings, preferences.
 
 ```python
-from nexus.remote import RemoteNexusFS
+import nexus
 
-nx = RemoteNexusFS(server_url="http://localhost:2026")
+nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026"})
 nx.user_id = "alice"
 nx.agent_id = "settings-agent"
 
@@ -233,9 +233,9 @@ graph LR
 #### API Operations
 
 ```python
-from nexus.remote import RemoteNexusFS
+import nexus
 
-nx = RemoteNexusFS(server_url="http://localhost:2026")
+nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026"})
 nx.user_id = "alice"
 nx.agent_id = "my-agent"
 
@@ -353,13 +353,10 @@ nexus serve --host 0.0.0.0 --port 2026
 ```
 
 ```python
-from nexus.remote import RemoteNexusFS
+import nexus
 
 # Connect to server
-nx = RemoteNexusFS(
-    server_url="http://localhost:2026",
-    api_key="your-api-key"  # Optional
-)
+nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": "your-api-key"})
 
 # Set identity context (who is using the memory)
 nx.zone_id = "acme"      # Organization
@@ -382,13 +379,10 @@ export NEXUS_AGENT_ID=agent1
 
 ```python
 import os
-from nexus.remote import RemoteNexusFS
+import nexus
 
 # Load from environment
-nx = RemoteNexusFS(
-    server_url=os.getenv("NEXUS_SERVER_URL"),
-    api_key=os.getenv("NEXUS_API_KEY")
-)
+nx = nexus.connect(config={"mode": "remote", "url": os.getenv("NEXUS_SERVER_URL"), "api_key": os.getenv("NEXUS_API_KEY")})
 nx.zone_id = os.getenv("NEXUS_TENANT_ID", "default")
 nx.agent_id = os.getenv("NEXUS_AGENT_ID", "my-agent")
 
@@ -451,9 +445,9 @@ memory_id = nx.memory.store(
 **Examples:**
 
 ```python
-from nexus.remote import RemoteNexusFS
+import nexus
 
-nx = RemoteNexusFS(server_url="http://localhost:2026")
+nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026"})
 nx.user_id = "alice"
 nx.agent_id = "my-agent"
 
@@ -756,10 +750,10 @@ result = nx.memory.delete_batch(unwanted_ids)
 ### Pattern 1: Persistent Agent Preferences
 
 ```python
-from nexus.remote import RemoteNexusFS
+import nexus
 
 # Connect to server
-nx = RemoteNexusFS(server_url="http://localhost:2026")
+nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026"})
 nx.user_id = "alice"
 nx.agent_id = "chatbot1"
 
@@ -791,10 +785,10 @@ print(prefs['content'])  # {"language": "Python", ...}
 ### Pattern 2: Multi-Agent Knowledge Sharing
 
 ```python
-from nexus.remote import RemoteNexusFS
+import nexus
 
 # Connect as research agent - stores organizational knowledge
-nx = RemoteNexusFS(server_url="http://localhost:2026")
+nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026"})
 nx.zone_id = "acme"
 nx.user_id = "alice"
 nx.agent_id = "research_agent"
@@ -809,7 +803,7 @@ nx.memory.store(
 )
 
 # Connect as code assistant (different user, same tenant)
-nx2 = RemoteNexusFS(server_url="http://localhost:2026")
+nx2 = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026"})
 nx2.zone_id = "acme"
 nx2.user_id = "bob"
 nx2.agent_id = "code_assistant"
@@ -829,9 +823,9 @@ for fact in facts:
 ### Pattern 3: Agent-Scoped Learning
 
 ```python
-from nexus.remote import RemoteNexusFS
+import nexus
 
-nx = RemoteNexusFS(server_url="http://localhost:2026")
+nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026"})
 nx.agent_id = "learning-agent"
 
 # Store agent-private learning (only this agent can access)
@@ -940,10 +934,10 @@ capitals = nx.memory.list(namespace_prefix="knowledge/geography/capitals/")
 ### Pattern 6: Manual Memory Approval Workflow (Issue #368)
 
 ```python
-from nexus.remote import RemoteNexusFS
+import nexus
 
 # Setup
-nx = RemoteNexusFS(server_url="http://localhost:2026")
+nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026"})
 nx.user_id = "alice"
 nx.agent_id = "content_agent"
 

@@ -48,14 +48,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 from agents import Agent, Runner
 from nexus_tools import get_nexus_tools
 
-from nexus.remote import RemoteNexusFS
+import nexus
 
 
 def connect_to_nexus(tenant_id: str = "openai-agents-demo", agent_id: str = "react-agent"):
     """
     Connect to Nexus filesystem (local or remote) with multi-tenancy support.
 
-    By default, uses RemoteNexusFS which connects to a remote server.
+    By default, uses nexus.connect() which connects to a remote server.
     Falls back to local filesystem if no server is configured.
 
     Args:
@@ -92,11 +92,8 @@ def connect_to_nexus(tenant_id: str = "openai-agents-demo", agent_id: str = "rea
 
     if not use_local:
         try:
-            # Connect to remote Nexus server using RemoteNexusFS
-            nx = RemoteNexusFS(
-                server_url=server_url,
-                api_key=api_key,
-            )
+            # Connect to remote Nexus server using nexus.connect()
+            nx = nexus.connect(config={"mode": "remote", "url": server_url, "api_key": api_key})
 
             # Set tenant and agent identifiers for multi-tenancy
             nx.tenant_id = tenant_id

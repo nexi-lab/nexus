@@ -77,9 +77,9 @@ cleanup() {
     python3 << 'CLEANUP'
 import sys, os
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
+import nexus
 
-nx = RemoteNexusFS(os.getenv('NEXUS_URL'), api_key=os.getenv('NEXUS_API_KEY'))
+nx = nexus.connect(config={"mode": "remote", "url": os.getenv('NEXUS_URL'), "api_key": os.getenv('NEXUS_API_KEY')})
 base = os.getenv('DEMO_BASE')
 
 # Delete all tuples related to demo paths
@@ -345,9 +345,9 @@ print_test "List all ReBAC tuples for alice_agent"
 python3 << 'LIST_AGENT_TUPLES'
 import sys, os
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
+import nexus
 
-nx = RemoteNexusFS(os.getenv('NEXUS_URL'), api_key=os.getenv('NEXUS_API_KEY'))
+nx = nexus.connect(config={"mode": "remote", "url": os.getenv('NEXUS_URL'), "api_key": os.getenv('NEXUS_API_KEY')})
 tuples = nx.rebac_list_tuples(subject=("agent", "alice_agent"))
 print(f"\nalice_agent has {len(tuples)} direct ReBAC tuples:")
 for t in tuples[:10]:

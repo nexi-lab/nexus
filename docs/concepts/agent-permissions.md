@@ -633,14 +633,11 @@ agent = create_react_agent(model, tools=[read_user_files])
 
 ```python
 from agents import Agent, function_tool
-from nexus.remote import RemoteNexusFS
+import nexus
 import os
 
 # Agent authenticates with its own API key
-nx = RemoteNexusFS(
-    server_url=os.environ['NEXUS_URL'],
-    api_key=os.environ['AGENT_API_KEY']  # Agent's own key
-)
+nx = nexus.connect(config={"mode": "remote", "url": os.environ['NEXUS_URL'], "api_key": os.environ['AGENT_API_KEY']})
 
 @function_tool
 async def store_data(data: str) -> str:

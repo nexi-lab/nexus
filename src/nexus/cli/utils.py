@@ -3,7 +3,7 @@
 import os
 import sys
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import click
 from rich.console import Console
@@ -194,7 +194,7 @@ def get_filesystem(
         backend_config: Backend configuration
         enforce_permissions: Whether to enforce permissions (None = use environment/config default)
         server_mode: Explicit mode for server use ("standalone" or "federation").
-            When set, forces a local NexusFS (never RemoteNexusFS) to prevent
+            When set, forces a local NexusFS (never remote) to prevent
             circular dependency when the server itself has NEXUS_URL set.
         allow_admin_bypass: Whether admin keys can bypass permission checks (None = use default False)
         enforce_zone_isolation: Whether to enforce zone isolation (None = use default True)
@@ -205,20 +205,18 @@ def get_filesystem(
     try:
         # If server_mode is set, the caller is a server — always use local NexusFS
         if not server_mode and backend_config.remote_url:
-            # Client mode: use remote server connection
-            from nexus.remote import RemoteNexusFS
-
-            return cast(
-                NexusFilesystem,
-                RemoteNexusFS(
-                    server_url=backend_config.remote_url,
-                    api_key=backend_config.remote_api_key,
-                ),
+            # Client mode: use remote server connection via nexus.connect()
+            return nexus.connect(
+                config={
+                    "mode": "remote",
+                    "url": backend_config.remote_url,
+                    "api_key": backend_config.remote_api_key,
+                }
             )
         elif backend_config.config_path:
             # Use explicit config file
             if server_mode:
-                # Server mode: override mode to prevent RemoteNexusFS
+                # Server mode: override mode to prevent remote NexusFS
                 config_obj = load_config(Path(backend_config.config_path))
                 config_dict: dict[str, Any] = {
                     "mode": server_mode,
@@ -331,7 +329,7 @@ def get_default_filesystem() -> NexusFilesystem:
     - NEXUS_DATA_DIR: Data directory for local mode (default: ~/.nexus)
 
     Returns:
-        NexusFilesystem instance (RemoteNexusFS if NEXUS_URL is set, otherwise local)
+        NexusFilesystem instance (remote if NEXUS_URL is set, otherwise local)
     """
     try:
         import os
@@ -339,15 +337,13 @@ def get_default_filesystem() -> NexusFilesystem:
         # Check for remote URL first (priority over local)
         remote_url = os.environ.get("NEXUS_URL")
         if remote_url:
-            # Use remote server connection
-            from nexus.remote import RemoteNexusFS
-
-            return cast(
-                NexusFilesystem,
-                RemoteNexusFS(
-                    server_url=remote_url,
-                    api_key=os.environ.get("NEXUS_API_KEY"),
-                ),
+            # Use remote server connection via nexus.connect()
+            return nexus.connect(
+                config={
+                    "mode": "remote",
+                    "url": remote_url,
+                    "api_key": os.environ.get("NEXUS_API_KEY"),
+                }
             )
 
         # Fall back to local mode

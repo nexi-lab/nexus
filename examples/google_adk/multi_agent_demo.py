@@ -31,8 +31,6 @@ from pathlib import Path
 # Add src to path for local development
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-import nexus
-
 
 def connect_to_nexus():
     """Connect to Nexus filesystem."""
@@ -40,10 +38,10 @@ def connect_to_nexus():
     api_key = os.getenv("NEXUS_API_KEY")
 
     if server_url:
-        from nexus.remote import RemoteNexusFS
+        import nexus
 
         print(f"✓ Connected to Nexus server: {server_url}")
-        return RemoteNexusFS(server_url=server_url, api_key=api_key)
+        return nexus.connect(config={"mode": "remote", "url": server_url, "api_key": api_key})
     else:
         print("✓ Connected to local Nexus")
         return nexus.connect()

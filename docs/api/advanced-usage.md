@@ -276,14 +276,11 @@ python examples/python/advanced_usage_demo.py
 ### Python Remote Connection
 
 ```python
-from nexus.remote.client import RemoteNexusFS
+import nexus
 import os
 
 # Connect to remote server with authentication
-nx = RemoteNexusFS(
-    server_url=os.environ['SERVER_URL'],    # http://localhost:2026
-    api_key=os.environ['NEXUS_API_KEY']     # sk-admin_...
-)
+nx = nexus.connect(config={"mode": "remote", "url": os.environ['SERVER_URL'], "api_key": os.environ['NEXUS_API_KEY']})
 
 # Create workspace
 nx.mkdir("/workspace/my-project", parents=True)

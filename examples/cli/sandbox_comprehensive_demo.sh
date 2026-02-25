@@ -110,7 +110,7 @@ print_section "1. Server Setup"
 
 print_subsection "Starting Nexus server with E2B configuration"
 
-# Unset NEXUS_URL to avoid RemoteNexusFS circular dependency
+# Unset NEXUS_URL to avoid nexus.connect() circular dependency
 unset NEXUS_URL
 unset NEXUS_API_KEY
 

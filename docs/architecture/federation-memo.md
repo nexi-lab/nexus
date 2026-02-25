@@ -477,14 +477,14 @@ No `cache_redb` or Dragonfly needed for metadata caching.
 
 Federation is **NOT kernel**. It is an optional, DI-injected subsystem at the same
 level as CacheStore and RecordStore. NexusFS without federation gracefully degrades
-to remote mode (via RemoteNexusFS) or single-node standalone mode.
+to remote mode (via `nexus.connect()`) or single-node standalone mode.
 
 **Degradation path:**
 ```
 Full (Federation + Remote + RecordStore + CacheStore)
   ↓ remove Federation
-Client-Server (RemoteNexusFS ↔ NexusFS server)
-  ↓ remove RemoteNexusFS
+Client-Server (nexus.connect() ↔ NexusFS server)
+  ↓ unified via nexus.connect()
 Single-node standalone (NexusFS kernel: Metastore + ObjectStore only)
 ```
 
@@ -498,7 +498,7 @@ Driver:         RaftMetadataStore          PyZoneManager (Rust/redb/Raft)
 Comms:          —                          RaftClient (gRPC to peers)
 ```
 
-Federation does NOT need a remote implementation (unlike NexusFS → RemoteNexusFS)
+Federation does NOT need a remote implementation (unlike NexusFS → nexus.connect())
 because zone operations are inherently asymmetric: you always operate locally on
 your ZoneManager and call peers via RaftClient. No "remote federation proxy" scenario.
 

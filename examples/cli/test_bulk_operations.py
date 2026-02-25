@@ -376,12 +376,12 @@ class RemoteTestRunner(TestRunner):
         return asyncio.run(self._run_async())
 
     async def _run_async(self) -> bool:
-        from nexus.remote import AsyncRemoteNexusFS
+        import nexus
 
         print_header("Bulk Operations Test (Remote Mode)")
         print_info(f"Server: {self.url}")
 
-        nx = AsyncRemoteNexusFS(self.url, api_key=self.api_key)
+        nx = nexus.connect(config={"mode": "remote", "url": self.url, "api_key": self.api_key})
 
         try:
             # Cleanup stale data

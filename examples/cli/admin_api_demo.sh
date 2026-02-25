@@ -72,7 +72,7 @@ mkdir -p "$DEMO_DIR"
 export NEXUS_DATABASE_URL="sqlite:///$DB_PATH"
 
 # IMPORTANT: Unset NEXUS_URL to prevent circular dependency
-# (Server should use local backend, not RemoteNexusFS)
+# (Server should use local backend, not nexus.connect() in remote mode)
 unset NEXUS_URL
 
 echo "  Database: $DB_PATH"

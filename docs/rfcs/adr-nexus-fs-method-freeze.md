@@ -58,7 +58,7 @@ leaving NexusFS as a thin delegation layer.
 3. If migrating from NexusFS: remove logic from the mixin, keep the
    `@rpc_expose` method as a 1-line delegation
 4. Wire via `_wire_services()` (accepts pre-built services from KernelServices)
-5. Update RemoteNexusFS if needed
+5. Update remote NexusFS (via `nexus.connect()`) if needed
 6. Deprecate old mixin file if applicable
 
 ## Consequences

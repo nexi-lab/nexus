@@ -115,7 +115,7 @@ class NexusFUSEOperations(Operations):
                     logger.info("[FUSE] Rust daemon ready")
                 else:
                     logger.warning(
-                        "[FUSE] --use-rust requires RemoteNexusFS. Falling back to Python."
+                        "[FUSE] --use-rust requires REMOTE profile NexusFS. Falling back to Python."
                     )
                     use_rust = False
             except Exception as e:

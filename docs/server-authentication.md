@@ -65,12 +65,9 @@ Save this API key securely - it won't be shown again!
 
 **Usage:**
 ```python
-from nexus.remote import RemoteNexusFS
+import nexus
 
-nx = RemoteNexusFS(
-    server_url="http://localhost:2026",
-    api_key="sk_a1b2c3d4e5f6..."  # From init output
-)
+nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": "sk_a1b2c3d4e5f6..."})
 ```
 
 ### 3. Local Authentication (Username/Password + JWT)
@@ -100,10 +97,10 @@ nexus serve --auth-type local
 
 **Usage:**
 ```python
-from nexus.remote import RemoteNexusFS
+import nexus
 
 # Login with username/password
-nx = RemoteNexusFS(server_url="http://localhost:2026")
+nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026"})
 jwt_token = nx.login(username="alice", password="password123")
 
 # Use JWT token for requests
@@ -144,15 +141,12 @@ nexus serve --auth-type oidc
 
 **Usage:**
 ```python
-from nexus.remote import RemoteNexusFS
+import nexus
 
 # Get ID token from your OAuth flow
 id_token = "eyJhbGciOiJSUzI1NiIs..."  # From Google/Microsoft/etc.
 
-nx = RemoteNexusFS(
-    server_url="http://localhost:2026",
-    api_key=id_token  # Pass OIDC token as API key
-)
+nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": id_token})
 ```
 
 ### 5. Multi-OIDC Authentication (Multiple Providers)
@@ -192,15 +186,15 @@ nexus serve --auth-type multi-oidc
 
 **Usage:**
 ```python
-from nexus.remote import RemoteNexusFS
+import nexus
 
 # Users can log in via any configured provider
 google_token = "eyJ..."  # From Google OAuth
 microsoft_token = "eyJ..."  # From Microsoft OAuth
 
 # Both work!
-nx1 = RemoteNexusFS(server_url="http://localhost:2026", api_key=google_token)
-nx2 = RemoteNexusFS(server_url="http://localhost:2026", api_key=microsoft_token)
+nx1 = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": google_token})
+nx2 = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": microsoft_token})
 ```
 
 ### 6. Static API Key (Deprecated)

@@ -1308,15 +1308,17 @@ class TestServerCreation:
 
     def test_server_with_remote_url(self):
         """Test creating server with remote URL."""
-        with patch("nexus.remote.RemoteNexusFS") as mock_remote:
+        with patch("nexus.connect") as mock_connect:
             mock_instance = Mock()
             mock_instance.read = Mock(return_value=b"test")
             mock_instance.write = Mock()
-            mock_remote.return_value = mock_instance
+            mock_connect.return_value = mock_instance
 
             server = create_mcp_server(remote_url="http://localhost:2026", api_key="test-key")
 
-            mock_remote.assert_called_once_with("http://localhost:2026", api_key="test-key")
+            mock_connect.assert_called_once_with(
+                config={"mode": "remote", "url": "http://localhost:2026", "api_key": "test-key"}
+            )
             assert server is not None
 
     def test_server_with_auto_connect(self):

@@ -259,6 +259,14 @@ def connect(
             record_store=None,
         )
         nfs.router.add_mount("/", remote_backend)
+
+        # Wire service proxies for REMOTE profile (Issue #1171).
+        # Fills all 25+ service slots with RemoteServiceProxy — like
+        # mount -t nfs: forwards method calls to the server via HTTP.
+        from nexus.factory._remote import _boot_remote_services
+
+        _boot_remote_services(nfs, call_rpc=remote_backend._call_rpc)
+
         return nfs
 
     # ── Modes: standalone / federation ───────────────────────────────

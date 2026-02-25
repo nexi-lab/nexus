@@ -198,7 +198,6 @@ export NEXUS_DRAGONFLY_RETRY_ON_TIMEOUT=true
 
 ```python
 nx = nexus.connect(config={
-    "enable_metadata_cache": True,
     "cache_ttl": 300,  # 5 minutes
     "cache_size": 1000
 })

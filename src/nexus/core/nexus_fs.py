@@ -265,28 +265,6 @@ class NexusFS(  # type: ignore[misc]
             enforce_permissions=self._enforce_permissions,
         )
 
-        # Read-set-aware cache (Issue #1169)
-        self._read_set_cache = None
-        metadata_cache = getattr(self.metadata, "_cache", None)
-        if metadata_cache is not None and self._cache_config.enable_metadata_cache:
-            from nexus.storage.read_set import ReadSetRegistry
-            from nexus.storage.read_set_cache import ReadSetAwareCache
-
-            self._read_set_registry = ReadSetRegistry()
-            self._read_set_cache = ReadSetAwareCache(
-                base_cache=metadata_cache,
-                registry=self._read_set_registry,
-            )
-            self._read_tracking_enabled = True
-
-        # Issue #1519/#2034: Cache observer — created internally from read-set cache.
-        # (Removed from KernelServices — NexusFS owns the cache observer lifecycle.)
-        self._cache_observer = None
-        if self._read_set_cache is not None:
-            from nexus.storage.cache_invalidation import ReadSetCacheObserver
-
-            self._cache_observer = ReadSetCacheObserver(self._read_set_cache)
-
     def _bind_wired_services(self, wired: WiredServices | dict[str, Any]) -> None:
         """Bind wired services from factory two-phase init.
 
@@ -370,21 +348,6 @@ class NexusFS(  # type: ignore[misc]
             if v is not None:
                 result[k] = v
         return result
-
-    @property
-    def read_set_cache(self) -> Any | None:
-        """Public accessor for the read-set-aware cache (Issue #1169)."""
-        return self._read_set_cache
-
-    @property
-    def read_set_registry(self) -> Any | None:
-        """Public accessor for the ReadSetRegistry (Issue #1169)."""
-        return getattr(self, "_read_set_registry", None)
-
-    @property
-    def metadata_cache(self) -> Any | None:
-        """Public accessor for the underlying MetadataCache on the metadata store."""
-        return getattr(self.metadata, "_cache", None)
 
     @property
     def namespace_manager(self) -> Any | None:

@@ -35,7 +35,6 @@ class TestCacheConfig:
 
     def test_defaults(self) -> None:
         cfg = CacheConfig()
-        assert cfg.enable_metadata_cache is True
         assert cfg.path_size == 512
         assert cfg.list_size == 1024
         assert cfg.kv_size == 256
@@ -57,11 +56,9 @@ class TestCacheConfig:
 
     def test_custom_values(self) -> None:
         cfg = CacheConfig(
-            enable_metadata_cache=False,
             ttl_seconds=None,
             content_cache_size_mb=512,
         )
-        assert cfg.enable_metadata_cache is False
         assert cfg.ttl_seconds is None
         assert cfg.content_cache_size_mb == 512
 

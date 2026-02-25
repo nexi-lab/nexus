@@ -364,17 +364,6 @@ class NexusFSGateway:
         """
         return self._fs._rebac_manager
 
-    def invalidate_metadata_cache(self, *paths: str) -> None:
-        """Invalidate metadata cache entries for given paths.
-
-        Args:
-            paths: Virtual paths to invalidate
-        """
-        metadata_cache = getattr(self._fs, "metadata_cache", None)
-        if metadata_cache is not None:
-            for path in paths:
-                metadata_cache.invalidate_path(path)
-
     # =========================================================================
     # Hierarchy Operations
     # =========================================================================

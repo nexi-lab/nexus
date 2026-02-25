@@ -382,29 +382,6 @@ class TestSearchOperations:
 
 
 # =============================================================================
-# Cache Invalidation
-# =============================================================================
-
-
-class TestCacheInvalidation:
-    """Tests for cache invalidation."""
-
-    def test_invalidate_with_cache(self, mock_fs):
-        """Invalidates cache when available."""
-        cache = MagicMock()
-        mock_fs.metadata_cache = cache
-        gw = NexusFSGateway(mock_fs)
-        gw.invalidate_metadata_cache("/a", "/b")
-        assert cache.invalidate_path.call_count == 2
-
-    def test_invalidate_without_cache(self, mock_fs):
-        """No error when metadata_cache is not available."""
-        del mock_fs.metadata_cache
-        gw = NexusFSGateway(mock_fs)
-        gw.invalidate_metadata_cache("/a")  # Should not raise
-
-
-# =============================================================================
 # Mount Operations
 # =============================================================================
 

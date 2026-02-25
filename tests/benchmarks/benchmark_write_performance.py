@@ -107,7 +107,6 @@ def run_benchmark(enable_deferred: bool = False):
             zone_id="benchmark_zone",
             enforce_permissions=True,
             auto_parse=False,
-            enable_metadata_cache=True,
             enable_tiger_cache=False,  # SQLite doesn't support Tiger Cache
             enable_deferred_permissions=enable_deferred,  # Issue #1071
         )

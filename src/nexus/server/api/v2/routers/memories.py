@@ -102,6 +102,7 @@ async def store_memory(
             valid_at=request.valid_at,
             classify_stability=request.classify_stability,
             detect_evolution=request.detect_evolution,
+            generate_embedding=request.generate_embedding,
             _metadata=request.metadata,
             context=context,
         )
@@ -268,11 +269,13 @@ async def revalidate_memory(
 @router.post("/search", response_model=dict[str, Any])
 async def search_memories(
     request: MemorySearchRequest,
-    _auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
     memory_api: Any = Depends(get_memory_api),
 ) -> dict[str, Any]:
     """Search memories with semantic/keyword/hybrid search."""
     try:
+        context = _get_operation_context(auth_result)
+
         results = memory_api.search(
             query=request.query,
             scope=request.scope,
@@ -282,6 +285,7 @@ async def search_memories(
             after=request.after,
             before=request.before,
             during=request.during,
+            context=context,
         )
 
         return {
@@ -387,7 +391,10 @@ async def batch_store_memories(
                     extract_temporal=mem_request.extract_temporal,
                     extract_relationships=mem_request.extract_relationships,
                     store_to_graph=mem_request.store_to_graph,
+                    valid_at=mem_request.valid_at,
                     classify_stability=mem_request.classify_stability,
+                    detect_evolution=mem_request.detect_evolution,
+                    generate_embedding=mem_request.generate_embedding,
                     _metadata=mem_request.metadata,
                     context=context,
                 )

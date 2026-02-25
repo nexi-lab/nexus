@@ -263,9 +263,6 @@ def test_all_public_methods_are_exposed_or_excluded():
         # Already exposed via different mechanism
         "write_batch",  # Exposed via different RPC endpoint
         "list_memories",  # Handled manually by dispatcher, calls memory.list() instead
-        # Watch cache lifecycle - server-side only (Issue #2065)
-        "start_watch_cache",  # Async - starts background poll task on server
-        "stop_watch_cache",  # Async - stops background poll task on server
         # Tiger Cache internal methods - server-side optimization only
         "grant_traverse_on_implicit_dirs",  # Internal - grants TRAVERSE on implicit dirs during init
         "process_tiger_cache_queue",  # Internal - background worker processes cache updates

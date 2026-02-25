@@ -885,6 +885,8 @@ ignore_imports = [
     "nexus.bricks.portability.export_service -> nexus",
     # tools -> nexus: _client.py uses nexus.connect() — same transitive hub pattern (Issue #1065)
     "nexus.bricks.tools._client -> nexus",
+    # mcp -> nexus: server.py imports top-level nexus package — same transitive hub pattern
+    "nexus.bricks.mcp.server -> nexus",
 ]
 unmatched_ignore_imports_alerting = "warn"
 

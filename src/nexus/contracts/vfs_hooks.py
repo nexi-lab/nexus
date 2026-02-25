@@ -236,3 +236,29 @@ class VFSObserver(Protocol):
     """
 
     def on_mutation(self, event: Any) -> None: ...
+
+
+# ---------------------------------------------------------------------------
+# PRE-DISPATCH phase — virtual path resolver protocol (Issue #889)
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class VFSPathResolver(Protocol):
+    """PRE-DISPATCH resolver for virtual paths (Issue #889).
+
+    Linux analogue: virtual filesystem dispatch (procfs, sysfs, devtmpfs).
+    When read()/write()/delete() is called on a path claimed by a resolver,
+    the resolver handles the entire operation — the normal VFS pipeline is
+    skipped.  Each resolver owns its own permission semantics.
+
+    Registered at boot via factory into KernelDispatch.  Empty resolver
+    chain = no-op = zero overhead when no resolvers registered.
+    """
+
+    def matches(self, path: str) -> bool: ...
+    def read(
+        self, path: str, *, return_metadata: bool = False, context: Any = None
+    ) -> bytes | dict: ...
+    def write(self, path: str, content: bytes) -> dict[str, Any]: ...
+    def delete(self, path: str, *, context: Any = None) -> None: ...

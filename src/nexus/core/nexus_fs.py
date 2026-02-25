@@ -1252,6 +1252,11 @@ class NexusFS(  # type: ignore[misc]
         "set_rebac_option": "rebac_service",
         "get_rebac_option": "rebac_service",
         "register_namespace": "rebac_service",
+        # EventsService (Issue #1166)
+        "wait_for_changes": "events_service",
+        "lock": "events_service",
+        "extend_lock": "events_service",
+        "unlock": "events_service",
     }
 
     # Special aliases where service method name differs

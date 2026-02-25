@@ -720,6 +720,10 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
                         .raw_node
                         .campaign()
                         .map_err(|e| RaftError::Raft(e.to_string()));
+                    // Sync cached role so handle.is_leader() reflects the
+                    // post-campaign state before the next advance() cycle.
+                    // For single-node: campaign() grants self-vote → Leader.
+                    self.update_cached_status();
                     let _ = tx.send(result);
                 }
             }
@@ -1252,5 +1256,56 @@ mod tests {
             matches!(result.unwrap_err(), RaftError::NotLeader { .. }),
             "Should be NotLeader error"
         );
+    }
+
+    /// Regression test: after campaign() on a single-node cluster,
+    /// is_leader() must return true IMMEDIATELY — without needing advance().
+    ///
+    /// Previously, update_cached_status() was only called inside advance(),
+    /// so the cached role stayed Follower until the next transport loop tick.
+    /// Callers (PyO3 set_metadata) that checked is_leader() right after
+    /// create_zone() would get "not leader" errors.
+    #[tokio::test]
+    async fn test_single_node_is_leader_after_campaign_without_advance() {
+        let dir = TempDir::new().unwrap();
+        let storage = RaftStorage::open(dir.path()).unwrap();
+        let store = RedbStore::open(dir.path().join("sm")).unwrap();
+        let state_machine = FullStateMachine::new(&store).unwrap();
+
+        let config = RaftConfig {
+            id: 1,
+            peers: vec![],
+            ..Default::default()
+        };
+
+        let (handle, mut driver) =
+            ZoneConsensus::new(config, storage, state_machine, None).unwrap();
+
+        // Before campaign: should be Follower
+        assert_eq!(handle.role(), NodeRole::Follower);
+        assert!(!handle.is_leader());
+
+        // Spawn campaign on a separate task (it blocks waiting for driver response).
+        // Then drive process_messages() to dequeue and process the Campaign msg.
+        let campaign_handle = handle.clone();
+        let campaign_task = tokio::spawn(async move { campaign_handle.campaign().await });
+
+        // Yield to let the campaign task send the message
+        tokio::task::yield_now().await;
+
+        // Process the Campaign message in the driver (no advance!)
+        driver.process_messages();
+
+        // Wait for campaign to complete
+        campaign_task.await.unwrap().unwrap();
+
+        // is_leader() must be true now — the cached status was synced
+        // inside the campaign handler, not deferred to advance().
+        assert!(
+            handle.is_leader(),
+            "is_leader() must be true after campaign() + process_messages(), without advance()"
+        );
+        assert_eq!(handle.role(), NodeRole::Leader);
+        assert_eq!(handle.leader_id(), Some(1));
     }
 }

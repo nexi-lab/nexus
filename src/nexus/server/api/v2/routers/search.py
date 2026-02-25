@@ -225,6 +225,12 @@ async def search_query(
                     "line_end": r.line_end,
                     "keyword_score": round(r.keyword_score, 4) if r.keyword_score else None,
                     "vector_score": round(r.vector_score, 4) if r.vector_score else None,
+                    "splade_score": round(r.splade_score, 4)
+                    if getattr(r, "splade_score", None)
+                    else None,
+                    "reranker_score": round(r.reranker_score, 4)
+                    if getattr(r, "reranker_score", None)
+                    else None,
                 }
                 for r in results
             ],
@@ -250,6 +256,21 @@ async def search_refresh_notify(
     """Notify the search daemon of a file change for index refresh."""
     await search_daemon.notify_file_change(path, change_type)
     return {"status": "accepted", "path": path, "change_type": change_type}
+
+
+@router.post("/bulk-embed")
+async def search_bulk_embed(
+    batch_size: int = Query(50, description="Batch size for embedding"),
+    _auth_result: dict[str, Any] = Depends(require_auth),
+    search_daemon: Any = Depends(_get_search_daemon),
+) -> dict[str, Any]:
+    """Trigger bulk embedding of all BM25S-indexed documents.
+
+    Uses BM25S corpus as content source, registers files in file_paths,
+    and embeds via the standard IndexingPipeline (decoupled from BM25).
+    """
+    embedded = await search_daemon.bulk_embed_from_bm25s(batch_size=batch_size)
+    return {"status": "completed", "documents_embedded": embedded}
 
 
 @router.post("/expand")

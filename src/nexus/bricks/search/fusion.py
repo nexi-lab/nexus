@@ -300,6 +300,53 @@ def rrf_weighted_fusion(
     return [item["result"] for item in sorted_results]
 
 
+def rrf_multi_fusion(
+    result_lists: list[tuple[str, Sequence[dict[str, Any] | Any]]],
+    k: int = 60,
+    limit: int = 10,
+    id_key: str | None = "chunk_id",
+) -> list[dict[str, Any]]:
+    """N-way Reciprocal Rank Fusion for combining 3+ retrieval sources.
+
+    Generalizes RRF from 2-way to N-way for pipelines that combine
+    keyword + dense + SPLADE (or any number of retrievers).
+
+    Args:
+        result_lists: List of (source_name, results) tuples.
+            source_name is used to set '{source_name}_score' on each result.
+        k: RRF constant (default: 60)
+        limit: Maximum results to return
+        id_key: Key for identifying unique results, or None for path:chunk_index
+
+    Returns:
+        Combined results ranked by RRF score
+    """
+    rrf_scores: dict[str, dict[str, Any]] = {}
+
+    for source_name, results in result_lists:
+        score_key = f"{source_name}_score"
+        for rank, raw_result in enumerate(results, start=1):
+            result = _to_dict(raw_result)
+            key = _get_result_key(result, id_key)
+            if key not in rrf_scores:
+                rrf_scores[key] = {"result": result.copy(), "rrf_score": 0.0}
+            rrf_scores[key]["rrf_score"] += 1.0 / (k + rank)
+            rrf_scores[key]["result"][score_key] = result.get("score", 0.0)
+
+    # Sort by RRF score
+    sorted_results = sorted(
+        rrf_scores.values(),
+        key=lambda x: x["rrf_score"],
+        reverse=True,
+    )[:limit]
+
+    # Update final scores
+    for item in sorted_results:
+        item["result"]["score"] = item["rrf_score"]
+
+    return [item["result"] for item in sorted_results]
+
+
 def fuse_results(
     keyword_results: Sequence[dict[str, Any] | Any],
     vector_results: Sequence[dict[str, Any] | Any],

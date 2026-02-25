@@ -79,10 +79,14 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
                     enabled=True,
                 )
 
+        # CacheBrick is available from startup_permissions (runs before search)
+        _cache_brick = getattr(app.state, "cache_brick", None)
+
         app.state.search_daemon = SearchDaemon(
             config,
             async_session_factory=_async_sf,
             zoekt_client=_zoekt_client,
+            cache_brick=_cache_brick,
         )
         await app.state.search_daemon.startup()
         app.state.search_daemon_enabled = True

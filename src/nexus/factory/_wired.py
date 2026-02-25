@@ -316,7 +316,15 @@ def _boot_wired_services(
     # Pre-extract optional NexusFS attrs to avoid mypy getattr+None inference issues
     _nx_default_context: Any = getattr(nx, "_default_context", None)
     _nx_session_factory: Any = getattr(nx, "SessionLocal", None)
-    _nx_memory_config: Any = getattr(nx, "_memory_config", None)
+    # Build memory_config dict from _default_context (NexusFS stores the
+    # MemoryConfig dataclass as _memory_config_obj, not _memory_config).
+    _nx_memory_config: Any = None
+    if _nx_default_context is not None:
+        _nx_memory_config = {
+            "zone_id": getattr(_nx_default_context, "zone_id", None),
+            "user_id": getattr(_nx_default_context, "user_id", None),
+            "agent_id": getattr(_nx_default_context, "agent_id", None),
+        }
 
     workspace_rpc_service: Any = None
     try:

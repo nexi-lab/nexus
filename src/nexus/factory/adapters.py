@@ -26,7 +26,17 @@ class _NexusFSFileReader:
         self._nx = nx
 
     def read_text(self, path: str) -> str:
-        content_raw = self._nx.read(path)
+        # Read with admin context so the search daemon can index all files
+        # regardless of per-user ReBAC permissions.
+        from nexus.contracts.types import OperationContext
+
+        admin_ctx = OperationContext(
+            user_id="system",
+            groups=[],
+            is_admin=True,
+            is_system=True,
+        )
+        content_raw = self._nx.read(path, context=admin_ctx)
         if isinstance(content_raw, bytes):
             return content_raw.decode("utf-8", errors="ignore")
         return str(content_raw)

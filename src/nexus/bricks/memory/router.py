@@ -579,7 +579,10 @@ class MemoryViewRouter:
 
                 bind = self.session.get_bind()
                 assert isinstance(bind, Engine), "Expected Engine, got Connection"
-                rebac = ReBACManager(bind)
+                rebac = ReBACManager(
+                    bind,
+                    is_postgresql=(bind.dialect.name == "postgresql"),
+                )
 
                 rebac.rebac_write(
                     subject=("user", owner_id),
@@ -652,7 +655,10 @@ class MemoryViewRouter:
 
                 bind = self.session.get_bind()
                 assert isinstance(bind, Engine), "Expected Engine, got Connection"
-                rebac = ReBACManager(bind)
+                rebac = ReBACManager(
+                    bind,
+                    is_postgresql=(bind.dialect.name == "postgresql"),
+                )
 
                 # Grant owner permission to the memory
                 rebac.rebac_write(

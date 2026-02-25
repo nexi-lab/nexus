@@ -665,10 +665,12 @@ class NexusFSCoreMixin:
         """
         path = self._validate_path(path)
 
-        # Phase 2 Integration: Intercept memory paths
-        _mr = self._brick_services.memory_router
-        if _mr is not None and _mr.is_memory_path(path):
-            return self._read_memory_path(path, return_metadata, context=context)
+        # PRE-DISPATCH: virtual path resolvers (Issue #889)
+        _handled, _result = self._dispatch.resolve_read(
+            path, return_metadata=return_metadata, context=context
+        )
+        if _handled:
+            return _result
 
         # Check read permission (handles virtual views by checking original file)
         perm_check_start = time.time()
@@ -1596,10 +1598,10 @@ class NexusFSCoreMixin:
         path = self._validate_path(path)
         self._check_zone_writable(context)  # Issue #2061: write-gating
 
-        # Phase 2 Integration: Intercept memory paths
-        _mr = self._brick_services.memory_router
-        if _mr is not None and _mr.is_memory_path(path):
-            return self._write_memory_path(path, content)
+        # PRE-DISPATCH: virtual path resolvers (Issue #889)
+        _handled, _result = self._dispatch.resolve_write(path, content)
+        if _handled:
+            return _result
 
         # Issue #1106 Block 3: Acquire distributed lock if requested
         lock_id = None
@@ -2645,11 +2647,10 @@ class NexusFSCoreMixin:
         path = self._validate_path(path)
         self._check_zone_writable(context)  # Issue #2061: write-gating
 
-        # Phase 2 Integration: Intercept memory paths
-        _mr = self._brick_services.memory_router
-        if _mr is not None and _mr.is_memory_path(path):
-            self._delete_memory_path(path, context=context)
-            return {}
+        # PRE-DISPATCH: virtual path resolvers (Issue #889)
+        _handled, _result = self._dispatch.resolve_delete(path, context=context)
+        if _handled:
+            return _result
 
         # Route to backend with write access check FIRST (to check zone/agent isolation)
         # This must happen before permission check so AccessDeniedError is raised before PermissionError
@@ -3360,118 +3361,6 @@ class NexusFSCoreMixin:
                 results[path] = None
 
         return results
-
-    def _read_memory_path(
-        self, path: str, return_metadata: bool = False, context: OperationContext | None = None
-    ) -> bytes | dict[str, Any]:
-        """Read memory via virtual path (Phase 2 Integration).
-
-        Args:
-            path: Memory virtual path.
-            return_metadata: If True, return dict with content and metadata.
-
-        Returns:
-            Memory content as bytes, or dict with metadata if return_metadata=True.
-
-        Raises:
-            NexusFileNotFoundError: If memory doesn't exist.
-        """
-        router = self._brick_services.memory_router
-        if router is None:
-            raise RuntimeError("Memory brick not available — MemoryViewRouter not injected")
-
-        memory = router.resolve(path)
-
-        if not memory:
-            raise NexusFileNotFoundError(f"Memory not found at path: {path}")
-
-        # Read content from CAS — route the memory path to find the backend
-        route = self.router.route(path, is_admin=True)
-        content = route.backend.read_content(memory.content_hash, context=context)
-
-        if return_metadata:
-            return {
-                "content": content,
-                "etag": memory.content_hash,
-                "version": 1,  # Memories don't version like files
-                "modified_at": memory.created_at,
-                "size": len(content),
-            }
-
-        return content
-
-    def _write_memory_path(self, path: str, content: bytes) -> dict[str, Any]:
-        """Write memory via virtual path (Phase 2 Integration).
-
-        Args:
-            path: Memory virtual path.
-            content: Content to store.
-
-        Returns:
-            Dict with memory metadata.
-        """
-        # Delegate to Memory API
-        if not hasattr(self, "memory") or self.memory is None:
-            raise RuntimeError(
-                "Memory API not initialized. Use nx.memory for direct memory operations."
-            )
-
-        # Extract memory type from path if present
-        parts = [p for p in path.split("/") if p]
-        memory_type = None
-        if "memory" in parts:
-            idx = parts.index("memory")
-            if idx + 1 < len(parts):
-                memory_type = parts[idx + 1]
-
-        # Store memory with default scope='user'
-        memory_id = self.memory.store(
-            content=content.decode("utf-8") if isinstance(content, bytes) else content,
-            scope="user",
-            memory_type=memory_type,
-        )
-
-        # Get the created memory
-        mem = self.memory.get(memory_id)
-
-        # Handle case where memory.get() returns None
-        if mem is None:
-            raise RuntimeError(
-                f"Failed to retrieve stored memory (id={memory_id}). "
-                "The memory API may not be properly configured or the memory was not persisted."
-            )
-
-        return {
-            "etag": mem["content_hash"],
-            "version": 1,
-            "modified_at": mem["created_at"],
-            "size": len(content),
-        }
-
-    def _delete_memory_path(self, path: str, context: OperationContext | None = None) -> None:
-        """Delete memory via virtual path (Phase 2 Integration).
-
-        Args:
-            path: Memory virtual path.
-
-        Raises:
-            NexusFileNotFoundError: If memory doesn't exist.
-        """
-        router = self._brick_services.memory_router
-        if router is None:
-            raise RuntimeError("Memory brick not available — MemoryViewRouter not injected")
-
-        memory = router.resolve(path)
-
-        if not memory:
-            raise NexusFileNotFoundError(f"Memory not found at path: {path}")
-
-        # Delete the memory
-        router.delete_memory(memory.memory_id)
-
-        # Also delete content from CAS (decrement ref count)
-        route = self.router.route(path, is_admin=True)
-        route.backend.delete_content(memory.content_hash, context=context)
 
     @rpc_expose(description="Shutdown background parser threads")
     def shutdown_parser_threads(self, timeout: float = 10.0) -> dict[str, Any]:

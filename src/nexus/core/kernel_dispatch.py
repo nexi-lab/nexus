@@ -1,8 +1,14 @@
-"""KernelDispatch — unified two-phase VFS notification dispatch.
+"""KernelDispatch — unified three-phase VFS dispatch.
 
 Single dispatch point for all kernel VFS operation notifications.
 Every VFS operation (read/write/delete/rename/mkdir/rmdir) passes
-through two ordered phases:
+through three ordered phases:
+
+    PRE-DISPATCH  (first-match short-circuit)
+    └── Registered VFSPathResolver chain.
+        First resolver whose ``matches(path)`` returns True handles
+        the entire operation — normal VFS pipeline is skipped.
+        Each resolver owns its own permission semantics.
 
     INTERCEPT  (synchronous, ordered)
     └── Registered interceptor hooks (per-operation hook lists).
@@ -15,19 +21,22 @@ through two ordered phases:
         Failures are caught and logged.  Never abort.
 
 Linux kernel analogy:
-    INTERCEPT ≈ LSM ``call_void_hook()`` chain
-    OBSERVE   ≈ ``fsnotify()`` / ``notifier_call_chain()``
+    PRE-DISPATCH ≈ VFS ``file->f_op`` dispatch (procfs, sysfs, devtmpfs)
+    INTERCEPT    ≈ LSM ``call_void_hook()`` chain
+    OBSERVE      ≈ ``fsnotify()`` / ``notifier_call_chain()``
 
 Lifecycle:
     Kernel creates KernelDispatch with empty callback lists at init.
-    Factory registers interceptor hooks and observers at boot.
-    Kernel call sites invoke ``intercept_post_*()`` then ``notify()``.
-    Empty hook lists = no-op dispatch = zero overhead when no services.
+    Factory registers resolvers, interceptor hooks, and observers at boot.
+    Kernel call sites invoke ``resolve_*()`` then ``intercept_post_*()``
+    then ``notify()``.
+    Empty lists = no-op dispatch = zero overhead when no services.
 
-Issue #900.
+Issue #900, #889.
 """
 
 import logging
+from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.exceptions import AuditLogError
 from nexus.contracts.operation_result import OperationWarning
@@ -50,6 +59,9 @@ from nexus.contracts.vfs_hooks import (
 )
 from nexus.core.file_events import FileEvent
 
+if TYPE_CHECKING:
+    from nexus.contracts.vfs_hooks import VFSPathResolver
+
 logger = logging.getLogger(__name__)
 
 
@@ -70,6 +82,7 @@ class KernelDispatch:
     """
 
     __slots__ = (
+        "_resolvers",
         "_read_hooks",
         "_write_hooks",
         "_write_batch_hooks",
@@ -81,6 +94,9 @@ class KernelDispatch:
     )
 
     def __init__(self) -> None:
+        # PRE-DISPATCH: virtual path resolvers (Issue #889)
+        self._resolvers: list[VFSPathResolver] = []
+
         # INTERCEPT: per-operation hook lists
         self._read_hooks: list[VFSReadHook] = []
         self._write_hooks: list[VFSWriteHook] = []
@@ -92,6 +108,48 @@ class KernelDispatch:
 
         # OBSERVE: generic mutation observers
         self._observers: list[VFSObserver] = []
+
+    # ── PRE-DISPATCH: virtual path resolvers (Issue #889) ─────────────
+
+    def register_resolver(self, resolver: "VFSPathResolver") -> None:
+        """Register a PRE-DISPATCH virtual path resolver."""
+        self._resolvers.append(resolver)
+
+    def resolve_read(
+        self,
+        path: str,
+        *,
+        return_metadata: bool = False,
+        context: Any = None,
+    ) -> tuple[bool, Any]:
+        """PRE-DISPATCH: first-match resolver for read.
+
+        Returns (handled, result).  If handled is True the caller
+        must return result and skip the normal VFS pipeline.
+        """
+        for r in self._resolvers:
+            if r.matches(path):
+                return True, r.read(path, return_metadata=return_metadata, context=context)
+        return False, None
+
+    def resolve_write(self, path: str, content: bytes) -> tuple[bool, Any]:
+        """PRE-DISPATCH: first-match resolver for write."""
+        for r in self._resolvers:
+            if r.matches(path):
+                return True, r.write(path, content)
+        return False, None
+
+    def resolve_delete(self, path: str, *, context: Any = None) -> tuple[bool, Any]:
+        """PRE-DISPATCH: first-match resolver for delete."""
+        for r in self._resolvers:
+            if r.matches(path):
+                r.delete(path, context=context)
+                return True, {}
+        return False, None
+
+    @property
+    def resolver_count(self) -> int:
+        return len(self._resolvers)
 
     # ── register_intercept: per-operation INTERCEPT hooks ─────────────
 

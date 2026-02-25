@@ -145,7 +145,7 @@ See `ops-scenario-matrix.md` for full Ops-Scenario affinity proof.
 | `CacheStoreABC` | (no direct analogue) | Ephemeral KV + Pub/Sub primitives |
 | `VFSLockManagerProtocol` | per-inode `i_rwsem` | Path-level RW locking with hierarchy awareness |
 | `PipeManagerProtocol` | `pipe(2)` + `fs/pipe.c` | Named pipe lifecycle + MPMC data path (see §6 Kernel Tier) |
-| Notification dispatch | `security_hook_heads` + `fsnotify` | Two-phase callback lists at VFS operation points (see §3 Notification Dispatch) |
+| VFS dispatch | `file->f_op` + `security_hook_heads` + `fsnotify` | Three-phase dispatch at VFS operation points (see §3 VFS Dispatch) |
 
 `MetastoreABC` is kernel because it IS the inode layer — the typed contract
 between VFS and storage. Without it, the kernel cannot describe files.
@@ -190,9 +190,9 @@ LSM modules call `security_add_hooks()` to populate them.
 > `_wire_services()` deleted — all service creation moved to `factory._boot_wired_services()` (#643).
 > Remaining: replace `KernelServices` dataclass with `ServiceRegistry`.
 
-### Kernel Notification Dispatch
+### Kernel VFS Dispatch
 
-The kernel provides callback-based notification at VFS operation points (read,
+The kernel provides callback-based dispatch at VFS operation points (read,
 write, delete, rename, mkdir, rmdir). Like Linux's `security_hook_heads` and
 `fsnotify_group`, these are kernel-internal callback lists.
 
@@ -201,17 +201,25 @@ write, delete, rename, mkdir, rmdir). Like Linux's `security_hook_heads` and
 callbacks into kernel-owned dispatch at boot. Empty lists = no-op dispatch
 = kernel operates with zero services.
 
-Two-phase dispatch per VFS operation:
+Three-phase dispatch per VFS operation:
 
-| Phase | Semantics | Abort? | Modify? | Linux Analogue | Mechanism |
-|-------|-----------|--------|---------|----------------|-----------|
-| **INTERCEPT** | Synchronous, ordered | Yes (hook policy) | Yes (hooks) | LSM `call_void_hook()` | `KernelDispatch.intercept_post_*()` |
-| **OBSERVE** | Fire-and-forget | No | No | `fsnotify()` / `notifier_call_chain()` | `KernelDispatch.notify()` |
+| Phase | Semantics | Short-circuit? | Linux Analogue | Mechanism |
+|-------|-----------|----------------|----------------|-----------|
+| **PRE-DISPATCH** | First-match short-circuit | Yes (skips pipeline) | VFS `file->f_op` dispatch (procfs, sysfs) | `KernelDispatch.resolve_*()` |
+| **INTERCEPT** | Synchronous, ordered | Yes (hook policy) | LSM `call_void_hook()` | `KernelDispatch.intercept_post_*()` |
+| **OBSERVE** | Fire-and-forget | No | `fsnotify()` / `notifier_call_chain()` | `KernelDispatch.notify()` |
 
-**Implementation** (`core/kernel_dispatch.py`, Issue #900):
+**Implementation** (`core/kernel_dispatch.py`, Issues #900, #889):
 
-`KernelDispatch` is a single class that owns both phases. Each VFS operation
-(read/write/delete/rename/mkdir/rmdir) calls `intercept_post_*()` then `notify()`.
+`KernelDispatch` is a single class that owns all three phases.
+
+PRE-DISPATCH (Issue #889) resolves virtual path operations before the
+normal VFS pipeline runs. Registered `VFSPathResolver` instances are
+checked in order; the first whose `matches(path)` returns True handles
+the entire operation (read/write/delete). Each resolver owns its own
+permission semantics — like procfs has `proc_pid_permission` separate
+from ext4's `ext4_permission`. Current resolvers: `MemoryIOHandler`
+(memory virtual paths). Empty resolver chain = no-op = zero overhead.
 
 INTERCEPT phase dispatches registered interceptor hooks — per-operation
 hook lists (`register_intercept_read/write/delete/rename/mkdir/rmdir`).
@@ -229,12 +237,15 @@ Failures logged, never abort.
 
 **Contracts:**
 - `FileEvent`/`FileEventType` in `core/file_events.py` (kernel-defined data type).
+- `VFSPathResolver` — PRE-DISPATCH protocol for virtual path resolvers
+  (in `contracts/vfs_hooks.py`).
 - Hook protocols (`VFSReadHook`, `VFSWriteHook`, etc.), context dataclasses
   (`ReadHookContext`, `WriteHookContext`, etc.), `VFSObserver` — in
   `contracts/vfs_hooks.py` (tier-neutral, like `include/linux/notifier.h`).
 - Concrete implementations in `services/hooks/` (policy, like SELinux/AppArmor).
 
 **Registration API** (factory registers at boot):
+- `dispatch.register_resolver(resolver)` — PRE-DISPATCH resolvers (first-match)
 - `dispatch.register_intercept_read(hook)` — INTERCEPT hooks (per-operation)
 - `dispatch.register_observe(observer)` — OBSERVE observers (all mutations)
 

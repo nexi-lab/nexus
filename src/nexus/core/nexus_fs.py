@@ -3061,8 +3061,8 @@ class NexusFS(  # type: ignore[misc]
             ...     {"old_str": "def foo():", "new_str": "def bar():", "hint_line": 42}
             ... ], fuzzy_threshold=0.8)
         """
-        from nexus.core.edit_engine import EditEngine
-        from nexus.core.edit_engine import EditOperation as EditOp
+        from nexus.utils.edit_engine import EditEngine
+        from nexus.utils.edit_engine import EditOperation as EditOp
 
         path = self._validate_path(path)
 

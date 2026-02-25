@@ -624,7 +624,6 @@ class MountService:
         mount_point: str,
         backend_type: str,
         backend_config: dict[str, Any],
-        priority: int = 0,
         readonly: bool = False,
         io_profile: str = "balanced",
         owner_user_id: str | None = None,
@@ -643,7 +642,6 @@ class MountService:
             mount_point: Virtual path where backend is mounted
             backend_type: Backend type - "local", "gcs", etc.
             backend_config: Backend-specific configuration dict
-            priority: Mount priority (default: 0)
             readonly: Whether mount is read-only (default: False)
             owner_user_id: User who owns this mount (optional)
             zone_id: Zone ID for multi-zone isolation (optional)
@@ -693,7 +691,6 @@ class MountService:
                 mount_point=mount_point,
                 backend_type=backend_type,
                 backend_config=backend_config,
-                priority=priority,
                 readonly=readonly,
                 io_profile=io_profile,
                 owner_user_id=owner_user_id,

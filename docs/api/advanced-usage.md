@@ -115,7 +115,7 @@ nx = NexusFS(backend=local, db_path="./nexus.db")
 
 # Add cloud backend mount at runtime
 gcs = GCSBackend(bucket_name="my-bucket", project_id="my-project")
-nx.router.add_mount("/cloud", gcs, priority=10)
+nx.router.add_mount("/cloud", gcs)
 
 # Use both backends transparently
 nx.write("/workspace/local.txt", b"local data")
@@ -149,7 +149,6 @@ def setup_user_workspace(user_id: str):
             "bucket": f"{user_id}-personal-bucket",
             "project_id": "my-project"
         },
-        priority=10
     )
 
     # User can now access their personal space
@@ -221,7 +220,6 @@ def setup_shared_resources():
         backend_config={
             "bucket": "public-datasets-bucket"
         },
-        priority=5,
         readonly=True  # Prevents accidental modifications
     )
 

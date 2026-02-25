@@ -315,33 +315,6 @@ class NexusFSCoreMixin:
             f"[READ-SET] Recorded {access_type} read: {resource_type}:{resource_id}@{revision}"
         )
 
-    def _register_cache_read_set(
-        self,
-        path: str,
-        metadata: FileMetadata | None,
-        resource_type: str = "file",
-    ) -> None:
-        """Register a read set for a cached metadata entry (Issue #1169).
-
-        Creates a minimal ReadSet tracking that this cache entry depends on
-        the given path, enabling precise invalidation when the path is written.
-
-        Called after metadata reads (get/stat) to associate read sets with
-        cache entries. This is a no-op when cache observer is not configured.
-
-        Args:
-            path: Virtual path of the cached entry
-            metadata: File metadata (None means not found — skip)
-            resource_type: Type of resource (file, directory)
-        """
-        cache_observer = getattr(self, "_cache_observer", None)
-        if cache_observer is None or metadata is None:
-            return
-
-        zone_id = getattr(self, "zone_id", None) or ROOT_ZONE_ID
-        revision = self._get_vfs_revision()
-        cache_observer.on_read(path, metadata, revision, zone_id, resource_type)
-
     # =========================================================================
     # Sync Lock Helpers for write(lock=True) - Issue #1106 Block 3
     # =========================================================================
@@ -858,9 +831,6 @@ class NexusFSCoreMixin:
 
         # Issue #1166: Record read for dependency tracking
         self._record_read_if_tracking(context, "file", path, "content")
-
-        # Issue #1169: Register read set for precise cache invalidation
-        self._register_cache_read_set(path, meta, "file")
 
         # Return content with metadata if requested
         if return_metadata:
@@ -3066,9 +3036,6 @@ class NexusFSCoreMixin:
 
         # Issue #1166: Record metadata read for dependency tracking
         self._record_read_if_tracking(context, "file", path, "metadata")
-
-        # Issue #1169: Register read set for precise cache invalidation
-        self._register_cache_read_set(path, meta, "file")
 
         return {
             "size": size,

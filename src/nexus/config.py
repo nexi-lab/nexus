@@ -168,9 +168,6 @@ class NexusConfig(BaseModel):
     )
 
     # In-memory metadata caching settings
-    enable_metadata_cache: bool = Field(
-        default=True, description="Enable in-memory metadata caching"
-    )
     cache_path_size: int = Field(default=512, description="Max entries for path metadata cache")
     cache_list_size: int = Field(default=128, description="Max entries for directory listing cache")
     cache_kv_size: int = Field(default=256, description="Max entries for file metadata KV cache")
@@ -490,7 +487,6 @@ def _load_from_environment() -> NexusConfig:
         "NEXUS_DB_PATH": "db_path",
         "NEXUS_METASTORE_PATH": "metastore_path",
         "NEXUS_RECORD_STORE_PATH": "record_store_path",
-        "NEXUS_ENABLE_METADATA_CACHE": "enable_metadata_cache",
         "NEXUS_CACHE_PATH_SIZE": "cache_path_size",
         "NEXUS_CACHE_LIST_SIZE": "cache_list_size",
         "NEXUS_CACHE_KV_SIZE": "cache_kv_size",
@@ -555,7 +551,6 @@ def _load_from_environment() -> NexusConfig:
             elif config_key in [
                 "enable_vector_search",
                 "enable_llm_cache",
-                "enable_metadata_cache",
                 "auto_parse",
                 "is_admin",
                 "enforce_permissions",

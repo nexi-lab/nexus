@@ -337,7 +337,6 @@ def main():
     nx = nexus.connect(config={
         "backend": "local",
         "data_dir": "./app-data",
-        "enable_metadata_cache": True,
         "auto_parse": True
     })
 

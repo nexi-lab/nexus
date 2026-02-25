@@ -65,7 +65,6 @@ config = {
     "db_path": None,                   # Custom database path (auto-generated if None)
 
     # Caching
-    "enable_metadata_cache": True,     # In-memory metadata caching
     "cache_path_size": 512,            # Path metadata cache size
     "cache_list_size": 128,            # Directory listing cache size
     "cache_kv_size": 256,              # File metadata KV cache size
@@ -110,7 +109,6 @@ backend: local
 data_dir: ./nexus-data
 
 # Enable features
-enable_metadata_cache: true
 auto_parse: true
 enforce_permissions: false
 

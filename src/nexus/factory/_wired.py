@@ -279,16 +279,11 @@ def _boot_wired_services(
         try:
             from nexus.system_services.lifecycle.events_service import EventsService
 
-            metadata_cache = None
-            if hasattr(nx.metadata, "_cache"):
-                metadata_cache = nx.metadata._cache
-
             events_service = EventsService(
                 backend=_root_backend,
                 event_bus=brick_services.event_bus,
                 lock_manager=brick_services.lock_manager,
                 zone_id=None,
-                metadata_cache=metadata_cache,
             )
             logger.debug("[BOOT:WIRED] EventsService created")
         except Exception as exc:

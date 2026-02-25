@@ -24,7 +24,7 @@ class ObjectTypeMapper:
         """Get ReBAC object type for a backend path.
 
         Delegates to backend.get_object_type() which defaults to 'file'.
-        Backends like IPCVFSDriver override to return custom types.
+        Backends may override to return custom types.
 
         Args:
             backend: The backend instance

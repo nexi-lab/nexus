@@ -28,7 +28,7 @@ from nexus.bricks.a2a.task_store import TaskStoreProtocol
 
 
 class InMemoryStorageDriver:
-    """Minimal fake for IPCStorageDriver used by VFSTaskStore tests."""
+    """Minimal fake for VFSOperations used by VFSTaskStore tests."""
 
     def __init__(self) -> None:
         self._files: dict[tuple[str, str], bytes] = {}

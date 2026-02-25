@@ -93,8 +93,6 @@ EXPECTED_MODELS = [
     "SpendingPolicyModel",
     "SpendingLedgerModel",
     "SpendingApprovalModel",
-    # IPC (Issue #1469)
-    "IPCMessageModel",
     # OAuth Token Rotation (Issue #997)
     "RefreshTokenHistoryModel",
     # Secrets Audit (Issue #997)

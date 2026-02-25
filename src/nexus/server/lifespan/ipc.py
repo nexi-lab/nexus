@@ -67,22 +67,12 @@ async def startup_ipc(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.T
     return bg_tasks
 
 
-async def shutdown_ipc(app: "FastAPI", svc: "LifespanServices") -> None:
+async def shutdown_ipc(app: "FastAPI", _svc: "LifespanServices") -> None:
     """Stop IPC background tasks."""
-    sweeper = app.state.ipc_sweeper
+    sweeper = getattr(app.state, "ipc_sweeper", None)
     if sweeper is not None and hasattr(sweeper, "stop"):
         try:
             await sweeper.stop()
             logger.info("[IPC] TTLSweeper stopped")
         except Exception as exc:
             logger.warning("[IPC] Error stopping TTLSweeper: %s", exc)
-
-    # Close IPCVFSDriver's background event loop
-    brk = svc.brick_services
-    vfs_driver = getattr(brk, "ipc_vfs_driver", None) if brk else None
-    if vfs_driver is not None and hasattr(vfs_driver, "close"):
-        try:
-            vfs_driver.close()
-            logger.info("[IPC] IPCVFSDriver closed")
-        except Exception as exc:
-            logger.warning("[IPC] Error closing IPCVFSDriver: %s", exc)

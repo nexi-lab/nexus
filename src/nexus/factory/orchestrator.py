@@ -219,7 +219,6 @@ def create_nexus_services(
         task_queue_service=brick_dict["task_queue_service"],
         # IPC Brick (Issue #1727, LEGO §8)
         ipc_storage_driver=brick_dict["ipc_storage_driver"],
-        ipc_vfs_driver=brick_dict["ipc_vfs_driver"],
         ipc_provisioner=brick_dict["ipc_provisioner"],
         # Sandbox Brick (Issue #1307)
         agent_event_log=brick_dict["agent_event_log"],

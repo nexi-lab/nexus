@@ -100,6 +100,11 @@ class RemoteBackend(ObjectStoreABC):
     def name(self) -> str:
         return "remote"
 
+    @property
+    def has_root_path(self) -> bool:
+        """Remote server always has a configured root path."""
+        return True
+
     # === RPC Transport ===
 
     @retry(

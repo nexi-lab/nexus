@@ -2,6 +2,7 @@
 
 import re
 from datetime import timedelta
+from typing import Any
 
 import click
 from rich.console import Console
@@ -80,7 +81,7 @@ def register_cmd(
         nexus workspace register /tmp/build-$BUILD_ID --session-id $BUILD_ID --ttl 2h
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx: Any = get_filesystem(backend_config)
 
         # v0.5.0: Parse TTL string to timedelta
         ttl_delta = None
@@ -126,7 +127,7 @@ def list_cmd(
         nexus workspace list
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx: Any = get_filesystem(backend_config)
 
         workspaces = nx.list_workspaces()
 
@@ -177,7 +178,7 @@ def unregister_cmd(
         nexus workspace unregister /my-workspace --yes
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx: Any = get_filesystem(backend_config)
 
         # Get workspace info first
         info = nx.get_workspace_info(path)
@@ -229,7 +230,7 @@ def info_cmd(
         nexus workspace info /my-workspace
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx: Any = get_filesystem(backend_config)
 
         info = nx.get_workspace_info(path)
 
@@ -274,7 +275,7 @@ def snapshot_cmd(
         nexus workspace snapshot /my-workspace --tag experiment --tag v1.0
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx: Any = get_filesystem(backend_config)
         tags = list(tag) if tag else None
 
         with console.status(f"[bold cyan]Creating snapshot for workspace '{path}'..."):
@@ -319,7 +320,7 @@ def log_cmd(
         nexus workspace log /my-workspace --limit 50
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx: Any = get_filesystem(backend_config)
 
         snapshots = nx.workspace_log(workspace_path=path, limit=limit)
 
@@ -379,7 +380,7 @@ def restore_cmd(
         nexus workspace restore /my-workspace --snapshot 10 --yes
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx: Any = get_filesystem(backend_config)
 
         # Get snapshot info
         snapshots = nx.workspace_log(workspace_path=path, limit=1000)
@@ -443,7 +444,7 @@ def diff_cmd(
         nexus workspace diff /my-workspace --snapshot1 5 --snapshot2 10
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx: Any = get_filesystem(backend_config)
 
         with console.status("[bold cyan]Computing diff between snapshots..."):
             diff = nx.workspace_diff(

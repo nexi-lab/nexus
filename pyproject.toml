@@ -906,6 +906,7 @@ ignore_imports = [
     # --- tier-neutral (contracts) importing core ---
     "nexus.contracts.metadata -> nexus.core._compact_generated",
     # --- tier-neutral (contracts/lib) cross-imports ---
+    "nexus.lib.path_utils -> nexus.contracts.exceptions",
     "nexus.contracts -> nexus.lib.validators",
     "nexus.contracts.deployment_profile -> nexus.lib.performance_tuning",
     "nexus.contracts.types -> nexus.storage.read_set",

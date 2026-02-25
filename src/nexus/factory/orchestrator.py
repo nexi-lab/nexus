@@ -547,6 +547,20 @@ def _register_vfs_hooks(nx: "NexusFS") -> None:
 
         dispatch.register_intercept_write(TigerCacheWriteHook(tiger_cache=tiger_cache))
 
+    # ── PRE-DISPATCH: Memory virtual path resolver (Issue #889) ────────
+    _mem_router = getattr(nx._brick_services, "memory_router", None)
+    _mem_provider = getattr(nx, "_memory_provider", None)
+    if _mem_router is not None and _mem_provider is not None:
+        from nexus.bricks.memory.io_handler import MemoryIOHandler
+
+        dispatch.register_resolver(
+            MemoryIOHandler(
+                memory_router=_mem_router,
+                memory_provider=_mem_provider,
+                path_router=nx.router,
+            )
+        )
+
     # ── OBSERVE observers (Issue #900, #922) ──────────────────────────
     # EventBusObserver: forwards FileEvents to distributed EventBus (Redis/NATS).
     # Replaces _publish_file_event() direct calls — single dispatch exit point.

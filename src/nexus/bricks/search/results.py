@@ -30,6 +30,8 @@ class BaseSearchResult:
     line_end: int | None = None
     keyword_score: float | None = None
     vector_score: float | None = None
+    splade_score: float | None = None  # SPLADE learned sparse score
+    reranker_score: float | None = None  # Cross-encoder reranker score
     # Issue #1092: Attribute ranking metadata (merged from SemanticSearchResult)
     matched_field: str | None = None  # Which field matched (filename, path, content, etc.)
     attribute_boost: float | None = None  # Boost multiplier applied

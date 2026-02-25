@@ -133,6 +133,7 @@ class SearchDaemon:
         *,
         async_session_factory: Any | None = None,
         zoekt_client: Any | None = None,
+        cache_brick: Any | None = None,
     ):
         """Initialize the search daemon.
 
@@ -141,10 +142,12 @@ class SearchDaemon:
             async_session_factory: Injected async_sessionmaker from RecordStoreABC.
                 When provided, skips creating a private engine (Issue #1597).
             zoekt_client: Injected ZoektClient instance (Issue #2188).
+            cache_brick: Injected CacheBrick for embedding cache health checks.
         """
         self.config = config or DaemonConfig()
         self.stats = DaemonStats()
         self._zoekt_client = zoekt_client
+        self._cache_brick = cache_brick
 
         # Search components (initialized on startup)
         self._bm25s_index: BM25SIndex | None = None
@@ -180,6 +183,9 @@ class SearchDaemon:
 
         # Issue #2036: Injected adaptive-k provider (replaces lazy import)
         self._adaptive_k_provider: Any = None
+
+        # SPLADE learned sparse retrieval (optional, initialized in startup)
+        self._splade: Any = None
 
         # Latency tracking (circular buffer)
         self._latencies: list[float] = []
@@ -331,6 +337,11 @@ class SearchDaemon:
         """Initialize and warm the database connection pool."""
         # If session factory was injected via __init__, skip engine creation
         if self._async_session is not None:
+            # Extract engine reference from the injected session factory
+            # so db_pool_ready reports correctly.
+            _bind = getattr(self._async_session, "kw", {}).get("bind")
+            if _bind is not None:
+                self._async_engine = _bind
             logger.info("Using injected async_session_factory (RecordStoreABC)")
             return
 
@@ -426,12 +437,13 @@ class SearchDaemon:
             self.stats.zoekt_available = False
 
     async def _check_embedding_cache(self) -> None:
-        """Check if embedding cache (Dragonfly) is connected.
-
-        NOTE: Embedding cache health is now checked via CacheBrick.health_check().
-        This method is kept for backward compat but always reports False until
-        a CacheBrick reference is wired in (follow-up).
-        """
+        """Check if embedding cache (Dragonfly) is connected."""
+        if self._cache_brick is not None:
+            try:
+                self.stats.embedding_cache_connected = await self._cache_brick.health_check()
+                return
+            except Exception:
+                pass
         self.stats.embedding_cache_connected = False
 
     # =========================================================================
@@ -589,6 +601,31 @@ class SearchDaemon:
             logger.error(f"Semantic search error: {e}")
             return []
 
+    async def _splade_search(
+        self,
+        query: str,
+        limit: int,
+        path_filter: str | None,
+    ) -> list[SearchResult]:
+        """Search using SPLADE learned sparse retrieval (optional)."""
+        if not self._splade:
+            return []
+        try:
+            results = await self._splade.search(query=query, limit=limit, path_filter=path_filter)
+            return [
+                SearchResult(
+                    path=r.path,
+                    chunk_index=r.chunk_index,
+                    chunk_text=r.chunk_text,
+                    score=r.score,
+                    search_type="splade",
+                )
+                for r in results
+            ]
+        except Exception as e:
+            logger.debug(f"SPLADE search failed: {e}")
+            return []
+
     async def _hybrid_search(
         self,
         query: str,
@@ -597,72 +634,91 @@ class SearchDaemon:
         alpha: float,
         fusion_method: str,
     ) -> list[SearchResult]:
-        """Hybrid search combining keyword and semantic results."""
-        from nexus.bricks.search.fusion import FusionConfig, FusionMethod, fuse_results
+        """Hybrid search combining keyword, semantic, and optionally SPLADE results.
 
-        # Run keyword and semantic search in parallel
-        keyword_task = self._keyword_search(query, limit * 3, path_filter)
-        semantic_task = self._semantic_search(query, limit * 3, path_filter)
-
-        keyword_results, semantic_results = await asyncio.gather(
-            keyword_task, semantic_task, return_exceptions=True
+        Pipeline: BM25 + Dense + SPLADE(optional) -> N-way RRF -> results
+        """
+        from nexus.bricks.search.fusion import (
+            FusionConfig,
+            FusionMethod,
+            fuse_results,
+            rrf_multi_fusion,
         )
+
+        def _to_dicts(results: list[SearchResult]) -> list[dict[str, Any]]:
+            return [
+                {
+                    "path": r.path,
+                    "chunk_index": r.chunk_index,
+                    "chunk_text": r.chunk_text,
+                    "score": r.score,
+                    "start_offset": r.start_offset,
+                    "end_offset": r.end_offset,
+                    "line_start": r.line_start,
+                    "line_end": r.line_end,
+                }
+                for r in results
+            ]
+
+        # Run all retrieval backends in parallel
+        tasks: list[asyncio.Task] = [
+            asyncio.ensure_future(self._keyword_search(query, limit * 3, path_filter)),
+            asyncio.ensure_future(self._semantic_search(query, limit * 3, path_filter)),
+        ]
+        has_splade = self._splade is not None
+        if has_splade:
+            tasks.append(asyncio.ensure_future(self._splade_search(query, limit * 3, path_filter)))
+
+        raw_results = await asyncio.gather(*tasks, return_exceptions=True)
 
         # Handle errors
         kw_results: list[SearchResult] = []
         sem_results: list[SearchResult] = []
-        if isinstance(keyword_results, BaseException):
-            logger.warning(f"Keyword search failed: {keyword_results}")
+        splade_results: list[SearchResult] = []
+
+        if isinstance(raw_results[0], BaseException):
+            logger.warning(f"Keyword search failed: {raw_results[0]}")
         else:
-            kw_results = keyword_results
-        if isinstance(semantic_results, BaseException):
-            logger.warning(f"Semantic search failed: {semantic_results}")
+            kw_results = raw_results[0]
+        if isinstance(raw_results[1], BaseException):
+            logger.warning(f"Semantic search failed: {raw_results[1]}")
         else:
-            sem_results = semantic_results
+            sem_results = raw_results[1]
+        if has_splade and len(raw_results) > 2:
+            if isinstance(raw_results[2], BaseException):
+                logger.warning(f"SPLADE search failed: {raw_results[2]}")
+            else:
+                splade_results = raw_results[2]
 
-        # Convert to dicts for fusion
-        keyword_dicts = [
-            {
-                "path": r.path,
-                "chunk_index": r.chunk_index,
-                "chunk_text": r.chunk_text,
-                "score": r.score,
-                "start_offset": r.start_offset,
-                "end_offset": r.end_offset,
-                "line_start": r.line_start,
-                "line_end": r.line_end,
-            }
-            for r in kw_results
-        ]
+        keyword_dicts = _to_dicts(kw_results)
+        semantic_dicts = _to_dicts(sem_results)
+        splade_dicts = _to_dicts(splade_results)
 
-        semantic_dicts = [
-            {
-                "path": r.path,
-                "chunk_index": r.chunk_index,
-                "chunk_text": r.chunk_text,
-                "score": r.score,
-                "start_offset": r.start_offset,
-                "end_offset": r.end_offset,
-                "line_start": r.line_start,
-                "line_end": r.line_end,
-            }
-            for r in sem_results
-        ]
-
-        # Fuse results
-        config = FusionConfig(
-            method=FusionMethod(fusion_method),
-            alpha=alpha,
-            rrf_k=60,
-        )
-
-        fused = fuse_results(
-            keyword_dicts,
-            semantic_dicts,
-            config=config,
-            limit=limit,
-            id_key=None,
-        )
+        # Use N-way RRF when SPLADE is available, else standard 2-way fusion
+        if splade_dicts:
+            fused = rrf_multi_fusion(
+                [
+                    ("keyword", keyword_dicts),
+                    ("vector", semantic_dicts),
+                    ("splade", splade_dicts),
+                ],
+                k=60,
+                limit=limit,
+                id_key=None,
+            )
+        else:
+            config = FusionConfig(
+                method=FusionMethod(fusion_method),
+                alpha=alpha,
+                rrf_k=60,
+            )
+            fused = fuse_results(
+                keyword_dicts,
+                semantic_dicts,
+                config=config,
+                limit=limit,
+                id_key=None,
+            )
 
         # Convert back to SearchResult
         return [
@@ -677,6 +733,7 @@ class SearchDaemon:
                 line_end=r.get("line_end"),
                 keyword_score=r.get("keyword_score"),
                 vector_score=r.get("vector_score"),
+                splade_score=r.get("splade_score"),
                 search_type="hybrid",
             )
             for r in fused
@@ -951,6 +1008,125 @@ class SearchDaemon:
                 else 0
             )
             self.stats.bm25_documents = corpus_len + delta_len
+
+    # =========================================================================
+    # Bulk Embedding (decoupled from BM25)
+    # =========================================================================
+
+    async def bulk_embed_from_bm25s(self, batch_size: int = 50) -> int:
+        """Bulk-generate embeddings for documents found in the BM25S index.
+
+        BM25 and embedding are independent search backends — this method
+        uses the BM25S corpus only as a convenient content source to discover
+        which files need embedding.  The actual flow:
+
+        1. Read file list + content from BM25S metadata
+        2. Register files in file_paths (the canonical file registry)
+        3. Embed via the standard IndexingPipeline (document_chunks)
+
+        Args:
+            batch_size: Number of documents per embedding batch
+
+        Returns:
+            Number of documents successfully embedded
+        """
+        import uuid
+        from datetime import datetime
+
+        if not self._bm25s_index:
+            logger.warning("[BULK-EMBED] No BM25S index available")
+            return 0
+        if not self._indexing_pipeline:
+            logger.warning("[BULK-EMBED] No indexing pipeline available")
+            return 0
+        if not self._async_session:
+            logger.warning("[BULK-EMBED] No database session available")
+            return 0
+
+        # Read BM25S corpus
+        corpus = getattr(self._bm25s_index, "_corpus", [])
+        paths = getattr(self._bm25s_index, "_paths", [])
+        total = len(corpus)
+        if total == 0:
+            logger.info("[BULK-EMBED] BM25S corpus is empty")
+            return 0
+
+        logger.info(f"[BULK-EMBED] Processing {total} documents from BM25S corpus")
+
+        # Step 1: Build deterministic UUID5 path_ids for each virtual path
+        ns = uuid.UUID("12345678-1234-5678-1234-567812345678")
+        path_id_map: dict[str, str] = {}
+        now = datetime.utcnow()
+
+        unique_vpaths: list[str] = []
+        for i in range(total):
+            vpath = paths[i] if i < len(paths) else f"doc_{i}"
+            if vpath not in path_id_map:
+                path_id_map[vpath] = str(uuid.uuid5(ns, vpath))
+                unique_vpaths.append(vpath)
+
+        # Query which paths already exist in file_paths
+        from sqlalchemy import text
+
+        existing_pids: dict[str, str] = {}
+        async with self._async_session() as session:
+            for batch_start in range(0, len(unique_vpaths), 100):
+                batch_vpaths = unique_vpaths[batch_start : batch_start + 100]
+                result = await session.execute(
+                    text(
+                        "SELECT path_id, virtual_path FROM file_paths "
+                        "WHERE virtual_path = ANY(:vpaths) AND deleted_at IS NULL"
+                    ),
+                    {"vpaths": batch_vpaths},
+                )
+                for row in result.fetchall():
+                    existing_pids[row[1]] = row[0]
+
+        # Use existing path_ids where they exist
+        for vpath, existing_pid in existing_pids.items():
+            path_id_map[vpath] = existing_pid
+
+        # Insert only new files into file_paths
+        new_vpaths = [v for v in unique_vpaths if v not in existing_pids]
+        if new_vpaths:
+            async with self._async_session() as session:
+                for vpath in new_vpaths:
+                    pid = path_id_map[vpath]
+                    await session.execute(
+                        text(
+                            "INSERT INTO file_paths (path_id, virtual_path, zone_id, created_at, updated_at) "
+                            "VALUES (:pid, :vpath, 'default', :now, :now) "
+                            "ON CONFLICT (path_id) DO NOTHING"
+                        ),
+                        {"pid": pid, "vpath": vpath, "now": now},
+                    )
+                await session.commit()
+            logger.info(f"[BULK-EMBED] Registered {len(new_vpaths)} new files in file_paths")
+
+        # Step 2: Feed to standard indexing pipeline with UUID path_ids
+        docs_to_embed: list[tuple[str, str, str]] = []
+        for i in range(total):
+            vpath = paths[i] if i < len(paths) else f"doc_{i}"
+            content = corpus[i]
+            embed_pid = path_id_map.get(vpath)
+            if embed_pid is not None and content:
+                docs_to_embed.append((vpath, content, embed_pid))
+
+        embedded = 0
+        for batch_start in range(0, len(docs_to_embed), batch_size):
+            batch = docs_to_embed[batch_start : batch_start + batch_size]
+            try:
+                await self._indexing_pipeline.index_documents(
+                    [(path_id, vpath, content) for vpath, content, path_id in batch]
+                )
+                embedded += len(batch)
+                if batch_start % (batch_size * 5) == 0:
+                    logger.info(f"[BULK-EMBED] Progress: {embedded}/{len(docs_to_embed)}")
+            except Exception as e:
+                logger.warning(f"[BULK-EMBED] Batch failed at {batch_start}: {e}")
+
+        logger.info(f"[BULK-EMBED] Complete: {embedded}/{len(docs_to_embed)} documents embedded")
+        return embedded
 
     # =========================================================================
     # Statistics

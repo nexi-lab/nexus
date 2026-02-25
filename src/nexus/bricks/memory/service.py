@@ -152,7 +152,10 @@ class Memory:
 
             bind = session.get_bind()
             assert isinstance(bind, Engine), "Expected Engine, got Connection"
-            rebac_manager = _ReBACManager(bind)
+            rebac_manager = _ReBACManager(
+                bind,
+                is_postgresql=(bind.dialect.name == "postgresql"),
+            )
             self.permission_enforcer = _MemoryPermissionEnforcer(
                 memory_router=self.memory_router,
                 entity_registry=self.entity_registry,

@@ -156,7 +156,6 @@ def demo_with_server():
             mount_point=mount_point,
             backend_type="gcs_connector",
             backend_config=mount_config,
-            priority=10,
         )
         print_success(f"Mounted GCS connector at {mount_point}")
         print_info("  Backend type: gcs_connector")
@@ -265,7 +264,7 @@ def demo_local():
         print_info("  Prefix: nexus-demo/")
 
         # Add mount
-        nx.router.add_mount(mount_point="/workspace/gcs", backend=gcs_backend, priority=10)
+        nx.router.add_mount(mount_point="/workspace/gcs", backend=gcs_backend)
         print_success("Mounted GCS connector at /workspace/gcs")
 
         # Write files

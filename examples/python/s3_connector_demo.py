@@ -158,7 +158,6 @@ def demo_with_server():
             mount_point=mount_point,
             backend_type="s3_connector",
             backend_config=mount_config,
-            priority=10,
         )
         print_success(f"Mounted S3 connector at {mount_point}")
         print_info("  Backend type: s3_connector")
@@ -270,7 +269,7 @@ def demo_local():
         print_info("  Prefix: nexus-demo/")
 
         # Add mount
-        nx.router.add_mount(mount_point="/workspace/s3", backend=s3_backend, priority=10)
+        nx.router.add_mount(mount_point="/workspace/s3", backend=s3_backend)
         print_success("Mounted S3 connector at /workspace/s3")
 
         # Write files

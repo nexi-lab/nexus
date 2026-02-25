@@ -416,7 +416,6 @@ class TestMountOperations:
         """list_mounts returns formatted mount list."""
         mount_info = MagicMock()
         mount_info.mount_point = "/mnt/test"
-        mount_info.priority = 5
         mount_info.readonly = False
         mount_info.backend = MagicMock()
         type(mount_info.backend).__name__ = "LocalBackend"

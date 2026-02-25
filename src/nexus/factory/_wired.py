@@ -66,6 +66,27 @@ def _boot_wired_services(
     except Exception as exc:
         logger.warning("[BOOT:WIRED] NexusFSGateway unavailable: %s", exc)
 
+    # --- IPC KernelVFSAdapter: bind to NexusFS + mount LocalConnector ---
+    _ipc_adapter = getattr(brick_services, "ipc_storage_driver", None)
+    if _ipc_adapter is not None and hasattr(_ipc_adapter, "bind"):
+        try:
+            _ipc_adapter.bind(nx)
+
+            # Mount a LocalConnector at /agents for IPC file storage
+            from pathlib import Path
+
+            from nexus.backends.local_connector import LocalConnectorBackend
+
+            _ipc_data_dir = Path(getattr(nx, "_data_dir", "data")) / "ipc"
+            _ipc_data_dir.mkdir(parents=True, exist_ok=True)
+            _ipc_connector = LocalConnectorBackend(local_path=_ipc_data_dir)
+            nx.router.add_mount("/agents", _ipc_connector)
+            logger.debug(
+                "[BOOT:WIRED] IPC KernelVFSAdapter bound + LocalConnector mounted at /agents"
+            )
+        except Exception as exc:
+            logger.warning("[BOOT:WIRED] IPC adapter bind failed: %s", exc)
+
     # --- ReBACService: Permission and access control operations ---
     rebac_service: Any = None
     try:

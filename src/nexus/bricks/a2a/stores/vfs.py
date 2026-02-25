@@ -34,7 +34,7 @@ MessageEnvelope = _ipc_envelope.MessageEnvelope
 MessageType = _ipc_envelope.MessageType
 
 if TYPE_CHECKING:
-    from nexus.bricks.ipc.storage.protocol import IPCStorageDriver
+    from nexus.bricks.ipc.protocols import VFSOperations
 
 logger = logging.getLogger(__name__)
 
@@ -66,15 +66,15 @@ class VFSTaskStore:
     Parameters
     ----------
     storage:
-        An ``IPCStorageDriver`` implementation (VFS-backed, PostgreSQL,
-        or in-memory fake).
+        A ``VFSOperations`` implementation (kernel VFS via KernelVFSAdapter,
+        local filesystem, or in-memory fake).
     max_cache_size:
         Maximum entries in the task index before LRU eviction.
     """
 
     def __init__(
         self,
-        storage: "IPCStorageDriver",
+        storage: "VFSOperations",
         max_cache_size: int = _DEFAULT_MAX_CACHE_SIZE,
     ) -> None:
         self._storage = storage

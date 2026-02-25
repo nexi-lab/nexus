@@ -1,19 +1,16 @@
 """In-memory fakes for IPC brick unit testing.
 
-These satisfy the Protocol interfaces defined in ``nexus.ipc.protocols``
+These satisfy the Protocol interfaces defined in ``nexus.bricks.ipc.protocols``
 without any real I/O, enabling fast, isolated unit tests.
 """
 
-import asyncio
-from collections.abc import AsyncIterator
 from typing import Any
 
 
 class InMemoryStorageDriver:
     """In-memory IPC storage driver for testing.
 
-    Satisfies both the ``IPCStorageDriver`` and ``VFSOperations`` protocols
-    via structural subtyping. Single implementation for all test fakes.
+    Satisfies the ``VFSOperations`` protocol via structural subtyping.
     """
 
     def __init__(self) -> None:
@@ -88,36 +85,3 @@ class InMemoryEventPublisher:
         if self._should_fail:
             raise ConnectionError("EventBus unavailable")
         self.published.append((channel, data))
-
-
-class InMemoryHotPathPublisher:
-    """Captures published hot-path messages for assertion."""
-
-    def __init__(self, *, should_fail: bool = False) -> None:
-        self.published: list[tuple[str, bytes]] = []
-        self._should_fail = should_fail
-
-    async def publish(self, subject: str, data: bytes) -> None:
-        if self._should_fail:
-            raise ConnectionError("NATS unavailable")
-        self.published.append((subject, data))
-
-
-class InMemoryHotPathSubscriber:
-    """Feeds messages to hot listener for testing.
-
-    Use ``inject()`` to push a message that will be yielded by
-    ``subscribe()``.
-    """
-
-    def __init__(self) -> None:
-        self._queues: dict[str, asyncio.Queue[bytes]] = {}
-
-    async def subscribe(self, subject: str) -> AsyncIterator[bytes]:
-        q = self._queues.setdefault(subject, asyncio.Queue())
-        while True:
-            yield await q.get()
-
-    async def inject(self, subject: str, data: bytes) -> None:
-        q = self._queues.setdefault(subject, asyncio.Queue())
-        await q.put(data)

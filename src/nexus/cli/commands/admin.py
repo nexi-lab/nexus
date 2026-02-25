@@ -11,6 +11,7 @@ All commands require:
 
 import json
 import sys
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -23,21 +24,27 @@ from nexus.cli.utils import (
     REMOTE_URL_OPTION,
     console,
 )
-from nexus.remote import RemoteNexusFS
+
+# Type alias for the RPC transport callable returned by get_admin_rpc().
+AdminRPC = Callable[[str, dict[str, Any] | None], Any]
 
 # Rich console for output
 _console = Console()
 
 
-def get_remote_client(url: str | None, api_key: str | None) -> RemoteNexusFS:
-    """Get remote Nexus client for admin operations.
+def get_admin_rpc(url: str | None, api_key: str | None) -> AdminRPC:
+    """Get RPC transport callable for admin management-plane operations.
+
+    Admin commands are management-plane RPCs (like ioctl), not data-plane
+    VFS operations (read/write/mkdir). They only need the HTTP transport
+    to call server-side admin endpoints — no full NexusFS instance needed.
 
     Args:
         url: Server URL (from --remote-url or NEXUS_URL)
         api_key: Admin API key (from --remote-api-key or NEXUS_API_KEY)
 
     Returns:
-        RemoteNexusFS instance
+        RPC callable: ``(method: str, params: dict | None) -> Any``
 
     Raises:
         SystemExit: If URL or API key not provided
@@ -52,7 +59,10 @@ def get_remote_client(url: str | None, api_key: str | None) -> RemoteNexusFS:
         )
         sys.exit(1)
 
-    return RemoteNexusFS(server_url=url, api_key=api_key)
+    from nexus.backends.remote import RemoteBackend
+
+    backend = RemoteBackend(server_url=url, api_key=api_key)
+    return backend._call_rpc
 
 
 @click.group()
@@ -118,7 +128,7 @@ def create_user(
         nexus admin create-user bot1 --name "Bot Agent" --subject-type agent
     """
     try:
-        nx = get_remote_client(remote_url, remote_api_key)
+        call_rpc = get_admin_rpc(remote_url, remote_api_key)
 
         # Build parameters
         params: dict[str, Any] = {
@@ -133,7 +143,7 @@ def create_user(
             params["expires_days"] = expires_days
 
         # Call admin API
-        result = nx._call_rpc("admin_create_key", params)
+        result = call_rpc("admin_create_key", params)
 
         if json_output:
             click.echo(json.dumps(result, indent=2))
@@ -194,7 +204,7 @@ def list_users(
         nexus admin list-users --include-revoked --include-expired
     """
     try:
-        nx = get_remote_client(remote_url, remote_api_key)
+        call_rpc = get_admin_rpc(remote_url, remote_api_key)
 
         # Build parameters
         params: dict[str, Any] = {
@@ -211,7 +221,7 @@ def list_users(
             params["is_admin"] = True
 
         # Call admin API
-        result = nx._call_rpc("admin_list_keys", params)
+        result = call_rpc("admin_list_keys", params)
         keys = result.get("keys", [])
 
         if json_output:
@@ -283,10 +293,10 @@ def revoke_key(
         nexus admin revoke-key d6f5e137-5fce-4e06-9432-6e30324dfad1
     """
     try:
-        nx = get_remote_client(remote_url, remote_api_key)
+        call_rpc = get_admin_rpc(remote_url, remote_api_key)
 
         # Call admin API
-        result = nx._call_rpc("admin_revoke_key", {"key_id": key_id})
+        result = call_rpc("admin_revoke_key", {"key_id": key_id})
 
         if json_output:
             click.echo(json.dumps(result, indent=2))
@@ -321,7 +331,7 @@ def create_key(
         nexus admin create-key alice --name "Alice's new laptop" --expires-days 90
     """
     try:
-        nx = get_remote_client(remote_url, remote_api_key)
+        call_rpc = get_admin_rpc(remote_url, remote_api_key)
 
         # Build parameters
         params: dict[str, Any] = {
@@ -333,7 +343,7 @@ def create_key(
             params["expires_days"] = expires_days
 
         # Call admin API
-        result = nx._call_rpc("admin_create_key", params)
+        result = call_rpc("admin_create_key", params)
 
         if json_output:
             click.echo(json.dumps(result, indent=2))
@@ -378,11 +388,11 @@ def get_user(
         sys.exit(1)
 
     try:
-        nx = get_remote_client(remote_url, remote_api_key)
+        call_rpc = get_admin_rpc(remote_url, remote_api_key)
 
         # If user_id provided, first get the key_id by listing keys
         if user_id and not key_id:
-            list_result = nx._call_rpc("admin_list_keys", {"user_id": user_id, "limit": 1})
+            list_result = call_rpc("admin_list_keys", {"user_id": user_id, "limit": 1})
             keys = list_result.get("keys", [])
             if not keys:
                 console.print(f"[red]Error:[/red] No keys found for user '{user_id}'")
@@ -390,7 +400,7 @@ def get_user(
             key_id = keys[0]["key_id"]
 
         # Call admin API with key_id
-        result = nx._call_rpc("admin_get_key", {"key_id": key_id})
+        result = call_rpc("admin_get_key", {"key_id": key_id})
 
         if json_output:
             click.echo(json.dumps(result, indent=2))
@@ -457,7 +467,7 @@ def create_agent_key(
         nexus admin create-agent-key alice alice_agent --name "Production Agent" --expires-days 90
     """
     try:
-        nx = get_remote_client(remote_url, remote_api_key)
+        call_rpc = get_admin_rpc(remote_url, remote_api_key)
 
         # Default name if not provided
         if not name:
@@ -475,7 +485,7 @@ def create_agent_key(
             params["expires_days"] = expires_days
 
         # Call admin API
-        result = nx._call_rpc("admin_create_key", params)
+        result = call_rpc("admin_create_key", params)
 
         if json_output:
             click.echo(json.dumps(result, indent=2))
@@ -530,7 +540,7 @@ def update_key(
         sys.exit(1)
 
     try:
-        nx = get_remote_client(remote_url, remote_api_key)
+        call_rpc = get_admin_rpc(remote_url, remote_api_key)
 
         # Build parameters
         params: dict[str, Any] = {"key_id": key_id}
@@ -541,7 +551,7 @@ def update_key(
             params["is_admin"] = is_admin
 
         # Call admin API
-        result = nx._call_rpc("admin_update_key", params)
+        result = call_rpc("admin_update_key", params)
 
         if json_output:
             click.echo(json.dumps(result, indent=2))
@@ -593,7 +603,7 @@ def gc_versions(
         nexus admin gc-versions --execute --max-versions 50
     """
     try:
-        nx = get_remote_client(remote_url, remote_api_key)
+        call_rpc = get_admin_rpc(remote_url, remote_api_key)
 
         # Build parameters
         params: dict[str, Any] = {"dry_run": dry_run}
@@ -604,7 +614,7 @@ def gc_versions(
             params["max_versions"] = max_versions
 
         # Call admin API
-        result = nx._call_rpc("admin_gc_versions", params)
+        result = call_rpc("admin_gc_versions", params)
 
         if json_output:
             click.echo(json.dumps(result, indent=2))
@@ -658,10 +668,10 @@ def gc_versions_stats(
         nexus admin gc-versions-stats
     """
     try:
-        nx = get_remote_client(remote_url, remote_api_key)
+        call_rpc = get_admin_rpc(remote_url, remote_api_key)
 
         # Call admin API
-        result = nx._call_rpc("admin_gc_versions_stats", {})
+        result = call_rpc("admin_gc_versions_stats", {})
 
         if json_output:
             click.echo(json.dumps(result, indent=2))

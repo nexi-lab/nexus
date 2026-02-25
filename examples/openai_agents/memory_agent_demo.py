@@ -40,7 +40,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from agents import Agent, Runner, function_tool
 
-from nexus.remote import RemoteNexusFS
+import nexus
 
 
 def connect_to_nexus(tenant_id: str = "openai-memory-demo", agent_id: str = "memory-agent"):
@@ -66,10 +66,7 @@ def connect_to_nexus(tenant_id: str = "openai-memory-demo", agent_id: str = "mem
     print(f"  Agent: {agent_id}")
 
     try:
-        nx = RemoteNexusFS(
-            server_url=server_url,
-            api_key=api_key,
-        )
+        nx = nexus.connect(config={"mode": "remote", "url": server_url, "api_key": api_key})
 
         nx.tenant_id = tenant_id
         nx.agent_id = agent_id

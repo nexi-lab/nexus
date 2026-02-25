@@ -107,16 +107,13 @@ nx = nexus.connect(config={
 })
 ```
 
-Alternatively, use `RemoteNexusFS` directly:
+Alternatively, use `nexus.connect()` directly:
 
 ```python
-from nexus import RemoteNexusFS
+import nexus
 
 # Direct remote connection
-nx = RemoteNexusFS(
-    server_url="http://localhost:8765",
-    api_key="nxk_abc123..."
-)
+nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:8765", "api_key": "nxk_abc123..."})
 ```
 
 ### Step 2: Add GCS Backend Dynamically

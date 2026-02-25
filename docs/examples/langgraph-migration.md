@@ -38,20 +38,17 @@ with open("workspace/research/requirements.txt") as f:
 
 ### Nexus File System (After)
 ```python
-from nexus.remote import RemoteNexusFS
+import nexus
 
 # Connect to Nexus
-nexus = RemoteNexusFS(
-    server_url="http://localhost:2026",
-    api_key=get_demo_user_key()
-)
-nexus.agent_id = "researcher"
+nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": get_demo_user_key()})
+nx.agent_id = "researcher"
 
 # Write file (auto-creates directories, enforces permissions)
-nexus.write("/workspace/research/requirements.txt", requirements)
+nx.write("/workspace/research/requirements.txt", requirements)
 
 # Read file (permission-checked)
-content = nexus.read("/workspace/research/requirements.txt")
+content = nx.read("/workspace/research/requirements.txt")
 ```
 
 ---
@@ -76,7 +73,7 @@ from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 
 # ✨ Add Nexus import
-from nexus.remote import RemoteNexusFS
+import nexus
 ```
 
 ---
@@ -86,7 +83,7 @@ from nexus.remote import RemoteNexusFS
 This is **NEW** - standard file I/O has no permissions concept.
 
 ```python
-def setup_nexus_permissions(admin_nx: RemoteNexusFS, workspace: str):
+def setup_nexus_permissions(admin_nx: NexusFS, workspace: str):
     """
     Setup permission structure for multi-agent workflow.
 
@@ -178,11 +175,8 @@ def researcher_node(state: AgentState) -> AgentState:
     print(f"\n🔍 Researcher is analyzing task: {state['task']}")
 
     # ✨ Connect as researcher agent
-    nexus = RemoteNexusFS(
-        server_url=os.getenv("NEXUS_URL", "http://localhost:2026"),
-        api_key=get_demo_user_key()  # Non-admin key
-    )
-    nexus.agent_id = "researcher"  # Set agent identity
+    nx = nexus.connect(config={"mode": "remote", "url": os.getenv("NEXUS_URL", "http://localhost:2026"), "api_key": get_demo_user_key()})
+    nx.agent_id = "researcher"  # Set agent identity
 
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7)
 
@@ -196,7 +190,7 @@ def researcher_node(state: AgentState) -> AgentState:
 
     # ✅ Nexus file system (drop-in replacement!)
     research_file = "/workspace/research/requirements.txt"
-    nexus.write(research_file, requirements)
+    nx.write(research_file, requirements)
 
     print(f"✓ Requirements written to {research_file}")
     print("  (Researcher has write permission to /workspace/research/)")
@@ -205,10 +199,10 @@ def researcher_node(state: AgentState) -> AgentState:
 ```
 
 **Key Changes:**
-1. Added `nexus = RemoteNexusFS(...)` connection
-2. Set `nexus.agent_id = "researcher"` for permission enforcement
+1. Added `nx = nexus.connect(...)` connection
+2. Set `nx.agent_id = "researcher"` for permission enforcement
 3. Replaced `os.makedirs()` → removed (Nexus auto-creates directories)
-4. Replaced `open(file, "w")` → `nexus.write(file, content)`
+4. Replaced `open(file, "w")` → `nx.write(file, content)`
 5. Changed path from relative `workspace/...` → absolute `/workspace/...`
 
 ---
@@ -254,14 +248,11 @@ def coder_node(state: AgentState) -> AgentState:
     print("\n💻 Coder is implementing solution...")
 
     # ✨ Connect as coder agent
-    nexus = RemoteNexusFS(
-        server_url=os.getenv("NEXUS_URL", "http://localhost:2026"),
-        api_key=get_demo_user_key()
-    )
-    nexus.agent_id = "coder"
+    nx = nexus.connect(config={"mode": "remote", "url": os.getenv("NEXUS_URL", "http://localhost:2026"), "api_key": get_demo_user_key()})
+    nx.agent_id = "coder"
 
     # ✅ Read requirements using Nexus
-    requirements = nexus.read(state["research_file"])
+    requirements = nx.read(state["research_file"])
     print("  (Coder has read permission to /workspace/research/)")
 
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
@@ -276,7 +267,7 @@ def coder_node(state: AgentState) -> AgentState:
 
     # ✅ Write code using Nexus
     code_file = "/workspace/code/implementation.py"
-    nexus.write(code_file, code)
+    nx.write(code_file, code)
 
     print(f"✓ Code written to {code_file}")
     print("  (Coder has write permission to /workspace/code/)")
@@ -286,8 +277,8 @@ def coder_node(state: AgentState) -> AgentState:
 
 **Key Changes:**
 1. Added Nexus connection with `agent_id = "coder"`
-2. Replaced `open(file).read()` → `nexus.read(file)`
-3. Replaced `open(file, "w")` → `nexus.write(file, content)`
+2. Replaced `open(file).read()` → `nx.read(file)`
+3. Replaced `open(file, "w")` → `nx.write(file, content)`
 4. Added permission confirmation messages
 
 ---
@@ -333,14 +324,11 @@ def reviewer_node(state: AgentState) -> AgentState:
     print("\n📋 Reviewer is evaluating code...")
 
     # ✨ Connect as reviewer agent
-    nexus = RemoteNexusFS(
-        server_url=os.getenv("NEXUS_URL", "http://localhost:2026"),
-        api_key=get_demo_user_key()
-    )
-    nexus.agent_id = "reviewer"
+    nx = nexus.connect(config={"mode": "remote", "url": os.getenv("NEXUS_URL", "http://localhost:2026"), "api_key": get_demo_user_key()})
+    nx.agent_id = "reviewer"
 
     # ✅ Read code using Nexus
-    code = nexus.read(state["code_file"])
+    code = nx.read(state["code_file"])
     print("  (Reviewer has read permission to /workspace/code/)")
 
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.5)
@@ -355,7 +343,7 @@ def reviewer_node(state: AgentState) -> AgentState:
 
     # ✅ Write review using Nexus
     review_file = "/workspace/reviews/review.txt"
-    nexus.write(review_file, review)
+    nx.write(review_file, review)
 
     print(f"✓ Review written to {review_file}")
     print("  (Reviewer has write permission to /workspace/reviews/)")
@@ -404,10 +392,7 @@ def main():
     print("=" * 60)
 
     # ✨ Setup admin connection for permission configuration
-    admin_nx = RemoteNexusFS(
-        server_url=os.getenv("NEXUS_URL", "http://localhost:2026"),
-        api_key=os.getenv("NEXUS_API_KEY")
-    )
+    admin_nx = nexus.connect(config={"mode": "remote", "url": os.getenv("NEXUS_URL", "http://localhost:2026"), "api_key": os.getenv("NEXUS_API_KEY")})
 
     workspace = "/workspace"
 
@@ -458,7 +443,7 @@ def main():
 - [ ] **Start Nexus server**: `./scripts/init-nexus-with-auth.sh --init`
 - [ ] **Create demo user**: `nexus admin create-user demo_user --name "Demo User"`
 - [ ] **Register agents**: Register researcher, coder, reviewer as agents
-- [ ] **Add Nexus import**: `from nexus.remote import RemoteNexusFS`
+- [ ] **Add Nexus import**: `import nexus`
 - [ ] **Add permission setup function**: Copy `setup_nexus_permissions()`
 - [ ] **Update each agent node**: Add Nexus connection + replace file I/O
 - [ ] **Update main function**: Add permission setup
@@ -531,10 +516,10 @@ Expected output:
 |---------|------------------|-------|
 | **Directory creation** | `os.makedirs()` required | Auto-created |
 | **File paths** | Relative (`workspace/...`) | Absolute (`/workspace/...`) |
-| **Write operation** | `open(file, "w").write()` | `nexus.write(file, content)` |
-| **Read operation** | `open(file).read()` | `nexus.read(file)` |
+| **Write operation** | `open(file, "w").write()` | `nx.write(file, content)` |
+| **Read operation** | `open(file).read()` | `nx.read(file)` |
 | **Permissions** | None (OS-level only) | Per-agent ReBAC permissions |
-| **Agent identity** | Not tracked | `nexus.agent_id = "researcher"` |
+| **Agent identity** | Not tracked | `nx.agent_id = "researcher"` |
 | **Remote access** | Local filesystem only | HTTP/HTTPS to remote server |
 | **Audit trails** | None | All operations logged |
 | **String handling** | Manual encode/decode | Auto-converts `str` → `bytes` |
@@ -547,18 +532,18 @@ Expected output:
 
 ```python
 # ❌ Bad - relative paths
-nexus.write("workspace/file.txt", content)
+nx.write("workspace/file.txt", content)
 
 # ✅ Good - absolute paths
-nexus.write("/workspace/file.txt", content)
+nx.write("/workspace/file.txt", content)
 ```
 
 ### 2. Set Agent ID Before Operations
 
 ```python
 # ✅ Always set agent_id for permission enforcement
-nexus = RemoteNexusFS(server_url="...", api_key="...")
-nexus.agent_id = "researcher"  # Required!
+nx = nexus.connect(config={"mode": "remote", "url": "...", "api_key": "..."})
+nx.agent_id = "researcher"  # Required!
 ```
 
 ### 3. Use Non-Admin Keys for Agents
@@ -582,8 +567,8 @@ setup_nexus_permissions(admin_nx, workspace)
 
 ```python
 # Nexus accepts both automatically
-nexus.write(file, "string content")  # Auto-converts to bytes
-nexus.write(file, b"bytes content")   # Direct bytes
+nx.write(file, "string content")  # Auto-converts to bytes
+nx.write(file, b"bytes content")   # Direct bytes
 ```
 
 ---

@@ -4,7 +4,7 @@ This module provides async Python clients to communicate with Rust Raft nodes
 over gRPC for metadata and lock operations.
 
 Architecture:
-    - ZoneApiService (client-facing): Used by RemoteNexusFS for Propose/Query
+    - ZoneApiService (client-facing): Used by REMOTE profile NexusFS for Propose/Query
     - ZoneTransportService (internal): Used for node-to-node Raft protocol (not exposed here)
 
 For local same-box scenarios, use Metastore (PyO3 FFI) instead for better
@@ -92,7 +92,7 @@ class RaftClient:
     - Metadata operations (put, get, list, delete) via Propose/Query RPCs
     - Lock operations (acquire, release, extend) via Propose RPC
 
-    Primary user: RemoteNexusFS (client-server architecture)
+    Primary user: REMOTE profile NexusFS (client-server architecture)
 
     Example:
         async with RaftClient("localhost:2026") as client:

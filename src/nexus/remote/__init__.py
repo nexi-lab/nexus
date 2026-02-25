@@ -1,11 +1,8 @@
-"""Remote Nexus filesystem client.
+"""Remote Nexus filesystem transport layer.
 
-This module provides remote client implementations of NexusFilesystem
-that connect to a Nexus RPC server over HTTP.
-
-Two client implementations are available:
-- RemoteNexusFS: Synchronous client using httpx.Client
-- AsyncRemoteNexusFS: Asynchronous client using httpx.AsyncClient
+This module provides the transport and proxy infrastructure for REMOTE
+deployment profile. Use ``nexus.connect(config={"mode": "remote", ...})``
+to create a remote NexusFS instance.
 
 Domain-specific operations are organized into domain clients:
 - SkillsClient / AsyncSkillsClient
@@ -18,29 +15,16 @@ Domain-specific operations are organized into domain clients:
 - AsyncACEClient (async-only)
 - AsyncLLMClient (async-only)
 
-Example (sync):
-    >>> from nexus.remote import RemoteNexusFS
-    >>> nx = RemoteNexusFS("http://localhost:2026", api_key="sk-xxx")
+Example:
+    >>> import nexus
+    >>> nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": "sk-xxx"})
     >>> content = nx.read("/workspace/file.txt")
-    >>> nx.skills.create("my-skill", "A skill", template="basic")
-
-Example (async):
-    >>> from nexus.remote import AsyncRemoteNexusFS
-    >>> async with AsyncRemoteNexusFS("http://localhost:2026", api_key="sk-xxx") as nx:
-    ...     content = await nx.read("/workspace/file.txt")
-    ...     await nx.skills.create("my-skill", "A skill", template="basic")
 """
 
 from nexus.contracts.exceptions import (
     RemoteConnectionError,
     RemoteFilesystemError,
     RemoteTimeoutError,
-)
-from nexus.remote.async_client import (
-    AsyncRemoteNexusFS,
-)
-from nexus.remote.client import (
-    RemoteNexusFS,
 )
 from nexus.remote.domain import (
     AsyncACEClient,
@@ -61,9 +45,6 @@ from nexus.remote.domain import (
 )
 
 __all__ = [
-    # Main clients
-    "RemoteNexusFS",
-    "AsyncRemoteNexusFS",
     # Error classes
     "RemoteFilesystemError",
     "RemoteConnectionError",

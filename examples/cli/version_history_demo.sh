@@ -30,8 +30,8 @@ cleanup() {
     python3 -c "
 import sys, os
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
-nx = RemoteNexusFS('$NEXUS_URL', api_key='$ADMIN_KEY')
+import nexus
+nx = nexus.connect(config={"mode": "remote", "url": '$NEXUS_URL', "api_key": '$ADMIN_KEY'})
 try:
     nx.delete_agent('demo_analyst')
 except: pass
@@ -58,11 +58,11 @@ echo -e "${B}ℹ${R} Registering agent 'demo_analyst' for admin..."
 python3 << 'REGISTER_AGENT'
 import sys, os
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
+import nexus
 
 nexus_url = os.getenv('NEXUS_URL')
 admin_key = os.getenv('ADMIN_KEY')
-nx = RemoteNexusFS(nexus_url, api_key=admin_key)
+nx = nexus.connect(config={"mode": "remote", "url": nexus_url, "api_key": admin_key})
 
 # Register agent
 agent = nx.register_agent(
@@ -109,11 +109,11 @@ export NEXUS_API_KEY="$ADMIN_KEY"
 python3 << 'SHOW_VERSIONS'
 import sys, os
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
+import nexus
 
 G, C, M, Y, R = '\033[0;32m', '\033[0;36m', '\033[0;35m', '\033[1;33m', '\033[0m'
 
-nx = RemoteNexusFS(os.environ['NEXUS_URL'], api_key=os.environ['NEXUS_API_KEY'])
+nx = nexus.connect(config={"mode": "remote", "url": os.environ['NEXUS_URL'], "api_key": os.environ['NEXUS_API_KEY']})
 file_path = os.environ['FILE']
 versions = nx.list_versions(file_path)
 

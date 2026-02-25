@@ -205,13 +205,10 @@ with SessionFactory() as session:
 ### Python Client
 
 ```python
-from nexus.remote import RemoteNexusFS
+import nexus
 
 # Connect with API key
-nx = RemoteNexusFS(
-    server_url="http://localhost:2026",
-    api_key="sk-alice-secret-key"
-)
+nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": "sk-alice-secret-key"})
 
 # Use as normal
 nx.write("/workspace/file.txt", b"Hello, World!")
@@ -484,8 +481,8 @@ Error: session_factory is required for database authentication
 nexus serve --api-key sk-dev-secret-123
 
 # Use from Python client
-from nexus.remote import RemoteNexusFS
-nx = RemoteNexusFS("http://localhost:2026", api_key="sk-dev-secret-123")
+import nexus
+nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": "sk-dev-secret-123"})
 nx.write("/workspace/file.txt", b"Hello!")
 ```
 
@@ -526,8 +523,8 @@ EOF
 nexus serve --host 0.0.0.0 --port 2026 --auth-type database
 
 # Step 3: Use from Python client
-from nexus.remote import RemoteNexusFS
-nx = RemoteNexusFS("http://localhost:2026", api_key="sk-alice-...")
+import nexus
+nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": "sk-alice-..."})
 nx.write("/workspace/file.txt", b"Hello!")
 ```
 

@@ -71,21 +71,13 @@ Tenants **cannot** read, write, or even discover each other's data.
 **Use when**: You want simple, filesystem-based tenant separation
 
 ```python
-from nexus import RemoteNexusFS
+import nexus
 
 # Tenant A's agent
-nx_tenant_a = RemoteNexusFS(
-    server_url="https://nexus.example.com",
-    api_key="tenant_a_key",  # Tenant-specific API key
-    workspace_prefix="/workspace/tenant-a"
-)
+nx_tenant_a = nexus.connect(config={"mode": "remote", "url": "https://nexus.example.com", "api_key": "tenant_a_key", "workspace_prefix": "/workspace/tenant-a"})
 
 # Tenant B's agent
-nx_tenant_b = RemoteNexusFS(
-    server_url="https://nexus.example.com",
-    api_key="tenant_b_key",
-    workspace_prefix="/workspace/tenant-b"
-)
+nx_tenant_b = nexus.connect(config={"mode": "remote", "url": "https://nexus.example.com", "api_key": "tenant_b_key", "workspace_prefix": "/workspace/tenant-b"})
 
 # Tenant A can only access /workspace/tenant-a/*
 nx_tenant_a.write("/data/report.txt", b"Tenant A data")
@@ -624,8 +616,8 @@ import pytest
 
 def test_tenant_isolation():
     # Create two tenant clients
-    nx_a = RemoteNexusFS(api_key="tenant_a_key", workspace_prefix="/workspace/tenant-a")
-    nx_b = RemoteNexusFS(api_key="tenant_b_key", workspace_prefix="/workspace/tenant-b")
+    nx_a = nexus.connect(config={"mode": "remote", "api_key": "tenant_a_key", "workspace_prefix": "/workspace/tenant-a"})
+    nx_b = nexus.connect(config={"mode": "remote", "api_key": "tenant_b_key", "workspace_prefix": "/workspace/tenant-b"})
 
     # Tenant A writes data
     nx_a.write("/data/secret.txt", b"Tenant A secret")
@@ -650,8 +642,8 @@ def test_tenant_isolation():
 ```python
 # BAD: All tenants use same API key
 api_key = "shared-admin-key"
-nx_a = RemoteNexusFS(api_key=api_key, workspace_prefix="/workspace/tenant-a")
-nx_b = RemoteNexusFS(api_key=api_key, workspace_prefix="/workspace/tenant-b")
+nx_a = nexus.connect(config={"mode": "remote", "api_key": api_key, "workspace_prefix": "/workspace/tenant-a"})
+nx_b = nexus.connect(config={"mode": "remote", "api_key": api_key, "workspace_prefix": "/workspace/tenant-b"})
 # ⚠️ Problem: Malicious tenant can change workspace_prefix
 ```
 
@@ -722,11 +714,7 @@ backend = LocalBackend(root_path="/tmp/nexus-data")
 nx = NexusFS(backend=backend, is_admin=True)
 
 # After
-nx = RemoteNexusFS(
-    server_url="https://nexus.example.com",
-    api_key=get_tenant_api_key(zone_id),
-    workspace_prefix=f"/workspace/{zone_id}"
-)
+nx = nexus.connect(config={"mode": "remote", "url": "https://nexus.example.com", "api_key": get_tenant_api_key(zone_id), "workspace_prefix": f"/workspace/{zone_id}"})
 ```
 
 ---

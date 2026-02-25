@@ -311,12 +311,12 @@ pip install nexus-plugin-skill-seekers
 # generate_skill.py
 import asyncio
 import os
-from nexus.remote import RemoteNexusFS
+import nexus
 from nexus_skill_seekers.plugin import SkillSeekersPlugin
 
 async def main():
     # Connect to Nexus server
-    nx = RemoteNexusFS("http://localhost:2026", api_key=os.getenv("NEXUS_API_KEY"))
+    nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": os.getenv("NEXUS_API_KEY"}))
 
     # Initialize Skill Seekers plugin
     plugin = SkillSeekersPlugin(nx)
@@ -500,12 +500,12 @@ Build a team skill library from documentation
 """
 import asyncio
 import os
-from nexus.remote import RemoteNexusFS
+import nexus
 from nexus_skill_seekers.plugin import SkillSeekersPlugin
 
 async def main():
     # Connect to server
-    nx = RemoteNexusFS("http://localhost:2026", api_key=os.getenv("NEXUS_API_KEY"))
+    nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": os.getenv("NEXUS_API_KEY"}))
     plugin = SkillSeekersPlugin(nx)
 
     # Team's tech stack documentation

@@ -450,7 +450,7 @@ class E2BSandboxProvider(SandboxProvider):
             sandbox = await self._get_sandbox(sandbox_id)
             # Run imports in background - don't wait for completion
             prewarm_cmd = (
-                "python3 -c 'from nexus.remote import RemoteNexusFS; "
+                "python3 -c 'import nexus; "
                 "from nexus.fuse.mount import NexusFUSE' > /dev/null 2>&1 &"
             )
             await sandbox.commands.run(prewarm_cmd)
@@ -535,7 +535,7 @@ class E2BSandboxProvider(SandboxProvider):
             python_nexus_installed = False
             try:
                 check_result = await sandbox.commands.run(
-                    "python3 -c 'from nexus.remote import RemoteNexusFS; print(\"ok\")'",
+                    "python3 -c 'import nexus; print(\"ok\")'",
                     timeout=E2B_DEPENDENCY_CHECK_TIMEOUT,
                 )
                 if check_result.exit_code == 0:
@@ -668,10 +668,10 @@ try:
     if not api_key:
         log.error("NEXUS_API_KEY not set")
         sys.exit(1)
-    from nexus.remote import RemoteNexusFS
+    import nexus
     from nexus.fuse.mount import NexusFUSE, MountMode
     log.info("Imports complete, connecting to server...")
-    nx = RemoteNexusFS("{nexus_url}", api_key=api_key)
+    nx = nexus.connect(config={{"mode": "remote", "url": "{nexus_url}", "api_key": api_key}})
     {"nx.agent_id = '" + agent_id + "'" if agent_id else ""}
     log.info("Creating FUSE mount...")
     fuse = NexusFUSE(nx, "{mount_path}", mode=MountMode.SMART)

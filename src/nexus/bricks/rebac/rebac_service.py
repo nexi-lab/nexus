@@ -158,86 +158,6 @@ class ReBACService(ReBACShareMixin):
         return cast(T, await asyncio.to_thread(fn_with_ctx, *args, **kwargs))
 
     # =========================================================================
-    # Internal: Zone Resolution Helper
-    # =========================================================================
-
-    def _resolve_zone_for_subject(self, subject: tuple[str, ...]) -> str | None:
-        """Look up zone_id from entity_registry for a subject.
-
-        For user subjects: look up the user's zone directly.
-        For group userset subjects (group, id, relation): find a member of the
-        group and use their zone, so the tuple lands in the same zone as the
-        users who will be checked against it.
-        """
-        if not self._rebac_manager:
-            return None
-        try:
-            with self._rebac_manager._connection() as conn:
-                cursor = self._rebac_manager._create_cursor(conn)
-                if subject[0] == "user":
-                    sql = self._rebac_manager._fix_sql_placeholders(
-                        "SELECT parent_id FROM entity_registry "
-                        "WHERE entity_type = 'user' AND entity_id = ? "
-                        "AND parent_type = 'zone' LIMIT 1"
-                    )
-                    cursor.execute(sql, (subject[1],))
-                elif subject[0] == "group" and len(subject) >= 3:
-                    # Userset-as-subject: find a member's zone via rebac_tuples
-                    # e.g. subject=("group","editors","member") → find a user
-                    # who has relation "member" on group:editors
-                    sql = self._rebac_manager._fix_sql_placeholders(
-                        "SELECT er.parent_id FROM rebac_tuples rt "
-                        "JOIN entity_registry er "
-                        "  ON er.entity_type = 'user' AND er.entity_id = rt.subject_id "
-                        "  AND er.parent_type = 'zone' "
-                        "WHERE rt.object_type = 'group' AND rt.object_id = ? "
-                        "  AND rt.relation = ? AND rt.subject_type = 'user' "
-                        "LIMIT 1"
-                    )
-                    cursor.execute(sql, (subject[1], subject[2]))
-                else:
-                    return None
-                row = cursor.fetchone()
-                if row:
-                    return row["parent_id"] if isinstance(row, dict) else row[0]
-        except Exception:
-            pass  # Table may not exist; fall through to context zone
-        return None
-
-    def _resolve_zone_for_object(self, object: tuple[str, str]) -> str | None:
-        """Look up zone_id from existing rebac_tuples for an object.
-
-        Used by rebac_expand (which has no subject) to auto-detect the zone
-        where tuples for this object live.  Prefers non-root zones since
-        user-created tuples typically live in a named zone.
-        """
-        if not self._rebac_manager:
-            return None
-        try:
-            with self._rebac_manager._connection() as conn:
-                cursor = self._rebac_manager._create_cursor(conn)
-                sql = self._rebac_manager._fix_sql_placeholders(
-                    "SELECT zone_id, COUNT(*) as cnt FROM rebac_tuples "
-                    "WHERE object_type = ? AND object_id = ? "
-                    "AND zone_id IS NOT NULL "
-                    "GROUP BY zone_id ORDER BY cnt DESC"
-                )
-                cursor.execute(sql, (object[0], object[1]))
-                rows = cursor.fetchall()
-                if not rows:
-                    return None
-                # Prefer non-root zone (user-created tuples)
-                for row in rows:
-                    zid = row["zone_id"] if isinstance(row, dict) else row[0]
-                    if zid != "root":
-                        return zid
-                # Fall back to root
-                return rows[0]["zone_id"] if isinstance(rows[0], dict) else rows[0][0]
-        except Exception:
-            pass
-        return None
-
-    # =========================================================================
     # Public API: Core ReBAC Operations
     # =========================================================================
 
@@ -323,15 +243,12 @@ class ReBACService(ReBACShareMixin):
 
             # Use zone_id from context if not explicitly provided
             effective_zone_id = zone_id
-            if effective_zone_id is None:
-                # Auto-detect zone from subject's entity registry
-                effective_zone_id = self._resolve_zone_for_subject(subject)
-                # Fall back to context zone
-                if effective_zone_id is None and context:
-                    if isinstance(context, dict):
-                        effective_zone_id = context.get("zone")
-                    elif hasattr(context, "zone_id"):
-                        effective_zone_id = context.zone_id
+            if effective_zone_id is None and context:
+                # Handle both dict and OperationContext
+                if isinstance(context, dict):
+                    effective_zone_id = context.get("zone")
+                elif hasattr(context, "zone_id"):
+                    effective_zone_id = context.zone_id
 
             # SECURITY: Check execute permission before allowing permission management
             # Only owners (those with execute permission) can grant/manage permissions on resources
@@ -533,15 +450,12 @@ class ReBACService(ReBACShareMixin):
 
             # Use zone_id from context if not explicitly provided
             effective_zone_id = zone_id
-            if effective_zone_id is None:
-                # Auto-detect zone from subject's entity registry
-                effective_zone_id = self._resolve_zone_for_subject(subject)
-                # Fall back to context zone
-                if effective_zone_id is None and context:
-                    if isinstance(context, dict):
-                        effective_zone_id = context.get("zone")
-                    elif hasattr(context, "zone_id"):
-                        effective_zone_id = context.zone_id
+            if effective_zone_id is None and context:
+                # Handle both dict and OperationContext
+                if isinstance(context, dict):
+                    effective_zone_id = context.get("zone")
+                elif hasattr(context, "zone_id"):
+                    effective_zone_id = context.zone_id
 
             # Issue #1081: Build consistency requirement from API params
             consistency = None
@@ -642,11 +556,6 @@ class ReBACService(ReBACShareMixin):
             kwargs: dict[str, Any] = {"permission": permission, "object": object}
             if zone_id is not None:
                 kwargs["zone_id"] = zone_id
-            else:
-                # Auto-detect zone from existing tuples for this object
-                detected_zone = self._resolve_zone_for_object(object)
-                if detected_zone is not None:
-                    kwargs["zone_id"] = detected_zone
             expanded: list[tuple[str, str]] = self._rebac_manager.rebac_expand(**kwargs)
             return expanded
 
@@ -713,15 +622,12 @@ class ReBACService(ReBACShareMixin):
 
             # Use zone_id from context if not explicitly provided
             effective_zone_id = zone_id
-            if effective_zone_id is None:
-                # Auto-detect zone from subject's entity registry
-                effective_zone_id = self._resolve_zone_for_subject(subject)
-                # Fall back to context zone
-                if effective_zone_id is None and context:
-                    if isinstance(context, dict):
-                        effective_zone_id = context.get("zone")
-                    elif hasattr(context, "zone_id"):
-                        effective_zone_id = context.zone_id
+            if effective_zone_id is None and context:
+                # Handle both dict and OperationContext
+                if isinstance(context, dict):
+                    effective_zone_id = context.get("zone")
+                elif hasattr(context, "zone_id"):
+                    effective_zone_id = context.zone_id
 
             # Get explanation from manager (manager guaranteed by _run_in_thread)
             assert self._rebac_manager is not None
@@ -1908,15 +1814,11 @@ class ReBACService(ReBACShareMixin):
 
         # Use zone_id from context if not explicitly provided
         effective_zone_id = zone_id
-        if effective_zone_id is None:
-            # Auto-detect zone from subject's entity registry
-            effective_zone_id = self._resolve_zone_for_subject(subject)
-            # Fall back to context zone
-            if effective_zone_id is None and context:
-                if isinstance(context, dict):
-                    effective_zone_id = context.get("zone")
-                elif hasattr(context, "zone_id"):
-                    effective_zone_id = context.zone_id
+        if effective_zone_id is None and context:
+            if isinstance(context, dict):
+                effective_zone_id = context.get("zone")
+            elif hasattr(context, "zone_id"):
+                effective_zone_id = context.zone_id
 
         # SECURITY: Check execute permission before allowing permission management
         self._check_share_permission(resource=object, context=context)
@@ -2157,12 +2059,16 @@ class ReBACService(ReBACShareMixin):
         self,
         permission: str,
         object: tuple[str, str],
+        zone_id: str | None = None,
     ) -> list[tuple[str, str]]:
         """Synchronous rebac_expand."""
         mgr = self._require_manager()
         if not isinstance(object, tuple) or len(object) != 2:
             raise ValueError(f"object must be (type, id) tuple, got {object}")
-        expanded: list[tuple[str, str]] = mgr.rebac_expand(permission=permission, object=object)
+        kwargs: dict[str, Any] = {"permission": permission, "object": object}
+        if zone_id is not None:
+            kwargs["zone_id"] = zone_id
+        expanded: list[tuple[str, str]] = mgr.rebac_expand(**kwargs)
         return expanded
 
     def rebac_explain_sync(

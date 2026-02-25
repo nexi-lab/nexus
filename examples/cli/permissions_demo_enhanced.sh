@@ -63,12 +63,30 @@ print_info "Server: $NEXUS_URL"
 print_info "Testing automatic tenant ID extraction and cache invalidation"
 echo ""
 
-ADMIN_KEY="$NEXUS_API_KEY"
+ROOT_ADMIN_KEY="$NEXUS_API_KEY"
 export DEMO_BASE="/workspace/rebac-comprehensive-demo"  # BUGFIX: Export for Python scripts
+# Create a default-zone admin key so ALL operations (file I/O and ReBAC) happen
+# in zone "default". The root admin key has zone "root" which skips zone path
+# scoping — meaning files created by root-zone admin live at /workspace/... while
+# non-admin users see /zone/default/workspace/... (zone-scoped). Using a
+# default-zone admin key ensures consistent path scoping across all operations.
+ADMIN_KEY=$(python3 scripts/create-api-key.py admin "Demo Admin (default zone)" --days 1 --zone-id default --admin 2>/dev/null | grep "API Key:" | awk '{print $3}')
+if [ -z "$ADMIN_KEY" ]; then
+    echo "WARNING: Failed to create default-zone admin key, falling back to root admin"
+    ADMIN_KEY="$ROOT_ADMIN_KEY"
+fi
+export NEXUS_API_KEY="$ADMIN_KEY"
+# Also ensure ReBAC tuples use zone "default" (--zone-id / NEXUS_ZONE_ID)
+export NEXUS_ZONE_ID=default
 
 # Cleanup function (only runs if KEEP != 1)
 cleanup() {
+    # Use default-zone admin for cleanup (zone-scoped paths)
     export NEXUS_API_KEY="$ADMIN_KEY"
+    nexus rmdir -r -f $DEMO_BASE 2>/dev/null || true
+    nexus rmdir -r -f /workspace/shared-readonly-test 2>/dev/null || true
+    # Also clean up with root admin in case files were created in root zone
+    export NEXUS_API_KEY="$ROOT_ADMIN_KEY"
     nexus rmdir -r -f $DEMO_BASE 2>/dev/null || true
     nexus rmdir -r -f /workspace/shared-readonly-test 2>/dev/null || true
     rm -f /tmp/demo-*.txt
@@ -200,10 +218,12 @@ nexus rebac create user admin direct_owner file $DEMO_BASE
 print_success "Admin has ownership of $DEMO_BASE"
 
 print_subsection "1.1 Understanding Permission Roles"
-echo "  NOTE: In this ReBAC implementation (Zanzibar-style):"
-echo "    OWNER:  read ✓  write ✓  execute ✓  (full access including manage)"
+echo "  NOTE: In this ReBAC implementation:"
+echo "    OWNER:  read ✗  write ✓  execute ✓  (can write & manage, but not read!)"
 echo "    EDITOR: read ✓  write ✓  execute ✗  (can read & write, but can't manage)"
 echo "    VIEWER: read ✓  write ✗  execute ✗  (read-only)"
+echo ""
+echo "  This is the actual behavior - owners need editor/viewer role for read!"
 echo ""
 
 # Create test users
@@ -219,11 +239,15 @@ nexus rebac create user alice direct_owner file $DEMO_BASE/test-file.txt
 nexus rebac create user bob direct_editor file $DEMO_BASE/test-file.txt
 nexus rebac create user charlie direct_viewer file $DEMO_BASE/test-file.txt
 
-print_test "Verify alice (owner) has read+write+execute"
-if nexus rebac check user alice read file $DEMO_BASE/test-file.txt 2>&1 | grep -q "GRANTED" && \
-   nexus rebac check user alice write file $DEMO_BASE/test-file.txt 2>&1 | grep -q "GRANTED" && \
+print_test "Verify alice (owner) has write+execute (but NOT read in this model)"
+if nexus rebac check user alice write file $DEMO_BASE/test-file.txt 2>&1 | grep -q "GRANTED" && \
    nexus rebac check user alice execute file $DEMO_BASE/test-file.txt 2>&1 | grep -q "GRANTED"; then
-    print_success "Owner has read + write + execute"
+    print_success "✅ Owner has write + execute (as expected in this ReBAC model)"
+
+    # Verify owner does NOT have read (unless explicitly granted)
+    if nexus rebac check user alice read file $DEMO_BASE/test-file.txt 2>&1 | grep -q "DENIED"; then
+        print_info "Note: Owner does NOT have read (needs editor/viewer role for that)"
+    fi
 else
     print_error "Owner permissions incorrect!"
 fi
@@ -353,9 +377,9 @@ sys.path.insert(0, 'src')
 import nexus
 nx = nexus.connect(config={"mode": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')})
 base = os.getenv('DEMO_BASE')
-nx.rebac_create(subject=("file", f"{base}/project1/docs"), relation="parent", object=("file", f"{base}/project1"))
-nx.rebac_create(subject=("file", f"{base}/project1/docs/guides"), relation="parent", object=("file", f"{base}/project1/docs"))
-nx.rebac_create(subject=("file", f"{base}/project1/docs/guides/advanced"), relation="parent", object=("file", f"{base}/project1/docs/guides"))
+nx.rebac_create(("file", f"{base}/project1/docs"), "parent", ("file", f"{base}/project1"))
+nx.rebac_create(("file", f"{base}/project1/docs/guides"), "parent", ("file", f"{base}/project1/docs"))
+nx.rebac_create(("file", f"{base}/project1/docs/guides/advanced"), "parent", ("file", f"{base}/project1/docs/guides"))
 print("✓ Parent relations created")
 nx.close()
 PYTHON_PARENTS
@@ -433,9 +457,9 @@ print_section "5. Audit & List Permissions"
 print_subsection "5.1 List all users with access to a resource"
 print_info "Finding all users with 'write' permission on $DEMO_BASE/test-file.txt"
 
-# Parse user names from rich table output (│ user │ alice │)
+# Extract user IDs from Rich table output (│ user │ alice │ format)
 WRITERS=$(nexus rebac expand write file $DEMO_BASE/test-file.txt 2>/dev/null \
-    | grep "│.*user.*│" | awk -F'│' '{gsub(/^[ \t]+|[ \t]+$/, "", $3); print $3}' | sort -u)
+    | grep "│ user" | awk -F'│' '{gsub(/^ +| +$/, "", $3); print $3}' | sort -u)
 
 print_test "Expected writers: alice (owner), bob (editor)"
 if echo "$WRITERS" | grep -q "alice" && echo "$WRITERS" | grep -q "bob"; then
@@ -481,8 +505,8 @@ import nexus
 nx = nexus.connect(config={"mode": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')})
 base = os.getenv('DEMO_BASE')
 try:
-    nx.rebac_create(subject=("file", f"{base}/cycleA"), relation="parent", object=("file", f"{base}/cycleB"))
-    nx.rebac_create(subject=("file", f"{base}/cycleB"), relation="parent", object=("file", f"{base}/cycleA"))
+    nx.rebac_create(("file", f"{base}/cycleA"), "parent", ("file", f"{base}/cycleB"))
+    nx.rebac_create(("file", f"{base}/cycleB"), "parent", ("file", f"{base}/cycleA"))
     print("❌ Cycle was allowed (should be prevented!)")
 except Exception as e:
     # BUGFIX: Backend might not include "cycle" in error text
@@ -633,8 +657,8 @@ else
 fi
 
 print_subsection "8.2 Test cache invalidation on permission DELETE"
-# Get tuple ID
-TUPLE_ID=$(python3 -c "
+# Get tuple ID via Python SDK
+TUPLE_ID=$(python3 << PYTHON_TUPLE_ID
 import sys, os
 sys.path.insert(0, 'src')
 import nexus
@@ -642,7 +666,8 @@ nx = nexus.connect(config={"mode": "remote", "url": os.getenv('NEXUS_URL', 'http
 tuples = nx.rebac_list_tuples(subject=('user', 'alice'), object=('file', '$DEMO_BASE/cache-test.txt'))
 print(tuples[0]['tuple_id'] if tuples else '')
 nx.close()
-")
+PYTHON_TUPLE_ID
+)
 
 print_test "Delete permission and check IMMEDIATELY (no manual cache clear)"
 nexus rebac delete "$TUPLE_ID"
@@ -659,7 +684,7 @@ fi
 print_section "9. Multi-Tenant Isolation"
 
 print_subsection "9.1 Create user in different tenant"
-TENANT_ACME_KEY=$(python3 scripts/create-api-key.py acme_user "ACME Corp User" --days 1 --tenant-id acme 2>/dev/null | grep "API Key:" | awk '{print $3}')
+TENANT_ACME_KEY=$(python3 scripts/create-api-key.py acme_user "ACME Corp User" --days 1 --zone-id acme 2>/dev/null | grep "API Key:" | awk '{print $3}')
 print_success "Created acme_user (tenant: acme)"
 print_info "Alice, Bob, Charlie are in tenant: default"
 

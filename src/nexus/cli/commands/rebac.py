@@ -339,7 +339,6 @@ def rebac_delete_cmd(
     try:
         nx = get_filesystem(backend_config)
 
-        # Delete tuple
         deleted = nx.rebac_service.rebac_delete_sync(tuple_id)  # type: ignore[attr-defined]
 
         nx.close()
@@ -373,7 +372,6 @@ def rebac_check_cmd(
     """Check if subject has permission on object.
 
     Uses graph traversal and caching to determine if permission is granted.
-    Supports multi-zone isolation via --zone-id or NEXUS_ZONE_ID env var.
 
     Examples:
         # Does alice have read permission on file123?
@@ -388,10 +386,8 @@ def rebac_check_cmd(
     try:
         nx = get_filesystem(backend_config)
 
-        # Get zone_id from operation_context (set by @add_context_options)
+        # Check permission (pass zone_id from --zone-id or NEXUS_ZONE_ID)
         zone = operation_context.get("zone")
-
-        # Check permission
         granted = nx.rebac_service.rebac_check_sync(  # type: ignore[attr-defined]
             subject=(subject_type, subject_id),
             permission=permission,
@@ -433,7 +429,6 @@ def rebac_expand_cmd(
     """Find all subjects with a given permission on an object.
 
     Uses recursive graph traversal to find all subjects.
-    Supports multi-zone isolation via --zone-id or NEXUS_ZONE_ID env var.
 
     Examples:
         # Who has read permission on file123?
@@ -448,10 +443,8 @@ def rebac_expand_cmd(
     try:
         nx = get_filesystem(backend_config)
 
-        # Get zone_id from operation_context (set by @add_context_options)
+        # Expand permission (pass zone_id from --zone-id or NEXUS_ZONE_ID)
         zone = operation_context.get("zone")
-
-        # Expand permission
         subjects = nx.rebac_service.rebac_expand_sync(  # type: ignore[attr-defined]
             permission=permission,
             object=(object_type, object_id),

@@ -11,7 +11,6 @@ Use Cases:
 
 Architecture:
     CacheWarmer orchestrates warming across multiple cache layers:
-    - MetadataCache (L1 in-memory) - file metadata
     - LocalDiskCache (L2 SSD) - file content
     - ReBACPermissionCache - permission results
     - TigerCache - pre-materialized permission bitmaps
@@ -404,7 +403,6 @@ class CacheWarmer:
     """Pre-populate caches based on access patterns.
 
     Orchestrates warming across multiple cache layers:
-    - MetadataCache: File metadata (getattr, exists, list)
     - LocalDiskCache: File content
     - ReBACPermissionCache: Permission check results
     - TigerCache: Pre-materialized permission bitmaps

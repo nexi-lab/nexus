@@ -186,6 +186,9 @@ class TestBootSystemServices:
             "zone_lifecycle",
             # DT_PIPE manager (Issue #809)
             "pipe_manager",
+            # Issue #2195, #2360
+            "event_log",
+            "scheduler_service",
         }
         assert expected_keys == set(result.keys())
 
@@ -270,7 +273,6 @@ class TestBootBrickServices:
             "snapshot_service",
             "task_queue_service",
             "ipc_storage_driver",
-            "ipc_vfs_driver",
             "ipc_provisioner",
             "skill_service",
             "skill_package_service",

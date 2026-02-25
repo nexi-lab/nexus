@@ -129,10 +129,13 @@ impl ZoneRaftRegistry {
         peers: Vec<NodeAddress>,
         runtime_handle: &tokio::runtime::Handle,
     ) -> Result<ZoneConsensus<FullStateMachine>, TransportError> {
-        // Empty peers in config → no ConfState bootstrap. Snapshot overwrites.
+        // Per raft contract: joining nodes start uninitialized (empty ConfState).
+        // The leader will send a snapshot with the correct voter set after
+        // the ConfChange(AddNode) is committed.
         let config = RaftConfig {
             id: self.node_id,
             peers: vec![],
+            skip_bootstrap: true,
             ..Default::default()
         };
 

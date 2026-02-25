@@ -58,6 +58,17 @@ class PathUpdater:
             ``should_bump_version`` to decide whether to increment
             ``_tuple_version``.
         """
+        # Unscope zone-prefixed paths — tuples store unscoped paths
+        # (e.g., /workspace/...) while rename operations may pass
+        # zone-scoped paths (e.g., /zone/default/workspace/...).
+        try:
+            from nexus.server.path_utils import unscope_internal_path
+
+            old_path = unscope_internal_path(old_path)
+            new_path = unscope_internal_path(new_path)
+        except ImportError:
+            pass  # path_utils not available outside server context
+
         updated_count = 0
 
         logger.info(

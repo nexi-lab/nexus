@@ -441,7 +441,25 @@ class SkillsListApprovalsParams:
 
 
 # ============================================================
-# 7. Namespace override (RPC name differs from method name)
+# 7. RemoteMetastore Parameters (metadata proxy for REMOTE profile)
+# ============================================================
+
+
+@dataclass
+class SetMetadataParams:
+    """Parameters for set_metadata() — store/update file metadata.
+
+    Called by RemoteMetastore.put() to persist DT_MOUNT entries and
+    metadata updates from the REMOTE deployment profile.
+    """
+
+    path: str
+    metadata: dict[str, Any] | None = None
+    consistency: str = "sc"
+
+
+# ============================================================
+# 8. Namespace override (RPC name differs from method name)
 # ============================================================
 
 
@@ -504,4 +522,6 @@ OVERRIDE_METHOD_PARAMS: dict[str, type] = {
     "skills_list_approvals": SkillsListApprovalsParams,
     # Namespace
     "namespace_get": NamespaceGetParams,
+    # RemoteMetastore
+    "set_metadata": SetMetadataParams,
 }

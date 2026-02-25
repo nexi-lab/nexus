@@ -1498,10 +1498,20 @@ class ReBACManager:
         if not namespace:
             return self._get_direct_subjects_zone_aware(permission, object_entity, zone_id)
 
-        # Recursively expand permission via namespace config (zone-scoped)
-        self._expand_permission_zone_aware(
-            permission, object_entity, namespace, zone_id, subjects, visited=set(), depth=0
-        )
+        # Resolve permission → relation mapping (e.g. "write" → ["editor", "owner"])
+        # Permissions are defined in config["permissions"], relations in config["relations"]
+        perm_relations = namespace.config.get("permissions", {}).get(permission)
+        if perm_relations:
+            # Permission name maps to one or more relations — expand each
+            for rel in perm_relations:
+                self._expand_permission_zone_aware(
+                    rel, object_entity, namespace, zone_id, subjects, visited=set(), depth=0
+                )
+        else:
+            # Already a relation name (or unknown) — expand directly
+            self._expand_permission_zone_aware(
+                permission, object_entity, namespace, zone_id, subjects, visited=set(), depth=0
+            )
 
         return list(subjects)
 

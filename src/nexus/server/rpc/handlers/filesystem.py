@@ -355,6 +355,47 @@ def handle_get_metadata(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[
     return {"metadata": metadata}
 
 
+def handle_set_metadata(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
+    """Handle set_metadata — persist metadata from RemoteMetastore.put().
+
+    Reconstructs a FileMetadata from the dict sent by the client and
+    stores it via the server-side metastore.
+    """
+    from nexus.contracts.metadata import FileMetadata
+
+    meta_dict: dict[str, Any] = params.metadata or {}
+    # Ensure path is set (prefer params.path over dict contents)
+    meta_dict["path"] = params.path
+
+    # Parse datetime strings back to datetime objects
+    from datetime import datetime
+
+    for dt_field in ("created_at", "modified_at"):
+        val = meta_dict.get(dt_field)
+        if isinstance(val, str):
+            meta_dict[dt_field] = datetime.fromisoformat(val)
+
+    file_meta = FileMetadata(
+        path=meta_dict.get("path", ""),
+        backend_name=meta_dict.get("backend_name", ""),
+        physical_path=meta_dict.get("physical_path", ""),
+        size=meta_dict.get("size", 0),
+        etag=meta_dict.get("etag"),
+        mime_type=meta_dict.get("mime_type"),
+        created_at=meta_dict.get("created_at"),
+        modified_at=meta_dict.get("modified_at"),
+        version=meta_dict.get("version", 1),
+        zone_id=meta_dict.get("zone_id"),
+        created_by=meta_dict.get("created_by"),
+        owner_id=meta_dict.get("owner_id"),
+        entry_type=meta_dict.get("entry_type", 0),
+        target_zone_id=meta_dict.get("target_zone_id"),
+        i_links_count=meta_dict.get("i_links_count", 0),
+    )
+    nexus_fs.metadata.put(file_meta)
+    return {"path": params.path, "ok": True}
+
+
 def handle_glob(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle glob method."""
     kwargs: dict[str, Any] = {"context": context}

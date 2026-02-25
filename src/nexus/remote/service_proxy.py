@@ -67,8 +67,9 @@ class RemoteServiceProxy:
 
         def rpc_forwarder(*args: Any, **kwargs: Any) -> Any:
             # Map positional args to keyword args using ABC signature
+            rpc_name = name
             if args:
-                param_names = RPCProxyBase._get_param_names(name)
+                param_names = RPCProxyBase._get_param_names(rpc_name)
                 for i, val in enumerate(args):
                     if i < len(param_names):
                         kwargs[param_names[i]] = val
@@ -77,7 +78,12 @@ class RemoteServiceProxy:
             kwargs.pop("context", None)
             kwargs.pop("_context", None)
 
-            return self._call_rpc(name, kwargs or None)
+            # Server exposes async @rpc_expose methods; client-side sync
+            # wrappers append "_sync" — strip suffix for RPC dispatch.
+            if rpc_name.endswith("_sync"):
+                rpc_name = rpc_name[:-5]
+
+            return self._call_rpc(rpc_name, kwargs or None)
 
         # Preserve method name for debugging
         rpc_forwarder.__name__ = name

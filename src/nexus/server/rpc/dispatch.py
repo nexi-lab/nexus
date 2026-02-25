@@ -83,6 +83,7 @@ def build_dispatch_table() -> dict[str, DispatchEntry]:
         handle_rmdir,
         handle_search,
         handle_semantic_search_index,
+        handle_set_metadata,
         handle_write,
     )
 
@@ -105,6 +106,7 @@ def build_dispatch_table() -> dict[str, DispatchEntry]:
         "mkdir": DispatchEntry(handle_mkdir, event_type="dir_create"),
         "rmdir": DispatchEntry(handle_rmdir, event_type="dir_delete"),
         "get_metadata": DispatchEntry(handle_get_metadata),
+        "set_metadata": DispatchEntry(handle_set_metadata),
         "glob": DispatchEntry(handle_glob),
         "grep": DispatchEntry(handle_grep),
         "search": DispatchEntry(handle_search),

@@ -227,11 +227,16 @@ class RemoteMetastore(MetastoreABC):
         """Store metadata by proxying ``set_metadata`` to the server.
 
         The *consistency* hint is forwarded so the server can honour it.
+        Non-fatal: in REMOTE mode the server already owns metadata —
+        failures here (e.g. during init) are logged but not raised.
         """
-        self._call_rpc(
-            "set_metadata",
-            {"path": metadata.path, "metadata": metadata.to_dict(), "consistency": consistency},
-        )
+        try:
+            self._call_rpc(
+                "set_metadata",
+                {"path": metadata.path, "metadata": metadata.to_dict(), "consistency": consistency},
+            )
+        except Exception as exc:
+            logger.debug("RemoteMetastore.put(%s) failed (non-fatal): %s", metadata.path, exc)
         return None
 
     def delete(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:

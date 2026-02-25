@@ -54,7 +54,7 @@ def benchmark_nexus(benchmark_backend, benchmark_db):
         is_admin=True,
         permissions=PermissionConfig(enforce=False),
         parsing=ParseConfig(auto_parse=False),
-        cache=CacheConfig(enable_metadata_cache=True, enable_content_cache=True),
+        cache=CacheConfig(enable_content_cache=True),
     )
     yield nx
     nx.close()
@@ -74,7 +74,7 @@ def benchmark_nexus_with_permissions(benchmark_backend, benchmark_db):
         agent_id="benchmark_agent",
         permissions=PermissionConfig(enforce=True),
         parsing=ParseConfig(auto_parse=False),
-        cache=CacheConfig(enable_metadata_cache=True, enable_content_cache=True),
+        cache=CacheConfig(enable_content_cache=True),
     )
     yield nx
     nx.close()

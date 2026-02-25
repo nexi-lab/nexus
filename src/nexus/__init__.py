@@ -389,7 +389,6 @@ def connect(
     )
 
     cache_cfg = CacheConfig(
-        enable_metadata_cache=cfg.enable_metadata_cache,
         path_size=cfg.cache_path_size,
         list_size=cfg.cache_list_size,
         kv_size=cfg.cache_kv_size,

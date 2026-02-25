@@ -122,7 +122,7 @@ async def nexus_fs(temp_nexus_dir, db_path_agent1, shared_event_bus):
             is_admin=True,  # Bypass router access checks
             permissions=PermissionConfig(enforce=False, enforce_zone_isolation=False),
             zone_id="test",  # Explicit zone for consistent event routing
-            cache=CacheConfig(enable_content_cache=True, enable_metadata_cache=True),
+            cache=CacheConfig(enable_content_cache=True),
             distributed=DistributedConfig(enable_locks=True),
         )
 
@@ -162,7 +162,7 @@ async def second_nexus_fs(temp_nexus_dir, db_path_agent2, shared_event_bus):
             is_admin=True,  # Bypass router access checks
             permissions=PermissionConfig(enforce=False, enforce_zone_isolation=False),
             zone_id="test",  # Explicit zone for consistent event routing
-            cache=CacheConfig(enable_content_cache=True, enable_metadata_cache=True),
+            cache=CacheConfig(enable_content_cache=True),
             distributed=DistributedConfig(enable_locks=True),
         )
 

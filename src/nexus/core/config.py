@@ -49,7 +49,6 @@ class CacheConfig:
     NOT related to the CacheStore pillar (Dragonfly/ephemeral KV+PubSub).
     """
 
-    enable_metadata_cache: bool = True
     path_size: int = 512
     list_size: int = 1024
     kv_size: int = 256

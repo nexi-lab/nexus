@@ -548,13 +548,6 @@ def _register_vfs_hooks(nx: "NexusFS") -> None:
         dispatch.register_intercept_write(TigerCacheWriteHook(tiger_cache=tiger_cache))
 
     # ── OBSERVE observers (Issue #900, #922) ──────────────────────────
-    # ReadSetCacheObserver: invalidates ReadSetAwareCache on mutations.
-    # Kernel fires FileEvent via _dispatch.notify(); observer handles
-    # invalidation without the kernel knowing about caching.
-    cache_observer = getattr(nx, "_cache_observer", None)
-    if cache_observer is not None:
-        dispatch.register_observe(cache_observer)
-
     # EventBusObserver: forwards FileEvents to distributed EventBus (Redis/NATS).
     # Replaces _publish_file_event() direct calls — single dispatch exit point.
     # Late-binding (Issue #969): always register with bus_provider=nx so that

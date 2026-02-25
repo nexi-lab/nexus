@@ -167,17 +167,6 @@ def stats(
         # Collect stats from various cache layers
         cache_stats: dict[str, Any] = {}
 
-        # Metadata cache stats
-        cache = getattr(nx, "metadata_cache", None)
-        if cache is None and hasattr(nx, "metadata"):
-            cache = getattr(nx.metadata, "_cache", None)
-        if cache:
-            cache_stats["metadata_cache"] = {
-                "path_cache_size": len(getattr(cache, "_path_cache", {})),
-                "list_cache_size": len(getattr(cache, "_list_cache", {})),
-                "exists_cache_size": len(getattr(cache, "_exists_cache", {})),
-            }
-
         # Content cache stats
         if hasattr(nx, "backend") and hasattr(nx.backend, "content_cache"):
             cc = nx.backend.content_cache
@@ -285,19 +274,6 @@ def clear(
     try:
         nx = get_filesystem(backend_config)
         cleared: list[str] = []
-
-        # Clear metadata cache
-        cache = getattr(nx, "metadata_cache", None)
-        if cache is None and hasattr(nx, "metadata"):
-            cache = getattr(nx.metadata, "_cache", None)
-        if (metadata or clear_all) and cache:
-            if hasattr(cache, "_path_cache"):
-                cache._path_cache.clear()
-            if hasattr(cache, "_list_cache"):
-                cache._list_cache.clear()
-            if hasattr(cache, "_exists_cache"):
-                cache._exists_cache.clear()
-            cleared.append("metadata")
 
         # Clear content cache
         if (

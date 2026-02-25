@@ -113,16 +113,6 @@ async def get_cache_stats(
 
     cache_stats: dict[str, Any] = {}
 
-    cache = getattr(nexus_fs, "metadata_cache", None)
-    if cache is None and hasattr(nexus_fs, "metadata"):
-        cache = getattr(nexus_fs.metadata, "_cache", None)
-    if cache:
-        cache_stats["metadata_cache"] = {
-            "path_cache_size": len(getattr(cache, "_path_cache", {})),
-            "list_cache_size": len(getattr(cache, "_list_cache", {})),
-            "exists_cache_size": len(getattr(cache, "_exists_cache", {})),
-        }
-
     if hasattr(nexus_fs, "backend") and hasattr(nexus_fs.backend, "content_cache"):
         cc = nexus_fs.backend.content_cache
         if cc and hasattr(cc, "get_stats"):
@@ -140,14 +130,6 @@ async def get_cache_stats(
     dvc = getattr(nexus_fs, "_dir_visibility_cache", None)
     if dvc is not None and hasattr(dvc, "get_metrics"):
         cache_stats["dir_visibility_cache"] = dvc.get_metrics()
-
-    read_set_cache = getattr(nexus_fs, "read_set_cache", None)
-    if read_set_cache is not None:
-        cache_stats["read_set_cache"] = read_set_cache.get_stats()
-
-    read_set_registry = getattr(nexus_fs, "read_set_registry", None)
-    if read_set_registry is not None:
-        cache_stats["read_set_registry"] = read_set_registry.get_stats()
 
     tracker = get_file_access_tracker()
     cache_stats["file_access_tracker"] = tracker.get_stats()

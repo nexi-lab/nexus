@@ -1,7 +1,7 @@
 """VFS Hook contracts — context dataclasses and hook protocols.
 
 These are inter-layer contracts used by the kernel (call sites in
-``nexus_fs_core.py`` / ``nexus_fs.py``) and implemented by service-layer
+``nexus_fs.py``) and implemented by service-layer
 hooks.  The kernel creates context objects after each VFS operation
 and passes them to ``KernelDispatch`` (injected via DI).
 

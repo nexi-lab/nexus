@@ -1,7 +1,7 @@
-"""Tests for NexusFSCoreMixin stream_range, read_range, and write_stream.
+"""Tests for NexusFS stream_range, read_range, and write_stream.
 
 Issue #1519, 9A: Covers byte-range reading, streaming, and writing
-with validation and error handling. Tests the mixin methods directly
+with validation and error handling. Tests the methods directly
 via a lightweight stub to avoid the heavy NexusFS constructor.
 """
 
@@ -23,6 +23,7 @@ class _StubFS:
         self.router = router
         self._enforce_permissions = False
         self._default_context = OperationContext(user_id="test", groups=[], zone_id=ROOT_ZONE_ID)
+        self._dispatch = MagicMock()  # KernelDispatch stub — intercept_pre_* are no-ops
 
     def _validate_path(self, path):
         if not path.startswith("/"):
@@ -31,21 +32,15 @@ class _StubFS:
             raise InvalidPathError(path)
         return path
 
-    class _NoOpChecker:
-        def check(self, path, perm, context=None, file_metadata=None):
-            pass  # permissions disabled in stub
-
-    _permission_checker = _NoOpChecker()
-
     def _get_routing_params(self, context):
         return "default", None, False
 
 
-# Graft mixin methods onto stub
-from nexus.core.nexus_fs_core import NexusFSCoreMixin  # noqa: E402
+# Graft VFS methods onto stub (Issue #899: dissolved from mixin into NexusFS)
+from nexus.core.nexus_fs import NexusFS  # noqa: E402
 
-_StubFS.read_range = NexusFSCoreMixin.read_range
-_StubFS.stream_range = NexusFSCoreMixin.stream_range
+_StubFS.read_range = NexusFS.read_range
+_StubFS.stream_range = NexusFS.stream_range
 
 
 @pytest.fixture()

@@ -222,7 +222,7 @@ class OAuthCapableProtocol(Protocol):
 class StreamingProtocol(Protocol):
     """Memory-efficient large file I/O — streaming reads and writes.
 
-    Used by nexus_fs_core for HTTP range requests and large file operations.
+    Used by NexusFS for HTTP range requests and large file operations.
     All Backend subclasses provide default implementations; backends with
     native streaming (e.g., GCS, S3) can override for true streaming.
     """

@@ -1,7 +1,5 @@
 """AutoParseWriteHook — fire-and-forget background parsing (INTERCEPT write).
 
-Extracted from NexusFSCoreMixin._auto_parse_file() + _parse_in_thread()
-(Phase 4 of Issue #2033, Strangler Fig decomposition).
 Issue #625: Lives in parsers/ (service-layer, not kernel).
 """
 

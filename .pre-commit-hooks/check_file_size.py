@@ -19,7 +19,6 @@ MAX_LINES = 2000
 # This list should shrink to zero as Phase 2 progresses
 EXCEPTIONS = [
     "src/nexus/core/nexus_fs.py",  # 6,167 lines - Phase 2 refactoring
-    "src/nexus/core/nexus_fs_core.py",  # 2,807 lines - Phase 2 refactoring
     "src/nexus/core/nexus_fs_search.py",  # 2,175 lines - Phase 2 refactoring
     "src/nexus/core/nexus_fs_rebac.py",  # 2,554 lines - Phase 2 refactoring
     "src/nexus/core/nexus_fs_mounts.py",  # 2,048 lines - Phase 2 refactoring

@@ -1,11 +1,10 @@
-"""Tests for NexusFSCoreMixin extraction-critical methods (Issue #1287, Decision 10A).
+"""Tests for NexusFS VFS API surface (Issue #1287, Decision 10A).
 
-Tests verify that NexusFSCoreMixin defines the expected public API surface
-that will be extracted into VFSCore. This ensures no methods are accidentally
-dropped during brick extraction.
+Tests verify that NexusFS defines the expected public API surface
+for core VFS operations. This ensures no methods are accidentally
+dropped during refactoring.
 
-Strategy: Since NexusFSCoreMixin is a mixin that requires full NexusFS
-(which needs Rust binary), we test at the class/API level:
+Strategy: Test at the class/API level:
 1. Method existence and @rpc_expose decorators
 2. Method signatures (parameter names match expected API)
 3. Async vs sync classification
@@ -17,7 +16,7 @@ import inspect
 
 import pytest
 
-from nexus.core.nexus_fs_core import NexusFSCoreMixin
+from nexus.core.nexus_fs import NexusFS
 
 # ── Expected API Surface ──────────────────────────────────────────────────────
 # These are the extraction-critical methods that MUST exist after refactoring.
@@ -58,7 +57,7 @@ ALL_CORE_METHODS = {
     **CORE_METADATA_METHODS,
 }
 
-# Bulk methods on NexusFSCoreMixin (service-layer convenience, future extraction target).
+# Bulk methods on NexusFS (service-layer convenience, future extraction target).
 BULK_METHODS = {
     "read_bulk": {"params": ["paths", "context", "return_metadata", "skip_errors"], "async": False},
     "write_batch": {"params": ["files", "context"], "async": False},
@@ -70,38 +69,34 @@ BULK_METHODS = {
 }
 
 
-class TestCoreMixinAPIExists:
-    """Verify all extraction-critical methods exist on the mixin."""
+class TestCoreAPIExists:
+    """Verify all VFS methods exist on NexusFS."""
 
     @pytest.mark.parametrize("method_name", list(ALL_CORE_METHODS.keys()))
     def test_method_exists(self, method_name: str):
-        """Test that extraction-critical method exists on mixin."""
-        assert hasattr(NexusFSCoreMixin, method_name), (
-            f"NexusFSCoreMixin.{method_name}() missing — "
-            f"extraction to VFSCore would lose this method"
-        )
+        """Test that VFS method exists on NexusFS."""
+        assert hasattr(NexusFS, method_name), f"NexusFS.{method_name}() missing"
 
     @pytest.mark.parametrize("method_name", list(ALL_CORE_METHODS.keys()))
     def test_method_is_callable(self, method_name: str):
         """Test that method is callable."""
-        method = getattr(NexusFSCoreMixin, method_name)
+        method = getattr(NexusFS, method_name)
         assert callable(method), f"{method_name} is not callable"
 
 
-class TestCoreMixinRPCExposed:
+class TestCoreRPCExposed:
     """Verify all public methods have @rpc_expose decorators."""
 
     @pytest.mark.parametrize("method_name", list(ALL_CORE_METHODS.keys()))
     def test_has_rpc_expose(self, method_name: str):
         """Test that method has @rpc_expose decorator."""
-        method = getattr(NexusFSCoreMixin, method_name)
+        method = getattr(NexusFS, method_name)
         assert hasattr(method, "_rpc_exposed"), (
-            f"NexusFSCoreMixin.{method_name}() missing @rpc_expose — "
-            f"will not be available via RPC after extraction"
+            f"NexusFS.{method_name}() missing @rpc_expose — will not be available via RPC"
         )
 
 
-class TestCoreMixinSignatures:
+class TestCoreSignatures:
     """Verify method signatures match expected parameters."""
 
     @pytest.mark.parametrize(
@@ -110,18 +105,17 @@ class TestCoreMixinSignatures:
     )
     def test_parameter_names(self, method_name: str, expected: dict):
         """Test that method accepts expected parameters."""
-        method = getattr(NexusFSCoreMixin, method_name)
+        method = getattr(NexusFS, method_name)
         sig = inspect.signature(method)
         param_names = [p for p in sig.parameters if p != "self"]
 
         for expected_param in expected["params"]:
             assert expected_param in param_names, (
-                f"NexusFSCoreMixin.{method_name}() missing parameter '{expected_param}'. "
-                f"Has: {param_names}"
+                f"NexusFS.{method_name}() missing parameter '{expected_param}'. Has: {param_names}"
             )
 
 
-class TestCoreMixinAsyncClassification:
+class TestCoreAsyncClassification:
     """Verify sync vs async classification of methods."""
 
     @pytest.mark.parametrize(
@@ -130,17 +124,17 @@ class TestCoreMixinAsyncClassification:
     )
     def test_sync_vs_async(self, method_name: str, expected: dict):
         """Test that method is sync or async as expected."""
-        method = getattr(NexusFSCoreMixin, method_name)
+        method = getattr(NexusFS, method_name)
         is_async = inspect.iscoroutinefunction(method)
         assert is_async == expected["async"], (
-            f"NexusFSCoreMixin.{method_name}() should be "
+            f"NexusFS.{method_name}() should be "
             f"{'async' if expected['async'] else 'sync'} but is "
             f"{'async' if is_async else 'sync'}"
         )
 
 
-class TestCoreMixinMethodGroups:
-    """Verify method grouping by domain for extraction guidance."""
+class TestCoreMethodGroups:
+    """Verify method grouping by domain."""
 
     def test_read_methods_count(self):
         """Verify expected number of read methods."""
@@ -158,44 +152,41 @@ class TestCoreMixinMethodGroups:
         """Verify expected number of metadata methods."""
         assert len(CORE_METADATA_METHODS) == 2, "Expected 2 metadata methods"
 
-    def test_total_extraction_critical_methods(self):
-        """Verify total count of extraction-critical methods on core mixin."""
+    def test_total_core_methods(self):
+        """Verify total count of core VFS methods."""
         assert len(ALL_CORE_METHODS) == 11, "Expected 11 core methods"
 
     def test_bulk_methods_count(self):
-        """Verify total count of bulk methods on NexusFSCoreMixin."""
-        assert len(BULK_METHODS) == 7, "Expected 7 bulk methods on NexusFSCoreMixin"
+        """Verify total count of bulk methods on NexusFS."""
+        assert len(BULK_METHODS) == 7, "Expected 7 bulk methods on NexusFS"
 
 
-class TestBulkMethodsOnCoreMixin:
-    """Verify bulk methods exist on NexusFSCoreMixin."""
+class TestBulkMethodsOnNexusFS:
+    """Verify bulk methods exist on NexusFS."""
 
     @pytest.mark.parametrize("method_name", list(BULK_METHODS.keys()))
     def test_method_exists(self, method_name: str):
-        assert hasattr(NexusFSCoreMixin, method_name), f"NexusFSCoreMixin.{method_name}() missing"
+        assert hasattr(NexusFS, method_name), f"NexusFS.{method_name}() missing"
 
     @pytest.mark.parametrize("method_name", list(BULK_METHODS.keys()))
     def test_method_is_callable(self, method_name: str):
-        method = getattr(NexusFSCoreMixin, method_name)
+        method = getattr(NexusFS, method_name)
         assert callable(method), f"{method_name} is not callable"
 
     @pytest.mark.parametrize("method_name", list(BULK_METHODS.keys()))
     def test_has_rpc_expose(self, method_name: str):
-        method = getattr(NexusFSCoreMixin, method_name)
-        assert hasattr(method, "_rpc_exposed"), (
-            f"NexusFSCoreMixin.{method_name}() missing @rpc_expose"
-        )
+        method = getattr(NexusFS, method_name)
+        assert hasattr(method, "_rpc_exposed"), f"NexusFS.{method_name}() missing @rpc_expose"
 
     @pytest.mark.parametrize(
         "method_name,expected",
         list(BULK_METHODS.items()),
     )
     def test_parameter_names(self, method_name: str, expected: dict):
-        method = getattr(NexusFSCoreMixin, method_name)
+        method = getattr(NexusFS, method_name)
         sig = inspect.signature(method)
         param_names = [p for p in sig.parameters if p != "self"]
         for expected_param in expected["params"]:
             assert expected_param in param_names, (
-                f"NexusFSCoreMixin.{method_name}() missing parameter '{expected_param}'. "
-                f"Has: {param_names}"
+                f"NexusFS.{method_name}() missing parameter '{expected_param}'. Has: {param_names}"
             )

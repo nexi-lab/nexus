@@ -2,7 +2,7 @@
 
 Issue #1264: Tests overlay resolution through the actual NexusFS kernel,
 using real LocalBackend, real SQLAlchemyRecordStore, and real WorkspaceRegistry.
-This verifies the overlay hooks in nexus_fs_core.py (read/delete) work
+This verifies the overlay hooks in nexus_fs.py (read/delete) work
 correctly when wired through the full dependency injection pipeline.
 
 No Raft required — uses DictMetastore implementing MetastoreABC.

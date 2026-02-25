@@ -224,7 +224,7 @@ def test_all_public_methods_are_exposed_or_excluded():
         "list_mounts",  # ABC stub → _mount_core_service.list_mounts()
         "get_mount",  # ABC stub → _mount_core_service.get_mount()
         # Search/list — delegates to search_service
-        "list",  # ABC stub → overrides NexusFSCoreMixin.list()
+        "list",  # ABC stub → overrides NexusFS.list()
         "glob",  # ABC stub → search_service.glob()
         "grep",  # ABC stub → search_service.grep()
         # ReBAC sync delegation stubs (Issue #2033) — delegates to rebac_service

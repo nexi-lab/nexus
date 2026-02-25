@@ -285,21 +285,21 @@ class TestMemoryDelegation:
         assert result is not None
         assert "Test memory from E2E with PostgreSQL" in str(result.get("content", result))
 
-    def test_get_memory_api_returns_fresh_instance(self, nx):
-        """_get_memory_api should return a fresh Memory per context."""
+    def test_memory_provider_returns_fresh_instance(self, nx):
+        """_memory_provider.get_for_context() should return a fresh Memory per context."""
         ctx = {"zone_id": "test-zone", "user_id": "alice"}
-        mem = nx._get_memory_api(ctx)
+        mem = nx._memory_provider.get_for_context(ctx)
         assert mem is not None
         assert hasattr(mem, "store")
 
-    def test_get_memory_api_with_none_context(self, nx):
-        """_get_memory_api(None) should use defaults."""
-        mem = nx._get_memory_api(None)
+    def test_memory_provider_with_none_context(self, nx):
+        """_memory_provider.get_for_context(None) should use defaults."""
+        mem = nx._memory_provider.get_for_context(None)
         assert mem is not None
 
     def test_ensure_entity_registry(self, nx):
-        """_ensure_entity_registry should return an EntityRegistry."""
-        reg = nx._ensure_entity_registry()
+        """_memory_provider.ensure_entity_registry should return an EntityRegistry."""
+        reg = nx._memory_provider.ensure_entity_registry()
         assert reg is not None
         assert hasattr(reg, "session") or hasattr(reg, "_session_factory")
 
@@ -587,11 +587,11 @@ class TestFastAPIIntegration:
         )
         assert mid is not None
 
-    def test_get_memory_api_via_server(self, client):
-        """_get_memory_api should work when called as server does."""
+    def test_memory_provider_via_server(self, client):
+        """_memory_provider.get_for_context() should work when called as server does."""
         nx = client["nx"]
         context_dict = {"zone_id": "root", "user_id": "test-user"}
-        mem = nx._get_memory_api(context_dict)
+        mem = nx._memory_provider.get_for_context(context_dict)
         assert mem is not None
         assert hasattr(mem, "store")
 
@@ -762,7 +762,7 @@ class TestFactoryServiceWiring:
 
     def test_entity_registry_wired(self, nx):
         """EntityRegistry should be wired by factory."""
-        reg = nx._ensure_entity_registry()
+        reg = nx._memory_provider.ensure_entity_registry()
         assert reg is not None
 
     def test_kernel_dispatch_wired(self, nx):

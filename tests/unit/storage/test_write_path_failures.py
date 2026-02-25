@@ -158,13 +158,13 @@ class TestBatchWriteErrorHandling:
         """DOCUMENTS CURRENT BEHAVIOR: batch write observer errors are silenced.
 
         This is the bug identified in Issue 6 of the #1246 review.
-        nexus_fs_core.py:2488 uses contextlib.suppress(Exception).
+        nexus_fs.py:2488 uses contextlib.suppress(Exception).
         """
         # Simulate what the kernel does for batch writes:
         write_observer = MagicMock()
         write_observer.on_write_batch.side_effect = RuntimeError("PG down")
 
-        # Current kernel code (nexus_fs_core.py:2488):
+        # Current kernel code (nexus_fs.py:2488):
         with contextlib.suppress(Exception):
             write_observer.on_write_batch(
                 [(_make_metadata(), True)],
@@ -177,7 +177,7 @@ class TestBatchWriteErrorHandling:
     def test_single_write_strict_mode_raises(self) -> None:
         """Single writes in audit_strict_mode should raise AuditLogError.
 
-        This tests the kernel's error handling (nexus_fs_core.py:1828-1840).
+        This tests the kernel's error handling (nexus_fs.py:1828-1840).
         """
         # We test the policy logic without importing the full NexusFS kernel
         write_observer = MagicMock()

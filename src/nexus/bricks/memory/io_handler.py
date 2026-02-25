@@ -58,10 +58,7 @@ class MemoryIOHandler(VFSPathResolver):
     def read(
         self, path: str, *, return_metadata: bool = False, context: Any = None
     ) -> bytes | dict[str, Any]:
-        """Read memory via virtual path.
-
-        Extracted from ``NexusFSCoreMixin._read_memory_path``.
-        """
+        """Read memory via virtual path."""
         memory = self._router.resolve(path)
         if not memory:
             raise NexusFileNotFoundError(f"Memory not found at path: {path}")
@@ -81,10 +78,7 @@ class MemoryIOHandler(VFSPathResolver):
         return content
 
     def write(self, path: str, content: bytes) -> dict[str, Any]:
-        """Write memory via virtual path.
-
-        Extracted from ``NexusFSCoreMixin._write_memory_path``.
-        """
+        """Write memory via virtual path."""
         memory_api = self._provider.get_or_create()
         if memory_api is None:
             raise RuntimeError("Memory API not initialized")
@@ -120,10 +114,7 @@ class MemoryIOHandler(VFSPathResolver):
         }
 
     def delete(self, path: str, *, context: Any = None) -> None:
-        """Delete memory via virtual path.
-
-        Extracted from ``NexusFSCoreMixin._delete_memory_path``.
-        """
+        """Delete memory via virtual path."""
         memory = self._router.resolve(path)
         if not memory:
             raise NexusFileNotFoundError(f"Memory not found at path: {path}")

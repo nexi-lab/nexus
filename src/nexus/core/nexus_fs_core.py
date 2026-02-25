@@ -666,13 +666,14 @@ class NexusFSCoreMixin:
         path = self._validate_path(path)
 
         # PRE-DISPATCH: virtual path resolvers (Issue #889)
+        # Memory paths → MemoryIOHandler, virtual views → VirtualViewResolver
         _handled, _result = self._dispatch.resolve_read(
             path, return_metadata=return_metadata, context=context
         )
         if _handled:
             return _result
 
-        # Check read permission (handles virtual views by checking original file)
+        # Check read permission
         perm_check_start = time.time()
         self._permission_checker.check(path, Permission.READ, context)
         perm_check_elapsed = time.time() - perm_check_start
@@ -682,63 +683,6 @@ class NexusFSCoreMixin:
             logger.warning(
                 f"[READ-PERF] SLOW permission check for {path}: {perm_check_elapsed * 1000:.1f}ms"
             )
-
-        # Fix #332: Handle virtual parsed views (e.g., report_parsed.pdf.md)
-        from nexus.lib.virtual_views import get_parsed_content, parse_virtual_path
-
-        def metadata_exists(check_path: str) -> bool:
-            return self.metadata.exists(check_path)
-
-        original_path, view_type = parse_virtual_path(path, metadata_exists)
-        if view_type == "md":
-            # This is a virtual view - read and parse the original file
-            logger.info(f"read: Virtual view detected, reading original file: {original_path}")
-
-            # Read the original file
-            zone_id, agent_id, is_admin = self._get_routing_params(context)
-            route = self.router.route(
-                original_path,
-                is_admin=is_admin,
-                check_write=False,
-            )
-            meta = self.metadata.get(original_path)
-            if meta is None or meta.etag is None:
-                raise NexusFileNotFoundError(original_path)
-
-            # Add backend_path to context for path-based connectors
-            read_context = context
-            if context:
-                from dataclasses import replace
-
-                read_context = replace(context, backend_path=route.backend_path)
-            original_content = route.backend.read_content(meta.etag, context=read_context)
-
-            # Apply dynamic_viewer filtering for CSV files before parsing
-            original_content = self._apply_dynamic_viewer_filter_if_needed(
-                original_path, original_content, context
-            )
-
-            # Parse the content (parse_fn injected by subclass; avoids parsers import in core/)
-            content = get_parsed_content(
-                original_content,
-                original_path,
-                view_type,
-                parse_fn=getattr(self, "_virtual_view_parse_fn", None),
-            )
-
-            # Issue #1166: Record read for dependency tracking (virtual view reads original file)
-            self._record_read_if_tracking(context, "file", original_path, "content")
-
-            # Return parsed content with simulated metadata
-            if return_metadata:
-                return {
-                    "content": content,
-                    "etag": meta.etag + ".md",  # Synthetic etag for virtual view
-                    "version": meta.version,
-                    "modified_at": meta.modified_at,
-                    "size": len(content),
-                }
-            return content
 
         # Normal file path - proceed with regular read
         zone_id, agent_id, is_admin = self._get_routing_params(context)

@@ -1032,7 +1032,7 @@ def create_mcp_server(
             Returns:
                 Execution result with stdout, stderr, exit_code, and execution time
             """
-            nx_instance = _get_nexus_instance(ctx)
+            nx_instance: Any = _get_nexus_instance(ctx)
             result = nx_instance.sandbox_run(
                 sandbox_id=sandbox_id, language="python", code=code, timeout=300
             )
@@ -1050,7 +1050,7 @@ def create_mcp_server(
             Returns:
                 Execution result with stdout, stderr, exit_code, and execution time
             """
-            nx_instance = _get_nexus_instance(ctx)
+            nx_instance: Any = _get_nexus_instance(ctx)
             result = nx_instance.sandbox_run(
                 sandbox_id=sandbox_id, language="bash", code=command, timeout=300
             )
@@ -1070,7 +1070,7 @@ def create_mcp_server(
             Returns:
                 JSON string with sandbox_id and metadata
             """
-            nx_instance = _get_nexus_instance(ctx)
+            nx_instance: Any = _get_nexus_instance(ctx)
             result = nx_instance.sandbox_create(name=name, ttl_minutes=ttl_minutes)
             return json.dumps(result, indent=2)
 
@@ -1082,7 +1082,7 @@ def create_mcp_server(
             Returns:
                 JSON string with list of sandboxes
             """
-            nx_instance = _get_nexus_instance(ctx)
+            nx_instance: Any = _get_nexus_instance(ctx)
             result = nx_instance.sandbox_list()
             return json.dumps(result, indent=2)
 
@@ -1097,7 +1097,7 @@ def create_mcp_server(
             Returns:
                 Success message or error
             """
-            nx_instance = _get_nexus_instance(ctx)
+            nx_instance: Any = _get_nexus_instance(ctx)
             nx_instance.sandbox_stop(sandbox_id)
             return f"Successfully stopped sandbox {sandbox_id}"
 

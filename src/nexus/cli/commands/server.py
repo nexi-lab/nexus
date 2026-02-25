@@ -304,7 +304,7 @@ def _mount_fuse(
         # Set agent_id on remote filesystem for version attribution (issue #418)
         # Only REMOTE profile NexusFS has a settable agent_id property
         if agent_id and hasattr(nx, "_agent_id"):
-            nx.agent_id = agent_id  # type: ignore[misc]
+            nx.agent_id = agent_id  # type: ignore[attr-defined]  # allowed
 
         # Create mount point if it doesn't exist
         mount_path = Path(mount_point)

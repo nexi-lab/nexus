@@ -225,6 +225,12 @@ async def search_query(
                     "line_end": r.line_end,
                     "keyword_score": round(r.keyword_score, 4) if r.keyword_score else None,
                     "vector_score": round(r.vector_score, 4) if r.vector_score else None,
+                    "splade_score": round(r.splade_score, 4)
+                    if getattr(r, "splade_score", None)
+                    else None,
+                    "reranker_score": round(r.reranker_score, 4)
+                    if getattr(r, "reranker_score", None)
+                    else None,
                 }
                 for r in results
             ],
@@ -252,6 +258,21 @@ async def search_refresh_notify(
     return {"status": "accepted", "path": path, "change_type": change_type}
 
 
+@router.post("/bulk-embed")
+async def search_bulk_embed(
+    batch_size: int = Query(50, description="Batch size for embedding"),
+    _auth_result: dict[str, Any] = Depends(require_auth),
+    search_daemon: Any = Depends(_get_search_daemon),
+) -> dict[str, Any]:
+    """Trigger bulk embedding of all BM25S-indexed documents.
+
+    Uses BM25S corpus as content source, registers files in file_paths,
+    and embeds via the standard IndexingPipeline (decoupled from BM25).
+    """
+    embedded = await search_daemon.bulk_embed_from_bm25s(batch_size=batch_size)
+    return {"status": "completed", "documents_embedded": embedded}
+
+
 @router.post("/expand")
 async def search_expand(
     q: str = Query(..., description="Query to expand", min_length=1),
@@ -265,26 +286,45 @@ async def search_expand(
     """Expand a search query using LLM-based query expansion."""
     import os
 
-    from nexus.bricks.search.query_expansion import OpenRouterQueryExpander, QueryExpansionConfig
+    from nexus.bricks.search.query_expansion import (
+        OpenAIQueryExpander,
+        OpenRouterQueryExpander,
+        QueryExpansionConfig,
+    )
 
-    api_key = os.environ.get("OPENROUTER_API_KEY")
-    if not api_key:
+    # Try OpenRouter first, fall back to OpenAI
+    openrouter_key = os.environ.get("OPENROUTER_API_KEY")
+    openai_key = os.environ.get("OPENAI_API_KEY")
+    if not openrouter_key and not openai_key:
         raise HTTPException(
             status_code=503,
-            detail="OPENROUTER_API_KEY not configured for query expansion",
+            detail="No API key configured for query expansion (need OPENROUTER_API_KEY or OPENAI_API_KEY)",
         )
 
     start_time = time.perf_counter()
 
     try:
-        config = QueryExpansionConfig(
-            model=model,
-            max_lex_variants=max_lex,
-            max_vec_variants=max_vec,
-            max_hyde_passages=max_hyde,
-            timeout=15.0,
-        )
-        expander = OpenRouterQueryExpander(config=config, api_key=api_key)
+        if openrouter_key:
+            config = QueryExpansionConfig(
+                model=model,
+                max_lex_variants=max_lex,
+                max_vec_variants=max_vec,
+                max_hyde_passages=max_hyde,
+                timeout=15.0,
+            )
+            expander = OpenRouterQueryExpander(config=config, api_key=openrouter_key)
+        else:
+            # Use OpenAI directly with gpt-4o-mini
+            openai_model = model if "/" not in model else "gpt-4o-mini"
+            config = QueryExpansionConfig(
+                model=openai_model,
+                max_lex_variants=max_lex,
+                max_vec_variants=max_vec,
+                max_hyde_passages=max_hyde,
+                timeout=15.0,
+                fallback_models=[],
+            )
+            expander = OpenAIQueryExpander(config=config, api_key=openai_key)
         expansions = await expander.expand(q, context=context)
         await expander.close()
 

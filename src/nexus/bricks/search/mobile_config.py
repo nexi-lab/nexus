@@ -376,6 +376,19 @@ RERANKER_MODELS: dict[str, RerankerModelConfig] = {
             "license": "MIT",
         },
     ),
+    "bge-reranker-v2-m3": RerankerModelConfig(
+        name="BAAI/bge-reranker-v2-m3",
+        provider=ModelProvider.SENTENCE_TRANSFORMERS,
+        size_mb=560,
+        max_length=8192,
+        batch_size=8,
+        metadata={
+            "params": "568M",
+            "beir_score": 59.14,
+            "license": "MIT",
+            "multilingual": True,
+        },
+    ),
 }
 
 # =============================================================================

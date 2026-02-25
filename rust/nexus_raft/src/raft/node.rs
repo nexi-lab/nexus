@@ -351,7 +351,7 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
             .initial_state()
             .map_err(|e| RaftError::Storage(e.to_string()))?;
 
-        if initial_state.conf_state.voters.is_empty() && !config.peers.is_empty() {
+        if initial_state.conf_state.voters.is_empty() {
             let mut voters = vec![config.id];
             voters.extend(config.peers.iter());
             let cs = ConfState {
@@ -1083,21 +1083,25 @@ mod tests {
             tokio::spawn(run_test_driver(driver, i, all_handles, shutdown_rx));
         }
 
-        // Give drivers a moment to start
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        // Yield to let spawned driver tasks start
+        tokio::task::yield_now().await;
 
         // Phase 3: Trigger election on node 1
         handles[0].campaign().await.unwrap();
 
-        // Wait for leader election
+        // Wait for leader election.
+        // The drivers run on 10ms intervals; election needs ~3 rounds of
+        // message exchange (MsgVote → MsgVoteResp → leader heartbeat).
+        let mut leader_elected = false;
         for _ in 0..200 {
             tokio::time::sleep(Duration::from_millis(10)).await;
             if handles.iter().any(|h| h.is_leader()) {
+                leader_elected = true;
                 break;
             }
         }
+        assert!(leader_elected, "Leader election must complete");
 
-        // Verify exactly one leader
         let mut leader_count = 0;
         let mut leader_idx = 0;
         for (i, handle) in handles.iter().enumerate() {
@@ -1119,21 +1123,29 @@ mod tests {
             "Proposal should succeed"
         );
 
-        // Wait for replication to followers
-        tokio::time::sleep(Duration::from_millis(200)).await;
-
-        // Verify all nodes have the metadata
-        for (i, handle) in handles.iter().enumerate() {
-            let value = handle
-                .with_state_machine(|sm| sm.get_metadata("/test.txt"))
-                .await
-                .unwrap();
-            assert!(
-                value.is_some(),
-                "Node {} should have /test.txt metadata after replication",
-                i + 1
-            );
+        // Wait for replication: poll until all nodes have the data,
+        // instead of a blanket sleep.
+        let mut all_replicated = false;
+        for _ in 0..200 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            let mut ok = true;
+            for handle in &handles {
+                let has_it = handle
+                    .with_state_machine(|sm| sm.get_metadata("/test.txt"))
+                    .await
+                    .map(|v| v.is_some())
+                    .unwrap_or(false);
+                if !has_it {
+                    ok = false;
+                    break;
+                }
+            }
+            if ok {
+                all_replicated = true;
+                break;
+            }
         }
+        assert!(all_replicated, "Replication to all nodes must complete");
 
         // Phase 5: EC propose — returns immediately without waiting for commit
         let ec_cmd = Command::SetMetadata {
@@ -1145,6 +1157,84 @@ mod tests {
 
         // Shutdown all drivers
         let _ = shutdown_tx.send(true);
+    }
+
+    /// Regression test: single-node ConfState must include self as voter.
+    ///
+    /// Before the fix, empty `config.peers` skipped ConfState bootstrap,
+    /// leaving the voter set empty.  This violated raft-rs's contract:
+    /// `RawNode` expects the node to be in the voter set before `campaign()`.
+    /// The result was a panic at `raft.rs:1225` (`unwrap()` on `None`).
+    ///
+    /// The fix: bootstrap ConfState with `voters=[self.id]` even when
+    /// `config.peers` is empty (single-node cluster).
+    ///
+    /// This test is deterministic: no async, no timers, no polling.
+    /// It verifies the persisted ConfState directly after ZoneConsensus::new().
+    #[test]
+    fn test_single_node_conf_state_includes_self() {
+        let dir = TempDir::new().unwrap();
+
+        // Create ZoneConsensus, then drop to release redb lock.
+        {
+            let storage = RaftStorage::open(dir.path()).unwrap();
+            let store = RedbStore::open(dir.path().join("sm")).unwrap();
+            let state_machine = FullStateMachine::new(&store).unwrap();
+
+            let config = RaftConfig {
+                id: 1,
+                peers: vec![], // single-node: no peers
+                ..Default::default()
+            };
+
+            // Before the fix, this skipped ConfState bootstrap when peers
+            // was empty, leaving voters=[].
+            let (_handle, _driver) =
+                ZoneConsensus::new(config, storage, state_machine, None).unwrap();
+        }
+
+        // Re-open storage (redb lock released) and verify ConfState.
+        let storage = RaftStorage::open(dir.path()).unwrap();
+        let state = Storage::initial_state(&storage).unwrap();
+        assert_eq!(
+            state.conf_state.voters,
+            vec![1],
+            "Single-node ConfState must include self as voter"
+        );
+    }
+
+    /// Verify multi-node ConfState includes all voters.
+    ///
+    /// Per raft-rs contract: all initial cluster members must be in
+    /// ConfState.voters before RawNode::new().
+    #[test]
+    fn test_multi_node_conf_state_includes_all_voters() {
+        let dir = TempDir::new().unwrap();
+
+        {
+            let storage = RaftStorage::open(dir.path()).unwrap();
+            let store = RedbStore::open(dir.path().join("sm")).unwrap();
+            let state_machine = FullStateMachine::new(&store).unwrap();
+
+            let config = RaftConfig {
+                id: 1,
+                peers: vec![2, 3],
+                ..Default::default()
+            };
+
+            let (_handle, _driver) =
+                ZoneConsensus::new(config, storage, state_machine, None).unwrap();
+        }
+
+        let storage = RaftStorage::open(dir.path()).unwrap();
+        let state = Storage::initial_state(&storage).unwrap();
+        let mut voters = state.conf_state.voters.clone();
+        voters.sort();
+        assert_eq!(
+            voters,
+            vec![1, 2, 3],
+            "Multi-node ConfState must include self and all peers"
+        );
     }
 
     #[tokio::test]

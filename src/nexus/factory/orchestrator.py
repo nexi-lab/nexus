@@ -562,7 +562,7 @@ def _register_vfs_hooks(nx: "NexusFS") -> None:
         )
 
     # ── PRE-DISPATCH: Virtual view resolver (Issue #332, #889) ────────
-    from nexus.lib.virtual_view_resolver import VirtualViewResolver
+    from nexus.bricks.parsers.virtual_view_resolver import VirtualViewResolver
 
     dispatch.register_resolver(
         VirtualViewResolver(

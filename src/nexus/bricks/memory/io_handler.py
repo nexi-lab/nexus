@@ -1,9 +1,9 @@
 """Memory I/O handler — VFSPathResolver for memory virtual paths (#889).
 
-Structurally satisfies the ``VFSPathResolver`` protocol so it can be
-registered in ``KernelDispatch`` as a PRE-DISPATCH resolver.  When a
-read/write/delete targets a memory path, this handler short-circuits
-the normal VFS pipeline and handles the operation directly.
+Implements the ``VFSPathResolver`` protocol and is registered in
+``KernelDispatch`` as a PRE-DISPATCH resolver.  When a read/write/delete
+targets a memory path, this handler short-circuits the normal VFS
+pipeline and handles the operation directly.
 
 Linux analogue: procfs ``proc_reg_read()`` / ``proc_reg_write()`` —
 a virtual filesystem whose file_operations bypass the block layer.
@@ -15,14 +15,15 @@ import logging
 from typing import Any
 
 from nexus.contracts.exceptions import NexusFileNotFoundError
+from nexus.contracts.vfs_hooks import VFSPathResolver
 
 logger = logging.getLogger(__name__)
 
 
-class MemoryIOHandler:
+class MemoryIOHandler(VFSPathResolver):
     """PRE-DISPATCH resolver for memory virtual paths.
 
-    Satisfies ``VFSPathResolver`` protocol (structural typing):
+    Implements ``VFSPathResolver`` protocol:
     - ``matches(path)`` — routing predicate
     - ``read(path, ...)`` — memory read
     - ``write(path, content)`` — memory write

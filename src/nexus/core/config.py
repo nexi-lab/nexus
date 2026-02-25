@@ -319,7 +319,6 @@ class BrickServices:
     version_service: Any = None  # VersionService (file history, rollback, diff)
 
     # --- Memory Brick (Issue #2177) ---
-    memory_router: Any = None  # MemoryViewRouter singleton
     memory_permission: Any = None  # MemoryPermissionProtocol adapter
 
     # --- Search Brick (Issue #810) ---

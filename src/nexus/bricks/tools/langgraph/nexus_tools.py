@@ -21,7 +21,7 @@ data, run code, and discover reusable skills across agent runs.
 Authentication:
     API key is REQUIRED via metadata.x_auth: "Bearer <token>"
     Frontend automatically passes the authenticated user's API key in request metadata.
-    Each tool creates an authenticated RemoteNexusFS instance using the extracted token.
+    Each tool creates an authenticated Nexus client using the extracted token.
 """
 
 import shlex
@@ -32,10 +32,8 @@ from langchain_core.tools import BaseTool, tool
 from langgraph.prebuilt import InjectedState
 
 from nexus.bricks.tools._client import _get_nexus_client
-from nexus.remote import RemoteNexusFS  # re-export for backward compatibility
 
 __all__ = [
-    "RemoteNexusFS",
     "get_nexus_tools",
     "list_skills",
 ]

@@ -7,7 +7,7 @@ function to quickly build a ReAct agent with Nexus filesystem integration.
 Authentication:
     API keys are REQUIRED via metadata.x_auth: "Bearer <token>"
     Frontend automatically passes the authenticated user's API key in request metadata.
-    Each tool extracts and uses the token to create an authenticated RemoteNexusFS instance.
+    Each tool extracts and uses the token to create an authenticated nexus.connect() instance.
 
 Requirements:
     pip install langgraph langchain-anthropic

@@ -8,11 +8,9 @@ from typing import Any
 
 from langchain_core.runnables import RunnableConfig
 
-from nexus.remote import RemoteNexusFS
 
-
-def _get_nexus_client(config: RunnableConfig, state: dict[str, Any] | None = None) -> RemoteNexusFS:
-    """Create authenticated RemoteNexusFS from config or state.
+def _get_nexus_client(config: RunnableConfig, state: dict[str, Any] | None = None) -> Any:
+    """Create authenticated Nexus client from config or state.
 
     Requires authentication via metadata.x_auth: "Bearer <token>" or state["context"]["x_auth"]
 
@@ -21,7 +19,7 @@ def _get_nexus_client(config: RunnableConfig, state: dict[str, Any] | None = Non
         state: Optional agent state that may contain context with x_auth
 
     Returns:
-        Authenticated RemoteNexusFS instance
+        Authenticated NexusFS instance (REMOTE profile via nexus.connect)
 
     Raises:
         ValueError: If x_auth is missing or invalid
@@ -55,4 +53,6 @@ def _get_nexus_client(config: RunnableConfig, state: dict[str, Any] | None = Non
     if not api_key:
         raise ValueError("Invalid x_auth format. Expected 'Bearer <token>', got: " + x_auth)
 
-    return RemoteNexusFS(server_url=server_url, api_key=api_key)
+    import nexus
+
+    return nexus.connect(config={"mode": "remote", "url": server_url, "api_key": api_key})

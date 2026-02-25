@@ -65,7 +65,6 @@ __all__ = [
     # Core interfaces
     "Filesystem",
     "NexusFS",
-    "RemoteNexusFS",
     # Backends
     "Backend",
     "LocalBackend",
@@ -145,7 +144,6 @@ from nexus.contracts.exceptions import (
 from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC as Filesystem
 from nexus.contracts.types import OperationContext
 from nexus.core.nexus_fs import NexusFS
-from nexus.remote import RemoteNexusFS
 
 
 def connect(

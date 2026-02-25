@@ -52,8 +52,8 @@ Nexus uses a **Relationship-Based Access Control (ReBAC)** system inspired by Go
 
 - **Server Mode**: ReBAC via HTTP RPC
   ```python
-  from nexus.remote import RemoteNexusFS
-  nx = RemoteNexusFS(server_url="...", api_key="...")
+  import nexus
+  nx = nexus.connect(config={"mode": "remote", "url": "...", "api_key": "..."})
 
   # Same API, works over HTTP
   nx.rebac_create(...)
@@ -388,12 +388,9 @@ Database (SQLite/PostgreSQL)
 **HTTP RPC Protocol:**
 
 ```python
-from nexus.remote import RemoteNexusFS
+import nexus
 
-nx = RemoteNexusFS(
-    server_url="http://localhost:2026",
-    api_key="sk-alice-xxx"
-)
+nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": "sk-alice-xxx"})
 
 # Same API, but over HTTP
 tuple_id = nx.rebac_create(
@@ -412,7 +409,7 @@ can_write = nx.rebac_check(
 
 **Internal Flow:**
 ```
-RemoteNexusFS
+remote NexusFS (via nexus.connect())
     ↓
 HTTP POST /api/nfs/rebac_create
     ↓
@@ -432,7 +429,7 @@ JSON-RPC Response
     ↓
 HTTP 200 OK
     ↓
-RemoteNexusFS returns result
+remote NexusFS returns result
 ```
 
 ### Performance Comparison

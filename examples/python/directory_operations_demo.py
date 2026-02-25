@@ -24,7 +24,7 @@ import sys
 from contextlib import suppress
 
 try:
-    from nexus.remote.client import RemoteNexusFS
+    import nexus
 except ImportError:
     print("❌ nexus-ai-fs not installed. Run: pip install nexus-ai-fs")
     sys.exit(1)
@@ -63,7 +63,7 @@ def main():
     print_section("1. Connecting to Remote Server")
 
     try:
-        nx = RemoteNexusFS(server_url=server_url, api_key=api_key)
+        nx = nexus.connect(config={"mode": "remote", "url": server_url, "api_key": api_key})
         print(f"✅ Connected to {server_url}")
     except Exception as e:
         print(f"❌ Failed to connect: {e}")

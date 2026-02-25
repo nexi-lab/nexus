@@ -525,7 +525,7 @@ else
     fi
 fi
 
-# Unset NEXUS_URL to prevent server from using RemoteNexusFS (circular dependency)
+# Unset NEXUS_URL to prevent server from using remote NexusFS (circular dependency)
 unset NEXUS_URL
 
 # Start server with database auth (redirect logs to file)

@@ -312,13 +312,10 @@ nx.rollback("/workspace/doc.txt", version=2)
 ### Remote Filesystem
 
 ```python
-from nexus.sdk import RemoteNexusFS
+import nexus
 
 # Connect to remote Nexus server
-nx = RemoteNexusFS(
-    server_url="http://your-server:2026",
-    api_key="your-api-key"
-)
+nx = nexus.connect(config={"mode": "remote", "url": "http://your-server:2026", "api_key": "your-api-key"})
 
 # Same API as local filesystem!
 nx.write("/workspace/file.txt", b"remote data")

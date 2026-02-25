@@ -1,6 +1,6 @@
 # RPC Parity Guide
 
-**Problem**: How to ensure parity between local NexusFS and RemoteNexusFS implementations?
+**Problem**: How to ensure parity between local NexusFS and remote NexusFS (via `nexus.connect()`) implementations?
 
 When adding a new method to NexusFS, you need to update **two places**:
 1. Core implementation (`src/nexus/core/nexus_fs*.py`) with `@rpc_expose` decorator
@@ -30,7 +30,7 @@ This was error-prone and easy to forget. **This is now automatically enforced!**
         │                 │
 ┌───────▼──────┐   ┌──────▼────────┐
 │  Embedded    │   │    Server     │
-│  NexusFS     │   │ RemoteNexusFS │
+│  NexusFS     │   │ nexus.connect()│
 └──────┬───────┘   └───────┬───────┘
        │                   │
        │                   │ HTTP/RPC
@@ -75,7 +75,7 @@ This was error-prone and easy to forget. **This is now automatically enforced!**
 
 ### Test 2: Implementation Parity Test
 - ✅ Finds all methods decorated with `@rpc_expose` in NexusFS
-- ✅ Verifies each one has a corresponding method in RemoteNexusFS
+- ✅ Verifies each one has a corresponding method in remote NexusFS (via `nexus.connect()`)
 - ✅ Reports missing methods with file locations
 - ✅ Runs automatically in CI
 
@@ -91,20 +91,20 @@ uv run pytest tests/unit/test_rpc_parity.py -v -s
 
 **Output example**:
 ```
-✓ All 26 @rpc_expose methods have RemoteNexusFS implementations
+✓ All 26 @rpc_expose methods have remote NexusFS implementations
   Exposed methods: batch_get_content_ids, chgrp, chmod, chown, delete...
   Remote methods: 28 total
 ```
 
 If a method is missing, the test fails with:
 ```
-The following @rpc_expose methods are missing from RemoteNexusFS:
+The following @rpc_expose methods are missing from remote NexusFS (via `nexus.connect()`):
   - new_method() [nexus_fs.py:123]
 
 To fix this:
 1. Add the missing method(s) to src/nexus/remote/client.py
 2. Each method should call self._call_rpc(method_name, params)
-3. See existing methods in RemoteNexusFS for examples
+3. See existing methods in remote NexusFS for examples
 ```
 
 ---
@@ -161,7 +161,7 @@ uv run pytest tests/unit/test_rpc_parity.py -v
 ```
 
 ✅ If it passes, you're done!
-❌ If it fails, add the missing method to RemoteNexusFS.
+❌ If it fails, add the missing method to remote NexusFS.
 
 ---
 
@@ -254,7 +254,7 @@ your_feature.register_commands(cli)
 When adding a new RPC method, verify:
 
 - [ ] Method has `@rpc_expose` decorator in core
-- [ ] RemoteNexusFS has corresponding client method
+- [ ] remote NexusFS has corresponding client method
 - [ ] Unit test: `pytest tests/unit/test_rpc_parity.py` passes
 - [ ] Integration test: Add test to `tests/integration/test_remote_parity.py`
 - [ ] CLI test (if applicable): Add test to `tests/integration/test_remote_parity.sh`
@@ -299,7 +299,7 @@ def your_new_method(self, path: str, param: str) -> dict:
     return {"result": "value"}
 ```
 
-Then add corresponding RemoteNexusFS implementation (see above).
+Then add corresponding remote NexusFS implementation (see above).
 
 #### Option 2: Mark as Internal-Only (RARE - 5% of cases)
 
@@ -335,7 +335,7 @@ If you see this error in CI:
 
 **Fix it by:**
 1. Adding `@rpc_expose` decorator (recommended)
-2. Adding RemoteNexusFS implementation
+2. Adding remote NexusFS implementation
 3. OR adding to `INTERNAL_ONLY_METHODS` with justification (rare)
 
 ---
@@ -345,7 +345,7 @@ If you see this error in CI:
 To fully eliminate manual duplication, consider:
 
 1. **Automatic Client Generation**
-   - Generate RemoteNexusFS methods from `@rpc_expose` decorators
+   - Generate remote NexusFS methods from `@rpc_expose` decorators
    - Tool: `scripts/generate_remote_client.py`
 
 2. **Dynamic Proxy Pattern**
@@ -398,7 +398,7 @@ User Code
     │ nx.write("/file.txt", b"hello")
     │
     ▼
-RemoteNexusFS.write()
+nexus.connect().write()
     │
     ├─► Build RPC request
     ├─► Serialize params
@@ -426,7 +426,7 @@ Return {"etag": "abc123", ...}
 HTTP Response
     │
     ▼
-RemoteNexusFS.write()
+nexus.connect().write()
     │
     ├─► Deserialize
     │

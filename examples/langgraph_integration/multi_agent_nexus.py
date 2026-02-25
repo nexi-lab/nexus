@@ -19,7 +19,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 
-from nexus.remote import RemoteNexusFS
+import nexus
 
 
 # State definition (same as standard version)
@@ -48,7 +48,7 @@ def get_demo_user_key():
     return demo_key
 
 
-def setup_nexus_permissions(admin_nx: RemoteNexusFS, workspace: str):
+def setup_nexus_permissions(admin_nx, workspace: str):
     """
     Setup permission structure for multi-agent workflow.
 
@@ -110,11 +110,14 @@ def researcher_node(state: AgentState) -> AgentState:
 
     # Connect as researcher agent (with limited permissions)
     # Use demo user API key (non-admin) with X-Agent-ID header for permission enforcement
-    nexus = RemoteNexusFS(
-        server_url=os.getenv("NEXUS_URL", "http://localhost:2026"),
-        api_key=get_demo_user_key(),  # Non-admin key
+    nx = nexus.connect(
+        config={
+            "mode": "remote",
+            "url": os.getenv("NEXUS_URL", "http://localhost:2026"),
+            "api_key": get_demo_user_key(),
+        }
     )
-    nexus.agent_id = "researcher"  # Set agent identity for permission checks
+    nx.agent_id = "researcher"  # Set agent identity for permission checks
 
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7)
 
@@ -132,7 +135,7 @@ def researcher_node(state: AgentState) -> AgentState:
 
     # Write requirements using Nexus (drop-in replacement!)
     research_file = "/workspace/research/requirements.txt"
-    nexus.write(research_file, requirements)
+    nx.write(research_file, requirements)
 
     print(f"✓ Requirements written to {research_file}")
     print("  (Researcher has write permission to /workspace/research/)")
@@ -146,14 +149,17 @@ def coder_node(state: AgentState) -> AgentState:
 
     # Connect as coder agent
     # Use demo user API key (non-admin) with X-Agent-ID header for permission enforcement
-    nexus = RemoteNexusFS(
-        server_url=os.getenv("NEXUS_URL", "http://localhost:2026"),
-        api_key=get_demo_user_key(),  # Non-admin key
+    nx = nexus.connect(
+        config={
+            "mode": "remote",
+            "url": os.getenv("NEXUS_URL", "http://localhost:2026"),
+            "api_key": get_demo_user_key(),
+        }
     )
-    nexus.agent_id = "coder"  # Set agent identity for permission checks
+    nx.agent_id = "coder"  # Set agent identity for permission checks
 
     # Read requirements using Nexus
-    requirements = nexus.read(state["research_file"])
+    requirements = nx.read(state["research_file"])
     print("  (Coder has read permission to /workspace/research/)")
 
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
@@ -172,7 +178,7 @@ def coder_node(state: AgentState) -> AgentState:
 
     # Write code using Nexus
     code_file = "/workspace/code/implementation.py"
-    nexus.write(code_file, code)
+    nx.write(code_file, code)
 
     print(f"✓ Code written to {code_file}")
     print("  (Coder has write permission to /workspace/code/)")
@@ -186,14 +192,17 @@ def reviewer_node(state: AgentState) -> AgentState:
 
     # Connect as reviewer agent
     # Use demo user API key (non-admin) with X-Agent-ID header for permission enforcement
-    nexus = RemoteNexusFS(
-        server_url=os.getenv("NEXUS_URL", "http://localhost:2026"),
-        api_key=get_demo_user_key(),  # Non-admin key
+    nx = nexus.connect(
+        config={
+            "mode": "remote",
+            "url": os.getenv("NEXUS_URL", "http://localhost:2026"),
+            "api_key": get_demo_user_key(),
+        }
     )
-    nexus.agent_id = "reviewer"  # Set agent identity for permission checks
+    nx.agent_id = "reviewer"  # Set agent identity for permission checks
 
     # Read code using Nexus
-    code = nexus.read(state["code_file"])
+    code = nx.read(state["code_file"])
     print("  (Reviewer has read permission to /workspace/code/)")
 
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.5)
@@ -210,7 +219,7 @@ def reviewer_node(state: AgentState) -> AgentState:
 
     # Write review using Nexus
     review_file = "/workspace/reviews/review.txt"
-    nexus.write(review_file, review)
+    nx.write(review_file, review)
 
     print(f"✓ Review written to {review_file}")
     print("  (Reviewer has write permission to /workspace/reviews/)")
@@ -251,15 +260,21 @@ def demonstrate_permission_enforcement():
     print("=" * 60)
 
     # Use non-admin demo user key for permission enforcement
-    nexus_coder = RemoteNexusFS(
-        server_url=os.getenv("NEXUS_URL", "http://localhost:2026"),
-        api_key=get_demo_user_key(),  # Non-admin key
+    nexus_coder = nexus.connect(
+        config={
+            "mode": "remote",
+            "url": os.getenv("NEXUS_URL", "http://localhost:2026"),
+            "api_key": get_demo_user_key(),
+        }
     )
     nexus_coder.agent_id = "coder"
 
-    nexus_reviewer = RemoteNexusFS(
-        server_url=os.getenv("NEXUS_URL", "http://localhost:2026"),
-        api_key=get_demo_user_key(),  # Non-admin key
+    nexus_reviewer = nexus.connect(
+        config={
+            "mode": "remote",
+            "url": os.getenv("NEXUS_URL", "http://localhost:2026"),
+            "api_key": get_demo_user_key(),
+        }
     )
     nexus_reviewer.agent_id = "reviewer"
 
@@ -289,9 +304,12 @@ def main():
     print("=" * 60)
 
     # Setup admin connection for permission configuration
-    admin_nx = RemoteNexusFS(
-        server_url=os.getenv("NEXUS_URL", "http://localhost:2026"),
-        api_key=os.getenv("NEXUS_API_KEY"),
+    admin_nx = nexus.connect(
+        config={
+            "mode": "remote",
+            "url": os.getenv("NEXUS_URL", "http://localhost:2026"),
+            "api_key": os.getenv("NEXUS_API_KEY"),
+        }
     )
 
     workspace = "/workspace"

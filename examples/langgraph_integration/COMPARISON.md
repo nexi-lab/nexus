@@ -20,10 +20,10 @@ from typing import TypedDict, Literal
 from langgraph.graph import StateGraph, START, END
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
-from nexus.remote import RemoteNexusFS  # ← Only new import!
+import nexus  # ← Only new import!
 ```
 
-**Difference:** Add just ONE import: `RemoteNexusFS`
+**Difference:** Add just ONE import: `nexus`
 
 ---
 
@@ -84,11 +84,8 @@ requirements = nexus.read(state["research_file"])
 ### Nexus Version
 ```python
 # Connect as specific agent with restricted permissions
-nexus = RemoteNexusFS(
-    server_url=os.getenv("NEXUS_URL", "http://localhost:2026"),
-    api_key=os.getenv("NEXUS_API_KEY")
-)
-nexus.agent_id = "researcher"  # Identifies agent for permission checks
+nx = nexus.connect(config={"mode": "remote", "url": os.getenv("NEXUS_URL", "http://localhost:2026"), "api_key": os.getenv("NEXUS_API_KEY")})
+nx.agent_id = "researcher"  # Identifies agent for permission checks
 ```
 
 **Difference:**
@@ -150,11 +147,8 @@ def researcher_node(state: AgentState) -> AgentState:
     print(f"\n🔍 Researcher is analyzing task: {state['task']}")
 
     # Connect as researcher agent
-    nexus = RemoteNexusFS(
-        server_url=os.getenv("NEXUS_URL", "http://localhost:2026"),
-        api_key=os.getenv("NEXUS_API_KEY")
-    )
-    nexus.agent_id = "researcher"
+    nx = nexus.connect(config={"mode": "remote", "url": os.getenv("NEXUS_URL", "http://localhost:2026"), "api_key": os.getenv("NEXUS_API_KEY")})
+    nx.agent_id = "researcher"
 
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7)
     messages = [...]
@@ -163,13 +157,13 @@ def researcher_node(state: AgentState) -> AgentState:
 
     # Nexus file I/O with permission checks
     research_file = "/workspace/research/requirements.txt"
-    nexus.write(research_file, requirements)
+    nx.write(research_file, requirements)
 
     return {**state, "research_file": research_file, "current_agent": "coder"}
 ```
 
 **Key Changes:**
-1. Add `RemoteNexusFS` connection with agent identity
+1. Add `nexus.connect()` connection with agent identity
 2. Replace `os.makedirs()` + `open()` + `write()` with `nexus.write()`
 3. Use absolute paths (`/workspace/`) instead of relative paths
 4. Permissions automatically enforced
@@ -223,13 +217,13 @@ To migrate from standard file I/O to Nexus:
 
 1. **Add import** (1 line)
    ```python
-   from nexus.remote import RemoteNexusFS
+   import nexus
    ```
 
 2. **Create Nexus connection** (3-4 lines per agent)
    ```python
-   nexus = RemoteNexusFS(server_url=..., api_key=...)
-   nexus.agent_id = "agent-name"
+   nx = nexus.connect(config={"mode": "remote", "url": ..., "api_key": ...})
+   nx.agent_id = "agent-name"
    ```
 
 3. **Replace file operations** (1:1 replacement)

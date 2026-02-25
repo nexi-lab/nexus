@@ -158,7 +158,7 @@ Time duration values are encoded as total seconds (v0.5.0+):
 }
 ```
 
-**Note:** When using the official Python client (`RemoteNexusFS`), these conversions are handled automatically. Manual API calls (curl, Postman, etc.) **must** use the formats above.
+**Note:** When using the official Python client (`nexus.connect()`), these conversions are handled automatically. Manual API calls (curl, Postman, etc.) **must** use the formats above.
 
 ---
 

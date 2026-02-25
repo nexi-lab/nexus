@@ -67,7 +67,7 @@ logger = logging.getLogger(__name__)
 class MetadataObj:
     """Immutable metadata container for FUSE attribute responses (C2-B).
 
-    Converts a raw metadata dict (from RemoteNexusFS.get_metadata()) into
+    Converts a raw metadata dict (from NexusFS.get_metadata() in REMOTE profile) into
     a typed, immutable object with named attributes.
     """
 

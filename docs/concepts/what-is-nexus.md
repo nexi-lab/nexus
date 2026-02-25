@@ -121,14 +121,14 @@ Traditional filesystems were designed for humans and applications. Nexus is desi
 ### 2. **Progressive Disclosure**
 Start simple, grow complex:
 ```python
-from nexus import NexusFS, LocalBackend, RemoteNexusFS
+from nexus import NexusFS, LocalBackend
 
 # Start: Local filesystem
 backend = LocalBackend(root_path="/tmp/nexus-data")
 nx = NexusFS(backend=backend, is_admin=True)
 
 # Grow: Add remote server
-nx = RemoteNexusFS(server_url="http://localhost:2026", api_key="...")
+nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": "..."})
 
 # Scale: Multi-backend mounts
 nx.mount("/workspace/db", PostgreSQLBackend(...))

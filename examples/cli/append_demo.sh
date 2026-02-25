@@ -141,9 +141,9 @@ print_info "Each append creates a new version..."
 python3 << 'PYTHON_VERSIONS'
 import sys, os
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
+import nexus
 
-nx = RemoteNexusFS(os.getenv('NEXUS_URL'), api_key=os.getenv('NEXUS_API_KEY'))
+nx = nexus.connect(config={"mode": "remote", "url": os.getenv('NEXUS_URL'), "api_key": os.getenv('NEXUS_API_KEY')})
 base = os.getenv('DEMO_BASE')
 
 versions = nx.list_versions(f"{base}/application.log")
@@ -195,9 +195,9 @@ print_info "Reading back JSONL file and parsing events..."
 python3 << 'PYTHON_JSONL'
 import sys, os, json
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
+import nexus
 
-nx = RemoteNexusFS(os.getenv('NEXUS_URL'), api_key=os.getenv('NEXUS_API_KEY'))
+nx = nexus.connect(config={"mode": "remote", "url": os.getenv('NEXUS_URL'), "api_key": os.getenv('NEXUS_API_KEY')})
 base = os.getenv('DEMO_BASE')
 
 content = nx.read(f"{base}/events.jsonl").decode('utf-8')
@@ -229,9 +229,9 @@ print_info "Getting current ETag before append..."
 ETAG=$(python3 << 'PYTHON_ETAG'
 import sys, os
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
+import nexus
 
-nx = RemoteNexusFS(os.getenv('NEXUS_URL'), api_key=os.getenv('NEXUS_API_KEY'))
+nx = nexus.connect(config={"mode": "remote", "url": os.getenv('NEXUS_URL'), "api_key": os.getenv('NEXUS_API_KEY')})
 base = os.getenv('DEMO_BASE')
 
 result = nx.read(f"{base}/counter.txt", return_metadata=True)
@@ -266,10 +266,10 @@ print_info "Demonstrating how to resolve conflicts with automatic retry..."
 python3 << 'PYTHON_RETRY'
 import sys, os
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
+import nexus
 from nexus.core.exceptions import ConflictError
 
-nx = RemoteNexusFS(os.getenv('NEXUS_URL'), api_key=os.getenv('NEXUS_API_KEY'))
+nx = nexus.connect(config={"mode": "remote", "url": os.getenv('NEXUS_URL'), "api_key": os.getenv('NEXUS_API_KEY')})
 base = os.getenv('DEMO_BASE')
 
 # Retry pattern for safe concurrent appends
@@ -386,9 +386,9 @@ print_info "Simulating an application collecting performance metrics..."
 python3 << 'PYTHON_METRICS'
 import sys, os, json, time, random
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
+import nexus
 
-nx = RemoteNexusFS(os.getenv('NEXUS_URL'), api_key=os.getenv('NEXUS_API_KEY'))
+nx = nexus.connect(config={"mode": "remote", "url": os.getenv('NEXUS_URL'), "api_key": os.getenv('NEXUS_API_KEY')})
 base = os.getenv('DEMO_BASE')
 
 # Simulate 10 metric collections
@@ -418,9 +418,9 @@ print_info "Computing statistics from metrics..."
 python3 << 'PYTHON_ANALYZE'
 import sys, os, json
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
+import nexus
 
-nx = RemoteNexusFS(os.getenv('NEXUS_URL'), api_key=os.getenv('NEXUS_API_KEY'))
+nx = nexus.connect(config={"mode": "remote", "url": os.getenv('NEXUS_URL'), "api_key": os.getenv('NEXUS_API_KEY')})
 base = os.getenv('DEMO_BASE')
 
 content = nx.read(f"{base}/metrics.jsonl").decode('utf-8')

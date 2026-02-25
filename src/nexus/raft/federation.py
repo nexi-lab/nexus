@@ -2,7 +2,7 @@
 
 Federation is NOT kernel. It is an optional subsystem at the same level as
 CacheStore/RecordStore. Without federation, NexusFS gracefully degrades to
-client-server mode (RemoteNexusFS) or single-node standalone mode.
+client-server mode (REMOTE profile) or single-node standalone mode.
 
 Layering:
     NexusFederation (this file) — orchestration / service layer

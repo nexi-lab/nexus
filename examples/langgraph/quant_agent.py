@@ -7,7 +7,7 @@ with access to Nexus filesystem containing trading API documentation and data.
 Authentication:
     API keys are REQUIRED via metadata.x_auth: "Bearer <token>"
     Frontend automatically passes the authenticated user's API key in request metadata.
-    Each tool extracts and uses the token to create an authenticated RemoteNexusFS instance.
+    Each tool extracts and uses the token to create an authenticated nexus.connect() instance.
 
 Requirements:
     pip install langgraph langchain-anthropic

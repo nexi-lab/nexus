@@ -1054,7 +1054,7 @@ class RaftMetadataStore(MetastoreABC):
             raise NotImplementedError("Remote force_release requires async")
 
     # =========================================================================
-    # Async Methods (for RemoteNexusFS using remote mode)
+    # Async Methods (for REMOTE profile)
     # =========================================================================
 
     async def get_async(self, path: str) -> FileMetadata | None:

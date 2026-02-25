@@ -98,9 +98,9 @@ nexus rmdir -r -f /workspace/shared-readonly-test 2>/dev/null || true
 python3 << 'CLEANUP'
 import sys, os
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
+import nexus
 
-nx = RemoteNexusFS(os.getenv('NEXUS_URL', 'http://localhost:2026'), api_key=os.getenv('NEXUS_API_KEY'))
+nx = nexus.connect(config={"mode": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')})
 base = os.getenv('DEMO_BASE')
 
 # 1. Delete all tuples related to demo paths (file objects, parent relationships)
@@ -356,8 +356,8 @@ nexus rebac create user bob direct_editor file $DEMO_BASE/project1
 python3 << 'PYTHON_PARENTS'
 import sys, os
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
-nx = RemoteNexusFS(os.getenv('NEXUS_URL', 'http://localhost:2026'), api_key=os.getenv('NEXUS_API_KEY'))
+import nexus
+nx = nexus.connect(config={"mode": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')})
 base = os.getenv('DEMO_BASE')
 nx.rebac_create(("file", f"{base}/project1/docs"), "parent", ("file", f"{base}/project1"))
 nx.rebac_create(("file", f"{base}/project1/docs/guides"), "parent", ("file", f"{base}/project1/docs"))
@@ -455,8 +455,8 @@ print_info "Listing all permissions for bob..."
 python3 << 'PYTHON_LIST'
 import sys, os
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
-nx = RemoteNexusFS(os.getenv('NEXUS_URL', 'http://localhost:2026'), api_key=os.getenv('NEXUS_API_KEY'))
+import nexus
+nx = nexus.connect(config={"mode": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')})
 tuples = nx.rebac_list_tuples(subject=("user", "bob"))
 print(f"Bob has {len(tuples)} permission tuples:")
 for t in tuples[:5]:
@@ -483,8 +483,8 @@ print_test "Creating cycle: A→B→A should fail"
 python3 << 'PYTHON_CYCLE'
 import sys, os
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
-nx = RemoteNexusFS(os.getenv('NEXUS_URL', 'http://localhost:2026'), api_key=os.getenv('NEXUS_API_KEY'))
+import nexus
+nx = nexus.connect(config={"mode": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')})
 base = os.getenv('DEMO_BASE')
 try:
     nx.rebac_create(("file", f"{base}/cycleA"), "parent", ("file", f"{base}/cycleB"))
@@ -643,8 +643,8 @@ print_subsection "8.2 Test cache invalidation on permission DELETE"
 TUPLE_ID=$(python3 -c "
 import sys, os
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
-nx = RemoteNexusFS(os.getenv('NEXUS_URL', 'http://localhost:2026'), api_key=os.getenv('NEXUS_API_KEY'))
+import nexus
+nx = nexus.connect(config={"mode": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')})
 tuples = nx.rebac_list_tuples(subject=('user', 'alice'), object=('file', '$DEMO_BASE/cache-test.txt'))
 print(tuples[0]['tuple_id'] if tuples else '')
 nx.close()

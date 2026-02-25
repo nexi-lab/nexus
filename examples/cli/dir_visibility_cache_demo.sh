@@ -86,7 +86,7 @@ import time
 
 sys.path.insert(0, 'src')
 
-from nexus.remote.client import RemoteNexusFS
+import nexus
 
 # Configuration
 NEXUS_URL = os.getenv('NEXUS_URL', 'http://localhost:2026')
@@ -121,7 +121,7 @@ def print_perf(msg): print(f"{MAGENTA}PERF:{NC} {msg}")
 
 print_section("1. Setup Test Environment")
 
-nx = RemoteNexusFS(NEXUS_URL, api_key=NEXUS_API_KEY)
+nx = nexus.connect(config={"mode": "remote", "url": NEXUS_URL, "api_key": NEXUS_API_KEY})
 
 # Cleanup old data
 print_info("Cleaning up old test data...")
@@ -209,7 +209,7 @@ try:
         print_success(f"Created API key for testuser")
 
         # Create new client with testuser credentials
-        nx_testuser = RemoteNexusFS(NEXUS_URL, api_key=testuser_key)
+        nx_testuser = nexus.connect(config={"mode": "remote", "url": NEXUS_URL, "api_key": testuser_key})
         use_testuser = True
     else:
         print_warning(f"Could not create testuser API key: {result}")

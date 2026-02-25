@@ -1,7 +1,6 @@
-"""Workflow dispatch service (#625 partial: extract from core/).
+"""Workflow dispatch service (#625).
 
-Extracted from ``NexusFSCoreMixin._fire_workflow_event`` / ``ensure_workflow_consumer``
-(Task #808). Dispatches workflow trigger events via PipeManager (userspace API
+Dispatches workflow trigger events via PipeManager (userspace API
 over DT_PIPE kernel IPC) and broadcasts to webhook subscriptions.
 
 Implements ``VFSObserver`` — registered in KernelDispatch's OBSERVE phase so

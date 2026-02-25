@@ -61,12 +61,8 @@ This document describes the **current** Nexus architecture as it exists today, i
 
 **Structure:**
 ```python
-class NexusFS(  # type: ignore[misc]  # Even mypy can't handle this
-    NexusFSCoreMixin,         # 2,807 lines - CRUD operations
-    NexusFSSearchMixin,       # 2,175 lines - Semantic search
-    NexusFSReBACMixin,        # 2,554 lines - Permissions
-    NexusFSVersionsMixin,     # 300 lines - Version control
-    NexusFSMountsMixin,       # 2,048 lines - Mount management
+class NexusFS(
+    NexusFilesystemABC,        # Pure composition — no mixins
     NexusFSOAuthMixin,        # 1,116 lines - OAuth integration
     NexusFSSkillsMixin,       # 874 lines - Skills system
     NexusFSMCPMixin,          # 379 lines - MCP integration
@@ -257,8 +253,7 @@ src/nexus/
 ├── sync.py                      # Sync operations
 │
 ├── core/                        # Core filesystem (⚠️ God Object here)
-│   ├── nexus_fs.py             # Main class (6,167 lines) 🚨
-│   ├── nexus_fs_core.py        # CRUD mixin (2,807 lines) ⚠️
+│   ├── nexus_fs.py             # Main class (VFS ops included) 🚨
 │   ├── nexus_fs_search.py      # Search mixin (2,175 lines) ⚠️
 │   ├── nexus_fs_rebac.py       # Permissions mixin (2,554 lines) ⚠️
 │   ├── nexus_fs_mounts.py      # Mounts mixin (2,048 lines) ⚠️

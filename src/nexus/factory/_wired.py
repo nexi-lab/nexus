@@ -417,7 +417,9 @@ def _boot_wired_services(
             backend=_root_backend,
             default_context=_nx_default_context,
             entity_registry=system_services.entity_registry,
-            ensure_entity_registry_fn=getattr(nx, "_ensure_entity_registry", None),
+            ensure_entity_registry_fn=getattr(
+                getattr(nx, "_memory_provider", None), "ensure_entity_registry", None
+            ),
         )
         logger.debug("[BOOT:WIRED] ACERPCService created")
     except Exception as exc:

@@ -171,11 +171,9 @@ a composed ABC of 7 sub-ABCs (FileOps, Discovery, DirectoryOps, Workspace, Memor
 Lifecycle). `connect()` returns this type. Relationship: POSIX spec (contract) vs Linux kernel
 (implementation) — clients program against the contract, kernel implements it.
 
-`NexusFSCoreMixin` contains the VFS operation implementations (like `vfs_read`,
-`vfs_write` in Linux), inherited by NexusFS. This is an implementation detail —
-a Python mixin used to split the large NexusFS class. As services continue
-extracting, the mixin should shrink to pure VFS ops and eventually evolve from
-mixin (inheritance) to composition (standalone `VFSCore` class).
+`NexusFS` contains the VFS operation implementations directly (like `vfs_read`,
+`vfs_write` in Linux). Permission checking flows through KernelDispatch
+INTERCEPT hooks (LSM pattern), not kernel attributes.
 
 `factory.py` is the init system (analogous to systemd): constructs drivers
 + services and wires them together. NexusFS creates its own kernel
@@ -206,7 +204,7 @@ Three-phase dispatch per VFS operation:
 | Phase | Semantics | Short-circuit? | Linux Analogue | Mechanism |
 |-------|-----------|----------------|----------------|-----------|
 | **PRE-DISPATCH** | First-match short-circuit | Yes (skips pipeline) | VFS `file->f_op` dispatch (procfs, sysfs) | `KernelDispatch.resolve_*()` |
-| **INTERCEPT** | Synchronous, ordered | Yes (hook policy) | LSM `call_void_hook()` | `KernelDispatch.intercept_post_*()` |
+| **INTERCEPT** | Synchronous, ordered (pre + post) | Yes (abort/policy) | LSM security hooks | `intercept_pre_*()` / `intercept_post_*()` |
 | **OBSERVE** | Fire-and-forget | No | `fsnotify()` / `notifier_call_chain()` | `KernelDispatch.notify()` |
 
 **Implementation** (`core/kernel_dispatch.py`, Issues #900, #889):

@@ -1,8 +1,6 @@
 """TigerCacheRenameHook — bitmap updates on file/directory move (INTERCEPT rename).
 
-Extracted from NexusFSCoreMixin._update_tiger_cache_on_move() +
-_get_directory_files_for_move() (Phase 4 of Issue #2033, Strangler Fig decomposition).
-Issue #625: Lives in services/permissions/cache/tiger/ (service-layer, not kernel).
+Issue #625: Lives in bricks/rebac/cache/tiger/ (service-layer, not kernel).
 """
 
 import logging

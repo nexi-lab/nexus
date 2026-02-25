@@ -86,7 +86,6 @@ EXCLUDED_METHODS: set[str] = {
 # Modules to scan for @rpc_expose methods.  We inspect each class in each
 # module and collect all methods that have ``_rpc_exposed = True``.
 MODULES_TO_SCAN: list[str] = [
-    "nexus.core.nexus_fs_core",
     "nexus.core.nexus_fs",
     "nexus.services.search_service",
     "nexus.services.search_listing_mixin",

@@ -94,11 +94,11 @@ class TestFastAPIServerLogging:
 
 
 class TestNexusFSCoreLogging:
-    """Verify nexus_fs_core.py silent swallowers are fixed."""
+    """Verify nexus_fs.py silent swallowers are fixed."""
 
-    def test_no_silent_swallowers_in_nexus_fs_core(self) -> None:
-        """nexus_fs_core.py should not have except Exception: pass."""
-        from nexus.core import nexus_fs_core
+    def test_no_silent_swallowers_in_nexus_fs(self) -> None:
+        """nexus_fs.py should not have except Exception: pass."""
+        from nexus.core import nexus_fs
 
-        found, line = _has_silent_swallower(inspect.getsource(nexus_fs_core))
+        found, line = _has_silent_swallower(inspect.getsource(nexus_fs))
         assert not found, f"Silent swallower found at line {line}"

@@ -1,7 +1,5 @@
 """DynamicViewerReadHook — column-level CSV filtering (INTERCEPT read).
 
-Extracted from NexusFSCoreMixin._apply_dynamic_viewer_filter_if_needed()
-(Phase 4 of Issue #2033, Strangler Fig decomposition).
 Issue #625: Lives in services/rebac/ (service-layer, not kernel).
 """
 

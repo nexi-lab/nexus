@@ -16,7 +16,7 @@ NexusFS has grown into a god object:
 
 - **188+ RPC-exposed methods** spanning filesystem, auth, search, memory,
   MCP, OAuth, governance, skills, events, and more
-- **10,700+ lines** across `nexus_fs.py` and `nexus_fs_core.py`
+- **10,700+ lines** in `nexus_fs.py`
 - **10+ service domains** conflated into one class
 - New features added directly to NexusFS create coupling, increase test
   surface, and make the kernel harder to reason about
@@ -31,7 +31,7 @@ leaving NexusFS as a thin delegation layer.
 
 ### Rules
 
-1. **No new methods on NexusFS or NexusFSCoreMixin** unless they are:
+1. **No new methods on NexusFS** unless they are:
    - Kernel primitives (inode CRUD: read, write, mkdir, delete, stat, list)
    - Thin delegation methods (1-3 lines forwarding to an extracted service)
 

@@ -72,9 +72,9 @@ cleanup() {
     python3 << 'CLEANUP'
 import sys, os
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
+import nexus
 
-nx = RemoteNexusFS('http://localhost:2026', api_key=os.getenv('NEXUS_API_KEY'))
+nx = nexus.connect(config={"mode": "remote", "url": 'http://localhost:2026', "api_key": os.getenv('NEXUS_API_KEY')})
 
 # List and delete memories created by demo users
 for user in ['alice', 'agent_alice']:
@@ -116,10 +116,10 @@ export NEXUS_API_KEY="$ADMIN_KEY"
 python3 << 'CLEANUP_OLD'
 import sys, os
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
+import nexus
 
 try:
-    nx = RemoteNexusFS('http://localhost:2026', api_key=os.getenv('NEXUS_API_KEY'))
+    nx = nexus.connect(config={"mode": "remote", "url": 'http://localhost:2026', "api_key": os.getenv('NEXUS_API_KEY')})
 
     # Delete all memories (admin can see all)
     all_memories = nx.memory.list(state='all', limit=1000)
@@ -160,9 +160,9 @@ export NEXUS_API_KEY="$ADMIN_KEY"
 python3 << 'PYTHON_DELEGATION'
 import sys, os
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
+import nexus
 
-nx = RemoteNexusFS('http://localhost:2026', api_key=os.getenv('NEXUS_API_KEY'))
+nx = nexus.connect(config={"mode": "remote", "url": 'http://localhost:2026', "api_key": os.getenv('NEXUS_API_KEY')})
 
 # Create delegation: agent can act as alice
 # This allows the agent to read/write alice's memories
@@ -193,10 +193,10 @@ print_info "All new memories default to 'inactive' state (pending review)"
 python3 << 'PYTHON_CREATE'
 import sys, os
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
+import nexus
 
 # Use Alice's API key with agent_id to act as the agent
-nx = RemoteNexusFS('http://localhost:2026', api_key=os.getenv('NEXUS_API_KEY'))
+nx = nexus.connect(config={"mode": "remote", "url": 'http://localhost:2026', "api_key": os.getenv('NEXUS_API_KEY')})
 nx.agent_id = "agent_alice"  # Set agent identity
 
 # Store memories (they will be inactive by default)
@@ -238,9 +238,9 @@ print_test "List memories with state=inactive"
 INACTIVE_COUNT=$(python3 << 'PYTHON_LIST_INACTIVE'
 import sys, os
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
+import nexus
 
-nx = RemoteNexusFS('http://localhost:2026', api_key=os.getenv('NEXUS_API_KEY'))
+nx = nexus.connect(config={"mode": "remote", "url": 'http://localhost:2026', "api_key": os.getenv('NEXUS_API_KEY')})
 
 # List inactive memories
 inactive = nx.memory.list(state='inactive')
@@ -266,9 +266,9 @@ print_test "List memories with state=active (should be empty)"
 ACTIVE_COUNT=$(python3 << 'PYTHON_LIST_ACTIVE'
 import sys, os
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
+import nexus
 
-nx = RemoteNexusFS('http://localhost:2026', api_key=os.getenv('NEXUS_API_KEY'))
+nx = nexus.connect(config={"mode": "remote", "url": 'http://localhost:2026', "api_key": os.getenv('NEXUS_API_KEY')})
 
 # List active memories
 active = nx.memory.list(state='active')
@@ -302,9 +302,9 @@ print_info "User reviews and approves high-quality memories"
 python3 << 'PYTHON_APPROVE'
 import sys, os
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
+import nexus
 
-nx = RemoteNexusFS('http://localhost:2026', api_key=os.getenv('NEXUS_API_KEY'))
+nx = nexus.connect(config={"mode": "remote", "url": 'http://localhost:2026', "api_key": os.getenv('NEXUS_API_KEY')})
 
 # Get inactive memories
 inactive = nx.memory.list(state='inactive')
@@ -328,9 +328,9 @@ print_test "Check that approved memories are now active"
 python3 << 'PYTHON_VERIFY'
 import sys, os
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
+import nexus
 
-nx = RemoteNexusFS('http://localhost:2026', api_key=os.getenv('NEXUS_API_KEY'))
+nx = nexus.connect(config={"mode": "remote", "url": 'http://localhost:2026', "api_key": os.getenv('NEXUS_API_KEY')})
 
 active = nx.memory.list(state='active')
 inactive = nx.memory.list(state='inactive')
@@ -360,9 +360,9 @@ print_info "Using approve_batch() for efficient bulk approval"
 python3 << 'PYTHON_BATCH'
 import sys, os
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
+import nexus
 
-nx = RemoteNexusFS('http://localhost:2026', api_key=os.getenv('NEXUS_API_KEY'))
+nx = nexus.connect(config={"mode": "remote", "url": 'http://localhost:2026', "api_key": os.getenv('NEXUS_API_KEY')})
 
 # Get remaining inactive memories
 inactive = nx.memory.list(state='inactive')
@@ -388,9 +388,9 @@ print_test "List all memories - should all be active"
 python3 << 'PYTHON_FINAL_CHECK'
 import sys, os
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
+import nexus
 
-nx = RemoteNexusFS('http://localhost:2026', api_key=os.getenv('NEXUS_API_KEY'))
+nx = nexus.connect(config={"mode": "remote", "url": 'http://localhost:2026', "api_key": os.getenv('NEXUS_API_KEY')})
 
 active = nx.memory.list(state='active')
 inactive = nx.memory.list(state='inactive')
@@ -420,9 +420,9 @@ print_info "User deactivates outdated or incorrect memories"
 python3 << 'PYTHON_DEACTIVATE'
 import sys, os
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
+import nexus
 
-nx = RemoteNexusFS('http://localhost:2026', api_key=os.getenv('NEXUS_API_KEY'))
+nx = nexus.connect(config={"mode": "remote", "url": 'http://localhost:2026', "api_key": os.getenv('NEXUS_API_KEY')})
 
 # Get active memories
 active = nx.memory.list(state='active')
@@ -445,9 +445,9 @@ print_test "Check memory distribution after deactivation"
 python3 << 'PYTHON_VERIFY_DEACTIVATE'
 import sys, os
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
+import nexus
 
-nx = RemoteNexusFS('http://localhost:2026', api_key=os.getenv('NEXUS_API_KEY'))
+nx = nexus.connect(config={"mode": "remote", "url": 'http://localhost:2026', "api_key": os.getenv('NEXUS_API_KEY')})
 
 active = nx.memory.list(state='active')
 inactive = nx.memory.list(state='inactive')
@@ -475,9 +475,9 @@ print_info "Memory retrieval defaults to active state for safety"
 python3 << 'PYTHON_QUERY_DEFAULT'
 import sys, os
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
+import nexus
 
-nx = RemoteNexusFS('http://localhost:2026', api_key=os.getenv('NEXUS_API_KEY'))
+nx = nexus.connect(config={"mode": "remote", "url": 'http://localhost:2026', "api_key": os.getenv('NEXUS_API_KEY')})
 
 # Query without specifying state (defaults to active)
 default_results = nx.memory.query(scope='user')
@@ -518,9 +518,9 @@ print_subsection "8.2 Approve a memory via CLI"
 INACTIVE_ID=$(python3 << 'PYTHON_GET_ID'
 import sys, os
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
+import nexus
 
-nx = RemoteNexusFS('http://localhost:2026', api_key=os.getenv('NEXUS_API_KEY'))
+nx = nexus.connect(config={"mode": "remote", "url": 'http://localhost:2026', "api_key": os.getenv('NEXUS_API_KEY')})
 inactive = nx.memory.list(state='inactive')
 if inactive:
     print(inactive[0]['memory_id'])

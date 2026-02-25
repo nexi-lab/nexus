@@ -67,7 +67,7 @@ export NEXUS_DATABASE_URL="$PSQL_CONN/$PG_DB"
 export NEXUS_DATA_DIR="./workflow-server-data"
 
 # IMPORTANT: Unset NEXUS_URL to prevent circular dependency
-# The server must use local NexusFS, not RemoteNexusFS
+# The server must use local NexusFS, not nexus.connect() in remote mode
 unset NEXUS_URL
 unset NEXUS_API_KEY
 

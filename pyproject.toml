@@ -434,9 +434,9 @@ module = [
     "nexus.bricks.tools.langgraph.nexus_tools",
     "nexus.tools.langgraph.nexus_tools",
 ]
-# These modules call methods on RemoteNexusFS/AsyncRemoteNexusFS that are
-# dispatched via __getattr__ (Issue #1289 RPC Proxy). The proxy returns Any
-# for dynamically-dispatched methods, triggering no-any-return warnings.
+# These modules call methods on RemoteServiceProxy that are
+# dispatched via __getattr__. The proxy returns Any for dynamically-dispatched
+# methods, triggering no-any-return warnings.
 warn_return_any = false
 disable_error_code = ["no-any-return"]
 

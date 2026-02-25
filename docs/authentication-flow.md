@@ -125,14 +125,11 @@ uuid3         | google   | alice@example.com | encrypted_token_abc    | encrypte
 ### Usage (Every Request)
 
 ```python
-from nexus.remote import RemoteNexusFS
+import nexus
 from nexus.contracts.types import OperationContext
 
 # Alice connects with her API key
-nx = RemoteNexusFS(
-    server_url="http://localhost:2026",
-    api_key="sk_alice_xyz123..."  # Alice's API key
-)
+nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": "sk_alice_xyz123..."})
 
 # Server authenticates the request:
 # 1. Validates API key → identifies user_id = "alice@example.com"
@@ -178,10 +175,7 @@ After this:
 
 ```python
 # Alice uses her API key for every request
-nx = RemoteNexusFS(
-    server_url="http://localhost:2026",
-    api_key="sk_alice_xyz123..."  # This identifies Alice
-)
+nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": "sk_alice_xyz123..."})
 
 # Server knows: "This is Alice (alice@example.com)"
 # Backend looks up: "Get OAuth token for alice@example.com"
@@ -252,19 +246,13 @@ bob@example.com   | google   | encrypted_token_b      | encrypted_refresh_b
 
 ```python
 # Alice's session
-alice_nx = RemoteNexusFS(
-    server_url="http://localhost:2026",
-    api_key="sk_alice_..."  # Alice's API key
-)
+alice_nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": "sk_alice_..."})
 
 # Writes to ALICE'S Google Drive
 alice_nx.write("/gdrive/my-file.txt", b"Alice's file")
 
 # Bob's session
-bob_nx = RemoteNexusFS(
-    server_url="http://localhost:2026",
-    api_key="sk_bob_..."  # Bob's API key
-)
+bob_nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": "sk_bob_..."})
 
 # Writes to BOB'S Google Drive
 bob_nx.write("/gdrive/my-file.txt", b"Bob's file")

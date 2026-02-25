@@ -44,8 +44,6 @@ from google.adk import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types as genai_types
 
-import nexus
-
 
 def connect_to_nexus(tenant_id: str = "adk-demo", agent_id: str = "file-agent"):
     """
@@ -63,13 +61,13 @@ def connect_to_nexus(tenant_id: str = "adk-demo", agent_id: str = "file-agent"):
     api_key = os.getenv("NEXUS_API_KEY")
 
     if server_url:
-        from nexus.remote import RemoteNexusFS
+        import nexus
 
         print(f"Connecting to Nexus server at {server_url}...")
         print(f"  Tenant: {tenant_id}")
         print(f"  Agent: {agent_id}")
 
-        nx = RemoteNexusFS(server_url=server_url, api_key=api_key)
+        nx = nexus.connect(config={"mode": "remote", "url": server_url, "api_key": api_key})
         nx.tenant_id = tenant_id
         nx.agent_id = agent_id
         print("✓ Connected to Nexus server")

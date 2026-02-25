@@ -149,14 +149,11 @@ Here's a typical workflow using both Python and CLI:
 
 ### Python Usage (Terminal 2)
 ```python
-from nexus.remote.client import RemoteNexusFS
+import nexus
 import os
 
 # Connect to server
-nx = RemoteNexusFS(
-    server_url=os.environ['SERVER_URL'],
-    api_key=os.environ['NEXUS_API_KEY']
-)
+nx = nexus.connect(config={"mode": "remote", "url": os.environ['SERVER_URL'], "api_key": os.environ['NEXUS_API_KEY']})
 
 # Create and write files
 nx.mkdir("/workspace/my-project", parents=True)

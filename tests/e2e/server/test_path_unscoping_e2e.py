@@ -136,7 +136,7 @@ class TestZoneScopedPathUnscopingE2E:
             b"a,b,c",
         )
 
-        # List root via RPC — this is what RemoteNexusFS.list('/') calls
+        # List root via RPC — this is what nx.list('/') calls in REMOTE profile
         result = _rpc_post(rpc_client, "list", {"path": "/", "recursive": True})
         files = result["files"]
 

@@ -198,15 +198,12 @@ admin_nx.rebac_create(
 
 **Each agent connects with its identity:**
 ```python
-nexus = RemoteNexusFS(
-    server_url=os.getenv("NEXUS_URL"),
-    api_key=os.getenv("NEXUS_API_KEY")
-)
-nexus.agent_id = "researcher"  # Identity for permission checks
+nx = nexus.connect(config={"mode": "remote", "url": os.getenv("NEXUS_URL"), "api_key": os.getenv("NEXUS_API_KEY")})
+nx.agent_id = "researcher"  # Identity for permission checks
 ```
 
 When the agent tries to access a file, Nexus checks:
-1. Who is this agent? (`nexus.agent_id`)
+1. Who is this agent? (`nx.agent_id`)
 2. What file are they accessing? (`/workspace/research/requirements.txt`)
 3. Do they have permission? (Check ReBAC tuples)
 4. Grant or deny access

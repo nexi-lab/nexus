@@ -4,7 +4,7 @@ Linux analogy: ``net/`` — the networking protocol stack.
 
 This package owns everything ABOUT the network (connectivity, tunnels,
 transport, discovery), not things that merely USE the network (Raft client,
-RemoteNexusFS, WebSocket manager — those stay in their domain packages).
+REMOTE profile, WebSocket manager — those stay in their domain packages).
 
 Submodules:
     constants     Network defaults (ports, subnets, timeouts)

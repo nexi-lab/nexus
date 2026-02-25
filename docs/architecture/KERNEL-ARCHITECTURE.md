@@ -166,6 +166,11 @@ user-facing operations (read, write, list, mkdir, mount). NexusFS contains
 **no service business logic** — services are accessed through `ServiceRegistry`
 (Phase 2) or thin delegation stubs (Phase 1).
 
+The published user-facing contract is `NexusFilesystemABC` (in `contracts/filesystem/`) —
+a composed ABC of 7 sub-ABCs (FileOps, Discovery, DirectoryOps, Workspace, Memory, Sandbox,
+Lifecycle). `connect()` returns this type. Relationship: POSIX spec (contract) vs Linux kernel
+(implementation) — clients program against the contract, kernel implements it.
+
 `NexusFSCoreMixin` contains the VFS operation implementations (like `vfs_read`,
 `vfs_write` in Linux), inherited by NexusFS. This is an implementation detail —
 a Python mixin used to split the large NexusFS class. As services continue
@@ -299,6 +304,7 @@ They must **never** import from: `nexus.core`, `nexus.services`, `nexus.server`,
 | `Base`, `TimestampMixin` (ORM base/mixins) | `lib/db_base.py` | Schema helpers with implementation (uuid gen, server_default) |
 | `EmailList`, `ISODateTimeStr` (Pydantic Annotated) | `lib/validators.py` | Annotated types with validation logic |
 | `get_database_url()` (env var resolution) | `lib/env.py` | Implementation helper |
+| `NexusFilesystemABC` (composed ABC) | `contracts/filesystem/` | Published user-facing API contract (`connect()` return type) |
 | `path_matches_pattern()` (glob matching) | `lib/path_utils.py` | Pure utility function |
 | `PathInterner`, `SegmentedPathInterner` (string interning) | `lib/path_interner.py` | Generic utility (like `lib/string.c` in Linux) |
 | `is_os_metadata_file()` (OS file filter) | `fuse/filters.py` | Single-layer (FUSE only) |
@@ -374,7 +380,7 @@ profile defaults.
 | **Remote** | NexusFS(profile=REMOTE) with RemoteBackend | RemoteMetastore (stateless proxy) | Zero (server-side) |
 | **Federation** | Multiple nodes sharing zones via Raft | redb (Raft) | Per-node |
 
-Remote mode uses the same NexusFS class as standalone — not a separate `RemoteNexusFS`.
+Remote mode uses the same NexusFS class as standalone — not a separate remote client class.
 `RemoteMetastore` is a stateless proxy — all metadata queries go directly to the server
 (SSOT), no local cache or invalidation. `PathRouter` resolves mount paths locally,
 actual I/O goes to the server via `RemoteBackend`.

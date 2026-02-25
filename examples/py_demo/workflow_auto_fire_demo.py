@@ -27,7 +27,6 @@ from pathlib import Path
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-import nexus
 from nexus.bricks.workflows import WorkflowAPI, WorkflowLoader
 
 
@@ -59,14 +58,16 @@ async def main():
         print("   Falling back to standalone mode for this demo...\n")
 
         # Use standalone mode
+        import nexus
+
         nx = nexus.connect(config={"data_dir": "./workflow-demo-data"})
         mode = "standalone"
     else:
         # Use remote mode
-        from nexus.remote import RemoteNexusFS
+        import nexus
 
         print(f"✅ Connecting to Nexus server at {server_url}")
-        nx = RemoteNexusFS(server_url=server_url, api_key=api_key)
+        nx = nexus.connect(config={"mode": "remote", "url": server_url, "api_key": api_key})
         mode = "remote"
 
     print(f"   Mode: {mode}")

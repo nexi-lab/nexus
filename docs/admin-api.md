@@ -916,7 +916,7 @@ nexus admin list-users
 
 ## Troubleshooting
 
-### "Server cannot use RemoteNexusFS (circular dependency detected)"
+### "Server cannot use nexus.connect() in remote mode (circular dependency detected)"
 
 **Problem:** You have `NEXUS_URL` environment variable set.
 

@@ -96,12 +96,12 @@ Create a skill from documentation:
 
 ```python
 import asyncio
-from nexus.remote import RemoteNexusFS
+import nexus
 from nexus_skill_seekers.plugin import SkillSeekersPlugin
 
 async def main():
     # Connect to Nexus
-    nx = RemoteNexusFS("http://localhost:2026", api_key="your-key")
+    nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": "your-key"})
 
     # Initialize plugin
     plugin = SkillSeekersPlugin(nx)
@@ -534,11 +534,11 @@ Claude is an AI assistant created by Anthropic...
 # 1. Generate skills for your project's dependencies
 python << 'EOF'
 import asyncio
-from nexus.remote import RemoteNexusFS
+import nexus
 from nexus_skill_seekers.plugin import SkillSeekersPlugin
 
 async def main():
-    nx = RemoteNexusFS("http://localhost:2026", api_key="...")
+    nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": "..."})
     plugin = SkillSeekersPlugin(nx)
 
     # Your project's dependencies

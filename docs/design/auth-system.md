@@ -41,11 +41,8 @@ Nexus provides a flexible authentication and authorization system that supports:
 
 - **Server Mode** (client-server): Authentication required
   ```python
-  from nexus.remote import RemoteNexusFS
-  nx = RemoteNexusFS(
-      server_url="http://localhost:2026",
-      api_key="sk-alice-xxx"  # Authentication required
-  )
+  import nexus
+  nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": "sk-alice-xxx"})
   nx.write("/workspace/file.txt", b"Hello!")
   ```
 
@@ -58,7 +55,7 @@ Two modes of operation:
 | Mode | Usage | Authentication | Use Case |
 |------|-------|----------------|----------|
 | **Embedded** | `from nexus.sdk import connect`<br>`nx = connect()` | ❌ None | Single-user apps, scripts, notebooks |
-| **Server** | `from nexus.remote import RemoteNexusFS`<br>`nx = RemoteNexusFS(url, api_key)` | ✅ Required | Multi-user apps, production deployments |
+| **Server** | `import nexus`<br>`nx = nexus.connect(config={"mode": "remote", "url": url, "api_key": api_key})` | ✅ Required | Multi-user apps, production deployments |
 
 ### Architecture
 
@@ -86,7 +83,7 @@ Two modes of operation:
 ```
 ┌─────────────────────────────────────────────────────┐
 │              Client Layer                           │
-│  (RemoteNexusFS, CLI, HTTP API)                     │
+│  (nexus.connect(), CLI, HTTP API)                     │
 └──────────────────┬──────────────────────────────────┘
                    │ Authorization: Bearer <token>
                    ▼
@@ -189,13 +186,10 @@ api_keys:
 **Python SDK Usage:**
 
 ```python
-from nexus.remote import RemoteNexusFS
+import nexus
 
 # Connect with API key
-nx = RemoteNexusFS(
-    server_url="http://localhost:2026",
-    api_key="sk-alice-xxx"
-)
+nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": "sk-alice-xxx"})
 
 # Use normally
 nx.write("/workspace/file.txt", b"Hello, World!")
@@ -297,12 +291,9 @@ server = NexusRPCServer(
 server.serve_forever()
 
 # Use the key from client
-from nexus.remote import RemoteNexusFS
+import nexus
 
-client = RemoteNexusFS(
-    server_url="http://localhost:2026",
-    api_key=raw_key  # Use the generated key
-)
+client = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": raw_key})
 client.write("/workspace/file.txt", b"Hello!")
 ```
 
@@ -422,12 +413,9 @@ token = auth.verify_password_and_create_token(
 print(f"JWT Token: {token}")
 
 # Use token for authentication
-from nexus.remote import RemoteNexusFS
+import nexus
 
-client = RemoteNexusFS(
-    server_url="http://localhost:2026",
-    api_key=token  # JWT token acts as API key
-)
+client = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": token})
 client.write("/workspace/file.txt", b"Hello!")
 ```
 
@@ -483,12 +471,9 @@ auth = OIDCAuth(
 
 # After user completes OAuth flow on frontend, they receive an ID token
 # Use that token to authenticate with Nexus
-from nexus.remote import RemoteNexusFS
+import nexus
 
-client = RemoteNexusFS(
-    server_url="http://localhost:2026",
-    api_key=id_token  # OIDC ID token from OAuth flow
-)
+client = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": id_token})
 client.write("/workspace/file.txt", b"Hello!")
 ```
 
@@ -1174,23 +1159,17 @@ auth:
 
 Old (v0.4.x):
 ```python
-from nexus.remote import RemoteNexusFS
+import nexus
 
-nx = RemoteNexusFS(
-    server_url="http://localhost:2026",
-    api_key="sk-alice-xxx"
-)
+nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": "sk-alice-xxx"})
 ```
 
 New (v0.5.0+):
 ```python
 # Same API - no changes required!
-from nexus.remote import RemoteNexusFS
+import nexus
 
-nx = RemoteNexusFS(
-    server_url="http://localhost:2026",
-    api_key="sk-alice-xxx"  # Works with all auth types
-)
+nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": "sk-alice-xxx"})
 ```
 
 ### From UNIX Permissions to ReBAC

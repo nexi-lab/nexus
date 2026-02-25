@@ -873,7 +873,6 @@ ignore_imports = [
     "nexus.server.telemetry -> nexus.bricks.rebac.rebac_tracing",
     # a2a -> ipc: TYPE_CHECKING imports only (runtime imports now use importlib)
     "nexus.bricks.a2a.messaging_adapters -> nexus.bricks.ipc.envelope",
-    "nexus.bricks.a2a.stores.vfs -> nexus.bricks.ipc.storage.protocol",
     # mcp -> rebac: TYPE_CHECKING imports for middleware/profiles (Issue #2429)
     "nexus.bricks.mcp.middleware -> nexus.bricks.rebac.manager",
     "nexus.bricks.mcp.profiles -> nexus.bricks.rebac.manager",

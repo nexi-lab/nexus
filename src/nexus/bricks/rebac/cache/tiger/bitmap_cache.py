@@ -1215,6 +1215,11 @@ class TigerCache:
             with self._lock:
                 self._evict_if_needed()
                 self._cache[key] = (bitmap, revision, time.time())
+                # Also update the zone-agnostic key used by check_access()
+                if zone_id:
+                    compat_key = CacheKey(subject_type, subject_id, permission, resource_type)
+                    if compat_key in self._cache:
+                        self._cache[compat_key] = (bitmap, revision, time.time())
 
             logger.info(
                 f"[TIGER] Write-through: {subject_type}:{subject_id} granted {permission} "
@@ -1361,6 +1366,13 @@ class TigerCache:
             with self._lock:
                 self._evict_if_needed()
                 self._cache[key] = (bitmap, revision, time.time())
+                # Also update the zone-agnostic key used by check_access(),
+                # which creates CacheKey without zone_id (defaults to "").
+                # Without this, a stale entry from _load_from_db() survives the revoke.
+                if zone_id:
+                    compat_key = CacheKey(subject_type, subject_id, permission, resource_type)
+                    if compat_key in self._cache:
+                        self._cache[compat_key] = (bitmap, revision, time.time())
 
             logger.info(
                 f"[TIGER] Write-through revoke: {subject_type}:{subject_id} revoked {permission} "

@@ -48,7 +48,11 @@ def main() -> None:
         expires_at = datetime.now(UTC) + timedelta(days=args.days)
 
     # Register user in entity registry (for agent permission inheritance)
-    entity_registry = EntityRegistry(SessionFactory)
+    class _SessionFactoryWrapper:
+        def __init__(self, sf):
+            self.session_factory = sf
+
+    entity_registry = EntityRegistry(_SessionFactoryWrapper(SessionFactory))
     entity_registry.register_entity(
         entity_type="user",
         entity_id=args.user_id,

@@ -360,6 +360,17 @@ class CacheCoordinator:
         """
         effective_zone_id = zone_id if zone_id is not None else ROOT_ZONE_ID
 
+        # Zone graph cache must be invalidated so fresh computes see the new tuples
+        self._invalidate_zone_graph(effective_zone_id)
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "invalidate_for_tuple_change: %s %s -> %s, zone=%s",
+                subject,
+                relation,
+                obj,
+                effective_zone_id,
+            )
+
         # Track write for adaptive TTL (Phase 4)
         if self._l1_cache:
             self._l1_cache.track_write(obj.entity_id)
@@ -395,11 +406,11 @@ class CacheCoordinator:
                     zone_id,
                 )
 
-            if should_eager_recompute:
-                self._eager_recompute(subject, relation, obj, zone_id, conn)
-
-            # If we didn't do eager recomputation, invalidate L2 cache
-            if not should_eager_recompute and self._fix_sql:
+            # Always invalidate L2 cache for this subject+object pair.
+            # Eager recompute only handles relation names (e.g. "owner"),
+            # not permission names (e.g. "write") that map to those relations,
+            # so stale L2 entries for permissions would survive without this.
+            if self._fix_sql and cursor:
                 cursor.execute(
                     self._fix_sql(
                         """
@@ -417,6 +428,9 @@ class CacheCoordinator:
                         obj.entity_id,
                     ),
                 )
+
+            if should_eager_recompute:
+                self._eager_recompute(subject, relation, obj, zone_id, conn)
 
             # 2. TRANSITIVE (Groups): If subject is a group/set, invalidate cache
             #    for potential members accessing the object
@@ -531,6 +545,16 @@ class CacheCoordinator:
                         ),
                         (effective_zone_id,),
                     )
+
+            # 6. BOUNDARY CACHE: invalidate cached path-inheritance boundaries
+            self._notify_boundary_invalidators(
+                effective_zone_id,
+                subject.entity_type,
+                subject.entity_id,
+                relation,
+                obj.entity_type,
+                obj.entity_id,
+            )
 
             conn.commit()
         finally:

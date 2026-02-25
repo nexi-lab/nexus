@@ -250,10 +250,14 @@ def connect(
             connect_timeout=connect_timeout,
         )
 
+        # In REMOTE mode, server enforces permissions — disable client-side.
+        from nexus.core.config import PermissionConfig as _PermissionConfig
+
         nfs = _create_remote_nfs(
             backend=remote_backend,
             metadata_store=remote_metastore,
             record_store=None,
+            permissions=_PermissionConfig(enforce=False),
         )
         nfs.router.add_mount("/", remote_backend)
 

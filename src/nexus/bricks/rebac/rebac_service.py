@@ -2059,12 +2059,16 @@ class ReBACService(ReBACShareMixin):
         self,
         permission: str,
         object: tuple[str, str],
+        zone_id: str | None = None,
     ) -> list[tuple[str, str]]:
         """Synchronous rebac_expand."""
         mgr = self._require_manager()
         if not isinstance(object, tuple) or len(object) != 2:
             raise ValueError(f"object must be (type, id) tuple, got {object}")
-        expanded: list[tuple[str, str]] = mgr.rebac_expand(permission=permission, object=object)
+        kwargs: dict[str, Any] = {"permission": permission, "object": object}
+        if zone_id is not None:
+            kwargs["zone_id"] = zone_id
+        expanded: list[tuple[str, str]] = mgr.rebac_expand(**kwargs)
         return expanded
 
     def rebac_explain_sync(

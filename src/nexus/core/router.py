@@ -158,8 +158,25 @@ class PathRouter:
         # LPM: walk from deepest prefix to shallowest
         current = virtual_path
         while True:
-            meta = self._metastore.get(current)
-            if meta is not None and meta.is_mount:
+            # Check metastore for DT_MOUNT, falling back to _backends
+            # for REMOTE profile where metastore.get() may fail (e.g.
+            # stat("/") is blocked server-side).
+            is_mount = False
+            try:
+                meta = self._metastore.get(current)
+                is_mount = meta is not None and meta.is_mount
+            except Exception:
+                # RemoteMetastore may raise on certain paths — fall
+                # back to in-memory backend registry.
+                is_mount = current in self._backends
+
+            if not is_mount:
+                # Also check _backends directly (REMOTE profile: the
+                # add_mount() call registered the backend but the
+                # remote metastore stat may return None or error).
+                is_mount = current in self._backends
+
+            if is_mount:
                 entry = self._backends.get(current)
                 if entry is None:
                     # DT_MOUNT in metastore but backend not loaded

@@ -1,11 +1,17 @@
 """RemoteBackend — ObjectStoreABC proxy for REMOTE deployment profile.
 
 Proxies content operations to a Nexus server over HTTP/JSON-RPC.
-Reuses the RPC transport pattern from ``nexus.remote.client`` but
-implements the ``ObjectStoreABC`` interface instead of ``NexusFilesystemABC``.
+Implements the ``ObjectStoreABC`` interface so the kernel can run its
+natural VFS pipeline identically to standalone/federation modes.
 
-This is the content pillar for the REMOTE profile.  Metadata is handled
-by ``RemoteMetastore`` (storage/remote_metastore.py).
+The kernel calls ``read_content(hash, context)`` / ``write_content(content,
+context)`` etc.  RemoteBackend extracts the virtual path from the
+``OperationContext`` and forwards the call to the server's NexusFS-level
+RPC endpoint, which runs the same operation server-side.
+
+Content deletion (``delete_content``) is a deliberate no-op: the kernel
+always follows with ``metastore.delete(path)`` which triggers
+``RemoteMetastore`` → server ``delete`` RPC → full server-side delete.
 
 Issue #844: Converge RemoteNexusFS → NexusFS(profile=REMOTE).
 """
@@ -221,10 +227,29 @@ class RemoteBackend(ObjectStoreABC):
                 method=method,
             ) from e
 
+    # === Path Resolution ===
+
+    @staticmethod
+    def _to_server_path(context: "OperationContext | None") -> str:
+        """Extract server-absolute path from OperationContext.
+
+        The kernel sets ``virtual_path`` (the full absolute nexus path) and
+        ``backend_path`` (mount-stripped relative path) on the context before
+        calling backend methods.  We prefer ``virtual_path`` because it is
+        already absolute; fall back to ``backend_path`` with ``/`` prepended.
+        """
+        if context is not None:
+            if context.virtual_path:
+                return context.virtual_path
+            if context.backend_path:
+                bp = context.backend_path
+                return bp if bp.startswith("/") else "/" + bp
+        return "/"
+
     # === CAS Content Operations ===
 
     def write_content(self, content: bytes, context: OperationContext | None = None) -> WriteResult:
-        path = context.backend_path if context else ""
+        path = self._to_server_path(context)
         result = self._call_rpc("write", {"path": path, "content": content})
         return WriteResult(
             content_hash=result.get("etag", ""),
@@ -232,7 +257,7 @@ class RemoteBackend(ObjectStoreABC):
         )
 
     def read_content(self, content_hash: str, context: OperationContext | None = None) -> bytes:
-        path = context.backend_path if context else ""
+        path = self._to_server_path(context)
         result = self._call_rpc("read", {"path": path})
         parsed = self._error_handler._parse_read_response(result)
         if isinstance(parsed, dict):
@@ -241,11 +266,17 @@ class RemoteBackend(ObjectStoreABC):
         return bytes(parsed)
 
     def delete_content(self, content_hash: str, context: OperationContext | None = None) -> None:
-        path = context.backend_path if context else ""
-        self._call_rpc("delete", {"path": path})
+        """No-op: server-side deletion is handled by RemoteMetastore.delete().
+
+        The kernel always calls ``metastore.delete(path)`` after
+        ``backend.delete_content()``.  In REMOTE mode, ``RemoteMetastore.delete``
+        sends the ``delete`` RPC to the server which runs the full delete
+        pipeline (CAS content + metadata).  Doing it here as well would be
+        redundant and risks a double-delete race.
+        """
 
     def get_content_size(self, content_hash: str, context: OperationContext | None = None) -> int:
-        path = context.backend_path if context else ""
+        path = self._to_server_path(context)
         result = self._call_rpc("stat", {"path": path})
         size: int = int(result.get("size", 0)) if isinstance(result, dict) else 0
         return size
@@ -259,7 +290,8 @@ class RemoteBackend(ObjectStoreABC):
         exist_ok: bool = False,
         context: OperationContext | None = None,
     ) -> None:
-        self._call_rpc("mkdir", {"path": path, "parents": parents, "exist_ok": exist_ok})
+        abs_path = path if path.startswith("/") else "/" + path
+        self._call_rpc("mkdir", {"path": abs_path, "parents": parents, "exist_ok": exist_ok})
 
     def rmdir(
         self,
@@ -267,12 +299,13 @@ class RemoteBackend(ObjectStoreABC):
         recursive: bool = False,
         context: OperationContext | None = None,
     ) -> None:
-        self._call_rpc("rmdir", {"path": path, "recursive": recursive})
+        abs_path = path if path.startswith("/") else "/" + path
+        self._call_rpc("rmdir", {"path": abs_path, "recursive": recursive})
 
     # === Query Operations ===
 
     def content_exists(self, content_hash: str, context: OperationContext | None = None) -> bool:
-        path = context.backend_path if context else ""
+        path = self._to_server_path(context)
         result = self._call_rpc("exists", {"path": path})
         if isinstance(result, dict):
             return bool(result.get("exists", False))
@@ -280,7 +313,8 @@ class RemoteBackend(ObjectStoreABC):
 
     def list_dir(self, path: str, context: OperationContext | None = None) -> list[str]:
         """List directory contents on the remote server."""
-        result = self._call_rpc("list", {"path": path})
+        abs_path = path if path.startswith("/") else "/" + path
+        result = self._call_rpc("list", {"path": abs_path})
         if isinstance(result, list):
             return [str(item) for item in result]
         if isinstance(result, dict) and "items" in result:

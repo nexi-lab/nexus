@@ -915,10 +915,17 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
                             ConfChangeType::AddNode | ConfChangeType::AddLearnerNode => {
                                 if !cc.context.is_empty() {
                                     let address = String::from_utf8_lossy(&cc.context).to_string();
+                                    // Normalize: tonic Endpoint requires a URI scheme.
+                                    // JoinZone may send bare "host:port" — add http:// if missing.
+                                    let endpoint = if address.starts_with("http") {
+                                        address
+                                    } else {
+                                        format!("http://{}", address)
+                                    };
                                     peer_map
                                         .write()
                                         .unwrap()
-                                        .insert(cc.node_id, NodeAddress::new(cc.node_id, address));
+                                        .insert(cc.node_id, NodeAddress::new(cc.node_id, endpoint));
                                 }
                             }
                             ConfChangeType::RemoveNode => {

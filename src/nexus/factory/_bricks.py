@@ -417,36 +417,29 @@ def _boot_independent_bricks(
             logger.debug("[BOOT:BRICK] TaskQueueService unavailable: %s", _tq_exc)
 
     # --- IPC Brick (Issue #1727, LEGO §8: Filesystem-as-IPC) ---
+    # IPC now goes through the kernel VFS (KernelVFSAdapter → NexusFS).
+    # A LocalConnector is mounted at /agents for actual file storage;
+    # KernelVFSAdapter wraps NexusFS sync calls in asyncio.to_thread().
     ipc_storage_driver: Any = None
-    ipc_vfs_driver: Any = None
     ipc_provisioner: Any = None
     if not _on("ipc"):
         logger.debug("[BOOT:BRICK] IPC brick disabled by profile")
-    elif ctx.record_store is not None:
+    else:
         try:
-            from nexus.bricks.ipc.driver import IPCVFSDriver
+            from nexus.bricks.ipc.kernel_adapter import KernelVFSAdapter
             from nexus.bricks.ipc.provisioning import AgentProvisioner
-            from nexus.bricks.ipc.storage.recordstore_driver import RecordStoreStorageDriver
-
-            ipc_storage_driver = RecordStoreStorageDriver(
-                record_store=ctx.record_store,
-            )
 
             _ipc_zone = ctx.zone_id or ROOT_ZONE_ID
-            ipc_vfs_driver = IPCVFSDriver(
-                storage=ipc_storage_driver,
-                zone_id=_ipc_zone,
-            )
 
-            # Mount at /agents in the PathRouter (higher priority than default /)
-            ctx.router.add_mount("/agents", ipc_vfs_driver)
+            # Lazy adapter — will be bound to NexusFS in _boot_wired_services
+            ipc_storage_driver = KernelVFSAdapter(zone_id=_ipc_zone)
 
             ipc_provisioner = AgentProvisioner(
                 storage=ipc_storage_driver,
                 zone_id=_ipc_zone,
             )
             logger.debug(
-                "[BOOT:BRICK] IPC brick created (zone=%s, storage=RecordStoreStorageDriver)",
+                "[BOOT:BRICK] IPC brick created (zone=%s, storage=KernelVFSAdapter, unbound)",
                 _ipc_zone,
             )
         except Exception as _ipc_exc:
@@ -569,7 +562,6 @@ def _boot_independent_bricks(
         "snapshot_service": snapshot_service,
         "task_queue_service": task_queue_service,
         "ipc_storage_driver": ipc_storage_driver,
-        "ipc_vfs_driver": ipc_vfs_driver,
         "ipc_provisioner": ipc_provisioner,
         "agent_event_log": agent_event_log,
         "skill_service": skill_service,

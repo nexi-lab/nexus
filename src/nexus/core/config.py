@@ -301,8 +301,7 @@ class BrickServices:
     cache_brick: Any = None  # CacheBrick — owns all cache domain services
 
     # --- IPC Brick (Issue #1727, LEGO §8) ---
-    ipc_storage_driver: Any = None  # IPCStorageDriver (RecordStore or VFS)
-    ipc_vfs_driver: Any = None  # IPCVFSDriver (Backend mounted at /agents)
+    ipc_storage_driver: Any = None  # KernelVFSAdapter (async bridge to NexusFS)
     ipc_provisioner: Any = None  # AgentProvisioner
 
     # --- Sandbox Brick (Issue #1307) ---

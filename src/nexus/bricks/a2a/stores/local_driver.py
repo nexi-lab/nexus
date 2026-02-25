@@ -1,6 +1,6 @@
 """Local-filesystem storage driver for A2A task persistence.
 
-Implements the ``IPCStorageDriver`` protocol using plain filesystem
+Implements the ``VFSOperations`` protocol using plain filesystem
 operations.  This driver is used when the server starts without a
 VFS-backed IPC layer (e.g., ``nexus serve`` with ``--data-dir``).
 
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 class LocalStorageDriver:
-    """Local-filesystem ``IPCStorageDriver`` implementation.
+    """Local-filesystem ``VFSOperations`` implementation.
 
     Parameters
     ----------

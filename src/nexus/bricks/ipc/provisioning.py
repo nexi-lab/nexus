@@ -19,7 +19,7 @@ from nexus.bricks.ipc.conventions import (
     agent_dir,
     inbox_path,
 )
-from nexus.bricks.ipc.storage.protocol import IPCStorageDriver
+from nexus.bricks.ipc.protocols import VFSOperations
 from nexus.contracts.constants import ROOT_ZONE_ID
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ class AgentProvisioner:
         zone_id: Zone ID for multi-zone isolation.
     """
 
-    def __init__(self, storage: IPCStorageDriver, zone_id: str = ROOT_ZONE_ID) -> None:
+    def __init__(self, storage: VFSOperations, zone_id: str = ROOT_ZONE_ID) -> None:
         self._storage = storage
         self._zone_id = zone_id
 

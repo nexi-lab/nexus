@@ -152,7 +152,20 @@ impl RaftStorage {
         Ok(())
     }
 
-    /// Apply a snapshot.
+    /// Store a snapshot without clearing existing entries.
+    ///
+    /// Used by the leader after ConfChange(AddNode) to prepare a snapshot
+    /// that raft-rs sends to lagging followers via `Storage::snapshot()`.
+    /// Unlike [`apply_snapshot`], this preserves existing log entries
+    /// (the leader still needs them for other followers).
+    pub fn store_snapshot(&self, snapshot: &Snapshot) -> Result<()> {
+        let value = protobuf::Message::write_to_bytes(snapshot)
+            .map_err(|e| RaftError::Serialization(e.to_string()))?;
+        self.state.set(KEY_SNAPSHOT, &value)?;
+        Ok(())
+    }
+
+    /// Apply a snapshot (receiver side — clears log and updates state).
     pub fn apply_snapshot(&self, snapshot: &Snapshot) -> Result<()> {
         let meta = snapshot.get_metadata();
 

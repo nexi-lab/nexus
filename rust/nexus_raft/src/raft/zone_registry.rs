@@ -207,13 +207,14 @@ impl ZoneRaftRegistry {
         let transport_handle = runtime_handle.spawn(transport_loop.run(shutdown_rx));
 
         if campaign {
-            let campaign_node = handle.clone();
-            runtime_handle.spawn(async move {
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                if let Err(e) = campaign_node.campaign().await {
-                    tracing::error!("Zone campaign failed: {}", e);
-                }
-            });
+            // Block until campaign is processed by the driver.
+            // Per raft contract: for single-node, campaign() grants self-vote
+            // (quorum=1) and the node becomes leader immediately. For multi-node,
+            // campaign() sends MsgVote to peers and returns (election is async).
+            // This ensures the node is ready before returning to the caller.
+            runtime_handle
+                .block_on(async { handle.campaign().await })
+                .map_err(|e| TransportError::Connection(format!("Campaign failed: {}", e)))?;
         }
 
         tracing::info!(

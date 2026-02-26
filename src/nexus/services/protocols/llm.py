@@ -1,7 +1,7 @@
 """LLM service protocol (Issue #1287: Extract domain services).
 
 Defines the contract for LLM-powered document reading operations.
-Existing implementation: ``nexus.services.llm.llm_service.LLMService``.
+Existing implementation: ``nexus.bricks.llm.llm_service.LLMService``.
 
 Renamed from LLMProtocol → LLMServiceProtocol in Issue #1521 to
 distinguish from the brick-level LLMProviderProtocol.

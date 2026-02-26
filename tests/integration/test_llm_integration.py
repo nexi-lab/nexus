@@ -23,17 +23,17 @@ class TestImportPaths:
 
     def test_new_service_imports(self) -> None:
         """New canonical import paths from services/ work."""
-        from nexus.services.llm.llm_citation import (
+        from nexus.bricks.llm.llm_citation import (
             Citation,
             CitationExtractor,
             DocumentReadResult,
         )
-        from nexus.services.llm.llm_context_builder import (
+        from nexus.bricks.llm.llm_context_builder import (
             AdaptiveRetrievalConfig,
             ChunkLike,
             ContextBuilder,
         )
-        from nexus.services.llm.llm_document_reader import (
+        from nexus.bricks.llm.llm_document_reader import (
             LLMDocumentReader,
             ReadChunk,
         )
@@ -91,8 +91,8 @@ class TestProtocolCompliance:
 
     def test_read_chunk_satisfies_chunk_like(self) -> None:
         """ReadChunk dataclass satisfies ChunkLike protocol."""
-        from nexus.services.llm.llm_context_builder import ChunkLike
-        from nexus.services.llm.llm_document_reader import ReadChunk
+        from nexus.bricks.llm.llm_context_builder import ChunkLike
+        from nexus.bricks.llm.llm_document_reader import ReadChunk
 
         chunk = ReadChunk(path="/test.txt", chunk_text="hello", chunk_index=0)
         assert isinstance(chunk, ChunkLike)
@@ -173,9 +173,9 @@ class TestCrossModuleWiring:
     """Verify cross-module imports resolve without circular dependencies."""
 
     def test_search_imports_context_builder_from_services(self) -> None:
-        """Search modules can import ContextBuilder from services."""
+        """Search modules can import ContextBuilder from bricks."""
         # Reimport to ensure clean resolution
-        mod = importlib.import_module("nexus.services.llm.llm_context_builder")
+        mod = importlib.import_module("nexus.bricks.llm.llm_context_builder")
         assert hasattr(mod, "ContextBuilder")
 
     def test_ace_imports_protocol(self) -> None:
@@ -185,7 +185,7 @@ class TestCrossModuleWiring:
 
     def test_document_reader_uses_chunk_like(self) -> None:
         """LLMDocumentReader resolves imports from services."""
-        mod = importlib.import_module("nexus.services.llm.llm_document_reader")
+        mod = importlib.import_module("nexus.bricks.llm.llm_document_reader")
         assert hasattr(mod, "LLMDocumentReader")
         assert hasattr(mod, "ReadChunk")
 
@@ -197,11 +197,11 @@ class TestCrossModuleWiring:
         import sys
 
         # Remove cached modules to force fresh resolution
-        to_remove = [k for k in sys.modules if "nexus.services.llm.llm_document_reader" in k]
+        to_remove = [k for k in sys.modules if "nexus.bricks.llm.llm_document_reader" in k]
         saved = {k: sys.modules.pop(k) for k in to_remove}
 
         try:
-            importlib.import_module("nexus.services.llm.llm_document_reader")
+            importlib.import_module("nexus.bricks.llm.llm_document_reader")
         finally:
             sys.modules.update(saved)
 
@@ -216,7 +216,7 @@ class TestProviderCaching:
 
     def test_llm_service_has_provider_cache(self) -> None:
         """LLMService initializes with empty provider cache."""
-        from nexus.services.llm.llm_service import LLMService
+        from nexus.bricks.llm.llm_service import LLMService
 
         service = LLMService(nexus_fs=None)
         assert hasattr(service, "_provider_cache")
@@ -234,8 +234,8 @@ class TestContextBuilderIntegration:
 
     def test_build_context_with_read_chunks(self) -> None:
         """ContextBuilder works with ReadChunk objects."""
-        from nexus.services.llm.llm_context_builder import ContextBuilder
-        from nexus.services.llm.llm_document_reader import ReadChunk
+        from nexus.bricks.llm.llm_context_builder import ContextBuilder
+        from nexus.bricks.llm.llm_document_reader import ReadChunk
 
         chunks = [
             ReadChunk(path="/doc1.txt", chunk_text="Hello world", chunk_index=0),
@@ -252,8 +252,8 @@ class TestContextBuilderIntegration:
 
     def test_citation_extractor_with_chunk_like_objects(self) -> None:
         """CitationExtractor works with ChunkLike objects (not just dicts)."""
-        from nexus.services.llm.llm_citation import CitationExtractor
-        from nexus.services.llm.llm_document_reader import ReadChunk
+        from nexus.bricks.llm.llm_citation import CitationExtractor
+        from nexus.bricks.llm.llm_document_reader import ReadChunk
 
         chunks = [
             ReadChunk(
@@ -276,7 +276,7 @@ class TestContextBuilderIntegration:
 
     def test_citation_extractor_with_dict_chunks(self) -> None:
         """CitationExtractor still works with legacy dict chunks."""
-        from nexus.services.llm.llm_citation import CitationExtractor
+        from nexus.bricks.llm.llm_citation import CitationExtractor
 
         chunks = [
             {

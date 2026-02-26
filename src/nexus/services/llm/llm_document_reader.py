@@ -23,7 +23,6 @@ from .llm_context_builder import ChunkLike, ContextBuilder
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from nexus.bricks.llm.provider import LLMProvider
     from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
 
 # SemanticSearch typed as Any — avoids cross-brick import from search brick.
@@ -55,7 +54,7 @@ class LLMDocumentReader:
     def __init__(
         self,
         nx: "NexusFilesystemABC",
-        provider: "LLMProvider",
+        provider: Any,
         search: "SemanticSearch | None" = None,
         system_prompt: str | None = None,
         max_context_tokens: int = 3000,

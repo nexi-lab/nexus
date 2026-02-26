@@ -935,7 +935,6 @@ ignore_imports = [
     "nexus.services.search.search_semantic -> nexus.bricks.search.pipeline_indexer",
     "nexus.services.search.search_semantic -> nexus.bricks.search.query_service",
     # search_semantic → factory._semantic_search → bricks (transitive chain)
-    "nexus.factory._semantic_search -> nexus.bricks.llm.llm_context_builder",
     "nexus.factory._semantic_search -> nexus.bricks.search.chunking",
     "nexus.factory._semantic_search -> nexus.bricks.search.embeddings",
     "nexus.factory._semantic_search -> nexus.bricks.search.indexing",

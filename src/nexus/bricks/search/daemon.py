@@ -459,6 +459,7 @@ class SearchDaemon:
         alpha: float = 0.5,
         fusion_method: str = "rrf",
         adaptive_k: bool = False,
+        zone_id: str | None = None,
     ) -> list[SearchResult]:
         """Execute a search query with pre-warmed indexes.
 
@@ -493,11 +494,18 @@ class SearchDaemon:
 
         try:
             if search_type == "keyword":
-                results = await self._keyword_search(query, limit, path_filter)
+                results = await self._keyword_search(query, limit, path_filter, zone_id=zone_id)
             elif search_type == "semantic":
-                results = await self._semantic_search(query, limit, path_filter)
+                results = await self._semantic_search(query, limit, path_filter, zone_id=zone_id)
             else:  # hybrid
-                results = await self._hybrid_search(query, limit, path_filter, alpha, fusion_method)
+                results = await self._hybrid_search(
+                    query,
+                    limit,
+                    path_filter,
+                    alpha,
+                    fusion_method,
+                    zone_id=zone_id,
+                )
 
             # Track latency
             latency_ms = (time.perf_counter() - start) * 1000
@@ -514,6 +522,8 @@ class SearchDaemon:
         query: str,
         limit: int,
         path_filter: str | None,
+        *,
+        zone_id: str | None = None,
     ) -> list[SearchResult]:
         """Fast keyword search using BM25S or Zoekt."""
         results: list[SearchResult] = []
@@ -532,7 +542,7 @@ class SearchDaemon:
 
         # Final fallback: database FTS
         if self._async_engine:
-            return await self._search_fts(query, limit, path_filter)
+            return await self._search_fts(query, limit, path_filter, zone_id=zone_id)
 
         return results
 
@@ -541,6 +551,8 @@ class SearchDaemon:
         query: str,
         limit: int,
         path_filter: str | None,
+        *,
+        zone_id: str | None = None,
     ) -> list[SearchResult]:
         """Vector similarity search using pgvector."""
         if not self._async_engine or not self._async_session:
@@ -567,6 +579,7 @@ class SearchDaemon:
                     JOIN file_paths fp ON c.path_id = fp.path_id
                     WHERE c.embedding IS NOT NULL
                       AND (:path_filter IS NULL OR fp.virtual_path LIKE :path_pattern)
+                      AND (:zone_id IS NULL OR fp.zone_id = :zone_id)
                     ORDER BY c.embedding <=> CAST(:embedding AS halfvec)
                     LIMIT :limit
                 """)
@@ -578,6 +591,7 @@ class SearchDaemon:
                         "limit": limit,
                         "path_filter": path_filter,
                         "path_pattern": f"{path_filter}%" if path_filter else None,
+                        "zone_id": zone_id,
                     },
                 )
 
@@ -633,6 +647,8 @@ class SearchDaemon:
         path_filter: str | None,
         alpha: float,
         fusion_method: str,
+        *,
+        zone_id: str | None = None,
     ) -> list[SearchResult]:
         """Hybrid search combining keyword, semantic, and optionally SPLADE results.
 
@@ -662,8 +678,12 @@ class SearchDaemon:
 
         # Run all retrieval backends in parallel
         tasks: list[asyncio.Task] = [
-            asyncio.ensure_future(self._keyword_search(query, limit * 3, path_filter)),
-            asyncio.ensure_future(self._semantic_search(query, limit * 3, path_filter)),
+            asyncio.ensure_future(
+                self._keyword_search(query, limit * 3, path_filter, zone_id=zone_id)
+            ),
+            asyncio.ensure_future(
+                self._semantic_search(query, limit * 3, path_filter, zone_id=zone_id)
+            ),
         ]
         has_splade = self._splade is not None
         if has_splade:
@@ -813,6 +833,8 @@ class SearchDaemon:
         query: str,
         limit: int,
         path_filter: str | None,
+        *,
+        zone_id: str | None = None,
     ) -> list[SearchResult]:
         """Search using database FTS (fallback)."""
         if not self._async_engine or not self._async_session:
@@ -822,43 +844,28 @@ class SearchDaemon:
             from sqlalchemy import text
 
             async with self._async_session() as session:
-                # PostgreSQL FTS query - use explicit boolean for path filtering
-                if path_filter:
-                    sql = text("""
-                        SELECT
-                            c.chunk_index, c.chunk_text,
-                            c.start_offset, c.end_offset, c.line_start, c.line_end,
-                            fp.virtual_path,
-                            ts_rank(to_tsvector('english', c.chunk_text), plainto_tsquery('english', :query)) as score
-                        FROM document_chunks c
-                        JOIN file_paths fp ON c.path_id = fp.path_id
-                        WHERE to_tsvector('english', c.chunk_text) @@ plainto_tsquery('english', :query)
-                          AND fp.virtual_path LIKE :path_pattern
-                        ORDER BY score DESC
-                        LIMIT :limit
-                    """)
-                    params = {
-                        "query": query,
-                        "limit": limit,
-                        "path_pattern": f"{path_filter}%",
-                    }
-                else:
-                    sql = text("""
-                        SELECT
-                            c.chunk_index, c.chunk_text,
-                            c.start_offset, c.end_offset, c.line_start, c.line_end,
-                            fp.virtual_path,
-                            ts_rank(to_tsvector('english', c.chunk_text), plainto_tsquery('english', :query)) as score
-                        FROM document_chunks c
-                        JOIN file_paths fp ON c.path_id = fp.path_id
-                        WHERE to_tsvector('english', c.chunk_text) @@ plainto_tsquery('english', :query)
-                        ORDER BY score DESC
-                        LIMIT :limit
-                    """)
-                    params = {
-                        "query": query,
-                        "limit": limit,
-                    }
+                # PostgreSQL FTS query with zone isolation
+                sql = text("""
+                    SELECT
+                        c.chunk_index, c.chunk_text,
+                        c.start_offset, c.end_offset, c.line_start, c.line_end,
+                        fp.virtual_path,
+                        ts_rank(to_tsvector('english', c.chunk_text), plainto_tsquery('english', :query)) as score
+                    FROM document_chunks c
+                    JOIN file_paths fp ON c.path_id = fp.path_id
+                    WHERE to_tsvector('english', c.chunk_text) @@ plainto_tsquery('english', :query)
+                      AND (:path_filter IS NULL OR fp.virtual_path LIKE :path_pattern)
+                      AND (:zone_id IS NULL OR fp.zone_id = :zone_id)
+                    ORDER BY score DESC
+                    LIMIT :limit
+                """)
+                params = {
+                    "query": query,
+                    "limit": limit,
+                    "path_filter": path_filter,
+                    "path_pattern": f"{path_filter}%" if path_filter else None,
+                    "zone_id": zone_id,
+                }
 
                 result = await session.execute(sql, params)
 

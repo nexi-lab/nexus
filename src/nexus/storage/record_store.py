@@ -211,7 +211,13 @@ class SQLAlchemyRecordStore(RecordStoreABC):
         from sqlalchemy.orm import sessionmaker
 
         # Resolve database URL
-        self.database_url = self._resolve_db_url(db_url, db_path)
+        _resolved = self._resolve_db_url(db_url, db_path)
+        # Auto-convert async driver URL to sync driver.  Many callers pass
+        # NEXUS_DATABASE_URL which uses ``postgresql+asyncpg://``, but this
+        # store uses a synchronous ``create_engine``.
+        self.database_url = (
+            _resolved.replace("postgresql+asyncpg://", "postgresql://") if _resolved else _resolved
+        )
 
         # Store creators for lazy async engine initialization
         self._async_creator = async_creator

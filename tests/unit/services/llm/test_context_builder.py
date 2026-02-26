@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from nexus.bricks.llm.llm_context_builder import AdaptiveRetrievalConfig, ContextBuilder
+from nexus.services.llm.llm_context_builder import AdaptiveRetrievalConfig, ContextBuilder
 
 
 @dataclass

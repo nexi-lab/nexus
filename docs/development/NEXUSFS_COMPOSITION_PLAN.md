@@ -109,7 +109,7 @@ from nexus.services.version_service import VersionService
 from nexus.bricks.rebac.rebac_service import ReBACService
 from nexus.services.mount_service import MountService
 from nexus.bricks.mcp.mcp_service import MCPService
-from nexus.bricks.llm.llm_service import LLMService
+from nexus.services.llm.llm_service import LLMService
 from nexus.services.oauth_service import OAuthService
 from nexus.services.skill_service import SkillService
 from nexus.services.search_service import SearchService

@@ -19,8 +19,6 @@ from nexus.lib.rpc_decorator import rpc_expose
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from nexus.bricks.llm.provider import LLMProvider
-
     from .llm_citation import DocumentReadResult
     from .llm_document_reader import LLMDocumentReader
 
@@ -111,7 +109,7 @@ class LLMService:
         api_key: str | None = None,
         use_search: bool = True,
         search_mode: str = "semantic",
-        provider: "LLMProvider | None" = None,
+        provider: Any = None,
         context: Any = None,
     ) -> str:
         """Read document with LLM and return answer.
@@ -185,7 +183,7 @@ class LLMService:
         search_mode: str = "semantic",
         search_limit: int = 10,
         include_citations: bool = True,
-        provider: "LLMProvider | None" = None,
+        provider: Any = None,
         context: Any = None,
     ) -> "DocumentReadResult":
         """Read document with LLM and return detailed result.
@@ -269,7 +267,7 @@ class LLMService:
         api_key: str | None = None,
         use_search: bool = True,
         search_mode: str = "semantic",
-        provider: "LLMProvider | None" = None,
+        provider: Any = None,
         context: Any = None,
     ) -> AsyncIterator[str]:
         """Stream document reading response.
@@ -339,7 +337,7 @@ class LLMService:
     @rpc_expose(description="Create an LLM document reader for advanced usage")
     def create_llm_reader(
         self,
-        provider: "LLMProvider | None" = None,
+        provider: Any = None,
         model: str | None = None,
         api_key: str | None = None,
         system_prompt: str | None = None,
@@ -421,7 +419,7 @@ class LLMService:
 
     def _get_llm_reader(
         self,
-        provider: "LLMProvider | None" = None,
+        provider: Any = None,
         model: str | None = None,
         api_key: str | None = None,
         system_prompt: str | None = None,
@@ -447,10 +445,12 @@ class LLMService:
             on the NexusFS instance. Handles provider-specific configuration
             like OpenRouter custom_llm_provider setting.
         """
+        import importlib
+
         from pydantic import SecretStr
 
-        from nexus.bricks.llm.config import LLMConfig
-        from nexus.bricks.llm.provider import LiteLLMProvider
+        LLMConfig = importlib.import_module("nexus.bricks.llm.config").LLMConfig
+        LiteLLMProvider = importlib.import_module("nexus.bricks.llm.provider").LiteLLMProvider
 
         from .llm_document_reader import LLMDocumentReader
 

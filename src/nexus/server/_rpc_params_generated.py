@@ -30,19 +30,13 @@ __all__ = [
     "AgentListByZoneParams",
     "AgentTransitionParams",
     "AppendParams",
-    "ApproveMemoryBatchParams",
-    "ApproveMemoryParams",
     "BackfillDirectoryIndexParams",
     "CancelSyncJobParams",
     "CancelTaskParams",
     "CreateShareLinkParams",
-    "DeactivateMemoryBatchParams",
-    "DeactivateMemoryParams",
     "DeleteAgentParams",
     "DeleteBulkParams",
     "DeleteConnectorParams",
-    "DeleteMemoryBatchParams",
-    "DeleteMemoryParams",
     "DeleteSavedMountParams",
     "DeprovisionUserParams",
     "DiffVersionsParams",
@@ -67,7 +61,6 @@ __all__ = [
     "ListAgentsParams",
     "ListConnectorsParams",
     "ListIncomingSharesParams",
-    "ListMemoriesParams",
     "ListMountsParams",
     "ListOutgoingSharesParams",
     "ListParams",
@@ -95,7 +88,6 @@ __all__ = [
     "OAuthRevokeCredentialParams",
     "OAuthTestCredentialParams",
     "ProvisionUserParams",
-    "QueryMemoriesParams",
     "ReadBulkParams",
     "RebacCheckParams",
     "RebacCreateParams",
@@ -109,7 +101,6 @@ __all__ = [
     "RegisterWorkspaceParams",
     "RemoveMountParams",
     "RenameBulkParams",
-    "RetrieveMemoryParams",
     "RevokeShareByIdParams",
     "RevokeShareLinkParams",
     "RevokeShareParams",
@@ -132,7 +123,6 @@ __all__ = [
     "SnapshotRollbackParams",
     "StatBulkParams",
     "StatParams",
-    "StoreMemoryParams",
     "SubmitTaskParams",
     "SyncMountAsyncParams",
     "SyncMountParams",
@@ -142,7 +132,6 @@ __all__ = [
     "SysReaddirParams",
     "SysRenameParams",
     "SysRmdirParams",
-    "SysSetattrParams",
     "SysStatParams",
     "SysUnlinkParams",
     "SysWriteParams",
@@ -322,20 +311,6 @@ class AppendParams:
 
 
 @dataclass
-class ApproveMemoryParams:
-    """Parameters for approve_memory(): Approve a memory record."""
-
-    memory_id: str
-
-
-@dataclass
-class ApproveMemoryBatchParams:
-    """Parameters for approve_memory_batch(): Approve a batch of memory records."""
-
-    memory_ids: list[str]
-
-
-@dataclass
 class BackfillDirectoryIndexParams:
     """Parameters for backfill_directory_index(): Backfill sparse directory index from existing files."""
 
@@ -369,20 +344,6 @@ class CreateShareLinkParams:
 
 
 @dataclass
-class DeactivateMemoryParams:
-    """Parameters for deactivate_memory(): Deactivate a memory record."""
-
-    memory_id: str
-
-
-@dataclass
-class DeactivateMemoryBatchParams:
-    """Parameters for deactivate_memory_batch(): Deactivate a batch of memory records."""
-
-    memory_ids: list[str]
-
-
-@dataclass
 class DeleteAgentParams:
     """Parameters for delete_agent(): Delete a registered agent (v0.5.0)."""
 
@@ -405,20 +366,6 @@ class DeleteConnectorParams:
     revoke_oauth: bool = False
     provider: str | None = None
     user_email: str | None = None
-
-
-@dataclass
-class DeleteMemoryParams:
-    """Parameters for delete_memory(): Delete a memory record."""
-
-    memory_id: str
-
-
-@dataclass
-class DeleteMemoryBatchParams:
-    """Parameters for delete_memory_batch(): Delete a batch of memory records."""
-
-    memory_ids: list[str]
 
 
 @dataclass
@@ -634,18 +581,6 @@ class ListIncomingSharesParams:
         """Convert lists to tuples (JSON deserializes tuples as lists)."""
         if isinstance(self.subject, list):
             object.__setattr__(self, "subject", tuple(self.subject))
-
-
-@dataclass
-class ListMemoriesParams:
-    """Parameters for list_memories(): List memory records."""
-
-    limit: int = 50
-    scope: str | None = None
-    memory_type: str | None = None
-    namespace: str | None = None
-    namespace_prefix: str | None = None
-    state: str | None = "active"
 
 
 @dataclass
@@ -880,19 +815,6 @@ class ProvisionUserParams:
 
 
 @dataclass
-class QueryMemoriesParams:
-    """Parameters for query_memories(): Query or search memory records."""
-
-    memory_type: str | None = None
-    scope: str | None = None
-    state: str | None = "active"
-    limit: int = 50
-    query: str | None = None
-    search_mode: str | None = None
-    embedding_provider: str | None = None
-
-
-@dataclass
 class ReadBulkParams:
     """Parameters for read_bulk(): Read multiple files in a single RPC call for improved performance."""
 
@@ -1072,15 +994,6 @@ class RenameBulkParams:
         """Convert lists to tuples (JSON deserializes tuples as lists)."""
         if isinstance(self.renames, list):
             object.__setattr__(self, "renames", tuple(self.renames))
-
-
-@dataclass
-class RetrieveMemoryParams:
-    """Parameters for retrieve_memory(): Retrieve a memory record."""
-
-    namespace: str | None = None
-    path_key: str | None = None
-    path: str | None = None
 
 
 @dataclass
@@ -1294,20 +1207,6 @@ class StatBulkParams:
 
 
 @dataclass
-class StoreMemoryParams:
-    """Parameters for store_memory(): Store a memory record."""
-
-    content: str
-    memory_type: str = "fact"
-    scope: str = "agent"
-    importance: float = 0.5
-    namespace: str | None = None
-    path_key: str | None = None
-    state: str = "active"
-    tags: list[str] | None = None
-
-
-@dataclass
 class SubmitTaskParams:
     """Parameters for submit_task(): Submit a task to the durable queue."""
 
@@ -1405,14 +1304,6 @@ class SysRmdirParams:
         """Convert lists to tuples (JSON deserializes tuples as lists)."""
         if isinstance(self.subject, list):
             object.__setattr__(self, "subject", tuple(self.subject))
-
-
-@dataclass
-class SysSetattrParams:
-    """Parameters for sys_setattr(): Update file metadata attributes (chmod/chown/utimensat analog)."""
-
-    path: str
-    attrs: Any
 
 
 @dataclass
@@ -1543,19 +1434,13 @@ METHOD_PARAMS: dict[str, type] = {
     "agent_list_by_zone": AgentListByZoneParams,
     "agent_transition": AgentTransitionParams,
     "append": AppendParams,
-    "approve_memory": ApproveMemoryParams,
-    "approve_memory_batch": ApproveMemoryBatchParams,
     "backfill_directory_index": BackfillDirectoryIndexParams,
     "cancel_sync_job": CancelSyncJobParams,
     "cancel_task": CancelTaskParams,
     "create_share_link": CreateShareLinkParams,
-    "deactivate_memory": DeactivateMemoryParams,
-    "deactivate_memory_batch": DeactivateMemoryBatchParams,
     "delete_agent": DeleteAgentParams,
     "delete_bulk": DeleteBulkParams,
     "delete_connector": DeleteConnectorParams,
-    "delete_memory": DeleteMemoryParams,
-    "delete_memory_batch": DeleteMemoryBatchParams,
     "delete_saved_mount": DeleteSavedMountParams,
     "deprovision_user": DeprovisionUserParams,
     "diff_versions": DiffVersionsParams,
@@ -1581,7 +1466,6 @@ METHOD_PARAMS: dict[str, type] = {
     "list_agents": ListAgentsParams,
     "list_connectors": ListConnectorsParams,
     "list_incoming_shares": ListIncomingSharesParams,
-    "list_memories": ListMemoriesParams,
     "list_mounts": ListMountsParams,
     "list_outgoing_shares": ListOutgoingSharesParams,
     "list_queue_tasks": ListQueueTasksParams,
@@ -1608,7 +1492,6 @@ METHOD_PARAMS: dict[str, type] = {
     "oauth_revoke_credential": OAuthRevokeCredentialParams,
     "oauth_test_credential": OAuthTestCredentialParams,
     "provision_user": ProvisionUserParams,
-    "query_memories": QueryMemoriesParams,
     "read_bulk": ReadBulkParams,
     "rebac_check": RebacCheckParams,
     "rebac_create": RebacCreateParams,
@@ -1622,7 +1505,6 @@ METHOD_PARAMS: dict[str, type] = {
     "register_workspace": RegisterWorkspaceParams,
     "remove_mount": RemoveMountParams,
     "rename_bulk": RenameBulkParams,
-    "retrieve_memory": RetrieveMemoryParams,
     "revoke_share": RevokeShareParams,
     "revoke_share_by_id": RevokeShareByIdParams,
     "revoke_share_link": RevokeShareLinkParams,
@@ -1645,7 +1527,6 @@ METHOD_PARAMS: dict[str, type] = {
     "snapshot_rollback": SnapshotRollbackParams,
     "stat": StatParams,
     "stat_bulk": StatBulkParams,
-    "store_memory": StoreMemoryParams,
     "submit_task": SubmitTaskParams,
     "sync_mount": SyncMountParams,
     "sync_mount_async": SyncMountAsyncParams,
@@ -1655,7 +1536,6 @@ METHOD_PARAMS: dict[str, type] = {
     "sys_readdir": SysReaddirParams,
     "sys_rename": SysRenameParams,
     "sys_rmdir": SysRmdirParams,
-    "sys_setattr": SysSetattrParams,
     "sys_stat": SysStatParams,
     "sys_unlink": SysUnlinkParams,
     "sys_write": SysWriteParams,

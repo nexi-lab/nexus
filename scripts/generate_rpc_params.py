@@ -33,13 +33,26 @@ OUTPUT_PATH = (
     Path(__file__).resolve().parent.parent / "src" / "nexus" / "server" / "_rpc_params_generated.py"
 )
 
+
 # Methods whose Param classes are hand-written in _rpc_param_overrides.py.
 # The codegen skips these entirely so the override takes precedence.
-OVERRIDE_METHODS: set[str] = {
-    "sys_read",  # RPC-only fields: return_url, expires_in
-    "oauth_get_auth_url",  # Uses DEFAULT_OAUTH_REDIRECT_URI constant
-    "oauth_exchange_code",  # Uses DEFAULT_OAUTH_REDIRECT_URI constant
-}
+# Auto-populated from OVERRIDE_METHOD_PARAMS keys at generation time.
+def _load_override_methods() -> set[str]:
+    """Load method names from _rpc_param_overrides.OVERRIDE_METHOD_PARAMS."""
+    try:
+        from nexus.server._rpc_param_overrides import OVERRIDE_METHOD_PARAMS
+
+        return set(OVERRIDE_METHOD_PARAMS.keys())
+    except ImportError:
+        # Fallback if overrides module not importable
+        return {
+            "sys_read",
+            "oauth_get_auth_url",
+            "oauth_exchange_code",
+        }
+
+
+OVERRIDE_METHODS: set[str] = _load_override_methods()
 
 # Methods that should be excluded from codegen entirely (streaming, internal, etc.)
 EXCLUDED_METHODS: set[str] = {

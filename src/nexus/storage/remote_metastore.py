@@ -232,7 +232,7 @@ class RemoteMetastore(MetastoreABC):
         """
         try:
             self._call_rpc(
-                "set_metadata",
+                "sys_setattr",
                 {"path": metadata.path, "metadata": metadata.to_dict(), "consistency": consistency},
             )
         except Exception as exc:

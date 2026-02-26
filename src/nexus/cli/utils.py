@@ -204,12 +204,13 @@ def get_filesystem(
     """
     try:
         # If server_mode is set, the caller is a server — always use local NexusFS
-        if not server_mode and backend_config.remote_url:
-            # Client mode: use remote server connection via nexus.connect()
+        if not server_mode:
+            # CLI command (userspace): connect to running kernel via RPC
+            remote_url = backend_config.remote_url or "http://localhost:2026"
             return nexus.connect(
                 config={
                     "mode": "remote",
-                    "url": backend_config.remote_url,
+                    "url": remote_url,
                     "api_key": backend_config.remote_api_key,
                 }
             )
@@ -323,32 +324,23 @@ def get_default_filesystem() -> NexusFilesystem:
     """Get Nexus filesystem instance with default configuration.
 
     Used by commands that don't accept backend options (e.g., memory commands).
-    Supports both local and remote modes via environment variables:
-    - NEXUS_URL: Remote server URL (if set, uses remote mode)
-    - NEXUS_API_KEY: API key for remote authentication
-    - NEXUS_DATA_DIR: Data directory for local mode (default: ~/.nexus)
+    Connects to the running kernel via RPC (defaults to http://localhost:2026).
+    Override with NEXUS_URL environment variable.
 
     Returns:
-        NexusFilesystem instance (remote if NEXUS_URL is set, otherwise local)
+        NexusFilesystem instance connected via RPC to the running kernel
     """
     try:
-        import os
+        remote_url = os.environ.get("NEXUS_URL", "http://localhost:2026")
+        api_key = os.environ.get("NEXUS_API_KEY")
 
-        # Check for remote URL first (priority over local)
-        remote_url = os.environ.get("NEXUS_URL")
-        if remote_url:
-            # Use remote server connection via nexus.connect()
-            return nexus.connect(
-                config={
-                    "mode": "remote",
-                    "url": remote_url,
-                    "api_key": os.environ.get("NEXUS_API_KEY"),
-                }
-            )
-
-        # Fall back to local mode
-        data_dir = os.environ.get("NEXUS_DATA_DIR", str(Path.home() / ".nexus"))
-        return nexus.connect(config={"data_dir": data_dir})
+        return nexus.connect(
+            config={
+                "mode": "remote",
+                "url": remote_url,
+                "api_key": api_key,
+            }
+        )
     except Exception as e:
         console.print(f"[red]Error connecting to Nexus:[/red] {e}")
         sys.exit(1)
@@ -545,9 +537,18 @@ def handle_error(e: Exception) -> None:
     - 3: Permission denied
     """
     # Import exception types here to avoid circular imports
-    from nexus.contracts.exceptions import AccessDeniedError, NexusPermissionError
+    from nexus.contracts.exceptions import (
+        AccessDeniedError,
+        NexusPermissionError,
+        RemoteConnectionError,
+    )
 
-    if isinstance(e, PermissionError | AccessDeniedError | NexusPermissionError):
+    if isinstance(e, RemoteConnectionError):
+        console.print(
+            "[red]Error:[/red] Nexus kernel is not running. Start it with: [bold]nexus serve[/bold]"
+        )
+        sys.exit(1)
+    elif isinstance(e, PermissionError | AccessDeniedError | NexusPermissionError):
         console.print(f"[red]Permission Denied:[/red] {e}")
         sys.exit(3)  # Exit code 3 for permission errors
     elif isinstance(e, NexusFileNotFoundError):

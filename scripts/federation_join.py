@@ -23,6 +23,7 @@ LEADER_ADDR = "10.99.0.1:2126"
 
 async def request_join(mgr: ZoneManager) -> dict:  # noqa: ARG001
     client = RaftClient(address=LEADER_ADDR)
+    await client.connect()
     try:
         return await client.join_zone(
             zone_id=ROOT_ZONE_ID,

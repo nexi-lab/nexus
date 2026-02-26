@@ -108,15 +108,17 @@ async def search_query(
     graph_mode: str = Query(
         "none", description="Graph enhancement mode: none, low, high, dual, auto"
     ),
-    _auth_result: dict[str, Any] = Depends(require_auth),
+    auth_result: dict[str, Any] = Depends(require_auth),
     search_daemon: Any = Depends(_get_search_daemon),
     async_session_factory: Any = Depends(_get_async_read_session_factory),
     record_store: Any = Depends(_get_record_store),
 ) -> dict[str, Any]:
     """Execute a fast search query using the search daemon."""
     from nexus.bricks.search.query_router import QueryRouter
+    from nexus.contracts.constants import ROOT_ZONE_ID
 
     start_time = time.perf_counter()
+    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
 
     if not search_daemon.is_initialized:
         raise HTTPException(status_code=503, detail="Search daemon is still initializing")
@@ -170,6 +172,7 @@ async def search_query(
                 record_store=record_store,
                 async_session_factory=async_session_factory,
                 search_daemon=search_daemon,
+                zone_id=zone_id,
             )
             latency_ms = (time.perf_counter() - start_time) * 1000
 
@@ -207,6 +210,7 @@ async def search_query(
             alpha=alpha,
             fusion_method=fusion,
             adaptive_k=adaptive_k,
+            zone_id=zone_id,
         )
 
         latency_ms = (time.perf_counter() - start_time) * 1000

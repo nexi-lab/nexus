@@ -16,9 +16,10 @@ logger = logging.getLogger(__name__)
 class DaemonSemanticSearchWrapper:
     """Wraps search daemon as SemanticSearch interface for GraphEnhancedRetriever."""
 
-    def __init__(self, daemon: Any) -> None:
+    def __init__(self, daemon: Any, *, zone_id: str | None = None) -> None:
         self.daemon = daemon
         self.embedding_provider = getattr(daemon, "_embedding_provider", None)
+        self._zone_id = zone_id
 
     async def search(
         self,
@@ -39,6 +40,7 @@ class DaemonSemanticSearchWrapper:
             limit=limit,
             path_filter=path if path != "/" else None,
             alpha=alpha,
+            zone_id=self._zone_id,
         )
         return [
             BaseSearchResult(
@@ -68,6 +70,7 @@ async def graph_enhanced_search(
     record_store: Any,
     async_session_factory: Any,
     search_daemon: Any,
+    zone_id: str | None = None,
 ) -> list[Any]:
     """Execute graph-enhanced search using GraphEnhancedRetriever (Issue #1040).
 
@@ -96,9 +99,9 @@ async def graph_enhanced_search(
     GraphStore = _il.import_module("nexus.bricks.search.graph_store").GraphStore
 
     async with async_session_factory() as session:
-        graph_store = GraphStore(record_store, session, zone_id=ROOT_ZONE_ID)
+        graph_store = GraphStore(record_store, session, zone_id=zone_id or ROOT_ZONE_ID)
 
-        semantic_wrapper = DaemonSemanticSearchWrapper(search_daemon)
+        semantic_wrapper = DaemonSemanticSearchWrapper(search_daemon, zone_id=zone_id)
         embedding_provider = getattr(search_daemon, "_embedding_provider", None)
 
         config = GraphRetrievalConfig(

@@ -77,6 +77,7 @@ class MCPService:
             filesystem: Filesystem Protocol for list/read operations and manager creation
         """
         self._filesystem = filesystem
+        self._mount_manager: Any | None = None
 
         logger.info("[MCPService] Initialized")
 
@@ -258,8 +259,8 @@ class MCPService:
         env: dict[str, str] | None = None,
         headers: dict[str, str] | None = None,
         description: str | None = None,
-        tier: str = "system",
-        context: "OperationContext | None" = None,
+        tier: str = "system",  # noqa: ARG002
+        context: "OperationContext | None" = None,  # noqa: ARG002
     ) -> dict[str, Any]:
         """Mount an MCP server.
 
@@ -358,7 +359,7 @@ class MCPService:
         manager = self._get_mcp_mount_manager()
 
         # Mount the server (async operation)
-        await manager.mount(mount_config, tier=tier, context=context)
+        await manager.mount(mount_config)
 
         # Sync tools (async operation)
         tool_count = await manager.sync_tools(name)
@@ -496,7 +497,9 @@ class MCPService:
         if self._filesystem is None:
             raise RuntimeError("Filesystem not configured for MCPService")
 
-        return MCPMountManager(self._filesystem)
+        if not hasattr(self, "_mount_manager") or self._mount_manager is None:
+            self._mount_manager = MCPMountManager(self._filesystem)
+        return self._mount_manager
 
 
 # =============================================================================

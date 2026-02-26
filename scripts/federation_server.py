@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""Join Windows node 1 federation from macOS node 2."""
+"""Nexus Federation Server — Node 1 (Windows).
 
-import asyncio
+Binds gRPC to WireGuard IP only (10.99.0.1:2126) to avoid public exposure.
+"""
+
 import os
 import signal
 import sys
@@ -9,28 +11,14 @@ import time
 from pathlib import Path
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.raft.client import RaftClient
 from nexus.raft.zone_manager import ZoneManager
 
 # ── Configuration ──────────────────────────────────────────────────────────────
-NODE_ID = 2
-WIREGUARD_IP = "10.99.0.2"
+NODE_ID = 1
+WIREGUARD_IP = "10.99.0.1"
 GRPC_PORT = 2126
 BIND_ADDR = f"{WIREGUARD_IP}:{GRPC_PORT}"
-LEADER_ADDR = "10.99.0.1:2126"
 # ───────────────────────────────────────────────────────────────────────────────
-
-
-async def request_join(mgr: ZoneManager) -> dict:  # noqa: ARG001
-    client = RaftClient(address=LEADER_ADDR)
-    try:
-        return await client.join_zone(
-            zone_id=ROOT_ZONE_ID,
-            node_id=NODE_ID,
-            node_address=BIND_ADDR,
-        )
-    finally:
-        await client.close()
 
 
 def main() -> None:
@@ -42,33 +30,19 @@ def main() -> None:
     Path(zones_dir).mkdir(parents=True, exist_ok=True)
 
     print("=" * 60)
-    print("Nexus Federation Join — Node 2 (macOS)")
+    print("Nexus Federation Server — Node 1")
     print("=" * 60)
 
-    # Step 1: Create local zone replica (no bootstrap — waits for leader snapshot)
     mgr = ZoneManager(node_id=NODE_ID, base_path=zones_dir, bind_addr=BIND_ADDR)
-    mgr.join_zone(ROOT_ZONE_ID, peers=[f"1@{LEADER_ADDR}"])
+    store = mgr.bootstrap(root_zone_id=ROOT_ZONE_ID)
 
-    print("  Local zone created (skip_bootstrap)")
-    print(f"  gRPC: {BIND_ADDR}")
-
-    # Step 2: Ask leader to add us as Voter
-    result = asyncio.run(request_join(mgr))
-    print(f"  JoinZone result: {result}")
-
-    if not result.get("success"):
-        print(f"  Join failed: {result.get('error')}")
-        mgr.shutdown()
-        sys.exit(1)
-
-    print("=" * 60)
-    print("  Federation joined!")
-    print(f"  Node ID:   {NODE_ID}")
+    print(f"  is_leader: {store._engine.is_leader()}")
+    print(f"  gRPC:      {BIND_ADDR}")
+    print(f"  Data dir:  {zones_dir}")
     print(f"  WireGuard: {WIREGUARD_IP}")
-    print(f"  Leader:    {LEADER_ADDR}")
     print("=" * 60)
+    print("Waiting for macOS node 2 to join... (Ctrl+C to stop)")
 
-    # Keep running so raft messages can flow
     running = True
 
     def shutdown(sig, frame):
@@ -85,7 +59,7 @@ def main() -> None:
         pass
     finally:
         mgr.shutdown()
-        print("Node 2 stopped.")
+        print("Server stopped.")
 
 
 if __name__ == "__main__":

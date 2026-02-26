@@ -38,6 +38,7 @@ print("  gRPC: 0.0.0.0:2126")
 # Step 2: Ask leader to add us as Voter
 async def request_join():
     client = RaftClient(address=LEADER_ADDR)
+    await client.connect()
     try:
         result = await client.join_zone(
             zone_id=ROOT_ZONE_ID,

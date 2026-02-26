@@ -90,6 +90,7 @@ class LLMDocumentReader:
         use_search: bool,
         search_limit: int,
         search_mode: str,
+        context: Any = None,
     ) -> tuple[list[Message], list[ChunkLike], list[str]]:
         """Shared context preparation for read() and stream().
 
@@ -131,11 +132,11 @@ class LLMDocumentReader:
 
         # If not using search, read document directly
         if not use_search:
-            file_paths = self.nx.glob(path) if "*" in path else [path]
+            file_paths = self.nx.glob(path, context=context) if "*" in path else [path]
 
             for file_path in file_paths[:search_limit]:
                 try:
-                    content = self.nx.read(file_path)
+                    content = self.nx.read(file_path, context=context)
                     if isinstance(content, bytes):
                         content_str = content.decode("utf-8", errors="ignore")
                     elif isinstance(content, dict):
@@ -185,6 +186,7 @@ class LLMDocumentReader:
         search_limit: int = 10,
         search_mode: str = "semantic",
         include_citations: bool = True,
+        context: Any = None,
     ) -> DocumentReadResult:
         """Read document(s) with LLM.
 
@@ -206,7 +208,7 @@ class LLMDocumentReader:
             NexusFileNotFoundError: If file doesn't exist
         """
         messages, chunks, sources = await self._prepare_context(
-            path, prompt, use_search, search_limit, search_mode
+            path, prompt, use_search, search_limit, search_mode, context=context
         )
 
         # Call LLM (async)
@@ -258,6 +260,7 @@ class LLMDocumentReader:
         use_search: bool = True,
         search_limit: int = 10,
         search_mode: str = "semantic",
+        context: Any = None,
     ) -> AsyncIterator[str]:
         """Stream document reading response.
 
@@ -274,7 +277,7 @@ class LLMDocumentReader:
             Response chunks as strings
         """
         messages, _chunks, _sources = await self._prepare_context(
-            path, prompt, use_search, search_limit, search_mode
+            path, prompt, use_search, search_limit, search_mode, context=context
         )
 
         # Stream response

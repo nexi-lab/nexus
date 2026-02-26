@@ -765,7 +765,7 @@ disable_error_code = ["override", "attr-defined"]
 target-version = "py311"
 line-length = 100
 exclude = [
-    "benchmarks/",
+    "tests/benchmarks/",
     "src/nexus/core/_metadata_generated.py",  # Generated at install time
     "src/nexus/core/_compact_generated.py",    # Generated at install time
     "src/nexus/core/protocols/",               # Generated at install time

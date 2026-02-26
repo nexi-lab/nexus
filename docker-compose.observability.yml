@@ -37,7 +37,7 @@ services:
     ports:
       - "9090:9090"
     volumes:
-      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./dockerfiles/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
@@ -62,7 +62,7 @@ services:
     ports:
       - "3100:3100"
     volumes:
-      - ./observability/loki/loki.yml:/etc/loki/config.yaml:ro
+      - ./dockerfiles/observability/loki/loki.yml:/etc/loki/config.yaml:ro
       - loki-data:/loki
     command:
       - "-config.file=/etc/loki/config.yaml"
@@ -87,7 +87,7 @@ services:
       - "4317:4317"   # OTLP gRPC receiver
       - "4318:4318"   # OTLP HTTP receiver
     volumes:
-      - ./observability/tempo/tempo.yml:/etc/tempo/config.yaml:ro
+      - ./dockerfiles/observability/tempo/tempo.yml:/etc/tempo/config.yaml:ro
       - tempo-data:/tmp/tempo
     command:
       - "-config.file=/etc/tempo/config.yaml"
@@ -116,7 +116,7 @@ services:
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
     volumes:
-      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./dockerfiles/observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - grafana-data:/var/lib/grafana
     deploy:
       resources:
@@ -142,7 +142,7 @@ services:
     ports:
       - "12345:12345"  # Alloy UI
     volumes:
-      - ./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - ./dockerfiles/observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     command:
       - "run"
@@ -197,7 +197,7 @@ services:
     ports:
       - "4040:4040"
     volumes:
-      - ./observability/pyroscope/pyroscope.yml:/etc/pyroscope/config.yaml:ro
+      - ./dockerfiles/observability/pyroscope/pyroscope.yml:/etc/pyroscope/config.yaml:ro
       - pyroscope-data:/data
     command:
       - "-config.file=/etc/pyroscope/config.yaml"

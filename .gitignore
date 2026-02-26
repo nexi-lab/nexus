@@ -125,8 +125,9 @@ test-fix-data/
 *-server-data/
 my-data/
 
-# Nexus plugins (development)
-nexus-plugin-*/
+# Nexus plugins (development — local clones outside packages/)
+# Note: packages/nexus-plugin-* are tracked; this ignores ad-hoc root clones
+/nexus-plugin-*/
 
 # Standalone backend storage directories (should be under nexus-data/)
 /cas/
@@ -139,7 +140,7 @@ nexus-plugin-*/
 *.sqlite
 *.sqlite3
 nexus-*.db
-benchmarks/LINKEDIN_POST.md
+tests/benchmarks/LINKEDIN_POST.md
 # Logs
 logs/
 *.log

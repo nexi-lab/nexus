@@ -93,8 +93,8 @@ class RustFUSEClient:
 
         Search order:
         1. nexus-fuse in PATH (production install)
-        2. ../nexus-fuse/target/release/nexus-fuse (development)
-        3. ../nexus-fuse/target/debug/nexus-fuse (development debug)
+        2. rust/nexus-fuse/target/release/nexus-fuse (development)
+        3. rust/nexus-fuse/target/debug/nexus-fuse (development debug)
 
         Returns:
             Path to nexus-fuse binary
@@ -114,14 +114,14 @@ class RustFUSEClient:
         repo_root = current_dir.parent.parent.parent  # src/nexus/fuse -> repo root
 
         for variant in ["release", "debug"]:
-            candidate = repo_root / "nexus-fuse" / "target" / variant / "nexus-fuse"
+            candidate = repo_root / "rust" / "nexus-fuse" / "target" / variant / "nexus-fuse"
             if candidate.exists():
                 logger.info("Found Rust binary in development build", path=str(candidate))
                 return str(candidate)
 
         raise RuntimeError(
-            "nexus-fuse binary not found. Install with 'cd nexus-fuse && cargo install --path .' "
-            "or build with 'cd nexus-fuse && cargo build --release'"
+            "nexus-fuse binary not found. Install with 'cd rust/nexus-fuse && cargo install --path .' "
+            "or build with 'cd rust/nexus-fuse && cargo build --release'"
         )
 
     def _start_daemon(self) -> None:

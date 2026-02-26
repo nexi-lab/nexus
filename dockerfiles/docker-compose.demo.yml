@@ -42,10 +42,10 @@ services:
       - postgres-data:/var/lib/postgresql/data
       # WAL archive for point-in-time recovery (Issue #998)
       - postgres-wal-archive:/var/lib/postgresql/wal_archive
-      # NOTE: this compose file lives in dockerfiles/, so use ../ for repo-root paths.
-      - ../postgres-init/01-pg-stat-statements.sql:/docker-entrypoint-initdb.d/01-pg-stat-statements.sql:ro
-      - ../postgres-init/02-wal-archiving.sql:/docker-entrypoint-initdb.d/02-wal-archiving.sql:ro
-      - ../postgres-init/03-monitoring-user.sql:/docker-entrypoint-initdb.d/03-monitoring-user.sql:ro
+      # postgres-init scripts (co-located in dockerfiles/)
+      - ./postgres-init/01-pg-stat-statements.sql:/docker-entrypoint-initdb.d/01-pg-stat-statements.sql:ro
+      - ./postgres-init/02-wal-archiving.sql:/docker-entrypoint-initdb.d/02-wal-archiving.sql:ro
+      - ./postgres-init/03-monitoring-user.sql:/docker-entrypoint-initdb.d/03-monitoring-user.sql:ro
     # PostgreSQL 16 optimizations:
     # - effective_io_concurrency=16: Concurrent I/O requests (tuned for SSD)
     # - wal_compression=lz4: 30-50% WAL size reduction with fast compression

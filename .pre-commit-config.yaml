@@ -22,9 +22,9 @@ repos:
     hooks:
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
-        exclude: ^benchmarks/
+        exclude: ^tests/benchmarks/
       - id: ruff-format
-        exclude: ^benchmarks/
+        exclude: ^tests/benchmarks/
 
   # Type checking — uses project venv mypy for correct type resolution
   - repo: local
@@ -34,7 +34,7 @@ repos:
         entry: .venv/bin/python -m mypy
         language: system
         types: [python]
-        exclude: ^(tests/|alembic/|examples/|benchmarks/|\.claude/|scripts/|nexus-plugin-)
+        exclude: ^(tests/|alembic/|examples/|\.claude/|scripts/|packages/nexus-plugin-|rust/nexus-fuse/)
 
   - repo: local
     hooks:

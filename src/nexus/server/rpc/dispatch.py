@@ -280,7 +280,13 @@ async def _auto_dispatch(
         elif hasattr(params, param_name):
             kwargs[param_name] = getattr(params, param_name)
 
-    if asyncio.iscoroutinefunction(func):
+    if inspect.isasyncgenfunction(func):
+        # Async generator (e.g. llm_read_stream): collect chunks into a string
+        chunks: list[str] = []
+        async for chunk in func(**kwargs):
+            chunks.append(str(chunk))
+        return "".join(chunks)
+    elif asyncio.iscoroutinefunction(func):
         return await func(**kwargs)
     else:
         timeout = 300.0 if method == "sync_mount" else None

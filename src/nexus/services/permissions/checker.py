@@ -176,6 +176,11 @@ class PermissionChecker:
         # ----------------------------------------------------------
         # ReBAC graph traversal via PermissionEnforcer
         # ----------------------------------------------------------
+        if self._permission_enforcer is None:
+            raise PermissionError(
+                f"Access denied: Permission enforcer unavailable (ReBAC degraded), "
+                f"cannot check {permission.name} permission for '{path}'"
+            )
         result = self._permission_enforcer.check(permission_path, permission, ctx)
         logger.debug(f"  -> permission_enforcer.check returned: {result}")
 

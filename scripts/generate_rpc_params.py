@@ -87,22 +87,28 @@ EXCLUDED_METHODS: set[str] = {
 # module and collect all methods that have ``_rpc_exposed = True``.
 MODULES_TO_SCAN: list[str] = [
     "nexus.core.nexus_fs",
-    "nexus.services.search_service",
-    "nexus.services.search_listing_mixin",
-    "nexus.services.search_grep_mixin",
-    "nexus.services.search_semantic",
-    "nexus.services.share_link_service",
-    "nexus.services.version_service",
-    "nexus.services.events_service",
+    # Search (reorganized from flat nexus.services.search_*)
+    "nexus.services.search.search_service",
+    "nexus.services.search.search_semantic",
+    # Services (reorganized into sub-packages)
+    "nexus.services.share_link.share_link_service",
+    "nexus.services.versioning.version_service",
+    "nexus.services.mount.mount_service",
+    "nexus.services.oauth.oauth_service",
+    "nexus.services.memory_service",
+    "nexus.services.ace_rpc_service",
+    "nexus.services.workspace_rpc_service",
+    "nexus.services.user_provisioning",
+    "nexus.services.agents.agent_service",
+    # System services
+    "nexus.system_services.lifecycle.events_service",
+    "nexus.system_services.lifecycle.task_queue_service",
+    # Brick services with @rpc_expose
     "nexus.bricks.llm.llm_service",
     "nexus.bricks.mcp.mcp_service",
-    "nexus.services.mount_service",
-    "nexus.services.oauth_service",
     "nexus.bricks.rebac.rebac_service",
-    "nexus.services.skill_service",
-    # Brick services with @rpc_expose (Issue #2035, Follow-up 1)
-    "nexus.skills.service",
-    "nexus.skills.package_service",
+    "nexus.bricks.skills.service",
+    "nexus.bricks.skills.package_service",
 ]
 
 # Types that signal "operation context" — parameters with these types are
@@ -136,6 +142,12 @@ NON_SERIALIZABLE_TYPES: set[str] = {
     "ProgressCallback",
     "ProgressCallback | None",
 }
+
+# Regex patterns for non-serializable types (checked after _annotation_str).
+# Catches resolved Callable types that don't match exact string entries above.
+NON_SERIALIZABLE_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"Callable"),
+]
 
 # Fields typed as tuple that need __post_init__ list→tuple conversion
 TUPLE_FIELD_PATTERN = re.compile(r"tuple\[")
@@ -349,7 +361,9 @@ def _generate_param_class(
             continue
 
         # Exclude non-serializable types (callbacks, etc.)
-        if ann_str in NON_SERIALIZABLE_TYPES:
+        if ann_str in NON_SERIALIZABLE_TYPES or any(
+            p.search(ann_str) for p in NON_SERIALIZABLE_PATTERNS
+        ):
             continue
 
         # Apply type rewrites

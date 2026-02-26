@@ -1101,7 +1101,7 @@ class MountService:
         logger.info(f"Setting up mount point: {mount_point}")
 
         # Create directory entry for the mount point
-        if self.nexus_fs and hasattr(self.nexus_fs, "mkdir"):
+        if self.nexus_fs and hasattr(self.nexus_fs, "sys_mkdir"):
             try:
                 self.nexus_fs.sys_mkdir(mount_point, parents=True, exist_ok=True)
                 logger.info(f"✓ Created directory entry for mount point: {mount_point}")
@@ -1153,7 +1153,7 @@ class MountService:
         Returns:
             True if skill was generated successfully
         """
-        if not self.nexus_fs or not hasattr(self.nexus_fs, "write"):
+        if not self.nexus_fs or not hasattr(self.nexus_fs, "sys_write"):
             logger.warning("[CONNECTOR-SKILL] NexusFS not available, skipping skill generation")
             return False
 

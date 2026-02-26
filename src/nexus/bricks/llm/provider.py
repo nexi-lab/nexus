@@ -474,6 +474,10 @@ class LiteLLMProvider(LLMProvider):
 
         # Prepare kwargs
         call_kwargs = kwargs.copy()
+        # Normalize max_tokens → max_completion_tokens (partial already sets
+        # max_completion_tokens; passing both causes OpenAI API errors).
+        if "max_tokens" in call_kwargs:
+            call_kwargs["max_completion_tokens"] = call_kwargs.pop("max_tokens")
         if tools:
             call_kwargs["tools"] = tools
             if "tool_choice" not in call_kwargs:
@@ -517,6 +521,10 @@ class LiteLLMProvider(LLMProvider):
 
         # Prepare kwargs
         call_kwargs = kwargs.copy()
+        # Normalize max_tokens → max_completion_tokens (partial already sets
+        # max_completion_tokens; passing both causes OpenAI API errors).
+        if "max_tokens" in call_kwargs:
+            call_kwargs["max_completion_tokens"] = call_kwargs.pop("max_tokens")
         if tools:
             call_kwargs["tools"] = tools
             if "tool_choice" not in call_kwargs:
@@ -617,6 +625,10 @@ class LiteLLMProvider(LLMProvider):
 
         # Prepare kwargs
         call_kwargs = kwargs.copy()
+        # Normalize max_tokens → max_completion_tokens (partial already sets
+        # max_completion_tokens; passing both causes OpenAI API errors).
+        if "max_tokens" in call_kwargs:
+            call_kwargs["max_completion_tokens"] = call_kwargs.pop("max_tokens")
         call_kwargs["stream"] = True
         if tools:
             call_kwargs["tools"] = tools
@@ -656,6 +668,10 @@ class LiteLLMProvider(LLMProvider):
 
         # Prepare kwargs
         call_kwargs = kwargs.copy()
+        # Normalize max_tokens → max_completion_tokens (partial already sets
+        # max_completion_tokens; passing both causes OpenAI API errors).
+        if "max_tokens" in call_kwargs:
+            call_kwargs["max_completion_tokens"] = call_kwargs.pop("max_tokens")
         call_kwargs["stream"] = True
         if tools:
             call_kwargs["tools"] = tools
@@ -706,7 +722,7 @@ class LiteLLMProvider(LLMProvider):
                 (self.config.model + str(formatted_messages)).encode()
             ).hexdigest()
             if cache_key in self._token_count_cache:
-                return self._token_count_cache[cache_key]
+                return int(self._token_count_cache[cache_key])
         except (TypeError, AttributeError, ValueError):
             cache_key = None
 

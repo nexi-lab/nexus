@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from nexus.services.llm.llm_citation import Citation, CitationExtractor, DocumentReadResult
+from nexus.bricks.llm.llm_citation import Citation, CitationExtractor, DocumentReadResult
 
 
 class TestCitation:

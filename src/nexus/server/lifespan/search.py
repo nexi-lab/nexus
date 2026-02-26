@@ -94,7 +94,7 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
 
         # Issue #2036: Inject AdaptiveKProtocol (LEGO compliance)
         with contextlib.suppress(Exception):
-            from nexus.services.llm.llm_context_builder import ContextBuilder
+            from nexus.bricks.llm.llm_context_builder import ContextBuilder
 
             app.state.search_daemon._adaptive_k_provider = ContextBuilder()
 

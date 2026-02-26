@@ -95,7 +95,7 @@ MODULES_TO_SCAN: list[str] = [
     "nexus.services.share_link_service",
     "nexus.services.version_service",
     "nexus.services.events_service",
-    "nexus.services.llm.llm_service",
+    "nexus.bricks.llm.llm_service",
     "nexus.bricks.mcp.mcp_service",
     "nexus.services.mount_service",
     "nexus.services.oauth_service",

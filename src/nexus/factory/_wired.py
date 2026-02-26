@@ -93,7 +93,7 @@ def _boot_wired_services(
     llm_subsystem: Any = None
     if _on("llm"):
         try:
-            from nexus.services.llm.llm_service import LLMService
+            from nexus.bricks.llm.llm_service import LLMService
 
             llm_service = LLMService(nexus_fs=nx)
 

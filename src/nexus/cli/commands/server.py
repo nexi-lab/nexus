@@ -496,10 +496,10 @@ def unmount(mount_point: str) -> None:
 @click.option("--port", default=2026, type=int, help="Server port (default: 2026)")
 @click.option(
     "--profile",
-    type=click.Choice(["kernel", "embedded", "lite", "full", "cloud"]),
+    type=click.Choice(["minimal", "embedded", "lite", "full", "cloud", "remote", "auto"]),
     default=None,
     envvar="NEXUS_PROFILE",
-    help="Deployment profile (kernel=bare VFS, embedded, lite, full, cloud)",
+    help="Deployment profile (minimal, embedded, lite, full, cloud, remote, auto)",
 )
 @click.option(
     "--api-key",

@@ -48,7 +48,6 @@ RemoteLockInfo: Any = None
 LockResult: Any = None
 RaftClient: Any = None
 RaftClientConfig: Any = None
-RaftClientPool: Any = None
 RaftError: Any = None
 RaftNotLeaderError: Any = None
 
@@ -59,7 +58,6 @@ try:
     LockResult = _raft_client_mod.LockResult
     RaftClient = _raft_client_mod.RaftClient
     RaftClientConfig = _raft_client_mod.RaftClientConfig
-    RaftClientPool = _raft_client_mod.RaftClientPool
     RaftError = _raft_client_mod.RaftError
     RaftNotLeaderError = _raft_client_mod.RaftNotLeaderError
     _HAS_GRPC_CLIENT = True
@@ -129,7 +127,6 @@ def require_metastore() -> None:
 __all__ = [
     # gRPC client (remote - for REMOTE profile NexusFS)
     "RaftClient",
-    "RaftClientPool",
     "RaftClientConfig",
     "RaftError",
     "RaftNotLeaderError",

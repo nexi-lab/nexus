@@ -79,10 +79,10 @@ def test_zone():
 
 @pytest.fixture
 def manager(engine, test_zone):
-    """Create a ReBAC manager with small revision window for testing."""
+    """Create a ReBAC manager for revision cache testing."""
     manager = ReBACManager(
         engine=engine,
-        l1_cache_revision_window=5,  # Small window for testing
+        is_postgresql=True,
     )
     yield manager
 
@@ -103,7 +103,7 @@ class TestRevisionCacheIntegration:
 
     def test_write_increments_revision(self, manager, test_zone):
         """Verify each write increments zone revision."""
-        initial = manager._get_zone_revision(test_zone)
+        initial = manager.get_zone_revision(test_zone)
 
         manager.rebac_write(
             subject=("agent", "alice"),
@@ -112,14 +112,14 @@ class TestRevisionCacheIntegration:
             zone_id=test_zone,
         )
 
-        new_rev = manager._get_zone_revision(test_zone)
+        new_rev = manager.get_zone_revision(test_zone)
         assert new_rev == initial + 1
 
     def test_write_increments_specific_zone(self, manager, test_zone):
         """Verify writes increment correct zone revision."""
         other_zone = f"{test_zone}_other"
-        initial_t1 = manager._get_zone_revision(test_zone)
-        initial_t2 = manager._get_zone_revision(other_zone)
+        initial_t1 = manager.get_zone_revision(test_zone)
+        initial_t2 = manager.get_zone_revision(other_zone)
 
         manager.rebac_write(
             subject=("agent", "alice"),
@@ -129,13 +129,13 @@ class TestRevisionCacheIntegration:
         )
 
         # test_zone should be incremented
-        assert manager._get_zone_revision(test_zone) == initial_t1 + 1
+        assert manager.get_zone_revision(test_zone) == initial_t1 + 1
         # other_zone should be unchanged
-        assert manager._get_zone_revision(other_zone) == initial_t2
+        assert manager.get_zone_revision(other_zone) == initial_t2
 
     def test_batch_write_single_increment(self, manager, test_zone):
         """Batch write should increment revision once, not per-tuple."""
-        initial = manager._get_zone_revision(test_zone)
+        initial = manager.get_zone_revision(test_zone)
 
         manager.rebac_write_batch(
             tuples=[
@@ -160,7 +160,7 @@ class TestRevisionCacheIntegration:
             ]
         )
 
-        final = manager._get_zone_revision(test_zone)
+        final = manager.get_zone_revision(test_zone)
         assert final == initial + 1, "Batch should increment revision once"
 
     def test_delete_increments_revision(self, manager, test_zone):
@@ -173,13 +173,13 @@ class TestRevisionCacheIntegration:
             zone_id=test_zone,
         )
 
-        initial = manager._get_zone_revision(test_zone)
+        initial = manager.get_zone_revision(test_zone)
 
         # Delete it
         manager.rebac_delete(result.tuple_id)
 
         # Revision should be incremented
-        assert manager._get_zone_revision(test_zone) == initial + 1
+        assert manager.get_zone_revision(test_zone) == initial + 1
 
     def test_cache_key_uses_revision_bucket(self, manager, test_zone):
         """Verify cache keys use revision bucket format."""
@@ -260,8 +260,8 @@ class TestRevisionCacheIntegration:
 
         misses_before = manager._l1_cache.get_stats()["misses"]
 
-        # Write enough to cross bucket boundary (window=5)
-        for i in range(6):
+        # Write enough to cross bucket boundary (default window=10)
+        for i in range(12):
             manager.rebac_write(
                 subject=("agent", f"filler{i}"),
                 relation="member-of",
@@ -296,7 +296,7 @@ class TestRevisionCacheIntegration:
             )
 
         # other_zone should still be at revision 0
-        assert manager._get_zone_revision(other_zone) == 0
+        assert manager.get_zone_revision(other_zone) == 0
 
     def test_revision_fetcher_connected(self, manager, test_zone):
         """Verify revision fetcher callback is properly connected."""

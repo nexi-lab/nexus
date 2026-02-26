@@ -595,7 +595,7 @@ class TestServerE2E:
             f"{base_url}/api/nfs/list",
             json={
                 "jsonrpc": "2.0",
-                "method": "list",
+                "method": "sys_readdir",
                 "params": {"path": "/workspace"},
                 "id": 1,
             },

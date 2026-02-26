@@ -21,7 +21,7 @@ from nexus import connect
 from nexus.fuse import mount_nexus
 
 
-def test_thread_safety():
+def test_thread_safety() -> bool:
     """Test that concurrent FUSE operations don't have race conditions."""
     print("\n" + "=" * 60)
     print("Test 1: Thread Safety (Issue #1563)")
@@ -63,7 +63,7 @@ def test_thread_safety():
         # Create test files
         print("Creating test files...")
         for i in range(10):
-            nx.write(f"/thread_test_{i}.txt", f"Content {i}".encode())
+            nx.sys_write(f"/thread_test_{i}.txt", f"Content {i}".encode())
 
         # Mount FUSE
         mount_point = tempfile.mkdtemp(prefix="nexus-fuse-test-")
@@ -83,7 +83,7 @@ def test_thread_safety():
         print("\nTesting concurrent reads...")
         errors = []
 
-        def read_file(path):
+        def read_file(path: str) -> None:
             try:
                 with open(path) as f:
                     content = f.read()
@@ -112,7 +112,7 @@ def test_thread_safety():
         print("\nTesting concurrent directory listings...")
         errors = []
 
-        def list_dir(path):
+        def list_dir(path: str) -> None:
             try:
                 entries = os.listdir(path)
                 assert len(entries) >= 10, f"Expected at least 10 entries, got {len(entries)}"
@@ -140,7 +140,7 @@ def test_thread_safety():
         server_proc.wait()
 
 
-def test_rust_integration():
+def test_rust_integration() -> bool:
     """Test that --use-rust flag works correctly."""
     print("\n" + "=" * 60)
     print("Test 2: Rust Integration (Issue #1569)")
@@ -179,8 +179,8 @@ def test_rust_integration():
             }
         )
 
-        nx.write("/rust_test.txt", b"Test content")
-        content = nx.read("/rust_test.txt")
+        nx.sys_write("/rust_test.txt", b"Test content")
+        content = nx.sys_read("/rust_test.txt")
         assert content == b"Test content", "Python mode read failed"
         print("✓ Python-only mode works")
 
@@ -195,7 +195,7 @@ def test_rust_integration():
         server_proc.wait()
 
 
-def test_permissions():
+def test_permissions() -> bool:
     """Test that permissions work correctly."""
     print("\n" + "=" * 60)
     print("Test 3: Permission Enforcement")
@@ -235,8 +235,8 @@ def test_permissions():
 
         # Test basic read/write with permissions enabled
         print("\nTesting basic operations with permissions...")
-        nx.write("/perm_test.txt", b"Permission test")
-        content = nx.read("/perm_test.txt")
+        nx.sys_write("/perm_test.txt", b"Permission test")
+        content = nx.sys_read("/perm_test.txt")
         assert content == b"Permission test", "Permission-enabled read failed"
         print("✓ Permissions work correctly")
 
@@ -247,7 +247,7 @@ def test_permissions():
         server_proc.wait()
 
 
-def main():
+def main() -> int:
     """Run all comprehensive tests."""
     print("=" * 60)
     print("COMPREHENSIVE FUSE INTEGRATION TEST")

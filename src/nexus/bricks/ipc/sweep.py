@@ -118,7 +118,7 @@ class TTLSweeper:
 
             msg_path = f"{agent_inbox}/{filename}"
             try:
-                data = await self._storage.read(msg_path, self._zone_id)
+                data = await self._storage.sys_read(msg_path, self._zone_id)
                 envelope = MessageEnvelope.from_bytes(data)
                 if envelope.is_expired():
                     dest = f"{dead_letter_path(agent_id)}/{filename}"

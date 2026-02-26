@@ -23,31 +23,31 @@ class TestRenameHappyPath:
     """Basic rename operations that should succeed."""
 
     def test_rename_file(self, nx):
-        nx.write("/files/old.txt", b"hello")
-        result = nx.rename("/files/old.txt", "/files/new.txt")
+        nx.sys_write("/files/old.txt", b"hello")
+        result = nx.sys_rename("/files/old.txt", "/files/new.txt")
         assert result == {}
-        assert nx.read("/files/new.txt") == b"hello"
-        assert not nx.exists("/files/old.txt")
+        assert nx.sys_read("/files/new.txt") == b"hello"
+        assert not nx.sys_access("/files/old.txt")
 
     def test_rename_preserves_content(self, nx):
         content = b"preserved content with special chars: \xff\x00\xfe"
-        nx.write("/files/src.bin", content)
-        nx.rename("/files/src.bin", "/files/dst.bin")
-        assert nx.read("/files/dst.bin") == content
+        nx.sys_write("/files/src.bin", content)
+        nx.sys_rename("/files/src.bin", "/files/dst.bin")
+        assert nx.sys_read("/files/dst.bin") == content
 
     def test_rename_preserves_metadata_version(self, nx):
-        nx.write("/files/v1.txt", b"v1")
-        nx.write("/files/v1.txt", b"v2")  # version 2
+        nx.sys_write("/files/v1.txt", b"v1")
+        nx.sys_write("/files/v1.txt", b"v2")  # version 2
         meta_before = nx.stat("/files/v1.txt")
-        nx.rename("/files/v1.txt", "/files/v2.txt")
+        nx.sys_rename("/files/v1.txt", "/files/v2.txt")
         meta_after = nx.stat("/files/v2.txt")
         assert meta_after["version"] == meta_before["version"]
 
     def test_rename_to_different_directory(self, nx):
-        nx.write("/files/dir-a/file.txt", b"moved")
-        nx.rename("/files/dir-a/file.txt", "/files/dir-b/file.txt")
-        assert nx.read("/files/dir-b/file.txt") == b"moved"
-        assert not nx.exists("/files/dir-a/file.txt")
+        nx.sys_write("/files/dir-a/file.txt", b"moved")
+        nx.sys_rename("/files/dir-a/file.txt", "/files/dir-b/file.txt")
+        assert nx.sys_read("/files/dir-b/file.txt") == b"moved"
+        assert not nx.sys_access("/files/dir-a/file.txt")
 
 
 class TestRenameDirectoryWithChildren:
@@ -61,16 +61,16 @@ class TestRenameDirectoryWithChildren:
         rename children. Children remain at old paths, so the old implicit
         directory still 'exists' due to those children.
         """
-        nx.write("/files/folder/a.txt", b"a")
-        nx.write("/files/folder/b.txt", b"b")
+        nx.sys_write("/files/folder/a.txt", b"a")
+        nx.sys_write("/files/folder/b.txt", b"b")
         # /files/folder/ is an implicit directory
         # rename_path for implicit dirs creates the new path entry
         # but children still exist under old path in DictMetastore
-        nx.rename("/files/folder", "/files/renamed")
+        nx.sys_rename("/files/folder", "/files/renamed")
         # The rename succeeded without error — that's the key assertion
         # Children are still under /files/folder/ in this implementation
-        assert nx.exists("/files/folder/a.txt")
-        assert nx.exists("/files/folder/b.txt")
+        assert nx.sys_access("/files/folder/a.txt")
+        assert nx.sys_access("/files/folder/b.txt")
 
 
 class TestRenameErrorPaths:
@@ -80,13 +80,13 @@ class TestRenameErrorPaths:
         from nexus.contracts.exceptions import NexusFileNotFoundError
 
         with pytest.raises(NexusFileNotFoundError):
-            nx.rename("/files/nonexistent.txt", "/files/new.txt")
+            nx.sys_rename("/files/nonexistent.txt", "/files/new.txt")
 
     def test_rename_to_existing_destination(self, nx):
-        nx.write("/files/src.txt", b"source")
-        nx.write("/files/dst.txt", b"destination")
+        nx.sys_write("/files/src.txt", b"source")
+        nx.sys_write("/files/dst.txt", b"destination")
         with pytest.raises(FileExistsError, match="already exists"):
-            nx.rename("/files/src.txt", "/files/dst.txt")
+            nx.sys_rename("/files/src.txt", "/files/dst.txt")
 
     def test_rename_from_readonly_path(self, nx):
         """Read-only source paths should raise PermissionError."""
@@ -99,9 +99,9 @@ class TestRenameErrorPaths:
         """Invalid paths should raise InvalidPathError."""
         from nexus.contracts.exceptions import InvalidPathError
 
-        nx.write("/files/valid.txt", b"content")
+        nx.sys_write("/files/valid.txt", b"content")
         with pytest.raises(InvalidPathError):
-            nx.rename("", "/files/new.txt")
+            nx.sys_rename("", "/files/new.txt")
 
 
 class TestRenameWithFailingBackend:
@@ -119,20 +119,20 @@ class TestRenameWithFailingBackend:
         )
         nx = make_test_nexus(tmp_path / "nx", backend=failing)
         # First write succeeds
-        nx.write("/files/a.txt", b"data")
+        nx.sys_write("/files/a.txt", b"data")
         # Second write fails due to backend
         from nexus.contracts.exceptions import BackendError
 
         with pytest.raises(BackendError):
-            nx.write("/files/b.txt", b"data2")
+            nx.sys_write("/files/b.txt", b"data2")
 
 
 class TestRenameMetadataConsistency:
     """Ensure metadata remains consistent after rename."""
 
     def test_old_path_metadata_removed(self, nx):
-        nx.write("/files/old.txt", b"content")
-        nx.rename("/files/old.txt", "/files/new.txt")
+        nx.sys_write("/files/old.txt", b"content")
+        nx.sys_rename("/files/old.txt", "/files/new.txt")
         assert nx.stat("/files/new.txt") is not None
         from nexus.contracts.exceptions import NexusFileNotFoundError
 
@@ -140,9 +140,9 @@ class TestRenameMetadataConsistency:
             nx.stat("/files/old.txt")
 
     def test_rename_updates_path_in_metadata(self, nx):
-        nx.write("/files/original.txt", b"content")
+        nx.sys_write("/files/original.txt", b"content")
         original_etag = nx.stat("/files/original.txt")["etag"]
-        nx.rename("/files/original.txt", "/files/renamed.txt")
+        nx.sys_rename("/files/original.txt", "/files/renamed.txt")
         meta = nx.stat("/files/renamed.txt")
         # The etag (content hash) should be preserved after rename
         assert meta["etag"] == original_etag

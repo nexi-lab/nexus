@@ -50,10 +50,10 @@ def nexus_fs(temp_dir):
     )
 
     # Create test files
-    fs.write("/workspace/readme.md", b"# Test Project\n\nThis is a test.")
-    fs.write("/workspace/src/main.py", b'print("Hello, World!")')
-    fs.write("/workspace/src/utils.py", b"def helper(): pass")
-    fs.write("/docs/guide.txt", b"User guide content here.")
+    fs.sys_write("/workspace/readme.md", b"# Test Project\n\nThis is a test.")
+    fs.sys_write("/workspace/src/main.py", b'print("Hello, World!")')
+    fs.sys_write("/workspace/src/utils.py", b"def helper(): pass")
+    fs.sys_write("/docs/guide.txt", b"User guide content here.")
 
     yield fs
     fs.close()

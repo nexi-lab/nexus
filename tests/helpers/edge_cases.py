@@ -8,8 +8,8 @@ Usage with pytest:
 
     @pytest.mark.parametrize("path", UNICODE_PATHS)
     def test_write_unicode(nexus_fs, path):
-        nexus_fs.write(path, b"hello")
-        assert nexus_fs.read(path) == b"hello"
+        nexus_fs.sys_write(path, b"hello")
+        assert nexus_fs.sys_read(path) == b"hello"
 """
 
 # === Unicode filename edge cases ===

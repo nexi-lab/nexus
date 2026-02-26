@@ -253,8 +253,10 @@ class UserProvisioningService:
             workspace_id = f"ws_personal_{uuid_suffix}"
             workspace_path = f"/zone/{zone_id}/user/{user_id}/workspace/{workspace_id}"
 
-            if not self._vfs.exists(workspace_path, context=admin_context):
-                self._vfs.mkdir(workspace_path, parents=True, exist_ok=True, context=admin_context)
+            if not self._vfs.sys_access(workspace_path, context=admin_context):
+                self._vfs.sys_mkdir(
+                    workspace_path, parents=True, exist_ok=True, context=admin_context
+                )
                 if self._register_workspace_fn:
                     self._register_workspace_fn(
                         workspace_path,
@@ -593,13 +595,13 @@ class UserProvisioningService:
 
         directory_exists = False
         with suppress(Exception):
-            directory_exists = self._vfs.exists(dir_path, context=context)
+            directory_exists = self._vfs.sys_access(dir_path, context=context)
 
         if not directory_exists:
             return False
 
         try:
-            result = self._vfs.list(dir_path, recursive=False, context=context)
+            result = self._vfs.sys_readdir(dir_path, recursive=False, context=context)
             if isinstance(result, dict) and "files" in result:
                 children = result["files"]
             elif isinstance(result, list):
@@ -617,7 +619,7 @@ class UserProvisioningService:
                 if isinstance(item, str):
                     child_path = item
                     try:
-                        self._vfs.list(child_path, recursive=False, context=context)
+                        self._vfs.sys_readdir(child_path, recursive=False, context=context)
                         is_dir = True
                     except Exception:
                         pass
@@ -634,7 +636,7 @@ class UserProvisioningService:
                     if is_dir:
                         self._delete_directory_recursive(child_path, context)
                     else:
-                        self._vfs.delete(child_path, context=context)
+                        self._vfs.sys_unlink(child_path, context=context)
                 except Exception as e:
                     logger.warning("Failed to delete %s: %s", child_path, e)
 
@@ -647,7 +649,7 @@ class UserProvisioningService:
                     pass
             if not directory_removed:
                 try:
-                    self._vfs.delete(dir_path, context=context)
+                    self._vfs.sys_unlink(dir_path, context=context)
                     directory_removed = True
                 except Exception:
                     pass
@@ -737,7 +739,7 @@ class UserProvisioningService:
         for resource_type in all_types:
             folder_path = f"/zone/{zone_id}/user/{user_id}/{resource_type}"
             try:
-                self._vfs.mkdir(folder_path, parents=True, exist_ok=True, context=context)
+                self._vfs.sys_mkdir(folder_path, parents=True, exist_ok=True, context=context)
                 if self._rebac_create_fn:
                     try:
                         self._rebac_create_fn(

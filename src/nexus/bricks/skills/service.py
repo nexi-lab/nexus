@@ -389,7 +389,7 @@ class SkillService:
         skill_md_path = f"{skill_path}SKILL.md"
 
         try:
-            content = self._fs.read(skill_md_path, context=context)
+            content = self._fs.sys_read(skill_md_path, context=context)
             if isinstance(content, bytes):
                 content = content.decode("utf-8")
             if not content:
@@ -578,7 +578,7 @@ class SkillService:
         path = self._get_subscriptions_path(context)
 
         try:
-            content = self._fs.read(path, context=context)
+            content = self._fs.sys_read(path, context=context)
             if isinstance(content, bytes):
                 content = content.decode("utf-8")
             if content:
@@ -627,7 +627,7 @@ class SkillService:
         config_path = f"/zone/{context.zone_id}/user/{user_id}/agent/{agent_name}/config.yaml"
 
         try:
-            content = self._fs.read(config_path, context=context)
+            content = self._fs.sys_read(config_path, context=context)
             if isinstance(content, bytes):
                 content = content.decode("utf-8")
             if content:
@@ -655,11 +655,11 @@ class SkillService:
 
         parent_dir = "/".join(path.split("/")[:-1])
         try:
-            self._fs.mkdir(parent_dir, context=context)
+            self._fs.sys_mkdir(parent_dir, context=context)
         except Exception as e:
             logger.debug("Failed to create parent directory %s: %s", parent_dir, e)
 
-        self._fs.write(path, content, context=context)
+        self._fs.sys_write(path, content, context=context)
 
         # Invalidate cache for this user/zone
         cache_key = (context.user_id or "", context.zone_id or "")
@@ -742,10 +742,10 @@ class SkillService:
         """
         skill_paths: list[str] = []
         try:
-            if not self._fs.exists(base_dir, context=context):
+            if not self._fs.sys_access(base_dir, context=context):
                 return skill_paths
 
-            items = self._fs.list(base_dir, context=context)
+            items = self._fs.sys_readdir(base_dir, context=context)
 
             # Build set of SKILL.md paths from listing (avoids N exists() calls)
             item_strs = [str(item) for item in items]
@@ -816,7 +816,7 @@ class SkillService:
         skill_md_path = f"{skill_path}SKILL.md"
 
         try:
-            content = self._fs.read(skill_md_path, context=context)
+            content = self._fs.sys_read(skill_md_path, context=context)
             if isinstance(content, bytes):
                 content = content.decode("utf-8")
             if not content:
@@ -831,7 +831,7 @@ class SkillService:
             if is_public:
                 try:
                     system_ctx = self._make_system_context(context)
-                    content = self._fs.read(skill_md_path, context=system_ctx)
+                    content = self._fs.sys_read(skill_md_path, context=system_ctx)
                     if isinstance(content, bytes):
                         content = content.decode("utf-8")
                     if content:

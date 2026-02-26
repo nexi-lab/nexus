@@ -22,13 +22,13 @@ from nexus.core.nexus_fs import NexusFS
 # These are the extraction-critical methods that MUST exist after refactoring.
 
 CORE_READ_METHODS = {
-    "read": {"params": ["path", "context", "return_metadata", "parsed"], "async": False},
+    "sys_read": {"params": ["path", "context", "return_metadata", "parsed"], "async": False},
     "read_range": {"params": ["path", "start", "end", "context"], "async": False},
     "stream": {"params": ["path", "chunk_size", "context"], "async": False},
 }
 
 CORE_WRITE_METHODS = {
-    "write": {
+    "sys_write": {
         "params": ["path", "content", "context", "if_match", "if_none_match", "force"],
         "async": False,
     },
@@ -41,13 +41,13 @@ CORE_WRITE_METHODS = {
 }
 
 CORE_DELETE_METHODS = {
-    "delete": {"params": ["path", "context"], "async": False},
-    "rename": {"params": ["old_path", "new_path", "context"], "async": False},
+    "sys_unlink": {"params": ["path", "context"], "async": False},
+    "sys_rename": {"params": ["old_path", "new_path", "context"], "async": False},
 }
 
 CORE_METADATA_METHODS = {
     "stat": {"params": ["path", "context"], "async": False},
-    "exists": {"params": ["path", "context"], "async": False},
+    "sys_access": {"params": ["path", "context"], "async": False},
 }
 
 ALL_CORE_METHODS = {
@@ -138,7 +138,7 @@ class TestCoreMethodGroups:
 
     def test_read_methods_count(self):
         """Verify expected number of read methods."""
-        assert len(CORE_READ_METHODS) == 3, "Expected 3 read methods (read, read_range, stream)"
+        assert len(CORE_READ_METHODS) == 3, "Expected 3 read methods (sys_read, read_range, stream)"
 
     def test_write_methods_count(self):
         """Verify expected number of write methods."""

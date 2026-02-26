@@ -137,17 +137,17 @@ def e2e_env():
         admin = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Write test files
-        source_fs.write(
+        source_fs.sys_write(
             "/workspace/readme.md",
             b"# Permissions E2E Test",
             context=admin,
         )
-        source_fs.write(
+        source_fs.sys_write(
             "/workspace/src/main.py",
             b"print('hello')",
             context=admin,
         )
-        source_fs.write(
+        source_fs.sys_write(
             "/docs/guide.txt",
             b"User guide content",
             context=admin,

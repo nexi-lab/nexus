@@ -1955,7 +1955,7 @@ def skills_mcp_tools(
         # If no tools in config, try to read from filesystem
         if not tools and mount.tools_path:
             try:
-                items = nx.list(mount.tools_path, recursive=False)
+                items = nx.sys_readdir(mount.tools_path, recursive=False)
                 # Filter for .json files (tool definitions)
                 tools = [
                     str(item).split("/")[-1].replace(".json", "")
@@ -1982,7 +1982,7 @@ def skills_mcp_tools(
                 # New flat structure: /skills/system/mcp-tools/github/search_repositories.json
                 tool_path = f"{mount.tools_path}{tool_name}.json"
                 try:
-                    content = nx.read(tool_path)
+                    content = nx.sys_read(tool_path)
                     if isinstance(content, bytes):
                         content_str = content.decode()
                         tool_info = json_module.loads(content_str)
@@ -2008,7 +2008,7 @@ def skills_mcp_tools(
                 # New flat structure: /skills/system/mcp-tools/github/search_repositories.json
                 tool_path = f"{mount.tools_path}{tool_name}.json"
                 try:
-                    content = nx.read(tool_path)
+                    content = nx.sys_read(tool_path)
                     import json as json_module
 
                     if isinstance(content, bytes):

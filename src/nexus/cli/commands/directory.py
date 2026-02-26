@@ -92,7 +92,7 @@ def list_files(
 
                 for file in files:
                     # Check if directory from time-travel data
-                    is_dir = nx.is_directory(file["path"])
+                    is_dir = nx.sys_is_directory(file["path"])
                     type_str = "dir" if is_dir else "file"
                     path_display = f"{file['path']}/" if is_dir else file["path"]
                     size_str = f"{file['size']:,} bytes" if not is_dir else "-"
@@ -115,7 +115,7 @@ def list_files(
             else:
                 # Simple listing
                 for file in files:
-                    is_dir = nx.is_directory(file["path"])
+                    is_dir = nx.sys_is_directory(file["path"])
                     if is_dir:
                         console.print(f"  [bold cyan]{file['path']}/[/bold cyan]")
                     else:
@@ -125,7 +125,7 @@ def list_files(
 
         if long:
             # Detailed listing
-            files_raw = nx.list(path, recursive=recursive, details=True)
+            files_raw = nx.sys_readdir(path, recursive=recursive, details=True)
             files = cast(list[dict[str, Any]], files_raw)
 
             if not files:
@@ -183,7 +183,7 @@ def list_files(
             console.print(table)
         else:
             # Simple listing - use details to get is_directory information
-            files_raw = nx.list(path, recursive=recursive, details=True)
+            files_raw = nx.sys_readdir(path, recursive=recursive, details=True)
             files = cast(list[dict[str, Any]], files_raw)
 
             if not files:
@@ -222,7 +222,7 @@ def mkdir(
     """
     try:
         nx = get_filesystem(backend_config)
-        nx.mkdir(path, parents=parents, exist_ok=True)
+        nx.sys_mkdir(path, parents=parents, exist_ok=True)
         nx.close()
 
         console.print(f"[green]✓[/green] Created directory [cyan]{path}[/cyan]")
@@ -256,7 +256,7 @@ def rmdir(
             nx.close()
             return
 
-        nx.rmdir(path, recursive=recursive)
+        nx.sys_rmdir(path, recursive=recursive)
         nx.close()
 
         console.print(f"[green]✓[/green] Removed directory [cyan]{path}[/cyan]")
@@ -289,7 +289,7 @@ def tree(
         nx = get_filesystem(backend_config)
 
         # Get all files recursively
-        files_raw = nx.list(path, recursive=True, details=show_size)
+        files_raw = nx.sys_readdir(path, recursive=True, details=show_size)
         nx.close()
 
         if not files_raw:

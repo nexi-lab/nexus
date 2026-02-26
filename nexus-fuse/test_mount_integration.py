@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from nexus.fuse.rust_client import RustFUSEClient  # noqa: E402
 
 
-def test_rust_client():
+def test_rust_client() -> None:
     """Test that Rust client can be instantiated and works."""
     print("=" * 60)
     print("Testing Rust FUSE Client Integration")
@@ -28,28 +28,28 @@ def test_rust_client():
     # Clean up any leftover files from previous test runs
     print("\n0. Cleaning up previous test runs...")
     with contextlib.suppress(Exception):
-        client.delete("/rust-test.txt")
+        client.sys_unlink("/rust-test.txt")
     with contextlib.suppress(Exception):
-        client.delete("/rust-testdir/renamed.txt")
+        client.sys_unlink("/rust-testdir/renamed.txt")
     with contextlib.suppress(Exception):
-        client.delete("/rust-testdir")
+        client.sys_unlink("/rust-testdir")
     print("✓ Cleanup complete")
 
     # Test write
     print("\n2. Testing write operation...")
     test_content = b"Hello from Rust FUSE integration test!"
-    client.write("/rust-test.txt", test_content)
+    client.sys_write("/rust-test.txt", test_content)
     print("✓ Write succeeded")
 
     # Test read
     print("\n3. Testing read operation...")
-    content = client.read("/rust-test.txt")
+    content = client.sys_read("/rust-test.txt")
     assert content == test_content, f"Content mismatch: {content!r} != {test_content!r}"
     print(f"✓ Read succeeded: {content.decode()}")
 
     # Test list
     print("\n4. Testing list operation...")
-    entries = client.list("/")
+    entries = client.sys_readdir("/")
     print(f"✓ List succeeded: {[e.name for e in entries]}")
     assert any(e.name == "rust-test.txt" for e in entries), "Test file not in listing"
 
@@ -63,29 +63,29 @@ def test_rust_client():
 
     # Test mkdir
     print("\n6. Testing mkdir operation...")
-    client.mkdir("/rust-testdir")
+    client.sys_mkdir("/rust-testdir")
     print("✓ Mkdir succeeded")
 
     # Test rename
     print("\n7. Testing rename operation...")
-    client.rename("/rust-test.txt", "/rust-testdir/renamed.txt")
+    client.sys_rename("/rust-test.txt", "/rust-testdir/renamed.txt")
     print("✓ Rename succeeded")
 
     # Verify rename
     print("\n8. Verifying rename...")
-    content = client.read("/rust-testdir/renamed.txt")
+    content = client.sys_read("/rust-testdir/renamed.txt")
     assert content == test_content, "Content changed after rename"
     print("✓ Rename verified")
 
     # Test delete
     print("\n9. Testing delete operation...")
-    client.delete("/rust-testdir/renamed.txt")
+    client.sys_unlink("/rust-testdir/renamed.txt")
     print("✓ Delete succeeded")
 
     # Cleanup
     print("\n10. Cleaning up...")
     with contextlib.suppress(Exception):
-        client.delete("/rust-testdir")
+        client.sys_unlink("/rust-testdir")
     client.close()
     print("✓ Client closed")
 

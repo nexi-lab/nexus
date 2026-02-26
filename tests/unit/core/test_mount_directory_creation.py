@@ -53,7 +53,7 @@ def test_mount_creates_directory_entry(nx_with_mount):
     nx.router.add_mount("/mnt/test", mount_backend, readonly=False)
 
     # Create directory entry (this is what server.py now does)
-    nx.mkdir("/mnt/test", parents=True, exist_ok=True)
+    nx.sys_mkdir("/mnt/test", parents=True, exist_ok=True)
 
     # Verify directory exists in metadata
     assert nx.metadata.exists("/mnt")
@@ -79,16 +79,16 @@ def test_mount_appears_in_listing(nx_with_mount):
 
     # Add mount and create directory
     nx.router.add_mount("/mnt/gcs_demo", mount_backend, readonly=False)
-    nx.mkdir("/mnt/gcs_demo", parents=True, exist_ok=True)
+    nx.sys_mkdir("/mnt/gcs_demo", parents=True, exist_ok=True)
 
     # List root directory (non-recursive)
-    root_list = nx.list("/", recursive=False, details=False)
+    root_list = nx.sys_readdir("/", recursive=False, details=False)
 
     # /mnt should appear in root listing
     assert "/mnt" in root_list, f"Expected /mnt in {root_list}"
 
     # List /mnt directory (non-recursive)
-    mnt_list = nx.list("/mnt", recursive=False, details=False)
+    mnt_list = nx.sys_readdir("/mnt", recursive=False, details=False)
 
     # /mnt/gcs_demo should appear in /mnt listing
     assert "/mnt/gcs_demo" in mnt_list, f"Expected /mnt/gcs_demo in {mnt_list}"
@@ -104,10 +104,10 @@ def test_mount_appears_in_detailed_listing(nx_with_mount):
 
     # Add mount and create directory
     nx.router.add_mount("/personal/alice", mount_backend, readonly=False)
-    nx.mkdir("/personal/alice", parents=True, exist_ok=True)
+    nx.sys_mkdir("/personal/alice", parents=True, exist_ok=True)
 
     # List with details
-    root_list = nx.list("/", recursive=False, details=True)
+    root_list = nx.sys_readdir("/", recursive=False, details=True)
 
     # Find /personal in results
     personal_entry = next((e for e in root_list if e["path"] == "/personal"), None)
@@ -115,7 +115,7 @@ def test_mount_appears_in_detailed_listing(nx_with_mount):
     assert personal_entry["is_directory"] is True
 
     # List /personal with details
-    personal_list = nx.list("/personal", recursive=False, details=True)
+    personal_list = nx.sys_readdir("/personal", recursive=False, details=True)
 
     # Find /personal/alice in results
     alice_entry = next((e for e in personal_list if e["path"] == "/personal/alice"), None)
@@ -133,7 +133,7 @@ def test_nested_mount_creates_all_parents(nx_with_mount):
 
     # Add mount and create directory with parents
     nx.router.add_mount("/a/b/c/mount", mount_backend, readonly=False)
-    nx.mkdir("/a/b/c/mount", parents=True, exist_ok=True)
+    nx.sys_mkdir("/a/b/c/mount", parents=True, exist_ok=True)
 
     # Verify all parents exist
     assert nx.metadata.exists("/a")
@@ -211,7 +211,7 @@ def test_add_mount_via_api_creates_directory(nx_with_mount):
     assert nx.metadata.exists("/api/mount")
 
     # Verify mount appears in listing
-    api_list = nx.list("/api", recursive=False, details=False)
+    api_list = nx.sys_readdir("/api", recursive=False, details=False)
     assert "/api/mount" in api_list
 
 
@@ -220,10 +220,10 @@ def test_mount_exist_ok_does_not_fail(nx_with_mount):
     nx, tmpdir = nx_with_mount
 
     # Create directory first
-    nx.mkdir("/mnt/test", parents=True, exist_ok=True)
+    nx.sys_mkdir("/mnt/test", parents=True, exist_ok=True)
 
     # Create it again with exist_ok=True (should not raise)
-    nx.mkdir("/mnt/test", parents=True, exist_ok=True)
+    nx.sys_mkdir("/mnt/test", parents=True, exist_ok=True)
 
     # Verify it still exists
     assert nx.metadata.exists("/mnt/test")
@@ -238,10 +238,10 @@ def test_multiple_mounts_in_same_parent(nx_with_mount):
         mount_backend = MagicMock()
         mount_backend.name = name
         nx.router.add_mount(f"/mnt/{name}", mount_backend, readonly=False)
-        nx.mkdir(f"/mnt/{name}", parents=True, exist_ok=True)
+        nx.sys_mkdir(f"/mnt/{name}", parents=True, exist_ok=True)
 
     # List /mnt
-    mnt_list = nx.list("/mnt", recursive=False, details=False)
+    mnt_list = nx.sys_readdir("/mnt", recursive=False, details=False)
 
     # All mounts should appear
     assert "/mnt/mount1" in mnt_list

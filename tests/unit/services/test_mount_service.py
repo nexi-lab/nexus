@@ -45,8 +45,8 @@ def mock_mount_manager():
 def mock_nexus_fs():
     """Create a mock NexusFilesystem."""
     fs = MagicMock()
-    fs.mkdir = MagicMock()
-    fs.write = MagicMock()
+    fs.sys_mkdir = MagicMock()
+    fs.sys_write = MagicMock()
     fs.metadata = MagicMock()
     fs.metadata.delete = MagicMock()
     fs.rebac_add_tuple = MagicMock()
@@ -409,11 +409,11 @@ class TestGrantMountOwnerPermission:
     def test_creates_directory_entry(self, mount_service, mock_nexus_fs, operation_context):
         """Mount point directory is created."""
         mount_service._grant_mount_owner_permission("/mnt/test", operation_context)
-        mock_nexus_fs.mkdir.assert_called_once_with("/mnt/test", parents=True, exist_ok=True)
+        mock_nexus_fs.sys_mkdir.assert_called_once_with("/mnt/test", parents=True, exist_ok=True)
 
     def test_handles_mkdir_error(self, mount_service, mock_nexus_fs, operation_context):
         """Errors creating directory do not prevent permission grant."""
-        mock_nexus_fs.mkdir.side_effect = RuntimeError("mkdir failed")
+        mock_nexus_fs.sys_mkdir.side_effect = RuntimeError("mkdir failed")
 
         # Should not raise
         mount_service._grant_mount_owner_permission("/mnt/test", operation_context)
@@ -434,9 +434,9 @@ class TestGenerateConnectorSkill:
         """SKILL.md is generated for connector mounts."""
         result = mount_service._generate_connector_skill("/mnt/gcs", "gcs_connector", None)
         assert result is True
-        mock_nexus_fs.write.assert_called_once()
+        mock_nexus_fs.sys_write.assert_called_once()
         # Verify skill content was written to the correct path
-        call_args = mock_nexus_fs.write.call_args
+        call_args = mock_nexus_fs.sys_write.call_args
         assert call_args[0][0] == "/mnt/gcs/SKILL.md"
 
     def test_returns_false_without_nexus_fs(self, mock_router):
@@ -447,6 +447,6 @@ class TestGenerateConnectorSkill:
 
     def test_handles_write_error(self, mount_service, mock_nexus_fs):
         """Write errors are handled gracefully."""
-        mock_nexus_fs.write.side_effect = OSError("Write failed")
+        mock_nexus_fs.sys_write.side_effect = OSError("Write failed")
         result = mount_service._generate_connector_skill("/mnt/gcs", "gcs_connector", None)
         assert result is False

@@ -36,7 +36,7 @@ class _NexusFSFileReader:
             is_admin=True,
             is_system=True,
         )
-        content_raw = self._nx.read(path, context=admin_ctx)
+        content_raw = self._nx.sys_read(path, context=admin_ctx)
         if isinstance(content_raw, bytes):
             return content_raw.decode("utf-8", errors="ignore")
         return str(content_raw)
@@ -46,7 +46,7 @@ class _NexusFSFileReader:
         return result
 
     def list_files(self, path: str, recursive: bool = True) -> list[Any]:
-        result = self._nx.list(path, recursive=recursive)
+        result = self._nx.sys_readdir(path, recursive=recursive)
         items: list[Any] = result.items if hasattr(result, "items") else result
         return items
 

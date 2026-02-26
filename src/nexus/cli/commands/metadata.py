@@ -37,7 +37,7 @@ def info(
         nx = get_filesystem(backend_config)
 
         # Check if file exists first
-        if not nx.exists(path):
+        if not nx.sys_access(path):
             console.print(f"[yellow]File not found:[/yellow] {path}")
             nx.close()
             sys.exit(1)
@@ -326,7 +326,7 @@ def size(
 
         # Get all files with details
         with console.status(f"[yellow]Calculating size of {path}...[/yellow]", spinner="dots"):
-            files_raw = nx.list(path, recursive=True, details=True)
+            files_raw = nx.sys_readdir(path, recursive=True, details=True)
 
         nx.close()
 

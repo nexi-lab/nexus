@@ -161,7 +161,7 @@ class TestVersionHistoryGC:
 
         # Create multiple versions
         for i in range(5):
-            nx.write(path, f"Version {i + 1}".encode())
+            nx.sys_write(path, f"Version {i + 1}".encode())
 
         # Run GC with very aggressive settings (0 retention, 1 max version)
         gc = VersionHistoryGC(record_store)
@@ -176,7 +176,7 @@ class TestVersionHistoryGC:
         gc.run_gc(config, dry_run=True)
 
         # Verify current version still readable
-        content = nx.read(path)
+        content = nx.sys_read(path)
         assert content == b"Version 5"
 
     def test_gc_dry_run_no_changes(self, nx, record_store):
@@ -185,7 +185,7 @@ class TestVersionHistoryGC:
 
         # Create multiple versions
         for i in range(3):
-            nx.write(path, f"Version {i + 1}".encode())
+            nx.sys_write(path, f"Version {i + 1}".encode())
 
         # Get initial version count
         with record_store.session_factory() as session:
@@ -213,7 +213,7 @@ class TestVersionHistoryGC:
 
         # Create 10 versions
         for i in range(10):
-            nx.write(path, f"Version {i + 1}".encode())
+            nx.sys_write(path, f"Version {i + 1}".encode())
 
         # Get the resource_id (path_id) for this file
         with record_store.session_factory() as session:
@@ -256,7 +256,7 @@ class TestVersionHistoryGC:
         """Test that GC reports accurate statistics."""
         # Create a file
         path = "/workspace/stats_test.txt"
-        nx.write(path, b"Content")
+        nx.sys_write(path, b"Content")
 
         gc = VersionHistoryGC(record_store)
         table_stats = gc.get_stats()
@@ -276,7 +276,7 @@ class TestVersionHistoryGC:
         for file_num in range(3):
             path = f"/workspace/file{file_num}.txt"
             for version in range(5):
-                nx.write(path, f"File {file_num} Version {version}".encode())
+                nx.sys_write(path, f"File {file_num} Version {version}".encode())
 
         # Run GC with max 2 versions
         gc = VersionHistoryGC(record_store)
@@ -293,14 +293,14 @@ class TestVersionHistoryGC:
         # All files should still be readable
         for file_num in range(3):
             path = f"/workspace/file{file_num}.txt"
-            content = nx.read(path)
+            content = nx.sys_read(path)
             assert b"Version 4" in content  # Latest version
 
     def test_gc_override_params(self, nx, record_store):
         """Test parameter override functionality."""
         path = "/workspace/override_test.txt"
         for i in range(5):
-            nx.write(path, f"V{i}".encode())
+            nx.sys_write(path, f"V{i}".encode())
 
         gc = VersionHistoryGC(record_store)
         default_config = VersionGCSettings(

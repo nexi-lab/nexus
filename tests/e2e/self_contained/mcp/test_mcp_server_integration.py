@@ -106,7 +106,7 @@ def test_files(nexus_fs, tmp_path):
     }
 
     for path, content in test_data.items():
-        nexus_fs.write(path, content)
+        nexus_fs.sys_write(path, content)
 
     return test_data
 
@@ -136,7 +136,7 @@ class TestFileOperationsIntegration:
         assert read_result == "Integration test content"
 
         # Verify directly with NexusFS
-        direct_read = nexus_fs.read("/integration_test.txt")
+        direct_read = nexus_fs.sys_read("/integration_test.txt")
         assert direct_read == b"Integration test content"
 
     def test_create_list_and_delete_workflow(self, mcp_server, nexus_fs):
@@ -163,9 +163,9 @@ class TestFileOperationsIntegration:
         assert "Successfully deleted" in delete_result
 
         # Verify file is gone
-        assert not nexus_fs.exists("/workflow/file2.txt")
-        assert nexus_fs.exists("/workflow/file1.txt")
-        assert nexus_fs.exists("/workflow/file3.txt")
+        assert not nexus_fs.sys_access("/workflow/file2.txt")
+        assert nexus_fs.sys_access("/workflow/file1.txt")
+        assert nexus_fs.sys_access("/workflow/file3.txt")
 
     def test_directory_operations(self, mcp_server, nexus_fs):
         """Test directory creation and removal."""
@@ -176,19 +176,19 @@ class TestFileOperationsIntegration:
         # Create directory
         mkdir_result = mkdir_tool.fn(path="/testdir")
         assert "Successfully created" in mkdir_result
-        assert nexus_fs.is_directory("/testdir")
+        assert nexus_fs.sys_is_directory("/testdir")
 
         # Write file in directory
         write_tool.fn(path="/testdir/file.txt", content="test")
 
         # Try to remove non-empty directory without recursive (should fail)
         rmdir_result = rmdir_tool.fn(path="/testdir", recursive=False)
-        assert "Error" in rmdir_result or nexus_fs.exists("/testdir")
+        assert "Error" in rmdir_result or nexus_fs.sys_access("/testdir")
 
         # Remove with recursive
         rmdir_result_recursive = rmdir_tool.fn(path="/testdir", recursive=True)
         assert "Successfully removed" in rmdir_result_recursive
-        assert not nexus_fs.exists("/testdir")
+        assert not nexus_fs.sys_access("/testdir")
 
     def test_file_info_integration(self, mcp_server, test_files):
         """Test getting file information for real files."""
@@ -227,9 +227,13 @@ class TestSearchIntegration:
     def test_grep_search(self, mcp_server, nexus_fs):
         """Test grep search with real file content."""
         # Create files with searchable content
-        nexus_fs.write("/search/file1.py", b"def hello():\n    print('Hello')\n# TODO: fix this")
-        nexus_fs.write("/search/file2.py", b"class MyClass:\n    def __init__(self):\n        pass")
-        nexus_fs.write("/search/file3.py", b"# TODO: implement feature\nimport sys")
+        nexus_fs.sys_write(
+            "/search/file1.py", b"def hello():\n    print('Hello')\n# TODO: fix this"
+        )
+        nexus_fs.sys_write(
+            "/search/file2.py", b"class MyClass:\n    def __init__(self):\n        pass"
+        )
+        nexus_fs.sys_write("/search/file3.py", b"# TODO: implement feature\nimport sys")
 
         grep_tool = get_tool(mcp_server, "nexus_grep")
 
@@ -689,7 +693,7 @@ class TestComprehensiveMCPToolsWorkflow:
         assert "Successfully removed" in rmdir_result
 
         # Verify directory was removed
-        assert not nexus_fs.exists("/mcp_integration_test")
+        assert not nexus_fs.sys_access("/mcp_integration_test")
 
 
 class TestPerformanceCharacteristics:

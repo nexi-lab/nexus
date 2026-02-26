@@ -27,7 +27,7 @@ class TestWriteBatchHappyPath:
         results = nx.write_batch([("/files/a.txt", b"hello")])
         assert len(results) == 1
         assert results[0]["size"] == 5
-        assert nx.read("/files/a.txt") == b"hello"
+        assert nx.sys_read("/files/a.txt") == b"hello"
 
     def test_write_batch_multiple_files(self, nx):
         files = [
@@ -38,7 +38,7 @@ class TestWriteBatchHappyPath:
         results = nx.write_batch(files)
         assert len(results) == 3
         for i, (path, content) in enumerate(files):
-            assert nx.read(path) == content
+            assert nx.sys_read(path) == content
             assert results[i]["size"] == len(content)
 
     def test_write_batch_returns_etag(self, nx):
@@ -80,12 +80,12 @@ class TestWriteBatchVersioning:
     """Version incrementing when overwriting existing files."""
 
     def test_overwrite_increments_version(self, nx):
-        nx.write("/files/a.txt", b"v1")
+        nx.sys_write("/files/a.txt", b"v1")
         results = nx.write_batch([("/files/a.txt", b"v2")])
         assert results[0]["version"] == 2
 
     def test_batch_overwrite_mixed_new_and_existing(self, nx):
-        nx.write("/files/existing.txt", b"old")
+        nx.sys_write("/files/existing.txt", b"old")
         results = nx.write_batch(
             [
                 ("/files/existing.txt", b"updated"),
@@ -128,13 +128,13 @@ class TestWriteBatchContentEdgeCases:
     def test_empty_content(self, nx):
         results = nx.write_batch([("/files/empty.txt", b"")])
         assert results[0]["size"] == 0
-        assert nx.read("/files/empty.txt") == b""
+        assert nx.sys_read("/files/empty.txt") == b""
 
     def test_binary_content(self, nx):
         binary = bytes(range(256))
         results = nx.write_batch([("/files/binary.bin", binary)])
         assert results[0]["size"] == 256
-        assert nx.read("/files/binary.bin") == binary
+        assert nx.sys_read("/files/binary.bin") == binary
 
     def test_large_batch(self, nx):
         """Write 50 files in a single batch."""
@@ -142,8 +142,8 @@ class TestWriteBatchContentEdgeCases:
         results = nx.write_batch(files)
         assert len(results) == 50
         # Spot-check a few
-        assert nx.read("/files/file_000.txt") == b"content_0"
-        assert nx.read("/files/file_049.txt") == b"content_49"
+        assert nx.sys_read("/files/file_000.txt") == b"content_0"
+        assert nx.sys_read("/files/file_049.txt") == b"content_49"
 
 
 class TestWriteBatchPathValidation:

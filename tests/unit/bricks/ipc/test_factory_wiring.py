@@ -82,7 +82,7 @@ class TestKernelVFSAdapter:
         assert not adapter.is_bound
 
         with __import__("pytest").raises(RuntimeError, match="bind"):
-            asyncio.get_event_loop().run_until_complete(adapter.read("/test", "test-zone"))
+            asyncio.get_event_loop().run_until_complete(adapter.sys_read("/test", "test-zone"))
 
     def test_adapter_satisfies_vfs_operations_protocol(self) -> None:
         """KernelVFSAdapter structurally satisfies VFSOperations."""
@@ -90,8 +90,16 @@ class TestKernelVFSAdapter:
         from nexus.bricks.ipc.protocols import VFSOperations
 
         adapter = KernelVFSAdapter(zone_id="test-zone")
-        # Protocol check: all required methods exist
-        for method in ("read", "write", "list_dir", "count_dir", "rename", "mkdir", "exists"):
+        # Protocol check: all required methods exist (sys_ prefixed names)
+        for method in (
+            "sys_read",
+            "sys_write",
+            "list_dir",
+            "count_dir",
+            "rename",
+            "sys_mkdir",
+            "sys_access",
+        ):
             assert hasattr(adapter, method), f"Missing method: {method}"
         # Runtime checkable protocol
         assert isinstance(adapter, VFSOperations)

@@ -209,39 +209,39 @@ class TestKernelSanity:
     """Verify basic VFS ops work after decomposition with factory + PostgreSQL."""
 
     def test_write_read_roundtrip(self, nx):
-        nx.write("/test.txt", b"hello world")
-        data = nx.read("/test.txt")
+        nx.sys_write("/test.txt", b"hello world")
+        data = nx.sys_read("/test.txt")
         assert data == b"hello world"
 
     def test_mkdir_and_list(self, nx):
-        nx.mkdir("/mydir", parents=True, exist_ok=True)
-        nx.write("/mydir/file.txt", b"content")
-        entries = nx.list("/mydir", recursive=False)
+        nx.sys_mkdir("/mydir", parents=True, exist_ok=True)
+        nx.sys_write("/mydir/file.txt", b"content")
+        entries = nx.sys_readdir("/mydir", recursive=False)
         assert "/mydir/file.txt" in entries
 
     def test_delete_file(self, nx):
-        nx.write("/del.txt", b"bye")
-        nx.delete("/del.txt")
-        assert not nx.exists("/del.txt")
+        nx.sys_write("/del.txt", b"bye")
+        nx.sys_unlink("/del.txt")
+        assert not nx.sys_access("/del.txt")
 
     def test_exists(self, nx):
-        nx.write("/exists.txt", b"yes")
-        assert nx.exists("/exists.txt")
-        assert not nx.exists("/nope.txt")
+        nx.sys_write("/exists.txt", b"yes")
+        assert nx.sys_access("/exists.txt")
+        assert not nx.sys_access("/nope.txt")
 
     def test_is_directory(self, nx):
-        nx.mkdir("/somedir", parents=True, exist_ok=True)
-        assert nx.is_directory("/somedir")
+        nx.sys_mkdir("/somedir", parents=True, exist_ok=True)
+        assert nx.sys_is_directory("/somedir")
 
     def test_get_metadata(self, nx):
-        nx.write("/meta.txt", b"metadata test")
-        meta = nx.get_metadata("/meta.txt")
+        nx.sys_write("/meta.txt", b"metadata test")
+        meta = nx.sys_stat("/meta.txt")
         assert meta is not None
         assert meta["size"] == 13
         assert meta["is_directory"] is False
 
     def test_get_etag(self, nx):
-        nx.write("/etag.txt", b"etag test")
+        nx.sys_write("/etag.txt", b"etag test")
         etag = nx.get_etag("/etag.txt")
         assert etag is not None
         assert isinstance(etag, str)
@@ -360,7 +360,7 @@ class TestVersionDelegation:
     def test_list_versions_after_write(self, nx):
         """list_versions should return version history after writes."""
         path = f"/ver-{uuid.uuid4().hex[:8]}.txt"
-        nx.write(path, b"v1")
+        nx.sys_write(path, b"v1")
         versions = nx.list_versions(path)
         assert isinstance(versions, list)
         assert len(versions) >= 1
@@ -368,7 +368,7 @@ class TestVersionDelegation:
     def test_get_version_returns_content(self, nx):
         """get_version should retrieve specific version content."""
         path = f"/ver2-{uuid.uuid4().hex[:8]}.txt"
-        nx.write(path, b"version-one")
+        nx.sys_write(path, b"version-one")
         versions = nx.list_versions(path)
         assert len(versions) >= 1
         ver_num = versions[0].get("version", 1)
@@ -378,8 +378,8 @@ class TestVersionDelegation:
     def test_multiple_versions(self, nx):
         """Multiple writes should produce multiple versions."""
         path = f"/multi-ver-{uuid.uuid4().hex[:8]}.txt"
-        nx.write(path, b"v1")
-        nx.write(path, b"v2")
+        nx.sys_write(path, b"v1")
+        nx.sys_write(path, b"v2")
         versions = nx.list_versions(path)
         assert len(versions) >= 2
 
@@ -465,8 +465,8 @@ class TestPermissionEnforcement:
             is_system=False,
         )
         path = f"/perm-test-{uuid.uuid4().hex[:8]}.txt"
-        nx_perms.write(path, b"admin write", context=ctx)
-        data = nx_perms.read(path, context=ctx)
+        nx_perms.sys_write(path, b"admin write", context=ctx)
+        data = nx_perms.sys_read(path, context=ctx)
         assert data == b"admin write"
 
     def test_mkdir_with_admin(self, nx_perms):
@@ -479,8 +479,8 @@ class TestPermissionEnforcement:
             is_system=False,
         )
         dirname = f"/admin-dir-{uuid.uuid4().hex[:8]}"
-        nx_perms.mkdir(dirname, parents=True, exist_ok=True, context=ctx)
-        assert nx_perms.is_directory(dirname, context=ctx)
+        nx_perms.sys_mkdir(dirname, parents=True, exist_ok=True, context=ctx)
+        assert nx_perms.sys_is_directory(dirname, context=ctx)
 
     def test_read_after_write_with_permissions(self, nx_perms):
         """Read after write should work with admin permissions."""
@@ -492,8 +492,8 @@ class TestPermissionEnforcement:
             is_system=False,
         )
         path = f"/perm-rw-{uuid.uuid4().hex[:8]}.txt"
-        nx_perms.write(path, b"perm data", context=ctx)
-        result = nx_perms.read(path, context=ctx)
+        nx_perms.sys_write(path, b"perm data", context=ctx)
+        result = nx_perms.sys_read(path, context=ctx)
         assert result == b"perm data"
 
     def test_version_with_permissions(self, nx_perms):
@@ -506,7 +506,7 @@ class TestPermissionEnforcement:
             is_system=False,
         )
         path = f"/perm-ver-{uuid.uuid4().hex[:8]}.txt"
-        nx_perms.write(path, b"version with perms", context=ctx)
+        nx_perms.sys_write(path, b"version with perms", context=ctx)
         versions = nx_perms.list_versions(path, context=ctx)
         assert isinstance(versions, list)
         assert len(versions) >= 1

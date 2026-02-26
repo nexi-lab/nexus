@@ -197,7 +197,7 @@ class TestServerWithPostgresAuth:
         """Database auth is enforced — requests without key get 401."""
         resp = client.post(
             "/api/nfs/list",
-            json={"jsonrpc": "2.0", "method": "list", "params": {"path": "/"}},
+            json={"jsonrpc": "2.0", "method": "sys_readdir", "params": {"path": "/"}},
         )
         assert resp.status_code == 401
 
@@ -205,7 +205,7 @@ class TestServerWithPostgresAuth:
         """Database auth works with valid API key."""
         resp = client.post(
             "/api/nfs/list",
-            json={"jsonrpc": "2.0", "method": "list", "params": {"path": "/"}},
+            json={"jsonrpc": "2.0", "method": "sys_readdir", "params": {"path": "/"}},
             headers={"Authorization": f"Bearer {nexus_server_pg['api_key']}"},
         )
         assert resp.status_code == 200
@@ -312,7 +312,7 @@ class TestNonAdminPermissions:
         with httpx.Client(base_url=server["base_url"], timeout=30.0, trust_env=False) as client:
             resp = client.post(
                 "/api/nfs/list",
-                json={"jsonrpc": "2.0", "method": "list", "params": {"path": "/"}},
+                json={"jsonrpc": "2.0", "method": "sys_readdir", "params": {"path": "/"}},
                 headers={"Authorization": f"Bearer {server['non_admin_key']}"},
             )
             # Non-admin gets 200 but with empty/filtered result (no ReBAC tuples)
@@ -328,13 +328,13 @@ class TestNonAdminPermissions:
             # Admin request
             admin_resp = client.post(
                 "/api/nfs/list",
-                json={"jsonrpc": "2.0", "method": "list", "params": {"path": "/"}},
+                json={"jsonrpc": "2.0", "method": "sys_readdir", "params": {"path": "/"}},
                 headers={"Authorization": f"Bearer {server['admin_key']}"},
             )
             # Non-admin request
             user_resp = client.post(
                 "/api/nfs/list",
-                json={"jsonrpc": "2.0", "method": "list", "params": {"path": "/"}},
+                json={"jsonrpc": "2.0", "method": "sys_readdir", "params": {"path": "/"}},
                 headers={"Authorization": f"Bearer {server['non_admin_key']}"},
             )
 

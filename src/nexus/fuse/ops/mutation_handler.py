@@ -49,7 +49,7 @@ class MutationHandler:
 
         check_namespace_visible(ctx, original_path)
 
-        ctx.nexus_fs.write(original_path, b"", context=ctx.context)
+        ctx.nexus_fs.sys_write(original_path, b"", context=ctx.context)
 
         # Invalidate caches
         ctx.cache.invalidate_path(original_path)
@@ -85,7 +85,7 @@ class MutationHandler:
 
         ok, _ = try_rust(ctx, "UNLINK", "delete", original_path)
         if not ok:
-            ctx.nexus_fs.delete(original_path)
+            ctx.nexus_fs.sys_unlink(original_path)
 
         ctx.cache.invalidate_path(original_path)
         if path != original_path:
@@ -105,7 +105,7 @@ class MutationHandler:
 
         ok, _ = try_rust(ctx, "MKDIR", "mkdir", path)
         if not ok:
-            ctx.nexus_fs.mkdir(path, parents=True, exist_ok=True)
+            ctx.nexus_fs.sys_mkdir(path, parents=True, exist_ok=True)
 
         if HAS_EVENT_BUS and FileEventType is not None:
             ctx.events.fire(FileEventType.DIR_CREATE, path)
@@ -119,7 +119,7 @@ class MutationHandler:
 
         check_namespace_visible(ctx, path)
 
-        ctx.nexus_fs.rmdir(path, recursive=False)
+        ctx.nexus_fs.sys_rmdir(path, recursive=False)
 
         if HAS_EVENT_BUS and FileEventType is not None:
             ctx.events.fire(FileEventType.DIR_DELETE, path)
@@ -140,11 +140,11 @@ class MutationHandler:
         check_namespace_visible(ctx, old_path)
         check_namespace_visible(ctx, new_path)
 
-        if ctx.nexus_fs.exists(new_path):
+        if ctx.nexus_fs.sys_access(new_path):
             logger.error(f"Destination {new_path} already exists")
             raise FuseOSError(errno.EEXIST)
 
-        if ctx.nexus_fs.is_directory(old_path, context=ctx.context):
+        if ctx.nexus_fs.sys_is_directory(old_path, context=ctx.context):
             self._rename_directory(old_path, new_path)
         else:
             self._rename_file(old_path, new_path)
@@ -176,7 +176,7 @@ class MutationHandler:
 
         ok, _ = try_rust(ctx, "RENAME", "rename", old_path, new_path)
         if not ok:
-            ctx.nexus_fs.rename(old_path, new_path)
+            ctx.nexus_fs.sys_rename(old_path, new_path)
 
     def _rename_directory(self, old_path: str, new_path: str) -> None:
         """Recursive directory rename: list + move files + rmdir source."""
@@ -184,11 +184,13 @@ class MutationHandler:
         logger.debug(f"Renaming directory {old_path} to {new_path}")
 
         try:
-            ctx.nexus_fs.mkdir(new_path, parents=True, exist_ok=True)
+            ctx.nexus_fs.sys_mkdir(new_path, parents=True, exist_ok=True)
         except Exception as e:
             logger.debug(f"mkdir {new_path} failed (may already exist): {e}")
 
-        files = ctx.nexus_fs.list(old_path, recursive=True, details=True, context=ctx.context)
+        files = ctx.nexus_fs.sys_readdir(
+            old_path, recursive=True, details=True, context=ctx.context
+        )
 
         for file_info in files:
             if not isinstance(file_info, dict):
@@ -197,7 +199,7 @@ class MutationHandler:
                 src_file = file_info["path"]
                 dest_file = src_file.replace(old_path, new_path, 1)
                 logger.debug(f"  Moving file {src_file} to {dest_file}")
-                ctx.nexus_fs.rename(src_file, dest_file)
+                ctx.nexus_fs.sys_rename(src_file, dest_file)
 
         logger.debug(f"Removing source directory {old_path}")
-        ctx.nexus_fs.rmdir(old_path, recursive=True)
+        ctx.nexus_fs.sys_rmdir(old_path, recursive=True)

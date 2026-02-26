@@ -132,31 +132,31 @@ class TestCoreFileOperations:
 
     def test_read(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
         """Test read with path scoping."""
-        mock_fs.read.return_value = b"content"
-        result = scoped_fs.read("/workspace/file.txt")
-        mock_fs.read.assert_called_once_with(
+        mock_fs.sys_read.return_value = b"content"
+        result = scoped_fs.sys_read("/workspace/file.txt")
+        mock_fs.sys_read.assert_called_once_with(
             "/zones/team_12/users/user_1/workspace/file.txt", None, False
         )
         assert result == b"content"
 
     def test_read_with_metadata(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
         """Test read with metadata unscopes path."""
-        mock_fs.read.return_value = {
+        mock_fs.sys_read.return_value = {
             "content": b"data",
             "path": "/zones/team_12/users/user_1/workspace/file.txt",
             "etag": "abc",
         }
-        result = scoped_fs.read("/workspace/file.txt", return_metadata=True)
+        result = scoped_fs.sys_read("/workspace/file.txt", return_metadata=True)
         assert result["path"] == "/workspace/file.txt"
 
     def test_write(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
         """Test write with path scoping."""
-        mock_fs.write.return_value = {
+        mock_fs.sys_write.return_value = {
             "path": "/zones/team_12/users/user_1/workspace/file.txt",
             "etag": "abc",
         }
-        result = scoped_fs.write("/workspace/file.txt", b"content")
-        mock_fs.write.assert_called_once_with(
+        result = scoped_fs.sys_write("/workspace/file.txt", b"content")
+        mock_fs.sys_write.assert_called_once_with(
             "/zones/team_12/users/user_1/workspace/file.txt",
             b"content",
             None,
@@ -170,12 +170,12 @@ class TestCoreFileOperations:
         self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock
     ) -> None:
         """Test write forwards lock=True to inner filesystem."""
-        mock_fs.write.return_value = {
+        mock_fs.sys_write.return_value = {
             "path": "/zones/team_12/users/user_1/workspace/file.txt",
             "etag": "abc",
         }
-        result = scoped_fs.write("/workspace/file.txt", b"content", lock=True)
-        mock_fs.write.assert_called_once_with(
+        result = scoped_fs.sys_write("/workspace/file.txt", b"content", lock=True)
+        mock_fs.sys_write.assert_called_once_with(
             "/zones/team_12/users/user_1/workspace/file.txt",
             b"content",
             None,
@@ -190,12 +190,12 @@ class TestCoreFileOperations:
         self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock
     ) -> None:
         """Test write forwards lock_timeout to inner filesystem."""
-        mock_fs.write.return_value = {
+        mock_fs.sys_write.return_value = {
             "path": "/zones/team_12/users/user_1/workspace/file.txt",
             "etag": "abc",
         }
-        result = scoped_fs.write("/workspace/file.txt", b"content", lock=True, lock_timeout=5.0)
-        mock_fs.write.assert_called_once_with(
+        result = scoped_fs.sys_write("/workspace/file.txt", b"content", lock=True, lock_timeout=5.0)
+        mock_fs.sys_write.assert_called_once_with(
             "/zones/team_12/users/user_1/workspace/file.txt",
             b"content",
             None,
@@ -234,22 +234,27 @@ class TestCoreFileOperations:
 
     def test_delete(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
         """Test delete with path scoping."""
-        scoped_fs.delete("/workspace/file.txt")
-        mock_fs.delete.assert_called_once_with("/zones/team_12/users/user_1/workspace/file.txt")
+        scoped_fs.sys_unlink("/workspace/file.txt")
+        mock_fs.sys_unlink.assert_called_once_with(
+            "/zones/team_12/users/user_1/workspace/file.txt", None
+        )
 
     def test_rename(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
         """Test rename with path scoping for both paths."""
-        scoped_fs.rename("/workspace/old.txt", "/workspace/new.txt")
-        mock_fs.rename.assert_called_once_with(
+        scoped_fs.sys_rename("/workspace/old.txt", "/workspace/new.txt")
+        mock_fs.sys_rename.assert_called_once_with(
             "/zones/team_12/users/user_1/workspace/old.txt",
             "/zones/team_12/users/user_1/workspace/new.txt",
+            None,
         )
 
     def test_exists(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
         """Test exists with path scoping."""
-        mock_fs.exists.return_value = True
-        result = scoped_fs.exists("/workspace/file.txt")
-        mock_fs.exists.assert_called_once_with("/zones/team_12/users/user_1/workspace/file.txt")
+        mock_fs.sys_access.return_value = True
+        result = scoped_fs.sys_access("/workspace/file.txt")
+        mock_fs.sys_access.assert_called_once_with(
+            "/zones/team_12/users/user_1/workspace/file.txt", None
+        )
         assert result is True
 
 
@@ -258,20 +263,20 @@ class TestFileDiscoveryOperations:
 
     def test_list_paths_only(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
         """Test list returns unscoped paths."""
-        mock_fs.list.return_value = [
+        mock_fs.sys_readdir.return_value = [
             "/zones/team_12/users/user_1/workspace/a.txt",
             "/zones/team_12/users/user_1/workspace/b.txt",
         ]
-        result = scoped_fs.list("/workspace")
+        result = scoped_fs.sys_readdir("/workspace")
         assert result == ["/workspace/a.txt", "/workspace/b.txt"]
 
     def test_list_with_details(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
         """Test list with details unscopes paths."""
-        mock_fs.list.return_value = [
+        mock_fs.sys_readdir.return_value = [
             {"path": "/zones/team_12/users/user_1/workspace/a.txt", "size": 100},
             {"path": "/zones/team_12/users/user_1/workspace/b.txt", "size": 200},
         ]
-        result = scoped_fs.list("/workspace", details=True)
+        result = scoped_fs.sys_readdir("/workspace", details=True)
         assert result[0]["path"] == "/workspace/a.txt"
         assert result[1]["path"] == "/workspace/b.txt"
 
@@ -306,21 +311,23 @@ class TestDirectoryOperations:
 
     def test_mkdir(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
         """Test mkdir with path scoping."""
-        scoped_fs.mkdir("/workspace/new_dir", parents=True, exist_ok=True)
-        mock_fs.mkdir.assert_called_once_with(
-            "/zones/team_12/users/user_1/workspace/new_dir", True, True
+        scoped_fs.sys_mkdir("/workspace/new_dir", parents=True, exist_ok=True)
+        mock_fs.sys_mkdir.assert_called_once_with(
+            "/zones/team_12/users/user_1/workspace/new_dir", True, True, None
         )
 
     def test_rmdir(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
         """Test rmdir with path scoping."""
-        scoped_fs.rmdir("/workspace/old_dir", recursive=True)
-        mock_fs.rmdir.assert_called_once_with("/zones/team_12/users/user_1/workspace/old_dir", True)
+        scoped_fs.sys_rmdir("/workspace/old_dir", recursive=True)
+        mock_fs.sys_rmdir.assert_called_once_with(
+            "/zones/team_12/users/user_1/workspace/old_dir", True, None
+        )
 
     def test_is_directory(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
         """Test is_directory with path scoping."""
-        mock_fs.is_directory.return_value = True
-        result = scoped_fs.is_directory("/workspace/dir")
-        mock_fs.is_directory.assert_called_once_with(
+        mock_fs.sys_is_directory.return_value = True
+        result = scoped_fs.sys_is_directory("/workspace/dir")
+        mock_fs.sys_is_directory.assert_called_once_with(
             "/zones/team_12/users/user_1/workspace/dir", None
         )
         assert result is True

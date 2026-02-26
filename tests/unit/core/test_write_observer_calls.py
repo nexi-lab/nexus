@@ -53,6 +53,11 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
 def mock_notify(nx: NexusFS) -> MagicMock:
     """Replace _dispatch with a mock and return the mock's .notify attribute."""
     mock_dispatch = MagicMock()
+    # resolve_* methods must return (handled=False, None) so sys_ methods
+    # fall through to the real implementation instead of unpacking a MagicMock.
+    mock_dispatch.resolve_read.return_value = (False, None)
+    mock_dispatch.resolve_write.return_value = (False, None)
+    mock_dispatch.resolve_delete.return_value = (False, None)
     nx._dispatch = mock_dispatch
     return mock_dispatch.notify
 
@@ -66,7 +71,7 @@ class TestWriteCallsDispatch:
     """write() should call _dispatch.notify() with FILE_WRITE event."""
 
     def test_new_file_notifies_with_is_new_true(self, nx: NexusFS, mock_notify: MagicMock) -> None:
-        nx.write("/new.txt", b"hello")
+        nx.sys_write("/new.txt", b"hello")
 
         mock_notify.assert_called_once()
         event = mock_notify.call_args.args[0]
@@ -77,10 +82,10 @@ class TestWriteCallsDispatch:
     def test_update_file_notifies_with_is_new_false(
         self, nx: NexusFS, mock_notify: MagicMock
     ) -> None:
-        nx.write("/file.txt", b"v1")
+        nx.sys_write("/file.txt", b"v1")
         mock_notify.reset_mock()
 
-        nx.write("/file.txt", b"v2")
+        nx.sys_write("/file.txt", b"v2")
 
         mock_notify.assert_called_once()
         event = mock_notify.call_args.args[0]
@@ -89,7 +94,7 @@ class TestWriteCallsDispatch:
         assert event.path == "/file.txt"
 
     def test_notify_receives_etag_and_size(self, nx: NexusFS, mock_notify: MagicMock) -> None:
-        nx.write("/test.txt", b"content")
+        nx.sys_write("/test.txt", b"content")
 
         event = mock_notify.call_args.args[0]
         assert event.path == "/test.txt"
@@ -101,10 +106,10 @@ class TestDeleteCallsDispatch:
     """delete() should call _dispatch.notify() with FILE_DELETE event."""
 
     def test_delete_notifies_dispatch(self, nx: NexusFS, mock_notify: MagicMock) -> None:
-        nx.write("/test.txt", b"content")
+        nx.sys_write("/test.txt", b"content")
         mock_notify.reset_mock()
 
-        nx.delete("/test.txt")
+        nx.sys_unlink("/test.txt")
 
         mock_notify.assert_called_once()
         event = mock_notify.call_args.args[0]
@@ -112,11 +117,11 @@ class TestDeleteCallsDispatch:
         assert event.path == "/test.txt"
 
     def test_delete_passes_etag(self, nx: NexusFS, mock_notify: MagicMock) -> None:
-        result = nx.write("/test.txt", b"content")
+        result = nx.sys_write("/test.txt", b"content")
         etag = result["etag"]
         mock_notify.reset_mock()
 
-        nx.delete("/test.txt")
+        nx.sys_unlink("/test.txt")
 
         event = mock_notify.call_args.args[0]
         assert event.etag == etag
@@ -126,10 +131,10 @@ class TestRenameCallsDispatch:
     """rename() should call _dispatch.notify() with FILE_RENAME event."""
 
     def test_rename_notifies_dispatch(self, nx: NexusFS, mock_notify: MagicMock) -> None:
-        nx.write("/old.txt", b"content")
+        nx.sys_write("/old.txt", b"content")
         mock_notify.reset_mock()
 
-        nx.rename("/old.txt", "/new.txt")
+        nx.sys_rename("/old.txt", "/new.txt")
 
         mock_notify.assert_called_once()
         event = mock_notify.call_args.args[0]
@@ -172,6 +177,9 @@ class TestWriteStreamCallsDispatch:
             pytest.skip("write_stream not available")
 
         mock_dispatch = MagicMock()
+        mock_dispatch.resolve_read.return_value = (False, None)
+        mock_dispatch.resolve_write.return_value = (False, None)
+        mock_dispatch.resolve_delete.return_value = (False, None)
         nx._dispatch = mock_dispatch
 
         nx.write_stream("/streamed.txt", iter([b"chunk1", b"chunk2"]))
@@ -186,7 +194,7 @@ class TestMkdirCallsDispatch:
     """mkdir() calls _dispatch.notify() with DIR_CREATE (Issue #625 gap closed)."""
 
     def test_mkdir_notifies_dispatch(self, nx: NexusFS, mock_notify: MagicMock) -> None:
-        nx.mkdir("/testdir")
+        nx.sys_mkdir("/testdir")
 
         mock_notify.assert_called_once()
         event = mock_notify.call_args.args[0]
@@ -194,7 +202,7 @@ class TestMkdirCallsDispatch:
         assert event.path == "/testdir"
 
     def test_mkdir_parents_notifies_dispatch(self, nx: NexusFS, mock_notify: MagicMock) -> None:
-        nx.mkdir("/a/b/c", parents=True)
+        nx.sys_mkdir("/a/b/c", parents=True)
 
         # notify is called once for the final directory
         mock_notify.assert_called_once()
@@ -207,10 +215,10 @@ class TestRmdirCallsDispatch:
     """rmdir() calls _dispatch.notify() with DIR_DELETE (Issue #625 gap closed)."""
 
     def test_rmdir_notifies_dispatch(self, nx: NexusFS, mock_notify: MagicMock) -> None:
-        nx.mkdir("/mydir")
+        nx.sys_mkdir("/mydir")
         mock_notify.reset_mock()
 
-        nx.rmdir("/mydir")
+        nx.sys_rmdir("/mydir")
 
         mock_notify.assert_called_once()
         event = mock_notify.call_args.args[0]
@@ -218,11 +226,11 @@ class TestRmdirCallsDispatch:
         assert event.path == "/mydir"
 
     def test_rmdir_recursive_notifies_dispatch(self, nx: NexusFS, mock_notify: MagicMock) -> None:
-        nx.mkdir("/mydir")
-        nx.write("/mydir/file.txt", b"content")
+        nx.sys_mkdir("/mydir")
+        nx.sys_write("/mydir/file.txt", b"content")
         mock_notify.reset_mock()
 
-        nx.rmdir("/mydir", recursive=True)
+        nx.sys_rmdir("/mydir", recursive=True)
 
         # rmdir notify is the last call; write_batch notify may precede it
         events = [call.args[0] for call in mock_notify.call_args_list]
@@ -259,24 +267,24 @@ class TestVFSObserverCoverage:
         nx.close()
 
     def test_write_fires_hook(self, nx_with_hook: NexusFS, hook: MagicMock) -> None:
-        nx_with_hook.write("/file.txt", b"hello")
+        nx_with_hook.sys_write("/file.txt", b"hello")
         hook.on_mutation.assert_called_once()
         event = hook.on_mutation.call_args.args[0]
         assert event.type == FileEventType.FILE_WRITE
         assert event.path == "/file.txt"
 
     def test_delete_fires_hook(self, nx_with_hook: NexusFS, hook: MagicMock) -> None:
-        nx_with_hook.write("/file.txt", b"hello")
+        nx_with_hook.sys_write("/file.txt", b"hello")
         hook.reset_mock()
-        nx_with_hook.delete("/file.txt")
+        nx_with_hook.sys_unlink("/file.txt")
         hook.on_mutation.assert_called_once()
         event = hook.on_mutation.call_args.args[0]
         assert event.type == FileEventType.FILE_DELETE
 
     def test_rename_fires_hook(self, nx_with_hook: NexusFS, hook: MagicMock) -> None:
-        nx_with_hook.write("/old.txt", b"hello")
+        nx_with_hook.sys_write("/old.txt", b"hello")
         hook.reset_mock()
-        nx_with_hook.rename("/old.txt", "/new.txt")
+        nx_with_hook.sys_rename("/old.txt", "/new.txt")
         hook.on_mutation.assert_called_once()
         event = hook.on_mutation.call_args.args[0]
         assert event.type == FileEventType.FILE_RENAME
@@ -290,16 +298,16 @@ class TestVFSObserverCoverage:
         assert paths == {"/a.txt", "/b.txt", "/c.txt"}
 
     def test_mkdir_fires_hook(self, nx_with_hook: NexusFS, hook: MagicMock) -> None:
-        nx_with_hook.mkdir("/newdir")
+        nx_with_hook.sys_mkdir("/newdir")
         hook.on_mutation.assert_called_once()
         event = hook.on_mutation.call_args.args[0]
         assert event.type == FileEventType.DIR_CREATE
         assert event.path == "/newdir"
 
     def test_rmdir_fires_hook(self, nx_with_hook: NexusFS, hook: MagicMock) -> None:
-        nx_with_hook.mkdir("/mydir")
+        nx_with_hook.sys_mkdir("/mydir")
         hook.reset_mock()
-        nx_with_hook.rmdir("/mydir")
+        nx_with_hook.sys_rmdir("/mydir")
         hook.on_mutation.assert_called_once()
         event = hook.on_mutation.call_args.args[0]
         assert event.type == FileEventType.DIR_DELETE

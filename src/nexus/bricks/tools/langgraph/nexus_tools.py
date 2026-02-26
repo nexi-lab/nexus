@@ -315,7 +315,7 @@ def get_nexus_tools() -> list[BaseTool]:
             if path.startswith("/mnt/nexus"):
                 path = path[len("/mnt/nexus") :]
 
-            content = nx.read(path)
+            content = nx.sys_read(path)
 
             # Handle dict response (when return_metadata=True or edge cases)
             if isinstance(content, dict):
@@ -323,7 +323,7 @@ def get_nexus_tools() -> list[BaseTool]:
                 encoding = content.get("encoding", "")
                 content_value = content.get("content")
                 if content_value is None:
-                    return f"Error: nx.read() returned dict without 'content' key: {content}"
+                    return f"Error: nx.sys_read() returned dict without 'content' key: {content}"
                 content = content_value
 
                 # Decode base64 if needed
@@ -444,10 +444,10 @@ def get_nexus_tools() -> list[BaseTool]:
             # Write file (Nexus creates parent directories automatically)
             if path.startswith("/mnt/nexus"):
                 path = path[len("/mnt/nexus") :]
-            nx.write(path, content_bytes)
+            nx.sys_write(path, content_bytes)
 
             # Verify write was successful
-            if nx.exists(path):
+            if nx.sys_access(path):
                 size = len(content_bytes)
                 return f"Successfully wrote {size} bytes to {path}"
             else:

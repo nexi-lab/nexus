@@ -757,7 +757,7 @@ class TestMultiZoneIsolation:
         store = _make_store()  # zone_id is None
         store.put(_make_meta(path="/test.txt"))
 
-        with pytest.raises(AssertionError, match="zone_id filter.*passed to a non-zone-scoped"):
+        with pytest.raises(ValueError, match="zone_id filter.*passed to a non-zone-scoped"):
             store.list(zone_id="zone_a")
 
     def test_default_zone_id_allowed_on_unzoned_store(self) -> None:

@@ -218,7 +218,7 @@ class ProxyVFSBrick(ProxyBrick):
     server for zone-scoped isolation.
     """
 
-    async def read(self, path: str, zone_id: str) -> bytes:
+    async def sys_read(self, path: str, zone_id: str) -> bytes:
         result = await self._forward("read", path=path, zone_id=zone_id)
         if isinstance(result, bytes):
             return result
@@ -226,7 +226,7 @@ class ProxyVFSBrick(ProxyBrick):
             return result.encode()
         raise TypeError(f"Expected bytes or str from remote read, got {type(result).__name__}")
 
-    async def write(self, path: str, data: bytes, zone_id: str) -> None:
+    async def sys_write(self, path: str, data: bytes, zone_id: str) -> None:
         if len(data) > self._config.stream_threshold_bytes:
             await self._forward_stream("write", data, path=path, zone_id=zone_id)
             return
@@ -239,13 +239,13 @@ class ProxyVFSBrick(ProxyBrick):
     async def rename(self, src: str, dst: str, zone_id: str) -> None:
         await self._forward("rename", src=src, dst=dst, zone_id=zone_id)
 
-    async def mkdir(self, path: str, zone_id: str) -> None:
+    async def sys_mkdir(self, path: str, zone_id: str) -> None:
         await self._forward("mkdir", path=path, zone_id=zone_id)
 
     async def count_dir(self, path: str, zone_id: str) -> int:
         return cast(int, await self._forward("count_dir", path=path, zone_id=zone_id))
 
-    async def exists(self, path: str, zone_id: str) -> bool:
+    async def sys_access(self, path: str, zone_id: str) -> bool:
         return cast(bool, await self._forward("exists", path=path, zone_id=zone_id))
 
 

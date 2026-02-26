@@ -74,7 +74,7 @@ def mock_gateway(record_store):
         }
     ]
     gw.metadata_get.return_value = MagicMock(mtime=datetime.now(UTC), content_hash="abc", size=1024)
-    gw.read.return_value = b"hello world"
+    gw.sys_read.return_value = b"hello world"
     return gw
 
 

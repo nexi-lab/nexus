@@ -69,8 +69,19 @@ async def rpc_endpoint(
         if not rpc_request.method:
             rpc_request.method = method
 
-        # Parse parameters
-        params = parse_method_params(method, rpc_request.params)
+        # Parse parameters — fall through to SimpleNamespace for dynamically
+        # discovered @rpc_expose methods that lack pre-generated Params classes
+        # (e.g., llm_read, llm_read_detailed, llm_read_stream).
+        try:
+            params = parse_method_params(method, rpc_request.params)
+        except ValueError:
+            _exposed = getattr(request.app.state, "exposed_methods", {})
+            if method in _exposed:
+                from types import SimpleNamespace
+
+                params = SimpleNamespace(**(rpc_request.params or {}))
+            else:
+                raise
 
         # Get operation context
         context = get_operation_context(auth_result)

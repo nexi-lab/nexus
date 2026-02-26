@@ -1,17 +1,17 @@
 """Narrow filesystem protocol shared by Skills and MCP bricks.
 
 This defines only the filesystem methods that bricks actually use,
-rather than mirroring the full NexusFilesystem ABC (1,000+ LOC).
+rather than mirroring the full NexusFilesystemABC (1,000+ LOC).
 
-Any object implementing these 7 methods can serve as a filesystem for bricks:
-read, write, list, exists, mkdir, delete, is_directory.
+Any object implementing these 7 sys_ methods can serve as a filesystem for bricks:
+sys_read, sys_write, sys_readdir, sys_access, sys_mkdir, sys_unlink, sys_is_directory.
 
 Moved from nexus.bricks.skills.protocols (Issue #2035) to services/protocols/
 because both Skills and MCP bricks depend on this contract.
 
 Verification:
 - Run: pytest tests/unit/skills/test_protocol_compatibility.py
-- Contract test verifies NexusFilesystem ABC satisfies this protocol
+- Contract test verifies NexusFilesystemABC satisfies this protocol
 """
 
 from typing import Any, Protocol, runtime_checkable
@@ -21,20 +21,21 @@ from typing import Any, Protocol, runtime_checkable
 class NexusFilesystem(Protocol):
     """Narrow filesystem protocol for bricks (Skills, MCP).
 
-    Contains only the methods used by skills and MCP code:
-    - read: Read file content
-    - write: Write file content
-    - list: List files in a directory
-    - exists: Check if a path exists
-    - mkdir: Create a directory
-    - delete: Delete a file
-    - is_directory: Check if path is a directory
+    Contains only the methods used by skills and MCP code,
+    using the sys_ prefix convention matching NexusFilesystemABC:
+    - sys_read: Read file content
+    - sys_write: Write file content
+    - sys_readdir: List files in a directory
+    - sys_access: Check if a path exists
+    - sys_mkdir: Create a directory
+    - sys_unlink: Delete a file
+    - sys_is_directory: Check if path is a directory
     """
 
-    def read(
+    def sys_read(
         self, path: str, context: Any = None, return_metadata: bool = False
     ) -> bytes | dict[str, Any]:
-        """Read file content.
+        """Read file content (POSIX read).
 
         Args:
             path: Virtual path to read
@@ -46,7 +47,7 @@ class NexusFilesystem(Protocol):
         """
         ...
 
-    def write(
+    def sys_write(
         self,
         path: str,
         content: bytes,
@@ -55,7 +56,7 @@ class NexusFilesystem(Protocol):
         if_none_match: bool = False,
         force: bool = False,
     ) -> dict[str, Any]:
-        """Write content to a file.
+        """Write content to a file (POSIX write).
 
         Args:
             path: Virtual path to write
@@ -70,7 +71,7 @@ class NexusFilesystem(Protocol):
         """
         ...
 
-    def list(
+    def sys_readdir(
         self,
         path: str = "/",
         recursive: bool = True,
@@ -78,7 +79,7 @@ class NexusFilesystem(Protocol):
         show_parsed: bool = True,
         context: Any = None,
     ) -> list[str] | list[dict[str, Any]]:
-        """List files in a directory.
+        """List files in a directory (POSIX readdir).
 
         Args:
             path: Directory path to list
@@ -92,8 +93,8 @@ class NexusFilesystem(Protocol):
         """
         ...
 
-    def exists(self, path: str) -> bool:
-        """Check if a file or directory exists.
+    def sys_access(self, path: str) -> bool:
+        """Check if a file or directory exists (POSIX access).
 
         Args:
             path: Virtual path to check
@@ -103,8 +104,8 @@ class NexusFilesystem(Protocol):
         """
         ...
 
-    def mkdir(self, path: str, parents: bool = False, exist_ok: bool = False) -> None:
-        """Create a directory.
+    def sys_mkdir(self, path: str, parents: bool = False, exist_ok: bool = False) -> None:
+        """Create a directory (POSIX mkdir).
 
         Args:
             path: Virtual path to directory
@@ -113,8 +114,8 @@ class NexusFilesystem(Protocol):
         """
         ...
 
-    def delete(self, path: str) -> Any:
-        """Delete a file.
+    def sys_unlink(self, path: str) -> Any:
+        """Delete a file (POSIX unlink).
 
         Args:
             path: Virtual path to delete
@@ -124,7 +125,7 @@ class NexusFilesystem(Protocol):
         """
         ...
 
-    def is_directory(self, path: str, context: Any = None) -> bool:
+    def sys_is_directory(self, path: str, context: Any = None) -> bool:
         """Check if path is a directory.
 
         Args:

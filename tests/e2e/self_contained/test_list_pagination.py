@@ -32,7 +32,7 @@ def nexus_fs(tmp_path, isolated_db):
 def nexus_fs_with_files(nexus_fs):
     """Create NexusFS with 100 test files."""
     for i in range(100):
-        nexus_fs.write(f"/workspace/file{i:03d}.txt", f"content {i}")
+        nexus_fs.sys_write(f"/workspace/file{i:03d}.txt", f"content {i}")
     return nexus_fs
 
 
@@ -47,7 +47,7 @@ def nexus_fs_large(tmp_path, isolated_db):
 
     # Create 1000 files in batches
     for i in range(1000):
-        nx.write(f"/large/file{i:04d}.txt", f"content {i}")
+        nx.sys_write(f"/large/file{i:04d}.txt", f"content {i}")
 
     yield nx
     nx.close()
@@ -58,7 +58,7 @@ class TestPaginatedListBasic:
 
     def test_paginated_list_returns_paginated_result(self, nexus_fs_with_files):
         """list() with limit should return PaginatedResult."""
-        result = nexus_fs_with_files.list(
+        result = nexus_fs_with_files.sys_readdir(
             path="/workspace/",
             limit=10,
         )
@@ -70,7 +70,7 @@ class TestPaginatedListBasic:
 
     def test_paginated_list_path_only_mode(self, nexus_fs_with_files):
         """Paginated list with details=False should return paths."""
-        result = nexus_fs_with_files.list(
+        result = nexus_fs_with_files.sys_readdir(
             path="/workspace/",
             limit=10,
             details=False,
@@ -82,7 +82,7 @@ class TestPaginatedListBasic:
 
     def test_paginated_list_details_mode(self, nexus_fs_with_files):
         """Paginated list with details=True should return dicts."""
-        result = nexus_fs_with_files.list(
+        result = nexus_fs_with_files.sys_readdir(
             path="/workspace/",
             limit=10,
             details=True,
@@ -100,7 +100,7 @@ class TestPaginatedListBasic:
         page_count = 0
 
         while True:
-            result = nexus_fs_with_files.list(
+            result = nexus_fs_with_files.sys_readdir(
                 path="/workspace/",
                 limit=15,
                 cursor=cursor,
@@ -121,7 +121,7 @@ class TestPaginatedListBasic:
 
     def test_last_page_has_no_cursor(self, nexus_fs_with_files):
         """Last page should have next_cursor=None and has_more=False."""
-        result = nexus_fs_with_files.list(
+        result = nexus_fs_with_files.sys_readdir(
             path="/workspace/",
             limit=200,  # More than total files
         )
@@ -135,7 +135,7 @@ class TestBackwardCompatibility:
 
     def test_list_without_limit_returns_list(self, nexus_fs_with_files):
         """list() without limit should return regular list."""
-        result = nexus_fs_with_files.list(path="/workspace/")
+        result = nexus_fs_with_files.sys_readdir(path="/workspace/")
 
         # Should be a regular list, not PaginatedResult
         assert isinstance(result, list)
@@ -144,7 +144,7 @@ class TestBackwardCompatibility:
 
     def test_list_without_limit_details_mode(self, nexus_fs_with_files):
         """list() without limit and details=True should return list of dicts."""
-        result = nexus_fs_with_files.list(path="/workspace/", details=True)
+        result = nexus_fs_with_files.sys_readdir(path="/workspace/", details=True)
 
         assert isinstance(result, list)
         assert all(isinstance(item, dict) for item in result)
@@ -152,16 +152,16 @@ class TestBackwardCompatibility:
     def test_existing_tests_still_pass(self, nexus_fs):
         """Existing list() behavior should be unchanged."""
         # Create some files
-        nexus_fs.write("/test/a.txt", "a")
-        nexus_fs.write("/test/b.txt", "b")
-        nexus_fs.write("/test/sub/c.txt", "c")
+        nexus_fs.sys_write("/test/a.txt", "a")
+        nexus_fs.sys_write("/test/b.txt", "b")
+        nexus_fs.sys_write("/test/sub/c.txt", "c")
 
         # Recursive list (default)
-        result = nexus_fs.list("/test/")
+        result = nexus_fs.sys_readdir("/test/")
         assert len(result) == 3
 
         # Non-recursive list
-        result = nexus_fs.list("/test/", recursive=False)
+        result = nexus_fs.sys_readdir("/test/", recursive=False)
         # Returns a.txt, b.txt, and sub/ directory = 3 items
         assert len(result) == 3
 
@@ -176,7 +176,7 @@ class TestPaginationAtScale:
         page_count = 0
 
         while True:
-            result = nexus_fs_large.list(
+            result = nexus_fs_large.sys_readdir(
                 path="/large/",
                 limit=100,
                 cursor=cursor,
@@ -195,14 +195,14 @@ class TestPaginationAtScale:
 
     def test_small_pages(self, nexus_fs_large):
         """Should work with very small page sizes."""
-        result = nexus_fs_large.list(path="/large/", limit=1)
+        result = nexus_fs_large.sys_readdir(path="/large/", limit=1)
 
         assert len(result.items) == 1
         assert result.has_more is True
 
     def test_large_single_page(self, nexus_fs_large):
         """Should handle large single page requests."""
-        result = nexus_fs_large.list(path="/large/", limit=10000)
+        result = nexus_fs_large.sys_readdir(path="/large/", limit=10000)
 
         assert len(result.items) == 1000
         assert result.has_more is False
@@ -218,7 +218,7 @@ class TestPaginationWithPermissions:
     def test_pagination_without_permissions(self, nexus_fs_with_files):
         """Pagination should work when permissions are disabled."""
         # nexus_fs fixture has enforce_permissions=False
-        result = nexus_fs_with_files.list(
+        result = nexus_fs_with_files.sys_readdir(
             path="/workspace/",
             limit=10,
         )
@@ -233,7 +233,7 @@ class TestPaginationEdgeCases:
 
     def test_empty_directory(self, nexus_fs):
         """Should handle empty directories."""
-        result = nexus_fs.list(path="/empty/", limit=10)
+        result = nexus_fs.sys_readdir(path="/empty/", limit=10)
 
         assert isinstance(result, PaginatedResult)
         assert len(result.items) == 0
@@ -243,12 +243,12 @@ class TestPaginationEdgeCases:
     def test_non_recursive_pagination(self, nexus_fs):
         """Should work with recursive=False."""
         # Create nested structure
-        nexus_fs.write("/dir/file1.txt", "1")
-        nexus_fs.write("/dir/file2.txt", "2")
-        nexus_fs.write("/dir/sub/file3.txt", "3")
-        nexus_fs.write("/dir/sub/deep/file4.txt", "4")
+        nexus_fs.sys_write("/dir/file1.txt", "1")
+        nexus_fs.sys_write("/dir/file2.txt", "2")
+        nexus_fs.sys_write("/dir/sub/file3.txt", "3")
+        nexus_fs.sys_write("/dir/sub/deep/file4.txt", "4")
 
-        result = nexus_fs.list(
+        result = nexus_fs.sys_readdir(
             path="/dir/",
             recursive=False,
             limit=10,
@@ -264,11 +264,11 @@ class TestPaginationEdgeCases:
 
     def test_pagination_with_special_characters(self, nexus_fs):
         """Should handle paths with special characters."""
-        nexus_fs.write("/test/file with spaces.txt", "content")
-        nexus_fs.write("/test/file-with-dashes.txt", "content")
-        nexus_fs.write("/test/file_with_underscores.txt", "content")
+        nexus_fs.sys_write("/test/file with spaces.txt", "content")
+        nexus_fs.sys_write("/test/file-with-dashes.txt", "content")
+        nexus_fs.sys_write("/test/file_with_underscores.txt", "content")
 
-        result = nexus_fs.list(path="/test/", limit=10)
+        result = nexus_fs.sys_readdir(path="/test/", limit=10)
 
         assert len(result.items) == 3
 
@@ -276,17 +276,17 @@ class TestPaginationEdgeCases:
         """Should handle cursor pointing to deleted file gracefully."""
         # Create files
         for i in range(20):
-            nexus_fs.write(f"/test/file{i:02d}.txt", f"content {i}")
+            nexus_fs.sys_write(f"/test/file{i:02d}.txt", f"content {i}")
 
         # Get first page
-        page1 = nexus_fs.list(path="/test/", limit=10)
+        page1 = nexus_fs.sys_readdir(path="/test/", limit=10)
 
         # Delete some files (simulating concurrent modification)
-        nexus_fs.delete("/test/file09.txt")
-        nexus_fs.delete("/test/file10.txt")
+        nexus_fs.sys_unlink("/test/file09.txt")
+        nexus_fs.sys_unlink("/test/file10.txt")
 
         # Continue pagination - should work even with deleted files
-        page2 = nexus_fs.list(
+        page2 = nexus_fs.sys_readdir(
             path="/test/",
             limit=10,
             cursor=page1.next_cursor,

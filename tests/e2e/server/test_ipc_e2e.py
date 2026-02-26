@@ -203,7 +203,7 @@ def _read_file(client: httpx.Client, path: str) -> str:
 
     body = {
         "jsonrpc": "2.0",
-        "method": "read",
+        "method": "sys_read",
         "params": {"path": path},
         "id": "1",
     }
@@ -267,7 +267,7 @@ class TestIPCViaServer:
         """Verify unauthenticated requests are rejected (401)."""
         body = {
             "jsonrpc": "2.0",
-            "method": "mkdir",
+            "method": "sys_mkdir",
             "params": {"path": "/agents", "exist_ok": True},
             "id": "1",
         }

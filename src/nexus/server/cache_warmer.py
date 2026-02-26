@@ -735,7 +735,7 @@ class CacheWarmer:
         async with self._semaphore:
             try:
                 # Check if file exists (warms exists cache)
-                exists = self._nexus.exists(path)
+                exists = self._nexus.sys_access(path)
                 if not exists:
                     self._current_stats.skipped += 1
                     return
@@ -760,7 +760,7 @@ class CacheWarmer:
         async with self._semaphore:
             try:
                 # Read file content
-                content = self._nexus.read(path, context=context)
+                content = self._nexus.sys_read(path, context=context)
                 if content:
                     content_bytes = content if isinstance(content, bytes) else b""
                     self._current_stats.content_warmed += 1
@@ -834,7 +834,7 @@ class CacheWarmer:
 
         try:
             # List root directory
-            root_entries = self._nexus.list("/", recursive=False)
+            root_entries = self._nexus.sys_readdir("/", recursive=False)
             if isinstance(root_entries, list):
                 # Handle both list[str] and list[dict] return types
                 for entry in root_entries[:50]:

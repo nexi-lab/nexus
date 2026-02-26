@@ -144,7 +144,7 @@ async def handle_read_async(
     # If not parsed, use sync read in thread with timeout
     if not parsed:
         read_result: bytes | dict[str, Any] = await to_thread_with_timeout(
-            nexus_fs.read,
+            nexus_fs.sys_read,
             params.path,
             context,
             return_metadata,
@@ -156,7 +156,7 @@ async def handle_read_async(
 
     # For parsed reads, read raw content with timeout first
     raw_result = await to_thread_with_timeout(
-        nexus_fs.read,
+        nexus_fs.sys_read,
         params.path,
         context,
         True,
@@ -215,13 +215,13 @@ def handle_write(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, An
     if lock_timeout_val is not None and lock_timeout_val != 30.0:
         kwargs["lock_timeout"] = lock_timeout_val
 
-    bytes_written = nexus_fs.write(params.path, content, **kwargs)
+    bytes_written = nexus_fs.sys_write(params.path, content, **kwargs)
     return {"bytes_written": bytes_written}
 
 
 def handle_exists(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle exists method."""
-    return {"exists": nexus_fs.exists(params.path, context=context)}
+    return {"exists": nexus_fs.sys_access(params.path, context=context)}
 
 
 def handle_list(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
@@ -247,7 +247,7 @@ def handle_list(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any
         kwargs["cursor"] = cursor
 
     _list_start = _time.time()
-    result = nexus_fs.list(params.path, **kwargs)
+    result = nexus_fs.sys_readdir(params.path, **kwargs)
     _list_elapsed = (_time.time() - _list_start) * 1000
 
     # Result is PaginatedResult when limit is provided
@@ -297,18 +297,18 @@ def handle_list(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any
 def handle_delete(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle delete method."""
     try:
-        nexus_fs.delete(params.path, context=context)
+        nexus_fs.sys_unlink(params.path, context=context)
     except TypeError:
-        nexus_fs.delete(params.path)
+        nexus_fs.sys_unlink(params.path)
     return {"deleted": True}
 
 
 def handle_rename(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle rename method."""
     try:
-        nexus_fs.rename(params.old_path, params.new_path, context=context)
+        nexus_fs.sys_rename(params.old_path, params.new_path, context=context)
     except TypeError:
-        nexus_fs.rename(params.old_path, params.new_path)
+        nexus_fs.sys_rename(params.old_path, params.new_path)
     return {"renamed": True}
 
 
@@ -326,7 +326,7 @@ def handle_mkdir(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, An
     if hasattr(params, "exist_ok") and params.exist_ok is not None:
         kwargs["exist_ok"] = params.exist_ok
 
-    nexus_fs.mkdir(params.path, **kwargs)
+    nexus_fs.sys_mkdir(params.path, **kwargs)
     return {"created": True}
 
 
@@ -338,7 +338,7 @@ def handle_rmdir(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, An
     if hasattr(params, "force") and params.force is not None:
         kwargs["force"] = params.force
 
-    nexus_fs.rmdir(params.path, **kwargs)
+    nexus_fs.sys_rmdir(params.path, **kwargs)
     return {"removed": True}
 
 
@@ -349,7 +349,7 @@ def handle_rmdir(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, An
 
 def handle_get_metadata(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle get_metadata method."""
-    metadata = nexus_fs.get_metadata(params.path, context=context)
+    metadata = nexus_fs.sys_stat(params.path, context=context)
     if isinstance(metadata, dict):
         metadata = unscope_internal_dict(metadata, ["path"])
     return {"metadata": metadata}
@@ -468,4 +468,4 @@ async def handle_semantic_search_index(
 
 def handle_is_directory(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle is_directory method."""
-    return {"is_directory": nexus_fs.is_directory(params.path, context=context)}
+    return {"is_directory": nexus_fs.sys_is_directory(params.path, context=context)}

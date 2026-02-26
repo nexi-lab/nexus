@@ -264,7 +264,7 @@ class TestSignedIPCE2E:
         assert path.endswith(".json")
 
         # 5. Verify envelope on disk has signature
-        data = await vfs.read(path, ZONE)
+        data = await vfs.sys_read(path, ZONE)
         restored = MessageEnvelope.from_bytes(data)
         assert restored.signature is not None
         assert restored.signer_did == alice_record.did
@@ -380,7 +380,7 @@ class TestSignedIPCE2E:
 
         # Write tampered envelope directly to inbox
         msg_path = message_path_in_inbox("agent:bob", tampered.id, tampered.timestamp)
-        await vfs.write(msg_path, tampered.to_bytes(), ZONE)
+        await vfs.sys_write(msg_path, tampered.to_bytes(), ZONE)
 
         handler_called = False
 
@@ -570,7 +570,7 @@ class TestSignedIPCWithFastAPI:
         """Unauthenticated requests are rejected (permissions enforced)."""
         body = {
             "jsonrpc": "2.0",
-            "method": "mkdir",
+            "method": "sys_mkdir",
             "params": {"path": "/agents", "exist_ok": True},
             "id": "1",
         }
@@ -582,7 +582,7 @@ class TestSignedIPCWithFastAPI:
         headers = {"Authorization": f"Bearer {client['admin_key']}"}
         body = {
             "jsonrpc": "2.0",
-            "method": "mkdir",
+            "method": "sys_mkdir",
             "params": {"path": "/agents", "exist_ok": True},
             "id": "1",
         }

@@ -136,7 +136,7 @@ class LLMDocumentReader:
 
             for file_path in file_paths[:search_limit]:
                 try:
-                    content = self.nx.read(file_path, context=context)
+                    content = self.nx.sys_read(file_path, context=context)
                     if isinstance(content, bytes):
                         content_str = content.decode("utf-8", errors="ignore")
                     elif isinstance(content, dict):

@@ -173,7 +173,7 @@ def test_nexus(file_count=1000):
 
         for attempt in range(max_retries):
             try:
-                client.write(f"{nexus_path}/{file.name}", content)
+                client.sys_write(f"{nexus_path}/{file.name}", content)
                 upload_count += 1
                 upload_bytes += len(content)
                 uploaded = True
@@ -197,7 +197,7 @@ def test_nexus(file_count=1000):
     # Test 1: List
     print("\n[1/3] List operation (Nexus)...")
     start = time.time()
-    listed = client.list(nexus_path, recursive=False)
+    listed = client.sys_readdir(nexus_path, recursive=False)
     list_duration = time.time() - start
     list_count = len(listed)
 

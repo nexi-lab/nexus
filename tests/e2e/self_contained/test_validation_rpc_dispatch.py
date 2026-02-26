@@ -1,7 +1,8 @@
 """RPC dispatch integration tests for sandbox_validate endpoint.
 
-Verifies that sandbox_validate is properly registered in the RPC dispatch
-pipeline: protocol params class, method exposure, and parameter parsing.
+Verifies that sandbox_validate is properly dispatched through the service
+delegation pattern, and that validation models, serialization, and
+performance characteristics are correct.
 No Docker or live server required.
 """
 
@@ -18,35 +19,18 @@ from nexus.bricks.parsers.validation.script_builder import (
     build_simple_validation_script,
     parse_simple_script_output,
 )
-from nexus.server.protocol import METHOD_PARAMS, SandboxValidateParams
 
 
-class TestSandboxValidateProtocol:
-    """Verify sandbox_validate is properly wired into the RPC protocol."""
+class TestSandboxValidateDispatch:
+    """Verify sandbox_validate is dispatched through the service delegation pattern."""
 
-    def test_registered_in_method_params(self):
-        assert "sandbox_validate" in METHOD_PARAMS
-        assert METHOD_PARAMS["sandbox_validate"] is SandboxValidateParams
+    def test_sandbox_validate_in_service_methods(self):
+        """sandbox_validate is dispatched via _sandbox_rpc_service, not METHOD_PARAMS."""
+        from nexus.core.nexus_fs import NexusFS
 
-    def test_params_class_fields(self):
-        fields = {f.name for f in dataclasses.fields(SandboxValidateParams)}
-        assert "sandbox_id" in fields
-        assert "workspace_path" in fields
-        assert "context" in fields
-
-    def test_params_defaults(self):
-        params = SandboxValidateParams(sandbox_id="sb-123")
-        assert params.workspace_path == "/workspace"
-        assert params.context is None
-
-    def test_params_custom(self):
-        params = SandboxValidateParams(
-            sandbox_id="sb-456",
-            workspace_path="/code",
-            context={"user_id": "u1"},
-        )
-        assert params.sandbox_id == "sb-456"
-        assert params.workspace_path == "/code"
+        dispatch = NexusFS._SERVICE_METHODS
+        assert "sandbox_validate" in dispatch
+        assert dispatch["sandbox_validate"] == "_sandbox_rpc_service"
 
 
 class TestValidationResultSerialization:

@@ -170,7 +170,7 @@ class NexusFederation:
         # Step 1: Discover zone via peer's DT_MOUNT
         client = self._client_factory(peer_addr)
         try:
-            metadata = await client.get_metadata(
+            metadata = await client.sys_stat(
                 path=remote_path,
                 zone_id=ROOT_ZONE_ID,
             )

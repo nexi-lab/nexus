@@ -3,7 +3,7 @@
 PRE-DISPATCH resolver that short-circuits pipe I/O before PathRouter
 runs.  Registered at boot via factory into KernelDispatch.
 
-    nx.read("/pipes/agent-b/inbox")
+    nx.sys_read("/pipes/agent-b/inbox")
       → KernelDispatch.resolve_read()
       → PipeResolver.matches() → True  (O(1) dict lookup)
       → PipeResolver.read()   → ring buffer → bytes

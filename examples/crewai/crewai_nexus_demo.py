@@ -71,16 +71,18 @@ def call_nexus_mcp(tool_name: str, **kwargs) -> str:
 
         # Map tool names to Nexus methods
         if tool_name == "nexus_read_file":
-            content = nx.read(kwargs["path"])
+            content = nx.sys_read(kwargs["path"])
             if isinstance(content, bytes):
                 content = content.decode("utf-8", errors="replace")
             return content
         elif tool_name == "nexus_write_file":
             content = kwargs["content"].encode("utf-8")
-            nx.write(kwargs["path"], content)
+            nx.sys_write(kwargs["path"], content)
             return f"Successfully wrote to {kwargs['path']}"
         elif tool_name == "nexus_list_files":
-            files = nx.list(kwargs.get("path", "/"), recursive=kwargs.get("recursive", False))
+            files = nx.sys_readdir(
+                kwargs.get("path", "/"), recursive=kwargs.get("recursive", False)
+            )
             return "\n".join(files) if files else "No files found"
         elif tool_name == "nexus_grep":
             results = nx.grep(kwargs["pattern"], kwargs.get("path", "/"))
@@ -452,7 +454,7 @@ def check_environment():
         from nexus import connect
 
         nx = connect(config={"remote_url": nexus_url})
-        nx.list("/")
+        nx.sys_readdir("/")
         print("✓ Connected to Nexus server")
         nx.close()
     except Exception as e:
@@ -478,7 +480,7 @@ def setup_test_data():
         # Create directories
         for dir_path in ["/workspace", "/reports"]:
             with contextlib.suppress(Exception):
-                nx.mkdir(dir_path)  # Directory may already exist
+                nx.sys_mkdir(dir_path)  # Directory may already exist
 
         # Create sample Python files with async patterns
         sample_files = {
@@ -525,7 +527,7 @@ def validate_input(data: dict) -> bool:
         }
 
         for path, content in sample_files.items():
-            nx.write(path, content.encode("utf-8"))
+            nx.sys_write(path, content.encode("utf-8"))
 
         print(f"✓ Created {len(sample_files)} test files in /workspace")
         nx.close()

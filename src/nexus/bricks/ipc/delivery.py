@@ -130,7 +130,7 @@ class MessageSender:
     async def _send_to_inbox(self, envelope: MessageEnvelope, data: bytes) -> str:
         """Write message to inbox, copy to outbox, and notify via EventBus."""
         recipient_inbox = inbox_path(envelope.recipient)
-        if not await self._storage.exists(recipient_inbox, self._zone_id):
+        if not await self._storage.sys_access(recipient_inbox, self._zone_id):
             raise InboxNotFoundError(envelope.recipient)
 
         # Check backpressure (count_dir is more efficient than list_dir)
@@ -139,16 +139,16 @@ class MessageSender:
             raise InboxFullError(envelope.recipient, inbox_count, self._max_inbox_size)
 
         msg_path = message_path_in_inbox(envelope.recipient, envelope.id, envelope.timestamp)
-        await self._storage.write(msg_path, data, self._zone_id)
+        await self._storage.sys_write(msg_path, data, self._zone_id)
 
         # Outbox copy (best-effort)
         outbox_dir = outbox_path(envelope.sender)
         try:
-            if await self._storage.exists(outbox_dir, self._zone_id):
+            if await self._storage.sys_access(outbox_dir, self._zone_id):
                 outbox_msg_path = message_path_in_outbox(
                     envelope.sender, envelope.id, envelope.timestamp
                 )
-                await self._storage.write(outbox_msg_path, data, self._zone_id)
+                await self._storage.sys_write(outbox_msg_path, data, self._zone_id)
         except Exception as exc:
             logger.warning(
                 "Failed to write outbox copy",
@@ -398,7 +398,7 @@ class MessageProcessor:
         """
         # Read and parse envelope
         try:
-            data = await self._storage.read(msg_path, self._zone_id)
+            data = await self._storage.sys_read(msg_path, self._zone_id)
             envelope = MessageEnvelope.from_bytes(data)
         except FileNotFoundError:
             # File was already moved/processed by another processor (race condition).
@@ -628,7 +628,7 @@ class MessageProcessor:
                     indent=2,
                 ).encode("utf-8")
                 reason_path = dest + ".reason.json"
-                await self._storage.write(reason_path, reason_data, self._zone_id)
+                await self._storage.sys_write(reason_path, reason_data, self._zone_id)
             except Exception:
                 logger.debug(
                     "Failed to write .reason.json for dead-lettered message at %s",

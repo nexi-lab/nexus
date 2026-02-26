@@ -30,7 +30,7 @@ Usage:
     For programmatic access, use the SDK:
         >>> from nexus.sdk import connect
         >>> nx = connect()
-        >>> nx.write("/file.txt", b"content")
+        >>> nx.sys_write("/file.txt", b"content")
 """
 
 __all__ = ["main"]

@@ -114,7 +114,7 @@ class TestZoneScopedPathUnscopingE2E:
         /zone/{zone_id}/user:{user_id}/{resource_path}
         """
         internal_path = f"/zone/{zone_id}/user:{user_id}/{resource_path}"
-        nexus_fs.write(internal_path, content)
+        nexus_fs.sys_write(internal_path, content)
 
     def test_list_strips_zone_prefix_from_provisioned_paths(
         self, rpc_client: TestClient, nexus_fs_local: NexusFS
@@ -136,7 +136,7 @@ class TestZoneScopedPathUnscopingE2E:
             b"a,b,c",
         )
 
-        # List root via RPC — this is what nx.list('/') calls in REMOTE profile
+        # List root via RPC — this is what nx.sys_readdir('/') calls in REMOTE profile
         result = _rpc_post(rpc_client, "list", {"path": "/", "recursive": True})
         files = result["files"]
 
@@ -237,7 +237,7 @@ class TestTenantPrefixUnscopingE2E:
     ) -> None:
         """Legacy /tenant:default/... paths get stripped by list()."""
         # Write using legacy tenant-prefixed path
-        nexus_fs_local.write(
+        nexus_fs_local.sys_write(
             "/tenant:default/connector/gcs_demo/auto-test.txt",
             b"test data",
         )

@@ -38,8 +38,8 @@ class TestWirableFSConformance:
         from nexus.core.config import ParseConfig
         from nexus.core.nexus_fs import NexusFS
 
-        # NexusFS.read exists at class level (method)
-        assert callable(getattr(NexusFS, "read", None))
+        # NexusFS.sys_read exists at class level (method)
+        assert callable(getattr(NexusFS, "sys_read", None))
 
         # Verify protocol is runtime_checkable and importable
         assert hasattr(WirableFS, "__protocol_attrs__") or True

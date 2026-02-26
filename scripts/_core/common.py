@@ -36,7 +36,7 @@ def safe_operation(
 
     Examples:
         >>> def create_folder(path):
-        ...     nx.mkdir(path)
+        ...     nx.sys_mkdir(path)
         ...     return {"path": path}
         >>>
         >>> result = safe_operation(

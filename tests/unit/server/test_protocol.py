@@ -23,24 +23,24 @@ class TestRPCRequest:
         data = {
             "jsonrpc": "2.0",
             "id": "test-123",
-            "method": "read",
+            "method": "sys_read",
             "params": {"path": "/test.txt"},
         }
         request = RPCRequest.from_dict(data)
         assert request.jsonrpc == "2.0"
         assert request.id == "test-123"
-        assert request.method == "read"
+        assert request.method == "sys_read"
         assert request.params == {"path": "/test.txt"}
 
     def test_to_dict(self):
         """Test converting RPCRequest to dict."""
         request = RPCRequest(
-            jsonrpc="2.0", id="test-456", method="write", params={"path": "/file.txt"}
+            jsonrpc="2.0", id="test-456", method="sys_write", params={"path": "/file.txt"}
         )
         result = request.to_dict()
         assert result["jsonrpc"] == "2.0"
         assert result["id"] == "test-456"
-        assert result["method"] == "write"
+        assert result["method"] == "sys_write"
         assert result["params"] == {"path": "/file.txt"}
 
 
@@ -164,19 +164,19 @@ class TestParseMethodParams:
 
     def test_parse_read_params(self):
         """Test parsing read method parameters."""
-        params = parse_method_params("read", {"path": "/test.txt"})
+        params = parse_method_params("sys_read", {"path": "/test.txt"})
         assert params.path == "/test.txt"
 
     def test_parse_write_params(self):
         """Test parsing write method parameters."""
-        params = parse_method_params("write", {"path": "/file.txt", "content": b"data"})
+        params = parse_method_params("sys_write", {"path": "/file.txt", "content": b"data"})
         assert params.path == "/file.txt"
         assert params.content == b"data"
 
     def test_parse_list_params(self):
         """Test parsing list method parameters."""
         params = parse_method_params(
-            "list", {"path": "/workspace", "recursive": True, "details": False}
+            "sys_readdir", {"path": "/workspace", "recursive": True, "details": False}
         )
         assert params.path == "/workspace"
         assert params.recursive is True
@@ -184,7 +184,7 @@ class TestParseMethodParams:
 
     def test_parse_list_params_defaults(self):
         """Test parsing list with default parameters."""
-        params = parse_method_params("list", {})
+        params = parse_method_params("sys_readdir", {})
         assert params.path == "/"
         assert params.recursive is True
         assert params.details is False
@@ -197,7 +197,7 @@ class TestParseMethodParams:
     def test_parse_invalid_params(self):
         """Test parsing with invalid parameters raises error."""
         with pytest.raises(ValueError, match="Invalid parameters"):
-            parse_method_params("read", {"invalid_param": "value"})
+            parse_method_params("sys_read", {"invalid_param": "value"})
 
 
 class TestRPCErrorCode:
@@ -339,11 +339,11 @@ class TestCodegenConsistency:
     def test_merged_method_params_has_both_generated_and_overrides(self):
         """METHOD_PARAMS should contain both generated and override entries."""
         # Generated entries
-        assert "write" in METHOD_PARAMS
-        assert "list" in METHOD_PARAMS
+        assert "sys_write" in METHOD_PARAMS
+        assert "sys_readdir" in METHOD_PARAMS
         assert "grep" in METHOD_PARAMS
         # Override entries
-        assert "read" in METHOD_PARAMS
+        assert "sys_read" in METHOD_PARAMS
         assert "admin_create_key" in METHOD_PARAMS
         assert "store_memory" in METHOD_PARAMS
         assert "skills_create" in METHOD_PARAMS

@@ -14,8 +14,6 @@ from contextlib import suppress
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from nexus.contracts.constants import ROOT_ZONE_ID
-
 if TYPE_CHECKING:
     from nexus.contracts.metadata import FileMetadata
 
@@ -184,7 +182,7 @@ class MetadataMapper:
             "file_type": metadata.mime_type,
             "created_at": _to_naive(metadata.created_at) or _utcnow_naive(),
             "updated_at": _to_naive(metadata.modified_at) or _utcnow_naive(),
-            "zone_id": metadata.zone_id or ROOT_ZONE_ID,
+            "zone_id": metadata.zone_id or "default",
             "posix_uid": metadata.owner_id,
         }
         if include_version:

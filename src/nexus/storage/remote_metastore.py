@@ -214,7 +214,7 @@ class RemoteMetastore(MetastoreABC):
     def get(self, path: str) -> FileMetadata | None:
         """Get metadata for a file by proxying ``stat`` to the server."""
         try:
-            result = self._call_rpc("stat", {"path": path})
+            result = self._call_rpc("sys_stat", {"path": path})
         except Exception:
             return None
         if result is None:
@@ -241,14 +241,14 @@ class RemoteMetastore(MetastoreABC):
 
     def delete(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
         """Delete metadata by proxying ``delete`` to the server."""
-        result = self._call_rpc("delete", {"path": path, "consistency": consistency})
+        result = self._call_rpc("sys_unlink", {"path": path, "consistency": consistency})
         if isinstance(result, dict):
             return result
         return {"path": path}
 
     def exists(self, path: str) -> bool:
         """Check if metadata exists by proxying ``exists`` to the server."""
-        result = self._call_rpc("exists", {"path": path})
+        result = self._call_rpc("sys_access", {"path": path})
         if isinstance(result, dict):
             return bool(result.get("exists", False))
         return bool(result)
@@ -258,7 +258,7 @@ class RemoteMetastore(MetastoreABC):
         params: dict[str, Any] = {"path": prefix, "recursive": recursive}
         if kwargs:
             params.update(kwargs)
-        result = self._call_rpc("list", params)
+        result = self._call_rpc("sys_readdir", params)
         if not result:
             return []
 

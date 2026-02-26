@@ -17,8 +17,8 @@ For programmatic access (building tools, libraries, integrations), use the SDK:
     from nexus.sdk import connect
 
     nx = connect()
-    nx.write("/workspace/data.txt", b"Hello World")
-    content = nx.read("/workspace/data.txt")
+    nx.sys_write("/workspace/data.txt", b"Hello World")
+    content = nx.sys_read("/workspace/data.txt")
 
 For command-line usage, use the nexus CLI:
 
@@ -201,7 +201,7 @@ def connect(
 
         Standalone mode (development/testing):
             >>> nx = nexus.connect()
-            >>> nx.write("/workspace/file.txt", b"Hello World")
+            >>> nx.sys_write("/workspace/file.txt", b"Hello World")
 
         Federation mode (multi-node cluster):
             >>> # Requires NEXUS_NODE_ID, NEXUS_BIND_ADDR env vars

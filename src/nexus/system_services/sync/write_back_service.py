@@ -489,7 +489,7 @@ class WriteBackService:
         try:
             content = self._read_nexus_content(original_path)
             if content is not None:
-                self._gw.write(conflict_path, content)
+                self._gw.sys_write(conflict_path, content)
         except Exception as e:
             logger.warning(f"[WRITE_BACK] Failed to create conflict copy: {e}")
 
@@ -550,7 +550,7 @@ class WriteBackService:
             content_hash = getattr(meta, "content_hash", None)
             if content_hash is None:
                 return None
-            result = self._gw.read(path)
+            result = self._gw.sys_read(path)
             if isinstance(result, bytes):
                 return result
             return getattr(result, "data", None) if result else None

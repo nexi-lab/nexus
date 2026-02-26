@@ -383,7 +383,7 @@ class MountCoreService:
 
         # Create directory entry
         try:
-            self._gw.mkdir(mount_point, parents=True, exist_ok=True, context=context)
+            self._gw.sys_mkdir(mount_point, parents=True, exist_ok=True, context=context)
             logger.info(f"Created directory entry for mount point: {mount_point}")
         except Exception as e:
             logger.warning(f"Failed to create directory entry: {e}")
@@ -476,11 +476,11 @@ class MountCoreService:
 
             # Create directory and write skill
             try:
-                self._gw.mkdir(skill_path, parents=True, exist_ok=True, context=context)
+                self._gw.sys_mkdir(skill_path, parents=True, exist_ok=True, context=context)
             except Exception as e:
                 logger.warning(f"Failed to create skill directory: {e}")
 
-            self._gw.write(skill_md_path, skill_md, context=context)
+            self._gw.sys_write(skill_md_path, skill_md, context=context)
             logger.info(f"Generated connector skill: {skill_md_path}")
             return True
 

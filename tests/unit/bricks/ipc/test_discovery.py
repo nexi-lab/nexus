@@ -20,9 +20,9 @@ async def _create_agent(
     status: str = "connected",
 ) -> None:
     """Helper: create agent directory and AGENT.json."""
-    await vfs.mkdir(f"/agents/{agent_id}", ZONE)
-    await vfs.mkdir(f"/agents/{agent_id}/inbox", ZONE)
-    await vfs.mkdir("/agents", ZONE)
+    await vfs.sys_mkdir(f"/agents/{agent_id}", ZONE)
+    await vfs.sys_mkdir(f"/agents/{agent_id}/inbox", ZONE)
+    await vfs.sys_mkdir("/agents", ZONE)
     card = {
         "name": name or agent_id,
         "agent_id": agent_id,
@@ -31,7 +31,7 @@ async def _create_agent(
         "inbox": f"/agents/{agent_id}/inbox",
     }
     card_data = json.dumps(card).encode("utf-8")
-    await vfs.write(agent_card_path(agent_id), card_data, ZONE)
+    await vfs.sys_write(agent_card_path(agent_id), card_data, ZONE)
 
 
 class TestAgentDiscovery:

@@ -30,7 +30,7 @@ Example:
     >>> nx = NexusFS(backend=HNConnectorBackend())
     >>>
     >>> # Read top story
-    >>> story = nx.read("/hn/top/1.json")
+    >>> story = nx.sys_read("/hn/top/1.json")
     >>>
     >>> # List all feeds
     >>> nx.ls("/hn/")

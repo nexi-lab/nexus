@@ -52,7 +52,7 @@ class TestOnlineRoundTrip:
         proxy = ProxyVFSBrick(config, transport=http_transport)
         await proxy.start()
         try:
-            result = await proxy.read("/file.txt", "zone1")
+            result = await proxy.sys_read("/file.txt", "zone1")
             assert result == b"file content"
         finally:
             await proxy.stop()
@@ -112,9 +112,9 @@ class TestOfflineQueueReplay:
         try:
             # These should fail and be queued
             with pytest.raises(OfflineQueuedError):
-                await proxy.mkdir("/dir1", "z1")
+                await proxy.sys_mkdir("/dir1", "z1")
             with pytest.raises(OfflineQueuedError):
-                await proxy.mkdir("/dir2", "z1")
+                await proxy.sys_mkdir("/dir2", "z1")
 
             assert await proxy.pending_count() == 2
 
@@ -158,7 +158,7 @@ class TestCircuitBreakerIntegration:
             # Trip the circuit
             for _ in range(3):
                 with pytest.raises(OfflineQueuedError):
-                    await proxy.exists("/f", "z1")
+                    await proxy.sys_access("/f", "z1")
 
             assert proxy.circuit_state is CircuitState.OPEN
 
@@ -196,7 +196,7 @@ class TestLargePayloadStreaming:
         proxy = ProxyVFSBrick(config, transport=http_transport)
         await proxy.start()
         try:
-            await proxy.write("/big.bin", b"x" * 200, "z1")
+            await proxy.sys_write("/big.bin", b"x" * 200, "z1")
             assert streamed
         finally:
             await proxy.stop()
@@ -230,7 +230,7 @@ class TestAuthHeaderForwarded:
         proxy = ProxyVFSBrick(config, transport=http_transport)
         await proxy.start()
         try:
-            await proxy.exists("/f", "z1")
+            await proxy.sys_access("/f", "z1")
             assert captured_headers.get("authorization") == "Bearer my-secret-key"
         finally:
             await proxy.stop()

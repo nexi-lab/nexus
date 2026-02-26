@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from nexus.fuse.rust_client import RustFUSEClient
 
 
-def main():
+def main() -> None:
     print("🧪 Testing Python → Rust IPC communication\n")
 
     # Create client (spawns Rust daemon)
@@ -31,12 +31,12 @@ def main():
         # Test 1: Write file
         print("2. Writing test file...")
         test_content = b"Hello from Python via Rust!"
-        client.write("/python-rust-test.txt", test_content)
+        client.sys_write("/python-rust-test.txt", test_content)
         print("   ✓ Write successful\n")
 
         # Test 2: Read file
         print("3. Reading test file...")
-        content = client.read("/python-rust-test.txt")
+        content = client.sys_read("/python-rust-test.txt")
         assert content == test_content, f"Content mismatch: {content!r} != {test_content!r}"
         print(f"   ✓ Read successful: {content.decode()!r}\n")
 
@@ -51,34 +51,34 @@ def main():
 
         # Test 4: List directory
         print("5. Listing directory...")
-        files = client.list("/")
+        files = client.sys_readdir("/")
         print(f"   ✓ List successful: {len(files)} files\n")
         file_names = [f.name for f in files]
         assert "python-rust-test.txt" in file_names, f"Test file not found in: {file_names}"
 
         # Test 5: Exists check
         print("6. Checking file exists...")
-        assert client.exists("/python-rust-test.txt"), "File should exist"
-        assert not client.exists("/nonexistent.txt"), "Nonexistent file should not exist"
+        assert client.sys_access("/python-rust-test.txt"), "File should exist"
+        assert not client.sys_access("/nonexistent.txt"), "Nonexistent file should not exist"
         print("   ✓ Exists check successful\n")
 
         # Test 6: Rename file
         print("7. Renaming file...")
-        client.rename("/python-rust-test.txt", "/python-rust-renamed.txt")
-        assert client.exists("/python-rust-renamed.txt"), "Renamed file should exist"
-        assert not client.exists("/python-rust-test.txt"), "Old file should not exist"
+        client.sys_rename("/python-rust-test.txt", "/python-rust-renamed.txt")
+        assert client.sys_access("/python-rust-renamed.txt"), "Renamed file should exist"
+        assert not client.sys_access("/python-rust-test.txt"), "Old file should not exist"
         print("   ✓ Rename successful\n")
 
         # Test 7: Delete file
         print("8. Deleting file...")
-        client.delete("/python-rust-renamed.txt")
-        assert not client.exists("/python-rust-renamed.txt"), "Deleted file should not exist"
+        client.sys_unlink("/python-rust-renamed.txt")
+        assert not client.sys_access("/python-rust-renamed.txt"), "Deleted file should not exist"
         print("   ✓ Delete successful\n")
 
         # Test 8: Error handling (404)
         print("9. Testing error handling (404)...")
         try:
-            client.read("/nonexistent-file.txt")
+            client.sys_read("/nonexistent-file.txt")
             print("   ✗ Should have raised OSError")
             sys.exit(1)
         except OSError as e:

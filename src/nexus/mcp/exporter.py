@@ -683,15 +683,15 @@ class MCPToolExporter:
         if self._filesystem:
             # Create directory
             try:
-                self._filesystem.mkdir(tool_dir, parents=True)
+                self._filesystem.sys_mkdir(tool_dir, parents=True)
             except FileExistsError:
                 pass
             except OSError as e:
                 logger.warning("Failed to create directory %s: %s", tool_dir, e)
 
             # Write files
-            self._filesystem.write(tool_json_path, tool_json.encode("utf-8"))
-            self._filesystem.write(skill_md_path, skill_md.encode("utf-8"))
+            self._filesystem.sys_write(tool_json_path, tool_json.encode("utf-8"))
+            self._filesystem.sys_write(skill_md_path, skill_md.encode("utf-8"))
         else:
             # Local filesystem
             tool_dir_path = Path(tool_dir.lstrip("/"))

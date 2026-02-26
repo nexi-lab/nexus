@@ -18,7 +18,7 @@ Domain-specific operations are organized into domain clients:
 Example:
     >>> import nexus
     >>> nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": "sk-xxx"})
-    >>> content = nx.read("/workspace/file.txt")
+    >>> content = nx.sys_read("/workspace/file.txt")
 """
 
 from nexus.contracts.exceptions import (

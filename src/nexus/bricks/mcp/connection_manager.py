@@ -138,8 +138,8 @@ class MCPConnectionManager:
     def _load_connections(self) -> None:
         """Load existing connections from storage."""
         try:
-            if self.filesystem and self.filesystem.exists(self.CONNECTIONS_PATH):
-                items = self.filesystem.list(self.CONNECTIONS_PATH)
+            if self.filesystem and self.filesystem.sys_access(self.CONNECTIONS_PATH):
+                items = self.filesystem.sys_readdir(self.CONNECTIONS_PATH)
                 for item in items:
                     # Item might be full path, just filename, or dict
                     if isinstance(item, dict):
@@ -150,7 +150,7 @@ class MCPConnectionManager:
                     if item_name.endswith(".json"):
                         path = f"{self.CONNECTIONS_PATH}{item_name}"
                         try:
-                            raw = self.filesystem.read(path)
+                            raw = self.filesystem.sys_read(path)
                             data = json.loads(
                                 raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
                             )
@@ -168,7 +168,7 @@ class MCPConnectionManager:
             if self.filesystem:
                 # Ensure directory exists
                 try:
-                    self.filesystem.mkdir(self.CONNECTIONS_PATH, parents=True)
+                    self.filesystem.sys_mkdir(self.CONNECTIONS_PATH, parents=True)
                 except FileExistsError:
                     pass
                 except OSError as e:
@@ -178,7 +178,7 @@ class MCPConnectionManager:
                 filename = f"{conn.provider}_{conn.user_id.replace('@', '_at_')}.json"
                 path = f"{self.CONNECTIONS_PATH}{filename}"
                 content = json.dumps(conn.to_dict(), indent=2)
-                self.filesystem.write(path, content.encode("utf-8"))
+                self.filesystem.sys_write(path, content.encode("utf-8"))
 
         except Exception as e:
             logger.error(f"Failed to save connection: {e}")
@@ -189,8 +189,8 @@ class MCPConnectionManager:
             if self.filesystem:
                 filename = f"{provider}_{user_id.replace('@', '_at_')}.json"
                 path = f"{self.CONNECTIONS_PATH}{filename}"
-                if self.filesystem.exists(path):
-                    self.filesystem.delete(path)
+                if self.filesystem.sys_access(path):
+                    self.filesystem.sys_unlink(path)
         except Exception as e:
             logger.warning(f"Failed to delete connection file: {e}")
 

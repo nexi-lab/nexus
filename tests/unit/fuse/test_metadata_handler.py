@@ -227,7 +227,7 @@ class TestResolveFileSize:
         mock_nexus_fs: MagicMock,
         mock_cache: MagicMock,
     ) -> None:
-        """nexus_fs.read() must NEVER be called during _resolve_file_size."""
+        """nexus_fs.sys_read() must NEVER be called during _resolve_file_size."""
         mock_cache.get_parsed_size.return_value = None
         mock_cache.get_content.return_value = None
         handler = self._make_handler(mock_nexus_fs, mock_cache)

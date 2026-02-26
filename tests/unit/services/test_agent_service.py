@@ -490,7 +490,7 @@ class TestDeleteAgentCleanup:
         ctx = nx._parse_context(context)
         # Directory may or may not exist depending on test environment
         # Just verify delete_agent succeeds
-        directory_existed = nx.exists(agent_dir, context=ctx)
+        directory_existed = nx.sys_access(agent_dir, context=ctx)
 
         # Delete agent
         result = agent_service.delete_agent("alice,test_agent", _context=context)
@@ -498,7 +498,7 @@ class TestDeleteAgentCleanup:
 
         # Verify directory is removed (if it existed)
         if directory_existed:
-            assert not nx.exists(agent_dir, context=ctx)
+            assert not nx.sys_access(agent_dir, context=ctx)
 
     def test_delete_agent_removes_rebac_tuples(self, agent_service: AgentService) -> None:
         """Test that delete_agent removes ReBAC tuples for the agent."""
@@ -567,7 +567,7 @@ class TestDeleteAgentCleanup:
         original_enforce = nx._enforce_permissions
         nx._enforce_permissions = False
         try:
-            nx.rmdir(agent_dir, recursive=True, context=admin_ctx)
+            nx.sys_rmdir(agent_dir, recursive=True, context=admin_ctx)
         finally:
             nx._enforce_permissions = original_enforce
 

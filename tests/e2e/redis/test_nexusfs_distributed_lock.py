@@ -212,25 +212,25 @@ class TestLockedContextManager:
     async def test_locked_basic_usage(self, nx_with_lock: "NexusFS"):
         """Test basic locked() context manager usage."""
         # Write initial content
-        nx_with_lock.write("/test.txt", b"initial")
+        nx_with_lock.sys_write("/test.txt", b"initial")
 
         async with nx_with_lock.events_service.locked("/test.txt") as lock_id:
             assert lock_id is not None
             assert isinstance(lock_id, str)
 
             # Can read and write inside the lock
-            content = nx_with_lock.read("/test.txt")
+            content = nx_with_lock.sys_read("/test.txt")
             assert content == b"initial"
 
-            nx_with_lock.write("/test.txt", b"modified", lock=False)
+            nx_with_lock.sys_write("/test.txt", b"modified", lock=False)
 
         # Verify modification persisted
-        assert nx_with_lock.read("/test.txt") == b"modified"
+        assert nx_with_lock.sys_read("/test.txt") == b"modified"
 
     @pytest.mark.asyncio
     async def test_locked_releases_on_exception(self, nx_with_lock: "NexusFS"):
         """Test that lock is released even when exception occurs."""
-        nx_with_lock.write("/test.txt", b"content")
+        nx_with_lock.sys_write("/test.txt", b"content")
 
         with pytest.raises(ValueError, match="intentional"):
             async with nx_with_lock.events_service.locked("/test.txt") as lock_id:
@@ -247,7 +247,7 @@ class TestLockedContextManager:
         from nexus.contracts.exceptions import LockTimeout
 
         nx1, nx2 = nx_pair_with_lock
-        nx1.write("/shared.txt", b"content")
+        nx1.sys_write("/shared.txt", b"content")
 
         # Agent 1 holds the lock
         async with nx1.events_service.locked("/shared.txt", timeout=30.0):
@@ -263,7 +263,7 @@ class TestLockedContextManager:
     async def test_locked_waits_for_release(self, nx_pair_with_lock):
         """Test that locked() waits for lock release."""
         nx1, nx2 = nx_pair_with_lock
-        nx1.write("/shared.txt", b"content")
+        nx1.sys_write("/shared.txt", b"content")
 
         acquired_order = []
 
@@ -297,26 +297,26 @@ class TestWriteWithLock:
 
     def test_write_with_lock_basic(self, nx_sync_with_lock: "NexusFS"):
         """Test basic write with lock=True."""
-        result = nx_sync_with_lock.write("/test.txt", b"content", lock=True)
+        result = nx_sync_with_lock.sys_write("/test.txt", b"content", lock=True)
 
         assert result["etag"] is not None
         assert result["version"] == 1
-        assert nx_sync_with_lock.read("/test.txt") == b"content"
+        assert nx_sync_with_lock.sys_read("/test.txt") == b"content"
 
     def test_write_with_lock_false_default(self, nx_sync_with_lock: "NexusFS"):
         """Test that lock=False is the default (backward compatible)."""
         # This should work without any lock
-        result = nx_sync_with_lock.write("/test.txt", b"content")
+        result = nx_sync_with_lock.sys_write("/test.txt", b"content")
 
         assert result["etag"] is not None
-        assert nx_sync_with_lock.read("/test.txt") == b"content"
+        assert nx_sync_with_lock.sys_read("/test.txt") == b"content"
 
     def test_write_lock_from_async_context_raises(self, nx_with_lock: "NexusFS"):
         """Test that write(lock=True) raises error when called from async context."""
 
         async def try_write_with_lock():
             with pytest.raises(RuntimeError, match="cannot be used from async context"):
-                nx_with_lock.write("/test.txt", b"content", lock=True)
+                nx_with_lock.sys_write("/test.txt", b"content", lock=True)
 
         asyncio.run(try_write_with_lock())
 
@@ -327,7 +327,7 @@ class TestWriteWithLock:
         from nexus.contracts.exceptions import LockTimeout
 
         # First, acquire a lock on the file manually so write(lock=True) will contend
-        nx_sync_with_lock.write("/contended.txt", b"initial")
+        nx_sync_with_lock.sys_write("/contended.txt", b"initial")
 
         barrier = threading.Barrier(2, timeout=10)
 
@@ -351,7 +351,7 @@ class TestWriteWithLock:
             barrier.wait()  # Wait for lock to be held
             # Now try to write with a very short timeout — should fail
             with pytest.raises(LockTimeout):
-                nx_sync_with_lock.write(
+                nx_sync_with_lock.sys_write(
                     "/contended.txt", b"should fail", lock=True, lock_timeout=0.1
                 )
         finally:
@@ -359,19 +359,19 @@ class TestWriteWithLock:
 
     def test_write_with_lock_and_etag(self, nx_sync_with_lock: "NexusFS"):
         """Test write(lock=True, if_match=etag) — lock + OCC combination."""
-        result = nx_sync_with_lock.write("/occ.txt", b"v1", lock=True)
+        result = nx_sync_with_lock.sys_write("/occ.txt", b"v1", lock=True)
         etag = result["etag"]
 
         # Write with matching etag + lock should succeed
-        result2 = nx_sync_with_lock.write("/occ.txt", b"v2", lock=True, if_match=etag)
+        result2 = nx_sync_with_lock.sys_write("/occ.txt", b"v2", lock=True, if_match=etag)
         assert result2["version"] == 2
-        assert nx_sync_with_lock.read("/occ.txt") == b"v2"
+        assert nx_sync_with_lock.sys_read("/occ.txt") == b"v2"
 
         # Write with stale etag + lock should fail with ConflictError
         from nexus.contracts.exceptions import ConflictError
 
         with pytest.raises(ConflictError):
-            nx_sync_with_lock.write("/occ.txt", b"v3", lock=True, if_match=etag)
+            nx_sync_with_lock.sys_write("/occ.txt", b"v3", lock=True, if_match=etag)
 
     def test_write_lock_mutual_exclusion(self, temp_dir, isolated_db, tmp_path):
         """Test that write(lock=True) provides TRUE mutual exclusion.
@@ -414,7 +414,7 @@ class TestWriteWithLock:
 
         try:
             # Initialize with a counter
-            nx1.write("/shared_counter.txt", b"0", lock=False)
+            nx1.sys_write("/shared_counter.txt", b"0", lock=False)
 
             write_order = []  # Track which thread wrote when
             errors = []
@@ -425,11 +425,11 @@ class TestWriteWithLock:
                     try:
                         # This is the critical section that needs locking
                         # Read current value
-                        current = int(nx.read("/shared_counter.txt").decode())
+                        current = int(nx.sys_read("/shared_counter.txt").decode())
                         # Simulate some processing time to increase contention
                         time.sleep(0.01)
                         # Write incremented value
-                        nx.write("/shared_counter.txt", str(current + 1).encode(), lock=True)
+                        nx.sys_write("/shared_counter.txt", str(current + 1).encode(), lock=True)
                         write_order.append(f"{name}-{i}")
                     except Exception as e:
                         errors.append(f"{name}: {e}")
@@ -443,7 +443,7 @@ class TestWriteWithLock:
             t2.join()
 
             # Check final counter value
-            final_value = int(nx1.read("/shared_counter.txt").decode())
+            final_value = int(nx1.sys_read("/shared_counter.txt").decode())
 
             # Without proper locking, lost updates would give < 10
             # With proper locking via write(lock=True), we should get close to 10
@@ -472,7 +472,7 @@ class TestAtomicUpdate:
     async def test_atomic_update_basic(self, nx_with_lock: "NexusFS"):
         """Test basic atomic_update usage."""
         # Initialize with JSON content
-        nx_with_lock.write("/counter.json", b'{"count": 0}')
+        nx_with_lock.sys_write("/counter.json", b'{"count": 0}')
 
         # Atomic increment
         result = await nx_with_lock.atomic_update(
@@ -481,20 +481,20 @@ class TestAtomicUpdate:
         )
 
         assert result["version"] == 2
-        content = json.loads(nx_with_lock.read("/counter.json"))
+        content = json.loads(nx_with_lock.sys_read("/counter.json"))
         assert content["count"] == 1
 
     @pytest.mark.asyncio
     async def test_atomic_update_append(self, nx_with_lock: "NexusFS"):
         """Test atomic_update for appending content."""
-        nx_with_lock.write("/log.txt", b"line1\n")
+        nx_with_lock.sys_write("/log.txt", b"line1\n")
 
         await nx_with_lock.atomic_update(
             "/log.txt",
             lambda c: c + b"line2\n",
         )
 
-        assert nx_with_lock.read("/log.txt") == b"line1\nline2\n"
+        assert nx_with_lock.sys_read("/log.txt") == b"line1\nline2\n"
 
     @pytest.mark.asyncio
     async def test_atomic_update_concurrent_no_lost_updates(self, nx_with_lock: "NexusFS"):
@@ -506,7 +506,7 @@ class TestAtomicUpdate:
         nx = nx_with_lock
 
         # Initialize counter
-        nx.write("/counter.json", b'{"count": 0}')
+        nx.sys_write("/counter.json", b'{"count": 0}')
 
         async def increment(name: str, times: int):
             for _ in range(times):
@@ -522,7 +522,7 @@ class TestAtomicUpdate:
         )
 
         # Final count should be exactly 20 (no lost updates)
-        content = json.loads(nx.read("/counter.json"))
+        content = json.loads(nx.sys_read("/counter.json"))
         assert content["count"] == 20
 
     @pytest.mark.asyncio
@@ -539,7 +539,7 @@ class TestAtomicUpdate:
     @pytest.mark.asyncio
     async def test_atomic_update_transform_error_releases_lock(self, nx_with_lock: "NexusFS"):
         """Test that lock is released when transform function raises."""
-        nx_with_lock.write("/test.txt", b"content")
+        nx_with_lock.sys_write("/test.txt", b"content")
 
         def bad_transform(c):
             raise ValueError("Transform failed")
@@ -566,29 +566,29 @@ class TestCombinedScenarios:
         from nexus.contracts.exceptions import LockTimeout
 
         nx1, nx2 = nx_pair_with_lock
-        nx1.write("/shared.txt", b"initial")
+        nx1.sys_write("/shared.txt", b"initial")
 
         async with nx1.events_service.locked("/shared.txt"):
             # Agent 2's write(lock=True) should timeout
             # Must run in thread since write(lock=True) can't be called from async context
             with pytest.raises(LockTimeout):
                 await asyncio.to_thread(
-                    lambda: nx2.write("/shared.txt", b"conflict", lock=True, lock_timeout=0.5)
+                    lambda: nx2.sys_write("/shared.txt", b"conflict", lock=True, lock_timeout=0.5)
                 )
 
     @pytest.mark.asyncio
     async def test_write_lock_false_during_locked(self, nx_pair_with_lock):
         """Test that write(lock=False) works during another's lock (LWW behavior)."""
         nx1, nx2 = nx_pair_with_lock
-        nx1.write("/shared.txt", b"initial")
+        nx1.sys_write("/shared.txt", b"initial")
 
         async with nx1.events_service.locked("/shared.txt"):
             # Agent 2's write(lock=False) succeeds (LWW - no lock)
             # This is expected behavior for backward compatibility
-            nx2.write("/shared.txt", b"lww-write", lock=False)
+            nx2.sys_write("/shared.txt", b"lww-write", lock=False)
 
         # LWW write wins (Agent 2's content)
-        assert nx2.read("/shared.txt") == b"lww-write"
+        assert nx2.sys_read("/shared.txt") == b"lww-write"
 
     @pytest.mark.asyncio
     async def test_atomic_update_vs_write_lock(self, nx_pair_with_lock):
@@ -596,7 +596,7 @@ class TestCombinedScenarios:
         from nexus.contracts.exceptions import LockTimeout
 
         nx1, nx2 = nx_pair_with_lock
-        nx1.write("/shared.txt", b"initial")
+        nx1.sys_write("/shared.txt", b"initial")
 
         blocked = []
 
@@ -606,17 +606,17 @@ class TestCombinedScenarios:
                 return c + b"-updated"
 
             # Use a wrapper since we can't await in lambda
-            content = nx1.read("/shared.txt")
+            content = nx1.sys_read("/shared.txt")
             async with nx1.events_service.locked("/shared.txt"):
                 await asyncio.sleep(0.5)
-                nx1.write("/shared.txt", content + b"-updated", lock=False)
+                nx1.sys_write("/shared.txt", content + b"-updated", lock=False)
 
         async def try_write():
             await asyncio.sleep(0.1)
             try:
                 # Must run in thread since write(lock=True) can't be called from async context
                 await asyncio.to_thread(
-                    lambda: nx2.write("/shared.txt", b"conflict", lock=True, lock_timeout=0.2)
+                    lambda: nx2.sys_write("/shared.txt", b"conflict", lock=True, lock_timeout=0.2)
                 )
             except LockTimeout:
                 blocked.append(True)
@@ -641,14 +641,14 @@ class TestEdgeCases:
         # Lock a non-existent path, then create the file
         async with nx_with_lock.events_service.locked("/new_file.txt") as lock_id:
             assert lock_id is not None
-            nx_with_lock.write("/new_file.txt", b"created", lock=False)
+            nx_with_lock.sys_write("/new_file.txt", b"created", lock=False)
 
-        assert nx_with_lock.read("/new_file.txt") == b"created"
+        assert nx_with_lock.sys_read("/new_file.txt") == b"created"
 
     @pytest.mark.asyncio
     async def test_nested_locked_same_path_reentrant(self, nx_with_lock: "NexusFS"):
         """Test that nested locked() on same path works (if reentrant)."""
-        nx_with_lock.write("/test.txt", b"content")
+        nx_with_lock.sys_write("/test.txt", b"content")
 
         # Note: Current implementation may NOT support reentrant locks
         # This test documents the expected behavior
@@ -677,17 +677,17 @@ class TestEdgeCases:
         )
 
         # No lock manager configured - should warn but succeed (LWW)
-        result = nx.write("/test.txt", b"content", lock=True)
+        result = nx.sys_write("/test.txt", b"content", lock=True)
 
         assert result["etag"] is not None
-        assert nx.read("/test.txt") == b"content"
+        assert nx.sys_read("/test.txt") == b"content"
 
         nx.close()
 
     @pytest.mark.asyncio
     async def test_locked_custom_ttl(self, nx_with_lock: "NexusFS"):
         """Test locked() with custom TTL."""
-        nx_with_lock.write("/test.txt", b"content")
+        nx_with_lock.sys_write("/test.txt", b"content")
 
         # Short TTL
         async with nx_with_lock.events_service.locked("/test.txt", ttl=5.0) as lock_id:
@@ -699,14 +699,14 @@ class TestEdgeCases:
     async def test_atomic_update_preserves_binary(self, nx_with_lock: "NexusFS"):
         """Test atomic_update preserves binary content correctly."""
         binary_content = bytes(range(256))
-        nx_with_lock.write("/binary.bin", binary_content)
+        nx_with_lock.sys_write("/binary.bin", binary_content)
 
         await nx_with_lock.atomic_update(
             "/binary.bin",
             lambda c: c + bytes([0xFF]),
         )
 
-        result = nx_with_lock.read("/binary.bin")
+        result = nx_with_lock.sys_read("/binary.bin")
         assert result == binary_content + bytes([0xFF])
 
 
@@ -722,7 +722,7 @@ class TestPerformance:
     @pytest.mark.slow
     async def test_many_sequential_atomic_updates(self, nx_with_lock: "NexusFS"):
         """Test many sequential atomic updates."""
-        nx_with_lock.write("/counter.json", b'{"count": 0}')
+        nx_with_lock.sys_write("/counter.json", b'{"count": 0}')
 
         for _ in range(50):
             await nx_with_lock.atomic_update(
@@ -730,7 +730,7 @@ class TestPerformance:
                 lambda c: json.dumps({"count": json.loads(c)["count"] + 1}).encode(),
             )
 
-        content = json.loads(nx_with_lock.read("/counter.json"))
+        content = json.loads(nx_with_lock.sys_read("/counter.json"))
         assert content["count"] == 50
 
     @pytest.mark.asyncio
@@ -742,7 +742,7 @@ class TestPerformance:
         Tests that locks correctly serialize access under high contention.
         """
         nx = nx_with_lock
-        nx.write("/counter.json", b'{"count": 0}')
+        nx.sys_write("/counter.json", b'{"count": 0}')
 
         async def increment(name: str, times: int):
             for _ in range(times):
@@ -757,7 +757,7 @@ class TestPerformance:
             increment("task2", 25),
         )
 
-        content = json.loads(nx.read("/counter.json"))
+        content = json.loads(nx.sys_read("/counter.json"))
         assert content["count"] == 50
 
 
@@ -1195,7 +1195,7 @@ class TestLockIsolation:
             nx._lock_manager = RedisLockManager(client)
             nx.events_service._lock_manager = nx._lock_manager
 
-            nx.write("/shared.txt", b"content")
+            nx.sys_write("/shared.txt", b"content")
 
             # Create contexts for different zones
             zone_a_ctx = OperationContext(user_id="user_a", groups=[], zone_id="zone_a")
@@ -1241,7 +1241,7 @@ class TestLockIsolation:
         This is the normal case - same zone, same path = mutual exclusion.
         """
         nx1, nx2 = nx_pair_with_lock
-        nx1.write("/shared.txt", b"content")
+        nx1.sys_write("/shared.txt", b"content")
 
         acquired_order = []
 

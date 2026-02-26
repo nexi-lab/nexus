@@ -50,22 +50,22 @@ def test_workspace_namespace_operations():
         )
 
         # Write to workspace
-        nx.write("/workspace/acme/agent1/code.py", b"print('hello')", context=ctx)
+        nx.sys_write("/workspace/acme/agent1/code.py", b"print('hello')", context=ctx)
 
         # Read back
-        content = nx.read("/workspace/acme/agent1/code.py", context=ctx)
+        content = nx.sys_read("/workspace/acme/agent1/code.py", context=ctx)
         assert content == b"print('hello')"
 
         # Check existence
-        assert nx.exists("/workspace/acme/agent1/code.py", context=ctx)
+        assert nx.sys_access("/workspace/acme/agent1/code.py", context=ctx)
 
         # List files
-        files = nx.list("/workspace/acme/agent1", context=ctx)
+        files = nx.sys_readdir("/workspace/acme/agent1", context=ctx)
         assert "/workspace/acme/agent1/code.py" in files
 
         # Delete
-        nx.delete("/workspace/acme/agent1/code.py", context=ctx)
-        assert not nx.exists("/workspace/acme/agent1/code.py", context=ctx)
+        nx.sys_unlink("/workspace/acme/agent1/code.py", context=ctx)
+        assert not nx.sys_access("/workspace/acme/agent1/code.py", context=ctx)
 
         nx.close()
         cleanup_windows_db()
@@ -92,19 +92,19 @@ def test_shared_namespace_operations():
         )
 
         # Write to shared namespace
-        nx.write("/shared/acme/models/model.pkl", b"model data", context=ctx)
+        nx.sys_write("/shared/acme/models/model.pkl", b"model data", context=ctx)
 
         # Read back
-        content = nx.read("/shared/acme/models/model.pkl", context=ctx)
+        content = nx.sys_read("/shared/acme/models/model.pkl", context=ctx)
         assert content == b"model data"
 
         # List files
-        files = nx.list("/shared/acme/models", context=ctx)
+        files = nx.sys_readdir("/shared/acme/models", context=ctx)
         assert "/shared/acme/models/model.pkl" in files
 
         # Delete
-        nx.delete("/shared/acme/models/model.pkl", context=ctx)
-        assert not nx.exists("/shared/acme/models/model.pkl", context=ctx)
+        nx.sys_unlink("/shared/acme/models/model.pkl", context=ctx)
+        assert not nx.sys_access("/shared/acme/models/model.pkl", context=ctx)
 
         nx.close()
         cleanup_windows_db()
@@ -130,19 +130,19 @@ def test_external_namespace_operations():
         )  # External namespace doesn't require zone_id
 
         # Write to external namespace
-        nx.write("/external/s3/bucket/file.txt", b"external data", context=ctx)
+        nx.sys_write("/external/s3/bucket/file.txt", b"external data", context=ctx)
 
         # Read back
-        content = nx.read("/external/s3/bucket/file.txt", context=ctx)
+        content = nx.sys_read("/external/s3/bucket/file.txt", context=ctx)
         assert content == b"external data"
 
         # List files
-        files = nx.list("/external/s3/bucket", context=ctx)
+        files = nx.sys_readdir("/external/s3/bucket", context=ctx)
         assert "/external/s3/bucket/file.txt" in files
 
         # Delete
-        nx.delete("/external/s3/bucket/file.txt", context=ctx)
-        assert not nx.exists("/external/s3/bucket/file.txt", context=ctx)
+        nx.sys_unlink("/external/s3/bucket/file.txt", context=ctx)
+        assert not nx.sys_access("/external/s3/bucket/file.txt", context=ctx)
 
         nx.close()
         cleanup_windows_db()
@@ -169,14 +169,14 @@ def test_multi_namespace_operations_single_zone():
         )
 
         # Write to different namespaces
-        nx.write("/workspace/acme/agent1/code.py", b"code", context=ctx)
-        nx.write("/shared/acme/data.txt", b"data", context=ctx)
-        nx.write("/external/gcs/bucket/file.txt", b"external", context=ctx)
+        nx.sys_write("/workspace/acme/agent1/code.py", b"code", context=ctx)
+        nx.sys_write("/shared/acme/data.txt", b"data", context=ctx)
+        nx.sys_write("/external/gcs/bucket/file.txt", b"external", context=ctx)
 
         # Verify all namespaces work
-        assert nx.exists("/workspace/acme/agent1/code.py", context=ctx)
-        assert nx.exists("/shared/acme/data.txt", context=ctx)
-        assert nx.exists("/external/gcs/bucket/file.txt", context=ctx)
+        assert nx.sys_access("/workspace/acme/agent1/code.py", context=ctx)
+        assert nx.sys_access("/shared/acme/data.txt", context=ctx)
+        assert nx.sys_access("/external/gcs/bucket/file.txt", context=ctx)
 
         nx.close()
         cleanup_windows_db()
@@ -194,7 +194,7 @@ def test_namespace_isolation_between_zones():
         )
 
         # Zone 1 writes
-        nx.write(
+        nx.sys_write(
             "/workspace/acme/agent1/secret.txt",
             b"acme secret",
             context=OperationContext(
@@ -208,7 +208,7 @@ def test_namespace_isolation_between_zones():
         )
 
         # Zone 2 writes to same path structure (different zone)
-        nx.write(
+        nx.sys_write(
             "/workspace/globex/agent1/secret.txt",
             b"globex secret",
             context=OperationContext(
@@ -222,7 +222,7 @@ def test_namespace_isolation_between_zones():
         )
 
         # Verify isolation - each zone sees only their data
-        acme_content = nx.read(
+        acme_content = nx.sys_read(
             "/workspace/acme/agent1/secret.txt",
             context=OperationContext(
                 user_id="agent1",
@@ -233,7 +233,7 @@ def test_namespace_isolation_between_zones():
                 is_admin=False,
             ),
         )
-        globex_content = nx.read(
+        globex_content = nx.sys_read(
             "/workspace/globex/agent1/secret.txt",
             context=OperationContext(
                 user_id="agent1",

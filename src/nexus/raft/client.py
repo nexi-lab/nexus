@@ -100,7 +100,7 @@ class RaftClient:
             await client.put_metadata(file_metadata)
 
             # Get metadata (read - can be served by any node)
-            metadata = await client.get_metadata("/path/to/file")
+            metadata = await client.sys_stat("/path/to/file")
 
             # Acquire lock
             result = await client.acquire_lock(

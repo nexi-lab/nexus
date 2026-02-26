@@ -159,12 +159,12 @@ class SkillSeekersPlugin(NexusPlugin):
 
                 # Create directory
                 try:
-                    self.nx.mkdir(skill_dir, parents=True)
+                    self.nx.sys_mkdir(skill_dir, parents=True)
                 except Exception:
                     pass  # Directory might already exist
 
                 # Write skill file
-                self.nx.write(skill_path, skill_content.encode("utf-8"))
+                self.nx.sys_write(skill_path, skill_content.encode("utf-8"))
                 console.print(f"[green]✓ Imported to Nexus:[/green] {skill_path}")
 
                 # Create ReBAC tuples
@@ -742,11 +742,11 @@ This skill can be used to understand and work with concepts from the source docu
 
             # Create directory
             try:
-                self.nx.mkdir(skill_dir, parents=True)
+                self.nx.sys_mkdir(skill_dir, parents=True)
             except Exception:
                 pass
 
-            self.nx.write(skill_path, content.encode("utf-8"))
+            self.nx.sys_write(skill_path, content.encode("utf-8"))
 
             console.print(f"[green]✓ Imported '{name}' to {skill_path}[/green]")
 
@@ -884,12 +884,12 @@ This skill can be used to understand and work with concepts from the source docu
 
                 # Create directory
                 try:
-                    self.nx.mkdir(skill_dir, parents=True)
+                    self.nx.sys_mkdir(skill_dir, parents=True)
                 except Exception:
                     pass
 
                 # Write skill file
-                self.nx.write(skill_path, skill_content.encode("utf-8"))
+                self.nx.sys_write(skill_path, skill_content.encode("utf-8"))
                 console.print(f"[green]✓ Imported to Nexus:[/green] {skill_path}")
 
                 # Create ReBAC tuples
@@ -1067,7 +1067,7 @@ This skill was automatically generated from PDF documentation using the skill-se
 
             for tier_name, tier_path in tiers.items():
                 try:
-                    files = self.nx.list(tier_path)
+                    files = self.nx.sys_readdir(tier_path)
                     for file in files:
                         if isinstance(file, str) and file.endswith(".md"):
                             name = file.replace(".md", "")

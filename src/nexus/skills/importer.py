@@ -346,7 +346,7 @@ class SkillImporter:
 
         try:
             # Check if directory exists
-            return self._filesystem.exists(target_path)
+            return self._filesystem.sys_access(target_path)
         except Exception:
             # Path doesn't exist, no conflict
             return False
@@ -427,7 +427,7 @@ class SkillImporter:
             context: Operation context for permission checks
         """
         # Create target directory
-        self._filesystem.mkdir(target_path, parents=True, exist_ok=True)
+        self._filesystem.sys_mkdir(target_path, parents=True, exist_ok=True)
 
         # Copy all files recursively
         for item in source_dir.rglob("*"):
@@ -439,6 +439,6 @@ class SkillImporter:
                 content = item.read_bytes()
 
                 # Write to filesystem
-                self._filesystem.write(target_file_path, content, context=context)
+                self._filesystem.sys_write(target_file_path, content, context=context)
 
                 logger.debug(f"Copied {item} to {target_file_path}")

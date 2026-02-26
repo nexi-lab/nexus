@@ -16,7 +16,7 @@ Example:
             self._gw = gateway  # Grep pattern: self._gw.
 
         def sync_mount(self, ctx):
-            self._gw.mkdir(ctx.mount_point, parents=True)
+            self._gw.sys_mkdir(ctx.mount_point, parents=True)
             meta = self._gw.metadata_get(path)
             self._gw.metadata_put(new_meta)
     ```
@@ -44,7 +44,7 @@ class NexusFSGateway:
     - No protocol hunting required
 
     Dependencies exposed:
-    - File ops: mkdir(), write()
+    - File ops: sys_mkdir(), sys_write(), sys_read(), sys_readdir(), sys_access()
     - Metadata: metadata_get/put/list/delete
     - Permissions: rebac_create/check/delete_object_tuples
     - Hierarchy: ensure_parent_tuples_batch, hierarchy_enabled
@@ -64,7 +64,7 @@ class NexusFSGateway:
     # File Operations
     # =========================================================================
 
-    def mkdir(
+    def sys_mkdir(
         self,
         path: str,
         *,
@@ -72,7 +72,7 @@ class NexusFSGateway:
         exist_ok: bool = False,
         context: "OperationContext | None" = None,
     ) -> None:
-        """Create directory at path.
+        """Create directory at path (POSIX mkdir).
 
         Args:
             path: Virtual path for directory
@@ -80,16 +80,16 @@ class NexusFSGateway:
             exist_ok: If True, don't raise if directory exists
             context: Operation context for permissions
         """
-        self._fs.mkdir(path, parents=parents, exist_ok=exist_ok, context=context)
+        self._fs.sys_mkdir(path, parents=parents, exist_ok=exist_ok, context=context)
 
-    def write(
+    def sys_write(
         self,
         path: str,
         content: bytes | str,
         *,
         context: "OperationContext | None" = None,
     ) -> None:
-        """Write content to file.
+        """Write content to file (POSIX write).
 
         Args:
             path: Virtual path for file
@@ -98,15 +98,15 @@ class NexusFSGateway:
         """
         if isinstance(content, str):
             content = content.encode("utf-8")
-        self._fs.write(path, content, context=context)
+        self._fs.sys_write(path, content, context=context)
 
-    def read(
+    def sys_read(
         self,
         path: str,
         *,
         context: "OperationContext | None" = None,
     ) -> bytes | str:
-        """Read content from file.
+        """Read content from file (POSIX read).
 
         Args:
             path: Virtual path for file
@@ -115,20 +115,20 @@ class NexusFSGateway:
         Returns:
             File content as bytes or str
         """
-        result = self._fs.read(path, context=context)
+        result = self._fs.sys_read(path, context=context)
         # Normalize to bytes or str
         if isinstance(result, bytes | str):
             return result
         # Handle dict results (parsed content) by returning empty bytes
         return b""
 
-    def list(
+    def sys_readdir(
         self,
         path: str,
         *,
         context: "OperationContext | None" = None,
     ) -> builtins.list[str]:
-        """List directory contents.
+        """List directory contents (POSIX readdir).
 
         Args:
             path: Virtual path for directory
@@ -137,19 +137,19 @@ class NexusFSGateway:
         Returns:
             List of paths in directory
         """
-        result = self._fs.list(path, context=context)
+        result = self._fs.sys_readdir(path, context=context)
         # Handle PaginatedResult vs raw list
         items = result.items if hasattr(result, "items") else result
         # Convert to list of strings
         return [str(item) for item in items]
 
-    def exists(
+    def sys_access(
         self,
         path: str,
         *,
         context: "OperationContext | None" = None,
     ) -> bool:
-        """Check if path exists.
+        """Check if path exists (POSIX access).
 
         Args:
             path: Virtual path to check
@@ -158,7 +158,7 @@ class NexusFSGateway:
         Returns:
             True if path exists, False otherwise
         """
-        return self._fs.exists(path, context=context)
+        return self._fs.sys_access(path, context=context)
 
     # =========================================================================
     # Metadata Operations
@@ -546,7 +546,7 @@ class NexusFSGateway:
     ) -> bytes | str | dict[str, Any]:
         """Read file content with optional metadata return.
 
-        Unlike the simpler `read()` method, this supports the full NexusFS
+        Unlike the simpler `sys_read()` method, this supports the full NexusFS
         read interface including metadata return for search indexing.
 
         Args:
@@ -557,7 +557,7 @@ class NexusFSGateway:
         Returns:
             File content as bytes/str, or metadata dict if return_metadata=True
         """
-        return self._fs.read(path, context=context, return_metadata=return_metadata)
+        return self._fs.sys_read(path, context=context, return_metadata=return_metadata)
 
     def read_bulk(
         self,

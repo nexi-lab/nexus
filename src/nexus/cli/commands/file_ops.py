@@ -57,8 +57,8 @@ def init(path: str) -> None:
         nx = nexus.connect(config={"data_dir": str(data_dir)})
 
         # Create default directories
-        nx.mkdir("/workspace", exist_ok=True)
-        nx.mkdir("/shared", exist_ok=True)
+        nx.sys_mkdir("/workspace", exist_ok=True)
+        nx.sys_mkdir("/shared", exist_ok=True)
 
         nx.close()
 
@@ -142,7 +142,7 @@ def cat(
             content = state["content"]
         elif metadata:
             # Read with metadata for OCC
-            data = nx.read(path, context=operation_context, return_metadata=True)
+            data = nx.sys_read(path, context=operation_context, return_metadata=True)
             nx.close()
 
             # Type narrowing: when return_metadata=True, result is always dict
@@ -191,7 +191,7 @@ def cat(
                     raise e
             else:
                 # Read normally for small files
-                content = nx.read(path, context=operation_context)
+                content = nx.sys_read(path, context=operation_context)
                 nx.close()
 
         # Try to detect file type for syntax highlighting
@@ -291,7 +291,7 @@ def write(
             sys.exit(1)
 
         # Write with OCC parameters and context
-        result = nx.write(
+        result = nx.sys_write(
             path,
             file_content,
             context=operation_context,
@@ -589,13 +589,13 @@ def cp(
         nx = get_filesystem(backend_config)
 
         # Read source
-        content = nx.read(source)
+        content = nx.sys_read(source)
 
         # Type narrowing: when return_metadata=False (default), result is bytes
         assert isinstance(content, bytes), "Expected bytes from read()"
 
         # Write to destination
-        nx.write(dest, content)
+        nx.sys_write(dest, content)
 
         nx.close()
 
@@ -838,7 +838,7 @@ def rm(
         nx = get_filesystem(backend_config)
 
         # Check if file exists
-        if not nx.exists(path):
+        if not nx.sys_access(path):
             console.print(f"[yellow]File does not exist:[/yellow] {path}")
             nx.close()
             return
@@ -849,7 +849,7 @@ def rm(
             nx.close()
             return
 
-        nx.delete(path)
+        nx.sys_unlink(path)
         nx.close()
 
         console.print(f"[green]✓[/green] Deleted [cyan]{path}[/cyan]")

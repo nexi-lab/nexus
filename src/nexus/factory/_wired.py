@@ -97,7 +97,7 @@ def _boot_wired_services(
             enforce_permissions=nx._enforce_permissions,
             enable_audit_logging=True,
             circuit_breaker=brick_services.rebac_circuit_breaker,
-            file_reader=lambda path: nx.read(path),
+            file_reader=lambda path: nx.sys_read(path),
             permission_enforcer=nx._permission_enforcer,
         )
         logger.debug("[BOOT:WIRED] ReBACService created")

@@ -90,9 +90,9 @@ def test_remote_service_proxy_coverage():
     # Note: list/glob/grep/workspace_snapshot are ABC stubs that delegate
     # to services — they aren't @rpc_expose on NexusFS itself.
     expected_categories = {
-        "File I/O": ["read", "write", "delete"],
-        "Directory": ["mkdir", "rmdir"],
-        "Query": ["exists", "stat", "get_metadata"],
+        "File I/O": ["sys_read", "sys_write", "sys_unlink"],
+        "Directory": ["sys_mkdir", "sys_rmdir"],
+        "Query": ["sys_access", "sys_stat"],
         "Versioning": ["get_version", "list_versions"],
     }
 

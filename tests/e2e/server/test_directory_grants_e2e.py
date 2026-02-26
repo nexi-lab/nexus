@@ -189,7 +189,7 @@ class TestDirectoryGrantExpansion:
             "/workspace/project/subdir/file3.txt",
         ]
         for path in files:
-            nx.write(path, f"content of {path}", context=ctx)
+            nx.sys_write(path, f"content of {path}", context=ctx)
 
         # Verify files exist
         listed = nx.metadata.list(prefix="/workspace/project/", recursive=True, zone_id="root")
@@ -254,7 +254,7 @@ class TestDirectoryGrantExpansion:
 
         # Now create a new file in that directory
         new_file = "/workspace/shared/newfile.txt"
-        nx.write(new_file, "new content", context=ctx)
+        nx.sys_write(new_file, "new content", context=ctx)
 
         # The new file should inherit the permission via Tiger Cache
         has_access = nx.rebac_check(
@@ -303,7 +303,7 @@ class TestDirectoryGrantExpansion:
         )
 
         # Create file in dir_a
-        nx.write("/dir_a/moveme.txt", "content", context=ctx)
+        nx.sys_write("/dir_a/moveme.txt", "content", context=ctx)
 
         # Wait for expansion
         time.sleep(0.2)
@@ -317,7 +317,7 @@ class TestDirectoryGrantExpansion:
         ), "Alice should have access to file in dir_a"
 
         # Move file to dir_b
-        nx.rename("/dir_a/moveme.txt", "/dir_b/moveme.txt", context=ctx)
+        nx.sys_rename("/dir_a/moveme.txt", "/dir_b/moveme.txt", context=ctx)
 
         # Wait for permission update
         time.sleep(0.2)
@@ -484,7 +484,7 @@ class TestTigerCacheIntegration:
             "/cache_test/c.txt",
         ]
         for path in files:
-            nx.write(path, f"content of {path}")
+            nx.sys_write(path, f"content of {path}")
 
         # Grant permission on directory
         nx.rebac_create(

@@ -27,7 +27,7 @@ def test_individual_writes(client, test_dir):
     for i in range(NUM_FILES):
         path = f"{test_dir}/individual/file_{i:04d}.txt"
         content = f"Content for file {i}\n".encode() * 10  # ~200 bytes each
-        client.write(path, content)
+        client.sys_write(path, content)
         if (i + 1) % 10 == 0:
             elapsed = time.time() - start
             rate = (i + 1) / elapsed
@@ -78,9 +78,9 @@ def main():
 
     # Create unique test directory
     test_dir = f"/batch_test_{uuid.uuid4().hex[:8]}"
-    client.mkdir(test_dir)
-    client.mkdir(f"{test_dir}/individual")
-    client.mkdir(f"{test_dir}/batch")
+    client.sys_mkdir(test_dir)
+    client.sys_mkdir(f"{test_dir}/individual")
+    client.sys_mkdir(f"{test_dir}/batch")
 
     try:
         # Test 1: Individual writes
@@ -110,7 +110,7 @@ def main():
         # Cleanup
         print("\n[Cleanup] Deleting test directory...")
         try:
-            client.delete(test_dir)
+            client.sys_unlink(test_dir)
         except Exception as e:
             print(f"  Warning: {e}")
 

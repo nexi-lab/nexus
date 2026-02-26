@@ -1069,7 +1069,7 @@ class RaftMetadataStore(MetastoreABC):
         if self._has_engine:
             return self._get_engine(path)
         else:
-            return await self._client.get_metadata(path, zone_id=self._zone_id)
+            return await self._client.sys_stat(path, zone_id=self._zone_id)
 
     async def put_async(self, metadata: FileMetadata, *, consistency: str = "sc") -> None:
         """Store or update file metadata (async).

@@ -143,7 +143,7 @@ def run_benchmark(enable_deferred: bool = False):
         for i in range(num_files):
             path = f"/bench/single/file_{i:04d}.txt"
             start = time.perf_counter()
-            nx.write(path, content_1kb, context=ctx)
+            nx.sys_write(path, content_1kb, context=ctx)
             elapsed = time.perf_counter() - start
             single_times.append(elapsed * 1000)  # Convert to ms
 
@@ -195,7 +195,7 @@ def run_benchmark(enable_deferred: bool = False):
         for i in range(num_files):
             path = f"/bench/single10k/file_{i:04d}.txt"
             start = time.perf_counter()
-            nx.write(path, content_10kb, context=ctx)
+            nx.sys_write(path, content_10kb, context=ctx)
             elapsed = time.perf_counter() - start
             single_times_10k.append(elapsed * 1000)
 

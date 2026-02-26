@@ -264,7 +264,7 @@ class SkillManager:
 
         # Check if skill already exists
         if self._filesystem:
-            if self._filesystem.exists(skill_file):
+            if self._filesystem.sys_access(skill_file):
                 raise SkillManagerError(f"Skill '{name}' already exists at {skill_file}")
         else:
             local_path = Path(skill_file)
@@ -310,14 +310,16 @@ class SkillManager:
         if self._filesystem:
             # Create directory
             try:
-                await asyncio.to_thread(self._filesystem.mkdir, skill_dir, parents=True)
+                await asyncio.to_thread(self._filesystem.sys_mkdir, skill_dir, parents=True)
             except FileExistsError:
                 pass
             except OSError as e:
                 logger.warning("Failed to create directory %s: %s", skill_dir, e)
 
             # Write file
-            await asyncio.to_thread(self._filesystem.write, skill_file, skill_md.encode("utf-8"))
+            await asyncio.to_thread(
+                self._filesystem.sys_write, skill_file, skill_md.encode("utf-8")
+            )
         else:
             # Use local filesystem
             local_dir = Path(skill_dir)
@@ -409,7 +411,7 @@ class SkillManager:
 
         # Check if skill already exists
         if self._filesystem:
-            if self._filesystem.exists(skill_file):
+            if self._filesystem.sys_access(skill_file):
                 raise SkillManagerError(f"Skill '{name}' already exists at {skill_file}")
         else:
             local_path = Path(skill_file)
@@ -448,14 +450,16 @@ class SkillManager:
         if self._filesystem:
             # Create directory
             try:
-                await asyncio.to_thread(self._filesystem.mkdir, skill_dir, parents=True)
+                await asyncio.to_thread(self._filesystem.sys_mkdir, skill_dir, parents=True)
             except FileExistsError:
                 pass
             except OSError as e:
                 logger.warning("Failed to create directory %s: %s", skill_dir, e)
 
             # Write file
-            await asyncio.to_thread(self._filesystem.write, skill_file, skill_md.encode("utf-8"))
+            await asyncio.to_thread(
+                self._filesystem.sys_write, skill_file, skill_md.encode("utf-8")
+            )
         else:
             # Use local filesystem
             local_dir = Path(skill_dir)
@@ -560,7 +564,7 @@ class SkillManager:
 
         # Check if target already exists
         if self._filesystem:
-            if self._filesystem.exists(target_file):
+            if self._filesystem.sys_access(target_file):
                 raise SkillManagerError(f"Skill '{target_name}' already exists at {target_file}")
         else:
             if Path(target_file).exists():
@@ -614,14 +618,16 @@ class SkillManager:
         if self._filesystem:
             # Create directory
             try:
-                await asyncio.to_thread(self._filesystem.mkdir, target_dir, parents=True)
+                await asyncio.to_thread(self._filesystem.sys_mkdir, target_dir, parents=True)
             except FileExistsError:
                 pass
             except OSError as e:
                 logger.warning("Failed to create directory %s: %s", target_dir, e)
 
             # Write file (CAS deduplication will happen automatically in NexusFS)
-            await asyncio.to_thread(self._filesystem.write, target_file, skill_md.encode("utf-8"))
+            await asyncio.to_thread(
+                self._filesystem.sys_write, target_file, skill_md.encode("utf-8")
+            )
         else:
             # Use local filesystem
             local_dir = Path(target_dir)
@@ -773,14 +779,16 @@ class SkillManager:
         if self._filesystem:
             # Create directory
             try:
-                await asyncio.to_thread(self._filesystem.mkdir, target_dir, parents=True)
+                await asyncio.to_thread(self._filesystem.sys_mkdir, target_dir, parents=True)
             except FileExistsError:
                 pass
             except OSError as e:
                 logger.warning("Failed to create directory %s: %s", target_dir, e)
 
             # Write file (CAS deduplication will happen automatically)
-            await asyncio.to_thread(self._filesystem.write, target_file, skill_md.encode("utf-8"))
+            await asyncio.to_thread(
+                self._filesystem.sys_write, target_file, skill_md.encode("utf-8")
+            )
         else:
             # Use local filesystem
             local_dir = Path(target_dir)

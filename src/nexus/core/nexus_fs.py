@@ -538,7 +538,7 @@ class NexusFS(  # type: ignore[misc]
     # === Directory Operations ===
 
     @rpc_expose(description="Create directory")
-    def mkdir(
+    def sys_mkdir(
         self,
         path: str,
         parents: bool = False,
@@ -694,12 +694,13 @@ class NexusFS(  # type: ignore[misc]
         )
 
     @rpc_expose(description="Remove directory")
-    def rmdir(
+    def sys_rmdir(
         self,
         path: str,
         recursive: bool = False,
-        subject: tuple[str, str] | None = None,
         context: OperationContext | None = None,
+        *,
+        subject: tuple[str, str] | None = None,
         zone_id: str | None = None,
         agent_id: str | None = None,
         is_admin: bool | None = None,
@@ -853,7 +854,7 @@ class NexusFS(  # type: ignore[misc]
         )
 
     @rpc_expose(description="Check if path is a directory")
-    def is_directory(
+    def sys_is_directory(
         self,
         path: str,
         context: OperationContext | None = None,
@@ -920,7 +921,7 @@ class NexusFS(  # type: ignore[misc]
         return sorted(names)
 
     @rpc_expose(description="Get file metadata for FUSE operations")
-    def get_metadata(
+    def sys_stat(
         self,
         path: str,
         context: OperationContext | None = None,
@@ -930,7 +931,7 @@ class NexusFS(  # type: ignore[misc]
         normalized = self._validate_path(path, allow_root=True)
 
         # Check if it's a directory first
-        is_dir = self.is_directory(normalized, context=ctx)
+        is_dir = self.sys_is_directory(normalized, context=ctx)
 
         if is_dir:
             # Return directory metadata
@@ -962,6 +963,47 @@ class NexusFS(  # type: ignore[misc]
             "group": ctx.user_id,
             "mode": 0o644,  # -rw-r--r--
         }
+
+    @rpc_expose(description="Update file metadata attributes")
+    def sys_setattr(
+        self,
+        path: str,
+        context: OperationContext | None = None,
+        **attrs: Any,
+    ) -> dict[str, Any]:
+        """Update file metadata attributes (chmod/chown/utimensat analog).
+
+        Args:
+            path: Virtual file path.
+            context: Operation context.
+            **attrs: Metadata attributes to update (e.g., mime_type, owner_id).
+
+        Returns:
+            Dict with path and list of updated attribute names.
+
+        Raises:
+            NexusFileNotFoundError: If file does not exist.
+        """
+        path = self._validate_path(path)
+        ctx = context or self._default_context
+
+        # Block writes during zone deprovisioning
+        self._check_zone_writable(ctx)
+
+        meta = self.metadata.get(path)
+        if meta is None:
+            raise NexusFileNotFoundError(path)
+
+        from dataclasses import fields, replace
+
+        valid_fields = {f.name for f in fields(meta)}
+        valid_attrs = {k: v for k, v in attrs.items() if k in valid_fields}
+        if not valid_attrs:
+            return {"path": path, "updated": []}
+
+        new_meta = replace(meta, **valid_attrs)
+        self.metadata.put(new_meta)
+        return {"path": path, "updated": list(valid_attrs.keys())}
 
     @rpc_expose(description="Get ETag (content hash) for HTTP caching")
     def get_etag(
@@ -1557,7 +1599,7 @@ class NexusFS(  # type: ignore[misc]
             return run_sync(self._get_parsed_content_async(path, content))
 
     @rpc_expose(description="Read file content")
-    def read(
+    def sys_read(
         self,
         path: str,
         context: OperationContext | None = None,
@@ -1598,26 +1640,26 @@ class NexusFS(  # type: ignore[misc]
 
         Examples:
             >>> # Read raw content
-            >>> content = nx.read("/workspace/report.pdf")
+            >>> content = nx.sys_read("/workspace/report.pdf")
             >>> print(type(content))
             <class 'bytes'>
 
             >>> # Read parsed content (markdown)
-            >>> content = nx.read("/workspace/report.pdf", parsed=True)
+            >>> content = nx.sys_read("/workspace/report.pdf", parsed=True)
             >>> print(content.decode())
             # Report Title
             ...
 
             >>> # Read with metadata for optimistic concurrency
-            >>> result = nx.read("/workspace/data.json", return_metadata=True)
+            >>> result = nx.sys_read("/workspace/data.json", return_metadata=True)
             >>> content = result['content']
             >>> etag = result['etag']
             >>> # Later, write with version check
-            >>> nx.write("/workspace/data.json", new_content, if_match=etag)
+            >>> nx.sys_write("/workspace/data.json", new_content, if_match=etag)
 
             >>> # Read memory via virtual path
-            >>> content = nx.read("/workspace/alice/agent1/memory/facts")
-            >>> content = nx.read("/memory/by-user/alice/facts")  # Same memory!
+            >>> content = nx.sys_read("/workspace/alice/agent1/memory/facts")
+            >>> content = nx.sys_read("/memory/by-user/alice/facts")  # Same memory!
         """
         path = self._validate_path(path)
 
@@ -2429,7 +2471,7 @@ class NexusFS(  # type: ignore[misc]
         }
 
     @rpc_expose(description="Write file content")
-    def write(
+    def sys_write(
         self,
         path: str,
         content: bytes | str,
@@ -2480,26 +2522,26 @@ class NexusFS(  # type: ignore[misc]
 
         Examples:
             >>> # Simple write (no version checking)
-            >>> result = nx.write("/workspace/data.json", b'{"key": "value"}')
+            >>> result = nx.sys_write("/workspace/data.json", b'{"key": "value"}')
             >>> print(result['etag'], result['version'])
 
             >>> # Optimistic concurrency control
-            >>> result = nx.read("/workspace/data.json", return_metadata=True)
+            >>> result = nx.sys_read("/workspace/data.json", return_metadata=True)
             >>> new_content = modify(result['content'])
             >>> try:
-            ...     nx.write("/workspace/data.json", new_content, if_match=result['etag'])
+            ...     nx.sys_write("/workspace/data.json", new_content, if_match=result['etag'])
             ... except ConflictError:
             ...     print("File was modified by another agent!")
 
             >>> # Create-only mode
-            >>> nx.write("/workspace/new.txt", b'content', if_none_match=True)
+            >>> nx.sys_write("/workspace/new.txt", b'content', if_none_match=True)
 
             >>> # Write with distributed lock (mutual exclusion)
-            >>> nx.write("/shared/config.json", b'{"v": 1}', lock=True)
+            >>> nx.sys_write("/shared/config.json", b'{"v": 1}', lock=True)
 
             >>> # Write memory via virtual path
-            >>> nx.write("/workspace/alice/agent1/memory/facts", b'Python is great')
-            >>> nx.write("/memory/by-user/alice/facts", b'Update')  # Same memory!
+            >>> nx.sys_write("/workspace/alice/agent1/memory/facts", b'Python is great')
+            >>> nx.sys_write("/memory/by-user/alice/facts", b'Update')  # Same memory!
         """
         # Auto-convert str to bytes for convenience
         if isinstance(content, str):
@@ -2851,14 +2893,14 @@ class NexusFS(  # type: ignore[misc]
 
         async with self.events_service.locked(path, timeout=timeout, ttl=ttl, _context=context):
             # Read current content (return_metadata=False ensures bytes return)
-            content = self.read(path, context=context, return_metadata=False)
+            content = self.sys_read(path, context=context, return_metadata=False)
             assert isinstance(content, bytes), "Expected bytes from read()"
 
             # Apply update function
             new_content = update_fn(content)
 
             # Write back (no lock needed since we hold the lock)
-            return self.write(path, new_content, context=context, lock=False)
+            return self.sys_write(path, new_content, context=context, lock=False)
 
     @rpc_expose(description="Append content to an existing file or create if it doesn't exist")
     def append(
@@ -2914,7 +2956,7 @@ class NexusFS(  # type: ignore[misc]
             ...     nx.append("/workspace/data.jsonl", line)
 
             >>> # Append with optimistic concurrency control
-            >>> result = nx.read("/workspace/log.txt", return_metadata=True)
+            >>> result = nx.sys_read("/workspace/log.txt", return_metadata=True)
             >>> try:
             ...     nx.append("/workspace/log.txt", "New entry\\n", if_match=result['etag'])
             ... except ConflictError:
@@ -2933,7 +2975,7 @@ class NexusFS(  # type: ignore[misc]
         # For non-existent files, we'll create them (existing_content stays empty)
         existing_content = b""
         try:
-            result = self.read(path, context=context, return_metadata=True)
+            result = self.sys_read(path, context=context, return_metadata=True)
             # Type narrowing: when return_metadata=True, result is always dict
             assert isinstance(result, dict), "Expected dict when return_metadata=True"
 
@@ -2972,7 +3014,7 @@ class NexusFS(  # type: ignore[misc]
         # - Workflow triggers
         # - Parent tuple creation
         # Note: We pass if_match to write() for additional safety
-        return self.write(
+        return self.sys_write(
             path,
             final_content,
             context=context,
@@ -3044,7 +3086,7 @@ class NexusFS(  # type: ignore[misc]
             >>> print(result['diff'])
 
             >>> # With optimistic concurrency
-            >>> content = nx.read("/code/main.py", return_metadata=True)
+            >>> content = nx.sys_read("/code/main.py", return_metadata=True)
             >>> result = nx.edit(
             ...     "/code/main.py",
             ...     [("old_text", "new_text")],
@@ -3067,7 +3109,7 @@ class NexusFS(  # type: ignore[misc]
         path = self._validate_path(path)
 
         # Read current content with metadata
-        result = self.read(path, context=context, return_metadata=True)
+        result = self.sys_read(path, context=context, return_metadata=True)
         assert isinstance(result, dict), "Expected dict when return_metadata=True"
 
         content_bytes: bytes = result["content"]
@@ -3166,7 +3208,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Write the edited content
         new_content_bytes = edit_result.content.encode("utf-8")
-        write_result = self.write(
+        write_result = self.sys_write(
             path,
             new_content_bytes,
             context=context,
@@ -3535,7 +3577,7 @@ class NexusFS(  # type: ignore[misc]
                 )
 
     @rpc_expose(description="Delete file")
-    def delete(self, path: str, context: OperationContext | None = None) -> dict[str, Any]:
+    def sys_unlink(self, path: str, context: OperationContext | None = None) -> dict[str, Any]:
         """
         Delete a file or memory.
 
@@ -3659,7 +3701,7 @@ class NexusFS(  # type: ignore[misc]
         return {}
 
     @rpc_expose(description="Rename/move file")
-    def rename(
+    def sys_rename(
         self, old_path: str, new_path: str, context: OperationContext | None = None
     ) -> dict[str, Any]:
         """
@@ -3687,8 +3729,8 @@ class NexusFS(  # type: ignore[misc]
             AccessDeniedError: If access is denied (zone isolation)
 
         Example:
-            >>> nx.rename('/workspace/old.txt', '/workspace/new.txt')
-            >>> nx.rename('/folder-a/file.txt', '/shared/folder-a/file.txt')
+            >>> nx.sys_rename('/workspace/old.txt', '/workspace/new.txt')
+            >>> nx.sys_rename('/folder-a/file.txt', '/shared/folder-a/file.txt')
         """
         old_path = self._validate_path(old_path)
         new_path = self._validate_path(new_path)
@@ -4094,7 +4136,7 @@ class NexusFS(  # type: ignore[misc]
         return results
 
     @rpc_expose(description="Check if file exists")
-    def exists(self, path: str, context: OperationContext | None = None) -> bool:
+    def sys_access(self, path: str, context: OperationContext | None = None) -> bool:
         """
         Check if a file or directory exists.
 
@@ -4185,7 +4227,7 @@ class NexusFS(  # type: ignore[misc]
         results: dict[str, bool] = {}
         for path in paths:
             try:
-                results[path] = self.exists(path, context=context)
+                results[path] = self.sys_access(path, context=context)
             except Exception as exc:
                 # Any error means file doesn't exist or isn't accessible
                 logger.debug("Exists check failed for %s: %s", path, exc)
@@ -4259,7 +4301,7 @@ class NexusFS(  # type: ignore[misc]
                         continue
 
                 # Check if it's a directory
-                is_dir = self.is_directory(path, context=context)  # type: ignore[attr-defined]  # allowed
+                is_dir = self.sys_is_directory(path, context=context)  # type: ignore[attr-defined]  # allowed
 
                 results[path] = {
                     "path": meta.path,
@@ -4407,7 +4449,7 @@ class NexusFS(  # type: ignore[misc]
                     )
                 else:
                     # Use delete for files
-                    self.delete(path, context=context)
+                    self.sys_unlink(path, context=context)
 
                 results[path] = {"success": True}
             except Exception as e:
@@ -4530,7 +4572,7 @@ class NexusFS(  # type: ignore[misc]
         results = {}
         for old_path, new_path in renames:
             try:
-                self.rename(old_path, new_path, context=context)
+                self.sys_rename(old_path, new_path, context=context)
                 results[old_path] = {"success": True, "new_path": new_path}
             except Exception as e:
                 results[old_path] = {"success": False, "error": str(e)}
@@ -5001,7 +5043,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Create directory entry for the mount point
         try:
-            self.mkdir(mount_point, parents=True, exist_ok=True)
+            self.sys_mkdir(mount_point, parents=True, exist_ok=True)
         except Exception as e:
             _log.warning(f"Failed to create directory entry for mount {mount_point}: {e}")
 
@@ -5043,9 +5085,10 @@ class NexusFS(  # type: ignore[misc]
             exclude_patterns and any(_fnmatch.fnmatch(file_path, p) for p in exclude_patterns)
         )
 
-    # --- Search (list/glob/grep already have concrete impls below) ---
+    # --- Search (sys_readdir/glob/grep) ---
 
-    def list(
+    @rpc_expose(description="List directory entries")
+    def sys_readdir(
         self,
         path: str = "/",
         recursive: bool = True,

@@ -250,7 +250,7 @@ class RemoteBackend(ObjectStoreABC):
 
     def write_content(self, content: bytes, context: OperationContext | None = None) -> WriteResult:
         path = self._to_server_path(context)
-        result = self._call_rpc("write", {"path": path, "content": content})
+        result = self._call_rpc("sys_write", {"path": path, "content": content})
         return WriteResult(
             content_hash=result.get("etag", ""),
             size=result.get("size", len(content)),
@@ -258,7 +258,7 @@ class RemoteBackend(ObjectStoreABC):
 
     def read_content(self, content_hash: str, context: OperationContext | None = None) -> bytes:
         path = self._to_server_path(context)
-        result = self._call_rpc("read", {"path": path})
+        result = self._call_rpc("sys_read", {"path": path})
         parsed = self._error_handler._parse_read_response(result)
         if isinstance(parsed, dict):
             # Server returned metadata dict — extract content if present
@@ -277,7 +277,7 @@ class RemoteBackend(ObjectStoreABC):
 
     def get_content_size(self, content_hash: str, context: OperationContext | None = None) -> int:
         path = self._to_server_path(context)
-        result = self._call_rpc("stat", {"path": path})
+        result = self._call_rpc("sys_stat", {"path": path})
         size: int = int(result.get("size", 0)) if isinstance(result, dict) else 0
         return size
 
@@ -291,7 +291,7 @@ class RemoteBackend(ObjectStoreABC):
         context: OperationContext | None = None,
     ) -> None:
         abs_path = path if path.startswith("/") else "/" + path
-        self._call_rpc("mkdir", {"path": abs_path, "parents": parents, "exist_ok": exist_ok})
+        self._call_rpc("sys_mkdir", {"path": abs_path, "parents": parents, "exist_ok": exist_ok})
 
     def rmdir(
         self,
@@ -300,13 +300,13 @@ class RemoteBackend(ObjectStoreABC):
         context: OperationContext | None = None,
     ) -> None:
         abs_path = path if path.startswith("/") else "/" + path
-        self._call_rpc("rmdir", {"path": abs_path, "recursive": recursive})
+        self._call_rpc("sys_rmdir", {"path": abs_path, "recursive": recursive})
 
     # === Query Operations ===
 
     def content_exists(self, content_hash: str, context: OperationContext | None = None) -> bool:
         path = self._to_server_path(context)
-        result = self._call_rpc("exists", {"path": path})
+        result = self._call_rpc("sys_access", {"path": path})
         if isinstance(result, dict):
             return bool(result.get("exists", False))
         return bool(result)
@@ -314,7 +314,7 @@ class RemoteBackend(ObjectStoreABC):
     def list_dir(self, path: str, context: OperationContext | None = None) -> list[str]:
         """List directory contents on the remote server."""
         abs_path = path if path.startswith("/") else "/" + path
-        result = self._call_rpc("list", {"path": abs_path})
+        result = self._call_rpc("sys_readdir", {"path": abs_path})
         if isinstance(result, list):
             return [str(item) for item in result]
         if isinstance(result, dict) and "items" in result:

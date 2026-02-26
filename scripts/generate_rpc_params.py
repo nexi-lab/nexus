@@ -36,7 +36,7 @@ OUTPUT_PATH = (
 # Methods whose Param classes are hand-written in _rpc_param_overrides.py.
 # The codegen skips these entirely so the override takes precedence.
 OVERRIDE_METHODS: set[str] = {
-    "read",  # RPC-only fields: return_url, expires_in
+    "sys_read",  # RPC-only fields: return_url, expires_in
     "oauth_get_auth_url",  # Uses DEFAULT_OAUTH_REDIRECT_URI constant
     "oauth_exchange_code",  # Uses DEFAULT_OAUTH_REDIRECT_URI constant
 }
@@ -160,10 +160,14 @@ def _annotation_str(annotation: Any) -> str:
             return "str"
         return result
 
+    # Handle NoneType → "None" (before get_origin, which returns None for NoneType)
+    if annotation is type(None):
+        return "None"
+
     origin = get_origin(annotation)
     args = get_args(annotation)
 
-    # Handle None / NoneType in unions
+    # Handle None / NoneType in unions (fallback)
     if origin is type(None):
         return "None"
 

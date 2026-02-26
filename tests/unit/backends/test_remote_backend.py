@@ -86,7 +86,7 @@ class TestRemoteBackendRPC:
             result = backend.write_content(b"hello", context=ctx)
 
             mock_rpc.assert_called_once_with(
-                "write",
+                "sys_write",
                 {"path": "/path/to/file.txt", "content": b"hello"},
             )
             assert isinstance(result, WriteResult)
@@ -106,7 +106,7 @@ class TestRemoteBackendRPC:
             ctx = self._make_ctx("/file.txt", "file.txt")
             result = backend.read_content("hash", context=ctx)
 
-            mock_rpc.assert_called_once_with("read", {"path": "/file.txt"})
+            mock_rpc.assert_called_once_with("sys_read", {"path": "/file.txt"})
             assert result == b"content"
 
     def test_delete_content_is_noop(self, backend: RemoteBackend) -> None:
@@ -127,7 +127,7 @@ class TestRemoteBackendRPC:
             ctx = self._make_ctx("/file.txt", "file.txt")
             result = backend.content_exists("hash", context=ctx)
 
-            mock_rpc.assert_called_once_with("exists", {"path": "/file.txt"})
+            mock_rpc.assert_called_once_with("sys_access", {"path": "/file.txt"})
             assert result is True
 
     def test_get_content_size_calls_rpc(self, backend: RemoteBackend) -> None:
@@ -140,7 +140,7 @@ class TestRemoteBackendRPC:
             ctx = self._make_ctx("/file.txt", "file.txt")
             result = backend.get_content_size("hash", context=ctx)
 
-            mock_rpc.assert_called_once_with("stat", {"path": "/file.txt"})
+            mock_rpc.assert_called_once_with("sys_stat", {"path": "/file.txt"})
             assert result == 1024
 
     def test_backend_path_fallback(self, backend: RemoteBackend) -> None:
@@ -155,7 +155,7 @@ class TestRemoteBackendRPC:
             ctx.backend_path = "workspace/data.txt"
             backend.get_content_size("hash", context=ctx)
 
-            mock_rpc.assert_called_once_with("stat", {"path": "/workspace/data.txt"})
+            mock_rpc.assert_called_once_with("sys_stat", {"path": "/workspace/data.txt"})
 
     def test_no_context_defaults_to_root(self, backend: RemoteBackend) -> None:
         """When context is None, use root path /."""
@@ -166,7 +166,7 @@ class TestRemoteBackendRPC:
         ) as mock_rpc:
             backend.get_content_size("hash", context=None)
 
-            mock_rpc.assert_called_once_with("stat", {"path": "/"})
+            mock_rpc.assert_called_once_with("sys_stat", {"path": "/"})
 
     def test_mkdir_calls_rpc(self, backend: RemoteBackend) -> None:
         """mkdir should call _call_rpc('mkdir', ...)."""
@@ -174,7 +174,7 @@ class TestRemoteBackendRPC:
             backend.mkdir("/test/dir", parents=True, exist_ok=True)
 
             mock_rpc.assert_called_once_with(
-                "mkdir",
+                "sys_mkdir",
                 {"path": "/test/dir", "parents": True, "exist_ok": True},
             )
 
@@ -184,7 +184,7 @@ class TestRemoteBackendRPC:
             backend.rmdir("/test/dir", recursive=True)
 
             mock_rpc.assert_called_once_with(
-                "rmdir",
+                "sys_rmdir",
                 {"path": "/test/dir", "recursive": True},
             )
 
@@ -197,7 +197,7 @@ class TestRemoteBackendRPC:
         ) as mock_rpc:
             result = backend.list_dir("/test/dir")
 
-            mock_rpc.assert_called_once_with("list", {"path": "/test/dir"})
+            mock_rpc.assert_called_once_with("sys_readdir", {"path": "/test/dir"})
             assert result == ["file1.txt", "subdir"]
 
     def test_list_dir_handles_dict_response(self, backend: RemoteBackend) -> None:

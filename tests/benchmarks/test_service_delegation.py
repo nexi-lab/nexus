@@ -69,11 +69,11 @@ def mock_nexus_fs():
 def mock_gateway():
     """Create a NexusFSGateway with mock NexusFS for gateway benchmarks."""
     mock_fs = MagicMock()
-    mock_fs.read = MagicMock(return_value=b"data")
-    mock_fs.write = MagicMock()
-    mock_fs.mkdir = MagicMock()
-    mock_fs.list = MagicMock(return_value=["a.txt", "b.txt"])
-    mock_fs.exists = MagicMock(return_value=True)
+    mock_fs.sys_read = MagicMock(return_value=b"data")
+    mock_fs.sys_write = MagicMock()
+    mock_fs.sys_mkdir = MagicMock()
+    mock_fs.sys_readdir = MagicMock(return_value=["a.txt", "b.txt"])
+    mock_fs.sys_access = MagicMock(return_value=True)
     mock_fs.metadata = MagicMock()
     mock_fs.metadata.get = MagicMock(return_value=MagicMock())
     mock_fs.metadata.list = MagicMock(return_value=[])
@@ -257,24 +257,24 @@ class TestGatewayDelegationOverhead:
     """
 
     def test_gateway_read(self, benchmark, mock_gateway, context):
-        """Benchmark gateway.read() delegation."""
-        benchmark(mock_gateway.read, "/test/file.txt", context=context)
+        """Benchmark gateway.sys_read() delegation."""
+        benchmark(mock_gateway.sys_read, "/test/file.txt", context=context)
 
     def test_gateway_write_bytes(self, benchmark, mock_gateway, context):
-        """Benchmark gateway.write() delegation with bytes."""
-        benchmark(mock_gateway.write, "/test/file.txt", b"content", context=context)
+        """Benchmark gateway.sys_write() delegation with bytes."""
+        benchmark(mock_gateway.sys_write, "/test/file.txt", b"content", context=context)
 
     def test_gateway_write_str_conversion(self, benchmark, mock_gateway, context):
-        """Benchmark gateway.write() with str→bytes conversion."""
-        benchmark(mock_gateway.write, "/test/file.txt", "text content", context=context)
+        """Benchmark gateway.sys_write() with str→bytes conversion."""
+        benchmark(mock_gateway.sys_write, "/test/file.txt", "text content", context=context)
 
     def test_gateway_exists(self, benchmark, mock_gateway, context):
-        """Benchmark gateway.exists() delegation."""
-        benchmark(mock_gateway.exists, "/test/file.txt", context=context)
+        """Benchmark gateway.sys_access() delegation."""
+        benchmark(mock_gateway.sys_access, "/test/file.txt", context=context)
 
     def test_gateway_list(self, benchmark, mock_gateway, context):
-        """Benchmark gateway.list() delegation."""
-        benchmark(mock_gateway.list, "/test", context=context)
+        """Benchmark gateway.sys_readdir() delegation."""
+        benchmark(mock_gateway.sys_readdir, "/test", context=context)
 
     def test_gateway_metadata_get(self, benchmark, mock_gateway):
         """Benchmark gateway.metadata_get() delegation."""

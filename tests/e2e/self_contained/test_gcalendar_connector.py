@@ -311,7 +311,7 @@ class TestSkillDocGeneration:
 
             if skill_path:
                 # Read back and verify
-                content = nx.read(skill_path)
+                content = nx.sys_read(skill_path)
                 assert b"Gcalendar Connector" in content
                 assert b"agent_intent" in content
         finally:

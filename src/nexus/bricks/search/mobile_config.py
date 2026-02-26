@@ -389,6 +389,33 @@ RERANKER_MODELS: dict[str, RerankerModelConfig] = {
             "multilingual": True,
         },
     ),
+    # API-based reranker providers (no local model download required)
+    "jina-reranker-v3": RerankerModelConfig(
+        name="jina-reranker-v2-base-multilingual",
+        provider=ModelProvider.API,
+        size_mb=0,
+        max_length=131072,
+        batch_size=64,
+        metadata={
+            "api_provider": "jina",
+            "api_url": "https://api.jina.ai/v1/rerank",
+            "env_key": "JINA_API_KEY",
+            "timeout": 5.0,
+        },
+    ),
+    "cohere-rerank-v3.5": RerankerModelConfig(
+        name="rerank-v3.5",
+        provider=ModelProvider.API,
+        size_mb=0,
+        max_length=4096,
+        batch_size=100,
+        metadata={
+            "api_provider": "cohere",
+            "api_url": "https://api.cohere.com/v2/rerank",
+            "env_key": "COHERE_API_KEY",
+            "timeout": 5.0,
+        },
+    ),
 }
 
 # =============================================================================

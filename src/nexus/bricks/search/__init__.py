@@ -126,9 +126,11 @@ from nexus.bricks.search.mobile_config import (
     list_available_models,
 )
 from nexus.bricks.search.mobile_providers import (
+    CohereAPIRerankerProvider,
     CrossEncoderRerankerProvider,
     FastEmbedMobileProvider,
     GGUFEmbeddingProvider,
+    JinaAPIRerankerProvider,
     MobileEmbeddingProvider,
     MobileRerankerProvider,
     MobileSearchService,
@@ -342,6 +344,8 @@ __all__ = [
     "SentenceTransformersProvider",
     "GGUFEmbeddingProvider",
     "CrossEncoderRerankerProvider",
+    "JinaAPIRerankerProvider",
+    "CohereAPIRerankerProvider",
     "MobileSearchService",
     "create_mobile_embedding_provider",
     "create_reranker_provider",

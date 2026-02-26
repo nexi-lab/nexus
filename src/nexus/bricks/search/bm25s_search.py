@@ -675,9 +675,9 @@ class BM25SIndex:
                     if path_filter and not path.startswith(path_filter):
                         continue
 
-                    # Get content preview (first 200 chars)
+                    # Get full content for recall (truncation done at API layer)
                     content = self._corpus[idx]
-                    preview = content[:200] + "..." if len(content) > 200 else content
+                    preview = content
 
                     # Issue #1092: Detect which field matched for attribute ranking
                     matched_field = detect_matched_field(query, path)

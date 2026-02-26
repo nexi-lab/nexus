@@ -90,8 +90,14 @@ class TestRerankerProviderClassSelection:
         config = self._make_config(ModelProvider.GGUF)
         assert _get_reranker_provider_class(config) is CrossEncoderRerankerProvider
 
-    def test_unsupported_reranker(self) -> None:
+    def test_api_reranker_defaults_to_jina(self) -> None:
         config = self._make_config(ModelProvider.API)
+        from nexus.bricks.search.mobile_providers import JinaAPIRerankerProvider
+
+        assert _get_reranker_provider_class(config) is JinaAPIRerankerProvider
+
+    def test_unsupported_reranker(self) -> None:
+        config = self._make_config(ModelProvider.MODEL2VEC)
         with pytest.raises(ValueError, match="Unsupported reranker provider"):
             _get_reranker_provider_class(config)
 

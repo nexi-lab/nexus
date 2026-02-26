@@ -14,6 +14,8 @@ Supported Embedding Providers:
 
 Supported Reranker Providers:
 - CrossEncoder: sentence-transformers cross-encoder models
+- JinaAPI: Jina AI Reranker API (v1/rerank)
+- CohereAPI: Cohere Rerank API (v2/rerank)
 
 Usage:
     from nexus.bricks.search.mobile_config import auto_detect_config
@@ -39,6 +41,8 @@ import os
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+import httpx
 
 if TYPE_CHECKING:
     from nexus.bricks.search.mobile_config import (
@@ -662,6 +666,192 @@ class CrossEncoderRerankerProvider(MobileRerankerProvider):
 
 
 # =============================================================================
+# API-Based Reranker Providers
+# =============================================================================
+
+
+class JinaAPIRerankerProvider(MobileRerankerProvider):
+    """Jina AI Reranker API provider.
+
+    Uses the Jina Reranker API (POST /v1/rerank) for cloud-based reranking.
+    Requires JINA_API_KEY environment variable.
+    """
+
+    def __init__(
+        self,
+        config: "RerankerModelConfig",
+        ml_executor: concurrent.futures.ThreadPoolExecutor | None = None,
+    ):
+        super().__init__(config, ml_executor=ml_executor)
+        self._client: Any = None
+        env_key = config.metadata.get("env_key", "JINA_API_KEY")
+        self._api_key = os.environ.get(env_key, "")
+        self._api_url = config.metadata.get("api_url", "https://api.jina.ai/v1/rerank")
+        self._timeout = float(config.metadata.get("timeout", 5.0))
+
+    async def load(self) -> None:
+        if self._loaded:
+            return
+
+        if not self._api_key:
+            raise RuntimeError("JINA_API_KEY not set")
+
+        import httpx
+
+        self._client = httpx.AsyncClient(
+            base_url=self._api_url.rsplit("/v1/rerank", 1)[0],
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+                "Content-Type": "application/json",
+            },
+            timeout=self._timeout,
+        )
+        self._loaded = True
+        logger.info("Jina API reranker ready (model=%s)", self.config.name)
+
+    async def unload(self) -> None:
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
+            self._loaded = False
+            logger.info("Jina API reranker client closed")
+
+    async def rerank(
+        self,
+        query: str,
+        documents: list[str],
+        top_k: int | None = None,
+    ) -> list[tuple[int, float]]:
+        if not self._loaded:
+            await self.load()
+
+        if not documents:
+            return []
+
+        payload: dict[str, Any] = {
+            "model": self.config.name,
+            "query": query,
+            "documents": documents,
+            "return_documents": False,
+        }
+        if top_k is not None:
+            payload["top_n"] = top_k
+
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                resp = await self._client.post("/v1/rerank", json=payload)
+                resp.raise_for_status()
+                data = resp.json()
+
+                results: list[tuple[int, float]] = [
+                    (item["index"], float(item["relevance_score"]))
+                    for item in data.get("results", [])
+                ]
+                results.sort(key=lambda x: x[1], reverse=True)
+                return results
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 429 and attempt < max_retries - 1:
+                    wait = 1.0 * (2**attempt)  # 1s, 2s, 4s
+                    logger.info(
+                        "Jina reranker rate-limited (429), retrying in %.1fs (attempt %d/%d)",
+                        wait,
+                        attempt + 1,
+                        max_retries,
+                    )
+                    await asyncio.sleep(wait)
+                    continue
+                logger.warning("Jina reranker API call failed", exc_info=True)
+                return []
+            except Exception:
+                logger.warning("Jina reranker API call failed", exc_info=True)
+                return []
+        return []
+
+
+class CohereAPIRerankerProvider(MobileRerankerProvider):
+    """Cohere Rerank API provider.
+
+    Uses the Cohere Rerank API (POST /v2/rerank) for cloud-based reranking.
+    Requires COHERE_API_KEY environment variable.
+    """
+
+    def __init__(
+        self,
+        config: "RerankerModelConfig",
+        ml_executor: concurrent.futures.ThreadPoolExecutor | None = None,
+    ):
+        super().__init__(config, ml_executor=ml_executor)
+        self._client: Any = None
+        env_key = config.metadata.get("env_key", "COHERE_API_KEY")
+        self._api_key = os.environ.get(env_key, "")
+        self._api_url = config.metadata.get("api_url", "https://api.cohere.com/v2/rerank")
+        self._timeout = float(config.metadata.get("timeout", 5.0))
+        self._model_name = config.name  # e.g. "rerank-v3.5"
+
+    async def load(self) -> None:
+        if self._loaded:
+            return
+
+        if not self._api_key:
+            raise RuntimeError("COHERE_API_KEY not set")
+
+        import httpx
+
+        self._client = httpx.AsyncClient(
+            base_url=self._api_url.rsplit("/v2/rerank", 1)[0],
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+                "Content-Type": "application/json",
+            },
+            timeout=self._timeout,
+        )
+        self._loaded = True
+        logger.info("Cohere API reranker ready (model=%s)", self._model_name)
+
+    async def unload(self) -> None:
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
+            self._loaded = False
+            logger.info("Cohere API reranker client closed")
+
+    async def rerank(
+        self,
+        query: str,
+        documents: list[str],
+        top_k: int | None = None,
+    ) -> list[tuple[int, float]]:
+        if not self._loaded:
+            await self.load()
+
+        if not documents:
+            return []
+
+        payload: dict[str, Any] = {
+            "model": self._model_name,
+            "query": query,
+            "documents": documents,
+        }
+        if top_k is not None:
+            payload["top_n"] = top_k
+
+        try:
+            resp = await self._client.post("/v2/rerank", json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+
+            results: list[tuple[int, float]] = [
+                (item["index"], float(item["relevance_score"])) for item in data.get("results", [])
+            ]
+            results.sort(key=lambda x: x[1], reverse=True)
+            return results
+        except Exception:
+            logger.warning("Cohere reranker API call failed", exc_info=True)
+            return []
+
+
+# =============================================================================
 # Provider Factory
 # =============================================================================
 
@@ -692,6 +882,14 @@ def _get_reranker_provider_class(
 ) -> type[MobileRerankerProvider]:
     """Get the appropriate reranker provider class for a config."""
     from nexus.bricks.search.mobile_config import ModelProvider
+
+    if config.provider == ModelProvider.API:
+        api_provider = config.metadata.get("api_provider", "jina")
+        if api_provider == "jina":
+            return JinaAPIRerankerProvider
+        if api_provider == "cohere":
+            return CohereAPIRerankerProvider
+        raise ValueError(f"Unsupported API reranker: {api_provider}")
 
     provider_map: dict[ModelProvider, type[MobileRerankerProvider]] = {
         ModelProvider.SENTENCE_TRANSFORMERS: CrossEncoderRerankerProvider,

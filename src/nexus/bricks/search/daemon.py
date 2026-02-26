@@ -133,7 +133,7 @@ class DaemonConfig:
     expansion_provider: str = "openrouter"  # "openrouter" | "local"
     expansion_model: str = "deepseek/deepseek-chat"  # or GGUF path for local
     reranking_enabled: bool = False
-    reranker_provider: str = "local"  # "local" (sentence-transformers/GGUF)
+    reranker_provider: str = "local"  # "local" | "jina" | "cohere"
     reranker_model: str = "jina-tiny"  # key from RERANKER_MODELS
     reranking_top_k: int = 30  # max candidates to rerank
     position_aware_blending: bool = True  # only active when reranking_enabled
@@ -1269,15 +1269,28 @@ class SearchDaemon:
             logger.warning("[BULK-EMBED] No database session available")
             return 0
 
-        # Read BM25S corpus
-        corpus = getattr(self._bm25s_index, "_corpus", [])
-        paths = getattr(self._bm25s_index, "_paths", [])
+        # Read BM25S corpus (main + delta — new docs go into delta first)
+        corpus = list(getattr(self._bm25s_index, "_corpus", []))
+        paths = list(getattr(self._bm25s_index, "_paths", []))
+        delta_corpus = getattr(self._bm25s_index, "_delta_corpus", [])
+        delta_paths = getattr(self._bm25s_index, "_delta_paths", [])
+        if delta_corpus:
+            corpus.extend(delta_corpus)
+            paths.extend(delta_paths)
         total = len(corpus)
         if total == 0:
-            logger.info("[BULK-EMBED] BM25S corpus is empty")
+            logger.info(
+                "[BULK-EMBED] BM25S corpus is empty (main=%d, delta=%d)",
+                len(getattr(self._bm25s_index, "_corpus", [])),
+                len(delta_corpus),
+            )
             return 0
 
-        logger.info(f"[BULK-EMBED] Processing {total} documents from BM25S corpus")
+        logger.info(
+            f"[BULK-EMBED] Processing {total} documents from BM25S corpus"
+            f" (main={len(getattr(self._bm25s_index, '_corpus', []))}"
+            f", delta={len(delta_corpus)})"
+        )
 
         # Step 1: Build deterministic UUID5 path_ids for each virtual path
         ns = uuid.UUID("12345678-1234-5678-1234-567812345678")
@@ -1322,9 +1335,9 @@ class SearchDaemon:
                         text(
                             "INSERT INTO file_paths "
                             "(path_id, virtual_path, zone_id, backend_id, physical_path, "
-                            " size_bytes, current_version, created_at, updated_at) "
+                            " tenant_id, size_bytes, current_version, created_at, updated_at) "
                             "VALUES (:pid, :vpath, 'default', 'local', :vpath, "
-                            " 0, 1, :now, :now) "
+                            " 'default', 0, 1, :now, :now) "
                             "ON CONFLICT (path_id) DO NOTHING"
                         ),
                         {"pid": pid, "vpath": vpath, "now": now},
@@ -1591,6 +1604,21 @@ async def create_and_start_daemon(
     return daemon
 
 
+def _detect_reranker_defaults() -> tuple[str, str]:
+    """Auto-detect reranker provider and model based on available API keys.
+
+    Returns:
+        (provider, model) tuple — prefers API keys if set, falls back to local.
+    """
+    import os
+
+    if os.environ.get("JINA_API_KEY"):
+        return "jina", "jina-reranker-v3"
+    if os.environ.get("COHERE_API_KEY"):
+        return "cohere", "cohere-rerank-v3.5"
+    return "local", "jina-tiny"
+
+
 def get_pipeline_config_from_env() -> dict[str, Any]:
     """Read QMD pipeline flags from environment variables.
 
@@ -1601,7 +1629,8 @@ def get_pipeline_config_from_env() -> dict[str, Any]:
         NEXUS_SEARCH_EXPANSION_PROVIDER: "openrouter" | "local" (default: openrouter)
         NEXUS_SEARCH_EXPANSION_MODEL: Model name or GGUF path
         NEXUS_SEARCH_RERANKING_ENABLED: Enable reranking (default: false)
-        NEXUS_SEARCH_RERANKER_MODEL: Key from RERANKER_MODELS (default: jina-tiny)
+        NEXUS_SEARCH_RERANKER_PROVIDER: "local" | "jina" | "cohere" (auto-detected)
+        NEXUS_SEARCH_RERANKER_MODEL: Key from RERANKER_MODELS (auto-detected)
         NEXUS_SEARCH_RERANKING_TOP_K: Max candidates to rerank (default: 30)
         NEXUS_SEARCH_POSITION_BLENDING: Position-aware blending (default: true)
         NEXUS_SEARCH_SCORED_CHUNKING: Scored break-point chunking (default: false)
@@ -1632,6 +1661,9 @@ def get_pipeline_config_from_env() -> dict[str, Any]:
         "voyage-lite": "voyage-3-lite",
     }.get(_provider, "text-embedding-3-small")
 
+    # Auto-detect reranker provider/model from available API keys
+    _default_reranker_provider, _default_reranker_model = _detect_reranker_defaults()
+
     return {
         "embedding_provider": _provider,
         "embedding_model": os.environ.get("NEXUS_SEARCH_EMBEDDING_MODEL", _default_model),
@@ -1639,7 +1671,10 @@ def get_pipeline_config_from_env() -> dict[str, Any]:
         "expansion_provider": os.environ.get("NEXUS_SEARCH_EXPANSION_PROVIDER", "openrouter"),
         "expansion_model": os.environ.get("NEXUS_SEARCH_EXPANSION_MODEL", "deepseek/deepseek-chat"),
         "reranking_enabled": _bool("NEXUS_SEARCH_RERANKING_ENABLED", False),
-        "reranker_model": os.environ.get("NEXUS_SEARCH_RERANKER_MODEL", "jina-tiny"),
+        "reranker_provider": os.environ.get(
+            "NEXUS_SEARCH_RERANKER_PROVIDER", _default_reranker_provider
+        ),
+        "reranker_model": os.environ.get("NEXUS_SEARCH_RERANKER_MODEL", _default_reranker_model),
         "reranking_top_k": _int("NEXUS_SEARCH_RERANKING_TOP_K", 30),
         "position_aware_blending": _bool("NEXUS_SEARCH_POSITION_BLENDING", True),
         "scored_chunking_enabled": _bool("NEXUS_SEARCH_SCORED_CHUNKING", False),

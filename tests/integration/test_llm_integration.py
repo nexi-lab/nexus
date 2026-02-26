@@ -175,8 +175,8 @@ class TestCrossModuleWiring:
     def test_search_imports_context_builder_from_services(self) -> None:
         """Search modules can import ContextBuilder from services."""
         # Reimport to ensure clean resolution
-        mod = importlib.import_module("nexus.bricks.search.semantic")
-        assert mod is not None
+        mod = importlib.import_module("nexus.services.llm.llm_context_builder")
+        assert hasattr(mod, "ContextBuilder")
 
     def test_ace_imports_protocol(self) -> None:
         """ACE services can import LLMProviderProtocol."""

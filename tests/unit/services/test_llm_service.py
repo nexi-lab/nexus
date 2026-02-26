@@ -224,6 +224,7 @@ class TestLLMRead:
                 max_tokens=2000,
                 use_search=False,
                 search_mode="keyword",
+                context=None,
             )
 
 

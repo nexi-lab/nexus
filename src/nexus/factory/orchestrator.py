@@ -563,6 +563,13 @@ def _register_vfs_hooks(nx: "NexusFS", *, permission_checker: Any = None) -> Non
 
         dispatch.register_intercept_write(TigerCacheWriteHook(tiger_cache=tiger_cache))
 
+    # ── PRE-DISPATCH: Pipe resolver for DT_PIPE paths (Issue #1201) ────
+    _pipe_mgr = getattr(nx._system_services, "pipe_manager", None) if nx._system_services else None
+    if _pipe_mgr is not None:
+        from nexus.system_services.pipe_resolver import PipeResolver
+
+        dispatch.register_resolver(PipeResolver(pipe_manager=_pipe_mgr, metastore=nx.metadata))
+
     # ── PRE-DISPATCH: Memory virtual path resolver (Issue #889) ────────
     # memory_router removed from BrickServices — get it from MemoryPermissionEnforcer
     _mem_perm = getattr(nx._brick_services, "memory_permission", None)

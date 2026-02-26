@@ -277,6 +277,35 @@ async def search_bulk_embed(
     return {"status": "completed", "documents_embedded": embedded}
 
 
+@router.post("/purge")
+async def search_purge(
+    path_prefix: str = Query(..., description="Path prefix to purge (e.g. '/workspace/123/')"),
+    _auth_result: dict[str, Any] = Depends(require_auth),
+    search_daemon: Any = Depends(_get_search_daemon),
+) -> dict[str, Any]:
+    """Purge all search data matching a path prefix.
+
+    Removes entries from document_chunks, file_paths, and BM25S index.
+    Use after folder/workspace deletion or to clean stale test data.
+    """
+    result = await search_daemon.purge_by_prefix(path_prefix)
+    return {"status": "completed", **result}
+
+
+@router.post("/rebuild-index")
+async def search_rebuild_index(
+    _auth_result: dict[str, Any] = Depends(require_auth),
+    search_daemon: Any = Depends(_get_search_daemon),
+) -> dict[str, Any]:
+    """Rebuild BM25S index from database.
+
+    Reads all document_chunks from PostgreSQL and re-indexes into BM25S.
+    Use after purge, index corruption, or disk loss for self-healing.
+    """
+    indexed = await search_daemon.rebuild_bm25s_from_db()
+    return {"status": "completed", "documents_indexed": indexed}
+
+
 @router.post("/expand")
 async def search_expand(
     q: str = Query(..., description="Query to expand", min_length=1),

@@ -50,6 +50,7 @@ class VectorDatabase:
         sync_pool_workers: int = _DEFAULT_VDB_WORKERS,
         *,
         is_postgresql: bool = False,
+        embedding_dim: int = 1536,
     ):
         """Initialize vector database.
 
@@ -64,9 +65,12 @@ class VectorDatabase:
             sync_pool_workers: Thread pool size for sync-to-async bridge (Issue #2188).
             is_postgresql: Config-time flag indicating PostgreSQL backend.
                 When False, assumes SQLite. Avoids runtime dialect sniffing.
+            embedding_dim: Dimension of the embedding vectors. Must match the
+                embedding provider (e.g. 384 for fastembed, 1536 for OpenAI).
         """
         self.engine = engine
         self._is_postgresql = is_postgresql
+        self._embedding_dim = embedding_dim
         self.hnsw_config = hnsw_config or HNSWConfig.medium_scale()
         self._zoekt_client = zoekt_client
         self._bm25s_index = bm25s_index
@@ -121,7 +125,9 @@ class VectorDatabase:
         """Initialize PostgreSQL with pgvector and pg_textsearch."""
         from nexus.bricks.search.vector_db_postgres import init_postgresql
 
-        self.vec_available, self.bm25_available = init_postgresql(conn, self.hnsw_config)
+        self.vec_available, self.bm25_available = init_postgresql(
+            conn, self.hnsw_config, embedding_dim=self._embedding_dim
+        )
 
     def store_embedding(self, session: "Session", chunk_id: str, embedding: list[float]) -> None:
         """Store embedding for a chunk.

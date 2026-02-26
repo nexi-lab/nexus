@@ -46,9 +46,11 @@ from nexus.bricks.search.bm25s_search import (
     is_bm25s_available,
 )
 from nexus.bricks.search.chunking import (
+    BREAK_SCORES,
     ChunkStrategy,
     DocumentChunk,
     DocumentChunker,
+    ScoredBreakPointChunker,
 )
 from nexus.bricks.search.config import SearchConfig, search_config_from_env
 from nexus.bricks.search.contextual_chunking import (
@@ -67,6 +69,7 @@ from nexus.bricks.search.daemon import (
     SearchDaemon,
     SearchResult,
     create_and_start_daemon,
+    get_pipeline_config_from_env,
 )
 from nexus.bricks.search.embeddings import (
     CachedEmbeddingProvider,
@@ -84,7 +87,9 @@ from nexus.bricks.search.fusion import (
     FusionMethod,
     fuse_results,
     normalize_scores_minmax,
+    position_aware_blend,
     rrf_fusion,
+    rrf_multi_fusion,
     rrf_weighted_fusion,
     weighted_fusion,
 )
@@ -143,6 +148,8 @@ from nexus.bricks.search.query_expansion import (
     CachedQueryExpander,
     ExpansionResult,
     ExpansionType,
+    LocalQueryExpander,
+    OpenAIQueryExpander,
     OpenRouterQueryExpander,
     QueryExpander,
     QueryExpansion,
@@ -216,9 +223,11 @@ __all__ = [
     "MULTIHOP_PATTERNS",
     "COMPLEX_PATTERNS",
     # Chunking
+    "BREAK_SCORES",
     "ChunkStrategy",
     "DocumentChunk",
     "DocumentChunker",
+    "ScoredBreakPointChunker",
     # Contextual Chunking (Issue #1192)
     "ChunkContext",
     "ContextGenerator",
@@ -258,8 +267,10 @@ __all__ = [
     "fuse_results",
     "normalize_scores_minmax",
     "rrf_fusion",
+    "rrf_multi_fusion",
     "rrf_weighted_fusion",
     "weighted_fusion",
+    "position_aware_blend",
     # Graph-Enhanced Retrieval (Issue #1040)
     "GraphEnhancedRetriever",
     "GraphRetrievalConfig",
@@ -274,6 +285,8 @@ __all__ = [
     "ExpansionType",
     "ExpansionResult",
     "OpenRouterQueryExpander",
+    "OpenAIQueryExpander",
+    "LocalQueryExpander",
     "CachedQueryExpander",
     "SignalDetector",
     "create_query_expander",
@@ -301,6 +314,7 @@ __all__ = [
     "DaemonStats",
     "SearchResult",
     "create_and_start_daemon",
+    "get_pipeline_config_from_env",
     # Zoekt Code Search
     "ZoektClient",
     "ZoektIndexManager",

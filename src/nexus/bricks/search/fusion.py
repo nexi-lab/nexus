@@ -300,53 +300,6 @@ def rrf_weighted_fusion(
     return [item["result"] for item in sorted_results]
 
 
-def rrf_multi_fusion(
-    result_lists: list[tuple[str, Sequence[dict[str, Any] | Any]]],
-    k: int = 60,
-    limit: int = 10,
-    id_key: str | None = "chunk_id",
-) -> list[dict[str, Any]]:
-    """N-way Reciprocal Rank Fusion for combining 3+ retrieval sources.
-
-    Generalizes RRF from 2-way to N-way for pipelines that combine
-    keyword + dense + SPLADE (or any number of retrievers).
-
-    Args:
-        result_lists: List of (source_name, results) tuples.
-            source_name is used to set '{source_name}_score' on each result.
-        k: RRF constant (default: 60)
-        limit: Maximum results to return
-        id_key: Key for identifying unique results, or None for path:chunk_index
-
-    Returns:
-        Combined results ranked by RRF score
-    """
-    rrf_scores: dict[str, dict[str, Any]] = {}
-
-    for source_name, results in result_lists:
-        score_key = f"{source_name}_score"
-        for rank, raw_result in enumerate(results, start=1):
-            result = _to_dict(raw_result)
-            key = _get_result_key(result, id_key)
-            if key not in rrf_scores:
-                rrf_scores[key] = {"result": result.copy(), "rrf_score": 0.0}
-            rrf_scores[key]["rrf_score"] += 1.0 / (k + rank)
-            rrf_scores[key]["result"][score_key] = result.get("score", 0.0)
-
-    # Sort by RRF score
-    sorted_results = sorted(
-        rrf_scores.values(),
-        key=lambda x: x["rrf_score"],
-        reverse=True,
-    )[:limit]
-
-    # Update final scores
-    for item in sorted_results:
-        item["result"]["score"] = item["rrf_score"]
-
-    return [item["result"] for item in sorted_results]
-
-
 def fuse_results(
     keyword_results: Sequence[dict[str, Any] | Any],
     vector_results: Sequence[dict[str, Any] | Any],
@@ -410,3 +363,146 @@ def fuse_results(
         )
     else:
         raise ValueError(f"Unknown fusion method: {config.method}")
+
+
+# =============================================================================
+# QMD-inspired multi-source fusion (Issue #QMD)
+# =============================================================================
+
+
+def rrf_multi_fusion(
+    result_lists: Sequence[
+        tuple[str, Sequence[dict[str, Any] | Any]]
+        | tuple[str, Sequence[dict[str, Any] | Any], float]
+    ],
+    k: int = 60,
+    limit: int = 10,
+    id_key: str | None = "chunk_id",
+    top_rank_bonus: bool = False,
+) -> list[dict[str, Any]]:
+    """N-way Reciprocal Rank Fusion with per-source weights and top-rank bonus.
+
+    Extends standard 2-way RRF to support arbitrary numbers of result lists,
+    each with an optional weight. Backward-compatible: 2-element tuples get
+    weight 1.0.
+
+    Args:
+        result_lists: List of (source_name, results) or (source_name, results, weight)
+        k: RRF constant (default: 60 per original paper)
+        limit: Maximum results to return
+        id_key: Key for identifying unique results, or None for path:chunk_index
+        top_rank_bonus: If True, add bonus for top-ranked results:
+            +0.05 for rank 1, +0.02 for ranks 2-3
+
+    Returns:
+        Combined results ranked by weighted RRF score
+    """
+    rrf_scores: dict[str, dict[str, Any]] = {}
+
+    for source_tuple in result_lists:
+        source_name = str(source_tuple[0])
+        results: Sequence[dict[str, Any] | Any] = source_tuple[1]
+        weight = float(source_tuple[2]) if len(source_tuple) == 3 else 1.0  # noqa: PLR2004
+
+        for rank, raw_result in enumerate(results, start=1):
+            result = _to_dict(raw_result)
+            key = _get_result_key(result, id_key)
+
+            if key not in rrf_scores:
+                rrf_scores[key] = {"result": result.copy(), "rrf_score": 0.0}
+
+            rrf_contribution = weight / (k + rank)
+
+            # Top-rank bonus (inspired by QMD)
+            if top_rank_bonus:
+                if rank == 1:
+                    rrf_contribution += 0.05
+                elif rank <= 3:
+                    rrf_contribution += 0.02
+
+            rrf_scores[key]["rrf_score"] += rrf_contribution
+
+            # Track per-source scores (generic + specific)
+            score_key = f"{source_name}_score"
+            rrf_scores[key]["result"][score_key] = result.get("score", 0.0)
+
+            if "keyword" in source_name:
+                rrf_scores[key]["result"]["keyword_score"] = result.get("score", 0.0)
+            elif "vector" in source_name or "semantic" in source_name:
+                rrf_scores[key]["result"]["vector_score"] = result.get("score", 0.0)
+            elif "splade" in source_name:
+                rrf_scores[key]["result"]["splade_score"] = result.get("score", 0.0)
+
+            # Track expansion source
+            if "exp" in source_name:
+                rrf_scores[key]["result"]["expansion_source"] = source_name
+
+    # Sort by RRF score
+    sorted_results = sorted(
+        rrf_scores.values(),
+        key=lambda x: x["rrf_score"],
+        reverse=True,
+    )[:limit]
+
+    # Update final scores
+    for item in sorted_results:
+        item["result"]["score"] = item["rrf_score"]
+
+    return [item["result"] for item in sorted_results]
+
+
+def position_aware_blend(
+    fused_results: list[dict[str, Any]],
+    reranker_scores: dict[str, float],
+    id_key: str | None = "chunk_id",
+    tiers: list[tuple[int, float, float]] | None = None,
+) -> list[dict[str, Any]]:
+    """Blend retrieval scores with reranker scores using position-aware tiers.
+
+    Results near the top (ranks 1-3) keep more of their retrieval score,
+    while lower-ranked results rely more on the reranker's judgment.
+
+    Args:
+        fused_results: Results from RRF fusion with 'score' field
+        reranker_scores: Reranker scores keyed by result ID
+        id_key: Key for identifying results
+        tiers: List of (max_rank, retrieval_weight, reranker_weight) tuples.
+            Default: [(3, 0.75, 0.25), (10, 0.60, 0.40), (999, 0.40, 0.60)]
+
+    Returns:
+        Results re-sorted by blended score
+    """
+    if not fused_results:
+        return []
+
+    if tiers is None:
+        tiers = [(3, 0.75, 0.25), (10, 0.60, 0.40), (999, 0.40, 0.60)]
+
+    blended = []
+    for rank_idx, result in enumerate(fused_results):
+        result = result.copy()
+        key = _get_result_key(result, id_key)
+        rank = rank_idx + 1  # 1-indexed
+
+        retrieval_score = result.get("score", 0.0)
+        reranker_score = reranker_scores.get(key, 0.0)
+
+        # Find tier
+        retrieval_w, reranker_w = 0.5, 0.5  # default
+        for max_rank, rw, rew in tiers:
+            if rank <= max_rank:
+                retrieval_w, reranker_w = rw, rew
+                break
+
+        # Blend
+        blended_score = retrieval_w * retrieval_score + reranker_w * reranker_score
+
+        # Preserve original scores
+        result["original_retrieval_score"] = retrieval_score
+        result["reranker_score"] = reranker_score
+        result["score"] = blended_score
+        blended.append(result)
+
+    # Re-sort by blended score
+    blended.sort(key=lambda x: x["score"], reverse=True)
+    return blended

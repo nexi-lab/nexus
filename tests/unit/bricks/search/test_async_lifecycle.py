@@ -307,6 +307,8 @@ class TestDaemonStats2:
             "zoekt_available",
             "embedding_cache_connected",
             "entropy_filtering",
+            "pipeline",
+            "pipeline_stage_latencies",
         }
         assert set(stats.keys()) == expected_keys
 

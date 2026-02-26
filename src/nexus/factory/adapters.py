@@ -1,6 +1,10 @@
 """Factory adapters — NexusFSFileReader, WorkflowLifecycleAdapter."""
 
+import re
 from typing import Any
+
+# Pattern: /zone/{zone_id}/rest/of/path → /rest/of/path
+_ZONE_PREFIX_RE = re.compile(r"^/zone/[^/]+(/.*)")
 
 # =========================================================================
 # Issue #1520: NexusFS → FileReaderProtocol adapter
@@ -25,10 +29,22 @@ class _NexusFSFileReader:
     def __init__(self, nx: Any) -> None:
         self._nx = nx
 
+    @staticmethod
+    def _strip_zone_prefix(path: str) -> str:
+        """Strip /zone/{zone_id}/ prefix if present.
+
+        The search daemon receives zone-scoped paths from refresh
+        notifications, but NexusFS.read() operates on plain paths.
+        """
+        m = _ZONE_PREFIX_RE.match(path)
+        return m.group(1) if m else path
+
     def read_text(self, path: str) -> str:
         # Read with admin context so the search daemon can index all files
         # regardless of per-user ReBAC permissions.
         from nexus.contracts.types import OperationContext
+
+        path = self._strip_zone_prefix(path)
 
         admin_ctx = OperationContext(
             user_id="system",
@@ -42,10 +58,12 @@ class _NexusFSFileReader:
         return str(content_raw)
 
     def get_searchable_text(self, path: str) -> str | None:
+        path = self._strip_zone_prefix(path)
         result: str | None = self._nx.metadata.get_searchable_text(path)
         return result
 
     def list_files(self, path: str, recursive: bool = True) -> list[Any]:
+        path = self._strip_zone_prefix(path)
         result = self._nx.list(path, recursive=recursive)
         items: list[Any] = result.items if hasattr(result, "items") else result
         return items
@@ -59,6 +77,7 @@ class _NexusFSFileReader:
 
         from nexus.storage.models import FilePathModel
 
+        path = self._strip_zone_prefix(path)
         stmt = select(FilePathModel.path_id).where(
             FilePathModel.virtual_path == path,
             FilePathModel.deleted_at.is_(None),
@@ -76,6 +95,7 @@ class _NexusFSFileReader:
 
         from nexus.storage.models import FilePathModel
 
+        path = self._strip_zone_prefix(path)
         stmt = select(FilePathModel.content_hash).where(
             FilePathModel.virtual_path == path,
             FilePathModel.deleted_at.is_(None),

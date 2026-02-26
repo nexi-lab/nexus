@@ -25,21 +25,7 @@ _VALID_SEARCH_MODES = frozenset({"keyword", "semantic", "hybrid"})
 
 def _dict_to_result(result: dict[str, Any]) -> BaseSearchResult:
     """Convert a canonical result dict to a ``BaseSearchResult``."""
-    return BaseSearchResult(
-        path=result.get("path", ""),
-        chunk_text=result.get("chunk_text", ""),
-        score=result.get("score", 0.0),
-        chunk_index=result.get("chunk_index", 0),
-        start_offset=result.get("start_offset"),
-        end_offset=result.get("end_offset"),
-        line_start=result.get("line_start"),
-        line_end=result.get("line_end"),
-        keyword_score=result.get("keyword_score"),
-        vector_score=result.get("vector_score"),
-        matched_field=result.get("matched_field"),
-        attribute_boost=result.get("attribute_boost"),
-        original_score=result.get("original_score"),
-    )
+    return BaseSearchResult.from_dict(result)
 
 
 class QueryService:

@@ -487,6 +487,172 @@ class OpenAIQueryExpander(OpenRouterQueryExpander):
         return self._client
 
 
+class LocalQueryExpander(QueryExpander):
+    """Query expander using local GGUF model via llama-cpp-python.
+
+    Runs QMD-style query expansion locally with no API dependency.
+    Uses the same lex:/vec:/hyde: output format as OpenRouterQueryExpander.
+
+    Model is loaded lazily on first expand() call and can be unloaded
+    after idle timeout to save memory.
+    """
+
+    def __init__(
+        self,
+        config: QueryExpansionConfig | None = None,
+        api_key: str | None = None,  # noqa: ARG002 - kept for factory compat
+    ) -> None:
+        """Initialize local query expander.
+
+        Args:
+            config: Expansion configuration (model field = GGUF path or HuggingFace repo)
+            api_key: Unused, kept for factory interface compatibility
+        """
+        self.config = config or QueryExpansionConfig()
+        self._model: Any = None
+        self._lock = asyncio.Lock()
+
+    async def _ensure_model(self) -> Any:
+        """Lazy-load the GGUF model."""
+        if self._model is not None:
+            return self._model
+
+        async with self._lock:
+            if self._model is not None:
+                return self._model
+
+            try:
+                from llama_cpp import Llama
+            except ImportError as e:
+                raise ImportError(
+                    "llama-cpp-python required for LocalQueryExpander. "
+                    "Install with: pip install llama-cpp-python"
+                ) from e
+
+            model_path = self.config.model
+            # If model is a HuggingFace repo, download the GGUF file
+            if "/" in model_path and not os.path.exists(model_path):
+                try:
+                    from nexus.bricks.search.mobile_providers import download_gguf_model
+
+                    model_path = await download_gguf_model(
+                        repo_id=model_path,
+                        filename=model_path.split("/")[-1] + ".gguf",
+                    )
+                except Exception as e:
+                    raise RuntimeError(f"Failed to download GGUF model {model_path}: {e}") from e
+
+            # Load in thread pool to avoid blocking event loop
+            def _load() -> Any:
+                return Llama(
+                    model_path=str(model_path),
+                    n_ctx=512,
+                    n_threads=2,
+                    verbose=False,
+                )
+
+            self._model = await asyncio.to_thread(_load)
+            logger.info("Local query expansion model loaded: %s", model_path)
+            return self._model
+
+    def _build_prompt(self, query: str, context: str | None) -> str:
+        """Build expansion prompt (same format as OpenRouter expander)."""
+        context_line = f"\nContext: {context}" if context else ""
+
+        instructions = []
+        for _ in range(self.config.max_lex_variants):
+            instructions.append("lex: <keyword variant>")
+        for _ in range(self.config.max_vec_variants):
+            instructions.append("vec: <natural language question>")
+        for _ in range(self.config.max_hyde_passages):
+            instructions.append("hyde: <hypothetical document passage>")
+
+        total_variants = (
+            self.config.max_lex_variants
+            + self.config.max_vec_variants
+            + self.config.max_hyde_passages
+        )
+
+        return EXPANSION_PROMPT_TEMPLATE.format(
+            query=query,
+            context_line=context_line,
+            total_variants=total_variants,
+            format_instructions="\n".join(instructions),
+        )
+
+    def _parse_response(self, response_text: str) -> list[QueryExpansion]:
+        """Parse LLM response into expansions (reuses OpenRouter's parsing logic)."""
+        expansions = []
+        lines = response_text.strip().split("\n")
+
+        patterns = {
+            ExpansionType.LEX: re.compile(r"^lex:\s*(.+)$", re.IGNORECASE),
+            ExpansionType.VEC: re.compile(r"^vec:\s*(.+)$", re.IGNORECASE),
+            ExpansionType.HYDE: re.compile(r"^hyde:\s*(.+)$", re.IGNORECASE),
+        }
+
+        counts = dict.fromkeys(ExpansionType, 0)
+        limits = {
+            ExpansionType.LEX: self.config.max_lex_variants,
+            ExpansionType.VEC: self.config.max_vec_variants,
+            ExpansionType.HYDE: self.config.max_hyde_passages,
+        }
+
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+
+            for exp_type, pattern in patterns.items():
+                match = pattern.match(line)
+                if match and counts[exp_type] < limits[exp_type]:
+                    text = match.group(1).strip()
+                    if text:
+                        expansions.append(
+                            QueryExpansion(expansion_type=exp_type, text=text, weight=1.0)
+                        )
+                        counts[exp_type] += 1
+                    break
+
+        return expansions
+
+    async def expand(
+        self,
+        query: str,
+        context: str | None = None,
+    ) -> list[QueryExpansion]:
+        """Expand query using local GGUF model."""
+        model = await self._ensure_model()
+        prompt = self._build_prompt(query, context)
+
+        try:
+
+            def _generate() -> str:
+                result = model.create_completion(
+                    prompt,
+                    max_tokens=self.config.max_tokens,
+                    temperature=self.config.temperature,
+                    stop=["\n\n\n"],  # Stop on triple newline
+                )
+                return str(result["choices"][0]["text"])
+
+            response_text = await asyncio.wait_for(
+                asyncio.to_thread(_generate),
+                timeout=self.config.timeout,
+            )
+            return self._parse_response(response_text)
+        except TimeoutError:
+            logger.warning("Local query expansion timed out")
+            return []
+        except Exception as e:
+            logger.warning("Local query expansion failed: %s", e)
+            return []
+
+    async def close(self) -> None:
+        """Unload the model."""
+        self._model = None
+
+
 class SignalDetector:
     """Detects strong BM25 signal to skip unnecessary query expansion.
 
@@ -795,17 +961,21 @@ def create_query_expander(
     Raises:
         ValueError: If provider is not supported
     """
+    from dataclasses import replace
+
     config = config or QueryExpansionConfig()
 
     if model:
-        config.model = model
+        config = replace(config, model=model)
 
     if provider == "openrouter":
         return OpenRouterQueryExpander(config=config, api_key=api_key)
     elif provider == "openai":
         return OpenAIQueryExpander(config=config, api_key=api_key)
+    elif provider == "local":
+        return LocalQueryExpander(config=config)
     else:
-        raise ValueError(f"Unsupported provider: {provider}. Supported: openrouter, openai")
+        raise ValueError(f"Unsupported provider: {provider}. Supported: openrouter, openai, local")
 
 
 async def create_cached_query_expander(

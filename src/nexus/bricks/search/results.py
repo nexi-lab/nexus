@@ -8,7 +8,10 @@ Also provides detect_matched_field() — the canonical 6-field version used by
 ranking.py and bm25s_search.py (Issue #1092, #1499).
 """
 
-from dataclasses import dataclass
+from __future__ import annotations
+
+from dataclasses import dataclass, fields
+from typing import Any, Self
 
 
 @dataclass
@@ -36,6 +39,26 @@ class BaseSearchResult:
     matched_field: str | None = None  # Which field matched (filename, path, content, etc.)
     attribute_boost: float | None = None  # Boost multiplier applied
     original_score: float | None = None  # Score before attribute boosting
+    # QMD pipeline: tracks which expansion generated this result
+    expansion_source: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary using direct field access (3-5x faster than asdict()).
+
+        Replaces ad-hoc _to_dicts() helpers across the codebase.
+        """
+        return {f.name: getattr(self, f.name) for f in fields(self)}
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> Self:
+        """Create from a dictionary, works correctly with subclasses.
+
+        Unknown keys are silently ignored, missing optional fields default to None.
+        Replaces ad-hoc _dict_to_result() helpers across the codebase.
+        """
+        valid_fields = {f.name for f in fields(cls)}
+        filtered = {k: v for k, v in d.items() if k in valid_fields}
+        return cls(**filtered)
 
 
 def detect_matched_field(

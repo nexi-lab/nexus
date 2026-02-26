@@ -56,6 +56,11 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         if _max_indexing is not None:
             _daemon_kwargs["max_indexing_concurrency"] = _max_indexing
 
+        # Merge QMD pipeline flags from environment variables
+        from nexus.bricks.search.daemon import get_pipeline_config_from_env
+
+        _daemon_kwargs.update(get_pipeline_config_from_env())
+
         config = DaemonConfig(**_daemon_kwargs)
 
         # Inject async_session_factory from RecordStoreABC when available

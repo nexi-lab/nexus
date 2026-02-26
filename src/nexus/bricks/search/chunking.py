@@ -43,6 +43,7 @@ class ChunkStrategy(StrEnum):
     FIXED = "fixed"  # Fixed-size chunks
     SEMANTIC = "semantic"  # Semantic chunks (paragraphs/sections)
     OVERLAPPING = "overlapping"  # Overlapping fixed-size chunks
+    SCORED_BREAKPOINT = "scored_breakpoint"  # QMD-inspired scored break-point chunking
 
 
 @dataclass
@@ -265,6 +266,12 @@ class DocumentChunker:
             chunks = self._chunk_semantic(content, file_path)
         elif self.strategy == ChunkStrategy.OVERLAPPING:
             chunks = self._chunk_overlapping(content)
+        elif self.strategy == ChunkStrategy.SCORED_BREAKPOINT:
+            scorer = ScoredBreakPointChunker(
+                chunk_size=self.chunk_size,
+                encoding_name=self.encoding_name,
+            )
+            return scorer.chunk(content, file_path, compute_lines)
         else:
             raise ValueError(f"Unknown chunking strategy: {self.strategy}")
 
@@ -650,6 +657,272 @@ class DocumentChunker:
             # Move forward by step_size
             i += step_size
             current_offset += len(" ".join(words[i - step_size : i])) + 1
+
+        return chunks
+
+
+# =============================================================================
+# QMD-inspired Scored Break-Point Chunker
+# =============================================================================
+
+# Break-point scores for document structure elements
+BREAK_SCORES: dict[str, int] = {
+    "h1": 100,  # # Heading
+    "h2": 90,  # ## Heading
+    "h3": 80,  # ### Heading
+    "code_fence": 80,  # ``` boundary
+    "h4": 70,  # #### Heading
+    "hr": 60,  # ---
+    "paragraph": 20,  # \n\n
+    "list_item": 5,  # - item
+    "newline": 1,  # \n
+}
+
+# Compiled regex patterns for break-point detection
+_BREAK_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("h1", re.compile(r"^# ", re.MULTILINE)),
+    ("h2", re.compile(r"^## ", re.MULTILINE)),
+    ("h3", re.compile(r"^### ", re.MULTILINE)),
+    ("h4", re.compile(r"^#### ", re.MULTILINE)),
+    ("code_fence", re.compile(r"^```", re.MULTILINE)),
+    ("hr", re.compile(r"^---\s*$", re.MULTILINE)),
+    ("list_item", re.compile(r"^[-*+] ", re.MULTILINE)),
+    ("paragraph", re.compile(r"\n\n")),
+]
+
+
+@dataclass
+class _BreakPoint:
+    """A potential break position in a document."""
+
+    offset: int
+    break_type: str
+    score: int
+
+
+class ScoredBreakPointChunker:
+    """QMD-inspired scored break-point chunker for markdown documents.
+
+    Finds optimal chunk boundaries by scoring structural break-points
+    (headings, code fences, paragraphs) and selecting the highest-scoring
+    break near the target chunk size.
+
+    Features:
+    - Break-point scoring: headings > code fences > paragraphs > newlines
+    - Code fence protection: never splits inside code blocks
+    - Distance decay: prefers break-points closer to the target position
+    - Configurable overlap for cross-chunk context
+
+    Reference: tobi/qmd scored break-point algorithm
+    """
+
+    encoding: Any  # tiktoken.Encoding or None
+
+    def __init__(
+        self,
+        chunk_size: int = 1024,
+        overlap_fraction: float = 0.15,
+        window_size: int = 200,
+        decay_factor: float = 0.5,
+        encoding_name: str = "cl100k_base",
+    ):
+        """Initialize scored break-point chunker.
+
+        Args:
+            chunk_size: Target chunk size in tokens
+            overlap_fraction: Fraction of chunk_size for overlap (default: 15%)
+            window_size: Search window (±tokens) around target cut position
+            decay_factor: Distance decay for break-point scoring
+            encoding_name: Tiktoken encoding name
+        """
+        self.chunk_size = chunk_size
+        self.overlap_fraction = overlap_fraction
+        self.overlap_size = int(chunk_size * overlap_fraction)
+        self.window_size = window_size
+        self.decay_factor = decay_factor
+
+        if tiktoken_module is not None:
+            try:
+                self.encoding = tiktoken_module.get_encoding(encoding_name)
+            except Exception:
+                self.encoding = None
+        else:
+            self.encoding = None
+
+    def _count_tokens(self, text: str) -> int:
+        """Count tokens in text."""
+        if self.encoding is not None:
+            return len(self.encoding.encode(text))
+        return len(text) // 4
+
+    def _find_break_points(self, content: str) -> list[_BreakPoint]:
+        """Find all break-points in the document with their scores."""
+        break_points: list[_BreakPoint] = []
+
+        for break_type, pattern in _BREAK_PATTERNS:
+            score = BREAK_SCORES[break_type]
+            for match in pattern.finditer(content):
+                break_points.append(
+                    _BreakPoint(offset=match.start(), break_type=break_type, score=score)
+                )
+
+        # Sort by offset
+        break_points.sort(key=lambda bp: bp.offset)
+        return break_points
+
+    def _find_code_fence_ranges(self, content: str) -> list[tuple[int, int]]:
+        """Find ranges of code blocks (between ``` pairs) to protect from splitting."""
+        ranges: list[tuple[int, int]] = []
+        fence_pattern = re.compile(r"^```", re.MULTILINE)
+        matches = list(fence_pattern.finditer(content))
+
+        # Pair up fences (open, close)
+        i = 0
+        while i + 1 < len(matches):
+            ranges.append((matches[i].start(), matches[i + 1].end()))
+            i += 2
+
+        return ranges
+
+    def _is_inside_code_fence(self, offset: int, fence_ranges: list[tuple[int, int]]) -> bool:
+        """Check if an offset falls inside a code block."""
+        return any(start < offset < end for start, end in fence_ranges)
+
+    def _best_break_near(
+        self,
+        target_offset: int,
+        break_points: list[_BreakPoint],
+        fence_ranges: list[tuple[int, int]],
+        content_len: int,
+    ) -> int:
+        """Find the highest-scoring break-point near the target offset.
+
+        Args:
+            target_offset: Ideal cut position (character offset)
+            break_points: All break-points in the document
+            fence_ranges: Code fence ranges to protect
+            content_len: Total content length
+
+        Returns:
+            Best break offset (falls back to target_offset if no candidates)
+        """
+        # Window in characters (approx: 4 chars per token)
+        window_chars = self.window_size * 4
+        window_start = max(0, target_offset - window_chars)
+        window_end = min(content_len, target_offset + window_chars)
+
+        best_score = -1.0
+        best_offset = target_offset
+
+        for bp in break_points:
+            if bp.offset < window_start:
+                continue
+            if bp.offset > window_end:
+                break
+
+            # Skip break-points inside code blocks
+            if self._is_inside_code_fence(bp.offset, fence_ranges):
+                continue
+
+            # Distance decay: normalized distance from target
+            dist = abs(bp.offset - target_offset)
+            max_dist = window_chars
+            normalized_dist = dist / max_dist if max_dist > 0 else 0.0
+
+            # Score = break_score * (1 - normalized_dist² * decay_factor)
+            final_score = bp.score * (1.0 - (normalized_dist**2) * self.decay_factor)
+
+            if final_score > best_score:
+                best_score = final_score
+                best_offset = bp.offset
+
+        return best_offset
+
+    def chunk(
+        self,
+        content: str,
+        file_path: str = "",  # noqa: ARG002
+        compute_lines: bool = True,
+    ) -> list[DocumentChunk]:
+        """Chunk document using scored break-point algorithm.
+
+        Args:
+            content: Document content to chunk
+            file_path: Path to file (unused, kept for API compat)
+            compute_lines: If True, compute line numbers
+
+        Returns:
+            List of document chunks
+        """
+        if not content.strip():
+            return []
+
+        total_tokens = self._count_tokens(content)
+        if total_tokens <= self.chunk_size:
+            chunk = DocumentChunk(
+                text=content,
+                chunk_index=0,
+                tokens=total_tokens,
+                start_offset=0,
+                end_offset=len(content),
+            )
+            if compute_lines:
+                line_offsets = _build_line_offsets(content)
+                chunk.line_start, chunk.line_end = _compute_line_numbers_fast(
+                    0, len(content), line_offsets
+                )
+            return [chunk]
+
+        # Pre-compute break-points and code fence ranges
+        break_points = self._find_break_points(content)
+        fence_ranges = self._find_code_fence_ranges(content)
+        line_offsets = _build_line_offsets(content) if compute_lines else []
+
+        chunks: list[DocumentChunk] = []
+        current_start = 0
+        chars_per_token = len(content) / max(total_tokens, 1)
+
+        while current_start < len(content):
+            # Estimate target end position
+            target_end = current_start + int(self.chunk_size * chars_per_token)
+            target_end = min(target_end, len(content))
+
+            if target_end >= len(content):
+                # Last chunk: take everything remaining
+                chunk_text = content[current_start:]
+            else:
+                # Find best break-point near target
+                best_break = self._best_break_near(
+                    target_end, break_points, fence_ranges, len(content)
+                )
+                chunk_text = content[current_start:best_break]
+
+            if not chunk_text.strip():
+                break
+
+            chunk_tokens = self._count_tokens(chunk_text)
+            end_offset = current_start + len(chunk_text)
+
+            chunk = DocumentChunk(
+                text=chunk_text,
+                chunk_index=len(chunks),
+                tokens=chunk_tokens,
+                start_offset=current_start,
+                end_offset=end_offset,
+            )
+
+            if compute_lines and line_offsets:
+                chunk.line_start, chunk.line_end = _compute_line_numbers_fast(
+                    current_start, end_offset, line_offsets
+                )
+
+            chunks.append(chunk)
+
+            # Advance with overlap
+            overlap_chars = int(self.overlap_size * chars_per_token)
+            current_start = end_offset - overlap_chars
+            if current_start <= chunks[-1].start_offset:
+                current_start = end_offset  # Prevent infinite loop
 
         return chunks
 

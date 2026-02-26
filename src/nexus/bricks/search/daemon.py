@@ -33,6 +33,7 @@ Issue: #951
 import asyncio
 import contextlib
 import logging
+import re
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
@@ -48,6 +49,18 @@ if TYPE_CHECKING:
     from nexus.bricks.search.indexing import IndexingPipeline
 
 logger = logging.getLogger(__name__)
+
+# Zone prefix pattern: /zone/{zone_id}/rest/of/path
+_ZONE_PREFIX_RE = re.compile(r"^/zone/[^/]+/")
+
+
+def _strip_zone_prefix(path: str) -> str:
+    """Strip the /zone/{zone_id}/ prefix from a virtual path.
+
+    Search results store paths with zone prefix (e.g. /zone/corp/foo.md)
+    but the API returns user-facing paths without it (e.g. /foo.md).
+    """
+    return _ZONE_PREFIX_RE.sub("/", path)
 
 
 @dataclass
@@ -66,6 +79,8 @@ class DaemonStats:
     last_index_refresh: float | None = None
     zoekt_available: bool = False
     embedding_cache_connected: bool = False
+    # QMD pipeline per-stage latencies (last query)
+    pipeline_stage_latencies: dict[str, float] | None = None
 
 
 @dataclass
@@ -108,6 +123,21 @@ class DaemonConfig:
     entropy_filtering: bool = False
     entropy_threshold: float = 0.35  # SimpleMem's τ_redundant
     entropy_alpha: float = 0.5  # Balance entity vs semantic novelty
+
+    # Embedding provider for query-time vectors
+    embedding_provider: str = "openai"  # "openai" | "fastembed" | "voyage"
+    embedding_model: str = "text-embedding-3-small"  # must match stored embeddings dim
+
+    # QMD pipeline stages (all optional, all default OFF for backward compat)
+    query_expansion_enabled: bool = False
+    expansion_provider: str = "openrouter"  # "openrouter" | "local"
+    expansion_model: str = "deepseek/deepseek-chat"  # or GGUF path for local
+    reranking_enabled: bool = False
+    reranker_provider: str = "local"  # "local" (sentence-transformers/GGUF)
+    reranker_model: str = "jina-tiny"  # key from RERANKER_MODELS
+    reranking_top_k: int = 30  # max candidates to rerank
+    position_aware_blending: bool = True  # only active when reranking_enabled
+    scored_chunking_enabled: bool = False  # scored break-point chunking
 
 
 class SearchDaemon:
@@ -187,6 +217,14 @@ class SearchDaemon:
         # SPLADE learned sparse retrieval (optional, initialized in startup)
         self._splade: Any = None
 
+        # QMD pipeline components (initialized on startup if enabled)
+        # Runtime flags track whether each stage is actually active.
+        # Config is never mutated — these decouple intent from runtime state.
+        self._reranker: Any = None
+        self._reranking_active = False
+        self._expansion_service: Any = None
+        self._expansion_active = False
+
         # Latency tracking (circular buffer)
         self._latencies: list[float] = []
         self._max_latency_samples = 1000
@@ -224,6 +262,24 @@ class SearchDaemon:
         await self._check_zoekt()
         await self._check_embedding_cache()
 
+        # Initialize embedding provider for query-time vectors
+        try:
+            from nexus.bricks.search.embeddings import create_embedding_provider
+
+            self._embedding_provider = create_embedding_provider(
+                provider=self.config.embedding_provider,
+                model=self.config.embedding_model,
+            )
+            _dim = self._embedding_provider.embedding_dimension()
+            logger.info(
+                "Embedding provider: %s/%s (%dD)",
+                self.config.embedding_provider,
+                self.config.embedding_model,
+                _dim,
+            )
+        except Exception as e:
+            logger.warning("Embedding provider init failed (%s), semantic search disabled", e)
+
         # Initialize entropy-aware chunker if enabled (Issue #1024)
         if self.config.entropy_filtering:
             from nexus.bricks.search.chunking import EntropyAwareChunker
@@ -242,14 +298,66 @@ class SearchDaemon:
         from nexus.bricks.search.chunking import DocumentChunker
         from nexus.bricks.search.indexing import IndexingPipeline as _IP
 
+        # Detect database type from URL or engine dialect for correct bulk insert path
+        _db_url = self.config.database_url or ""
+        _is_pg = "postgresql" in _db_url or "postgres" in _db_url
+        if not _is_pg and self._async_engine is not None:
+            _is_pg = self._async_engine.dialect.name == "postgresql"
+        _db_type = "postgresql" if _is_pg else "sqlite"
+
         self._indexing_pipeline = _IP(
             chunker=DocumentChunker(),
             embedding_provider=self._embedding_provider,
             entropy_chunker=self._entropy_chunker,
+            db_type=_db_type,
             async_session_factory=self._async_session,
             max_concurrency=self.config.max_indexing_concurrency,
             cross_doc_batching=True,
         )
+
+        # QMD pipeline: Initialize reranker if enabled
+        if self.config.reranking_enabled:
+            try:
+                from nexus.bricks.search.mobile_config import RERANKER_MODELS
+                from nexus.bricks.search.mobile_providers import create_reranker_provider
+
+                model_config = RERANKER_MODELS.get(self.config.reranker_model)
+                if model_config:
+                    self._reranker = await create_reranker_provider(model_config)
+                    self._reranking_active = True
+                    logger.info("Reranker loaded: %s", self.config.reranker_model)
+                else:
+                    logger.warning(
+                        "Unknown reranker model: %s, disabling", self.config.reranker_model
+                    )
+            except Exception as e:
+                logger.warning("Reranker init failed (%s), disabling reranking", e)
+
+        # QMD pipeline: Initialize query expansion if enabled
+        if self.config.query_expansion_enabled:
+            try:
+                from nexus.bricks.search.query_expansion import (
+                    QueryExpansionConfig,
+                    create_query_expansion_service,
+                )
+
+                exp_config = QueryExpansionConfig(
+                    provider=self.config.expansion_provider,
+                    model=self.config.expansion_model,
+                )
+                self._expansion_service = create_query_expansion_service(
+                    provider=self.config.expansion_provider,
+                    model=self.config.expansion_model,
+                    config=exp_config,
+                )
+                self._expansion_active = True
+                logger.info(
+                    "Query expansion enabled: provider=%s, model=%s",
+                    self.config.expansion_provider,
+                    self.config.expansion_model,
+                )
+            except Exception as e:
+                logger.warning("Query expansion init failed (%s), disabling", e)
 
         # Start index refresh background task
         if self.config.refresh_enabled:
@@ -569,35 +677,45 @@ class SearchDaemon:
             from sqlalchemy import text
 
             async with self._async_session() as session:
-                sql = text("""
+                # asyncpg cannot infer pgvector parameter types (CAST/::halfvec)
+                # or NULL parameter types. Build SQL dynamically to avoid both
+                # issues. Vector literal and path filter are safe to interpolate
+                # (floats from our model, path from internal code).
+                vec_literal = "[" + ",".join(str(v) for v in embedding) + "]"
+
+                # Build WHERE clauses dynamically to avoid asyncpg NULL
+                # parameter type inference issues.
+                where_clauses = ["c.embedding IS NOT NULL"]
+                params: dict[str, Any] = {"limit": limit}
+
+                if path_filter:
+                    where_clauses.append("fp.virtual_path LIKE :path_pattern")
+                    params["path_pattern"] = f"{path_filter}%"
+
+                if zone_id and zone_id != "root":
+                    where_clauses.append("fp.zone_id = :zone_id")
+                    params["zone_id"] = zone_id
+
+                where_sql = " AND ".join(where_clauses)
+
+                sql = text(f"""
                     SELECT
                         c.chunk_index, c.chunk_text,
                         c.start_offset, c.end_offset, c.line_start, c.line_end,
                         fp.virtual_path,
-                        1 - (c.embedding <=> CAST(:embedding AS halfvec)) as score
+                        1 - (c.embedding <=> '{vec_literal}'::halfvec) as score
                     FROM document_chunks c
                     JOIN file_paths fp ON c.path_id = fp.path_id
-                    WHERE c.embedding IS NOT NULL
-                      AND (:path_filter IS NULL OR fp.virtual_path LIKE :path_pattern)
-                      AND (:zone_id IS NULL OR fp.zone_id = :zone_id)
-                    ORDER BY c.embedding <=> CAST(:embedding AS halfvec)
+                    WHERE {where_sql}
+                    ORDER BY c.embedding <=> '{vec_literal}'::halfvec
                     LIMIT :limit
                 """)
 
-                result = await session.execute(
-                    sql,
-                    {
-                        "embedding": embedding,
-                        "limit": limit,
-                        "path_filter": path_filter,
-                        "path_pattern": f"{path_filter}%" if path_filter else None,
-                        "zone_id": zone_id,
-                    },
-                )
+                result = await session.execute(sql, params)
 
                 return [
                     SearchResult(
-                        path=row.virtual_path,
+                        path=_strip_zone_prefix(row.virtual_path),
                         chunk_index=row.chunk_index,
                         chunk_text=row.chunk_text,
                         score=float(row.score),
@@ -628,7 +746,7 @@ class SearchDaemon:
             results = await self._splade.search(query=query, limit=limit, path_filter=path_filter)
             return [
                 SearchResult(
-                    path=r.path,
+                    path=_strip_zone_prefix(r.path),
                     chunk_index=r.chunk_index,
                     chunk_text=r.chunk_text,
                     score=r.score,
@@ -652,7 +770,12 @@ class SearchDaemon:
     ) -> list[SearchResult]:
         """Hybrid search combining keyword, semantic, and optionally SPLADE results.
 
-        Pipeline: BM25 + Dense + SPLADE(optional) -> N-way RRF -> results
+        QMD-inspired pipeline:
+        1. [Optional] Query expansion with strong signal detection
+        2. Parallel keyword + semantic + SPLADE(optional) retrieval
+        3. N-way weighted RRF fusion (or standard 2-way for backward compat)
+        4. [Optional] Cross-encoder reranking
+        5. [Optional] Position-aware blending
         """
         from nexus.bricks.search.fusion import (
             FusionConfig,
@@ -661,72 +784,112 @@ class SearchDaemon:
             rrf_multi_fusion,
         )
 
-        def _to_dicts(results: list[SearchResult]) -> list[dict[str, Any]]:
-            return [
-                {
-                    "path": r.path,
-                    "chunk_index": r.chunk_index,
-                    "chunk_text": r.chunk_text,
-                    "score": r.score,
-                    "start_offset": r.start_offset,
-                    "end_offset": r.end_offset,
-                    "line_start": r.line_start,
-                    "line_end": r.line_end,
-                }
-                for r in results
-            ]
+        timings: dict[str, float] = {}
+        over_fetch = limit * 3
 
-        # Run all retrieval backends in parallel
-        tasks: list[asyncio.Task] = [
+        # Stage 1: Query expansion (if enabled)
+        expansion_queries: list[Any] = []
+        if self._expansion_active and self._expansion_service:
+            t0 = time.perf_counter()
+            try:
+                # Quick BM25 probe for strong signal detection
+                probe_results = await self._keyword_search(query, 5, path_filter, zone_id=zone_id)
+                probe_dicts = [r.to_dict() for r in probe_results]
+
+                expansion_result = await self._expansion_service.expand_if_needed(
+                    query, initial_results=probe_dicts
+                )
+                if expansion_result.was_expanded:
+                    expansion_queries = expansion_result.expansions
+            except Exception as e:
+                logger.warning("Query expansion failed (%s), continuing without", e)
+            timings["expansion_ms"] = (time.perf_counter() - t0) * 1000
+
+        # Stage 2: Parallel retrieval (keyword + semantic + optional SPLADE)
+        t0 = time.perf_counter()
+        tasks: list[asyncio.Task[Any]] = [
             asyncio.ensure_future(
-                self._keyword_search(query, limit * 3, path_filter, zone_id=zone_id)
+                self._keyword_search(query, over_fetch, path_filter, zone_id=zone_id)
             ),
             asyncio.ensure_future(
-                self._semantic_search(query, limit * 3, path_filter, zone_id=zone_id)
+                self._semantic_search(query, over_fetch, path_filter, zone_id=zone_id)
             ),
         ]
         has_splade = self._splade is not None
         if has_splade:
-            tasks.append(asyncio.ensure_future(self._splade_search(query, limit * 3, path_filter)))
+            tasks.append(asyncio.ensure_future(self._splade_search(query, over_fetch, path_filter)))
 
         raw_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Handle errors
+        # Handle errors gracefully
         kw_results: list[SearchResult] = []
         sem_results: list[SearchResult] = []
         splade_results: list[SearchResult] = []
 
         if isinstance(raw_results[0], BaseException):
-            logger.warning(f"Keyword search failed: {raw_results[0]}")
+            logger.warning("Keyword search failed: %s", raw_results[0])
         else:
             kw_results = raw_results[0]
         if isinstance(raw_results[1], BaseException):
-            logger.warning(f"Semantic search failed: {raw_results[1]}")
+            logger.warning("Semantic search failed: %s", raw_results[1])
         else:
             sem_results = raw_results[1]
         if has_splade and len(raw_results) > 2:
             if isinstance(raw_results[2], BaseException):
-                logger.warning(f"SPLADE search failed: {raw_results[2]}")
+                logger.warning("SPLADE search failed: %s", raw_results[2])
             else:
                 splade_results = raw_results[2]
 
-        keyword_dicts = _to_dicts(kw_results)
-        semantic_dicts = _to_dicts(sem_results)
-        splade_dicts = _to_dicts(splade_results)
+        timings["retrieval_ms"] = (time.perf_counter() - t0) * 1000
 
-        # Use N-way RRF when SPLADE is available, else standard 2-way fusion
-        if splade_dicts:
+        # Convert to dicts for fusion (DRY: uses BaseSearchResult.to_dict())
+        keyword_dicts = [r.to_dict() for r in kw_results]
+        semantic_dicts = [r.to_dict() for r in sem_results]
+        splade_dicts = [r.to_dict() for r in splade_results]
+
+        # Stage 3: Fusion
+        t0 = time.perf_counter()
+        if expansion_queries or splade_dicts:
+            # N-way weighted RRF: original queries weighted 2.0, expanded 1.0
+            retrieval_sources: list[tuple[str, list[dict[str, Any]], float]] = [
+                ("keyword_orig", keyword_dicts, 2.0),
+                ("vector_orig", semantic_dicts, 2.0),
+            ]
+
+            # Include SPLADE results if available
+            if splade_dicts:
+                retrieval_sources.append(("splade", splade_dicts, 1.5))
+
+            # Retrieve for each expanded query
+            if expansion_queries:
+                from nexus.bricks.search.query_expansion import ExpansionType
+
+                for exp in expansion_queries:
+                    try:
+                        if exp.expansion_type == ExpansionType.LEX:
+                            exp_results = await self._keyword_search(
+                                exp.text, over_fetch, path_filter
+                            )
+                            exp_dicts = [r.to_dict() for r in exp_results]
+                            retrieval_sources.append(("keyword_exp", exp_dicts, 1.0))
+                        elif exp.expansion_type in (ExpansionType.VEC, ExpansionType.HYDE):
+                            exp_results = await self._semantic_search(
+                                exp.text, over_fetch, path_filter
+                            )
+                            exp_dicts = [r.to_dict() for r in exp_results]
+                            retrieval_sources.append(("vector_exp", exp_dicts, 1.0))
+                    except Exception as e:
+                        logger.warning("Expanded query retrieval failed (%s)", e)
+
             fused = rrf_multi_fusion(
-                [
-                    ("keyword", keyword_dicts),
-                    ("vector", semantic_dicts),
-                    ("splade", splade_dicts),
-                ],
+                retrieval_sources,
                 k=60,
                 limit=limit,
                 id_key=None,
+                top_rank_bonus=bool(expansion_queries),
             )
         else:
+            # Standard 2-way fusion (backward compat)
             config = FusionConfig(
                 method=FusionMethod(fusion_method),
                 alpha=alpha,
@@ -740,24 +903,71 @@ class SearchDaemon:
                 id_key=None,
             )
 
-        # Convert back to SearchResult
-        return [
-            SearchResult(
-                path=r["path"],
-                chunk_index=r["chunk_index"],
-                chunk_text=r["chunk_text"],
-                score=r["score"],
-                start_offset=r.get("start_offset"),
-                end_offset=r.get("end_offset"),
-                line_start=r.get("line_start"),
-                line_end=r.get("line_end"),
-                keyword_score=r.get("keyword_score"),
-                vector_score=r.get("vector_score"),
-                splade_score=r.get("splade_score"),
-                search_type="hybrid",
-            )
-            for r in fused
-        ]
+        timings["fusion_ms"] = (time.perf_counter() - t0) * 1000
+
+        # Stage 4: Reranking + position-aware blending
+        if self._reranking_active and self._reranker:
+            t0 = time.perf_counter()
+            fused, reranker_scores = await self._rerank_results(fused, query)
+            if self.config.position_aware_blending and reranker_scores:
+                from nexus.bricks.search.fusion import position_aware_blend
+
+                fused = position_aware_blend(fused, reranker_scores, id_key=None)
+            timings["reranking_ms"] = (time.perf_counter() - t0) * 1000
+
+        # Log pipeline timings
+        if timings:
+            self.stats.pipeline_stage_latencies = timings
+            logger.info("[PIPELINE] %s", timings)
+
+        # Convert back to SearchResult (DRY: uses from_dict())
+        results: list[SearchResult] = []
+        for r in fused:
+            r["search_type"] = "hybrid"
+            result = SearchResult.from_dict(r)
+            results.append(result)
+        return results
+
+    async def _rerank_results(
+        self,
+        results: list[dict[str, Any]],
+        query: str,
+    ) -> tuple[list[dict[str, Any]], dict[str, float]]:
+        """Cross-encoder reranking of top candidates.
+
+        Returns copies — never mutates the input results.
+        Tail results beyond reranking_top_k are preserved in original order.
+
+        Args:
+            results: Fused results to rerank
+            query: Original query text
+
+        Returns:
+            Tuple of (reranked candidates + tail, scores dict keyed by result ID)
+        """
+        from nexus.bricks.search.fusion import _get_result_key
+
+        if not self._reranker or not results:
+            return results, {}
+
+        top_k = self.config.reranking_top_k
+        candidates = results[:top_k]
+        tail = results[top_k:]
+        documents = [r.get("chunk_text", "") for r in candidates]
+
+        try:
+            ranked = await self._reranker.rerank(query, documents, top_k=len(documents))
+            # ranked: list[tuple[int, float]] — (original_index, score)
+
+            reranker_scores: dict[str, float] = {}
+            for orig_idx, score in ranked:
+                key = _get_result_key(candidates[orig_idx], id_key=None)
+                reranker_scores[key] = score
+
+            return candidates + tail, reranker_scores
+        except Exception as e:
+            logger.warning("Reranking failed (%s), returning unranked results", e)
+            return results, {}
 
     async def _search_zoekt(
         self,
@@ -779,7 +989,7 @@ class SearchDaemon:
 
             return [
                 SearchResult(
-                    path=match.file,
+                    path=_strip_zone_prefix(match.file),
                     chunk_index=0,
                     chunk_text=match.content,
                     score=match.score or 1.0,
@@ -814,7 +1024,7 @@ class SearchDaemon:
 
             return [
                 SearchResult(
-                    path=r.path,
+                    path=_strip_zone_prefix(r.path),
                     chunk_index=0,
                     chunk_text=r.content_preview,
                     score=r.score,
@@ -871,7 +1081,7 @@ class SearchDaemon:
 
                 return [
                     SearchResult(
-                        path=row.virtual_path,
+                        path=_strip_zone_prefix(row.virtual_path),
                         chunk_index=row.chunk_index,
                         chunk_text=row.chunk_text,
                         score=float(row.score),
@@ -1016,6 +1226,15 @@ class SearchDaemon:
             )
             self.stats.bm25_documents = corpus_len + delta_len
 
+        # Also generate embeddings for newly indexed documents (decoupled from BM25)
+        if indexed_count > 0 and self._indexing_pipeline and self._embedding_provider:
+            try:
+                embedded = await self.bulk_embed_from_bm25s(batch_size=indexed_count)
+                if embedded > 0:
+                    logger.info("[DAEMON] Embedded %d documents after refresh", embedded)
+            except Exception as e:
+                logger.warning("Embedding after refresh failed: %s", e)
+
     # =========================================================================
     # Bulk Embedding (decoupled from BM25)
     # =========================================================================
@@ -1063,7 +1282,7 @@ class SearchDaemon:
         # Step 1: Build deterministic UUID5 path_ids for each virtual path
         ns = uuid.UUID("12345678-1234-5678-1234-567812345678")
         path_id_map: dict[str, str] = {}
-        now = datetime.utcnow()
+        now = datetime.utcnow()  # noqa: DTZ003 — column is timestamp without time zone
 
         unique_vpaths: list[str] = []
         for i in range(total):
@@ -1101,8 +1320,11 @@ class SearchDaemon:
                     pid = path_id_map[vpath]
                     await session.execute(
                         text(
-                            "INSERT INTO file_paths (path_id, virtual_path, zone_id, created_at, updated_at) "
-                            "VALUES (:pid, :vpath, 'default', :now, :now) "
+                            "INSERT INTO file_paths "
+                            "(path_id, virtual_path, zone_id, backend_id, physical_path, "
+                            " size_bytes, current_version, created_at, updated_at) "
+                            "VALUES (:pid, :vpath, 'default', 'local', :vpath, "
+                            " 0, 1, :now, :now) "
                             "ON CONFLICT (path_id) DO NOTHING"
                         ),
                         {"pid": pid, "vpath": vpath, "now": now},
@@ -1124,7 +1346,7 @@ class SearchDaemon:
             batch = docs_to_embed[batch_start : batch_start + batch_size]
             try:
                 await self._indexing_pipeline.index_documents(
-                    [(path_id, vpath, content) for vpath, content, path_id in batch]
+                    [(vpath, content, path_id) for vpath, content, path_id in batch]
                 )
                 embedded += len(batch)
                 if batch_start % (batch_size * 5) == 0:
@@ -1134,6 +1356,136 @@ class SearchDaemon:
 
         logger.info(f"[BULK-EMBED] Complete: {embedded}/{len(docs_to_embed)} documents embedded")
         return embedded
+
+    # =========================================================================
+    # Index Maintenance (purge + rebuild)
+    # =========================================================================
+
+    async def purge_by_prefix(self, path_prefix: str) -> dict[str, int]:
+        """Delete all search data matching a path prefix.
+
+        Removes entries from document_chunks, file_paths, and BM25S index
+        for any path starting with the given prefix. Production use cases:
+        - Workspace/folder deletion cleanup
+        - Stale test data removal
+        - Zone teardown
+
+        Args:
+            path_prefix: Path prefix to match (e.g. "/test-search/" or "/workspace/123/")
+
+        Returns:
+            Dict with counts: chunks_deleted, paths_deleted, bm25s_deleted
+        """
+        from sqlalchemy import text
+
+        result = {"chunks_deleted": 0, "paths_deleted": 0, "bm25s_deleted": 0}
+
+        if not path_prefix or not self._async_session:
+            return result
+
+        # Also match zone-prefixed paths: /zone/*/prefix
+        zone_pattern = f"/zone/%{path_prefix}%"
+        plain_pattern = f"{path_prefix}%"
+
+        async with self._async_session() as session:
+            # Delete chunks first (FK constraint)
+            r = await session.execute(
+                text(
+                    "DELETE FROM document_chunks WHERE path_id IN ("
+                    "  SELECT path_id FROM file_paths"
+                    "  WHERE virtual_path LIKE :plain OR virtual_path LIKE :zone"
+                    ")"
+                ),
+                {"plain": plain_pattern, "zone": zone_pattern},
+            )
+            result["chunks_deleted"] = r.rowcount or 0
+
+            # Delete file_paths
+            r = await session.execute(
+                text(
+                    "DELETE FROM file_paths"
+                    " WHERE virtual_path LIKE :plain OR virtual_path LIKE :zone"
+                ),
+                {"plain": plain_pattern, "zone": zone_pattern},
+            )
+            result["paths_deleted"] = r.rowcount or 0
+            await session.commit()
+
+        # Rebuild BM25S from DB (batch approach — avoids O(n²) per-item rebuild)
+        if self._bm25s_index:
+            old_stats = await self._bm25s_index.get_stats()
+            old_count = old_stats.get("total_documents", 0)
+            await self.rebuild_bm25s_from_db()
+            new_stats = await self._bm25s_index.get_stats()
+            new_count = new_stats.get("total_documents", 0)
+            result["bm25s_deleted"] = max(0, old_count - new_count)
+
+        logger.info(
+            "[PURGE] prefix=%s: %d chunks, %d paths, %d bm25s entries removed",
+            path_prefix,
+            result["chunks_deleted"],
+            result["paths_deleted"],
+            result["bm25s_deleted"],
+        )
+        return result
+
+    async def rebuild_bm25s_from_db(self) -> int:
+        """Rebuild the BM25S index from document_chunks in PostgreSQL.
+
+        Reads all chunk text from the database, groups by file, and
+        re-indexes into BM25S. Use after purge, corruption, or when the
+        on-disk index is lost. Production use cases:
+        - Index recovery after disk loss
+        - Resync BM25S with database after bulk operations
+        - Post-migration reindex
+
+        Returns:
+            Number of documents indexed into BM25S
+        """
+        from sqlalchemy import text
+
+        if not self._bm25s_index or not self._async_session:
+            logger.warning("[REBUILD] BM25S or DB session not available")
+            return 0
+
+        # Clear existing BM25S data
+        await self._bm25s_index.clear()
+
+        # Read all documents from DB, grouped by file
+        async with self._async_session() as session:
+            rows = await session.execute(
+                text(
+                    "SELECT fp.virtual_path, fp.path_id,"
+                    " string_agg(dc.chunk_text, E'\\n\\n' ORDER BY dc.chunk_index) as full_text"
+                    " FROM file_paths fp"
+                    " JOIN document_chunks dc ON dc.path_id = fp.path_id"
+                    " WHERE fp.deleted_at IS NULL"
+                    " GROUP BY fp.virtual_path, fp.path_id"
+                )
+            )
+            docs = rows.fetchall()
+
+        if not docs:
+            logger.info("[REBUILD] No documents found in database")
+            return 0
+
+        # Bulk-index into BM25S
+        indexed = 0
+        for row in docs:
+            vpath, path_id, full_text = row[0], row[1], row[2]
+            if full_text:
+                # Strip zone prefix for consistent BM25S paths
+                clean_path = _strip_zone_prefix(vpath)
+                await self._bm25s_index.index_document(path_id, clean_path, full_text)
+                indexed += 1
+
+        # Merge delta into main index and save
+        await self._bm25s_index.rebuild_index()
+
+        # Update stats
+        self.stats.bm25_documents = indexed
+        logger.info("[REBUILD] BM25S rebuilt from DB: %d documents indexed", indexed)
+        return indexed
 
     # =========================================================================
     # Statistics
@@ -1182,6 +1534,18 @@ class SearchDaemon:
                 "threshold": self.config.entropy_threshold,
                 "alpha": self.config.entropy_alpha,
             },
+            # QMD pipeline configuration (config = intent, active = runtime state)
+            "pipeline": {
+                "query_expansion_enabled": self.config.query_expansion_enabled,
+                "query_expansion_active": self._expansion_active,
+                "expansion_provider": self.config.expansion_provider,
+                "reranking_enabled": self.config.reranking_enabled,
+                "reranking_active": self._reranking_active,
+                "reranker_model": self.config.reranker_model,
+                "position_aware_blending": self.config.position_aware_blending,
+                "scored_chunking_enabled": self.config.scored_chunking_enabled,
+            },
+            "pipeline_stage_latencies": self.stats.pipeline_stage_latencies,
         }
 
     def get_health(self) -> dict[str, Any]:
@@ -1225,3 +1589,58 @@ async def create_and_start_daemon(
     daemon = SearchDaemon(config, async_session_factory=async_session_factory)
     await daemon.startup()
     return daemon
+
+
+def get_pipeline_config_from_env() -> dict[str, Any]:
+    """Read QMD pipeline flags from environment variables.
+
+    Environment variables:
+        NEXUS_SEARCH_EMBEDDING_PROVIDER: "openai" | "fastembed" | "voyage" (default: openai)
+        NEXUS_SEARCH_EMBEDDING_MODEL: Model name (default: text-embedding-3-small)
+        NEXUS_SEARCH_EXPANSION_ENABLED: Enable query expansion (default: false)
+        NEXUS_SEARCH_EXPANSION_PROVIDER: "openrouter" | "local" (default: openrouter)
+        NEXUS_SEARCH_EXPANSION_MODEL: Model name or GGUF path
+        NEXUS_SEARCH_RERANKING_ENABLED: Enable reranking (default: false)
+        NEXUS_SEARCH_RERANKER_MODEL: Key from RERANKER_MODELS (default: jina-tiny)
+        NEXUS_SEARCH_RERANKING_TOP_K: Max candidates to rerank (default: 30)
+        NEXUS_SEARCH_POSITION_BLENDING: Position-aware blending (default: true)
+        NEXUS_SEARCH_SCORED_CHUNKING: Scored break-point chunking (default: false)
+
+    Returns:
+        Dict of pipeline config fields suitable for DaemonConfig(**pipeline_config).
+    """
+    import os
+
+    def _bool(key: str, default: bool) -> bool:
+        val = os.environ.get(key, "").lower()
+        if val in ("true", "1", "yes"):
+            return True
+        if val in ("false", "0", "no"):
+            return False
+        return default
+
+    def _int(key: str, default: int) -> int:
+        val = os.environ.get(key)
+        return int(val) if val else default
+
+    # Default model depends on provider — fastembed needs a fastembed-compatible model
+    _provider = os.environ.get("NEXUS_SEARCH_EMBEDDING_PROVIDER", "openai")
+    _default_model = {
+        "fastembed": "BAAI/bge-small-en-v1.5",
+        "openai": "text-embedding-3-small",
+        "voyage": "voyage-3",
+        "voyage-lite": "voyage-3-lite",
+    }.get(_provider, "text-embedding-3-small")
+
+    return {
+        "embedding_provider": _provider,
+        "embedding_model": os.environ.get("NEXUS_SEARCH_EMBEDDING_MODEL", _default_model),
+        "query_expansion_enabled": _bool("NEXUS_SEARCH_EXPANSION_ENABLED", False),
+        "expansion_provider": os.environ.get("NEXUS_SEARCH_EXPANSION_PROVIDER", "openrouter"),
+        "expansion_model": os.environ.get("NEXUS_SEARCH_EXPANSION_MODEL", "deepseek/deepseek-chat"),
+        "reranking_enabled": _bool("NEXUS_SEARCH_RERANKING_ENABLED", False),
+        "reranker_model": os.environ.get("NEXUS_SEARCH_RERANKER_MODEL", "jina-tiny"),
+        "reranking_top_k": _int("NEXUS_SEARCH_RERANKING_TOP_K", 30),
+        "position_aware_blending": _bool("NEXUS_SEARCH_POSITION_BLENDING", True),
+        "scored_chunking_enabled": _bool("NEXUS_SEARCH_SCORED_CHUNKING", False),
+    }

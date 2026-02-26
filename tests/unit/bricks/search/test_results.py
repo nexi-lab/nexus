@@ -274,3 +274,95 @@ class TestBaseSearchResultMigration:
         assert result.chunk_index == 2
         assert result.line_start == 5
         assert result.line_end == 10
+
+
+# =============================================================================
+# to_dict / from_dict round-trip tests
+# =============================================================================
+
+
+class TestBaseSearchResultSerialization:
+    """Tests for BaseSearchResult.to_dict() and from_dict() round-tripping."""
+
+    def test_to_dict_round_trip(self) -> None:
+        """to_dict() then from_dict() preserves all fields."""
+        original = BaseSearchResult(
+            path="/src/search.py",
+            chunk_text="def search(query): ...",
+            score=0.92,
+            chunk_index=3,
+            start_offset=100,
+            end_offset=250,
+            line_start=10,
+            line_end=20,
+            keyword_score=0.85,
+            vector_score=0.95,
+            splade_score=0.70,
+            reranker_score=0.88,
+            matched_field="content",
+            attribute_boost=2.0,
+            original_score=0.46,
+            expansion_source="vector_exp",
+        )
+
+        d = original.to_dict()
+        restored = BaseSearchResult.from_dict(d)
+
+        # Every field should be preserved
+        assert restored.path == original.path
+        assert restored.chunk_text == original.chunk_text
+        assert restored.score == original.score
+        assert restored.chunk_index == original.chunk_index
+        assert restored.start_offset == original.start_offset
+        assert restored.end_offset == original.end_offset
+        assert restored.line_start == original.line_start
+        assert restored.line_end == original.line_end
+        assert restored.keyword_score == original.keyword_score
+        assert restored.vector_score == original.vector_score
+        assert restored.splade_score == original.splade_score
+        assert restored.reranker_score == original.reranker_score
+        assert restored.matched_field == original.matched_field
+        assert restored.attribute_boost == original.attribute_boost
+        assert restored.original_score == original.original_score
+        assert restored.expansion_source == original.expansion_source
+
+    def test_from_dict_missing_fields(self) -> None:
+        """Missing optional fields default to None (only required fields needed)."""
+        minimal = {
+            "path": "/test.py",
+            "chunk_text": "hello",
+            "score": 0.5,
+        }
+
+        result = BaseSearchResult.from_dict(minimal)
+
+        assert result.path == "/test.py"
+        assert result.chunk_text == "hello"
+        assert result.score == 0.5
+        assert result.chunk_index == 0  # default
+        assert result.start_offset is None
+        assert result.end_offset is None
+        assert result.line_start is None
+        assert result.line_end is None
+        assert result.keyword_score is None
+        assert result.vector_score is None
+        assert result.splade_score is None
+        assert result.reranker_score is None
+        assert result.matched_field is None
+        assert result.attribute_boost is None
+        assert result.original_score is None
+        assert result.expansion_source is None
+
+    def test_from_dict_ignores_unknown_keys(self) -> None:
+        """Unknown keys in the dict are silently ignored."""
+        d = {
+            "path": "/test.py",
+            "chunk_text": "hello",
+            "score": 0.5,
+            "unknown_field": "should be ignored",
+            "another_unknown": 42,
+        }
+
+        result = BaseSearchResult.from_dict(d)
+        assert result.path == "/test.py"
+        assert not hasattr(result, "unknown_field")

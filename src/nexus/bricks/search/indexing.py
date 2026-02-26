@@ -16,7 +16,7 @@ import logging
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import text
@@ -331,7 +331,7 @@ class IndexingPipeline:
     ) -> None:
         """PostgreSQL bulk insert using batched INSERT with unnest."""
         assert self._async_session_factory is not None  # guarded by _bulk_insert
-        now = datetime.now(UTC)
+        now = datetime.utcnow()  # noqa: DTZ003 — column is timestamp without time zone
         embedding_model = (
             self._embedding_provider.__class__.__name__ if self._embedding_provider else None
         )
@@ -354,7 +354,7 @@ class IndexingPipeline:
                     VALUES
                     (:chunk_id, :path_id, :chunk_index, :chunk_text, :chunk_tokens,
                      :start_offset, :end_offset, :line_start, :line_end,
-                     :embedding_model, :embedding::halfvec,
+                     :embedding_model, CAST(:embedding AS halfvec),
                      :chunk_context, :chunk_position, :source_document_id,
                      :created_at)
                 """)
@@ -393,7 +393,10 @@ class IndexingPipeline:
                     "created_at": now,
                 }
                 if embeddings:
-                    params["embedding"] = embeddings[i]
+                    # Convert to string format for pgvector CAST(:embedding AS halfvec)
+                    # asyncpg can't serialize Python lists to halfvec directly
+                    vec = embeddings[i]
+                    params["embedding"] = "[" + ",".join(str(v) for v in vec) + "]"
                 params_list.append(params)
 
             # executemany-style: execute each row (SA text doesn't support executemany directly)
@@ -409,7 +412,7 @@ class IndexingPipeline:
     ) -> None:
         """SQLite bulk insert using executemany."""
         assert self._async_session_factory is not None  # guarded by _bulk_insert
-        now = datetime.now(UTC)
+        now = datetime.utcnow()  # noqa: DTZ003 — column is timestamp without time zone
         embedding_model = (
             self._embedding_provider.__class__.__name__ if self._embedding_provider else None
         )

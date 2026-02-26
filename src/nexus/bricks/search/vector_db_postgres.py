@@ -18,12 +18,15 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 
-def init_postgresql(conn: Any, hnsw_config: Any) -> tuple[bool, bool]:
+def init_postgresql(conn: Any, hnsw_config: Any, embedding_dim: int = 1536) -> tuple[bool, bool]:
     """Initialize PostgreSQL with pgvector and pg_textsearch.
 
     Args:
         conn: Active database connection.
         hnsw_config: HNSWConfig instance for index parameters.
+        embedding_dim: Dimension of the embedding vectors (must match
+            the embedding provider, e.g. 384 for fastembed/bge-small,
+            1536 for OpenAI text-embedding-3-small).
 
     Returns:
         Tuple of (vec_available, bm25_available).
@@ -70,7 +73,9 @@ def init_postgresql(conn: Any, hnsw_config: Any) -> tuple[bool, bool]:
     # Add embedding column if pgvector available
     if vec_available:
         try:
-            conn.execute(text("ALTER TABLE document_chunks ADD COLUMN embedding halfvec(1536)"))
+            conn.execute(
+                text(f"ALTER TABLE document_chunks ADD COLUMN embedding halfvec({embedding_dim})")
+            )
             conn.commit()
         except (OperationalError, ProgrammingError):
             conn.rollback()

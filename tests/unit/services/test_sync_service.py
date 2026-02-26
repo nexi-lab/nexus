@@ -35,12 +35,20 @@ def mock_gateway():
     gw.session_factory = None
     gw.list_mounts.return_value = []
 
-    # Router mock
+    # record_store and is_postgresql for ChangeLogStore init
+    gw.record_store = MagicMock()
+    gw.record_store.session_factory = None
+    gw.is_postgresql = False
+
+    # Router mock — source uses has_mount() + route(), not get_mount()
     mount_info = MagicMock()
     mount_info.backend = MagicMock()
     mount_info.backend.name = "test_backend"
     mount_info.backend.list_dir = MagicMock(return_value=[])
     gw.router = MagicMock()
+    gw.router.has_mount.return_value = True
+    gw.router.route.return_value = mount_info
+    # Keep get_mount for backward compat (used in _sync_all_mounts path)
     gw.router.get_mount.return_value = mount_info
 
     return gw
@@ -174,7 +182,7 @@ class TestSyncMount:
 
     def test_sync_mount_validates_mount_exists(self, sync_service, mock_gateway):
         """sync_mount raises ValueError if mount not found."""
-        mock_gateway.router.get_mount.return_value = None
+        mock_gateway.router.has_mount.return_value = False
 
         ctx = SyncContext(mount_point="/mnt/nonexistent", recursive=True)
         with pytest.raises(ValueError, match="Mount not found"):
@@ -184,7 +192,7 @@ class TestSyncMount:
         """sync_mount raises RuntimeError if backend has no list_dir."""
         mount = MagicMock()
         mount.backend = MagicMock(spec=[])  # spec=[] means no attributes
-        mock_gateway.router.get_mount.return_value = mount
+        mock_gateway.router.route.return_value = mount
 
         ctx = SyncContext(mount_point="/mnt/test", recursive=True)
         with pytest.raises(RuntimeError, match="does not support metadata sync"):
@@ -192,7 +200,7 @@ class TestSyncMount:
 
     def test_sync_mount_with_files_from_backend(self, sync_service, sync_context, mock_gateway):
         """sync_mount creates metadata for files found in backend."""
-        mount = mock_gateway.router.get_mount.return_value
+        mount = mock_gateway.router.route.return_value
         backend = mount.backend
         backend.list_dir.return_value = ["file1.txt", "file2.txt"]
 
@@ -207,7 +215,7 @@ class TestSyncMount:
 
     def test_sync_mount_skips_existing_files(self, sync_service, sync_context, mock_gateway):
         """sync_mount does not recreate metadata for existing files."""
-        mount = mock_gateway.router.get_mount.return_value
+        mount = mock_gateway.router.route.return_value
         backend = mount.backend
         backend.list_dir.return_value = ["existing.txt"]
 
@@ -221,7 +229,7 @@ class TestSyncMount:
 
     def test_sync_mount_handles_directories(self, sync_service, sync_context, mock_gateway):
         """sync_mount recurses into directories when recursive=True."""
-        mount = mock_gateway.router.get_mount.return_value
+        mount = mock_gateway.router.route.return_value
         backend = mount.backend
 
         # First call returns a directory, second call returns files in that directory
@@ -241,7 +249,7 @@ class TestSyncMount:
 
     def test_sync_mount_non_recursive(self, sync_service, mock_gateway):
         """sync_mount with recursive=False does not traverse subdirectories."""
-        mount = mock_gateway.router.get_mount.return_value
+        mount = mock_gateway.router.route.return_value
         backend = mount.backend
         backend.list_dir.return_value = ["subdir/", "file.txt"]
 
@@ -267,7 +275,7 @@ class TestSyncMountDryRun:
 
     def test_dry_run_does_not_create_metadata(self, sync_service, mock_gateway):
         """Dry run scans but does not write metadata."""
-        mount = mock_gateway.router.get_mount.return_value
+        mount = mock_gateway.router.route.return_value
         backend = mount.backend
         backend.list_dir.return_value = ["file1.txt", "file2.txt"]
 
@@ -286,7 +294,7 @@ class TestSyncMountDryRun:
 
     def test_dry_run_does_not_delete_metadata(self, sync_service, mock_gateway):
         """Dry run does not delete files no longer in backend."""
-        mount = mock_gateway.router.get_mount.return_value
+        mount = mock_gateway.router.route.return_value
         backend = mount.backend
         backend.list_dir.return_value = []
 
@@ -308,7 +316,7 @@ class TestSyncMountDryRun:
 
     def test_dry_run_does_not_sync_content(self, sync_service, mock_gateway):
         """Dry run does not sync content even if sync_content=True."""
-        mount = mock_gateway.router.get_mount.return_value
+        mount = mock_gateway.router.route.return_value
         backend = mount.backend
         backend.list_dir.return_value = []
         backend.sync_content_to_cache = MagicMock()
@@ -476,7 +484,7 @@ class TestSyncErrorHandling:
 
     def test_backend_list_dir_failure_records_error(self, sync_service, mock_gateway):
         """Errors from backend.list_dir are captured in result.errors."""
-        mount = mock_gateway.router.get_mount.return_value
+        mount = mock_gateway.router.route.return_value
         backend = mount.backend
         backend.list_dir.side_effect = OSError("Connection failed")
 
@@ -493,7 +501,7 @@ class TestSyncErrorHandling:
 
     def test_metadata_put_failure_records_error(self, sync_service, mock_gateway):
         """Errors from metadata_put are captured in result.errors."""
-        mount = mock_gateway.router.get_mount.return_value
+        mount = mock_gateway.router.route.return_value
         backend = mount.backend
         backend.list_dir.return_value = ["file.txt"]
         mock_gateway.metadata_put.side_effect = RuntimeError("DB write failed")
@@ -542,10 +550,10 @@ class TestSyncAllMounts:
             },
         ]
 
-        # Ensure get_mount works for the connector mount
+        # Ensure route() works for the connector mount
         mount_info = MagicMock()
         mount_info.backend = connector_backend
-        mock_gateway.router.get_mount.return_value = mount_info
+        mock_gateway.router.route.return_value = mount_info
 
         ctx = SyncContext(mount_point=None, recursive=True)
         result = sync_service.sync_mount(ctx)
@@ -569,7 +577,7 @@ class TestSyncAllMounts:
 
         mount_info = MagicMock()
         mount_info.backend = connector_backend
-        mock_gateway.router.get_mount.return_value = mount_info
+        mock_gateway.router.route.return_value = mount_info
 
         ctx = SyncContext(mount_point=None, recursive=True)
         result = sync_service.sync_mount(ctx)

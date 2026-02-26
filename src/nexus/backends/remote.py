@@ -61,6 +61,11 @@ class RemoteBackend(ObjectStoreABC):
         connect_timeout: Connection timeout in seconds.
     """
 
+    # Expose EXTERNAL_CONTENT so the client-side kernel takes the dynamic
+    # connector path in sys_read (bypassing local metadata/CAS lookup).
+    # The server knows the actual backend type and handles reads correctly.
+    capabilities: frozenset[str] = frozenset({"external_content"})
+
     def __init__(
         self,
         server_url: str,

@@ -211,9 +211,9 @@ class TestSyncDelegationOverhead:
         benchmark(mock_nexus_fs.skill_service.rpc_get_prompt_context, 50, context)
 
     def test_search_list_delegation(self, benchmark, mock_nexus_fs, context):
-        """Benchmark list() delegation to SearchService."""
+        """Benchmark sys_readdir() delegation to SearchService."""
         benchmark(
-            mock_nexus_fs.list,
+            mock_nexus_fs.sys_readdir,
             "/data",
             True,
             False,

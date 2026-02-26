@@ -28,28 +28,28 @@ class TestGetattr:
         mock_cache.get_attr.assert_called_with("/file.txt")
 
     def test_root_returns_dir_attrs(self, fuse_ops: Any, mock_nexus_fs: MagicMock) -> None:
-        mock_nexus_fs.is_directory.return_value = True
+        mock_nexus_fs.sys_is_directory.return_value = True
         result = fuse_ops.getattr("/")
         assert result["st_mode"] & stat.S_IFDIR
 
     def test_directory_returns_dir_attrs(self, fuse_ops: Any, mock_nexus_fs: MagicMock) -> None:
-        mock_nexus_fs.is_directory.return_value = True
-        mock_nexus_fs.get_metadata.return_value = None
+        mock_nexus_fs.sys_is_directory.return_value = True
+        mock_nexus_fs.sys_stat.return_value = None
         result = fuse_ops.getattr("/mydir")
         assert result["st_mode"] & stat.S_IFDIR
 
     def test_file_returns_file_attrs(self, fuse_ops: Any, mock_nexus_fs: MagicMock) -> None:
-        mock_nexus_fs.is_directory.return_value = False
-        mock_nexus_fs.exists.return_value = True
-        mock_nexus_fs.get_metadata.return_value = {"size": 1024}
+        mock_nexus_fs.sys_is_directory.return_value = False
+        mock_nexus_fs.sys_access.return_value = True
+        mock_nexus_fs.sys_stat.return_value = {"size": 1024}
 
         result = fuse_ops.getattr("/data.bin")
         assert result["st_mode"] & stat.S_IFREG
         assert result["st_size"] == 1024
 
     def test_missing_file_raises_enoent(self, fuse_ops: Any, mock_nexus_fs: MagicMock) -> None:
-        mock_nexus_fs.is_directory.return_value = False
-        mock_nexus_fs.exists.return_value = False
+        mock_nexus_fs.sys_is_directory.return_value = False
+        mock_nexus_fs.sys_access.return_value = False
 
         with pytest.raises(FuseOSError) as exc_info:
             fuse_ops.getattr("/nope")
@@ -64,7 +64,7 @@ class TestReaddir:
     """readdir: directory listing with caching and virtual views."""
 
     def test_basic_listing(self, fuse_ops: Any, mock_nexus_fs: MagicMock) -> None:
-        mock_nexus_fs.list.return_value = [
+        mock_nexus_fs.sys_readdir.return_value = [
             {"path": "/dir/file1.txt", "is_directory": False, "size": 10},
             {"path": "/dir/file2.txt", "is_directory": False, "size": 20},
         ]
@@ -76,12 +76,12 @@ class TestReaddir:
         assert "file2.txt" in entries
 
     def test_root_includes_raw(self, fuse_ops: Any, mock_nexus_fs: MagicMock) -> None:
-        mock_nexus_fs.list.return_value = []
+        mock_nexus_fs.sys_readdir.return_value = []
         entries = fuse_ops.readdir("/")
         assert ".raw" in entries
 
     def test_os_metadata_filtered(self, fuse_ops: Any, mock_nexus_fs: MagicMock) -> None:
-        mock_nexus_fs.list.return_value = [
+        mock_nexus_fs.sys_readdir.return_value = [
             {"path": "/dir/.DS_Store", "is_directory": False, "size": 0},
             {"path": "/dir/real.txt", "is_directory": False, "size": 10},
         ]
@@ -97,7 +97,7 @@ class TestReaddir:
 
         entries = fuse_ops.readdir("/cached")
         assert entries == [".", "..", "a.txt"]
-        mock_nexus_fs.list.assert_not_called()
+        mock_nexus_fs.sys_readdir.assert_not_called()
 
 
 class TestResolveFileSize:
@@ -234,7 +234,7 @@ class TestResolveFileSize:
 
         handler._resolve_file_size("/report.xlsx", None, "md")
 
-        mock_nexus_fs.read.assert_not_called()
+        mock_nexus_fs.sys_read.assert_not_called()
 
 
 class TestCacheGetParsedSize:

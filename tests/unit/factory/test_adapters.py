@@ -12,13 +12,13 @@ class TestNexusFSFileReader:
 
     def test_read_text_bytes_decoded(self) -> None:
         nx = MagicMock()
-        nx.read.return_value = b"hello world"
+        nx.sys_read.return_value = b"hello world"
         reader = _NexusFSFileReader(nx)
         assert reader.read_text("/test.txt") == "hello world"
 
     def test_read_text_string_passthrough(self) -> None:
         nx = MagicMock()
-        nx.read.return_value = "hello world"
+        nx.sys_read.return_value = "hello world"
         reader = _NexusFSFileReader(nx)
         assert reader.read_text("/test.txt") == "hello world"
 
@@ -63,13 +63,13 @@ class TestNexusFSFileReader:
         nx = MagicMock()
         mock_result = MagicMock()
         mock_result.items = ["/a.txt", "/b.txt"]
-        nx.list.return_value = mock_result
+        nx.sys_readdir.return_value = mock_result
         reader = _NexusFSFileReader(nx)
         assert reader.list_files("/") == ["/a.txt", "/b.txt"]
 
     def test_list_files_list_fallback(self) -> None:
         nx = MagicMock()
-        nx.list.return_value = ["/a.txt", "/b.txt"]
+        nx.sys_readdir.return_value = ["/a.txt", "/b.txt"]
         reader = _NexusFSFileReader(nx)
         result = reader.list_files("/")
         assert len(result) >= 2

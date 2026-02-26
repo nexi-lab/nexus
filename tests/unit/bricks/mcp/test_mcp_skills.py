@@ -475,7 +475,7 @@ def test_mcp_exporter_generate_skill_md() -> None:
 def test_mcp_mount_manager_initialization() -> None:
     """Test MCPMountManager initialization."""
     mock_fs = MagicMock()
-    mock_fs.exists.return_value = False
+    mock_fs.sys_access.return_value = False
 
     manager = MCPMountManager(filesystem=mock_fs)
 
@@ -486,7 +486,7 @@ def test_mcp_mount_manager_initialization() -> None:
 def test_mcp_mount_manager_add_mount_config() -> None:
     """Test adding mount configuration without connecting."""
     mock_fs = MagicMock()
-    mock_fs.exists.return_value = False
+    mock_fs.sys_access.return_value = False
 
     manager = MCPMountManager(filesystem=mock_fs)
 
@@ -507,7 +507,7 @@ def test_mcp_mount_manager_add_mount_config() -> None:
 def test_mcp_mount_manager_list_mounts() -> None:
     """Test listing mount configurations."""
     mock_fs = MagicMock()
-    mock_fs.exists.return_value = False
+    mock_fs.sys_access.return_value = False
 
     manager = MCPMountManager(filesystem=mock_fs)
 
@@ -529,7 +529,7 @@ def test_mcp_mount_manager_list_mounts() -> None:
 def test_mcp_mount_manager_get_mount() -> None:
     """Test getting mount by name."""
     mock_fs = MagicMock()
-    mock_fs.exists.return_value = False
+    mock_fs.sys_access.return_value = False
 
     manager = MCPMountManager(filesystem=mock_fs)
 
@@ -547,7 +547,7 @@ def test_mcp_mount_manager_get_mount() -> None:
 def test_mcp_mount_manager_remove_mount() -> None:
     """Test removing mount configuration."""
     mock_fs = MagicMock()
-    mock_fs.exists.return_value = False
+    mock_fs.sys_access.return_value = False
 
     manager = MCPMountManager(filesystem=mock_fs)
 
@@ -567,7 +567,7 @@ def test_mcp_mount_manager_remove_mount() -> None:
 async def test_mcp_mount_manager_mount_validation() -> None:
     """Test mount validation."""
     mock_fs = MagicMock()
-    mock_fs.exists.return_value = False
+    mock_fs.sys_access.return_value = False
 
     manager = MCPMountManager(filesystem=mock_fs)
 
@@ -596,7 +596,7 @@ async def test_mcp_mount_manager_mount_validation() -> None:
 async def test_mcp_mount_manager_unmount_not_found() -> None:
     """Test unmounting non-existent mount."""
     mock_fs = MagicMock()
-    mock_fs.exists.return_value = False
+    mock_fs.sys_access.return_value = False
 
     manager = MCPMountManager(filesystem=mock_fs)
 
@@ -613,8 +613,8 @@ async def test_mcp_mount_manager_unmount_not_found() -> None:
 async def test_mcp_exporter_export_nexus_tools() -> None:
     """Test exporting Nexus tools to filesystem."""
     mock_fs = MagicMock()
-    mock_fs.mkdir = MagicMock()
-    mock_fs.write = MagicMock()
+    mock_fs.sys_mkdir = MagicMock()
+    mock_fs.sys_write = MagicMock()
 
     exporter = MCPToolExporter(filesystem=mock_fs)
 
@@ -624,8 +624,8 @@ async def test_mcp_exporter_export_nexus_tools() -> None:
     # Verify some tools were exported
     assert count > 0
 
-    # Verify mkdir was called for tool directories
-    assert mock_fs.mkdir.call_count > 0
+    # Verify sys_mkdir was called for tool directories
+    assert mock_fs.sys_mkdir.call_count > 0
 
-    # Verify write was called (2 files per tool: tool.json and SKILL.md)
-    assert mock_fs.write.call_count == count * 2
+    # Verify sys_write was called (2 files per tool: tool.json and SKILL.md)
+    assert mock_fs.sys_write.call_count == count * 2

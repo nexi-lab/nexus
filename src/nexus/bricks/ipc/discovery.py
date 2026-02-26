@@ -103,7 +103,7 @@ class AgentDiscovery:
         """
         card_path = agent_card_path(agent_id)
         try:
-            data = await self._storage.read(card_path, self._zone_id)
+            data = await self._storage.sys_read(card_path, self._zone_id)
             card_dict = json.loads(data)
         except Exception:
             logger.debug(

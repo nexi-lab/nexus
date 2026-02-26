@@ -26,11 +26,11 @@ class VFSOperations(Protocol):
     for inbox/outbox file management.
     """
 
-    async def read(self, path: str, zone_id: str) -> bytes:
+    async def sys_read(self, path: str, zone_id: str) -> bytes:
         """Read file contents at the given path."""
         ...
 
-    async def write(self, path: str, data: bytes, zone_id: str) -> None:
+    async def sys_write(self, path: str, data: bytes, zone_id: str) -> None:
         """Write data to the given path (create or overwrite)."""
         ...
 
@@ -42,7 +42,7 @@ class VFSOperations(Protocol):
         """Atomically rename/move a file from src to dst."""
         ...
 
-    async def mkdir(self, path: str, zone_id: str) -> None:
+    async def sys_mkdir(self, path: str, zone_id: str) -> None:
         """Create a directory (including parents if needed)."""
         ...
 
@@ -56,7 +56,7 @@ class VFSOperations(Protocol):
         """
         ...
 
-    async def exists(self, path: str, zone_id: str) -> bool:
+    async def sys_access(self, path: str, zone_id: str) -> bool:
         """Check if a path exists."""
         ...
 

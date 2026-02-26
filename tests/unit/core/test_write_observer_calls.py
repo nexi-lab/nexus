@@ -53,6 +53,11 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
 def mock_notify(nx: NexusFS) -> MagicMock:
     """Replace _dispatch with a mock and return the mock's .notify attribute."""
     mock_dispatch = MagicMock()
+    # resolve_* methods must return (handled=False, None) so sys_ methods
+    # fall through to the real implementation instead of unpacking a MagicMock.
+    mock_dispatch.resolve_read.return_value = (False, None)
+    mock_dispatch.resolve_write.return_value = (False, None)
+    mock_dispatch.resolve_delete.return_value = (False, None)
     nx._dispatch = mock_dispatch
     return mock_dispatch.notify
 
@@ -172,6 +177,9 @@ class TestWriteStreamCallsDispatch:
             pytest.skip("write_stream not available")
 
         mock_dispatch = MagicMock()
+        mock_dispatch.resolve_read.return_value = (False, None)
+        mock_dispatch.resolve_write.return_value = (False, None)
+        mock_dispatch.resolve_delete.return_value = (False, None)
         nx._dispatch = mock_dispatch
 
         nx.write_stream("/streamed.txt", iter([b"chunk1", b"chunk2"]))

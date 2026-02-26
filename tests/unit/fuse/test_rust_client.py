@@ -191,7 +191,7 @@ class TestOtherOps:
 
     def test_delete(self, mock_client: RustFUSEClient) -> None:
         mock_client.sock.recv.return_value = _mock_rpc_response({})
-        mock_client.delete("/to-del.txt")
+        mock_client.sys_unlink("/to-del.txt")
         sent = json.loads(mock_client.sock.sendall.call_args[0][0].decode())
         assert sent["method"] == "delete"
 

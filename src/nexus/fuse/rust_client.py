@@ -314,7 +314,7 @@ class RustFUSEClient:
         result: dict[Any, Any] = response.get("result", {})
         return result
 
-    def read(self, path: str) -> bytes:
+    def sys_read(self, path: str) -> bytes:
         """Read file contents.
 
         Args:
@@ -326,7 +326,7 @@ class RustFUSEClient:
         result = self._send_request("read", {"path": path})
         return base64.b64decode(result["data"])
 
-    def write(self, path: str, content: bytes) -> None:
+    def sys_write(self, path: str, content: bytes) -> None:
         """Write file contents.
 
         Args:
@@ -339,7 +339,7 @@ class RustFUSEClient:
             {"path": path, "content": {"__type__": "bytes", "data": encoded}},
         )
 
-    def list(self, path: str) -> list[FileEntry]:
+    def sys_readdir(self, path: str) -> list[FileEntry]:
         """List directory contents.
 
         Args:
@@ -377,7 +377,7 @@ class RustFUSEClient:
             modified_at=result.get("modified_at"),
         )
 
-    def mkdir(self, path: str) -> None:
+    def sys_mkdir(self, path: str) -> None:
         """Create directory.
 
         Args:
@@ -385,7 +385,7 @@ class RustFUSEClient:
         """
         self._send_request("mkdir", {"path": path})
 
-    def delete(self, path: str) -> None:
+    def sys_unlink(self, path: str) -> None:
         """Delete file or directory.
 
         Args:
@@ -393,7 +393,7 @@ class RustFUSEClient:
         """
         self._send_request("delete", {"path": path})
 
-    def rename(self, old_path: str, new_path: str) -> None:
+    def sys_rename(self, old_path: str, new_path: str) -> None:
         """Rename/move file or directory.
 
         Args:
@@ -402,7 +402,7 @@ class RustFUSEClient:
         """
         self._send_request("rename", {"old_path": old_path, "new_path": new_path})
 
-    def exists(self, path: str) -> bool:
+    def sys_access(self, path: str) -> bool:
         """Check if path exists.
 
         Args:

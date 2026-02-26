@@ -77,15 +77,21 @@ class KernelVFSAdapter:
     # VFSOperations protocol (async)
     # ------------------------------------------------------------------
 
-    async def read(self, path: str, zone_id: str) -> bytes:
+    async def sys_read(self, path: str, zone_id: str) -> bytes:
         self._require_bound()
         ctx = self._ctx(zone_id)
-        return await asyncio.to_thread(self._nx.read, path, context=ctx)
+        return await asyncio.to_thread(self._nx.sys_read, path, context=ctx)
 
-    async def write(self, path: str, data: bytes, zone_id: str) -> None:
+    # Alias for backward compatibility
+    read = sys_read
+
+    async def sys_write(self, path: str, data: bytes, zone_id: str) -> None:
         self._require_bound()
         ctx = self._ctx(zone_id)
-        await asyncio.to_thread(self._nx.write, path, data, context=ctx)
+        await asyncio.to_thread(self._nx.sys_write, path, data, context=ctx)
+
+    # Alias for backward compatibility
+    write = sys_write
 
     async def list_dir(self, path: str, zone_id: str) -> list[str]:
         self._require_bound()
@@ -116,12 +122,18 @@ class KernelVFSAdapter:
         ctx = self._ctx(zone_id)
         await asyncio.to_thread(self._nx.rename, src, dst, context=ctx)
 
-    async def mkdir(self, path: str, zone_id: str) -> None:
+    async def sys_mkdir(self, path: str, zone_id: str) -> None:
         self._require_bound()
         ctx = self._ctx(zone_id)
-        await asyncio.to_thread(self._nx.mkdir, path, parents=True, exist_ok=True, context=ctx)
+        await asyncio.to_thread(self._nx.sys_mkdir, path, parents=True, exist_ok=True, context=ctx)
 
-    async def exists(self, path: str, zone_id: str) -> bool:
+    # Alias for backward compatibility
+    mkdir = sys_mkdir
+
+    async def sys_access(self, path: str, zone_id: str) -> bool:
         self._require_bound()
         ctx = self._ctx(zone_id)
-        return await asyncio.to_thread(self._nx.exists, path, context=ctx)
+        return await asyncio.to_thread(self._nx.sys_access, path, context=ctx)
+
+    # Alias for backward compatibility
+    exists = sys_access

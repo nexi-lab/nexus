@@ -74,7 +74,7 @@ class TestRemoteMetastoreRPC:
     """Each method calls _call_rpc with correct args."""
 
     def test_get_calls_stat(self, metastore: RemoteMetastore) -> None:
-        """get() should call _call_rpc('stat', ...)."""
+        """get() should call _call_rpc('sys_stat', ...)."""
         with patch.object(
             metastore,
             "_call_rpc",
@@ -87,7 +87,7 @@ class TestRemoteMetastoreRPC:
         ) as mock_rpc:
             result = metastore.get("/test.txt")
 
-            mock_rpc.assert_called_once_with("stat", {"path": "/test.txt"})
+            mock_rpc.assert_called_once_with("sys_stat", {"path": "/test.txt"})
             assert result is not None
             assert isinstance(result, FileMetadata)
             assert result.path == "/test.txt"
@@ -123,7 +123,7 @@ class TestRemoteMetastoreRPC:
             assert call_args[0][1]["consistency"] == "sc"
 
     def test_delete_calls_delete(self, metastore: RemoteMetastore) -> None:
-        """delete() should call _call_rpc('delete', ...)."""
+        """delete() should call _call_rpc('sys_unlink', ...)."""
         with patch.object(
             metastore,
             "_call_rpc",
@@ -131,12 +131,14 @@ class TestRemoteMetastoreRPC:
         ) as mock_rpc:
             result = metastore.delete("/test.txt")
 
-            mock_rpc.assert_called_once_with("delete", {"path": "/test.txt", "consistency": "sc"})
+            mock_rpc.assert_called_once_with(
+                "sys_unlink", {"path": "/test.txt", "consistency": "sc"}
+            )
             assert result is not None
             assert result["path"] == "/test.txt"
 
     def test_exists_calls_exists(self, metastore: RemoteMetastore) -> None:
-        """exists() should call _call_rpc('exists', ...)."""
+        """exists() should call _call_rpc('sys_access', ...)."""
         with patch.object(
             metastore,
             "_call_rpc",
@@ -144,7 +146,7 @@ class TestRemoteMetastoreRPC:
         ) as mock_rpc:
             result = metastore.exists("/test.txt")
 
-            mock_rpc.assert_called_once_with("exists", {"path": "/test.txt"})
+            mock_rpc.assert_called_once_with("sys_access", {"path": "/test.txt"})
             assert result is True
 
     def test_exists_returns_false_on_missing(self, metastore: RemoteMetastore) -> None:
@@ -158,7 +160,7 @@ class TestRemoteMetastoreRPC:
             assert result is False
 
     def test_list_calls_list(self, metastore: RemoteMetastore) -> None:
-        """list() should call _call_rpc('list', ...)."""
+        """list() should call _call_rpc('sys_readdir', ...)."""
         with patch.object(
             metastore,
             "_call_rpc",
@@ -170,7 +172,7 @@ class TestRemoteMetastoreRPC:
             result = metastore.list("/", recursive=True)
 
             mock_rpc.assert_called_once_with(
-                "list",
+                "sys_readdir",
                 {"path": "/", "recursive": True},
             )
             assert len(result) == 2

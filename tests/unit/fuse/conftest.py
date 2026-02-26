@@ -17,11 +17,11 @@ class _MockMountMode(Enum):
 def mock_nexus_fs() -> MagicMock:
     """Mock NexusFilesystem with standard methods."""
     fs = MagicMock()
-    fs.exists.return_value = True
-    fs.is_directory.return_value = False
-    fs.read.return_value = b"hello world"
-    fs.list.return_value = []
-    fs.get_metadata.return_value = None
+    fs.sys_access.return_value = True
+    fs.sys_is_directory.return_value = False
+    fs.sys_read.return_value = b"hello world"
+    fs.sys_readdir.return_value = []
+    fs.sys_stat.return_value = None
     fs.zone_id = "test-zone"
     return fs
 

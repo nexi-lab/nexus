@@ -400,7 +400,7 @@ RERANKER_MODELS: dict[str, RerankerModelConfig] = {
             "api_provider": "jina",
             "api_url": "https://api.jina.ai/v1/rerank",
             "env_key": "JINA_API_KEY",
-            "timeout": 5.0,
+            "timeout": 15.0,
         },
     ),
     "cohere-rerank-v3.5": RerankerModelConfig(

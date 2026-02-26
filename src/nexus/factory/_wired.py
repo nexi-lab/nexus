@@ -356,7 +356,7 @@ def _boot_wired_services(
             wallet_provisioner=brick_services.wallet_provisioner,
             api_key_creator=brick_services.api_key_creator,
             key_service=getattr(nx, "_key_service", None),
-            rmdir_fn=nx.rmdir if hasattr(nx, "rmdir") else None,
+            rmdir_fn=nx.sys_rmdir if hasattr(nx, "sys_rmdir") else None,
             rebac_create_fn=(rebac_service.rebac_create_sync if rebac_service else None),
             rebac_list_tuples_fn=(rebac_service.rebac_list_tuples_sync if rebac_service else None),
             rebac_delete_fn=(rebac_service.rebac_delete_sync if rebac_service else None),
@@ -376,7 +376,7 @@ def _boot_wired_services(
             api_key_creator=brick_services.api_key_creator,
             backend=_root_backend,
             rebac_manager=system_services.rebac_manager,
-            rmdir_fn=nx.rmdir if hasattr(nx, "rmdir") else None,
+            rmdir_fn=nx.sys_rmdir if hasattr(nx, "sys_rmdir") else None,
             rebac_create_fn=(rebac_service.rebac_create_sync if rebac_service else None),
             rebac_delete_fn=(rebac_service.rebac_delete_sync if rebac_service else None),
             register_workspace_fn=(
@@ -489,10 +489,10 @@ def _boot_wired_services(
 
             _undo_service = OperationUndoService(
                 router=kernel_services.router,
-                write_fn=nx.write,
-                delete_fn=nx.delete,
-                rename_fn=nx.rename,
-                exists_fn=nx.exists,
+                write_fn=nx.sys_write,
+                delete_fn=nx.sys_unlink,
+                rename_fn=nx.sys_rename,
+                exists_fn=nx.sys_access,
                 fallback_backend=getattr(nx, "backend", None),
             )
             operations_service = OperationsService(

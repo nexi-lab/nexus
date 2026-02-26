@@ -13,7 +13,6 @@ References:
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from nexus.backends.backend import Backend
     from nexus.contracts.types import OperationContext
     from nexus.storage.record_store import RecordStoreABC
 
@@ -27,13 +26,13 @@ class WirableFS(Protocol):
     all ``getattr()`` calls in the wiring layer.
 
     Do NOT use ``isinstance()`` checks in hot paths.
+
+    Note: NexusFS no longer exposes a global ``backend`` property;
+    all I/O is routed through ``router.route(path).backend``.
     """
 
     @property
     def metadata(self) -> Any: ...  # MetastoreABC (core tier — typed as Any to avoid upward import)
-
-    @property
-    def backend(self) -> "Backend": ...
 
     def sys_read(self, path: str, **kwargs: Any) -> bytes: ...
 

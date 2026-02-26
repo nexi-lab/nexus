@@ -475,7 +475,7 @@ class NamespaceGetParams:
 # ============================================================
 
 OVERRIDE_METHOD_PARAMS: dict[str, type] = {
-    "read": ReadParams,
+    "sys_read": ReadParams,
     "oauth_get_auth_url": OAuthGetAuthUrlParams,
     "oauth_exchange_code": OAuthExchangeCodeParams,
     # Admin
@@ -523,5 +523,5 @@ OVERRIDE_METHOD_PARAMS: dict[str, type] = {
     # Namespace
     "namespace_get": NamespaceGetParams,
     # RemoteMetastore
-    "set_metadata": SetMetadataParams,
+    "sys_setattr": SetMetadataParams,
 }

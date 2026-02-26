@@ -62,9 +62,9 @@ def test_cas_write_and_read(embedded_cas: NexusFS) -> None:
     """Test writing and reading with CAS."""
     content = b"Hello, CAS World!"
 
-    embedded_cas.write("/test/file.txt", content)
+    embedded_cas.sys_write("/test/file.txt", content)
 
-    result = embedded_cas.read("/test/file.txt")
+    result = embedded_cas.sys_read("/test/file.txt")
     assert result == content
 
 
@@ -73,12 +73,12 @@ def test_cas_automatic_deduplication(embedded_cas: NexusFS, local_backend: Local
     content = b"Duplicate content"
 
     # Write same content to two different paths
-    embedded_cas.write("/file1.txt", content)
-    embedded_cas.write("/file2.txt", content)
+    embedded_cas.sys_write("/file1.txt", content)
+    embedded_cas.sys_write("/file2.txt", content)
 
     # Check both files exist
-    assert embedded_cas.exists("/file1.txt")
-    assert embedded_cas.exists("/file2.txt")
+    assert embedded_cas.sys_access("/file1.txt")
+    assert embedded_cas.sys_access("/file2.txt")
 
     # Get metadata - should have same content hash (etag)
     meta1 = embedded_cas.metadata.get("/file1.txt")
@@ -98,8 +98,8 @@ def test_cas_delete_with_ref_counting(embedded_cas: NexusFS, local_backend: Loca
     content = b"Shared content"
 
     # Write same content to two paths
-    embedded_cas.write("/shared1.txt", content)
-    embedded_cas.write("/shared2.txt", content)
+    embedded_cas.sys_write("/shared1.txt", content)
+    embedded_cas.sys_write("/shared2.txt", content)
 
     meta1 = embedded_cas.metadata.get("/shared1.txt")
     content_hash = meta1.etag
@@ -108,20 +108,20 @@ def test_cas_delete_with_ref_counting(embedded_cas: NexusFS, local_backend: Loca
     assert local_backend.get_ref_count(content_hash) == 2
 
     # Delete first file
-    embedded_cas.delete("/shared1.txt")
+    embedded_cas.sys_unlink("/shared1.txt")
 
     # First file should not exist
-    assert not embedded_cas.exists("/shared1.txt")
+    assert not embedded_cas.sys_access("/shared1.txt")
 
     # Second file should still exist
-    assert embedded_cas.exists("/shared2.txt")
+    assert embedded_cas.sys_access("/shared2.txt")
 
     # Content should still exist in CAS with ref count 1
     assert local_backend.content_exists(content_hash)
     assert local_backend.get_ref_count(content_hash) == 1
 
     # Delete second file
-    embedded_cas.delete("/shared2.txt")
+    embedded_cas.sys_unlink("/shared2.txt")
 
     # Content should now be deleted from CAS
     assert not local_backend.content_exists(content_hash)
@@ -138,7 +138,7 @@ def test_cas_update_file_content(embedded_cas: NexusFS, local_backend: LocalBack
     content2 = b"Updated content"
 
     # Write initial content
-    embedded_cas.write("/test.txt", content1)
+    embedded_cas.sys_write("/test.txt", content1)
     meta1 = embedded_cas.metadata.get("/test.txt")
     hash1 = meta1.etag
 
@@ -146,7 +146,7 @@ def test_cas_update_file_content(embedded_cas: NexusFS, local_backend: LocalBack
     assert local_backend.get_ref_count(hash1) == 1
 
     # Update with new content
-    embedded_cas.write("/test.txt", content2)
+    embedded_cas.sys_write("/test.txt", content2)
     meta2 = embedded_cas.metadata.get("/test.txt")
     hash2 = meta2.etag
 
@@ -168,11 +168,11 @@ def test_cas_storage_efficiency(embedded_cas: NexusFS, local_backend: LocalBacke
 
     # Write same content 10 times
     for i in range(10):
-        embedded_cas.write(f"/file{i}.txt", content)
+        embedded_cas.sys_write(f"/file{i}.txt", content)
 
     # All files should exist
     for i in range(10):
-        assert embedded_cas.exists(f"/file{i}.txt")
+        assert embedded_cas.sys_access(f"/file{i}.txt")
 
     # Get content hash
     meta = embedded_cas.metadata.get("/file0.txt")
@@ -187,8 +187,8 @@ def test_cas_storage_efficiency(embedded_cas: NexusFS, local_backend: LocalBacke
 
 def test_cas_different_content_different_hashes(embedded_cas: NexusFS) -> None:
     """Test that different content produces different hashes."""
-    embedded_cas.write("/file1.txt", b"Content A")
-    embedded_cas.write("/file2.txt", b"Content B")
+    embedded_cas.sys_write("/file1.txt", b"Content A")
+    embedded_cas.sys_write("/file2.txt", b"Content B")
 
     meta1 = embedded_cas.metadata.get("/file1.txt")
     meta2 = embedded_cas.metadata.get("/file2.txt")
@@ -199,11 +199,11 @@ def test_cas_different_content_different_hashes(embedded_cas: NexusFS) -> None:
 
 def test_cas_list_files(embedded_cas: NexusFS) -> None:
     """Test listing files with CAS."""
-    embedded_cas.write("/dir1/file1.txt", b"Content 1")
-    embedded_cas.write("/dir1/file2.txt", b"Content 2")
-    embedded_cas.write("/dir2/file3.txt", b"Content 3")
+    embedded_cas.sys_write("/dir1/file1.txt", b"Content 1")
+    embedded_cas.sys_write("/dir1/file2.txt", b"Content 2")
+    embedded_cas.sys_write("/dir2/file3.txt", b"Content 3")
 
-    all_files = [f for f in embedded_cas.list() if f not in _SYSTEM_PATHS]
+    all_files = [f for f in embedded_cas.sys_readdir() if f not in _SYSTEM_PATHS]
     assert len(all_files) == 3
     assert "/dir1/file1.txt" in all_files
     assert "/dir1/file2.txt" in all_files
@@ -214,17 +214,17 @@ def test_cas_binary_content(embedded_cas: NexusFS) -> None:
     """Test CAS with binary content."""
     content = bytes(range(256))
 
-    embedded_cas.write("/binary.bin", content)
+    embedded_cas.sys_write("/binary.bin", content)
 
-    result = embedded_cas.read("/binary.bin")
+    result = embedded_cas.sys_read("/binary.bin")
     assert result == content
 
 
 def test_cas_empty_content(embedded_cas: NexusFS) -> None:
     """Test CAS with empty content."""
-    embedded_cas.write("/empty.txt", b"")
+    embedded_cas.sys_write("/empty.txt", b"")
 
-    result = embedded_cas.read("/empty.txt")
+    result = embedded_cas.sys_read("/empty.txt")
     assert result == b""
 
 
@@ -232,9 +232,9 @@ def test_cas_large_content(embedded_cas: NexusFS) -> None:
     """Test CAS with large content."""
     content = b"x" * (1024 * 1024)  # 1MB
 
-    embedded_cas.write("/large.bin", content)
+    embedded_cas.sys_write("/large.bin", content)
 
-    result = embedded_cas.read("/large.bin")
+    result = embedded_cas.sys_read("/large.bin")
     assert len(result) == len(content)
     assert result == content
 
@@ -243,7 +243,7 @@ def test_cas_metadata_stored_correctly(embedded_cas: NexusFS) -> None:
     """Test that metadata is stored correctly with CAS."""
     content = b"Test metadata"
 
-    embedded_cas.write("/test.txt", content)
+    embedded_cas.sys_write("/test.txt", content)
 
     meta = embedded_cas.metadata.get("/test.txt")
     assert meta is not None
@@ -261,11 +261,11 @@ def test_cas_concurrent_deduplication(embedded_cas: NexusFS, local_backend: Loca
     # Write same content multiple times rapidly
     paths = [f"/concurrent{i}.txt" for i in range(20)]
     for path in paths:
-        embedded_cas.write(path, content)
+        embedded_cas.sys_write(path, content)
 
     # All files should exist
     for path in paths:
-        assert embedded_cas.exists(path)
+        assert embedded_cas.sys_access(path)
 
     # Get content hash
     meta = embedded_cas.metadata.get(paths[0])
@@ -276,7 +276,7 @@ def test_cas_concurrent_deduplication(embedded_cas: NexusFS, local_backend: Loca
 
     # Delete all files
     for path in paths:
-        embedded_cas.delete(path)
+        embedded_cas.sys_unlink(path)
 
     # Content should be completely deleted
     assert not local_backend.content_exists(content_hash)
@@ -284,13 +284,13 @@ def test_cas_concurrent_deduplication(embedded_cas: NexusFS, local_backend: Loca
 
 def test_cas_update_preserves_timestamps(embedded_cas: NexusFS) -> None:
     """Test that updating content preserves created_at timestamp."""
-    embedded_cas.write("/test.txt", b"Original")
+    embedded_cas.sys_write("/test.txt", b"Original")
 
     meta1 = embedded_cas.metadata.get("/test.txt")
     created_at = meta1.created_at
 
     # Wait a tiny bit and update
-    embedded_cas.write("/test.txt", b"Updated")
+    embedded_cas.sys_write("/test.txt", b"Updated")
 
     meta2 = embedded_cas.metadata.get("/test.txt")
 

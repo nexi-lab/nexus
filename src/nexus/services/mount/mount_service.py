@@ -382,7 +382,7 @@ class MountService:
             if self.nexus_fs and hasattr(self.nexus_fs, "rmdir"):
                 try:
                     _nx: Any = self.nexus_fs
-                    _nx.rmdir(mount_point, recursive=True, context=context)
+                    _nx.sys_rmdir(mount_point, recursive=True, context=context)
                     result["directory_deleted"] = True
                     logger.info(f"Deleted mount point directory: {mount_point}")
                 except Exception as e:
@@ -1103,7 +1103,7 @@ class MountService:
         # Create directory entry for the mount point
         if self.nexus_fs and hasattr(self.nexus_fs, "mkdir"):
             try:
-                self.nexus_fs.mkdir(mount_point, parents=True, exist_ok=True)
+                self.nexus_fs.sys_mkdir(mount_point, parents=True, exist_ok=True)
                 logger.info(f"✓ Created directory entry for mount point: {mount_point}")
             except Exception as e:
                 logger.warning(f"Failed to create directory entry for mount {mount_point}: {e}")
@@ -1178,7 +1178,7 @@ Use sync_mount() to refresh metadata from the backend.
 """
 
             skill_path = f"{mount_point}/SKILL.md"
-            self.nexus_fs.write(skill_path, skill_content.encode("utf-8"), context=context)
+            self.nexus_fs.sys_write(skill_path, skill_content.encode("utf-8"), context=context)
             logger.info(f"✓ Generated SKILL.md for connector mount: {skill_path}")
             return True
         except Exception as e:

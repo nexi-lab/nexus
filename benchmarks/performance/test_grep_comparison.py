@@ -158,7 +158,7 @@ def test_nexus(file_count=1000):
 
         for attempt in range(max_retries):
             try:
-                client.write(f"{nexus_path}/{file.name}", content)
+                client.sys_write(f"{nexus_path}/{file.name}", content)
                 upload_count += 1
                 upload_bytes += len(content)
                 uploaded = True
@@ -182,13 +182,13 @@ def test_nexus(file_count=1000):
     # Verification: Check uploaded files
     print("\n🔍 Verifying upload...")
     try:
-        uploaded_files = client.list(nexus_path, recursive=False)
+        uploaded_files = client.sys_readdir(nexus_path, recursive=False)
         print(f"  ✓ Found {len(uploaded_files)} files in Nexus")
 
         if uploaded_files:
             # Read first file to verify content
             first_file = uploaded_files[0]
-            content = client.read(first_file)
+            content = client.sys_read(first_file)
             has_pattern = SEARCH_PATTERN.encode() in content
             print(
                 f"  ✓ Sample file '{Path(first_file).name}': {len(content)} bytes, contains '{SEARCH_PATTERN}': {has_pattern}"

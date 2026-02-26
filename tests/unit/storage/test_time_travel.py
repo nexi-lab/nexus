@@ -76,9 +76,9 @@ class TestTimeTravelDebug:
         path = "/workspace/test.txt"
 
         # Write three versions
-        nx.write(path, b"Version 1")
-        nx.write(path, b"Version 2")
-        nx.write(path, b"Version 3")
+        nx.sys_write(path, b"Version 1")
+        nx.sys_write(path, b"Version 2")
+        nx.sys_write(path, b"Version 3")
 
         # Get all operations (most recent first)
         with record_store.session_factory() as session:
@@ -109,7 +109,7 @@ class TestTimeTravelDebug:
         path = "/workspace/deleted.txt"
 
         # Write file
-        nx.write(path, b"Content before delete")
+        nx.sys_write(path, b"Content before delete")
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)
@@ -120,7 +120,7 @@ class TestTimeTravelDebug:
             op_write = ops_after_write[0].operation_id
 
         # Delete file
-        nx.delete(path)
+        nx.sys_unlink(path)
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)
@@ -141,7 +141,7 @@ class TestTimeTravelDebug:
     def test_time_travel_list_directory(self, nx, record_store, time_travel):
         """Test listing directory at historical operation point."""
         # Create multiple files
-        nx.write("/workspace/file1.txt", b"File 1")
+        nx.sys_write("/workspace/file1.txt", b"File 1")
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)
@@ -151,14 +151,14 @@ class TestTimeTravelDebug:
             op_1 = ops_1[0].operation_id
 
         # Add more files
-        nx.write("/workspace/file2.txt", b"File 2")
+        nx.sys_write("/workspace/file2.txt", b"File 2")
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)
             ops_2 = logger.list_operations(limit=10)
             op_2 = ops_2[0].operation_id
 
-        nx.write("/workspace/file3.txt", b"File 3")
+        nx.sys_write("/workspace/file3.txt", b"File 3")
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)
@@ -190,7 +190,7 @@ class TestTimeTravelDebug:
         path = "/workspace/evolving.txt"
 
         # Write version 1
-        nx.write(path, b"Hello World")
+        nx.sys_write(path, b"Hello World")
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)
@@ -198,7 +198,7 @@ class TestTimeTravelDebug:
             op_v1 = ops_v1[0].operation_id
 
         # Write version 2 (changed content)
-        nx.write(path, b"Hello World - Updated!")
+        nx.sys_write(path, b"Hello World - Updated!")
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)
@@ -218,7 +218,7 @@ class TestTimeTravelDebug:
     def test_time_travel_diff_file_created(self, nx, record_store, time_travel):
         """Test diff when file was created between operations."""
         # Create a baseline operation (write different file)
-        nx.write("/workspace/baseline.txt", b"Baseline")
+        nx.sys_write("/workspace/baseline.txt", b"Baseline")
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)
@@ -227,7 +227,7 @@ class TestTimeTravelDebug:
 
         # Now create the target file
         path = "/workspace/new_file.txt"
-        nx.write(path, b"New content")
+        nx.sys_write(path, b"New content")
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)
@@ -248,7 +248,7 @@ class TestTimeTravelDebug:
         path = "/workspace/to_delete.txt"
 
         # Create file
-        nx.write(path, b"Will be deleted")
+        nx.sys_write(path, b"Will be deleted")
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)
@@ -256,7 +256,7 @@ class TestTimeTravelDebug:
             op_created = ops_created[0].operation_id
 
         # Delete file
-        nx.delete(path)
+        nx.sys_unlink(path)
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)
@@ -280,7 +280,7 @@ class TestTimeTravelDebug:
         context = OperationContext(user_id="test", groups=[], agent_id="agent-1", zone_id="root")
 
         path = "/workspace/agent_file.txt"
-        nx.write(path, b"Agent 1 content", context=context)
+        nx.sys_write(path, b"Agent 1 content", context=context)
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)
@@ -308,7 +308,7 @@ class TestTimeTravelDebug:
         path = "/workspace/metadata_test.txt"
 
         # Write file
-        nx.write(path, b"Content")
+        nx.sys_write(path, b"Content")
 
         # Set permissions using ReBAC (v0.6.0+)
         nx.rebac_create(
@@ -316,7 +316,7 @@ class TestTimeTravelDebug:
         )
 
         # Write again to create a new version
-        nx.write(path, b"Updated content")
+        nx.sys_write(path, b"Updated content")
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)

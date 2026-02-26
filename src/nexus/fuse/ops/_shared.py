@@ -253,7 +253,7 @@ def check_namespace_visible(ctx: FUSESharedContext, path: str) -> None:
 
     parent = path.rsplit("/", 1)[0] or "/"
     try:
-        ctx.nexus_fs.is_directory(parent, context=ctx.context)
+        ctx.nexus_fs.sys_is_directory(parent, context=ctx.context)
     except NexusFileNotFoundError:
         raise FuseOSError(errno.ENOENT) from None
 
@@ -263,7 +263,7 @@ def parse_virtual_path_for_fuse(ctx: FUSESharedContext, path: str) -> tuple[str,
     if path.startswith("/.raw/"):
         original_path = path[5:]
         return (original_path, None)
-    return parse_virtual_path(path, ctx.nexus_fs.exists)
+    return parse_virtual_path(path, ctx.nexus_fs.sys_access)
 
 
 def get_file_content(
@@ -301,7 +301,7 @@ def get_file_content(
             read_ctx = None if skip_auth else ctx.context
             logger.info(f"[FUSE-CONTENT] L3 BACKEND FETCH: {path}")
             fetch_start = time.time()
-            raw_content = ctx.nexus_fs.read(path, context=read_ctx)
+            raw_content = ctx.nexus_fs.sys_read(path, context=read_ctx)
             fetch_time = time.time() - fetch_start
             assert isinstance(raw_content, bytes), "Expected bytes from read()"
             content = raw_content
@@ -426,7 +426,7 @@ def put_to_local_disk_cache(
 def get_metadata(ctx: FUSESharedContext, path: str) -> Any:
     """Get file/directory metadata from filesystem."""
     if hasattr(ctx.nexus_fs, "get_metadata"):
-        metadata_dict = ctx.nexus_fs.get_metadata(path)
+        metadata_dict = ctx.nexus_fs.sys_stat(path)
         if metadata_dict:
             return MetadataObj.from_dict(metadata_dict)
     return None

@@ -145,7 +145,7 @@ def main() -> None:
         existing_resources = []
         for resource_type in resource_types:
             resource_path = f"{user_base}/{resource_type}"
-            if nx.exists(resource_path, context=admin_context):
+            if nx.sys_access(resource_path, context=admin_context):
                 existing_resources.append(resource_type)
                 print(f"  ✓ {resource_type}: exists")
 
@@ -249,7 +249,7 @@ def main() -> None:
         for resource_type in resource_types:
             resource_path = f"{user_base}/{resource_type}"
             try:
-                files = nx.list(resource_path, recursive=True, context=admin_context)
+                files = nx.sys_readdir(resource_path, recursive=True, context=admin_context)
                 if isinstance(files, list):
                     count = len(files)
                 elif isinstance(files, dict):

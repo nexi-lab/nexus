@@ -48,23 +48,23 @@ class InMemorySkillFilesystem:
     def __init__(self) -> None:
         self._files: dict[str, bytes | str] = {}
 
-    def read(self, path: str, *, context: Any = None) -> bytes | str:
+    def sys_read(self, path: str, *, context: Any = None) -> bytes | str:
         if path not in self._files:
             raise FileNotFoundError(f"File not found: {path}")
         return self._files[path]
 
-    def write(self, path: str, content: bytes | str, *, context: Any = None) -> None:
+    def sys_write(self, path: str, content: bytes | str, *, context: Any = None) -> None:
         self._files[path] = content
 
-    def mkdir(self, path: str, *, context: Any = None) -> None:
+    def sys_mkdir(self, path: str, *, context: Any = None) -> None:
         # Directories are implicit — no-op
         pass
 
-    def list(self, path: str, *, context: Any = None) -> list[str]:
+    def sys_readdir(self, path: str, *, context: Any = None) -> list[str]:
         prefix = path if path.endswith("/") else path + "/"
         return [p for p in sorted(self._files) if p.startswith(prefix)]
 
-    def exists(self, path: str, *, context: Any = None) -> bool:
+    def sys_access(self, path: str, *, context: Any = None) -> bool:
         if path in self._files:
             return True
         # Check if any file exists under this path (directory check)

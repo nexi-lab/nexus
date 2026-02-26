@@ -249,7 +249,7 @@ class TestTTLSubscriptionCache:
 
         fs.seed_skill(SKILL_PATH, name="test")
         subs = {"subscribed_skills": [SKILL_PATH]}
-        fs.write(
+        fs.sys_write(
             "/zone/acme/user/alice/skill/.subscribed.yaml",
             yaml.dump(subs).encode(),
         )
@@ -258,7 +258,7 @@ class TestTTLSubscriptionCache:
         assert len(result1) == 1
 
         # Modify file — cache should still return old data
-        fs.write(
+        fs.sys_write(
             "/zone/acme/user/alice/skill/.subscribed.yaml",
             yaml.dump({"subscribed_skills": []}).encode(),
         )

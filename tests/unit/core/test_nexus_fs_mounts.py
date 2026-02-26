@@ -762,10 +762,10 @@ class TestMountIntegration:
         )
 
         # Write to the mount
-        nx.write("/mnt/write/test.txt", b"Hello from mount!")
+        nx.sys_write("/mnt/write/test.txt", b"Hello from mount!")
 
         # Read back
-        content = nx.read("/mnt/write/test.txt")
+        content = nx.sys_read("/mnt/write/test.txt")
         assert content == b"Hello from mount!"
 
     def test_list_mount_contents(self, nx: NexusFS, temp_dir: Path) -> None:
@@ -780,11 +780,11 @@ class TestMountIntegration:
         )
 
         # Write some files
-        nx.write("/mnt/list/file1.txt", b"Content 1")
-        nx.write("/mnt/list/file2.txt", b"Content 2")
+        nx.sys_write("/mnt/list/file1.txt", b"Content 1")
+        nx.sys_write("/mnt/list/file2.txt", b"Content 2")
 
         # List files
-        files = nx.list("/mnt/list", recursive=True)
+        files = nx.sys_readdir("/mnt/list", recursive=True)
 
         assert "/mnt/list/file1.txt" in files
         assert "/mnt/list/file2.txt" in files
@@ -813,12 +813,12 @@ class TestMountIntegration:
         assert nx.has_mount("/mnt/two")
 
         # Write to each
-        nx.write("/mnt/one/file.txt", b"Mount 1")
-        nx.write("/mnt/two/file.txt", b"Mount 2")
+        nx.sys_write("/mnt/one/file.txt", b"Mount 1")
+        nx.sys_write("/mnt/two/file.txt", b"Mount 2")
 
         # Read from each
-        assert nx.read("/mnt/one/file.txt") == b"Mount 1"
-        assert nx.read("/mnt/two/file.txt") == b"Mount 2"
+        assert nx.sys_read("/mnt/one/file.txt") == b"Mount 1"
+        assert nx.sys_read("/mnt/two/file.txt") == b"Mount 2"
 
 
 class TestMountContextUtilsIntegration:

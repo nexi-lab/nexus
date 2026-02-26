@@ -474,9 +474,9 @@ class AnthropicPlugin(NexusPlugin):
 
             # Create directory structure
             dir_path = f"{tier_paths[tier]}{skill_name}"
-            self.nx.mkdir(dir_path, parents=True, exist_ok=True)
+            self.nx.sys_mkdir(dir_path, parents=True, exist_ok=True)
 
-            self.nx.write(skill_path, skill_content.encode("utf-8"))
+            self.nx.sys_write(skill_path, skill_content.encode("utf-8"))
 
             console.print(f"[green]✓ Imported '{skill_name}' to {skill_path}[/green]")
             console.print(f"Source: https://github.com/anthropics/skills/tree/main/{skill_name}")

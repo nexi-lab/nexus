@@ -36,7 +36,7 @@ def handle_delta_read(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[st
     from nexus.core.hash_fast import hash_content
 
     # Read current file content
-    content = nexus_fs.read(params.path, context=context)
+    content = nexus_fs.sys_read(params.path, context=context)
     if isinstance(content, dict):
         content = content.get("content", b"")
     if isinstance(content, str):
@@ -139,7 +139,7 @@ def handle_delta_write(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[s
         raise ValueError("base_hash is required for delta_write")
 
     try:
-        current_content = nexus_fs.read(params.path, context=context)
+        current_content = nexus_fs.sys_read(params.path, context=context)
         if isinstance(current_content, dict):
             current_content = current_content.get("content", b"")
         if isinstance(current_content, str):
@@ -163,7 +163,7 @@ def handle_delta_write(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[s
     if hasattr(params, "if_match") and params.if_match:
         kwargs["if_match"] = params.if_match
 
-    bytes_written = nexus_fs.write(params.path, new_content, **kwargs)
+    bytes_written = nexus_fs.sys_write(params.path, new_content, **kwargs)
     new_hash = hash_content(new_content)
 
     return {

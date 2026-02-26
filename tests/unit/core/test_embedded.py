@@ -73,10 +73,10 @@ def test_write_and_read(embedded: NexusFS) -> None:
     path = "/test/file.txt"
 
     # Write file
-    embedded.write(path, content)
+    embedded.sys_write(path, content)
 
     # Read file
-    result = embedded.read(path)
+    result = embedded.sys_read(path)
     assert result == content
 
 
@@ -85,10 +85,10 @@ def test_write_creates_metadata(embedded: NexusFS) -> None:
     content = b"Test content"
     path = "/test.txt"
 
-    embedded.write(path, content)
+    embedded.sys_write(path, content)
 
     # Check metadata exists
-    assert embedded.exists(path)
+    assert embedded.sys_access(path)
 
     # Check metadata content
     meta = embedded.metadata.get(path)
@@ -108,13 +108,13 @@ def test_write_updates_version(embedded: NexusFS) -> None:
     path = "/test.txt"
 
     # Write initial version
-    embedded.write(path, b"Version 1")
+    embedded.sys_write(path, b"Version 1")
     meta1 = embedded.metadata.get(path)
     assert meta1 is not None
     assert meta1.version == 1
 
     # Rewrite file - version should increment
-    embedded.write(path, b"Version 2")
+    embedded.sys_write(path, b"Version 2")
     meta2 = embedded.metadata.get(path)
     assert meta2 is not None
     assert meta2.version == 2  # Version tracking enabled in v0.3.5
@@ -122,7 +122,7 @@ def test_write_updates_version(embedded: NexusFS) -> None:
     assert meta2.modified_at > meta1.modified_at
 
     # Rewrite again - version should increment again
-    embedded.write(path, b"Version 3")
+    embedded.sys_write(path, b"Version 3")
     meta3 = embedded.metadata.get(path)
     assert meta3 is not None
     assert meta3.version == 3  # Version tracking enabled in v0.3.5
@@ -132,7 +132,7 @@ def test_write_updates_version(embedded: NexusFS) -> None:
 def test_read_nonexistent_file_raises_error(embedded: NexusFS) -> None:
     """Test that reading nonexistent file raises error."""
     with pytest.raises(NexusFileNotFoundError) as exc_info:
-        embedded.read("/nonexistent.txt")
+        embedded.sys_read("/nonexistent.txt")
 
     assert "/nonexistent.txt" in str(exc_info.value)
 
@@ -143,24 +143,24 @@ def test_delete(embedded: NexusFS) -> None:
     content = b"Test content"
 
     # Create file
-    embedded.write(path, content)
-    assert embedded.exists(path)
+    embedded.sys_write(path, content)
+    assert embedded.sys_access(path)
 
     # Delete file
-    embedded.delete(path)
+    embedded.sys_unlink(path)
 
     # File should not exist
-    assert not embedded.exists(path)
+    assert not embedded.sys_access(path)
 
     # Reading should raise error
     with pytest.raises(NexusFileNotFoundError):
-        embedded.read(path)
+        embedded.sys_read(path)
 
 
 def test_delete_nonexistent_file_raises_error(embedded: NexusFS) -> None:
     """Test that deleting nonexistent file raises error."""
     with pytest.raises(NexusFileNotFoundError):
-        embedded.delete("/nonexistent.txt")
+        embedded.sys_unlink("/nonexistent.txt")
 
 
 def test_delete_removes_metadata(embedded: NexusFS) -> None:
@@ -168,11 +168,11 @@ def test_delete_removes_metadata(embedded: NexusFS) -> None:
     path = "/test.txt"
 
     # Create file
-    embedded.write(path, b"Content")
+    embedded.sys_write(path, b"Content")
     assert embedded.metadata.exists(path)
 
     # Delete file
-    embedded.delete(path)
+    embedded.sys_unlink(path)
 
     # Metadata should be gone
     assert not embedded.metadata.exists(path)
@@ -184,26 +184,26 @@ def test_exists(embedded: NexusFS) -> None:
     path = "/test.txt"
 
     # Doesn't exist initially
-    assert not embedded.exists(path)
+    assert not embedded.sys_access(path)
 
     # Create file
-    embedded.write(path, b"Content")
-    assert embedded.exists(path)
+    embedded.sys_write(path, b"Content")
+    assert embedded.sys_access(path)
 
     # Delete file
-    embedded.delete(path)
-    assert not embedded.exists(path)
+    embedded.sys_unlink(path)
+    assert not embedded.sys_access(path)
 
 
 def test_list_files(embedded: NexusFS) -> None:
     """Test listing files."""
     # Create multiple files
-    embedded.write("/file1.txt", b"Content 1")
-    embedded.write("/dir/file2.txt", b"Content 2")
-    embedded.write("/dir/subdir/file3.txt", b"Content 3")
+    embedded.sys_write("/file1.txt", b"Content 1")
+    embedded.sys_write("/dir/file2.txt", b"Content 2")
+    embedded.sys_write("/dir/subdir/file3.txt", b"Content 3")
 
     # List all files (filter out system mount-point entries)
-    files = [f for f in embedded.list() if f not in _SYSTEM_PATHS]
+    files = [f for f in embedded.sys_readdir() if f not in _SYSTEM_PATHS]
 
     assert len(files) == 3
     assert "/file1.txt" in files
@@ -214,13 +214,13 @@ def test_list_files(embedded: NexusFS) -> None:
 def test_list_with_prefix(embedded: NexusFS) -> None:
     """Test listing files with prefix."""
     # Create multiple files
-    embedded.write("/file1.txt", b"Content 1")
-    embedded.write("/dir/file2.txt", b"Content 2")
-    embedded.write("/dir/subdir/file3.txt", b"Content 3")
-    embedded.write("/other/file4.txt", b"Content 4")
+    embedded.sys_write("/file1.txt", b"Content 1")
+    embedded.sys_write("/dir/file2.txt", b"Content 2")
+    embedded.sys_write("/dir/subdir/file3.txt", b"Content 3")
+    embedded.sys_write("/other/file4.txt", b"Content 4")
 
     # List with path filter
-    files = embedded.list(path="/dir")
+    files = embedded.sys_readdir(path="/dir")
 
     assert len(files) == 2
     assert "/dir/file2.txt" in files
@@ -231,20 +231,20 @@ def test_list_with_prefix(embedded: NexusFS) -> None:
 
 def test_list_empty(embedded: NexusFS) -> None:
     """Test listing when no user files exist."""
-    files = [f for f in embedded.list() if f not in _SYSTEM_PATHS]
+    files = [f for f in embedded.sys_readdir() if f not in _SYSTEM_PATHS]
     assert len(files) == 0
 
 
 def test_path_validation_empty_path(embedded: NexusFS) -> None:
     """Test that empty path raises error."""
     with pytest.raises(InvalidPathError):
-        embedded.read("")
+        embedded.sys_read("")
 
 
 def test_path_validation_null_byte(embedded: NexusFS) -> None:
     """Test that path with null byte raises error."""
     with pytest.raises(InvalidPathError) as exc_info:
-        embedded.write("/bad\x00path.txt", b"Content")
+        embedded.sys_write("/bad\x00path.txt", b"Content")
 
     assert "invalid character" in str(exc_info.value).lower()
 
@@ -252,7 +252,7 @@ def test_path_validation_null_byte(embedded: NexusFS) -> None:
 def test_path_validation_parent_directory(embedded: NexusFS) -> None:
     """Test that path with .. raises error."""
     with pytest.raises(InvalidPathError) as exc_info:
-        embedded.read("/../etc/passwd")
+        embedded.sys_read("/../etc/passwd")
 
     assert ".." in str(exc_info.value)
 
@@ -262,15 +262,15 @@ def test_path_normalization_leading_slash(embedded: NexusFS) -> None:
     content = b"Test content"
 
     # Write without leading slash
-    embedded.write("test.txt", content)
+    embedded.sys_write("test.txt", content)
 
     # Read with leading slash
-    result = embedded.read("/test.txt")
+    result = embedded.sys_read("/test.txt")
     assert result == content
 
     # Both should be the same file
-    assert embedded.exists("test.txt")
-    assert embedded.exists("/test.txt")
+    assert embedded.sys_access("test.txt")
+    assert embedded.sys_access("/test.txt")
 
 
 def test_binary_content(embedded: NexusFS) -> None:
@@ -278,17 +278,17 @@ def test_binary_content(embedded: NexusFS) -> None:
     # Create binary content with various byte values
     content = bytes(range(256))
 
-    embedded.write("/binary.bin", content)
+    embedded.sys_write("/binary.bin", content)
 
-    result = embedded.read("/binary.bin")
+    result = embedded.sys_read("/binary.bin")
     assert result == content
 
 
 def test_empty_file(embedded: NexusFS) -> None:
     """Test handling of empty files."""
-    embedded.write("/empty.txt", b"")
+    embedded.sys_write("/empty.txt", b"")
 
-    result = embedded.read("/empty.txt")
+    result = embedded.sys_read("/empty.txt")
     assert result == b""
 
     # Check metadata
@@ -302,9 +302,9 @@ def test_large_file(embedded: NexusFS) -> None:
     # Create 1MB of data
     content = b"x" * (1024 * 1024)
 
-    embedded.write("/large.bin", content)
+    embedded.sys_write("/large.bin", content)
 
-    result = embedded.read("/large.bin")
+    result = embedded.sys_read("/large.bin")
     assert len(result) == len(content)
     assert result == content
 
@@ -314,11 +314,11 @@ def test_unicode_paths(embedded: NexusFS) -> None:
     content = b"Unicode content"
     path = "/测试/файл/αρχείο.txt"
 
-    embedded.write(path, content)
+    embedded.sys_write(path, content)
 
-    result = embedded.read(path)
+    result = embedded.sys_read(path)
     assert result == content
-    assert embedded.exists(path)
+    assert embedded.sys_access(path)
 
 
 def test_etag_changes_on_update(embedded: NexusFS) -> None:
@@ -326,13 +326,13 @@ def test_etag_changes_on_update(embedded: NexusFS) -> None:
     path = "/test.txt"
 
     # Write initial content
-    embedded.write(path, b"Content 1")
+    embedded.sys_write(path, b"Content 1")
     meta1 = embedded.metadata.get(path)
     assert meta1 is not None
     etag1 = meta1.etag
 
     # Update content
-    embedded.write(path, b"Content 2")
+    embedded.sys_write(path, b"Content 2")
     meta2 = embedded.metadata.get(path)
     assert meta2 is not None
     etag2 = meta2.etag
@@ -348,8 +348,8 @@ def test_etag_same_for_same_content(embedded: NexusFS) -> None:
     content = b"Same content"
 
     # Write same content to two files
-    embedded.write(path1, content)
-    embedded.write(path2, content)
+    embedded.sys_write(path1, content)
+    embedded.sys_write(path2, content)
 
     # ETags should be the same
     meta1 = embedded.metadata.get(path1)
@@ -372,8 +372,8 @@ def test_context_manager(temp_dir: Path) -> None:
             enforce=False
         ),  # Disable permissions for basic functionality test
     ) as nx:
-        nx.write("/test.txt", content)
-        result = nx.read("/test.txt")
+        nx.sys_write("/test.txt", content)
+        result = nx.sys_read("/test.txt")
         assert result == content
 
 
@@ -383,7 +383,7 @@ def test_modified_at_updates(embedded: NexusFS) -> None:
         path = "/test.txt"
 
         # Write initial content
-        embedded.write(path, b"Content 1")
+        embedded.sys_write(path, b"Content 1")
         meta1 = embedded.metadata.get(path)
         assert meta1 is not None
         modified1 = meta1.modified_at
@@ -392,7 +392,7 @@ def test_modified_at_updates(embedded: NexusFS) -> None:
         frozen_time.tick(delta=timedelta(seconds=1))
 
         # Update content
-        embedded.write(path, b"Content 2")
+        embedded.sys_write(path, b"Content 2")
         meta2 = embedded.metadata.get(path)
         assert meta2 is not None
         modified2 = meta2.modified_at
@@ -408,13 +408,13 @@ def test_created_at_persists(embedded: NexusFS) -> None:
     path = "/test.txt"
 
     # Write initial content
-    embedded.write(path, b"Content 1")
+    embedded.sys_write(path, b"Content 1")
     meta1 = embedded.metadata.get(path)
     assert meta1 is not None
     created1 = meta1.created_at
 
     # Update content
-    embedded.write(path, b"Content 2")
+    embedded.sys_write(path, b"Content 2")
     meta2 = embedded.metadata.get(path)
     assert meta2 is not None
     created2 = meta2.created_at
@@ -429,27 +429,27 @@ def test_multiple_operations(embedded: NexusFS) -> None:
     """Test multiple file operations in sequence."""
     # Create multiple files
     for i in range(10):
-        embedded.write(f"/file{i}.txt", f"Content {i}".encode())
+        embedded.sys_write(f"/file{i}.txt", f"Content {i}".encode())
 
     # Verify all exist
     for i in range(10):
-        assert embedded.exists(f"/file{i}.txt")
+        assert embedded.sys_access(f"/file{i}.txt")
 
     # Read all
     for i in range(10):
-        content = embedded.read(f"/file{i}.txt")
+        content = embedded.sys_read(f"/file{i}.txt")
         assert content == f"Content {i}".encode()
 
     # Delete half
     for i in range(0, 10, 2):
-        embedded.delete(f"/file{i}.txt")
+        embedded.sys_unlink(f"/file{i}.txt")
 
     # Verify correct files remain
     for i in range(10):
         if i % 2 == 0:
-            assert not embedded.exists(f"/file{i}.txt")
+            assert not embedded.sys_access(f"/file{i}.txt")
         else:
-            assert embedded.exists(f"/file{i}.txt")
+            assert embedded.sys_access(f"/file{i}.txt")
 
 
 def test_overwrite_preserves_path(embedded: NexusFS) -> None:
@@ -457,17 +457,17 @@ def test_overwrite_preserves_path(embedded: NexusFS) -> None:
     path = "/test.txt"
 
     # Write initial content
-    embedded.write(path, b"Content 1")
+    embedded.sys_write(path, b"Content 1")
 
     # Overwrite
-    embedded.write(path, b"Content 2")
+    embedded.sys_write(path, b"Content 2")
 
     # Should be accessible at same path
-    assert embedded.exists(path)
-    assert embedded.read(path) == b"Content 2"
+    assert embedded.sys_access(path)
+    assert embedded.sys_read(path) == b"Content 2"
 
     # Should only be one user file in list
-    files = [f for f in embedded.list() if f not in _SYSTEM_PATHS]
+    files = [f for f in embedded.sys_readdir() if f not in _SYSTEM_PATHS]
     assert len(files) == 1
     assert files[0] == path
 
@@ -478,20 +478,20 @@ def test_overwrite_preserves_path(embedded: NexusFS) -> None:
 def test_list_recursive(embedded: NexusFS) -> None:
     """Test recursive listing of files."""
     # Create directory structure
-    embedded.write("/file1.txt", b"Content 1")
-    embedded.write("/dir1/file2.txt", b"Content 2")
-    embedded.write("/dir1/subdir/file3.txt", b"Content 3")
-    embedded.write("/dir2/file4.txt", b"Content 4")
+    embedded.sys_write("/file1.txt", b"Content 1")
+    embedded.sys_write("/dir1/file2.txt", b"Content 2")
+    embedded.sys_write("/dir1/subdir/file3.txt", b"Content 3")
+    embedded.sys_write("/dir2/file4.txt", b"Content 4")
 
     # Non-recursive list of root (includes directories now)
-    files = [f for f in embedded.list("/", recursive=False) if f not in _SYSTEM_PATHS]
+    files = [f for f in embedded.sys_readdir("/", recursive=False) if f not in _SYSTEM_PATHS]
     assert len(files) == 3  # file1.txt + dir1 + dir2
     assert "/file1.txt" in files
     assert "/dir1" in files
     assert "/dir2" in files
 
     # Recursive list of root
-    files = [f for f in embedded.list("/", recursive=True) if f not in _SYSTEM_PATHS]
+    files = [f for f in embedded.sys_readdir("/", recursive=True) if f not in _SYSTEM_PATHS]
     assert len(files) == 4
     assert "/file1.txt" in files
     assert "/dir1/file2.txt" in files
@@ -499,13 +499,13 @@ def test_list_recursive(embedded: NexusFS) -> None:
     assert "/dir2/file4.txt" in files
 
     # Non-recursive list of dir1 (includes subdirectories now)
-    files = embedded.list("/dir1", recursive=False)
+    files = embedded.sys_readdir("/dir1", recursive=False)
     assert len(files) == 2  # file2.txt + subdir
     assert "/dir1/file2.txt" in files
     assert "/dir1/subdir" in files
 
     # Recursive list of dir1
-    files = embedded.list("/dir1", recursive=True)
+    files = embedded.sys_readdir("/dir1", recursive=True)
     assert len(files) == 2
     assert "/dir1/file2.txt" in files
     assert "/dir1/subdir/file3.txt" in files
@@ -514,13 +514,13 @@ def test_list_recursive(embedded: NexusFS) -> None:
 def test_list_with_details(embedded: NexusFS) -> None:
     """Test listing files with detailed metadata."""
     # Create files
-    embedded.write("/file1.txt", b"Hello")
-    embedded.write("/file2.txt", b"World!")
+    embedded.sys_write("/file1.txt", b"Hello")
+    embedded.sys_write("/file2.txt", b"World!")
 
     # List with details (filter out system mount-point entries)
     files = [
         f
-        for f in embedded.list("/", recursive=True, details=True)
+        for f in embedded.sys_readdir("/", recursive=True, details=True)
         if isinstance(f, dict) and f.get("path") not in _SYSTEM_PATHS
     ]
 
@@ -542,10 +542,10 @@ def test_list_with_details(embedded: NexusFS) -> None:
 def test_glob_simple_pattern(embedded: NexusFS) -> None:
     """Test glob with simple wildcard patterns."""
     # Create test files
-    embedded.write("/test1.txt", b"Content")
-    embedded.write("/test2.txt", b"Content")
-    embedded.write("/file.py", b"Content")
-    embedded.write("/data.csv", b"Content")
+    embedded.sys_write("/test1.txt", b"Content")
+    embedded.sys_write("/test2.txt", b"Content")
+    embedded.sys_write("/file.py", b"Content")
+    embedded.sys_write("/data.csv", b"Content")
 
     # Glob for .txt files
     files = embedded.glob("*.txt")
@@ -568,10 +568,10 @@ def test_glob_simple_pattern(embedded: NexusFS) -> None:
 def test_glob_recursive_pattern(embedded: NexusFS) -> None:
     """Test glob with recursive ** pattern."""
     # Create nested structure
-    embedded.write("/src/main.py", b"Content")
-    embedded.write("/src/utils/helper.py", b"Content")
-    embedded.write("/tests/test_main.py", b"Content")
-    embedded.write("/README.md", b"Content")
+    embedded.sys_write("/src/main.py", b"Content")
+    embedded.sys_write("/src/utils/helper.py", b"Content")
+    embedded.sys_write("/tests/test_main.py", b"Content")
+    embedded.sys_write("/README.md", b"Content")
 
     # Find all Python files recursively
     files = embedded.glob("**/*.py")
@@ -588,9 +588,9 @@ def test_glob_recursive_pattern(embedded: NexusFS) -> None:
 def test_glob_with_base_path(embedded: NexusFS) -> None:
     """Test glob with a base path."""
     # Create files
-    embedded.write("/data/file1.csv", b"Content")
-    embedded.write("/data/file2.csv", b"Content")
-    embedded.write("/other/file3.csv", b"Content")
+    embedded.sys_write("/data/file1.csv", b"Content")
+    embedded.sys_write("/data/file2.csv", b"Content")
+    embedded.sys_write("/other/file3.csv", b"Content")
 
     # Glob in data directory
     files = embedded.glob("*.csv", path="/data")
@@ -602,9 +602,9 @@ def test_glob_with_base_path(embedded: NexusFS) -> None:
 def test_glob_question_mark_pattern(embedded: NexusFS) -> None:
     """Test glob with ? wildcard."""
     # Create files
-    embedded.write("/file1.txt", b"Content")
-    embedded.write("/file2.txt", b"Content")
-    embedded.write("/file10.txt", b"Content")
+    embedded.sys_write("/file1.txt", b"Content")
+    embedded.sys_write("/file2.txt", b"Content")
+    embedded.sys_write("/file10.txt", b"Content")
 
     # Match single character
     files = embedded.glob("file?.txt")
@@ -617,8 +617,8 @@ def test_glob_question_mark_pattern(embedded: NexusFS) -> None:
 def test_grep_simple_search(embedded: NexusFS) -> None:
     """Test basic grep search."""
     # Create test files
-    embedded.write("/file1.txt", b"Hello World\nFoo Bar\nHello Again")
-    embedded.write("/file2.txt", b"Goodbye\nWorld Peace")
+    embedded.sys_write("/file1.txt", b"Hello World\nFoo Bar\nHello Again")
+    embedded.sys_write("/file2.txt", b"Goodbye\nWorld Peace")
 
     # Search for "Hello"
     results = embedded.grep("Hello")
@@ -637,7 +637,7 @@ def test_grep_simple_search(embedded: NexusFS) -> None:
 def test_grep_regex_pattern(embedded: NexusFS) -> None:
     """Test grep with regex patterns."""
     # Create test file
-    embedded.write("/code.py", b"def foo():\n    pass\ndef bar():\n    return 42")
+    embedded.sys_write("/code.py", b"def foo():\n    pass\ndef bar():\n    return 42")
 
     # Search for function definitions
     results = embedded.grep(r"def \w+")
@@ -650,9 +650,9 @@ def test_grep_regex_pattern(embedded: NexusFS) -> None:
 def test_grep_with_file_pattern(embedded: NexusFS) -> None:
     """Test grep with file filtering."""
     # Create test files
-    embedded.write("/file1.py", b"import os\nimport sys")
-    embedded.write("/file2.py", b"import re")
-    embedded.write("/file.txt", b"import nothing")
+    embedded.sys_write("/file1.py", b"import os\nimport sys")
+    embedded.sys_write("/file2.py", b"import re")
+    embedded.sys_write("/file.txt", b"import nothing")
 
     # Search only in .py files
     results = embedded.grep("import", file_pattern="*.py")
@@ -665,7 +665,9 @@ def test_grep_with_file_pattern(embedded: NexusFS) -> None:
 def test_grep_case_insensitive(embedded: NexusFS) -> None:
     """Test case-insensitive grep search."""
     # Create test file
-    embedded.write("/file.txt", b"ERROR: Something went wrong\nError in processing\nerror detected")
+    embedded.sys_write(
+        "/file.txt", b"ERROR: Something went wrong\nError in processing\nerror detected"
+    )
 
     # Case-sensitive (default)
     results = embedded.grep("ERROR")
@@ -680,7 +682,7 @@ def test_grep_max_results(embedded: NexusFS) -> None:
     """Test grep result limiting."""
     # Create file with many matches
     content = "\n".join([f"Line {i} with MATCH" for i in range(100)])
-    embedded.write("/file.txt", content.encode())
+    embedded.sys_write("/file.txt", content.encode())
 
     # Limit results
     results = embedded.grep("MATCH", max_results=10)
@@ -690,10 +692,10 @@ def test_grep_max_results(embedded: NexusFS) -> None:
 def test_grep_skips_binary_files(embedded: NexusFS) -> None:
     """Test that grep skips binary files."""
     # Create binary file
-    embedded.write("/binary.bin", bytes(range(256)))
+    embedded.sys_write("/binary.bin", bytes(range(256)))
 
     # Create text file
-    embedded.write("/text.txt", b"findme")
+    embedded.sys_write("/text.txt", b"findme")
 
     # Search should only find text file
     results = embedded.grep("findme")
@@ -703,7 +705,7 @@ def test_grep_skips_binary_files(embedded: NexusFS) -> None:
 
 def test_grep_empty_results(embedded: NexusFS) -> None:
     """Test grep with no matches."""
-    embedded.write("/file.txt", b"Hello World")
+    embedded.sys_write("/file.txt", b"Hello World")
 
     results = embedded.grep("nonexistent")
     assert len(results) == 0
@@ -711,10 +713,10 @@ def test_grep_empty_results(embedded: NexusFS) -> None:
 
 def test_list_returns_list_type(embedded: NexusFS) -> None:
     """Test that list() returns a list."""
-    embedded.write("/file1.txt", b"Content")
-    embedded.write("/file2.txt", b"Content")
+    embedded.sys_write("/file1.txt", b"Content")
+    embedded.sys_write("/file2.txt", b"Content")
 
-    files = embedded.list()
+    files = embedded.sys_readdir()
     assert isinstance(files, list)
     user_files = [f for f in files if f not in _SYSTEM_PATHS]
     assert len(user_files) == 2

@@ -589,7 +589,7 @@ def serve(
         # Connect from Python
         import nexus
         nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": "<admin-key>"})
-        nx.write("/workspace/file.txt", b"Hello, World!")
+        nx.sys_write("/workspace/file.txt", b"Hello, World!")
 
         # Mount with FUSE
         from nexus.fuse import mount_nexus
@@ -1418,7 +1418,7 @@ def serve(
             console.print(
                 f'  nx = nexus.connect(config={{"mode": "remote", "url": "http://{host}:{port}"}})'
             )
-        console.print("  nx.write('/workspace/file.txt', b'Hello!')")
+        console.print("  nx.sys_write('/workspace/file.txt', b'Hello!')")
         console.print()
 
         # ============================================
@@ -1448,10 +1448,10 @@ def serve(
             for path in common_paths:
                 try:
                     # Check if path exists and warm permission cache
-                    if nx.exists(path):
+                    if nx.sys_access(path):
                         # List directory to warm listing cache
                         try:
-                            nx.list(path, recursive=False, details=False)
+                            nx.sys_readdir(path, recursive=False, details=False)
                             warmed_count += 1
                         except Exception as e:
                             logger.debug("Failed to warm listing cache for %s: %s", path, e)

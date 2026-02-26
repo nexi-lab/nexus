@@ -117,20 +117,20 @@ class _GatewayFSAdapter:
     def __init__(self, gw: Any):
         self._gw = gw
 
-    def read(self, path: str, *, context: Any = None) -> bytes | str:
-        return cast("bytes | str", self._gw.read(path, context=context))
+    def sys_read(self, path: str, *, context: Any = None) -> bytes | str:
+        return cast("bytes | str", self._gw.sys_read(path, context=context))
 
-    def write(self, path: str, content: bytes | str, *, context: Any = None) -> None:
-        self._gw.write(path, content, context=context)
+    def sys_write(self, path: str, content: bytes | str, *, context: Any = None) -> None:
+        self._gw.sys_write(path, content, context=context)
 
-    def mkdir(self, path: str, *, context: Any = None) -> None:
-        self._gw.mkdir(path, context=context)
+    def sys_mkdir(self, path: str, *, context: Any = None) -> None:
+        self._gw.sys_mkdir(path, context=context)
 
-    def list(self, path: str, *, context: Any = None) -> list[str]:
-        return cast("list[str]", self._gw.list(path, context=context))
+    def sys_readdir(self, path: str, *, context: Any = None) -> list[str]:
+        return cast("list[str]", self._gw.sys_readdir(path, context=context))
 
-    def exists(self, path: str, *, context: Any = None) -> bool:
-        return cast(bool, self._gw.exists(path, context=context))
+    def sys_access(self, path: str, *, context: Any = None) -> bool:
+        return cast(bool, self._gw.sys_access(path, context=context))
 
 
 class _GatewayPermAdapter:

@@ -40,10 +40,10 @@ class MethodSpec:
 # and are NOT in this registry.
 METHOD_REGISTRY: dict[str, MethodSpec] = {
     # --- Discovery (response_key extraction) ---
-    "list": MethodSpec(response_key="files"),
+    "sys_readdir": MethodSpec(response_key="files"),
     "glob": MethodSpec(response_key="matches"),
     "grep": MethodSpec(response_key="results"),
     # --- Boolean result extraction ---
-    "is_directory": MethodSpec(response_key="is_directory"),
-    "is_file": MethodSpec(response_key="is_file"),
+    "sys_access": MethodSpec(response_key="exists"),
+    "sys_is_directory": MethodSpec(response_key="is_directory"),
 }

@@ -551,7 +551,7 @@ class TestReadRangeRPC:
         try:
             # Write a test file
             content = b"0123456789ABCDEF"
-            nx.write("/test.txt", content)
+            nx.sys_write("/test.txt", content)
 
             # Read ranges
             assert nx.read_range("/test.txt", 0, 5) == b"01234"
@@ -575,7 +575,7 @@ class TestReadRangeRPC:
         )
 
         try:
-            nx.write("/test.txt", b"test content")
+            nx.sys_write("/test.txt", b"test content")
 
             # Negative start should raise
             with pytest.raises(ValueError, match="non-negative"):
@@ -602,7 +602,7 @@ class TestReadRangeRPC:
         )
 
         try:
-            nx.write("/test.txt", b"test content")
+            nx.sys_write("/test.txt", b"test content")
 
             # Empty range should return empty bytes
             assert nx.read_range("/test.txt", 5, 5) == b""
@@ -625,7 +625,7 @@ class TestReadRangeRPC:
 
         try:
             content = b"short"
-            nx.write("/test.txt", content)
+            nx.sys_write("/test.txt", content)
 
             # Range beyond file size should return available content
             result = nx.read_range("/test.txt", 0, 100)
@@ -654,7 +654,7 @@ class TestStatRPC:
         try:
             # Write a test file
             content = b"Hello, World!"
-            nx.write("/test.txt", content)
+            nx.sys_write("/test.txt", content)
 
             # stat() should return metadata
             info = nx.stat("/test.txt")
@@ -703,7 +703,7 @@ class TestStatRPC:
 
         try:
             # Create a file in a subdirectory to make an implicit directory
-            nx.write("/subdir/file.txt", b"content")
+            nx.sys_write("/subdir/file.txt", b"content")
 
             # stat() on the directory should work
             info = nx.stat("/subdir")

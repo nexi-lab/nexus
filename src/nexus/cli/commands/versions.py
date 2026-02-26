@@ -253,7 +253,7 @@ def version_rollback(path: str, version: int, yes: bool, backend_config: Backend
 
         # Get current version for confirmation
         # Check if file exists
-        if not nx.exists(path):
+        if not nx.sys_access(path):
             console.print(f"[red]File not found: {path}[/red]")
             nx.close()
             return

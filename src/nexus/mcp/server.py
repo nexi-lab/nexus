@@ -300,7 +300,7 @@ def create_mcp_server(
             File content as string
         """
         nx_instance = _get_nexus_instance(ctx)
-        content = nx_instance.read(path)
+        content = nx_instance.sys_read(path)
         if isinstance(content, bytes):
             return content.decode("utf-8", errors="replace")
         return str(content)
@@ -327,7 +327,7 @@ def create_mcp_server(
         """
         nx_instance = _get_nexus_instance(ctx)
         content_bytes = content.encode("utf-8") if isinstance(content, str) else content
-        nx_instance.write(path, content_bytes)
+        nx_instance.sys_write(path, content_bytes)
         return f"Successfully wrote {len(content_bytes)} bytes to {path}"
 
     @mcp.tool(
@@ -400,7 +400,7 @@ def create_mcp_server(
             Success message or error
         """
         nx_instance = _get_nexus_instance(ctx)
-        nx_instance.delete(path)
+        nx_instance.sys_unlink(path)
         return f"Successfully deleted {path}"
 
     @mcp.tool(
@@ -459,7 +459,7 @@ def create_mcp_server(
         """
         nx_instance = _get_nexus_instance(ctx)
         try:
-            all_files = nx_instance.list(path, recursive=recursive, details=details)
+            all_files = nx_instance.sys_readdir(path, recursive=recursive, details=details)
         except FileNotFoundError:
             return tool_error(
                 "not_found",
@@ -502,13 +502,13 @@ def create_mcp_server(
             JSON string with file metadata
         """
         nx_instance = _get_nexus_instance(ctx)
-        if not nx_instance.exists(path):
+        if not nx_instance.sys_access(path):
             return tool_error(
                 "not_found",
                 f"File not found at '{path}'. Use nexus_list_files to check available files.",
             )
 
-        is_dir = nx_instance.is_directory(path)
+        is_dir = nx_instance.sys_is_directory(path)
         info_dict: dict[str, Any] = {
             "path": path,
             "exists": True,
@@ -518,7 +518,7 @@ def create_mcp_server(
         # Try to get size if it's a file
         if not is_dir:
             try:
-                content = nx_instance.read(path)
+                content = nx_instance.sys_read(path)
                 if isinstance(content, bytes):
                     info_dict["size"] = len(content)
             except Exception as e:
@@ -550,7 +550,7 @@ def create_mcp_server(
         """
         nx_instance = _get_nexus_instance(ctx)
         try:
-            nx_instance.mkdir(path)
+            nx_instance.sys_mkdir(path)
         except FileExistsError:
             return f"Directory already exists at '{path}'."
         return f"Successfully created directory {path}"
@@ -576,7 +576,7 @@ def create_mcp_server(
         """
         nx_instance = _get_nexus_instance(ctx)
         try:
-            nx_instance.rmdir(path, recursive=recursive)
+            nx_instance.sys_rmdir(path, recursive=recursive)
         except OSError as e:
             if "not empty" in str(e).lower():
                 return tool_error(
@@ -609,7 +609,7 @@ def create_mcp_server(
         """
         nx_instance = _get_nexus_instance(ctx)
         try:
-            nx_instance.rename(old_path, new_path)
+            nx_instance.sys_rename(old_path, new_path)
         except FileExistsError:
             return tool_error(
                 "invalid_input",
@@ -1117,7 +1117,7 @@ def create_mcp_server(
         """
         try:
             nx_instance = _get_nexus_instance(ctx)
-            content = nx_instance.read(path)
+            content = nx_instance.sys_read(path)
             if isinstance(content, bytes):
                 return content.decode("utf-8", errors="replace")
             return str(content)

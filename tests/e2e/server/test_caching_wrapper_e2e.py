@@ -365,21 +365,21 @@ class TestCachingPermissions:
         admin = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Write a file as admin
-        nx.write("/test/cached_file.txt", b"cached content", context=admin)
+        nx.sys_write("/test/cached_file.txt", b"cached content", context=admin)
 
         # First read — cache miss, reads from backend
-        content = nx.read("/test/cached_file.txt", context=admin)
+        content = nx.sys_read("/test/cached_file.txt", context=admin)
         assert content == b"cached content"
 
         # Second read — should use cache (verify via stats)
         cached_backend.clear_cache()
 
         # Re-read to populate cache
-        content = nx.read("/test/cached_file.txt", context=admin)
+        content = nx.sys_read("/test/cached_file.txt", context=admin)
         assert content == b"cached content"
 
         # Third read — L1 hit
-        content = nx.read("/test/cached_file.txt", context=admin)
+        content = nx.sys_read("/test/cached_file.txt", context=admin)
         assert content == b"cached content"
 
         stats = cached_backend.get_cache_stats()
@@ -391,10 +391,10 @@ class TestCachingPermissions:
         admin = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Write a file as admin
-        nx.write("/test/secret.txt", b"secret data", context=admin)
+        nx.sys_write("/test/secret.txt", b"secret data", context=admin)
 
         # Read as admin to populate cache
-        content = nx.read("/test/secret.txt", context=admin)
+        content = nx.sys_read("/test/secret.txt", context=admin)
         assert content == b"secret data"
 
         # Verify content is cached
@@ -404,7 +404,7 @@ class TestCachingPermissions:
         # Non-admin user without explicit permission should be DENIED
         unauthorized = OperationContext(user_id="mallory", groups=[], is_admin=False)
         with pytest.raises(PermissionError):
-            nx.read("/test/secret.txt", context=unauthorized)
+            nx.sys_read("/test/secret.txt", context=unauthorized)
 
     def test_permission_enforced_on_write_with_cache(self, nexus_with_cache):
         """Non-authorized user cannot write even with caching enabled."""
@@ -412,12 +412,12 @@ class TestCachingPermissions:
         admin = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Create directory as admin
-        nx.mkdir("/test/protected", parents=True, context=admin)
+        nx.sys_mkdir("/test/protected", parents=True, context=admin)
 
         # Non-admin user should be denied write
         unauthorized = OperationContext(user_id="eve", groups=[], is_admin=False)
         with pytest.raises(PermissionError):
-            nx.write("/test/protected/hack.txt", b"pwned", context=unauthorized)
+            nx.sys_write("/test/protected/hack.txt", b"pwned", context=unauthorized)
 
     def test_cached_content_not_leaked_across_users(self, nexus_with_cache):
         """User A's cached read does not leak data to unauthorized User B."""
@@ -425,12 +425,12 @@ class TestCachingPermissions:
         admin = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Write multiple files as admin
-        nx.write("/test/public.txt", b"public info", context=admin)
-        nx.write("/test/private.txt", b"private info", context=admin)
+        nx.sys_write("/test/public.txt", b"public info", context=admin)
+        nx.sys_write("/test/private.txt", b"private info", context=admin)
 
         # Admin reads both (populates cache for both)
-        assert nx.read("/test/public.txt", context=admin) == b"public info"
-        assert nx.read("/test/private.txt", context=admin) == b"private info"
+        assert nx.sys_read("/test/public.txt", context=admin) == b"public info"
+        assert nx.sys_read("/test/private.txt", context=admin) == b"private info"
 
         # Verify both are cached
         stats = cached_backend.get_cache_stats()
@@ -449,7 +449,7 @@ class TestCachingPermissions:
         # Alice should STILL be denied on private.txt even though it's cached
         alice = OperationContext(user_id="alice", groups=[], is_admin=False)
         with pytest.raises(PermissionError):
-            nx.read("/test/private.txt", context=alice)
+            nx.sys_read("/test/private.txt", context=alice)
 
     def test_delete_with_permissions_invalidates_cache(self, nexus_with_cache):
         """Deleting a file invalidates it from cache."""
@@ -457,17 +457,17 @@ class TestCachingPermissions:
         admin = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Write and read to populate cache
-        nx.write("/test/delete_me.txt", b"temp data", context=admin)
-        assert nx.read("/test/delete_me.txt", context=admin) == b"temp data"
+        nx.sys_write("/test/delete_me.txt", b"temp data", context=admin)
+        assert nx.sys_read("/test/delete_me.txt", context=admin) == b"temp data"
 
         # Delete the file
-        nx.delete("/test/delete_me.txt", context=admin)
+        nx.sys_unlink("/test/delete_me.txt", context=admin)
 
         # Should raise FileNotFoundError — NOT serve stale cached data
         from nexus.contracts.exceptions import NexusFileNotFoundError
 
         with pytest.raises((NexusFileNotFoundError, FileNotFoundError)):
-            nx.read("/test/delete_me.txt", context=admin)
+            nx.sys_read("/test/delete_me.txt", context=admin)
 
     def test_write_through_with_permissions(self, tmp_path: Path):
         """Write-through strategy works correctly with permission checks."""
@@ -497,16 +497,16 @@ class TestCachingPermissions:
             admin = OperationContext(user_id="admin", groups=[], is_admin=True)
 
             # Write-through: write populates cache immediately
-            nx.write("/wt/file.txt", b"write through data", context=admin)
+            nx.sys_write("/wt/file.txt", b"write through data", context=admin)
 
             # Read should be from cache (fast)
-            content = nx.read("/wt/file.txt", context=admin)
+            content = nx.sys_read("/wt/file.txt", context=admin)
             assert content == b"write through data"
 
             # Unauthorized user still blocked
             unauthorized = OperationContext(user_id="nobody", groups=[], is_admin=False)
             with pytest.raises(PermissionError):
-                nx.read("/wt/file.txt", context=unauthorized)
+                nx.sys_read("/wt/file.txt", context=unauthorized)
         finally:
             nx.close()
 
@@ -589,9 +589,9 @@ class TestCachingWithFastAPIServer:
         # from parent directories to all children.  Using isolated dirs
         # ensures that a grant on /alice_area/readme.md does NOT bleed to
         # /secret_area/secret.txt.
-        nx.write("/alice_area/readme.md", b"# HTTP Cache Test", context=admin)
-        nx.write("/secret_area/secret.txt", b"top secret data", context=admin)
-        nx.write("/shared_area/shared.txt", b"shared content", context=admin)
+        nx.sys_write("/alice_area/readme.md", b"# HTTP Cache Test", context=admin)
+        nx.sys_write("/secret_area/secret.txt", b"top secret data", context=admin)
+        nx.sys_write("/shared_area/shared.txt", b"shared content", context=admin)
 
         # Grant ReBAC permissions
         rebac = nx._rebac_manager

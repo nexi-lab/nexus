@@ -341,8 +341,8 @@ class WorkspaceRPCService:
         if context is None and hasattr(self, "_operation_context"):
             context = self._operation_context
 
-        if not self._vfs.exists(path, context=context):
-            self._vfs.mkdir(path, parents=True, exist_ok=True, context=context)
+        if not self._vfs.sys_access(path, context=context):
+            self._vfs.sys_mkdir(path, parents=True, exist_ok=True, context=context)
 
         config = self._wr.register_workspace(
             path=path,

@@ -93,9 +93,9 @@ def copy_file(
             content = f.read()
 
         # Check if destination exists and has same content (if checksum enabled)
-        if checksum and nx.exists(dest):
+        if checksum and nx.sys_access(dest):
             try:
-                raw_existing = nx.read(dest)
+                raw_existing = nx.sys_read(dest)
                 # Type narrowing: when return_metadata=False (default), result is bytes
                 assert isinstance(raw_existing, bytes), "Expected bytes from read()"
                 existing_content = raw_existing
@@ -108,14 +108,14 @@ def copy_file(
         # Create parent directories in Nexus
         parent = str(PurePosixPath(dest).parent)
         if parent and parent != "/" and parent != ".":
-            nx.mkdir(parent, parents=True, exist_ok=True)
+            nx.sys_mkdir(parent, parents=True, exist_ok=True)
 
-        nx.write(dest, content)
+        nx.sys_write(dest, content)
         return len(content)
 
     elif not is_source_local and is_dest_local:
         # Nexus to local
-        raw_content = nx.read(source)
+        raw_content = nx.sys_read(source)
         # Type narrowing: when return_metadata=False (default), result is bytes
         assert isinstance(raw_content, bytes), "Expected bytes from read()"
         content = raw_content
@@ -135,15 +135,15 @@ def copy_file(
 
     else:
         # Nexus to Nexus
-        raw_content = nx.read(source)
+        raw_content = nx.sys_read(source)
         # Type narrowing: when return_metadata=False (default), result is bytes
         assert isinstance(raw_content, bytes), "Expected bytes from read()"
         content = raw_content
 
         # Check if destination exists and has same content (if checksum enabled)
-        if checksum and nx.exists(dest):
+        if checksum and nx.sys_access(dest):
             try:
-                raw_existing = nx.read(dest)
+                raw_existing = nx.sys_read(dest)
                 # Type narrowing: when return_metadata=False (default), result is bytes
                 assert isinstance(raw_existing, bytes), "Expected bytes from read()"
                 existing_content = raw_existing
@@ -156,9 +156,9 @@ def copy_file(
         # Create parent directories in Nexus
         parent = str(PurePosixPath(dest).parent)
         if parent and parent != "/" and parent != ".":
-            nx.mkdir(parent, parents=True, exist_ok=True)
+            nx.sys_mkdir(parent, parents=True, exist_ok=True)
 
-        nx.write(dest, content)
+        nx.sys_write(dest, content)
         return len(content)
 
 
@@ -197,7 +197,7 @@ def sync_directories(
         source_path = Path(source)
         source_files_rel = [Path(f).relative_to(source_path).as_posix() for f in source_files]
     else:
-        source_files_abs = nx.list(source, recursive=True)
+        source_files_abs = nx.sys_readdir(source, recursive=True)
         # Ensure we have a list of strings (paths)
         if (
             isinstance(source_files_abs, list)
@@ -219,7 +219,7 @@ def sync_directories(
             # Convert to relative paths with forward slashes (POSIX-style)
             dest_files_rel = [Path(f).relative_to(dest_path).as_posix() for f in dest_files]
         else:
-            dest_files_abs = nx.list(dest, recursive=True)
+            dest_files_abs = nx.sys_readdir(dest, recursive=True)
             # Ensure we have a list of strings (paths)
             if (
                 isinstance(dest_files_abs, list)
@@ -299,7 +299,7 @@ def sync_directories(
                         os.remove(dest_full)
                     else:
                         dest_full = str(PurePosixPath(dest) / rel_path)
-                        nx.delete(dest_full)
+                        nx.sys_unlink(dest_full)
 
     return stats
 
@@ -341,7 +341,7 @@ def move_file(
         elif not is_source_local and not is_dest_local:
             # Nexus to Nexus - use efficient rename API
             # This is metadata-only, instant operation that preserves ReBAC permissions
-            nx.rename(source, dest)
+            nx.sys_rename(source, dest)
             return True
 
         else:
@@ -352,7 +352,7 @@ def move_file(
             if is_source_local:
                 os.remove(source)
             else:
-                nx.delete(source)
+                nx.sys_unlink(source)
             return True
 
     except (OSError, ValueError, TypeError):

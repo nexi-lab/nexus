@@ -196,10 +196,10 @@ class FirecrawlPlugin(NexusPlugin):
 
                 # Create directory
                 dir_path = str(Path(nexus_path).parent)
-                self.nx.mkdir(dir_path, parents=True, exist_ok=True)
+                self.nx.sys_mkdir(dir_path, parents=True, exist_ok=True)
 
                 # Write content
-                self.nx.write(nexus_path, result.markdown.encode("utf-8"))
+                self.nx.sys_write(nexus_path, result.markdown.encode("utf-8"))
                 console.print(f"[green]✓ Saved to NexusFS:[/green] {nexus_path}")
 
             # Display content if no output specified
@@ -305,8 +305,8 @@ class FirecrawlPlugin(NexusPlugin):
                     if save_to_nexus and self.nx:
                         nexus_path = f"/workspace/{file_path}"
                         dir_path = str(Path(nexus_path).parent)
-                        self.nx.mkdir(dir_path, parents=True, exist_ok=True)
-                        self.nx.write(nexus_path, markdown.encode("utf-8"))
+                        self.nx.sys_mkdir(dir_path, parents=True, exist_ok=True)
+                        self.nx.sys_write(nexus_path, markdown.encode("utf-8"))
 
                     if (i + 1) % 10 == 0:
                         console.print(f"  Saved {i + 1}/{len(job.data)} pages...")
@@ -437,8 +437,8 @@ class FirecrawlPlugin(NexusPlugin):
                     url_path = self._url_to_path(result["url"])
                     nexus_path = f"/workspace/search/{query}/{url_path}"
                     dir_path = str(Path(nexus_path).parent)
-                    self.nx.mkdir(dir_path, parents=True, exist_ok=True)
-                    self.nx.write(nexus_path, result["markdown"].encode("utf-8"))
+                    self.nx.sys_mkdir(dir_path, parents=True, exist_ok=True)
+                    self.nx.sys_write(nexus_path, result["markdown"].encode("utf-8"))
 
         except Exception as e:
             console.print(f"[red]Failed to search: {e}[/red]")

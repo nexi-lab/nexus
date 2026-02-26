@@ -186,7 +186,7 @@ class SkillRegistry:
             # so we check is_directory() first (which works for implicit dirs)
             # and fall back to trying to list the directory
             try:
-                is_dir = self._filesystem.is_directory(tier_path, context=context)
+                is_dir = self._filesystem.sys_is_directory(tier_path, context=context)
             except Exception:
                 # Directory check failed, try to list anyway
                 is_dir = False
@@ -195,7 +195,7 @@ class SkillRegistry:
                 # Try to list the directory - if it has files, it exists
                 try:
                     # list() returns list[str] when details=False
-                    files_raw = self._filesystem.list(
+                    files_raw = self._filesystem.sys_readdir(
                         tier_path, recursive=True, details=False, context=context
                     )
                     files_list: list[str] = files_raw  # type: ignore[assignment]
@@ -216,7 +216,7 @@ class SkillRegistry:
                 # Directory exists, list it
                 try:
                     # list() returns list[str] when details=False
-                    files_raw = self._filesystem.list(
+                    files_raw = self._filesystem.sys_readdir(
                         tier_path, recursive=True, details=False, context=context
                     )
                     str_files: list[str] = files_raw  # type: ignore[assignment]
@@ -304,7 +304,7 @@ class SkillRegistry:
         if self._filesystem:
             # Use NexusFS to read content and parse directly
             try:
-                raw_content = self._filesystem.read(file_path, context=context)
+                raw_content = self._filesystem.sys_read(file_path, context=context)
                 # Type narrowing: when return_metadata=False (default), result is bytes
                 assert isinstance(raw_content, bytes), "Expected bytes from read()"
                 content = raw_content.decode("utf-8")
@@ -385,7 +385,7 @@ class SkillRegistry:
         # Load full content
         try:
             if self._filesystem:
-                raw_content = self._filesystem.read(metadata.file_path or "", context=context)
+                raw_content = self._filesystem.sys_read(metadata.file_path or "", context=context)
                 # Type narrowing: when return_metadata=False (default), result is bytes
                 assert isinstance(raw_content, bytes), "Expected bytes from read()"
                 content = raw_content.decode("utf-8")

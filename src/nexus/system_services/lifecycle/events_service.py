@@ -113,6 +113,26 @@ class EventsService:
         return ROOT_ZONE_ID
 
     # =========================================================================
+    # Cache Invalidation Hooks (used by multi-instance tests)
+    # =========================================================================
+
+    def _start_cache_invalidation(self) -> None:
+        """Start listening for events from other instances to invalidate local cache.
+
+        No-op placeholder — cache invalidation is handled by the event bus
+        subscription in the distributed event path.  Provided so that
+        multi-instance test fixtures can call it without AttributeError.
+        """
+        logger.debug("[EventsService] _start_cache_invalidation (no-op)")
+
+    def _stop_cache_invalidation(self) -> None:
+        """Stop cache invalidation listener.
+
+        No-op placeholder — see ``_start_cache_invalidation``.
+        """
+        logger.debug("[EventsService] _stop_cache_invalidation (no-op)")
+
+    # =========================================================================
     # System Readiness
     # =========================================================================
 

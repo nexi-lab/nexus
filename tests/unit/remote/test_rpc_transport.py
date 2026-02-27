@@ -173,27 +173,168 @@ class TestRPCTransportCallRPC:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Typed RPC Method Tests (Phase 2)
+# ---------------------------------------------------------------------------
+
+
+class TestRPCTransportTypedMethods:
+    """Typed RPC methods: read_file, write_file, delete_file, stream_read, ping."""
+
+    def test_read_file_success(self, transport) -> None:
+        """read_file returns raw bytes from ReadResponse.content."""
+        mock_response = MagicMock()
+        mock_response.is_error = False
+        mock_response.content = b"file content here"
+        transport._mock_stub.Read.return_value = mock_response
+
+        result = transport.read_file("/test.txt")
+
+        assert result == b"file content here"
+        transport._mock_stub.Read.assert_called_once()
+        request = transport._mock_stub.Read.call_args[0][0]
+        assert request.path == "/test.txt"
+        assert request.auth_token == "test-token"
+
+    def test_read_file_error(self, transport) -> None:
+        """read_file raises NexusFileNotFoundError on is_error=True."""
+        mock_response = MagicMock()
+        mock_response.is_error = True
+        mock_response.error_payload = encode_rpc_message(
+            {"code": -32000, "message": "File not found: /missing.txt"}
+        )
+        transport._mock_stub.Read.return_value = mock_response
+
+        with pytest.raises(NexusFileNotFoundError):
+            transport.read_file("/missing.txt")
+
+    def test_write_file_success(self, transport) -> None:
+        """write_file returns etag/size dict from WriteResponse."""
+        mock_response = MagicMock()
+        mock_response.is_error = False
+        mock_response.etag = "sha256-abc"
+        mock_response.size = 100
+        transport._mock_stub.Write.return_value = mock_response
+
+        result = transport.write_file("/file.txt", b"x" * 100)
+
+        assert result == {"etag": "sha256-abc", "size": 100}
+        request = transport._mock_stub.Write.call_args[0][0]
+        assert request.path == "/file.txt"
+        assert request.content == b"x" * 100
+
+    def test_write_file_with_etag(self, transport) -> None:
+        """write_file passes etag for conditional write."""
+        mock_response = MagicMock()
+        mock_response.is_error = False
+        mock_response.etag = "sha256-new"
+        mock_response.size = 5
+        transport._mock_stub.Write.return_value = mock_response
+
+        transport.write_file("/file.txt", b"hello", etag="sha256-old")
+
+        request = transport._mock_stub.Write.call_args[0][0]
+        assert request.etag == "sha256-old"
+
+    def test_delete_file_success(self, transport) -> None:
+        """delete_file returns True on success."""
+        mock_response = MagicMock()
+        mock_response.is_error = False
+        mock_response.success = True
+        transport._mock_stub.Delete.return_value = mock_response
+
+        result = transport.delete_file("/file.txt")
+
+        assert result is True
+        request = transport._mock_stub.Delete.call_args[0][0]
+        assert request.path == "/file.txt"
+        assert request.recursive is False
+
+    def test_delete_file_recursive(self, transport) -> None:
+        """delete_file passes recursive flag."""
+        mock_response = MagicMock()
+        mock_response.is_error = False
+        mock_response.success = True
+        transport._mock_stub.Delete.return_value = mock_response
+
+        transport.delete_file("/dir", recursive=True)
+
+        request = transport._mock_stub.Delete.call_args[0][0]
+        assert request.recursive is True
+
+    def test_stream_read_assembles_chunks(self, transport) -> None:
+        """stream_read assembles multiple ReadChunks into bytes."""
+        chunk1 = MagicMock(data=b"aaa", is_error=False)
+        chunk2 = MagicMock(data=b"bbb", is_error=False)
+        chunk3 = MagicMock(data=b"ccc", is_error=False, is_last=True)
+        transport._mock_stub.StreamRead.return_value = iter([chunk1, chunk2, chunk3])
+
+        result = transport.stream_read("/big-file.bin", chunk_size=3)
+
+        assert result == b"aaabbbccc"
+
+    def test_stream_read_error_chunk(self, transport) -> None:
+        """stream_read raises on error chunk."""
+        error_chunk = MagicMock(
+            is_error=True,
+            error_payload=encode_rpc_message({"code": -32000, "message": "File not found"}),
+        )
+        transport._mock_stub.StreamRead.return_value = iter([error_chunk])
+
+        with pytest.raises(NexusFileNotFoundError):
+            transport.stream_read("/missing.bin")
+
+    def test_ping_success(self, transport) -> None:
+        """ping returns version/zone_id/uptime dict."""
+        mock_response = MagicMock()
+        mock_response.version = "0.7.2"
+        mock_response.zone_id = "root"
+        mock_response.uptime_seconds = 3600
+        transport._mock_stub.Ping.return_value = mock_response
+
+        result = transport.ping()
+
+        assert result == {"version": "0.7.2", "zone_id": "root", "uptime": 3600}
+
+    def test_read_file_unavailable(self, transport) -> None:
+        """read_file raises RemoteConnectionError on UNAVAILABLE."""
+        rpc_error = grpc.RpcError()
+        rpc_error.code = lambda: grpc.StatusCode.UNAVAILABLE
+        rpc_error.details = lambda: "Connection refused"
+        transport._mock_stub.Read.side_effect = rpc_error
+
+        with pytest.raises(RemoteConnectionError):
+            transport.read_file.__wrapped__(transport, "/file.txt")
+
+
+# ---------------------------------------------------------------------------
+# Lifecycle Tests
+# ---------------------------------------------------------------------------
+
+
 class TestRPCTransportLifecycle:
     """Health check and close."""
 
-    def test_health_check_success(self, transport) -> None:
-        """health_check returns True when channel is ready."""
-        with patch("nexus.remote.rpc_transport.grpc.channel_ready_future") as mock_future_fn:
-            mock_future = MagicMock()
-            mock_future.result.return_value = None
-            mock_future_fn.return_value = mock_future
+    def test_health_check_uses_ping(self, transport) -> None:
+        """health_check delegates to ping()."""
+        mock_response = MagicMock()
+        mock_response.version = "0.7.2"
+        mock_response.zone_id = "root"
+        mock_response.uptime_seconds = 0
+        transport._mock_stub.Ping.return_value = mock_response
 
-            assert transport.health_check() is True
+        assert transport.health_check() is True
+        transport._mock_stub.Ping.assert_called_once()
 
-    def test_health_check_timeout(self, transport) -> None:
-        """health_check raises RemoteConnectionError on timeout."""
-        with patch("nexus.remote.rpc_transport.grpc.channel_ready_future") as mock_future_fn:
-            mock_future = MagicMock()
-            mock_future.result.side_effect = grpc.FutureTimeoutError()
-            mock_future_fn.return_value = mock_future
+    def test_health_check_failure(self, transport) -> None:
+        """health_check raises RemoteConnectionError when ping fails."""
+        rpc_error = grpc.RpcError()
+        rpc_error.code = lambda: grpc.StatusCode.UNAVAILABLE
+        rpc_error.details = lambda: "Connection refused"
+        transport._mock_stub.Ping.side_effect = rpc_error
 
-            with pytest.raises(RemoteConnectionError, match="health check timed out"):
-                transport.health_check()
+        with pytest.raises(RemoteConnectionError, match="health check failed"):
+            transport.health_check()
 
     def test_close_closes_channel(self, transport) -> None:
         """close() should close the gRPC channel."""

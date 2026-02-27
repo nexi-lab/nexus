@@ -1,1 +1,1 @@
-# gRPC transport bindings for Nexus.
+# gRPC transport bindings for Nexus (VFS + future services).

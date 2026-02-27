@@ -263,11 +263,13 @@ def _mount_federation(
         fed = NexusFederation(zone_manager=mgr)
 
         if flow == "share":
-            console.print(f"[cyan]Sharing[/cyan] {local_path} → {peer_addr}:{remote_path}")
-            zone_id = asyncio.run(fed.share(local_path, peer_addr, remote_path))
+            console.print(f"[cyan]Sharing[/cyan] {local_path}")
+            zone_id = asyncio.run(fed.share(local_path))
             console.print(f"[green]Shared as zone '{zone_id}'[/green]")
-            console.print(f"  Local:  {local_path} → DT_MOUNT → {zone_id}")
-            console.print(f"  Remote: {peer_addr}:{remote_path} → DT_MOUNT → {zone_id}")
+            console.print(f"  Local: {local_path} → DT_MOUNT → {zone_id}")
+            console.print(
+                f"  Peer can join with: nexus mount <this-node>:{local_path} <mount-point>"
+            )
         else:
             console.print(f"[cyan]Joining[/cyan] {peer_addr}:{remote_path} → {local_path}")
             zone_id = asyncio.run(fed.join(peer_addr, remote_path, local_path))

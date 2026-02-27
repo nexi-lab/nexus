@@ -196,14 +196,39 @@ Mixed consistency: Zone A (EC), Zone B (SC) — each Raft group independent.
 Federation is **NOT kernel**. NexusFS without federation degrades to remote mode (`nexus.connect()`) or standalone.
 
 ```
-NexusFS (kernel)           Federation (optional subsystem)
-NexusFilesystem (ABC)      — (inherently asymmetric)
-NexusFS                    NexusFederation (orchestration)
-MetastoreABC               ZoneManager (wraps PyO3)
-RaftMetadataStore          PyZoneManager (Rust/redb/Raft)
+                NexusFS (kernel)           Federation (optional subsystem)
+User:           NexusFilesystem (ABC)      — (no ABC needed, inherently asymmetric)
+Kernel/Service: NexusFS                    NexusFederation (orchestration)
+HAL:            MetastoreABC               ZoneManager (wraps PyO3)
+Driver:         RaftMetadataStore          PyZoneManager (Rust/redb/Raft)
+Comms:          —                          gRPC inline (VFS + ZoneApi)
 ```
 
-**API Privilege Levels**: File I/O (agents/users) → Federation ops (`share/join`) → Zone lifecycle (admin). Agents do NOT get mount/unmount APIs.
+Federation does NOT need a remote implementation (unlike NexusFS → nexus.connect())
+because zone operations are inherently asymmetric: you always operate locally on
+your ZoneManager and call peers via inline gRPC. No "remote federation proxy" scenario.
+
+**`NexusFederation` class** (`nexus.raft.federation`):
+- Orchestrates ZoneManager (local ops) + inline gRPC (peer communication)
+- Dependencies injected: `ZoneManager`, optional `TofuTrustStore`
+- Exposes `share()` and `join()` as high-level async workflows
+- Only two RPCs needed: `NexusVFSService.Call("sys_stat")` for discovery,
+  `ZoneApiService.JoinZone` for Raft ConfChange
+- CLI and future REST/MCP endpoints are thin wrappers over this class
+
+**CLI `nexus mount`** (merged with FUSE mount via argument detection):
+- 1 arg → FUSE mount (existing)
+- 2 args with `peer:path` syntax → federation share/join (new)
+
+### 6.10 API Privilege Levels (DECIDED 2026-02-14)
+
+| Level | Who | API |
+|-------|-----|-----|
+| **File I/O** | Agents, users | `nx.read/write/list/mkdir/delete` — VFS routes transparently |
+| **Federation** | Ops scripts | `NexusFederation.share/join` |
+| **Zone lifecycle** | Admin | `nexus zone create/mount/unmount` (CLI) |
+
+Agents do NOT get mount/unmount APIs. Like Linux: processes don't mount filesystems.
 
 ---
 

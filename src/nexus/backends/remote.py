@@ -1,6 +1,6 @@
 """RemoteBackend — ObjectStoreABC proxy for REMOTE deployment profile.
 
-Proxies content operations to a Nexus server over HTTP/JSON-RPC.
+Proxies content operations to a Nexus server over gRPC via ``RPCTransport``.
 Implements the ``ObjectStoreABC`` interface so the kernel can run its
 natural VFS pipeline identically to standalone/federation modes.
 
@@ -14,36 +14,20 @@ always follows with ``metastore.delete(path)`` which triggers
 ``RemoteMetastore`` → server ``delete`` RPC → full server-side delete.
 
 Issue #844: Converge RemoteNexusFS → NexusFS(profile=REMOTE).
+Issue #1133: Unified gRPC transport.
 """
 
 from __future__ import annotations
 
 import logging
-import time
-import uuid
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urljoin
 
-import httpx
-from tenacity import (
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
-
-from nexus.contracts.exceptions import (
-    RemoteConnectionError,
-    RemoteFilesystemError,
-    RemoteTimeoutError,
-)
-from nexus.contracts.rpc_types import RPCRequest, RPCResponse
 from nexus.core.object_store import ObjectStoreABC, WriteResult
-from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.remote.base_client import BaseRemoteNexusFS
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
+    from nexus.remote.rpc_transport import RPCTransport
 
 logger = logging.getLogger(__name__)
 
@@ -51,51 +35,16 @@ logger = logging.getLogger(__name__)
 class RemoteBackend(ObjectStoreABC):
     """ObjectStoreABC implementation that proxies to a remote Nexus server.
 
-    Uses HTTP/JSON-RPC over httpx with HTTP/2, connection pooling, and
-    automatic retry (tenacity: 3 attempts, exponential backoff 1–10 s).
+    Uses ``RPCTransport`` (gRPC) for all RPC calls, with automatic retry
+    (tenacity: 3 attempts, exponential backoff 1–10 s) handled by the
+    transport layer.
 
     Args:
-        server_url: Base URL of the Nexus server (e.g. ``http://localhost:2026``).
-        api_key: Optional Bearer token for authentication.
-        timeout: Read/write timeout in seconds.
-        connect_timeout: Connection timeout in seconds.
+        transport: Shared ``RPCTransport`` instance (gRPC channel).
     """
 
-    def __init__(
-        self,
-        server_url: str,
-        api_key: str | None = None,
-        timeout: int = 90,
-        connect_timeout: int = 5,
-    ) -> None:
-        self._server_url = server_url.rstrip("/")
-        self._api_key = api_key
-        self._timeout = timeout
-        self._connect_timeout = connect_timeout
-
-        self._default_timeout = httpx.Timeout(
-            connect=connect_timeout,
-            read=timeout,
-            write=timeout,
-            pool=timeout,
-        )
-
-        limits = httpx.Limits(
-            max_connections=20,
-            max_keepalive_connections=10,
-        )
-
-        headers: dict[str, str] = {}
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
-
-        self._session = httpx.Client(
-            limits=limits,
-            timeout=self._default_timeout,
-            headers=headers,
-            http2=True,
-            trust_env=False,
-        )
+    def __init__(self, transport: "RPCTransport") -> None:
+        self._transport = transport
 
         # Reuse BaseRemoteNexusFS error handling (static method access)
         self._error_handler = BaseRemoteNexusFS()
@@ -113,119 +62,14 @@ class RemoteBackend(ObjectStoreABC):
 
     # === RPC Transport ===
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(
-            (httpx.ConnectError, httpx.TimeoutException, RemoteConnectionError)
-        ),
-        reraise=True,
-    )
     def _call_rpc(
         self,
         method: str,
         params: dict[str, Any] | None = None,
         read_timeout: float | None = None,
     ) -> Any:
-        """Make RPC call to server with automatic retry logic."""
-        request = RPCRequest(
-            jsonrpc="2.0",
-            id=str(uuid.uuid4()),
-            method=method,
-            params=params,
-        )
-        body = encode_rpc_message(request.to_dict())
-        url = urljoin(self._server_url, f"/api/nfs/{method}")
-
-        start_time = time.time()
-        logger.debug("RemoteBackend RPC: %s params=%s", method, params)
-
-        try:
-            headers: dict[str, str] = {
-                "Content-Type": "application/json",
-                "Accept-Encoding": "gzip",
-            }
-
-            if read_timeout is not None:
-                request_timeout = httpx.Timeout(
-                    connect=self._connect_timeout,
-                    read=read_timeout,
-                    write=read_timeout,
-                    pool=read_timeout,
-                )
-            else:
-                request_timeout = self._default_timeout
-
-            response = self._session.post(
-                url,
-                content=body,
-                headers=headers,
-                timeout=request_timeout,
-            )
-            elapsed = time.time() - start_time
-
-            if response.status_code != 200:
-                logger.error(
-                    "RemoteBackend RPC failed: %s — HTTP %d (%.3fs)",
-                    method,
-                    response.status_code,
-                    elapsed,
-                )
-                raise RemoteFilesystemError(
-                    f"Request failed: {response.text}",
-                    status_code=response.status_code,
-                    method=method,
-                )
-
-            response_dict = decode_rpc_message(response.content)
-            rpc_response = RPCResponse(
-                jsonrpc=response_dict.get("jsonrpc", "2.0"),
-                id=response_dict.get("id"),
-                result=response_dict.get("result"),
-                error=response_dict.get("error"),
-            )
-
-            if rpc_response.error:
-                logger.error(
-                    "RemoteBackend RPC error: %s — %s (%.3fs)",
-                    method,
-                    rpc_response.error.get("message"),
-                    elapsed,
-                )
-                self._error_handler._handle_rpc_error(rpc_response.error)
-
-            logger.debug("RemoteBackend RPC OK: %s (%.3fs)", method, elapsed)
-            return rpc_response.result
-
-        except httpx.ConnectError as e:
-            elapsed = time.time() - start_time
-            logger.error("RemoteBackend connect error: %s — %s (%.3fs)", method, e, elapsed)
-            raise RemoteConnectionError(
-                f"Failed to connect to server: {e}",
-                details={"server_url": self._server_url},
-                method=method,
-            ) from e
-
-        except httpx.TimeoutException as e:
-            elapsed = time.time() - start_time
-            logger.error("RemoteBackend timeout: %s — %s (%.3fs)", method, e, elapsed)
-            raise RemoteTimeoutError(
-                f"Request timed out after {elapsed:.1f}s",
-                details={
-                    "connect_timeout": self._connect_timeout,
-                    "read_timeout": self._timeout,
-                },
-                method=method,
-            ) from e
-
-        except httpx.HTTPError as e:
-            elapsed = time.time() - start_time
-            logger.error("RemoteBackend network error: %s — %s (%.3fs)", method, e, elapsed)
-            raise RemoteFilesystemError(
-                f"Network error: {e}",
-                details={"elapsed": elapsed},
-                method=method,
-            ) from e
+        """Delegate RPC call to the shared transport."""
+        return self._transport.call_rpc(method, params, read_timeout=read_timeout)
 
     # === Path Resolution ===
 
@@ -328,26 +172,11 @@ class RemoteBackend(ObjectStoreABC):
     # === Lifecycle ===
 
     def connect(self, context: OperationContext | None = None) -> None:
-        """Health-check the remote server."""
-        try:
-            response = self._session.get(
-                urljoin(self._server_url, "/api/health"),
-                timeout=self._connect_timeout,
-            )
-            if response.status_code != 200:
-                raise RemoteConnectionError(
-                    f"Health check failed: HTTP {response.status_code}",
-                    details={"server_url": self._server_url},
-                )
-        except httpx.HTTPError as e:
-            raise RemoteConnectionError(
-                f"Cannot reach server: {e}",
-                details={"server_url": self._server_url},
-            ) from e
+        """Health-check the remote server via gRPC channel readiness."""
+        self._transport.health_check()
 
     def disconnect(self, context: OperationContext | None = None) -> None:
-        """Close the httpx session."""
-        self._session.close()
+        """No-op — transport lifecycle managed by factory."""
 
     def close(self) -> None:
-        self._session.close()
+        """No-op — transport lifecycle managed by factory."""

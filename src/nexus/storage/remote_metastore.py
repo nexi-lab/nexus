@@ -1,46 +1,26 @@
 """RemoteMetastore — MetastoreABC proxy for REMOTE deployment profile.
 
-Proxies metadata operations to a Nexus server over HTTP/JSON-RPC.
-Shares the same transport pattern as ``RemoteBackend``.
+Proxies metadata operations to a Nexus server over gRPC via ``RPCTransport``.
+Shares the same transport instance as ``RemoteBackend``.
 
 Server is the single source of truth (SSOT) for metadata — this class
 is a stateless proxy, **not** a cache.  No local state, no invalidation.
 
 Issue #844: Converge RemoteNexusFS → NexusFS(profile=REMOTE).
-
-Follow-up (Task #1133): Evaluate consolidating HTTP RPC with gRPC
-transport (currently used by RaftClient for federation).
-Follow-up (Task #1134): Evaluate using RaftMetadataStore.remote()
-once gRPC metadata endpoint is promoted.
+Issue #1133: Unified gRPC transport.
 """
 
 from __future__ import annotations
 
 import logging
-import time
-import uuid
 from datetime import datetime
-from typing import Any
-from urllib.parse import urljoin
+from typing import TYPE_CHECKING, Any
 
-import httpx
-from tenacity import (
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
-
-from nexus.contracts.exceptions import (
-    RemoteConnectionError,
-    RemoteFilesystemError,
-    RemoteTimeoutError,
-)
 from nexus.contracts.metadata import FileMetadata
-from nexus.contracts.rpc_types import RPCRequest, RPCResponse
 from nexus.core.metastore import MetastoreABC
-from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
-from nexus.remote.base_client import BaseRemoteNexusFS
+
+if TYPE_CHECKING:
+    from nexus.remote.rpc_transport import RPCTransport
 
 logger = logging.getLogger(__name__)
 
@@ -76,138 +56,22 @@ def _dict_to_file_metadata(d: dict[str, Any]) -> FileMetadata:
 class RemoteMetastore(MetastoreABC):
     """MetastoreABC implementation that proxies to a remote Nexus server.
 
-    Uses HTTP/JSON-RPC over httpx with HTTP/2 and automatic retry.
+    Uses ``RPCTransport`` (gRPC) for all RPC calls, with automatic retry
+    handled by the transport layer.
     All metadata queries are forwarded to the server — no local state.
 
     Args:
-        server_url: Base URL of the Nexus server.
-        api_key: Optional Bearer token for authentication.
-        timeout: Read/write timeout in seconds.
-        connect_timeout: Connection timeout in seconds.
+        transport: Shared ``RPCTransport`` instance (gRPC channel).
     """
 
-    def __init__(
-        self,
-        server_url: str,
-        api_key: str | None = None,
-        timeout: int = 90,
-        connect_timeout: int = 5,
-    ) -> None:
-        self._server_url = server_url.rstrip("/")
-        self._timeout = timeout
-        self._connect_timeout = connect_timeout
-
-        self._default_timeout = httpx.Timeout(
-            connect=connect_timeout,
-            read=timeout,
-            write=timeout,
-            pool=timeout,
-        )
-
-        limits = httpx.Limits(
-            max_connections=20,
-            max_keepalive_connections=10,
-        )
-
-        headers: dict[str, str] = {}
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
-
-        self._session = httpx.Client(
-            limits=limits,
-            timeout=self._default_timeout,
-            headers=headers,
-            http2=True,
-            trust_env=False,
-        )
-
-        self._error_handler = BaseRemoteNexusFS()
+    def __init__(self, transport: "RPCTransport") -> None:
+        self._transport = transport
 
     # === RPC Transport ===
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(
-            (httpx.ConnectError, httpx.TimeoutException, RemoteConnectionError)
-        ),
-        reraise=True,
-    )
     def _call_rpc(self, method: str, params: dict[str, Any] | None = None) -> Any:
-        """Make RPC call to server with automatic retry logic."""
-        request = RPCRequest(
-            jsonrpc="2.0",
-            id=str(uuid.uuid4()),
-            method=method,
-            params=params,
-        )
-        body = encode_rpc_message(request.to_dict())
-        url = urljoin(self._server_url, f"/api/nfs/{method}")
-
-        start_time = time.time()
-
-        try:
-            headers: dict[str, str] = {
-                "Content-Type": "application/json",
-                "Accept-Encoding": "gzip",
-            }
-
-            response = self._session.post(
-                url,
-                content=body,
-                headers=headers,
-                timeout=self._default_timeout,
-            )
-            elapsed = time.time() - start_time
-
-            if response.status_code != 200:
-                raise RemoteFilesystemError(
-                    f"Request failed: {response.text}",
-                    status_code=response.status_code,
-                    method=method,
-                )
-
-            response_dict = decode_rpc_message(response.content)
-            rpc_response = RPCResponse(
-                jsonrpc=response_dict.get("jsonrpc", "2.0"),
-                id=response_dict.get("id"),
-                result=response_dict.get("result"),
-                error=response_dict.get("error"),
-            )
-
-            if rpc_response.error:
-                logger.error(
-                    "RemoteMetastore RPC error: %s — %s (%.3fs)",
-                    method,
-                    rpc_response.error.get("message"),
-                    elapsed,
-                )
-                self._error_handler._handle_rpc_error(rpc_response.error)
-
-            return rpc_response.result
-
-        except httpx.ConnectError as e:
-            raise RemoteConnectionError(
-                f"Failed to connect to server: {e}",
-                details={"server_url": self._server_url},
-                method=method,
-            ) from e
-
-        except httpx.TimeoutException as e:
-            elapsed = time.time() - start_time
-            raise RemoteTimeoutError(
-                f"Request timed out after {elapsed:.1f}s",
-                details={"connect_timeout": self._connect_timeout, "read_timeout": self._timeout},
-                method=method,
-            ) from e
-
-        except httpx.HTTPError as e:
-            elapsed = time.time() - start_time
-            raise RemoteFilesystemError(
-                f"Network error: {e}",
-                details={"elapsed": elapsed},
-                method=method,
-            ) from e
+        """Delegate RPC call to the shared transport."""
+        return self._transport.call_rpc(method, params)
 
     # === MetastoreABC Implementation ===
 
@@ -224,7 +88,7 @@ class RemoteMetastore(MetastoreABC):
         return None
 
     def put(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:
-        """Store metadata by proxying ``set_metadata`` to the server.
+        """Store metadata by proxying ``sys_setattr`` to the server.
 
         The *consistency* hint is forwarded so the server can honour it.
         Non-fatal: in REMOTE mode the server already owns metadata —
@@ -232,7 +96,7 @@ class RemoteMetastore(MetastoreABC):
         """
         try:
             self._call_rpc(
-                "set_metadata",
+                "sys_setattr",
                 {"path": metadata.path, "metadata": metadata.to_dict(), "consistency": consistency},
             )
         except Exception as exc:
@@ -284,5 +148,4 @@ class RemoteMetastore(MetastoreABC):
         return metadata_list
 
     def close(self) -> None:
-        """Close the httpx session."""
-        self._session.close()
+        """No-op — transport lifecycle managed by factory."""

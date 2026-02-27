@@ -91,7 +91,7 @@ class TestSearchDaemonLifecycle:
 
     @pytest.mark.asyncio
     async def test_startup_initializes(self) -> None:
-        daemon = SearchDaemon()
+        daemon = SearchDaemon(DaemonConfig(reranker_enabled=False))
         mock_backend = AsyncMock()
         with patch("nexus.bricks.search.daemon.create_backend", return_value=mock_backend):
             await daemon.startup()
@@ -101,7 +101,7 @@ class TestSearchDaemonLifecycle:
 
     @pytest.mark.asyncio
     async def test_double_startup_warns(self) -> None:
-        daemon = SearchDaemon()
+        daemon = SearchDaemon(DaemonConfig(reranker_enabled=False))
         mock_backend = AsyncMock()
         with patch("nexus.bricks.search.daemon.create_backend", return_value=mock_backend):
             await daemon.startup()
@@ -111,7 +111,7 @@ class TestSearchDaemonLifecycle:
 
     @pytest.mark.asyncio
     async def test_shutdown_calls_backend(self) -> None:
-        daemon = SearchDaemon()
+        daemon = SearchDaemon(DaemonConfig(reranker_enabled=False))
         mock_backend = AsyncMock()
         with patch("nexus.bricks.search.daemon.create_backend", return_value=mock_backend):
             await daemon.startup()
@@ -141,7 +141,7 @@ class TestSearchDaemonSearch:
     """Test SearchDaemon search routing."""
 
     async def _make_daemon(self) -> SearchDaemon:
-        daemon = SearchDaemon()
+        daemon = SearchDaemon(DaemonConfig(reranker_enabled=False))
         mock_backend = AsyncMock()
         mock_backend.search.return_value = []
         with patch("nexus.bricks.search.daemon.create_backend", return_value=mock_backend):

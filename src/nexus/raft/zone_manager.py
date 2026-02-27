@@ -65,6 +65,7 @@ class ZoneManager:
         base_path: str,
         bind_addr: str = "0.0.0.0:2126",
         *,
+        advertise_addr: str | None = None,
         tls_cert_path: str | None = None,
         tls_key_path: str | None = None,
         tls_ca_path: str | None = None,
@@ -97,6 +98,7 @@ class ZoneManager:
         self._stores: dict[str, RaftMetadataStore] = {}
         self._node_id = node_id
         self._base_path = base_path
+        self._advertise_addr = advertise_addr or bind_addr
         self._root_zone_id: str | None = None
         self._tls_cert_path = tls_cert_path
         self._tls_key_path = tls_key_path
@@ -120,6 +122,11 @@ class ZoneManager:
                 known_zones_path=Path(self._base_path) / "tls" / "known_zones",
             )
         return None
+
+    @property
+    def advertise_addr(self) -> str:
+        """Routable address for peers to connect to this node."""
+        return self._advertise_addr
 
     @staticmethod
     def _auto_generate_tls(base_path: str, node_id: int) -> "ZoneTlsConfig | None":

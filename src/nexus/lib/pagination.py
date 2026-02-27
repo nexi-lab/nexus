@@ -13,10 +13,34 @@ import base64
 import hashlib
 import json
 import logging
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class PaginatedResult:
+    """Result container for paginated list operations.
+
+    Supports cursor-based pagination for efficient traversal of large datasets
+    at 1M+ file scale without OOM or timeouts.
+    """
+
+    items: list[Any]
+    next_cursor: str | None
+    has_more: bool
+    total_count: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to JSON-serializable dict for API response."""
+        return {
+            "items": self.items,
+            "next_cursor": self.next_cursor,
+            "has_more": self.has_more,
+            "total_count": self.total_count,
+        }
 
 
 class CursorError(Exception):
@@ -115,6 +139,41 @@ def decode_cursor(cursor: str, filters: dict[str, Any]) -> CursorData:
         path=data["p"],
         path_id=data.get("i"),
         filters_hash=data["h"],
+    )
+
+
+def paginate_iter(
+    items_iter: Iterator,
+    limit: int = 1000,
+    cursor_path: str | None = None,
+) -> PaginatedResult:
+    """Paginate a metadata iterator using keyset pagination.
+
+    Service-layer utility: builds a PaginatedResult from list_iter().
+
+    Args:
+        items_iter: Iterator of FileMetadata (from MetastoreABC.list_iter)
+        limit: Maximum items per page
+        cursor_path: Skip entries with path <= cursor_path
+
+    Returns:
+        PaginatedResult with items, next_cursor, has_more
+    """
+    from itertools import islice
+
+    if cursor_path:
+        items_iter = (item for item in items_iter if item.path > cursor_path)
+
+    page = list(islice(items_iter, limit + 1))
+    has_more = len(page) > limit
+    if has_more:
+        page = page[:limit]
+
+    next_cursor = page[-1].path if has_more and page else None
+    return PaginatedResult(
+        items=page,
+        next_cursor=next_cursor,
+        has_more=has_more,
     )
 
 

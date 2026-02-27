@@ -25,8 +25,8 @@ from collections.abc import Iterator, Sequence
 from typing import Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.contracts.metadata import FileMetadata, PaginatedResult
-from nexus.core.metastore import CasResult, MetastoreABC
+from nexus.contracts.metadata import FileMetadata
+from nexus.core.metastore import MetastoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -182,28 +182,6 @@ class RaftMetadataStore(MetastoreABC):
             # Compiled PyO3 binary may not yet support the consistency parameter
             return self._engine.set_metadata(metadata.path, data)
 
-    def _cas_put_engine(
-        self,
-        metadata: FileMetadata,
-        expected_version: int,
-        *,
-        consistency: str = "sc",
-    ) -> CasResult:
-        """Atomic CAS via PyO3 cas_set_metadata (single redb txn, ~8μs).
-
-        Falls back to the ABC default (read-check-write) if the compiled
-        PyO3 binary does not yet expose ``cas_set_metadata``.
-        """
-        data = _serialize_metadata(metadata)
-        try:
-            success, current_version = self._engine.cas_set_metadata(
-                metadata.path, data, expected_version, consistency=consistency
-            )
-        except (TypeError, AttributeError):
-            # PyO3 binary doesn't support CAS yet — fall back to ABC default
-            return super().put_if_version(metadata, expected_version, consistency=consistency)
-        return CasResult(success=success, current_version=current_version)
-
     def _delete_engine(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
         """Delete metadata from the embedded sled engine.
 
@@ -306,29 +284,6 @@ class RaftMetadataStore(MetastoreABC):
             SC mode: None (write is already committed when this returns).
         """
         return self._put_engine(metadata, consistency=consistency)
-
-    def put_if_version(
-        self,
-        metadata: FileMetadata,
-        expected_version: int,
-        *,
-        consistency: str = "sc",
-    ) -> CasResult:
-        """Atomic compare-and-swap on FileMetadata.version.
-
-        Overrides the ABC default with a true atomic CAS via the
-        embedded PyO3 engine (single redb write transaction).
-
-        Args:
-            metadata: The new metadata to store.
-            expected_version: Version that must match the current stored
-                version.  Use 0 for create-only semantics.
-            consistency: ``"sc"`` (default) or ``"ec"``.
-
-        Returns:
-            CasResult indicating success and the current version.
-        """
-        return self._cas_put_engine(metadata, expected_version, consistency=consistency)
 
     def is_committed(self, token: int) -> str | None:
         """Check if an EC write token has been replicated to a majority.
@@ -492,68 +447,6 @@ class RaftMetadataStore(MetastoreABC):
                     continue
             metadata = _deserialize_metadata(data)
             yield metadata
-
-    def list_paginated(
-        self,
-        prefix: str = "",
-        recursive: bool = True,
-        limit: int = 1000,
-        cursor: str | None = None,
-        zone_id: str | None = None,
-    ) -> PaginatedResult:
-        """List files with cursor-based pagination.
-
-        RaftMetadataStore is zone-local: each zone has its own sled database,
-        so zone_id filtering is inherent to the store instance.
-
-        Uses list_iter() to avoid loading all entries into memory.
-        Memory usage is O(limit) instead of O(total).
-        """
-        # RaftMetadataStore is zone-local: zone_id accepted for API consistency.
-        # When prefix is already zone-scoped, zone_id is redundant.
-        if zone_id is not None and zone_id != ROOT_ZONE_ID:
-            if self._zone_id is None and not prefix.startswith(f"/zone/{zone_id}"):
-                raise ValueError(f"zone_id filter '{zone_id}' passed to a non-zone-scoped store")
-        from itertools import islice
-
-        # Decode cursor if it's base64-encoded
-        cursor_path: str | None = None
-        if cursor:
-            cursor_path = cursor
-            try:
-                from nexus.lib.pagination import decode_cursor
-
-                filters = {
-                    "prefix": prefix,
-                    "recursive": recursive,
-                    "zone_id": zone_id,
-                }
-                decoded = decode_cursor(cursor, filters)
-                cursor_path = decoded.path
-            except Exception:
-                cursor_path = cursor
-
-        # Stream through entries, skipping past cursor
-        items_iter = self.list_iter(prefix, recursive, zone_id=zone_id)
-
-        if cursor_path:
-            # Skip entries up to and including cursor position
-            items_iter = (item for item in items_iter if item.path > cursor_path)
-
-        # Take limit + 1 to detect has_more without loading everything
-        page = list(islice(items_iter, limit + 1))
-        has_more = len(page) > limit
-        if has_more:
-            page = page[:limit]
-
-        next_cursor = page[-1].path if has_more and page else None
-
-        return PaginatedResult(
-            items=page,
-            next_cursor=next_cursor,
-            has_more=has_more,
-            total_count=None,  # Unavailable without full scan (use -1 for unknown)
-        )
 
     def close(self) -> None:
         """Close the metadata store and release resources."""

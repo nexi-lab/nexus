@@ -123,7 +123,7 @@ def app(tmp_path, pg_engine, pg_session_factory, api_keys):
     # In-memory metadata store (same stub as in fastapi e2e test)
     from collections.abc import Sequence
 
-    from nexus.contracts.metadata import FileMetadata, PaginatedResult
+    from nexus.contracts.metadata import FileMetadata
     from nexus.core.metastore import MetastoreABC
 
     class InMemoryMetadataStore(MetastoreABC):
@@ -147,22 +147,6 @@ def app(tmp_path, pg_engine, pg_session_factory, api_keys):
             self, prefix: str = "", recursive: bool = True, **kwargs: Any
         ) -> list[FileMetadata]:
             return [m for p, m in self._store.items() if p.startswith(prefix)]
-
-        def list_paginated(
-            self,
-            prefix: str = "",
-            recursive: bool = True,
-            limit: int = 1000,
-            cursor: str | None = None,
-            zone_id: str | None = None,
-        ) -> PaginatedResult:
-            items = self.list(prefix, recursive)
-            return PaginatedResult(
-                items=items[:limit],
-                next_cursor=None,
-                has_more=len(items) > limit,
-                total_count=len(items),
-            )
 
         def get_batch(self, paths: Sequence[str]) -> dict[str, FileMetadata | None]:
             return {p: self._store.get(p) for p in paths}

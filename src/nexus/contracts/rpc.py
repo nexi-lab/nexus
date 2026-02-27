@@ -2,10 +2,6 @@
 
 Lives in ``contracts/`` so bricks and services can use ``@rpc_expose``
 without importing from ``nexus.core``.
-
-Backward compatibility:
-    ``from nexus.core.rpc_decorator import rpc_expose`` still works
-    via re-export in ``core/rpc_decorator.py``.
 """
 
 from collections.abc import Callable

@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.mcp.models import MCPToolConfig
+    from nexus.bricks.mcp.models import MCPToolConfig
 
 
 @dataclass

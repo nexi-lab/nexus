@@ -529,7 +529,7 @@ def _register_vfs_hooks(nx: "NexusFS", *, permission_checker: Any = None) -> Non
     parser_reg = getattr(nx, "parser_registry", None)
     parse_fn = getattr(nx, "_virtual_view_parse_fn", None)
     if parser_reg is not None and parse_fn is not None:
-        from nexus.parsers.auto_parse_hook import AutoParseWriteHook
+        from nexus.bricks.parsers.auto_parse_hook import AutoParseWriteHook
 
         dispatch.register_intercept_write(
             AutoParseWriteHook(

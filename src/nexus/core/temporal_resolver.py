@@ -220,7 +220,7 @@ Resolved:"""
         try:
             # Call LLM - handle different provider interfaces
             if hasattr(provider, "complete_async"):
-                from nexus.llm import Message, MessageRole
+                from nexus.contracts.llm_types import Message, MessageRole
 
                 messages = [Message(role=MessageRole.USER, content=prompt)]
                 response = await provider.complete_async(messages)
@@ -228,7 +228,7 @@ Resolved:"""
                 response = await provider.acomplete(prompt)
             elif hasattr(provider, "complete"):
                 if hasattr(provider, "config"):
-                    from nexus.llm import Message, MessageRole
+                    from nexus.contracts.llm_types import Message, MessageRole
 
                     messages = [Message(role=MessageRole.USER, content=prompt)]
                     response = provider.complete(messages)

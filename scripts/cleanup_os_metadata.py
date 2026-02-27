@@ -24,7 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from nexus import NexusFilesystem, connect
-from nexus.core.filters import is_os_metadata_file
+from nexus.fuse.filters import is_os_metadata_file
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)

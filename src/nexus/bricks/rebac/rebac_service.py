@@ -1746,6 +1746,17 @@ class ReBACService(ReBACShareMixin):
         if getattr(self, "_permission_enforcer", None) is not None:
             has_permission = self._permission_enforcer.check(resource_path, perm_enum, op_context)
 
+            # If enforcer denied, also check direct ownership via ReBAC
+            # (direct_owner relation may not imply execute in the permission graph)
+            if not has_permission and self._rebac_manager:
+                subject = self._get_subject_from_context(context) or ("user", op_context.user_id)
+                has_permission = self._rebac_manager.rebac_check(
+                    subject=subject,
+                    permission="owner",
+                    object=resource,
+                    zone_id=op_context.zone_id,
+                )
+
             # If user is not owner, check if they are zone admin
             if not has_permission:
                 # Extract zone from resource path (format: /zone/{zone_id}/...)

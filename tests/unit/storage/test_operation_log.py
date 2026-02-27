@@ -305,6 +305,7 @@ def test_undo_delete(
     # Write and delete
     result = nx.sys_write(path, content)
     content_hash = result["etag"]
+    local_backend.write_content(content)  # Hold extra CAS reference so blob survives unlink
     nx.sys_unlink(path)
     assert not nx.sys_access(path)
 

@@ -31,8 +31,6 @@ from pathlib import Path
 # Add src to path for local development
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-import nexus
-
 
 def connect_to_nexus():
     """Connect to Nexus filesystem."""
@@ -40,10 +38,10 @@ def connect_to_nexus():
     api_key = os.getenv("NEXUS_API_KEY")
 
     if server_url:
-        from nexus.remote import RemoteNexusFS
+        import nexus
 
         print(f"✓ Connected to Nexus server: {server_url}")
-        return RemoteNexusFS(server_url=server_url, api_key=api_key)
+        return nexus.connect(config={"mode": "remote", "url": server_url, "api_key": api_key})
     else:
         print("✓ Connected to local Nexus")
         return nexus.connect()
@@ -107,7 +105,7 @@ def create_multi_agent_system(nx):
     def read_file(path: str, max_lines: int = 200) -> str:
         """Read file content."""
         try:
-            content = nx.read(path)
+            content = nx.sys_read(path)
             if isinstance(content, bytes):
                 content = content.decode("utf-8", errors="replace")
 
@@ -123,7 +121,7 @@ def create_multi_agent_system(nx):
     def write_file(path: str, content: str) -> str:
         """Write content to file."""
         try:
-            nx.write(path, content.encode("utf-8"))
+            nx.sys_write(path, content.encode("utf-8"))
             return f"✓ Wrote {len(content)} chars to {path}"
         except Exception as e:
             return f"Error writing {path}: {e}"
@@ -323,11 +321,11 @@ Make it useful for new developers!""",
         print(f"\nFinal Result:\n{result}")
 
         # Show what was written
-        if nx.exists("/reports/multi-agent-analysis.md"):
+        if nx.sys_access("/reports/multi-agent-analysis.md"):
             print("\n" + "=" * 70)
             print("Generated Report Preview:")
             print("=" * 70)
-            content = nx.read("/reports/multi-agent-analysis.md").decode("utf-8")
+            content = nx.sys_read("/reports/multi-agent-analysis.md").decode("utf-8")
             preview_lines = content.split("\n")[:30]
             print("\n".join(preview_lines))
             if len(content.split("\n")) > 30:

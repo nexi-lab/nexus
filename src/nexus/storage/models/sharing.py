@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.models._base import Base, uuid_pk
 
 
@@ -31,7 +32,9 @@ class ShareLinkModel(Base):
 
     permission_level: Mapped[str] = mapped_column(String(20), nullable=False, default="viewer")
 
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root", index=True)
+    zone_id: Mapped[str] = mapped_column(
+        String(255), nullable=False, default=ROOT_ZONE_ID, index=True
+    )
 
     created_by: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
 

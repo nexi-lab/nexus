@@ -16,7 +16,6 @@ Only VFSRouterProtocol remains in core/protocols/ as it is a kernel concern
 
 Storage Affinity (per data-storage-matrix.md):
     - AgentRegistryProtocol  → RecordStore (relational agent identity)
-    - HookEngineProtocol     → CacheStore (ephemeral hook registration)
     - NamespaceManagerProtocol → RecordStore + CacheStore (ReBAC views)
     - SchedulerProtocol      → CacheStore or RecordStore (work queue)
 
@@ -27,6 +26,11 @@ References:
 
 import importlib as _il
 
+from nexus.contracts.workflow_types import (
+    MetadataStoreProtocol,
+    NexusOperationsProtocol,
+)
+from nexus.lib.rpc_decorator import rpc_expose
 from nexus.services.event_subsystem.log.protocol import EventLogConfig, EventLogProtocol
 from nexus.services.protocols.adaptive_k import AdaptiveKProtocol
 from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
@@ -41,25 +45,6 @@ from nexus.services.protocols.chunked_upload import ChunkedUploadProtocol
 from nexus.services.protocols.entity_registry import EntityRegistryProtocol
 from nexus.services.protocols.file_reader import FileReaderProtocol
 from nexus.services.protocols.filesystem import NexusFilesystem
-from nexus.services.protocols.hook_engine import (
-    POST_COPY,
-    POST_DELETE,
-    POST_MKDIR,
-    POST_READ,
-    POST_WRITE,
-    PRE_COPY,
-    PRE_DELETE,
-    PRE_MKDIR,
-    PRE_READ,
-    PRE_WRITE,
-    FailurePolicy,
-    HookContext,
-    HookEngineProtocol,
-    HookId,
-    HookPhaseType,
-    HookResult,
-    HookSpec,
-)
 from nexus.services.protocols.llm import LLMServiceProtocol
 from nexus.services.protocols.llm_provider import LLMProviderProtocol
 from nexus.services.protocols.lock import LockProtocol
@@ -80,7 +65,6 @@ from nexus.services.protocols.payment import PaymentProtocol
 from nexus.services.protocols.permission import PermissionProtocol
 from nexus.services.protocols.permission_enforcer import PermissionEnforcerProtocol
 from nexus.services.protocols.rebac import ReBACBrickProtocol
-from nexus.services.protocols.rpc import rpc_expose
 from nexus.services.protocols.sandbox import SandboxProtocol
 from nexus.services.protocols.scheduler import AgentRequest, SchedulerProtocol
 from nexus.services.protocols.search import SearchBrickProtocol, SearchProtocol
@@ -95,10 +79,6 @@ from nexus.services.protocols.time_travel import TimeTravelProtocol
 from nexus.services.protocols.trajectory import TrajectoryProtocol
 from nexus.services.protocols.version import VersionProtocol
 from nexus.services.protocols.watch import WatchProtocol
-from nexus.services.protocols.workflow import (
-    MetadataStoreProtocol,
-    NexusOperationsProtocol,
-)
 from nexus.services.protocols.workflow_dispatch import WorkflowDispatchProtocol
 from nexus.services.protocols.workspace_manager import WorkspaceManagerProtocol
 from nexus.services.protocols.write_back import WriteBackProtocol
@@ -118,13 +98,6 @@ __all__ = [
     "EventLogConfig",
     "FileReaderProtocol",
     "EventLogProtocol",
-    "FailurePolicy",
-    "HookContext",
-    "HookEngineProtocol",
-    "HookId",
-    "HookPhaseType",
-    "HookResult",
-    "HookSpec",
     "LifecycleManagerProtocol",
     "LLMProviderProtocol",
     "LLMServiceProtocol",
@@ -142,16 +115,6 @@ __all__ = [
     "NexusOperationsProtocol",
     "OAuthProtocol",
     "OperationLogProtocol",
-    "POST_COPY",
-    "POST_DELETE",
-    "POST_MKDIR",
-    "POST_READ",
-    "POST_WRITE",
-    "PRE_COPY",
-    "PRE_DELETE",
-    "PRE_MKDIR",
-    "PRE_READ",
-    "PRE_WRITE",
     "ParseProtocol",
     "PaymentProtocol",
     "PermissionEnforcerProtocol",

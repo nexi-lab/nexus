@@ -18,8 +18,8 @@ import pytest
 
 from nexus.contracts.deployment_profile import DeploymentProfile
 from nexus.contracts.exceptions import BootError
+from nexus.contracts.types import AuditConfig
 from nexus.core.config import (
-    AuditConfig,
     BrickServices,
     DistributedConfig,
     KernelServices,
@@ -70,16 +70,12 @@ EXPECTED_SYSTEM_KEYS = frozenset(
         "observability_subsystem",
         "resiliency_manager",
         "context_branch_service",
-        "namespace_fork_service",
         "brick_lifecycle_manager",
         "brick_reconciler",
-        "scoped_hook_engine",
-        "tiger_cache_manager",
         "zone_lifecycle",
-        # Issue #2195, #2360: EventLog + Scheduler (always-started)
+        "pipe_manager",
         "event_log",
         "scheduler_service",
-        "scheduler_state_emitter",
     }
 )
 
@@ -198,52 +194,42 @@ class TestBootSystemServices:
         ):
             assert result[key] is not None, f"Service {key} should not be None"
 
-    def test_rebac_failure_degrades_to_noop(self) -> None:
-        """Issue #2440: ReBAC failure degrades to NoOp (not BootError).
+    def test_rebac_failure_raises_boot_error(self) -> None:
+        """ReBAC is critical — failure raises BootError with tier='system-critical'.
 
-        ReBAC was demoted from critical to degradable. When ReBACManager
-        init fails, NoOp stubs are injected and boot continues.
+        ReBACManager, AuditStore, EntityRegistry, PermissionEnforcer, and
+        WriteObserver are all in the critical section.  Any failure aborts boot.
         """
-        from nexus.contracts.noop_rebac import (
-            NoOpAuditStore,
-            NoOpEntityRegistry,
-            NoOpPermissionEnforcer,
-            NoOpReBACManager,
-        )
-
         ctx = _make_boot_context()
 
-        with patch(
-            "nexus.bricks.rebac.manager.ReBACManager",
-            side_effect=RuntimeError("bad engine"),
+        with (
+            patch(
+                "nexus.bricks.rebac.manager.ReBACManager",
+                side_effect=RuntimeError("bad engine"),
+            ),
+            pytest.raises(BootError) as exc_info,
         ):
-            result = _boot_system_services(ctx)
+            _boot_system_services(ctx)
 
-        # ReBAC services should be NoOp, not None
-        assert isinstance(result["rebac_manager"], NoOpReBACManager)
-        assert isinstance(result["audit_store"], NoOpAuditStore)
-        assert isinstance(result["entity_registry"], NoOpEntityRegistry)
-        assert isinstance(result["permission_enforcer"], NoOpPermissionEnforcer)
-        # Critical service (write_observer) should still work
-        assert result["write_observer"] is not None
+        assert exc_info.value.tier == "system-critical"
 
     def test_system_services_values_are_not_none(self) -> None:
         """All system service values except nullable keys are non-None.
 
         deferred_permission_buffer is None because enable_deferred=False in the
-        test context.  tiger_cache_manager may be None if TigerCacheManager
-        is not available or tiger cache is disabled.
+        test context.
         """
         ctx = _make_boot_context()
         result = _boot_system_services(ctx)
 
         _NULLABLE_KEYS = {
             "deferred_permission_buffer",
-            "tiger_cache_manager",
             "delivery_worker",
             "observability_subsystem",
-            "event_log",  # Issue #2195: requires WAL dir
-            "scheduler_state_emitter",  # Issue #2360: None when InMemoryScheduler fallback
+            "workspace_registry",  # degradable — None with mock session_factory
+            "pipe_manager",  # degradable — None if PipeManager unavailable
+            "event_log",  # degradable — None if AgentEventLog unavailable
+            "scheduler_service",  # degradable — None if SchedulerService unavailable
         }
         for key, value in result.items():
             if key in _NULLABLE_KEYS:
@@ -456,7 +442,7 @@ class TestCreateNexusServices:
         # Issue #2193: Former-kernel fields now on SystemServices
         assert system.rebac_manager is not None
         assert system.permission_enforcer is not None
-        assert system.workspace_registry is not None
+        # workspace_registry may be None with mock session_factory (degradable)
         assert system.write_observer is not None
         assert kernel.router is router
 

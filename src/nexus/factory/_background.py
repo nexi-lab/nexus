@@ -24,14 +24,9 @@ def _start_background_services(system: dict[str, Any]) -> None:
         dpb.start()
         logger.debug("[BOOT:BG] DeferredPermissionBuffer started")
 
-    # Write Observer — only BufferedRecordStoreWriteObserver needs .start()
-    wo = system.get("write_observer")
-    if wo is not None and hasattr(wo, "start"):
-        from nexus.storage.record_store_syncer import BufferedRecordStoreWriteObserver
-
-        if isinstance(wo, BufferedRecordStoreWriteObserver):
-            wo.start()
-            logger.debug("[BOOT:BG] BufferedRecordStoreWriteObserver started")
+    # Write Observer — PipedRecordStoreWriteObserver.start() is async,
+    # called from server lifespan after PipeManager injection (Issue #809).
+    # RecordStoreWriteObserver (SQLite fallback) has no start().
 
     # Event Delivery Worker (system tier)
     dw = system.get("delivery_worker")

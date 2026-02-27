@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from sqlalchemy import Boolean, DateTime, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.models._base import Base, uuid_pk
 
 
@@ -31,7 +32,7 @@ class ContextBranchModel(Base):
 
     id: Mapped[str] = uuid_pk()
 
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default=ROOT_ZONE_ID)
     workspace_path: Mapped[str] = mapped_column(Text, nullable=False)
     branch_name: Mapped[str] = mapped_column(String(255), nullable=False)
 

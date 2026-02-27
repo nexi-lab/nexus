@@ -2,7 +2,7 @@
 
 Verifies that brick modules don't import forbidden core modules at
 import time. Bricks must be self-contained with no dependencies on
-nexus.core.nexus_fs, nexus.core.nexus_fs_core, or other bricks.
+nexus.core.nexus_fs or other bricks.
 """
 
 import importlib
@@ -23,7 +23,6 @@ _BRICK_MODULES = [
     # ReBAC brick (Issue #2179)
     "nexus.bricks.rebac.rebac_tracing",
     "nexus.bricks.rebac.domain",
-    "nexus.bricks.rebac.types",
     "nexus.bricks.rebac.circuit_breaker",
     "nexus.bricks.rebac.entity_registry",
     "nexus.bricks.rebac.memory_permission_enforcer",
@@ -36,7 +35,6 @@ _BRICK_MODULES = [
 # Forbidden modules that bricks must NOT pull in at import time
 _FORBIDDEN_MODULES = [
     "nexus.core.nexus_fs",
-    "nexus.core.nexus_fs_core",
     "nexus.server.telemetry",
     "nexus.server.app",
 ]

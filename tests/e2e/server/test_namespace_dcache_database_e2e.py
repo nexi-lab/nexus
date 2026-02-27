@@ -140,7 +140,7 @@ def _wait_for_health(base_url: str, timeout: float = SERVER_STARTUP_TIMEOUT) -> 
 
 
 def _wait_for_ready(base_url: str, admin_key: str, timeout: float = SERVER_STARTUP_TIMEOUT) -> None:
-    """Wait for AsyncNexusFS to be initialized (not just health check).
+    """Wait for NexusFS to be initialized (not just health check).
 
     Polls a v2 endpoint until it responds without 500 (503 = not ready yet).
     """
@@ -154,14 +154,14 @@ def _wait_for_ready(base_url: str, admin_key: str, timeout: float = SERVER_START
                     params={"path": "/__readiness_probe__"},
                     headers=headers,
                 )
-                # Any status other than 500 means AsyncNexusFS is initialized
+                # Any status other than 500 means NexusFS is initialized
                 # (404 = not found = server is ready, just file doesn't exist)
                 if resp.status_code != 500:
                     return
             except httpx.ConnectError:
                 pass
             time.sleep(0.5)
-    raise TimeoutError(f"AsyncNexusFS not ready within {timeout}s")
+    raise TimeoutError(f"NexusFS not ready within {timeout}s")
 
 
 def _check_postgres() -> bool:
@@ -303,7 +303,7 @@ def server():
         # PostgreSQL for database auth + async operations
         "NEXUS_DATABASE_URL": POSTGRES_URL,
         "NEXUS_JWT_SECRET": "dcache-e2e-jwt-secret-key-12345",
-        # AsyncNexusFS settings
+        # NexusFS settings
         "NEXUS_BACKEND_ROOT": backend_root,
         "NEXUS_TENANT_ID": "dcache-e2e-test",
         # CRITICAL: Permissions ENABLED for namespace + dcache testing

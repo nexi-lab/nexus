@@ -105,7 +105,6 @@ class MountService:
         mount_point: str,
         backend_type: str,
         backend_config: dict[str, Any],
-        priority: int = 0,
         readonly: bool = False,
         io_profile: str = "balanced",
         context: "OperationContext | None" = None,
@@ -121,7 +120,6 @@ class MountService:
             mount_point: Virtual path where backend is mounted (e.g., "/personal/alice")
             backend_type: Backend type - "local", "gcs", "gcs_connector", "google_drive", etc.
             backend_config: Backend-specific configuration dict
-            priority: Mount priority - higher values take precedence (default: 0)
             readonly: Whether mount is read-only (default: False)
             context: Operation context (automatically provided by RPC server)
 
@@ -141,7 +139,6 @@ class MountService:
                     "bucket": "alice-personal-bucket",
                     "project_id": "my-project"
                 },
-                priority=10
             )
 
             # Add GCS connector mount (direct path mapping for external buckets)
@@ -189,7 +186,6 @@ class MountService:
             self.router.add_mount(
                 mount_point=mount_point,
                 backend=backend,
-                priority=priority,
                 readonly=readonly,
                 io_profile=io_profile,
             )
@@ -386,7 +382,7 @@ class MountService:
             if self.nexus_fs and hasattr(self.nexus_fs, "rmdir"):
                 try:
                     _nx: Any = self.nexus_fs
-                    _nx.rmdir(mount_point, recursive=True, context=context)
+                    _nx.sys_rmdir(mount_point, recursive=True, context=context)
                     result["directory_deleted"] = True
                     logger.info(f"Deleted mount point directory: {mount_point}")
                 except Exception as e:
@@ -473,14 +469,13 @@ class MountService:
         Returns:
             List of mount info dictionaries, each containing:
                 - mount_point: Virtual path (str)
-                - priority: Mount priority (int)
                 - readonly: Read-only flag (bool)
-                - backend_type: Backend type name (str)
+                - admin_only: Admin-only flag (bool)
 
         Examples:
             # List all mounts I have access to
             for mount in await service.list_mounts():
-                print(f"{mount['mount_point']} (priority={mount['priority']})")
+                print(f"{mount['mount_point']} (readonly={mount['readonly']})")
         """
 
         def _list_mounts_sync() -> list[dict[str, Any]]:
@@ -559,9 +554,8 @@ class MountService:
                     mounts.append(
                         {
                             "mount_point": mount_info.mount_point,
-                            "priority": mount_info.priority,
                             "readonly": mount_info.readonly,
-                            "backend_type": type(mount_info.backend).__name__,
+                            "admin_only": mount_info.admin_only,
                         }
                     )
 
@@ -583,14 +577,13 @@ class MountService:
         Returns:
             Mount info dict if found, None otherwise. Dict contains:
                 - mount_point: Virtual path (str)
-                - priority: Mount priority (int)
                 - readonly: Read-only flag (bool)
-                - backend_type: Backend type name (str)
+                - admin_only: Admin-only flag (bool)
 
         Examples:
             mount = await service.get_mount("/personal/alice")
             if mount:
-                print(f"Priority: {mount['priority']}")
+                print(f"Readonly: {mount['readonly']}")
         """
 
         def _get_mount_sync() -> dict[str, Any] | None:
@@ -598,9 +591,8 @@ class MountService:
             if mount_info:
                 return {
                     "mount_point": mount_info.mount_point,
-                    "priority": mount_info.priority,
                     "readonly": mount_info.readonly,
-                    "backend_type": type(mount_info.backend).__name__,
+                    "admin_only": mount_info.admin_only,
                 }
             return None
 
@@ -632,7 +624,6 @@ class MountService:
         mount_point: str,
         backend_type: str,
         backend_config: dict[str, Any],
-        priority: int = 0,
         readonly: bool = False,
         io_profile: str = "balanced",
         owner_user_id: str | None = None,
@@ -651,7 +642,6 @@ class MountService:
             mount_point: Virtual path where backend is mounted
             backend_type: Backend type - "local", "gcs", etc.
             backend_config: Backend-specific configuration dict
-            priority: Mount priority (default: 0)
             readonly: Whether mount is read-only (default: False)
             owner_user_id: User who owns this mount (optional)
             zone_id: Zone ID for multi-zone isolation (optional)
@@ -701,7 +691,6 @@ class MountService:
                 mount_point=mount_point,
                 backend_type=backend_type,
                 backend_config=backend_config,
-                priority=priority,
                 readonly=readonly,
                 io_profile=io_profile,
                 owner_user_id=owner_user_id,
@@ -829,7 +818,6 @@ class MountService:
             mount_point=mount_config["mount_point"],
             backend_type=mount_config["backend_type"],
             backend_config=backend_config,
-            priority=mount_config["priority"],
             readonly=bool(mount_config["readonly"]),
         )
 
@@ -1113,9 +1101,9 @@ class MountService:
         logger.info(f"Setting up mount point: {mount_point}")
 
         # Create directory entry for the mount point
-        if self.nexus_fs and hasattr(self.nexus_fs, "mkdir"):
+        if self.nexus_fs and hasattr(self.nexus_fs, "sys_mkdir"):
             try:
-                self.nexus_fs.mkdir(mount_point, parents=True, exist_ok=True)
+                self.nexus_fs.sys_mkdir(mount_point, parents=True, exist_ok=True)
                 logger.info(f"✓ Created directory entry for mount point: {mount_point}")
             except Exception as e:
                 logger.warning(f"Failed to create directory entry for mount {mount_point}: {e}")
@@ -1165,7 +1153,7 @@ class MountService:
         Returns:
             True if skill was generated successfully
         """
-        if not self.nexus_fs or not hasattr(self.nexus_fs, "write"):
+        if not self.nexus_fs or not hasattr(self.nexus_fs, "sys_write"):
             logger.warning("[CONNECTOR-SKILL] NexusFS not available, skipping skill generation")
             return False
 
@@ -1190,7 +1178,7 @@ Use sync_mount() to refresh metadata from the backend.
 """
 
             skill_path = f"{mount_point}/SKILL.md"
-            self.nexus_fs.write(skill_path, skill_content.encode("utf-8"), context=context)
+            self.nexus_fs.sys_write(skill_path, skill_content.encode("utf-8"), context=context)
             logger.info(f"✓ Generated SKILL.md for connector mount: {skill_path}")
             return True
         except Exception as e:

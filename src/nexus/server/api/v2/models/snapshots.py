@@ -1,6 +1,6 @@
 """Pydantic models for Transactional Snapshot API (Issue #1752)."""
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.server.api.v2.models.base import ApiModel
 
 

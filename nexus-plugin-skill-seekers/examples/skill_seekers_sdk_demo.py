@@ -220,7 +220,7 @@ https://docs.sqlalchemy.org/ sqlalchemy-orm
         print("\n16. Verifying skills in Nexus filesystem...")
         print("\n   Agent tier skills (/workspace/.nexus/skills/):")
         try:
-            agent_skills = nx.list("/workspace/.nexus/skills/")
+            agent_skills = nx.sys_readdir("/workspace/.nexus/skills/")
             for skill_file in agent_skills[:5]:  # Show first 5
                 print(f"   • {skill_file}")
             if len(agent_skills) > 5:
@@ -230,7 +230,7 @@ https://docs.sqlalchemy.org/ sqlalchemy-orm
 
         print("\n   Tenant tier skills (/shared/skills/):")
         try:
-            tenant_skills = nx.list("/shared/skills/")
+            tenant_skills = nx.sys_readdir("/shared/skills/")
             for skill_file in tenant_skills[:5]:  # Show first 5
                 print(f"   • {skill_file}")
             if len(tenant_skills) > 5:

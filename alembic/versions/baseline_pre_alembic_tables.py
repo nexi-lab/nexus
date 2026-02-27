@@ -97,7 +97,6 @@ def upgrade() -> None:
         sa.Column("mount_id", sa.String(36), nullable=False),
         sa.Column("mount_point", sa.Text(), nullable=False),
         sa.Column("backend_type", sa.String(50), nullable=False),
-        sa.Column("priority", sa.Integer(), nullable=False),
         sa.Column("readonly", sa.Integer(), nullable=False),
         sa.Column("backend_config", sa.Text(), nullable=False),
         sa.Column("owner_user_id", sa.String(255), nullable=True),

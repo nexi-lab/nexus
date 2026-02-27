@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from nexus.remote.client import RemoteNexusFS
+import nexus
 
 NEXUS_URL = os.getenv("NEXUS_URL", "http://localhost:2026")
 NEXUS_API_KEY = os.getenv(
@@ -27,7 +27,7 @@ def test_individual_writes(client, test_dir):
     for i in range(NUM_FILES):
         path = f"{test_dir}/individual/file_{i:04d}.txt"
         content = f"Content for file {i}\n".encode() * 10  # ~200 bytes each
-        client.write(path, content)
+        client.sys_write(path, content)
         if (i + 1) % 10 == 0:
             elapsed = time.time() - start
             rate = (i + 1) / elapsed
@@ -74,13 +74,13 @@ def main():
     print(f"Server: {NEXUS_URL}")
     print(f"Files: {NUM_FILES}")
 
-    client = RemoteNexusFS(server_url=NEXUS_URL, api_key=NEXUS_API_KEY)
+    client = nexus.connect(config={"mode": "remote", "url": NEXUS_URL, "api_key": NEXUS_API_KEY})
 
     # Create unique test directory
     test_dir = f"/batch_test_{uuid.uuid4().hex[:8]}"
-    client.mkdir(test_dir)
-    client.mkdir(f"{test_dir}/individual")
-    client.mkdir(f"{test_dir}/batch")
+    client.sys_mkdir(test_dir)
+    client.sys_mkdir(f"{test_dir}/individual")
+    client.sys_mkdir(f"{test_dir}/batch")
 
     try:
         # Test 1: Individual writes
@@ -110,7 +110,7 @@ def main():
         # Cleanup
         print("\n[Cleanup] Deleting test directory...")
         try:
-            client.delete(test_dir)
+            client.sys_unlink(test_dir)
         except Exception as e:
             print(f"  Warning: {e}")
 

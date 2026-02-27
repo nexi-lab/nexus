@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from sqlalchemy import DateTime, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.models._base import Base, _generate_uuid, _get_uuid_server_default
 
 
@@ -29,7 +30,7 @@ class TransactionSnapshotModel(Base):
         default=_generate_uuid,
         server_default=_get_uuid_server_default(),
     )
-    zone_id: Mapped[str] = mapped_column(String(36), nullable=False, default="root")
+    zone_id: Mapped[str] = mapped_column(String(36), nullable=False, default=ROOT_ZONE_ID)
     agent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
     description: Mapped[str | None] = mapped_column(Text, nullable=True)

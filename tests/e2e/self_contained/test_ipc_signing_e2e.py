@@ -161,7 +161,7 @@ def app(tmp_path: Any, db_path: Any, record_store: Any) -> Any:
     from sqlalchemy.orm import sessionmaker
 
     from nexus.backends.local import LocalBackend
-    from nexus.core.nexus_fs import NexusFS
+    from nexus.factory import create_nexus_fs
     from nexus.server.fastapi_server import create_app
 
     engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
@@ -184,7 +184,7 @@ def app(tmp_path: Any, db_path: Any, record_store: Any) -> Any:
     backend = LocalBackend(root_path=tmpdir)
     metadata_store = InMemoryMetadataStore()
 
-    nx = NexusFS(
+    nx = create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,
@@ -264,7 +264,7 @@ class TestSignedIPCE2E:
         assert path.endswith(".json")
 
         # 5. Verify envelope on disk has signature
-        data = await vfs.read(path, ZONE)
+        data = await vfs.sys_read(path, ZONE)
         restored = MessageEnvelope.from_bytes(data)
         assert restored.signature is not None
         assert restored.signer_did == alice_record.did
@@ -380,7 +380,7 @@ class TestSignedIPCE2E:
 
         # Write tampered envelope directly to inbox
         msg_path = message_path_in_inbox("agent:bob", tampered.id, tampered.timestamp)
-        await vfs.write(msg_path, tampered.to_bytes(), ZONE)
+        await vfs.sys_write(msg_path, tampered.to_bytes(), ZONE)
 
         handler_called = False
 
@@ -570,7 +570,7 @@ class TestSignedIPCWithFastAPI:
         """Unauthenticated requests are rejected (permissions enforced)."""
         body = {
             "jsonrpc": "2.0",
-            "method": "mkdir",
+            "method": "sys_mkdir",
             "params": {"path": "/agents", "exist_ok": True},
             "id": "1",
         }
@@ -582,7 +582,7 @@ class TestSignedIPCWithFastAPI:
         headers = {"Authorization": f"Bearer {client['admin_key']}"}
         body = {
             "jsonrpc": "2.0",
-            "method": "mkdir",
+            "method": "sys_mkdir",
             "params": {"path": "/agents", "exist_ok": True},
             "id": "1",
         }

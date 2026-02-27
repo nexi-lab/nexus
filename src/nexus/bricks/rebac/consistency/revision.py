@@ -25,7 +25,7 @@ from sqlalchemy.exc import OperationalError, ProgrammingError
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.models.permissions import ReBACVersionSequenceModel as RBVS
 
 logger = logging.getLogger(__name__)

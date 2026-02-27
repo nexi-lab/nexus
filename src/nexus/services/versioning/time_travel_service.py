@@ -16,23 +16,17 @@ References:
     - services/protocols/time_travel.py          (TimeTravelProtocol)
 """
 
-from __future__ import annotations
-
 import json
+from collections.abc import Callable
 from contextlib import suppress
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from sqlalchemy import and_, or_, select
+from sqlalchemy.orm import Session
 
+from nexus.backends.backend import Backend
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.storage.models import FilePathModel, OperationLogModel
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from sqlalchemy.orm import Session
-
-    from nexus.storage.backend_base import Backend
 
 
 class TimeTravelService:
@@ -256,7 +250,7 @@ class TimeTravelService:
         metadata_dict: dict[str, Any] = {}
 
         if next_write and next_write.snapshot_hash:
-            content = self._backend.read_content(next_write.snapshot_hash).unwrap()
+            content = self._backend.read_content(next_write.snapshot_hash, context=None)
             if next_write.metadata_snapshot:
                 metadata_dict = json.loads(next_write.metadata_snapshot)
         else:
@@ -267,7 +261,10 @@ class TimeTravelService:
             current_path = session.execute(path_stmt).scalar_one_or_none()
 
             if current_path:
-                content = self._backend.read_content(current_path.content_hash).unwrap()
+                content_hash = current_path.content_hash
+                if content_hash is None:
+                    raise NexusFileNotFoundError(f"File {path} has no content hash")
+                content = self._backend.read_content(content_hash, context=None)
                 metadata_dict = {
                     "size": current_path.size_bytes,
                     "version": current_path.current_version,
@@ -284,7 +281,7 @@ class TimeTravelService:
                         break
 
                 if next_delete and next_delete.snapshot_hash:
-                    content = self._backend.read_content(next_delete.snapshot_hash).unwrap()
+                    content = self._backend.read_content(next_delete.snapshot_hash, context=None)
                     if next_delete.metadata_snapshot:
                         metadata_dict = json.loads(next_delete.metadata_snapshot)
                 else:

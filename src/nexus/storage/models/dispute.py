@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from sqlalchemy import Boolean, DateTime, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.models._base import Base, _generate_uuid, _get_uuid_server_default
 
 
@@ -38,7 +39,7 @@ class DisputeModel(Base):
 
     # Exchange + zone
     exchange_id: Mapped[str] = mapped_column(String(36), nullable=False)
-    zone_id: Mapped[str] = mapped_column(String(36), nullable=False, default="root")
+    zone_id: Mapped[str] = mapped_column(String(36), nullable=False, default=ROOT_ZONE_ID)
 
     # Parties
     complainant_agent_id: Mapped[str] = mapped_column(String(255), nullable=False)

@@ -17,7 +17,7 @@ from nexus.bricks.rebac.manager import (
     ConsistencyLevel,
     WriteResult,
 )
-from nexus.bricks.rebac.types import (
+from nexus.contracts.rebac_types import (
     ConsistencyMode,
     ConsistencyRequirement,
 )

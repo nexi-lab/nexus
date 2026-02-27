@@ -69,7 +69,6 @@ KNOWN_CROSS_BRICK_EXCEPTIONS: dict[tuple[str, str], list[str]] = {
     # TODO(#2429): Fix a2a->ipc via DI refactoring.
     ("a2a", "ipc"): [
         "nexus.bricks.a2a.messaging_adapters",
-        "nexus.bricks.a2a.stores.vfs",
     ],
     # TODO(#2429): Fix mcp->rebac/discovery via DI refactoring.
     ("mcp", "rebac"): [

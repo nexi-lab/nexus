@@ -3,6 +3,7 @@
 import json
 import re
 from datetime import timedelta
+from typing import Any
 
 import click
 from rich.console import Console
@@ -667,7 +668,7 @@ def register_memory_cmd(
         nexus memory register /tmp/agent-context --session-id abc123 --ttl 2h
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx: Any = get_filesystem(backend_config)
 
         # v0.5.0: Parse TTL string to timedelta
         ttl_delta = None
@@ -713,7 +714,7 @@ def list_registered_cmd(
         nexus memory list-registered
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx: Any = get_filesystem(backend_config)
 
         memories = nx.list_memories()
 
@@ -764,7 +765,7 @@ def unregister_memory_cmd(
         nexus memory unregister /my-memory --yes
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx: Any = get_filesystem(backend_config)
 
         # Get memory info first
         info = nx.get_memory_info(path)
@@ -816,7 +817,7 @@ def memory_info_cmd(
         nexus memory info /my-memory
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx: Any = get_filesystem(backend_config)
 
         info = nx.get_memory_info(path)
 

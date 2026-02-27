@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import BigInteger, DateTime, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.models._base import Base, _generate_uuid, _get_uuid_server_default
 
 if TYPE_CHECKING:
@@ -32,7 +33,7 @@ class FilePathModel(Base):
     )
 
     # P0 SECURITY: Defense-in-depth zone isolation
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default=ROOT_ZONE_ID)
 
     # Path information
     virtual_path: Mapped[str] = mapped_column(Text, nullable=False)

@@ -1,6 +1,6 @@
 """Unit tests for OperationResult and OperationWarning."""
 
-from nexus.core.operation_result import OperationResult, OperationWarning
+from nexus.contracts.operation_result import OperationResult, OperationWarning
 
 
 class TestOperationWarning:

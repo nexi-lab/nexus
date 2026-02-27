@@ -39,7 +39,6 @@ def _make_nexus_fs(**attrs) -> SimpleNamespace:
         "workflow_engine": None,
         "_snapshot_service": None,
         "_namespace_manager": None,
-        "_write_observer": None,
         "config": None,
     }
     defaults.update(attrs)
@@ -103,7 +102,6 @@ class TestFromAppExtraction:
             workflow_engine="wf_engine",
             _snapshot_service="snap_svc",
             _namespace_manager="ns_mgr",
-            _write_observer="write_obs",
             config="nexus_cfg",
         )
         app = _make_app(nexus_fs=nx)
@@ -121,7 +119,6 @@ class TestFromAppExtraction:
         assert svc.workflow_engine == "wf_engine"
         assert svc.snapshot_service == "snap_svc"
         assert svc.namespace_manager == "ns_mgr"
-        assert svc.write_observer == "write_obs"
         assert svc.nexus_config == "nexus_cfg"
 
 
@@ -134,8 +131,9 @@ class TestFromAppSystemServices:
             brick_lifecycle_manager="blm",
             brick_reconciler="br",
             eviction_manager="em",
-            scoped_hook_engine="she",
+            write_observer="write_obs",
             zone_lifecycle="zl",
+            pipe_manager="pipe_mgr",
         )
         nx = _make_nexus_fs(_system_services=sys_svc)
         app = _make_app(nexus_fs=nx)
@@ -144,8 +142,9 @@ class TestFromAppSystemServices:
         assert svc.brick_lifecycle_manager == "blm"
         assert svc.brick_reconciler == "br"
         assert svc.eviction_manager == "em"
-        assert svc.scoped_hook_engine == "she"
+        assert svc.write_observer == "write_obs"
         assert svc.zone_lifecycle == "zl"
+        assert svc.pipe_manager == "pipe_mgr"
 
     def test_missing_system_services_yields_none(self) -> None:
         """When _system_services is None, all system service fields are None."""
@@ -232,10 +231,10 @@ class TestFromAppEdgeCases:
         nx = SimpleNamespace(_system_services=None, _brick_services=None, _service_extras={})
         app = _make_app(nexus_fs=nx)
 
-        # Should not raise even though nx has no _write_observer, etc.
+        # Should not raise even though nx has no SessionLocal, etc.
         svc = LifespanServices.from_app(app)
         assert svc.nexus_fs is nx
-        assert svc.write_observer is None  # getattr with default
+        assert svc.write_observer is None  # extracted from _system_services (None here)
         assert svc.rebac_manager is None
 
     def test_a2a_task_manager_extracted(self) -> None:

@@ -34,7 +34,7 @@ def create_test_files(nx: NexusFS, num_files: int, file_size: int = 1024) -> lis
     for i in range(num_files):
         path = f"/benchmark/warmup/file_{i:04d}.txt"
         content = os.urandom(file_size).hex()  # Random content
-        nx.write(path, content)
+        nx.sys_write(path, content)
         paths.append(path)
     return paths
 
@@ -73,13 +73,13 @@ def benchmark_cold_access(nx: NexusFS, paths: list[str]) -> dict:
     for path in paths:
         # Measure exists() - checks metadata cache
         start = time.perf_counter()
-        _ = nx.exists(path)
+        _ = nx.sys_access(path)
         elapsed = time.perf_counter() - start
         times_exists.append(elapsed * 1000)  # ms
 
         # Measure read() - checks content cache
         start = time.perf_counter()
-        _ = nx.read(path)
+        _ = nx.sys_read(path)
         elapsed = time.perf_counter() - start
         times_read.append(elapsed * 1000)  # ms
 
@@ -104,12 +104,12 @@ def benchmark_warm_access(nx: NexusFS, paths: list[str]) -> dict:
 
     for path in paths:
         start = time.perf_counter()
-        _ = nx.exists(path)
+        _ = nx.sys_access(path)
         elapsed = time.perf_counter() - start
         times_exists.append(elapsed * 1000)
 
         start = time.perf_counter()
-        _ = nx.read(path)
+        _ = nx.sys_read(path)
         elapsed = time.perf_counter() - start
         times_read.append(elapsed * 1000)
 
@@ -226,7 +226,6 @@ async def run_benchmark(num_files: int = 100, file_size: int = 1024) -> None:
             metadata_store=RaftMetadataStore.embedded(str(db_path).replace(".db", "-raft")),
             record_store=SQLAlchemyRecordStore(db_path=str(db_path)),
             enforce_permissions=False,
-            enable_metadata_cache=True,
             cache_ttl_seconds=300,
         )
 

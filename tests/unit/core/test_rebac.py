@@ -225,7 +225,12 @@ def test_caching(rebac_manager):
 
 
 def test_cache_invalidation_on_write(rebac_manager):
-    """Test that cache is invalidated when tuples for the same subject-object pair are added."""
+    """Test that L1/L2 cache is invalidated when tuples for the same subject-object pair are added.
+
+    Write path: rebac_write → invalidate_zone_graph_cache (clears L1/L2)
+                            → Tiger Cache write-through (separate layer)
+    The L1/L2 check cache is invalidated on write; the next rebac_check repopulates it.
+    """
     # Create initial relationship
     rebac_manager.rebac_write(
         subject=("agent", "alice"),
@@ -242,32 +247,37 @@ def test_cache_invalidation_on_write(rebac_manager):
     assert result is True
 
     # Add another relationship for same subject-object pair
-    # With eager cache update, this should RECOMPUTE and UPDATE the cache
-    # instead of just invalidating it
+    # This invalidates the L1/L2 check cache for the affected zone
     rebac_manager.rebac_write(
         subject=("agent", "alice"),
         relation="editor-of",
         object=("file", "file123"),
     )
 
-    # OPTIMIZATION: Cache is now eagerly updated instead of invalidated
-    # The "viewer-of" permission should still be cached and remain True
+    # L1/L2 check cache is invalidated after write — returns None
     cached = rebac_manager._get_cached_check(
         Entity("agent", "alice"),
         "viewer-of",
         Entity("file", "file123"),
     )
-    # After eager cache update, "viewer-of" permission is still cached
-    # (because adding "editor-of" doesn't change "viewer-of" result)
-    assert cached is True  # Changed from None - cache is now eagerly updated!
+    assert cached is None  # Cache invalidated on write
+
+    # Next rebac_check repopulates the cache
+    result = rebac_manager.rebac_check(
+        subject=("agent", "alice"),
+        permission="viewer-of",
+        object=("file", "file123"),
+    )
+    assert result is True
 
 
-def test_eager_cache_update_on_write(rebac_manager):
-    """Test that cache is eagerly updated (not just invalidated) on write.
+def test_write_invalidates_then_check_repopulates(rebac_manager):
+    """Test write-then-read cycle: write invalidates L1/L2, next check repopulates.
 
-    This is a performance optimization: instead of invalidating the cache on write,
-    we eagerly recompute affected permissions and update the cache. This means
-    the next read is instant (<1ms) instead of requiring graph traversal (50-500ms).
+    Current behavior:
+      rebac_write → invalidate_zone_graph_cache (clears L1/L2 check cache)
+                  → Tiger Cache write-through (grants persisted in bitmap layer)
+      rebac_check → L1/L2 miss → graph traversal → repopulate L1/L2 cache
     """
     # Grant alice viewer-of permission
     rebac_manager.rebac_write(
@@ -291,22 +301,29 @@ def test_eager_cache_update_on_write(rebac_manager):
         object=("file", "file123"),
     )
 
-    # EAGER UPDATE: Cache should be updated, not invalidated
-    # The "viewer-of" permission should still be cached
+    # L1/L2 check cache is invalidated after write
     cached_viewer = rebac_manager._get_cached_check(
         Entity("agent", "alice"),
         "viewer-of",
         Entity("file", "file123"),
     )
-    assert cached_viewer is True  # Still cached!
+    assert cached_viewer is None  # Cache invalidated
 
-    # Next read should be instant (cache hit, not graph traversal)
+    # Next read repopulates the cache via graph traversal
     result = rebac_manager.rebac_check(
         subject=("agent", "alice"),
         permission="viewer-of",
         object=("file", "file123"),
     )
     assert result is True
+
+    # Now cache is repopulated
+    cached_after = rebac_manager._get_cached_check(
+        Entity("agent", "alice"),
+        "viewer-of",
+        Entity("file", "file123"),
+    )
+    assert cached_after is True
 
 
 def test_cache_invalidation_on_delete(rebac_manager):

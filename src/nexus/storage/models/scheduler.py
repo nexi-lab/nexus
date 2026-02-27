@@ -12,6 +12,7 @@ from decimal import Decimal
 from sqlalchemy import DateTime, Index, Numeric, SmallInteger, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.models._base import Base, uuid_pk
 
 
@@ -40,7 +41,7 @@ class ScheduledTaskModel(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued")
     idempotency_key: Mapped[str | None] = mapped_column(Text, nullable=True, unique=True)
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default=ROOT_ZONE_ID)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (

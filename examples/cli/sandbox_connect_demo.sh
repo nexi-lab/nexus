@@ -254,18 +254,15 @@ print(f"✓ Disconnected at: {result['unmounted_at']}")
 EOF
 echo ""
 
-print_subsection "5.2: Remote Python API (RemoteNexusFS)"
+print_subsection "5.2: Remote Python API (nexus.connect())"
 
 cat << 'EOF'
 ```python
-from nexus.remote import RemoteNexusFS
+import nexus
 import os
 
 # Connect to remote Nexus server
-remote_nx = RemoteNexusFS(
-    server_url="https://nexus.nexilab.co",
-    api_key=os.getenv("NEXUS_API_KEY")
-)
+remote_nx = nexus.connect(config={"mode": "remote", "url": "https://nexus.nexilab.co", "api_key": os.getenv("NEXUS_API_KEY")})
 
 # Connect to user's E2B sandbox
 result = remote_nx.sandbox_connect(

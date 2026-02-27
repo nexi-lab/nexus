@@ -225,23 +225,11 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
         "nexus.bricks.rebac.async_namespace_manager.AsyncNamespaceManager",
         True,
     ),
-    (
-        "HookEngineProtocol",
-        "nexus.services.protocols.hook_engine",
-        "nexus.plugins.async_hooks.AsyncHookEngine",
-        True,
-    ),
     # ── Service-layer protocols ───────────────────────────────────────
     (
         "MCPProtocol",
         "nexus.services.protocols.mcp",
         "nexus.bricks.mcp.mcp_service.MCPService",
-        True,
-    ),
-    (
-        "DelegationProtocol",
-        "nexus.services.protocols.delegation",
-        "nexus.bricks.delegation.service.DelegationService",
         True,
     ),
     (
@@ -391,10 +379,8 @@ def test_rebac_manager_satisfies_manager_methods() -> None:
 _PROTOCOL_FILES: list[tuple[str, str]] = [
     ("agent_registry", "nexus/services/protocols/agent_registry.py"),
     ("auth", "nexus/services/protocols/auth.py"),
-    ("delegation", "nexus/services/protocols/delegation.py"),
-    ("event_log", "nexus/services/event_log/protocol.py"),
+    ("event_log", "nexus/services/event_subsystem/log/protocol.py"),
     ("governance", "nexus/bricks/governance/protocols.py"),
-    ("hook_engine", "nexus/services/protocols/hook_engine.py"),
     ("llm", "nexus/services/protocols/llm.py"),
     ("llm_provider", "nexus/services/protocols/llm_provider.py"),
     ("lock", "nexus/services/protocols/lock.py"),
@@ -407,7 +393,6 @@ _PROTOCOL_FILES: list[tuple[str, str]] = [
     ("parse", "nexus/services/protocols/parse.py"),
     ("payment", "nexus/services/protocols/payment.py"),
     ("permission", "nexus/services/protocols/permission.py"),
-    ("plugin", "nexus/services/protocols/plugin.py"),
     ("rebac", "nexus/services/protocols/rebac.py"),
     ("reputation", "nexus/services/protocols/reputation.py"),
     ("scheduler", "nexus/services/protocols/scheduler.py"),
@@ -422,7 +407,6 @@ _PROTOCOL_FILES: list[tuple[str, str]] = [
     ("vfs_core", "nexus/core/protocols/vfs_core.py"),
     ("caching", "nexus/core/protocols/caching.py"),
     ("connector", "nexus/core/protocols/connector.py"),
-    ("revision_service", "nexus/core/protocols/revision_service.py"),
     # Issue #2359: Moved protocols to their correct tier locations
     ("describable", "nexus/contracts/describable.py"),
     ("wirable_fs", "nexus/contracts/wirable_fs.py"),
@@ -432,7 +416,7 @@ _PROTOCOL_FILES: list[tuple[str, str]] = [
 ]
 
 # Leaf modules that are safe to import at module level in protocol files
-_ALLOWED_LEAF_MODULES = {"nexus.constants"}
+_ALLOWED_LEAF_MODULES = {"nexus.constants", "nexus.contracts.constants"}
 
 
 @pytest.mark.parametrize(

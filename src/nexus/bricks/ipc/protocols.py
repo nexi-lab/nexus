@@ -1,14 +1,14 @@
 """Protocols (interfaces) for IPC brick dependencies.
 
 The IPC brick depends on EventBus capabilities and a pluggable storage
-driver (``IPCStorageDriver``) but does NOT import from ``nexus.core``
+driver (``VFSOperations``) but does NOT import from ``nexus.core``
 directly. It defines minimal Protocol interfaces here for event
 publishing/subscribing. The real implementations are injected at wiring
 time (factory/builder).
 
-``VFSOperations`` is retained for the ``VFSStorageDriver`` adapter and
-``ProxyVFSBrick``, but IPC delivery/sweep/discovery/provisioning
-components use ``IPCStorageDriver`` from ``nexus.ipc.storage.protocol``.
+``VFSOperations`` is the canonical storage protocol used by all IPC
+components (delivery, sweep, discovery, provisioning). The production
+implementation is ``KernelVFSAdapter`` which routes through NexusFS.
 
 This keeps the IPC brick testable in isolation — unit tests inject
 in-memory fakes that satisfy these Protocols.
@@ -26,11 +26,11 @@ class VFSOperations(Protocol):
     for inbox/outbox file management.
     """
 
-    async def read(self, path: str, zone_id: str) -> bytes:
+    async def sys_read(self, path: str, zone_id: str) -> bytes:
         """Read file contents at the given path."""
         ...
 
-    async def write(self, path: str, data: bytes, zone_id: str) -> None:
+    async def sys_write(self, path: str, data: bytes, zone_id: str) -> None:
         """Write data to the given path (create or overwrite)."""
         ...
 
@@ -42,7 +42,7 @@ class VFSOperations(Protocol):
         """Atomically rename/move a file from src to dst."""
         ...
 
-    async def mkdir(self, path: str, zone_id: str) -> None:
+    async def sys_mkdir(self, path: str, zone_id: str) -> None:
         """Create a directory (including parents if needed)."""
         ...
 
@@ -56,7 +56,7 @@ class VFSOperations(Protocol):
         """
         ...
 
-    async def exists(self, path: str, zone_id: str) -> bool:
+    async def sys_access(self, path: str, zone_id: str) -> bool:
         """Check if a path exists."""
         ...
 
@@ -87,30 +87,6 @@ class EventSubscriber(Protocol):
         ...
 
 
-@runtime_checkable
-class HotPathPublisher(Protocol):
-    """Publish raw bytes to a NATS subject for hot-path delivery.
-
-    Used by MessageSender to bypass filesystem for instant delivery.
-    """
-
-    async def publish(self, subject: str, data: bytes) -> None:
-        """Publish data to the given subject."""
-        ...
-
-
-@runtime_checkable
-class HotPathSubscriber(Protocol):
-    """Subscribe to raw bytes on a NATS subject for hot-path delivery.
-
-    Used by MessageProcessor to receive messages without filesystem polling.
-    """
-
-    def subscribe(self, subject: str) -> AsyncIterator[bytes]:
-        """Subscribe to a subject. Yields raw message bytes as they arrive."""
-        ...
-
-
 # ---------------------------------------------------------------------------
 # Protocols for cross-zone routing (replaces services.protocols imports)
 # ---------------------------------------------------------------------------
@@ -128,7 +104,6 @@ class AgentInfoResult(Protocol):
 class AgentLookupProtocol(Protocol):
     """Minimal agent registry interface for zone resolution.
 
-    Used by ``CrossZoneStorageDriver`` to resolve agent → zone mapping.
     Satisfied by the real ``AgentRegistryProtocol`` at wiring time.
     """
 
@@ -141,7 +116,6 @@ class AgentLookupProtocol(Protocol):
 class PermissionCheckProtocol(Protocol):
     """Minimal ReBAC permission check interface.
 
-    Used by ``CrossZoneStorageDriver`` for cross-zone delivery auth.
     Satisfied by the real ``PermissionProtocol`` at wiring time.
     """
 

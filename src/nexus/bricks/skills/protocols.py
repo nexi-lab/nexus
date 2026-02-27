@@ -2,7 +2,7 @@
 
 Defines narrow interfaces that the skills module depends on:
 
-- ``NexusFilesystem``: 7-method filesystem protocol (read/write/list/…)
+- ``NexusFilesystem``: 7-method filesystem protocol (sys_read/sys_write/sys_readdir/…)
 - ``SkillRegistryProtocol``: skill discovery, lookup, and dependency resolution
 - ``SkillManagerProtocol``: skill lifecycle (create, fork, publish, search)
 

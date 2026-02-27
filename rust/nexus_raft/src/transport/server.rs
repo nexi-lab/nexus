@@ -271,6 +271,15 @@ fn command_result_to_proto(result: &CommandResult) -> RaftResponse {
                 })),
             }
         }
+        CommandResult::CasResult { success, .. } => RaftResponse {
+            success: *success,
+            error: if *success {
+                None
+            } else {
+                Some("CAS conflict".to_string())
+            },
+            result: None,
+        },
         CommandResult::Error(e) => RaftResponse {
             success: false,
             error: Some(e.clone()),

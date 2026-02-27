@@ -111,7 +111,7 @@ class TestSearchServiceDelegation:
         """list forwards all args to search_service.list."""
         files = ["/a.txt", "/b.txt"]
         mock_fs.search_service.list = MagicMock(return_value=files)
-        result = mock_fs.list(
+        result = mock_fs.sys_readdir(
             path="/data",
             recursive=False,
             details=True,

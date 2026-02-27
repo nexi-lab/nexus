@@ -1,10 +1,10 @@
 """VFS core file operations protocol (Issue #1287, Decision 3A).
 
 Defines the contract for core file system operations that the kernel
-exposes. Existing implementation: ``NexusFSCoreMixin`` (sync, 4,269 LOC).
+exposes. Implementation: ``NexusFS`` (sync, methods merged from dissolved mixin).
 
 This protocol is a *roadmap* — it captures the target interface for future
-extraction of NexusFSCoreMixin into focused services. No implementation
+extraction of VFS ops into focused services. No implementation
 is required yet (Phase F in the architecture doc).
 
 References:

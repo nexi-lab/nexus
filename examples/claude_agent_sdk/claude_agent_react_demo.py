@@ -39,7 +39,6 @@ from pathlib import Path
 # Add src to path for local development
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-import nexus
 from claude_agent_sdk import ClaudeAgentOptions, create_sdk_mcp_server, query, tool
 
 
@@ -59,13 +58,13 @@ def connect_to_nexus(tenant_id: str = "claude-agent-demo", agent_id: str = "reac
     api_key = os.getenv("NEXUS_API_KEY")
 
     if server_url:
-        from nexus.remote import RemoteNexusFS
+        import nexus
 
         print(f"Connecting to Nexus server at {server_url}...")
         print(f"  Tenant: {tenant_id}")
         print(f"  Agent: {agent_id}")
 
-        nx = RemoteNexusFS(server_url=server_url, api_key=api_key)
+        nx = nexus.connect(config={"mode": "remote", "url": server_url, "api_key": api_key})
         nx.tenant_id = tenant_id
         nx.agent_id = agent_id
         print("✓ Connected to Nexus server")
@@ -180,7 +179,7 @@ def create_nexus_tools(nx):
         preview_only = args.get("preview_only", False)
 
         try:
-            content = nx.read(path)
+            content = nx.sys_read(path)
 
             # Handle bytes
             if isinstance(content, bytes):
@@ -219,9 +218,9 @@ def create_nexus_tools(nx):
 
         try:
             content_bytes = content.encode("utf-8") if isinstance(content, str) else content
-            nx.write(path, content_bytes)
+            nx.sys_write(path, content_bytes)
 
-            if nx.exists(path):
+            if nx.sys_access(path):
                 text = f"Successfully wrote {len(content_bytes)} bytes to {path}"
             else:
                 text = f"Error: Failed to write file {path}"
@@ -409,11 +408,11 @@ async def run_demo():
         # Check if any files were created
         try:
             # Look for the expected output file
-            if nx.exists("/reports/async-patterns.md"):
+            if nx.sys_access("/reports/async-patterns.md"):
                 print("\n📄 Report generated: /reports/async-patterns.md")
 
                 # Show a preview
-                content = nx.read("/reports/async-patterns.md")
+                content = nx.sys_read("/reports/async-patterns.md")
                 if isinstance(content, bytes):
                     content = content.decode("utf-8")
 

@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from sqlalchemy import DateTime, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.models._base import Base, _generate_uuid, _get_uuid_server_default
 
 
@@ -38,7 +39,7 @@ class RefreshTokenHistoryModel(Base):
     credential_id: Mapped[str] = mapped_column(String(36), nullable=False)
     refresh_token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     rotation_counter: Mapped[int] = mapped_column(Integer, nullable=False)
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default=ROOT_ZONE_ID)
 
     rotated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

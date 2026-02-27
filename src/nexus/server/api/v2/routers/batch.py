@@ -6,7 +6,7 @@ of VFS operations, reducing HTTP round-trips for chatty agent workloads.
 Design decisions:
     - Presentation layer only (not a brick) per §5.5
     - Factory pattern for DI (same as async_files.py)
-    - Direct VFS dispatch via AsyncNexusFS
+    - Direct VFS dispatch via NexusFS
     - Batch-specific rate limit (separate from per-endpoint limits)
 
 References:
@@ -20,6 +20,7 @@ from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext
 from nexus.server.batch_executor import BatchExecutor, BatchRequest, BatchResponse
 
@@ -80,7 +81,7 @@ def create_batch_router(
             if auth_result is None or not auth_result.get("authenticated"):
                 from nexus.contracts.types import OperationContext as OC
 
-                return OC(user_id="anonymous", groups=[], zone_id="root")
+                return OC(user_id="anonymous", groups=[], zone_id=ROOT_ZONE_ID)
             return cast("OperationContext", _real_get_operation_context(auth_result))
 
     @router.post("/batch", response_model=BatchResponse)

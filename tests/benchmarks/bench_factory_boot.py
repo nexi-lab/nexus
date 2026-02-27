@@ -322,7 +322,6 @@ class TestPerTierBreakdown:
             "context_branch_service",
             "brick_lifecycle_manager",
             "brick_reconciler",
-            "scoped_hook_engine",
         }
         assert set(result.keys()) == expected_keys, (
             f"System tier key mismatch. "

@@ -1,6 +1,6 @@
 """Integration tests for batch router (Issue #1242).
 
-Tests the full FastAPI router with a mock AsyncNexusFS via TestClient.
+Tests the full FastAPI router with a mock NexusFS via TestClient.
 """
 
 from unittest.mock import MagicMock

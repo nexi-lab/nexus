@@ -30,7 +30,7 @@ Example:
     >>> nx = NexusFS(backend=HNConnectorBackend())
     >>>
     >>> # Read top story
-    >>> story = nx.read("/hn/top/1.json")
+    >>> story = nx.sys_read("/hn/top/1.json")
     >>>
     >>> # List all feeds
     >>> nx.ls("/hn/")
@@ -48,8 +48,8 @@ from nexus.backends.cache_mixin import CacheConnectorMixin, SyncResult
 from nexus.backends.connectors.base import SkillDocMixin
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
+from nexus.core.object_store import WriteResult
 from nexus.core.protocols.capabilities import ConnectorCapability
-from nexus.lib.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
@@ -111,7 +111,7 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
 
     _CAPABILITIES = frozenset(
         {
-            ConnectorCapability.VIRTUAL_FILESYSTEM,
+            ConnectorCapability.EXTERNAL_CONTENT,
             ConnectorCapability.CACHE_BULK_READ,
             ConnectorCapability.CACHE_SYNC,
             ConnectorCapability.SKILL_DOC,
@@ -122,10 +122,6 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
     SKILL_NAME = "hn"
 
     user_scoped = False  # Public API, no per-user auth
-
-    @property
-    def has_virtual_filesystem(self) -> bool:  # noqa: D102
-        return True
 
     CONNECTION_ARGS: dict[str, ConnectionArg] = {
         "cache_ttl": ConnectionArg(
@@ -402,12 +398,11 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
 
     # === Backend Interface Implementation ===
 
-    @timed_response
     def read_content(
         self,
         content_hash: str,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[bytes]:
+    ) -> bytes:
         """
         Read content from HN API via virtual path.
 
@@ -418,14 +413,12 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
             context: Operation context with backend_path
 
         Returns:
-            HandlerResponse with JSON content as bytes in data field
+            JSON content as bytes
         """
         if not context or not context.backend_path:
-            return HandlerResponse.error(
-                message="HN connector requires context with backend_path",
-                code=400,
-                is_expected=True,
-                backend_name=self.name,
+            raise BackendError(
+                "HN connector requires context with backend_path",
+                backend="hn",
             )
 
         path = context.backend_path
@@ -436,22 +429,15 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
             cached = self._read_from_cache(cache_path, original=True)
             if cached and not cached.stale and cached.content_binary:
                 logger.info(f"[HN] Cache hit: {path}")
-                return HandlerResponse.ok(
-                    data=cached.content_binary,
-                    backend_name=self.name,
-                    path=path,
-                )
+                return cached.content_binary
 
         # Resolve path
         feed, rank = self._resolve_path(path)
 
         if rank is None:
-            return HandlerResponse.error(
-                message=f"Cannot read directory: {path}. Use list_dir() instead.",
-                code=400,
-                is_expected=True,
-                backend_name=self.name,
-                path=path,
+            raise BackendError(
+                f"Cannot read directory: {path}. Use list_dir() instead.",
+                backend="hn",
             )
 
         # Fetch from HN API
@@ -482,73 +468,50 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
             except Exception as e:
                 logger.warning(f"Failed to cache {path}: {e}")
 
-        return HandlerResponse.ok(
-            data=content,
-            backend_name=self.name,
-            path=path,
-        )
+        return content
 
-    @timed_response
     def write_content(
         self,
         content: bytes,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[str]:
+    ) -> WriteResult:
         """Write content (not supported - HN is read-only)."""
-        return HandlerResponse.error(
-            message="HN connector is read-only. HackerNews API does not support posting.",
-            code=405,
-            is_expected=True,
-            backend_name=self.name,
+        raise BackendError(
+            "HN connector is read-only. HackerNews API does not support posting.",
+            backend="hn",
         )
 
-    @timed_response
     def delete_content(
         self,
         content_hash: str,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[None]:
+    ) -> None:
         """Delete content (not supported - HN is read-only)."""
-        return HandlerResponse.error(
-            message="HN connector is read-only. HackerNews API does not support deletion.",
-            code=405,
-            is_expected=True,
-            backend_name=self.name,
+        raise BackendError(
+            "HN connector is read-only. HackerNews API does not support deletion.",
+            backend="hn",
         )
 
-    @timed_response
     def content_exists(
         self,
         content_hash: str,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[bool]:
+    ) -> bool:
         """Check if content exists."""
         if not context or not context.backend_path:
-            return HandlerResponse.ok(
-                data=False,
-                backend_name=self.name,
-            )
+            return False
 
         try:
             feed, rank = self._resolve_path(context.backend_path)
-            exists = feed != "" and (rank is None or 1 <= rank <= self.stories_per_feed)
-            return HandlerResponse.ok(
-                data=exists,
-                backend_name=self.name,
-                path=context.backend_path,
-            )
+            return feed != "" and (rank is None or 1 <= rank <= self.stories_per_feed)
         except BackendError:
-            return HandlerResponse.ok(
-                data=False,
-                backend_name=self.name,
-            )
+            return False
 
-    @timed_response
     def get_content_size(
         self,
         content_hash: str,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[int]:
+    ) -> int:
         """Get content size (cache-first, efficient).
 
         Performance optimization: Checks cache first for actual size.
@@ -558,70 +521,51 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
         if context and hasattr(context, "virtual_path") and context.virtual_path:
             cached_size = self._get_size_from_cache(context.virtual_path)
             if cached_size is not None:
-                return HandlerResponse.ok(
-                    data=cached_size,
-                    backend_name=self.name,
-                )
+                return cached_size
 
         # Fallback: Return approximate size estimate
-        return HandlerResponse.ok(
-            data=10 * 1024,  # 10 KB estimate
-            backend_name=self.name,
-        )
+        return 10 * 1024  # 10 KB estimate
 
-    @timed_response
     def get_ref_count(
         self,
         content_hash: str,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[int]:
+    ) -> int:
         """Get reference count (always 1 for HN connector)."""
-        return HandlerResponse.ok(
-            data=1,
-            backend_name=self.name,
-        )
+        return 1
 
     # === Directory Operations ===
 
-    @timed_response
     def mkdir(
         self,
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[None]:
+    ) -> None:
         """Create directory (not supported - fixed structure)."""
-        return HandlerResponse.error(
-            message="HN connector has a fixed virtual structure. mkdir() is not supported.",
-            code=405,
-            is_expected=True,
-            backend_name=self.name,
-            path=path,
+        raise BackendError(
+            "HN connector has a fixed virtual structure. mkdir() is not supported.",
+            backend="hn",
         )
 
-    @timed_response
     def rmdir(
         self,
         path: str,
         recursive: bool = False,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[None]:
+    ) -> None:
         """Remove directory (not supported - fixed structure)."""
-        return HandlerResponse.error(
-            message="HN connector has a fixed virtual structure. rmdir() is not supported.",
-            code=405,
-            is_expected=True,
-            backend_name=self.name,
-            path=path,
+        raise BackendError(
+            "HN connector has a fixed virtual structure. rmdir() is not supported.",
+            backend="hn",
         )
 
-    @timed_response
     def is_directory(
         self,
         path: str,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[bool]:
+    ) -> bool:
         """Check if path is a directory."""
         path = path.strip("/")
 
@@ -631,18 +575,9 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
 
         # Root or feed directories
         if path == "" or path == "hn":
-            return HandlerResponse.ok(
-                data=True,
-                backend_name=self.name,
-                path=path,
-            )
+            return True
 
-        is_dir = path in {"top", "new", "best", "ask", "show", "jobs"}
-        return HandlerResponse.ok(
-            data=is_dir,
-            backend_name=self.name,
-            path=path,
-        )
+        return path in {"top", "new", "best", "ask", "show", "jobs"}
 
     def list_dir(
         self,

@@ -113,7 +113,7 @@ class TransactionalSnapshotService:
         return self._registry
 
     # ------------------------------------------------------------------
-    # Sync hot-path methods (called from nexus_fs_core write/delete)
+    # Sync hot-path methods (called from nexus_fs write/delete)
     # ------------------------------------------------------------------
 
     def is_tracked(self, path: str) -> str | None:

@@ -14,8 +14,8 @@ Usage:
 import asyncio
 from typing import Any
 
-from nexus.bricks.rebac.types import WriteResult
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.contracts.rebac_types import WriteResult
 
 
 class AsyncReBACManager:

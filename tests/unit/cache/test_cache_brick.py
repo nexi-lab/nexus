@@ -14,13 +14,13 @@ Tests cover:
 
 from unittest.mock import AsyncMock, MagicMock
 
-from nexus.bricks.cache.base import (
+from nexus.cache.base import (
     EmbeddingCacheProtocol,
     PermissionCacheProtocol,
     ResourceMapCacheProtocol,
     TigerCacheProtocol,
 )
-from nexus.bricks.cache.settings import CacheSettings
+from nexus.cache.settings import CacheSettings
 from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
 
 # ---------------------------------------------------------------------------
@@ -54,14 +54,14 @@ class TestCacheBrickConstruction:
 
     def test_init_with_defaults(self) -> None:
         """CacheBrick() with no args should use NullCacheStore fallback."""
-        from nexus.bricks.cache.brick import CacheBrick
+        from nexus.cache.brick import CacheBrick
 
         brick = CacheBrick()
         assert isinstance(brick.cache_store, NullCacheStore)
 
     def test_init_with_real_store(self) -> None:
         """CacheBrick with injected store should use that store."""
-        from nexus.bricks.cache.brick import CacheBrick
+        from nexus.cache.brick import CacheBrick
 
         store = _make_mock_store()
         brick = CacheBrick(cache_store=store)
@@ -69,7 +69,7 @@ class TestCacheBrickConstruction:
 
     def test_init_with_settings(self) -> None:
         """CacheBrick with custom settings should use them."""
-        from nexus.bricks.cache.brick import CacheBrick
+        from nexus.cache.brick import CacheBrick
 
         settings = CacheSettings(
             dragonfly_url=None,
@@ -83,7 +83,7 @@ class TestCacheBrickConstruction:
 
     def test_init_with_record_store(self) -> None:
         """CacheBrick with record_store should store it for postgres fallback."""
-        from nexus.bricks.cache.brick import CacheBrick
+        from nexus.cache.brick import CacheBrick
 
         record_store = MagicMock()
         brick = CacheBrick(record_store=record_store)
@@ -100,7 +100,7 @@ class TestCacheBrickProtocols:
 
     def test_permission_cache_protocol(self) -> None:
         """permission_cache should satisfy PermissionCacheProtocol."""
-        from nexus.bricks.cache.brick import CacheBrick
+        from nexus.cache.brick import CacheBrick
 
         brick = CacheBrick()
         cache = brick.permission_cache
@@ -108,7 +108,7 @@ class TestCacheBrickProtocols:
 
     def test_tiger_cache_protocol(self) -> None:
         """tiger_cache should satisfy TigerCacheProtocol."""
-        from nexus.bricks.cache.brick import CacheBrick
+        from nexus.cache.brick import CacheBrick
 
         brick = CacheBrick()
         cache = brick.tiger_cache
@@ -116,7 +116,7 @@ class TestCacheBrickProtocols:
 
     def test_resource_map_cache_protocol(self) -> None:
         """resource_map_cache should satisfy ResourceMapCacheProtocol."""
-        from nexus.bricks.cache.brick import CacheBrick
+        from nexus.cache.brick import CacheBrick
 
         brick = CacheBrick()
         cache = brick.resource_map_cache
@@ -124,7 +124,7 @@ class TestCacheBrickProtocols:
 
     def test_embedding_cache_protocol(self) -> None:
         """embedding_cache should satisfy EmbeddingCacheProtocol."""
-        from nexus.bricks.cache.brick import CacheBrick
+        from nexus.cache.brick import CacheBrick
 
         brick = CacheBrick()
         cache = brick.embedding_cache
@@ -132,7 +132,7 @@ class TestCacheBrickProtocols:
 
     def test_get_cache_store(self) -> None:
         """cache_store property should return the injected CacheStoreABC."""
-        from nexus.bricks.cache.brick import CacheBrick
+        from nexus.cache.brick import CacheBrick
 
         store = _make_mock_store()
         brick = CacheBrick(cache_store=store)
@@ -150,7 +150,7 @@ class TestCacheBrickBackendWrapper:
     def test_create_backend_wrapper(self) -> None:
         """create_caching_wrapper should return a CachingBackendWrapper."""
         from nexus.backends.caching_backend_wrapper import CachingBackendWrapper
-        from nexus.bricks.cache.brick import CacheBrick
+        from nexus.cache.brick import CacheBrick
 
         brick = CacheBrick()
         mock_backend = MagicMock()
@@ -173,14 +173,14 @@ class TestCacheBrickImmutability:
 
     def test_settings_are_stable(self) -> None:
         """settings property should return the same object each time."""
-        from nexus.bricks.cache.brick import CacheBrick
+        from nexus.cache.brick import CacheBrick
 
         brick = CacheBrick()
         assert brick.settings is brick.settings
 
     def test_domain_caches_are_stable(self) -> None:
         """Domain cache accessors should return the same instance each call."""
-        from nexus.bricks.cache.brick import CacheBrick
+        from nexus.cache.brick import CacheBrick
 
         brick = CacheBrick()
         assert brick.permission_cache is brick.permission_cache
@@ -209,7 +209,6 @@ class TestCacheBrickIsolation:
             pathlib.Path(__file__).parent.parent.parent.parent
             / "src"
             / "nexus"
-            / "bricks"
             / "cache"
             / "brick.py"
         )
@@ -241,14 +240,14 @@ class TestCacheBrickBackendName:
 
     def test_backend_name_null(self) -> None:
         """NullCacheStore should report 'NullCacheStore'."""
-        from nexus.bricks.cache.brick import CacheBrick
+        from nexus.cache.brick import CacheBrick
 
         brick = CacheBrick()
         assert brick.backend_name == "NullCacheStore"
 
     def test_backend_name_injected(self) -> None:
         """Injected store should report its class name."""
-        from nexus.bricks.cache.brick import CacheBrick
+        from nexus.cache.brick import CacheBrick
 
         store = _make_mock_store()
         type(store).__name__ = "DragonflyCacheStore"
@@ -257,15 +256,15 @@ class TestCacheBrickBackendName:
 
     def test_has_cache_store_null(self) -> None:
         """NullCacheStore should report has_cache_store=False."""
-        from nexus.bricks.cache.brick import CacheBrick
+        from nexus.cache.brick import CacheBrick
 
         brick = CacheBrick()
         assert brick.has_cache_store is False
 
     def test_has_cache_store_real(self) -> None:
         """Real store should report has_cache_store=True."""
-        from nexus.bricks.cache.brick import CacheBrick
-        from nexus.bricks.cache.inmemory import InMemoryCacheStore
+        from nexus.cache.brick import CacheBrick
+        from nexus.cache.inmemory import InMemoryCacheStore
 
         brick = CacheBrick(cache_store=InMemoryCacheStore())
         assert brick.has_cache_store is True

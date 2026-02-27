@@ -4,7 +4,7 @@ This module provides async Python clients to communicate with Rust Raft nodes
 over gRPC for metadata and lock operations.
 
 Architecture:
-    - ZoneApiService (client-facing): Used by RemoteNexusFS for Propose/Query
+    - ZoneApiService (client-facing): Used by REMOTE profile NexusFS for Propose/Query
     - ZoneTransportService (internal): Used for node-to-node Raft protocol (not exposed here)
 
 For local same-box scenarios, use Metastore (PyO3 FFI) instead for better
@@ -14,7 +14,7 @@ performance (~5μs vs ~200μs latency).
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import grpc
@@ -92,7 +92,7 @@ class RaftClient:
     - Metadata operations (put, get, list, delete) via Propose/Query RPCs
     - Lock operations (acquire, release, extend) via Propose RPC
 
-    Primary user: RemoteNexusFS (client-server architecture)
+    Primary user: REMOTE profile NexusFS (client-server architecture)
 
     Example:
         async with RaftClient("localhost:2026") as client:
@@ -100,7 +100,7 @@ class RaftClient:
             await client.put_metadata(file_metadata)
 
             # Get metadata (read - can be served by any node)
-            metadata = await client.get_metadata("/path/to/file")
+            metadata = await client.sys_stat("/path/to/file")
 
             # Acquire lock
             result = await client.acquire_lock(
@@ -220,6 +220,7 @@ class RaftClient:
         request = transport_pb2.ProposeRequest(
             command=command,
             request_id=request_id or "",
+            zone_id=self.zone_id or "",
         )
 
         try:
@@ -262,6 +263,7 @@ class RaftClient:
         request = transport_pb2.QueryRequest(
             query=query,
             read_from_leader=read_from_leader,
+            zone_id=self.zone_id or "",
         )
 
         try:
@@ -725,45 +727,3 @@ class RaftClient:
         finally:
             if result.acquired:
                 await self.release_lock(lock_id, holder_id, zone_id)
-
-
-@dataclass
-class RaftClientPool:
-    """Pool of RaftClient connections to multiple Raft nodes.
-
-    Provides automatic leader discovery and failover.
-    """
-
-    addresses: list[str]
-    config: RaftClientConfig = field(default_factory=RaftClientConfig)
-    zone_id: str | None = None
-
-    _clients: "dict[str, RaftClient]" = field(default_factory=dict, init=False)
-    _leader_address: str | None = field(default=None, init=False)
-
-    async def get_client(self) -> "RaftClient":
-        """Get a client, preferring the leader if known."""
-        # For now, just return first available client
-        # In real impl, would track leader and route accordingly
-        address = self._leader_address or self.addresses[0]
-
-        if address not in self._clients:
-            client = RaftClient(address, self.config, self.zone_id)
-            await client.connect()
-            self._clients[address] = client
-
-        return self._clients[address]
-
-    async def close_all(self) -> None:
-        """Close all client connections."""
-        for client in self._clients.values():
-            await client.close()
-        self._clients.clear()
-
-    async def __aenter__(self) -> "RaftClientPool":
-        return self
-
-    async def __aexit__(
-        self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: object
-    ) -> None:
-        await self.close_all()

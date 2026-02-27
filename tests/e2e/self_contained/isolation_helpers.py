@@ -21,6 +21,9 @@ class MockBackend:
     If ``storage_dir`` is omitted, each instance creates its own temp
     directory (state NOT shared across instances — useful for cross-brick
     isolation tests).
+
+    Returns direct values (not HandlerResponse) following the ObjectStoreABC
+    contract.  Errors are raised as exceptions.
     """
 
     def __init__(self, storage_dir: str | None = None):
@@ -63,69 +66,48 @@ class MockBackend:
     # ── content ops ──
 
     def write_content(self, content, context=None):
-        from nexus.lib.response import HandlerResponse
+        from nexus.core.object_store import WriteResult
 
         h = hashlib.sha256(content).hexdigest()
         (self._content_dir / h).write_bytes(content)
-        return HandlerResponse.ok(data=h, backend_name=self.name)
+        return WriteResult(content_hash=h, size=len(content))
 
     def read_content(self, h, context=None):
-        from nexus.lib.response import HandlerResponse
+        from nexus.contracts.exceptions import NexusFileNotFoundError
 
         p = self._content_dir / h
-        data = p.read_bytes() if p.exists() else b""
-        return HandlerResponse.ok(data=data, backend_name=self.name)
+        if not p.exists():
+            raise NexusFileNotFoundError(f"Content not found: {h}")
+        return p.read_bytes()
 
     def delete_content(self, h, context=None):
-        from nexus.lib.response import HandlerResponse
-
         p = self._content_dir / h
         p.unlink(missing_ok=True)
-        return HandlerResponse.ok(data=None, backend_name=self.name)
 
     def content_exists(self, h, context=None):
-        from nexus.lib.response import HandlerResponse
-
-        return HandlerResponse.ok(data=(self._content_dir / h).exists(), backend_name=self.name)
+        return (self._content_dir / h).exists()
 
     def get_content_size(self, h, context=None):
-        from nexus.lib.response import HandlerResponse
-
         p = self._content_dir / h
-        size = p.stat().st_size if p.exists() else 0
-        return HandlerResponse.ok(data=size, backend_name=self.name)
+        return p.stat().st_size if p.exists() else 0
 
     def get_ref_count(self, h, context=None):
-        from nexus.lib.response import HandlerResponse
-
-        return HandlerResponse.ok(
-            data=1 if (self._content_dir / h).exists() else 0, backend_name=self.name
-        )
+        return 1 if (self._content_dir / h).exists() else 0
 
     # ── directory ops ──
 
     def mkdir(self, path, parents=False, exist_ok=False, context=None):
-        from nexus.lib.response import HandlerResponse
-
         dirs = self._load_dirs()
         dirs.add(path)
         self._save_dirs(dirs)
-        return HandlerResponse.ok(data=None, backend_name=self.name)
 
     def rmdir(self, path, recursive=False, context=None):
-        from nexus.lib.response import HandlerResponse
-
         dirs = self._load_dirs()
         dirs.discard(path)
         self._save_dirs(dirs)
-        return HandlerResponse.ok(data=None, backend_name=self.name)
 
     def is_directory(self, path, context=None):
-        from nexus.lib.response import HandlerResponse
-
-        return HandlerResponse.ok(data=(path in self._load_dirs()), backend_name=self.name)
+        return path in self._load_dirs()
 
     def list_dir(self, path, context=None):
-        from nexus.lib.response import HandlerResponse
-
-        return HandlerResponse.ok(data=[], backend_name=self.name)
+        return []

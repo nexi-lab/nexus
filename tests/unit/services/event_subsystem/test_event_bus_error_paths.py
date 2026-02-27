@@ -44,7 +44,7 @@ class TestSerializationErrors:
         event = FileEvent(type=FileEventType.FILE_WRITE, path="/test.txt", zone_id="root")
 
         with (
-            patch.object(event, "to_json", side_effect=TypeError("circular reference")),
+            patch.object(FileEvent, "to_json", side_effect=TypeError("circular reference")),
             pytest.raises(ValueError, match="Event serialization failed"),
         ):
             await bus.publish(event)
@@ -60,7 +60,7 @@ class TestSerializationErrors:
         event = FileEvent(type=FileEventType.FILE_WRITE, path="/test.txt", zone_id="root")
 
         with (
-            patch.object(event, "to_json", side_effect=ValueError("NaN not supported")),
+            patch.object(FileEvent, "to_json", side_effect=ValueError("NaN not supported")),
             pytest.raises(ValueError, match="Event serialization failed"),
         ):
             await bus.publish(event)

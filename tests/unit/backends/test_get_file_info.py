@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from nexus.backends.backend import FileInfo
+from nexus.contracts.exceptions import NexusFileNotFoundError
 
 # =============================================================================
 # LocalConnectorBackend.get_file_info()
@@ -33,10 +34,9 @@ class TestLocalConnectorGetFileInfo:
         test_file = tmp_path / "test.txt"
         test_file.write_text("hello world")
 
-        response = connector.get_file_info("test.txt")
+        info = connector.get_file_info("test.txt")
 
-        assert response.success is True
-        info: FileInfo = response.data
+        assert isinstance(info, FileInfo)
         assert info.size == 11  # len("hello world")
         assert info.mtime is not None
         assert info.backend_version is not None
@@ -47,19 +47,18 @@ class TestLocalConnectorGetFileInfo:
         assert parts[1].isdigit()  # mtime_ns
         assert info.content_hash is None
 
-    def test_returns_not_found_for_missing_file(self, connector):
-        """Should return not_found for nonexistent file."""
-        response = connector.get_file_info("nonexistent.txt")
-
-        assert response.success is False
+    def test_raises_not_found_for_missing_file(self, connector):
+        """Should raise NexusFileNotFoundError for nonexistent file."""
+        with pytest.raises(NexusFileNotFoundError):
+            connector.get_file_info("nonexistent.txt")
 
     def test_version_changes_on_content_change(self, connector, tmp_path: Path):
         """Should return different version when file content changes."""
         test_file = tmp_path / "mutable.txt"
         test_file.write_text("original")
 
-        response1 = connector.get_file_info("mutable.txt")
-        version1 = response1.data.backend_version
+        info1 = connector.get_file_info("mutable.txt")
+        version1 = info1.backend_version
 
         # Modify the file (ensure mtime changes)
         import time
@@ -67,8 +66,8 @@ class TestLocalConnectorGetFileInfo:
         time.sleep(0.01)
         test_file.write_text("modified content")
 
-        response2 = connector.get_file_info("mutable.txt")
-        version2 = response2.data.backend_version
+        info2 = connector.get_file_info("mutable.txt")
+        version2 = info2.backend_version
 
         # Version should change (mtime_ns differs)
         assert version1 != version2
@@ -82,19 +81,19 @@ class TestLocalConnectorGetFileInfo:
         ctx = MagicMock()
         ctx.backend_path = "sub/file.txt"
 
-        response = connector.get_file_info("ignored_path", context=ctx)
+        info = connector.get_file_info("ignored_path", context=ctx)
 
-        assert response.success is True
-        assert response.data.size == 4
+        assert isinstance(info, FileInfo)
+        assert info.size == 4
 
     def test_empty_file(self, connector, tmp_path: Path):
         """Should handle empty files correctly."""
         (tmp_path / "empty.txt").write_text("")
 
-        response = connector.get_file_info("empty.txt")
+        info = connector.get_file_info("empty.txt")
 
-        assert response.success is True
-        assert response.data.size == 0
+        assert isinstance(info, FileInfo)
+        assert info.size == 0
 
 
 # =============================================================================
@@ -132,26 +131,24 @@ class TestGCSConnectorGetFileInfo:
         blob.generation = 1234567890
         mock_bucket.blob.return_value = blob
 
-        response = connector.get_file_info("data/file.csv")
+        info = connector.get_file_info("data/file.csv")
 
-        assert response.success is True
-        info: FileInfo = response.data
+        assert isinstance(info, FileInfo)
         assert info.size == 2048
         assert info.mtime == datetime(2025, 6, 15, 12, 0, 0, tzinfo=UTC)
         assert info.backend_version == "1234567890"
         assert info.content_hash is None
 
-    def test_returns_not_found_for_missing_blob(self, connector, mock_bucket):
-        """Should return not_found when blob doesn't exist."""
+    def test_raises_not_found_for_missing_blob(self, connector, mock_bucket):
+        """Should raise NexusFileNotFoundError when blob doesn't exist."""
         from google.cloud.exceptions import NotFound
 
         blob = MagicMock()
         blob.reload.side_effect = NotFound("Blob not found")
         mock_bucket.blob.return_value = blob
 
-        response = connector.get_file_info("missing/file.txt")
-
-        assert response.success is False
+        with pytest.raises(NexusFileNotFoundError):
+            connector.get_file_info("missing/file.txt")
 
     def test_handles_none_generation(self, connector, mock_bucket):
         """Should handle None generation gracefully."""
@@ -161,10 +158,10 @@ class TestGCSConnectorGetFileInfo:
         blob.generation = None
         mock_bucket.blob.return_value = blob
 
-        response = connector.get_file_info("file.txt")
+        info = connector.get_file_info("file.txt")
 
-        assert response.success is True
-        assert response.data.backend_version is None
+        assert isinstance(info, FileInfo)
+        assert info.backend_version is None
 
     def test_handles_zero_size(self, connector, mock_bucket):
         """Should handle blob with zero size."""
@@ -174,11 +171,11 @@ class TestGCSConnectorGetFileInfo:
         blob.generation = 999
         mock_bucket.blob.return_value = blob
 
-        response = connector.get_file_info("empty.txt")
+        info = connector.get_file_info("empty.txt")
 
-        assert response.success is True
-        assert response.data.size == 0
-        assert response.data.backend_version == "999"
+        assert isinstance(info, FileInfo)
+        assert info.size == 0
+        assert info.backend_version == "999"
 
     def test_uses_context_backend_path(self, connector, mock_bucket):
         """Should use context.backend_path when available."""
@@ -231,10 +228,9 @@ class TestS3ConnectorGetFileInfo:
             "VersionId": "abc-123-def",
         }
 
-        response = connector.get_file_info("data/report.pdf")
+        info = connector.get_file_info("data/report.pdf")
 
-        assert response.success is True
-        info: FileInfo = response.data
+        assert isinstance(info, FileInfo)
         assert info.size == 4096
         assert info.mtime == datetime(2025, 7, 1, 10, 30, 0, tzinfo=UTC)
         assert info.backend_version == "abc-123-def"
@@ -249,10 +245,10 @@ class TestS3ConnectorGetFileInfo:
             "ETag": '"d41d8cd98f00b204e9800998ecf8427e"',
         }
 
-        response = connector.get_file_info("file.txt")
+        info = connector.get_file_info("file.txt")
 
-        assert response.success is True
-        assert response.data.backend_version == "etag:d41d8cd98f00b204e9800998ecf8427e"
+        assert isinstance(info, FileInfo)
+        assert info.backend_version == "etag:d41d8cd98f00b204e9800998ecf8427e"
 
     def test_falls_back_to_etag_when_version_id_missing(self, connector, mock_client):
         """Should use ETag when VersionId key is absent."""
@@ -262,13 +258,13 @@ class TestS3ConnectorGetFileInfo:
             "ETag": '"abc123"',
         }
 
-        response = connector.get_file_info("file.txt")
+        info = connector.get_file_info("file.txt")
 
-        assert response.success is True
-        assert response.data.backend_version == "etag:abc123"
+        assert isinstance(info, FileInfo)
+        assert info.backend_version == "etag:abc123"
 
-    def test_returns_not_found_for_missing_object(self, connector, mock_client):
-        """Should return not_found for 404 ClientError."""
+    def test_raises_not_found_for_missing_object(self, connector, mock_client):
+        """Should raise NexusFileNotFoundError for 404 ClientError."""
         from botocore.exceptions import ClientError
 
         mock_client.head_object.side_effect = ClientError(
@@ -276,12 +272,11 @@ class TestS3ConnectorGetFileInfo:
             "HeadObject",
         )
 
-        response = connector.get_file_info("missing.txt")
+        with pytest.raises(NexusFileNotFoundError):
+            connector.get_file_info("missing.txt")
 
-        assert response.success is False
-
-    def test_handles_no_such_key_error(self, connector, mock_client):
-        """Should handle NoSuchKey error code."""
+    def test_raises_not_found_for_no_such_key_error(self, connector, mock_client):
+        """Should raise NexusFileNotFoundError for NoSuchKey error code."""
         from botocore.exceptions import ClientError
 
         mock_client.head_object.side_effect = ClientError(
@@ -289,9 +284,8 @@ class TestS3ConnectorGetFileInfo:
             "HeadObject",
         )
 
-        response = connector.get_file_info("missing.txt")
-
-        assert response.success is False
+        with pytest.raises(NexusFileNotFoundError):
+            connector.get_file_info("missing.txt")
 
     def test_uses_context_backend_path(self, connector, mock_client):
         """Should use context.backend_path when available."""

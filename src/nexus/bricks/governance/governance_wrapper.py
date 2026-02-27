@@ -10,11 +10,9 @@ Wrapper chain: GovernanceEnforcedPayment -> PolicyEnforcedPayment -> CreditsPaym
 import logging
 from typing import TYPE_CHECKING, Any
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import TransactionProtocol
-from nexus.utils.async_helpers import fire_and_forget
-
-# Inlined to avoid cross-brick import to nexus.constants (brick isolation rule)
-_ROOT_ZONE_ID = "root"
+from nexus.lib.sync_bridge import fire_and_forget
 
 if TYPE_CHECKING:
     from nexus.bricks.governance.protocols import AnomalyServiceProtocol, GovernanceGraphProtocol
@@ -82,7 +80,7 @@ class GovernanceEnforcedPayment:
         Post-analysis: fire-and-forget anomaly detection.
         """
         zone_id = (
-            request.metadata.get("zone_id", _ROOT_ZONE_ID) if request.metadata else _ROOT_ZONE_ID
+            request.metadata.get("zone_id", ROOT_ZONE_ID) if request.metadata else ROOT_ZONE_ID
         )
 
         # 1. Pre-check: governance constraints

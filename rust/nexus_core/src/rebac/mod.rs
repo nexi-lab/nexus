@@ -22,6 +22,9 @@ pub const MAX_DEPTH: u32 = 50;
 pub struct ReBACGraph {
     pub tuple_index: AHashSet<TupleKey>,
     pub adjacency_list: AHashMap<AdjacencyKey, Vec<Entity>>,
+    /// Reverse adjacency: (object_type, object_id, relation) → [subjects].
+    /// Enables tupleToUserset resolution which needs "find subjects with relation on object".
+    pub reverse_adjacency: AHashMap<AdjacencyKey, Vec<Entity>>,
     pub userset_index: AHashMap<UsersetKey, Vec<UsersetEntry>>,
 }
 
@@ -30,6 +33,7 @@ impl ReBACGraph {
     pub fn from_tuples(tuples: &[ReBACTuple]) -> Self {
         let mut tuple_index = AHashSet::new();
         let mut adjacency_list: AHashMap<AdjacencyKey, Vec<Entity>> = AHashMap::new();
+        let mut reverse_adjacency: AHashMap<AdjacencyKey, Vec<Entity>> = AHashMap::new();
         let mut userset_index: AHashMap<UsersetKey, Vec<UsersetEntry>> = AHashMap::new();
 
         for tuple in tuples {
@@ -58,6 +62,7 @@ impl ReBACGraph {
                 tuple_index.insert(tuple_key);
             }
 
+            // Forward adjacency: subject → objects
             let adj_key = (
                 tuple.subject_type.clone(),
                 tuple.subject_id.clone(),
@@ -67,11 +72,23 @@ impl ReBACGraph {
                 entity_type: tuple.object_type.clone(),
                 entity_id: tuple.object_id.clone(),
             });
+
+            // Reverse adjacency: object → subjects
+            let rev_key = (
+                tuple.object_type.clone(),
+                tuple.object_id.clone(),
+                tuple.relation.clone(),
+            );
+            reverse_adjacency.entry(rev_key).or_default().push(Entity {
+                entity_type: tuple.subject_type.clone(),
+                entity_id: tuple.subject_id.clone(),
+            });
         }
 
         ReBACGraph {
             tuple_index,
             adjacency_list,
+            reverse_adjacency,
             userset_index,
         }
     }
@@ -100,15 +117,29 @@ impl ReBACGraph {
         self.tuple_index.contains(&wildcard_key)
     }
 
-    /// Find related objects in O(1) time using adjacency list.
-    pub fn find_related_objects(&self, object: &Entity, relation: &str) -> Vec<Entity> {
+    /// Find objects that a subject has a relation on (forward: subject → objects).
+    pub fn find_related_objects(&self, subject: &Entity, relation: &str) -> Vec<Entity> {
         let adj_key = (
-            object.entity_type.clone(),
-            object.entity_id.clone(),
+            subject.entity_type.clone(),
+            subject.entity_id.clone(),
             relation.to_string(),
         );
         self.adjacency_list
             .get(&adj_key)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Find subjects that have a relation on an object (reverse: object → subjects).
+    /// Required for tupleToUserset: "find who has `tupleset` relation on this object".
+    pub fn find_subjects_for_object(&self, object: &Entity, relation: &str) -> Vec<Entity> {
+        let rev_key = (
+            object.entity_type.clone(),
+            object.entity_id.clone(),
+            relation.to_string(),
+        );
+        self.reverse_adjacency
+            .get(&rev_key)
             .cloned()
             .unwrap_or_default()
     }
@@ -216,14 +247,25 @@ pub fn compute_permission(
                 allowed
             }
             RelationConfig::TupleToUserset { tuple_to_userset } => {
-                let related_objects =
-                    graph.find_related_objects(object, &tuple_to_userset.tupleset);
+                // tupleToUserset checks BOTH directions:
+                //
+                // Forward (parent pattern): object acts as subject with tupleset relation
+                //   parent_viewer = {tupleset: "parent", computedUserset: "viewer"}
+                //   file:doc → parent → folder:docs, then check viewer on folder:docs
+                //
+                // Reverse (group pattern): others have tupleset relation ON object
+                //   group_viewer = {tupleset: "direct_viewer", computedUserset: "member"}
+                //   group:team → direct_viewer → file:/path, then check member on group:team
                 let mut allowed = false;
-                for related_obj in related_objects {
+
+                // Forward: object as subject → find objects it points to
+                let forward_targets =
+                    graph.find_related_objects(object, &tuple_to_userset.tupleset);
+                for target in &forward_targets {
                     if compute_permission(
                         subject,
                         &tuple_to_userset.computed_userset,
-                        &related_obj,
+                        target,
                         graph,
                         namespaces,
                         memo_cache,
@@ -234,6 +276,28 @@ pub fn compute_permission(
                         break;
                     }
                 }
+
+                // Reverse: find subjects that have tupleset relation ON object
+                if !allowed {
+                    let reverse_targets =
+                        graph.find_subjects_for_object(object, &tuple_to_userset.tupleset);
+                    for target in &reverse_targets {
+                        if compute_permission(
+                            subject,
+                            &tuple_to_userset.computed_userset,
+                            target,
+                            graph,
+                            namespaces,
+                            memo_cache,
+                            &mut visited.clone(),
+                            depth + 1,
+                        ) {
+                            allowed = true;
+                            break;
+                        }
+                    }
+                }
+
                 // Also check direct relations — Zanzibar: direct tuples always apply
                 if !allowed {
                     allowed = check_relation_with_usersets(
@@ -358,12 +422,28 @@ pub fn expand_permission(
                 }
             }
             RelationConfig::TupleToUserset { tuple_to_userset } => {
-                let related_objects =
+                // Forward: object as subject → find objects it points to
+                let forward_targets =
                     graph.find_related_objects(object, &tuple_to_userset.tupleset);
-                for related_obj in related_objects {
+                for target in &forward_targets {
                     expand_permission(
                         &tuple_to_userset.computed_userset,
-                        &related_obj,
+                        target,
+                        graph,
+                        namespaces,
+                        subjects,
+                        &mut visited.clone(),
+                        depth + 1,
+                    );
+                }
+
+                // Reverse: find subjects that have tupleset relation ON object
+                let reverse_targets =
+                    graph.find_subjects_for_object(object, &tuple_to_userset.tupleset);
+                for target in &reverse_targets {
+                    expand_permission(
+                        &tuple_to_userset.computed_userset,
+                        target,
                         graph,
                         namespaces,
                         subjects,

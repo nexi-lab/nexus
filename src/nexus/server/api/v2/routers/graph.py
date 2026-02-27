@@ -19,6 +19,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.server.dependencies import require_auth
 
 logger = logging.getLogger(__name__)
@@ -90,7 +91,7 @@ async def _graph_session(
 
 def _zone_id_from(nexus_fs: Any) -> str:
     """Extract zone_id from a NexusFS instance, defaulting to "root"."""
-    return getattr(nexus_fs, "zone_id", None) or "root"
+    return getattr(nexus_fs, "zone_id", None) or ROOT_ZONE_ID
 
 
 # =============================================================================

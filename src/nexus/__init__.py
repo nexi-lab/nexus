@@ -7,7 +7,7 @@ and seamless deployment across three modes.
 
 Three Deployment Modes, One Codebase:
 - Standalone: Single-node redb, no Raft (like SQLite) — default mode
-- Remote: Thin HTTP client via RemoteNexusFS
+- Remote: NexusFS with RemoteBackend + RemoteServiceProxy (thin HTTP client)
 - Federation: ZoneManager + Raft consensus for multi-node clusters
 
 SDK vs CLI:
@@ -17,8 +17,8 @@ For programmatic access (building tools, libraries, integrations), use the SDK:
     from nexus.sdk import connect
 
     nx = connect()
-    nx.write("/workspace/data.txt", b"Hello World")
-    content = nx.read("/workspace/data.txt")
+    nx.sys_write("/workspace/data.txt", b"Hello World")
+    content = nx.sys_read("/workspace/data.txt")
 
 For command-line usage, use the nexus CLI:
 
@@ -84,8 +84,6 @@ if TYPE_CHECKING:
     from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC as NexusFilesystem
     from nexus.core.metastore import MetastoreABC
     from nexus.core.nexus_fs import NexusFS
-    from nexus.core.router import NamespaceConfig
-    from nexus.remote import RemoteNexusFS
 
 # =============================================================================
 # Lightweight imports (always loaded) - these are fast
@@ -119,9 +117,6 @@ _LAZY_IMPORTS = {
     # Core - heavy
     "NexusFilesystem": ("nexus.contracts.filesystem.filesystem_abc", "NexusFilesystemABC"),
     "NexusFS": ("nexus.core.nexus_fs", "NexusFS"),
-    "NamespaceConfig": ("nexus.core.router", "NamespaceConfig"),
-    # Remote - needed for FUSE mount
-    "RemoteNexusFS": ("nexus.remote", "RemoteNexusFS"),
     # Skills - very heavy
     "Skill": ("nexus.bricks.skills.models", "Skill"),
     "SkillDependencyError": ("nexus.bricks.skills.registry", "SkillDependencyError"),
@@ -175,7 +170,7 @@ def connect(
     deployment mode in configuration:
 
     - **standalone** (default): Single-node redb, no Raft. Like SQLite.
-    - **remote**: Thin HTTP client via RemoteNexusFS.
+    - **remote**: NexusFS with RemoteBackend + RemoteServiceProxy (thin HTTP client).
     - **federation**: ZoneManager + Raft consensus for multi-node clusters.
 
     Args:
@@ -187,7 +182,7 @@ def connect(
 
     Returns:
         NexusFilesystem instance (mode-dependent):
-            - remote: Returns RemoteNexusFS (thin HTTP client)
+            - remote: Returns NexusFS with RemoteBackend + RemoteServiceProxy
             - standalone/federation: Returns NexusFS with local backend
 
         All modes implement the NexusFilesystem interface, ensuring consistent
@@ -206,7 +201,7 @@ def connect(
 
         Standalone mode (development/testing):
             >>> nx = nexus.connect()
-            >>> nx.write("/workspace/file.txt", b"Hello World")
+            >>> nx.sys_write("/workspace/file.txt", b"Hello World")
 
         Federation mode (multi-node cluster):
             >>> # Requires NEXUS_NODE_ID, NEXUS_BIND_ADDR env vars
@@ -220,8 +215,6 @@ def connect(
     from nexus.backends.local import LocalBackend
     from nexus.config import NexusConfig, load_config
     from nexus.core.nexus_fs import NexusFS
-    from nexus.core.router import NamespaceConfig
-    from nexus.remote import RemoteNexusFS
     from nexus.storage.raft_metadata_store import RaftMetadataStore
 
     # Load configuration
@@ -229,6 +222,8 @@ def connect(
 
     # ── Mode: remote ─────────────────────────────────────────────────
     if cfg.mode == "remote":
+        from urllib.parse import urlparse
+
         server_url = cfg.url or os.getenv("NEXUS_URL")
         if not server_url:
             raise ValueError(
@@ -238,31 +233,55 @@ def connect(
         api_key = cfg.api_key or os.getenv("NEXUS_API_KEY")
         timeout = int(cfg.timeout) if hasattr(cfg, "timeout") else 30
         connect_timeout = int(cfg.connect_timeout) if hasattr(cfg, "connect_timeout") else 5
-        return RemoteNexusFS(  # type: ignore[return-value]
-            server_url=server_url,
-            api_key=api_key,
-            timeout=timeout,
-            connect_timeout=connect_timeout,
+
+        # Build gRPC address from NEXUS_URL hostname + NEXUS_GRPC_PORT.
+        grpc_port = int(os.getenv("NEXUS_GRPC_PORT", "2028"))
+        parsed = urlparse(server_url)
+        grpc_address = f"{parsed.hostname}:{grpc_port}"
+
+        # Single shared RPCTransport (gRPC channel) for all remote proxies.
+        from nexus.remote.rpc_transport import RPCTransport
+
+        transport = RPCTransport(
+            server_address=grpc_address,
+            auth_token=api_key,
+            timeout=float(timeout),
+            connect_timeout=float(connect_timeout),
         )
+
+        # RemoteBackend + RemoteMetastore — stateless proxies, server is SSOT.
+        from nexus.backends.remote import RemoteBackend
+        from nexus.factory import create_nexus_fs as _create_remote_nfs
+        from nexus.storage.remote_metastore import RemoteMetastore
+
+        remote_backend = RemoteBackend(transport)
+        remote_metastore = RemoteMetastore(transport)
+
+        # In REMOTE mode, server enforces permissions — disable client-side.
+        from nexus.core.config import PermissionConfig as _PermissionConfig
+
+        nfs = _create_remote_nfs(
+            backend=remote_backend,
+            metadata_store=remote_metastore,
+            record_store=None,
+            permissions=_PermissionConfig(enforce=False),
+        )
+        nfs.router.add_mount("/", remote_backend)
+
+        # Wire service proxies for REMOTE profile (Issue #1171).
+        # Fills all 25+ service slots with RemoteServiceProxy — forwards
+        # method calls to the server via gRPC.
+        from nexus.factory._remote import _boot_remote_services
+
+        _boot_remote_services(nfs, call_rpc=transport.call_rpc)
+
+        return nfs
 
     # ── Modes: standalone / federation ───────────────────────────────
     if cfg.mode not in ("standalone", "federation"):
         raise ValueError(
             f"Unknown mode: '{cfg.mode}'. Must be one of: standalone, remote, federation"
         )
-
-    # Parse custom namespaces from config
-    custom_namespaces = None
-    if cfg.namespaces:
-        custom_namespaces = [
-            NamespaceConfig(
-                name=ns["name"],
-                readonly=ns.get("readonly", False),
-                admin_only=ns.get("admin_only", False),
-                requires_zone=ns.get("requires_zone", True),
-            )
-            for ns in cfg.namespaces
-        ]
 
     # Create backend based on configuration
     backend: Backend
@@ -301,7 +320,7 @@ def connect(
     metadata_store: MetastoreABC
     if cfg.mode == "federation":
         try:
-            from nexus.constants import DEFAULT_GRPC_BIND_ADDR
+            from nexus.contracts.constants import DEFAULT_GRPC_BIND_ADDR
             from nexus.raft import FederatedMetadataProxy
             from nexus.raft.zone_manager import ZoneManager
         except ImportError as err:
@@ -378,7 +397,6 @@ def connect(
     )
 
     cache_cfg = CacheConfig(
-        enable_metadata_cache=cfg.enable_metadata_cache,
         path_size=cfg.cache_path_size,
         list_size=cfg.cache_list_size,
         kv_size=cfg.cache_kv_size,
@@ -440,7 +458,6 @@ def connect(
         metadata_store=metadata_store,
         record_store=record_store,
         is_admin=cfg.is_admin,
-        custom_namespaces=custom_namespaces,
         cache=cache_cfg,
         permissions=perm_cfg,
         distributed=dist_cfg,
@@ -516,7 +533,6 @@ __all__ = [
     "NexusFilesystem",  # Abstract base class for all filesystem modes
     # Filesystem implementation
     "NexusFS",
-    "RemoteNexusFS",  # Remote filesystem client
     # Backends
     "LocalBackend",
     "GCSBackend",
@@ -527,8 +543,6 @@ __all__ = [
     "BackendError",
     "InvalidPathError",
     "MetadataError",
-    # Router
-    "NamespaceConfig",
     # Skills System
     "SkillRegistry",
     "SkillExporter",

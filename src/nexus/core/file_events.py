@@ -1,13 +1,14 @@
 """Kernel-tier file event data types.
 
-FileEvent and FileEventType are kernel primitives used by:
-- Core filesystem (nexus_fs_core) for publishing change notifications
-- Services layer (event_subsystem) for event bus pub/sub
-- Bricks layer for event subscriptions
+FileEvent is the single kernel-defined I/O event type, analogous to Linux
+``fsnotify_event``. One event struct, multiple consumer paths:
+
+- KernelDispatch OBSERVE phase (local, fire-and-forget)
+- EventBus (distributed delivery via Dragonfly/NATS)
+- Layer 1 inotify/FSEvents (OS-native, via ``from_file_change()``)
 
 Per NEXUS-LEGO-ARCHITECTURE, data types can be defined in lower tiers and used
-by higher tiers. FileEvent is a kernel data type, even though it's primarily
-used by service-layer event bus implementations.
+by higher tiers. FileEvent is a kernel data type consumed by all layers.
 """
 
 import json
@@ -34,25 +35,15 @@ class FileEventType(StrEnum):
     CONFLICT_DETECTED = "conflict_detected"
 
 
-@dataclass
+@dataclass(frozen=True)
 class FileEvent:
-    """Unified file system event for both Layer 1 (local) and Layer 2 (distributed).
+    """Frozen kernel I/O event — immutable once created.
 
-    This is the single source of truth for file events across both layers:
-    - Layer 1 (inotify/ReadDirectoryChangesW): Creates via from_file_change()
-    - Layer 2 (Redis Pub/Sub): Creates directly with all fields
+    Analogous to Linux ``fsnotify_event``. Carries all context that consumers
+    might need; each consumer extracts what it requires and ignores the rest.
 
-    Attributes:
-        type: Type of event (file_write, file_delete, file_rename, etc.)
-        path: Virtual path that changed
-        zone_id: Zone that owns the file (None for Layer 1 local events)
-        timestamp: When the event occurred (ISO format)
-        event_id: Unique event ID for deduplication
-        old_path: Previous path (for rename events only)
-        size: File size in bytes (for write events)
-        etag: Content hash (for write events)
-        agent_id: Agent that performed the operation (optional)
-        revision: Filesystem revision number for consistency tracking (Issue #1187)
+    Used by KernelDispatch OBSERVE phase, EventBus distributed delivery,
+    and Layer 1 inotify/FSEvents (via ``from_file_change()``).
     """
 
     type: FileEventType | str
@@ -64,8 +55,14 @@ class FileEvent:
     size: int | None = None
     etag: str | None = None
     agent_id: str | None = None
-    revision: int | None = None  # Issue #1187: For consistency tracking
-    vector_clock: str | None = None  # Issue #1707: Edge split-brain causality
+    revision: int | None = None
+    vector_clock: str | None = None
+
+    # Identity & write-specific context
+    user_id: str | None = None
+    version: int | None = None  # write-specific: file version counter
+    is_new: bool = False  # write-specific: True if file was created (not overwritten)
+    new_path: str | None = None  # rename-specific: destination path
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
@@ -90,6 +87,14 @@ class FileEvent:
             result["revision"] = self.revision
         if self.vector_clock is not None:
             result["vector_clock"] = self.vector_clock
+        if self.user_id is not None:
+            result["user_id"] = self.user_id
+        if self.version is not None:
+            result["version"] = self.version
+        if self.is_new:
+            result["is_new"] = self.is_new
+        if self.new_path is not None:
+            result["new_path"] = self.new_path
         return result
 
     def to_json(self) -> str:
@@ -109,8 +114,12 @@ class FileEvent:
             size=data.get("size"),
             etag=data.get("etag"),
             agent_id=data.get("agent_id"),
-            revision=data.get("revision"),  # Issue #1187
-            vector_clock=data.get("vector_clock"),  # Issue #1707
+            revision=data.get("revision"),
+            vector_clock=data.get("vector_clock"),
+            user_id=data.get("user_id"),
+            version=data.get("version"),
+            is_new=data.get("is_new", False),
+            new_path=data.get("new_path"),
         )
 
     @classmethod

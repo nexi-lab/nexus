@@ -452,6 +452,41 @@ class OpenRouterQueryExpander(QueryExpander):
             self._client = None
 
 
+class OpenAIQueryExpander(OpenRouterQueryExpander):
+    """Query expander using OpenAI API directly.
+
+    Falls back to this when OPENROUTER_API_KEY is not available but
+    OPENAI_API_KEY is.
+    """
+
+    def __init__(
+        self,
+        config: QueryExpansionConfig | None = None,
+        api_key: str | None = None,
+    ) -> None:
+        super().__init__(config=config, api_key=api_key)
+        self._api_key = api_key or os.environ.get("OPENAI_API_KEY")
+
+    def _get_client(self) -> Any:
+        """Get or create the OpenAI client (direct, no proxy)."""
+        if self._client is None:
+            try:
+                from openai import AsyncOpenAI
+            except ImportError as e:
+                raise ImportError(
+                    "openai package required for OpenAIQueryExpander. "
+                    "Install with: pip install openai"
+                ) from e
+
+            if not self._api_key:
+                raise ValueError(
+                    "OpenAI API key required. Set OPENAI_API_KEY env var or pass api_key parameter."
+                )
+
+            self._client = AsyncOpenAI(api_key=self._api_key)
+        return self._client
+
+
 class SignalDetector:
     """Detects strong BM25 signal to skip unnecessary query expansion.
 
@@ -767,8 +802,10 @@ def create_query_expander(
 
     if provider == "openrouter":
         return OpenRouterQueryExpander(config=config, api_key=api_key)
+    elif provider == "openai":
+        return OpenAIQueryExpander(config=config, api_key=api_key)
     else:
-        raise ValueError(f"Unsupported provider: {provider}. Supported: openrouter")
+        raise ValueError(f"Unsupported provider: {provider}. Supported: openrouter, openai")
 
 
 async def create_cached_query_expander(

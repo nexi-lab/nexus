@@ -8,12 +8,13 @@ Validates:
 - Cross-contamination: tier fields do not leak across containers
 """
 
+from __future__ import annotations
+
 import dataclasses
 
 import pytest
 
 from nexus.core.config import (
-    AuditConfig,
     BrickServices,
     CacheConfig,
     DistributedConfig,
@@ -34,7 +35,6 @@ class TestCacheConfig:
 
     def test_defaults(self) -> None:
         cfg = CacheConfig()
-        assert cfg.enable_metadata_cache is True
         assert cfg.path_size == 512
         assert cfg.list_size == 1024
         assert cfg.kv_size == 256
@@ -56,11 +56,9 @@ class TestCacheConfig:
 
     def test_custom_values(self) -> None:
         cfg = CacheConfig(
-            enable_metadata_cache=False,
             ttl_seconds=None,
             content_cache_size_mb=512,
         )
-        assert cfg.enable_metadata_cache is False
         assert cfg.ttl_seconds is None
         assert cfg.content_cache_size_mb == 512
 
@@ -79,6 +77,7 @@ class TestPermissionConfig:
         assert cfg.inherit is True
         assert cfg.allow_admin_bypass is False
         assert cfg.enforce_zone_isolation is True
+        assert cfg.audit_strict_mode is True
         assert cfg.enable_tiger_cache is True
         assert cfg.enable_deferred is True
         assert cfg.deferred_flush_interval == 0.05
@@ -99,36 +98,7 @@ class TestPermissionConfig:
         """PermissionConfig(enforce=False) is the standard test setup."""
         cfg = PermissionConfig(enforce=False)
         assert cfg.enforce is False
-        assert cfg.enable_tiger_cache is True  # other defaults unchanged
-
-
-# ---------------------------------------------------------------------------
-# AuditConfig (Issue #2152)
-# ---------------------------------------------------------------------------
-
-
-class TestAuditConfig:
-    """Tests for AuditConfig frozen dataclass (Issue #2152)."""
-
-    def test_defaults(self) -> None:
-        cfg = AuditConfig()
-        assert cfg.strict_mode is True
-
-    def test_frozen(self) -> None:
-        cfg = AuditConfig()
-        with pytest.raises(dataclasses.FrozenInstanceError):
-            cfg.strict_mode = False
-
-    def test_replace(self) -> None:
-        cfg = AuditConfig(strict_mode=True)
-        new = dataclasses.replace(cfg, strict_mode=False)
-        assert new.strict_mode is False
-        assert cfg.strict_mode is True  # original unchanged
-
-    def test_non_strict_for_ha(self) -> None:
-        """AuditConfig(strict_mode=False) for high-availability scenarios."""
-        cfg = AuditConfig(strict_mode=False)
-        assert cfg.strict_mode is False
+        assert cfg.audit_strict_mode is True  # other defaults unchanged
 
 
 # ---------------------------------------------------------------------------
@@ -301,12 +271,12 @@ class TestSystemServices:
         assert ss.namespace_manager is None
         assert ss.async_namespace_manager is None
         assert ss.context_branch_service is None
-        assert ss.namespace_fork_service is None
-        assert ss.scoped_hook_engine is None
         assert ss.brick_lifecycle_manager is None
         assert ss.delivery_worker is None
         assert ss.observability_subsystem is None
         assert ss.resiliency_manager is None
+        # DT_PIPE manager (Issue #809)
+        assert ss.pipe_manager is None
 
     def test_frozen(self) -> None:
         ss = SystemServices()
@@ -346,7 +316,6 @@ class TestSystemServices:
             "workspace_registry",
             "mount_manager",
             "workspace_manager",
-            "hook_pipeline",
             # Original system services
             "agent_registry",
             "async_agent_registry",
@@ -354,18 +323,15 @@ class TestSystemServices:
             "namespace_manager",
             "async_namespace_manager",
             "context_branch_service",
-            "namespace_fork_service",
-            "scoped_hook_engine",
             "brick_lifecycle_manager",
             "brick_reconciler",
             "delivery_worker",
             "observability_subsystem",
             "resiliency_manager",
-            "tiger_cache_manager",
             "zone_lifecycle",
+            "pipe_manager",
             "event_log",
             "scheduler_service",
-            "scheduler_state_emitter",
         }
         assert field_names == expected_fields, (
             f"Extra: {field_names - expected_fields}, Missing: {expected_fields - field_names}"
@@ -403,6 +369,8 @@ class TestBrickServices:
         assert bs.api_key_creator is None
         assert bs.snapshot_service is None
         assert bs.task_queue_service is None
+        # DT_PIPE consumer (Issue #810)
+        assert bs.zoekt_pipe_consumer is None
 
     def test_frozen(self) -> None:
         bs = BrickServices()
@@ -442,7 +410,6 @@ class TestBrickServices:
             "task_queue_service",
             "cache_brick",
             "ipc_storage_driver",
-            "ipc_vfs_driver",
             "ipc_provisioner",
             "agent_event_log",
             "skill_service",
@@ -450,7 +417,6 @@ class TestBrickServices:
             "delegation_service",
             "reputation_service",
             "version_service",
-            "memory_router",
             "memory_permission",
             # Factory-created bricks (Issue #2134)
             "parse_fn",
@@ -463,6 +429,8 @@ class TestBrickServices:
             "governance_collusion_service",
             "governance_graph_service",
             "governance_response_service",
+            # DT_PIPE consumer (Issue #810)
+            "zoekt_pipe_consumer",
         }
         assert field_names == expected_fields, (
             f"Extra: {field_names - expected_fields}, Missing: {expected_fields - field_names}"

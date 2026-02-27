@@ -1,7 +1,7 @@
 """Leaf-module tests for contracts/types.py (Issue #1501).
 
 Verifies that:
-1. contracts/types.py is a zero-dependency leaf module (no runtime nexus.* imports).
+1. contracts/types.py has no runtime nexus.* imports outside its own package.
 2. contracts/types.py does NOT use ``from __future__ import annotations``.
 """
 
@@ -14,10 +14,10 @@ _CONTRACTS_TYPES_FILE = (
 
 
 class TestTypesIsLeafModule:
-    """contracts/types.py must have zero runtime nexus.* imports (Issue #1501)."""
+    """contracts/types.py must have no external runtime nexus.* imports (Issue #1501)."""
 
     def test_no_runtime_nexus_imports(self) -> None:
-        """AST check: contracts/types.py has no runtime imports from nexus.*."""
+        """AST check: contracts/types.py has no runtime imports from nexus.* outside its own package."""
         source = _CONTRACTS_TYPES_FILE.read_text(encoding="utf-8")
         tree = ast.parse(source, filename=str(_CONTRACTS_TYPES_FILE))
 
@@ -40,16 +40,22 @@ class TestTypesIsLeafModule:
 
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    if alias.name.startswith("nexus"):
+                    if alias.name.startswith("nexus") and not alias.name.startswith(
+                        "nexus.contracts."
+                    ):
                         runtime_nexus_imports.append(f"import {alias.name}")
             elif (
-                isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("nexus")
+                isinstance(node, ast.ImportFrom)
+                and node.module
+                and node.module.startswith("nexus")
+                # Allow intra-package imports (nexus.contracts.*)
+                and not node.module.startswith("nexus.contracts.")
             ):
                 names = ", ".join(a.name for a in node.names)
                 runtime_nexus_imports.append(f"from {node.module} import {names}")
 
         assert runtime_nexus_imports == [], (
-            f"contracts/types.py must be a zero-dependency leaf module, "
+            f"contracts/types.py must be a leaf module with no external nexus imports, "
             f"but has runtime nexus imports: {runtime_nexus_imports}"
         )
 

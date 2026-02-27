@@ -10,6 +10,7 @@ from typing import Any
 from sqlalchemy import DateTime, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.models._base import Base, _generate_uuid, _get_uuid_server_default
 
 
@@ -39,7 +40,7 @@ class UploadSessionModel(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="created")
 
     # Identity
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default=ROOT_ZONE_ID)
     user_id: Mapped[str] = mapped_column(String(255), nullable=False, default="anonymous")
 
     # tus metadata (JSON-encoded)

@@ -38,7 +38,6 @@ from nexus.bricks.rebac.consistency.revision import (
     increment_version_token,
 )
 from nexus.bricks.rebac.consistency.zone_manager import ZoneManager
-from nexus.bricks.rebac.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
 from nexus.bricks.rebac.directory.expander import DirectoryExpander
 from nexus.bricks.rebac.domain import (
     RELATION_TO_PERMISSIONS,
@@ -71,7 +70,14 @@ from nexus.bricks.rebac.rebac_tracing import (
 )
 from nexus.bricks.rebac.tuples.repository import TupleRepository
 from nexus.bricks.rebac.tuples.writer import TupleWriter
-from nexus.bricks.rebac.types import (
+from nexus.bricks.rebac.utils.fast import (
+    check_permissions_bulk_with_fallback,
+    is_rust_available,
+)
+from nexus.bricks.rebac.zone_graph_loader import ZoneGraphLoader
+from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.contracts.rebac_types import (
+    CROSS_ZONE_ALLOWED_RELATIONS,
     CheckResult,
     ConsistencyLevel,
     ConsistencyRequirement,
@@ -80,12 +86,6 @@ from nexus.bricks.rebac.types import (
     TraversalStats,
     WriteResult,
 )
-from nexus.bricks.rebac.utils.fast import (
-    check_permissions_bulk_with_fallback,
-    is_rust_available,
-)
-from nexus.bricks.rebac.zone_graph_loader import ZoneGraphLoader
-from nexus.constants import ROOT_ZONE_ID
 from nexus.lib.zone import normalize_zone_id
 
 if TYPE_CHECKING:
@@ -95,10 +95,6 @@ if TYPE_CHECKING:
     from nexus.bricks.rebac.cache.tiger import TigerCache, TigerCacheUpdater
 
 logger = logging.getLogger(__name__)
-
-# Canonical mapping imported from domain.py — see RELATION_TO_PERMISSIONS.
-# Local alias kept for backward compat with code referencing the old name.
-_RELATION_TO_PERMISSIONS = RELATION_TO_PERMISSIONS
 
 # ============================================================================
 # Flattened ReBAC Manager (Issue #1385)
@@ -475,10 +471,12 @@ class ReBACManager:
 
         # OPTIMIZATION 1: Boundary Cache (Issue #922) - O(1) inheritance shortcut
         # For file permissions, check if we have a cached boundary (nearest ancestor with grant)
+        # Skip when consistency_level is STRONG — caches must be bypassed for strong reads
         if (
             object_type == "file"
             and permission in ("read", "write", "execute")
             and self._boundary_cache
+            and consistency_level != ConsistencyLevel.STRONG
         ):
             boundary = self._boundary_cache.get_boundary(
                 effective_zone, subject_type, subject_id, permission, object_id
@@ -503,7 +501,8 @@ class ReBACManager:
 
         # OPTIMIZATION 2: Try Tiger Cache (O(1) bitmap lookup)
         # Tiger Cache stores pre-materialized permissions as Roaring Bitmaps
-        if self._tiger_cache and zone_id:
+        # Skip when consistency_level is STRONG — caches must be bypassed for strong reads
+        if self._tiger_cache and zone_id and consistency_level != ConsistencyLevel.STRONG:
             tiger_result = self.tiger_check_access(
                 subject=subject,
                 permission=permission,
@@ -1083,7 +1082,7 @@ class ReBACManager:
 
         # Map relation to permission(s) for invalidation
         # This maps relation names to permissions they grant
-        permissions = _RELATION_TO_PERMISSIONS.get(relation, [])
+        permissions = RELATION_TO_PERMISSIONS.get(relation, [])
         if not permissions:
             return
 
@@ -1298,7 +1297,7 @@ class ReBACManager:
             object_id = object[1]
 
             # Get permissions for this relation (fail-closed: unknown → [])
-            permissions = _RELATION_TO_PERMISSIONS.get(relation, [])
+            permissions = RELATION_TO_PERMISSIONS.get(relation, [])
 
             # Persist each permission grant immediately
             for permission in permissions:
@@ -1411,7 +1410,7 @@ class ReBACManager:
 
                     # Get permissions for this relation
                     # FIX: Default to empty list for unknown relations
-                    permissions = _RELATION_TO_PERMISSIONS.get(relation, [])
+                    permissions = RELATION_TO_PERMISSIONS.get(relation, [])
 
                     # Persist each permission grant immediately
                     for permission in permissions:
@@ -1499,10 +1498,20 @@ class ReBACManager:
         if not namespace:
             return self._get_direct_subjects_zone_aware(permission, object_entity, zone_id)
 
-        # Recursively expand permission via namespace config (zone-scoped)
-        self._expand_permission_zone_aware(
-            permission, object_entity, namespace, zone_id, subjects, visited=set(), depth=0
-        )
+        # Resolve permission → relation mapping (e.g. "write" → ["editor", "owner"])
+        # Permissions are defined in config["permissions"], relations in config["relations"]
+        perm_relations = namespace.config.get("permissions", {}).get(permission)
+        if perm_relations:
+            # Permission name maps to one or more relations — expand each
+            for rel in perm_relations:
+                self._expand_permission_zone_aware(
+                    rel, object_entity, namespace, zone_id, subjects, visited=set(), depth=0
+                )
+        else:
+            # Already a relation name (or unknown) — expand directly
+            self._expand_permission_zone_aware(
+                permission, object_entity, namespace, zone_id, subjects, visited=set(), depth=0
+            )
 
         return list(subjects)
 
@@ -1758,7 +1767,7 @@ class ReBACManager:
                 object_id = tuple_info["object_id"]
 
                 if subject_type and subject_id and object_type and object_id:
-                    permissions = _RELATION_TO_PERMISSIONS.get(relation, [])
+                    permissions = RELATION_TO_PERMISSIONS.get(relation, [])
 
                     # Revoke each permission immediately
                     for permission in permissions:
@@ -1784,6 +1793,18 @@ class ReBACManager:
                     tuple_info["object_id"],
                     effective_zone,
                 )
+
+            # Boundary Cache: Invalidate cached boundaries for affected subject+object
+            if self._boundary_cache:
+                effective_zone_bc = normalize_zone_id(zone_id)
+                for perm in RELATION_TO_PERMISSIONS.get(tuple_info["relation"], []):
+                    self._boundary_cache.invalidate_permission_change(
+                        effective_zone_bc,
+                        tuple_info["subject_type"],
+                        tuple_info["subject_id"],
+                        perm,
+                        tuple_info["object_id"],
+                    )
 
             # Issue #919: Notify directory visibility cache invalidators
             object_tuple = (tuple_info["object_type"], tuple_info["object_id"])
@@ -4193,8 +4214,6 @@ class ReBACManager:
         """
         pass
 
-
-ZoneAwareReBACManager = ReBACManager
 
 # Backward-compat alias — many tests and call-sites still reference the old name.
 EnhancedReBACManager = ReBACManager

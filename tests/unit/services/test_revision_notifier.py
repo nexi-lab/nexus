@@ -93,33 +93,34 @@ class TestABC:
 
 
 class TestLazyInit:
-    """Tests for the lazy init pattern in NexusFSCoreMixin."""
+    """Tests for the lazy init pattern in NexusFS."""
 
     def test_lazy_init_with_classvar(self) -> None:
         """_get_revision_notifier() creates a RevisionNotifier on first call."""
-        from nexus.core.nexus_fs_core import NexusFSCoreMixin
+        from nexus.core.nexus_fs import NexusFS
 
         # Reset the class-level notifier
-        NexusFSCoreMixin._revision_notifier = None
-        mixin = NexusFSCoreMixin()
-        notifier = mixin._get_revision_notifier()
+        NexusFS._revision_notifier = None
+        # Use __new__ to avoid full __init__ (needs metastore, etc.)
+        instance = NexusFS.__new__(NexusFS)
+        notifier = instance._get_revision_notifier()
         assert isinstance(notifier, RevisionNotifier)
         # Cleanup
-        NexusFSCoreMixin._revision_notifier = None
+        NexusFS._revision_notifier = None
 
     def test_fallback_on_construction_error(self) -> None:
         """If RevisionNotifier fails to construct, NullRevisionNotifier is used."""
-        from nexus.core.nexus_fs_core import NexusFSCoreMixin
+        from nexus.core.nexus_fs import NexusFS
 
-        NexusFSCoreMixin._revision_notifier = None
+        NexusFS._revision_notifier = None
 
         with patch(
             "nexus.lib.revision_notifier.RevisionNotifier.__init__",
             side_effect=RuntimeError("boom"),
         ):
-            mixin = NexusFSCoreMixin()
-            notifier = mixin._get_revision_notifier()
+            instance = NexusFS.__new__(NexusFS)
+            notifier = instance._get_revision_notifier()
             assert isinstance(notifier, NullRevisionNotifier)
 
         # Cleanup
-        NexusFSCoreMixin._revision_notifier = None
+        NexusFS._revision_notifier = None

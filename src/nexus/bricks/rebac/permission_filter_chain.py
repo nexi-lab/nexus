@@ -17,6 +17,8 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
+from nexus.server.path_utils import unscope_internal_path
+
 if TYPE_CHECKING:
     from nexus.bricks.rebac.manager import ReBACManager
     from nexus.bricks.rebac.permission_cache import PermissionCacheCoordinator
@@ -69,8 +71,12 @@ class TigerBitmapStrategy:
         allowed, still_remaining = result
         logger.debug(f"[TIGER-BITMAP] {len(allowed)} allowed, {len(still_remaining)} remaining")
 
-        # Check bitmap completeness — if complete, skip fallback
-        if still_remaining and ctx.cache.is_bitmap_complete(ctx.subject, ctx.zone_id):
+        # Check bitmap completeness — if complete, skip fallback.
+        # Only short-circuit when the bitmap found SOME allowed paths.
+        # If allowed is empty, the bitmap may be stale/incomplete (e.g.,
+        # zone-prefixed vs non-prefixed path mismatch) — fall through to
+        # the full ReBAC check to avoid false denials.
+        if still_remaining and allowed and ctx.cache.is_bitmap_complete(ctx.subject, ctx.zone_id):
             logger.info(f"[BITMAP-COMPLETE] Skipped {len(still_remaining)} fallback checks")
             return FilterResult(allowed=allowed, remaining=[], short_circuit=True)
 
@@ -135,7 +141,9 @@ class HierarchyPreFilterStrategy:
                 return FilterResult(allowed=[], remaining=[], short_circuit=True)
 
         # Batch check unique parent directories
-        parent_checks = [(subject, "read", ("file", parent)) for parent in unique_parents]
+        parent_checks = [
+            (subject, "read", ("file", unscope_internal_path(parent))) for parent in unique_parents
+        ]
         parent_results = ctx.rebac_manager.rebac_check_bulk(parent_checks, zone_id=ctx.zone_id)
 
         accessible_parents = {
@@ -185,7 +193,9 @@ class HierarchyPreFilterStrategy:
             if parts and parts[0]:
                 top_level_dirs.add("/" + parts[0])
 
-        top_level_checks = [(subject, "read", ("file", d)) for d in top_level_dirs]
+        top_level_checks = [
+            (subject, "read", ("file", unscope_internal_path(d))) for d in top_level_dirs
+        ]
         top_level_results = ctx.rebac_manager.rebac_check_bulk(
             top_level_checks, zone_id=ctx.zone_id
         )
@@ -264,14 +274,14 @@ class BulkReBACStrategy:
                 try:
                     route = ctx.router.route(
                         path,
-                        zone_id=ctx.context.zone_id,
                         is_admin=ctx.context.is_admin,
                     )
-                    if hasattr(route, "namespace") and route.namespace:
-                        obj_type = route.namespace
+                    # RouteResult no longer has .namespace — use mount_point as obj_type hint
+                    if route.mount_point and route.mount_point != "/":
+                        obj_type = route.mount_point.strip("/").split("/")[0]
                 except (KeyError, ValueError, AttributeError, LookupError) as e:
                     logger.debug("Route resolution failed for path %s: %s", path, e)
-            checks.append((subject, "read", (obj_type, path)))
+            checks.append((subject, "read", (obj_type, unscope_internal_path(path))))
 
         # Retry-once on transient I/O failures only
         try:

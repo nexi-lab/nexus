@@ -1,25 +1,28 @@
 """WriteObserverProtocol — kernel write-mutation observer interface.
 
 Defines the contract for write observers injected into NexusFS kernel.
-The kernel calls observer methods directly via typed Protocol dispatch.
-Observers own their error policy entirely (#55, #2152) — the kernel
-is a pure caller with no try/except wrapper around observer calls.
+The kernel calls on_write()/on_delete()/on_rename()/on_write_batch()/
+on_mkdir()/on_rmdir() after Metastore mutations. Observers handle
+side-effects (audit trail, version recording, etc.) and own their
+own error policy.
+
+The kernel passes kernel-native types only (FileMetadata).  Observers
+derive whatever they need (e.g. snapshot_hash = metadata.etag).
 
 Current implementations:
-- RecordStoreWriteObserver: synchronous audit trail + versioning (strict_mode
-  from AuditConfig controls raise-on-failure vs log-and-continue)
-- BufferedRecordStoreWriteObserver: async via WriteBuffer (fire-and-forget;
-  strict_mode is accepted but enqueue path cannot fail — see AuditConfig
-  docstring for the semantic gap discussion)
+- RecordStoreWriteObserver: synchronous audit trail + versioning (strict_mode)
+- PipedRecordStoreWriteObserver: async via DT_PIPE kernel IPC (Issue #809)
 
-Migrated from getattr() dispatch in #1631.
-Completed by: #2152 (Move audit_strict_mode to dedicated AuditConfig)
+The kernel is a pure caller — it never catches observer exceptions.
+Each implementation decides its own failure handling strategy.
+
+Tracked by: #55 (Move _audit_strict_mode from kernel to observer)
+Issue #900: Replaced snapshot_hash/metadata_snapshot with metadata.
 """
 
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
-if TYPE_CHECKING:
-    from nexus.contracts.metadata import FileMetadata
+from nexus.contracts.metadata import FileMetadata
 
 
 @runtime_checkable
@@ -29,26 +32,36 @@ class WriteObserverProtocol(Protocol):
     Duck-typed interface injected into NexusFS as write_observer.
     Implementations handle RecordStore side-effects (audit log,
     version history) and own their error policy.
+
+    The kernel passes ``metadata: FileMetadata`` — observers derive
+    ``snapshot_hash`` (``metadata.etag``) and ``metadata_snapshot``
+    (``metadata.to_dict()``) internally.
     """
 
     def on_write(
         self,
-        metadata: "FileMetadata",
+        metadata: FileMetadata,
         *,
         is_new: bool,
         path: str,
+        old_metadata: FileMetadata | None = ...,
         zone_id: str | None = ...,
         agent_id: str | None = ...,
-        snapshot_hash: str | None = ...,
-        metadata_snapshot: dict[str, Any] | None = ...,
-        urgency: str | None = ...,
     ) -> None:
-        """Called after a single file write completes in Metastore."""
+        """Called after a single file write completes in Metastore.
+
+        Args:
+            metadata: New file metadata after the write.
+            is_new: True if this is a new file (no previous version).
+            path: Virtual path of the file.
+            old_metadata: Previous metadata before write (for undo).
+                          None when is_new=True.
+        """
         ...
 
     def on_write_batch(
         self,
-        items: "list[tuple[FileMetadata, bool]]",
+        items: list[tuple[FileMetadata, bool]],
         *,
         zone_id: str | None = ...,
         agent_id: str | None = ...,
@@ -66,10 +79,9 @@ class WriteObserverProtocol(Protocol):
         old_path: str,
         new_path: str,
         *,
+        metadata: FileMetadata | None = ...,
         zone_id: str | None = ...,
         agent_id: str | None = ...,
-        snapshot_hash: str | None = ...,
-        metadata_snapshot: dict[str, Any] | None = ...,
     ) -> None:
         """Called after a file rename completes in Metastore."""
         ...
@@ -78,10 +90,9 @@ class WriteObserverProtocol(Protocol):
         self,
         path: str,
         *,
+        metadata: FileMetadata | None = ...,
         zone_id: str | None = ...,
         agent_id: str | None = ...,
-        snapshot_hash: str | None = ...,
-        metadata_snapshot: dict[str, Any] | None = ...,
     ) -> None:
         """Called after a file delete completes in Metastore."""
         ...

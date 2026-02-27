@@ -30,6 +30,7 @@ from nexus.bricks.search.models import (
     EntityModel,
     RelationshipModel,
 )
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 
 def _utcnow_naive() -> datetime:
@@ -260,7 +261,7 @@ class GraphStore:
         record_store: "RecordStoreABC",
         session: "AsyncSession",
         *,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         embedding_provider: "EmbeddingProvider | None" = None,
         merge_threshold: float = 0.85,
         confidence_threshold: float = 0.75,

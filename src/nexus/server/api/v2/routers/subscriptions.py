@@ -19,6 +19,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.server.dependencies import require_auth
 
 logger = logging.getLogger(__name__)
@@ -57,7 +58,7 @@ async def create_subscription(
 
     body = await request.json()
     data = SubscriptionCreate(**body)
-    zone_id = auth_result.get("zone_id") or "root"
+    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
     created_by = auth_result.get("subject_id")
 
     subscription = subscription_manager.create(
@@ -77,7 +78,7 @@ async def list_subscriptions(
     subscription_manager: Any = Depends(_get_subscription_manager),
 ) -> JSONResponse:
     """List webhook subscriptions for the current zone."""
-    zone_id = auth_result.get("zone_id") or "root"
+    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
     subscriptions = subscription_manager.list_subscriptions(
         zone_id=zone_id,
         enabled_only=enabled_only,
@@ -96,7 +97,7 @@ async def get_subscription(
     subscription_manager: Any = Depends(_get_subscription_manager),
 ) -> JSONResponse:
     """Get a webhook subscription by ID."""
-    zone_id = auth_result.get("zone_id") or "root"
+    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
     subscription = subscription_manager.get(subscription_id, zone_id)
     if subscription is None:
         raise HTTPException(status_code=404, detail="Subscription not found")
@@ -115,7 +116,7 @@ async def update_subscription(
 
     body = await request.json()
     data = SubscriptionUpdate(**body)
-    zone_id = auth_result.get("zone_id") or "root"
+    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
 
     subscription = subscription_manager.update(
         subscription_id=subscription_id,
@@ -134,7 +135,7 @@ async def delete_subscription(
     subscription_manager: Any = Depends(_get_subscription_manager),
 ) -> JSONResponse:
     """Delete a webhook subscription."""
-    zone_id = auth_result.get("zone_id") or "root"
+    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
     deleted = subscription_manager.delete(subscription_id, zone_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Subscription not found")
@@ -148,6 +149,6 @@ async def test_subscription(
     subscription_manager: Any = Depends(_get_subscription_manager),
 ) -> JSONResponse:
     """Send a test event to a webhook subscription."""
-    zone_id = auth_result.get("zone_id") or "root"
+    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
     result = await subscription_manager.test(subscription_id, zone_id)
     return JSONResponse(content=result)

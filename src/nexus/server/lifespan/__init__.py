@@ -73,6 +73,15 @@ def _compute_features_info(app: "FastAPI", svc: LifespanServices) -> None:
             asyncpg_max_size=_pt.pool.asyncpg_max_size,
         )
 
+    # Detect rate limiting status from env (same var used in fastapi_server.py)
+    import os
+
+    _rate_limit_enabled = os.environ.get("NEXUS_RATE_LIMIT_ENABLED", "").lower() in (
+        "true",
+        "1",
+        "yes",
+    )
+
     features_info = FeaturesResponse(
         profile=profile.value,
         mode=mode,
@@ -80,6 +89,7 @@ def _compute_features_info(app: "FastAPI", svc: LifespanServices) -> None:
         disabled_bricks=disabled,
         version=version,
         performance_tuning=_perf_info,
+        rate_limit_enabled=_rate_limit_enabled,
     )
     app.state.features_info = features_info
 
@@ -121,7 +131,7 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
     Calls domain-specific initializers during startup and tears them
     down in reverse order during shutdown.
     """
-    from nexus.server.lifespan.a2a_grpc import shutdown_a2a_grpc, startup_a2a_grpc
+    from nexus.grpc.server import shutdown_grpc, startup_grpc
     from nexus.server.lifespan.bricks import shutdown_bricks, startup_bricks
     from nexus.server.lifespan.ipc import shutdown_ipc, startup_ipc
     from nexus.server.lifespan.observability import (
@@ -188,8 +198,8 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
     bg_tasks.extend(await startup_ipc(app, svc))
     _done(StartupPhase.IPC)
 
-    bg_tasks.extend(await startup_a2a_grpc(app, svc))
-    _done(StartupPhase.A2A_GRPC)
+    bg_tasks.extend(await startup_grpc(app, svc))
+    _done(StartupPhase.GRPC)
 
     # Wire QueryObserverComponent into registry after services start (Issue #2072)
     _wire_query_observer(app, svc)
@@ -208,14 +218,13 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
             await asyncio.gather(*[t for t in bg_tasks if t], return_exceptions=True)
         logger.debug("Cancelled %d background tasks", len(bg_tasks))
 
-    await shutdown_a2a_grpc(app, svc)
+    await shutdown_grpc(app, svc)
     await shutdown_ipc(app, svc)
     await shutdown_bricks(app, svc)
     await shutdown_services(app, svc)
     await shutdown_realtime(app, svc)
 
     # Close NexusFS kernel
-    # (WriteBuffer shutdown is now handled by ObservabilityRegistry via WriteBufferComponent)
     if app.state.nexus_fs and hasattr(app.state.nexus_fs, "close"):
         app.state.nexus_fs.close()
 

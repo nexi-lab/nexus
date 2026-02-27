@@ -84,7 +84,7 @@ def mock_backend(base_manifest: WorkspaceManifest) -> MagicMock:
     """Mock CAS backend that serves the base manifest."""
     backend = MagicMock()
     manifest_json = base_manifest.to_json()
-    backend.read_content.return_value = MagicMock(unwrap=MagicMock(return_value=manifest_json))
+    backend.read_content.return_value = manifest_json
     return backend
 
 

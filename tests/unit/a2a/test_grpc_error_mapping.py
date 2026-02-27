@@ -4,13 +4,12 @@ Verifies that each A2AError subclass has a consistent grpc_status
 attribute mapped to the expected gRPC status code.
 """
 
-import grpc
 import pytest
 
-from nexus.bricks.a2a.exceptions import (
+grpc = pytest.importorskip("grpc")
+
+from nexus.bricks.a2a.exceptions import (  # noqa: E402
     A2AError,
-    ContentTypeNotSupportedError,
-    InternalError,
     InvalidParamsError,
     InvalidRequestError,
     InvalidStateTransitionError,
@@ -33,12 +32,10 @@ class TestGrpcStatusMapping:
             (TaskNotCancelableError, grpc.StatusCode.FAILED_PRECONDITION),
             (InvalidStateTransitionError, grpc.StatusCode.FAILED_PRECONDITION),
             (UnsupportedOperationError, grpc.StatusCode.UNIMPLEMENTED),
-            (ContentTypeNotSupportedError, grpc.StatusCode.INVALID_ARGUMENT),
             (PushNotificationNotSupportedError, grpc.StatusCode.UNIMPLEMENTED),
             (InvalidRequestError, grpc.StatusCode.INVALID_ARGUMENT),
             (MethodNotFoundError, grpc.StatusCode.UNIMPLEMENTED),
             (InvalidParamsError, grpc.StatusCode.INVALID_ARGUMENT),
-            (InternalError, grpc.StatusCode.INTERNAL),
         ],
     )
     def test_grpc_status_on_class(

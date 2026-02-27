@@ -21,19 +21,19 @@ Quick Start (Server Mode - Recommended):
     >>> nx = connect()
     >>>
     >>> # File operations
-    >>> nx.write("/workspace/file.txt", b"Hello World")
-    >>> content = nx.read("/workspace/file.txt")
-    >>> nx.delete("/workspace/file.txt")
+    >>> nx.sys_write("/workspace/file.txt", b"Hello World")
+    >>> content = nx.sys_read("/workspace/file.txt")
+    >>> nx.sys_unlink("/workspace/file.txt")
     >>>
     >>> # Discovery
-    >>> files = nx.list("/workspace", recursive=True)
+    >>> files = nx.sys_readdir("/workspace", recursive=True)
     >>> python_files = nx.glob("**/*.py")
     >>> todos = nx.grep("TODO", file_pattern="**/*.py")
 
 Quick Start (Standalone Mode - Development Only):
     >>> # No server required, but less suitable for production
     >>> nx = connect(config={"mode": "standalone", "data_dir": "./nexus-data"})
-    >>> nx.write("/workspace/file.txt", b"Hello World")
+    >>> nx.sys_write("/workspace/file.txt", b"Hello World")
 
 Configuration:
     >>> # Server mode with auto-discovery (recommended)
@@ -65,7 +65,6 @@ __all__ = [
     # Core interfaces
     "Filesystem",
     "NexusFS",
-    "RemoteNexusFS",
     # Backends
     "Backend",
     "LocalBackend",
@@ -101,8 +100,6 @@ __all__ = [
     "ConsistencyLevel",
     "CheckResult",
     "GraphLimitExceeded",
-    # Router
-    "NamespaceConfig",
 ]
 
 # Re-export from core modules with cleaner names
@@ -147,8 +144,6 @@ from nexus.contracts.exceptions import (
 from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC as Filesystem
 from nexus.contracts.types import OperationContext
 from nexus.core.nexus_fs import NexusFS
-from nexus.core.router import NamespaceConfig
-from nexus.remote import RemoteNexusFS
 
 
 def connect(
@@ -177,8 +172,8 @@ def connect(
     Examples:
         >>> # Use local backend (default)
         >>> nx = connect()
-        >>> nx.write("/workspace/file.txt", b"Hello World")
-        >>> content = nx.read("/workspace/file.txt")
+        >>> nx.sys_write("/workspace/file.txt", b"Hello World")
+        >>> content = nx.sys_read("/workspace/file.txt")
 
         >>> # Use GCS backend
         >>> nx = connect(config={

@@ -20,11 +20,11 @@ from nexus.services.gateway import NexusFSGateway
 def mock_fs():
     """Create a mock NexusFS instance."""
     fs = MagicMock()
-    fs.mkdir = MagicMock()
-    fs.write = MagicMock()
-    fs.read = MagicMock(return_value=b"file content")
-    fs.list = MagicMock(return_value=["file1.txt", "file2.txt"])
-    fs.exists = MagicMock(return_value=True)
+    fs.sys_mkdir = MagicMock()
+    fs.sys_write = MagicMock()
+    fs.sys_read = MagicMock(return_value=b"file content")
+    fs.sys_readdir = MagicMock(return_value=["file1.txt", "file2.txt"])
+    fs.sys_access = MagicMock(return_value=True)
     fs.metadata = MagicMock()
     fs.metadata.get = MagicMock(return_value=MagicMock(path="/test"))
     fs.metadata.put = MagicMock()
@@ -102,51 +102,53 @@ class TestFileOperations:
     """Tests for file operation delegation."""
 
     def test_mkdir_delegates(self, gateway, mock_fs, context):
-        """mkdir delegates to NexusFS."""
-        gateway.mkdir("/test/dir", parents=True, exist_ok=True, context=context)
-        mock_fs.mkdir.assert_called_once_with(
+        """sys_mkdir delegates to NexusFS.sys_mkdir."""
+        gateway.sys_mkdir("/test/dir", parents=True, exist_ok=True, context=context)
+        mock_fs.sys_mkdir.assert_called_once_with(
             "/test/dir", parents=True, exist_ok=True, context=context
         )
 
     def test_write_delegates_bytes(self, gateway, mock_fs, context):
-        """write delegates bytes to NexusFS."""
-        gateway.write("/test/file.txt", b"content", context=context)
-        mock_fs.write.assert_called_once_with("/test/file.txt", b"content", context=context)
+        """sys_write delegates bytes to NexusFS.sys_write."""
+        gateway.sys_write("/test/file.txt", b"content", context=context)
+        mock_fs.sys_write.assert_called_once_with("/test/file.txt", b"content", context=context)
 
     def test_write_converts_str_to_bytes(self, gateway, mock_fs, context):
-        """write converts string content to bytes."""
-        gateway.write("/test/file.txt", "text content", context=context)
-        mock_fs.write.assert_called_once_with("/test/file.txt", b"text content", context=context)
+        """sys_write converts string content to bytes."""
+        gateway.sys_write("/test/file.txt", "text content", context=context)
+        mock_fs.sys_write.assert_called_once_with(
+            "/test/file.txt", b"text content", context=context
+        )
 
     def test_read_delegates(self, gateway, mock_fs, context):
-        """read delegates to NexusFS."""
-        result = gateway.read("/test/file.txt", context=context)
+        """sys_read delegates to NexusFS.sys_read."""
+        result = gateway.sys_read("/test/file.txt", context=context)
         assert result == b"file content"
-        mock_fs.read.assert_called_once()
+        mock_fs.sys_read.assert_called_once()
 
     def test_read_handles_dict_result(self, gateway, mock_fs, context):
-        """read returns empty bytes for dict results (parsed content)."""
-        mock_fs.read.return_value = {"parsed": True}
-        result = gateway.read("/test/file.txt", context=context)
+        """sys_read returns empty bytes for dict results (parsed content)."""
+        mock_fs.sys_read.return_value = {"parsed": True}
+        result = gateway.sys_read("/test/file.txt", context=context)
         assert result == b""
 
     def test_list_delegates(self, gateway, mock_fs, context):
-        """list delegates to NexusFS."""
-        result = gateway.list("/test", context=context)
+        """sys_readdir delegates to NexusFS.sys_readdir."""
+        result = gateway.sys_readdir("/test", context=context)
         assert result == ["file1.txt", "file2.txt"]
 
     def test_list_handles_paginated_result(self, gateway, mock_fs, context):
-        """list handles PaginatedResult objects."""
+        """sys_readdir handles PaginatedResult objects."""
         paginated = MagicMock()
         paginated.items = ["a.txt", "b.txt"]
-        mock_fs.list.return_value = paginated
-        result = gateway.list("/test", context=context)
+        mock_fs.sys_readdir.return_value = paginated
+        result = gateway.sys_readdir("/test", context=context)
         assert result == ["a.txt", "b.txt"]
 
     def test_exists_delegates(self, gateway, mock_fs, context):
-        """exists delegates to NexusFS."""
-        assert gateway.exists("/test/file.txt", context=context) is True
-        mock_fs.exists.assert_called_once()
+        """sys_access delegates to NexusFS.sys_access."""
+        assert gateway.sys_access("/test/file.txt", context=context) is True
+        mock_fs.sys_access.assert_called_once()
 
 
 # =============================================================================
@@ -345,9 +347,9 @@ class TestSearchOperations:
     """Tests for search-related delegation."""
 
     def test_read_file(self, gateway, mock_fs, context):
-        """read_file delegates to NexusFS read."""
+        """read_file delegates to NexusFS sys_read."""
         gateway.read_file("/test/file.txt", context=context, return_metadata=True)
-        mock_fs.read.assert_called_once_with(
+        mock_fs.sys_read.assert_called_once_with(
             "/test/file.txt", context=context, return_metadata=True
         )
 
@@ -382,29 +384,6 @@ class TestSearchOperations:
 
 
 # =============================================================================
-# Cache Invalidation
-# =============================================================================
-
-
-class TestCacheInvalidation:
-    """Tests for cache invalidation."""
-
-    def test_invalidate_with_cache(self, mock_fs):
-        """Invalidates cache when available."""
-        cache = MagicMock()
-        mock_fs.metadata_cache = cache
-        gw = NexusFSGateway(mock_fs)
-        gw.invalidate_metadata_cache("/a", "/b")
-        assert cache.invalidate_path.call_count == 2
-
-    def test_invalidate_without_cache(self, mock_fs):
-        """No error when metadata_cache is not available."""
-        del mock_fs.metadata_cache
-        gw = NexusFSGateway(mock_fs)
-        gw.invalidate_metadata_cache("/a")  # Should not raise
-
-
-# =============================================================================
 # Mount Operations
 # =============================================================================
 
@@ -416,7 +395,6 @@ class TestMountOperations:
         """list_mounts returns formatted mount list."""
         mount_info = MagicMock()
         mount_info.mount_point = "/mnt/test"
-        mount_info.priority = 5
         mount_info.readonly = False
         mount_info.backend = MagicMock()
         type(mount_info.backend).__name__ = "LocalBackend"

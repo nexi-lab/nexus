@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import ValidationError
 from nexus.storage.models._base import Base, uuid_pk
 
@@ -139,7 +140,9 @@ class APIKeyModel(Base):
     user_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     subject_type: Mapped[str | None] = mapped_column(String(50), nullable=True, default="user")
     subject_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root", index=True)
+    zone_id: Mapped[str] = mapped_column(
+        String(255), nullable=False, default=ROOT_ZONE_ID, index=True
+    )
     is_admin: Mapped[int] = mapped_column(Integer, default=0)
 
     inherit_permissions: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -196,7 +199,7 @@ class OAuthCredentialModel(Base):
 
     user_email: Mapped[str] = mapped_column(String(255), nullable=False)
     user_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default=ROOT_ZONE_ID)
 
     encrypted_access_token: Mapped[str] = mapped_column(Text, nullable=False)
     encrypted_refresh_token: Mapped[str | None] = mapped_column(Text, nullable=True)

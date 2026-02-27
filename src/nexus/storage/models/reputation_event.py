@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from sqlalchemy import DateTime, Float, Index, String
 from sqlalchemy.orm import Mapped, mapped_column
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.models._base import Base, _generate_uuid, _get_uuid_server_default
 
 
@@ -48,7 +49,7 @@ class ReputationEventModel(Base):
     rater_agent_id: Mapped[str] = mapped_column(String(255), nullable=False)
     rated_agent_id: Mapped[str] = mapped_column(String(255), nullable=False)
     exchange_id: Mapped[str] = mapped_column(String(36), nullable=False)
-    zone_id: Mapped[str] = mapped_column(String(36), nullable=False, default="root")
+    zone_id: Mapped[str] = mapped_column(String(36), nullable=False, default=ROOT_ZONE_ID)
 
     # Event classification
     event_type: Mapped[str] = mapped_column(String(30), nullable=False)

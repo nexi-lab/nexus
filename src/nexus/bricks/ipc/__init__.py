@@ -4,14 +4,18 @@ Implements inbox/outbox conventions, message envelopes, agent discovery,
 delivery guarantees, and pluggable storage drivers on top of existing
 Nexus kernel primitives (VFS Router, EventBus, Agent Registry, ReBAC).
 
-Issues: #1411, #1243
+IPC operations go through the kernel VFS (NexusFS) via KernelVFSAdapter,
+gaining PathRouter routing, ReBAC permission checks, MetastoreABC metadata
+tracking, EventLog auditing, content caching, and Raft replication.
+
+Issues: #1411, #1243, #1178
 Architecture: KERNEL-ARCHITECTURE.md
 
 Usage:
     from nexus.bricks.ipc import MessageEnvelope, MessageSender, MessageProcessor
     from nexus.bricks.ipc.conventions import inbox_path, outbox_path
     from nexus.bricks.ipc.discovery import AgentDiscovery
-    from nexus.bricks.ipc.storage import IPCStorageDriver
+    from nexus.bricks.ipc.kernel_adapter import KernelVFSAdapter
 """
 
 from nexus.bricks.ipc.conventions import (
@@ -23,9 +27,8 @@ from nexus.bricks.ipc.conventions import (
     outbox_path,
     processed_path,
 )
-from nexus.bricks.ipc.delivery import DeliveryMode, MessageProcessor, MessageSender
+from nexus.bricks.ipc.delivery import MessageProcessor, MessageSender
 from nexus.bricks.ipc.discovery import AgentDiscovery
-from nexus.bricks.ipc.driver import IPCVFSDriver
 from nexus.bricks.ipc.envelope import MessageEnvelope, MessageType
 from nexus.bricks.ipc.exceptions import (
     CrossZoneDeliveryError,
@@ -36,9 +39,9 @@ from nexus.bricks.ipc.exceptions import (
     IPCError,
     MessageExpiredError,
 )
+from nexus.bricks.ipc.kernel_adapter import KernelVFSAdapter
 from nexus.bricks.ipc.provisioning import AgentProvisioner
 from nexus.bricks.ipc.signing import MessageSigner, MessageVerifier, SigningMode, VerifyResult
-from nexus.bricks.ipc.storage.cross_zone_driver import CrossZoneStorageDriver
 from nexus.bricks.ipc.sweep import TTLSweeper
 
 __all__ = [
@@ -54,7 +57,6 @@ __all__ = [
     "dead_letter_path",
     "message_filename",
     # Delivery
-    "DeliveryMode",
     "MessageSender",
     "MessageProcessor",
     # Signing (#1729)
@@ -62,12 +64,10 @@ __all__ = [
     "MessageVerifier",
     "SigningMode",
     "VerifyResult",
-    # Cross-zone
-    "CrossZoneStorageDriver",
     # Discovery
     "AgentDiscovery",
-    # VFS Driver
-    "IPCVFSDriver",
+    # Kernel VFS Adapter
+    "KernelVFSAdapter",
     # Provisioning
     "AgentProvisioner",
     # Sweep

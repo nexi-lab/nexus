@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import event, select
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.models.secrets_audit_log import SecretsAuditLogModel
 
 if TYPE_CHECKING:
@@ -118,7 +119,7 @@ class SecretsAuditLogger:
         provider: str | None = None,
         credential_id: str | None = None,
         token_family_id: str | None = None,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         ip_address: str | None = None,
         details: dict[str, Any] | None = None,
     ) -> str:

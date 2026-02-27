@@ -15,7 +15,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.services.scheduler.constants import (
     AGING_THRESHOLD_SECONDS,
     DEFAULT_EST_SERVICE_TIME_SECS,
@@ -37,6 +37,7 @@ INSERT INTO scheduled_tasks (
     zone_id, idempotency_key,
     request_state, priority_class, estimated_service_time
 ) VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+ON CONFLICT (idempotency_key) DO UPDATE SET agent_id = EXCLUDED.agent_id
 RETURNING id::text
 """
 
@@ -133,13 +134,13 @@ RETURNING
 _SQL_COMPLETE = """
 UPDATE scheduled_tasks
 SET status = $2, completed_at = now(), error_message = $3
-WHERE id = $1::uuid
+WHERE id = $1
 """
 
 _SQL_CANCEL = """
 UPDATE scheduled_tasks
 SET status = 'cancelled'
-WHERE id = $1::uuid AND status = 'queued'
+WHERE id = $1 AND status = 'queued'
 RETURNING status
 """
 
@@ -153,7 +154,7 @@ SELECT
     zone_id, idempotency_key,
     request_state, priority_class, executor_state, estimated_service_time
 FROM scheduled_tasks
-WHERE id = $1::uuid
+WHERE id = $1
 """
 
 _SQL_AGING_SWEEP = """

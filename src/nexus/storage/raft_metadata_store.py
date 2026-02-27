@@ -4,22 +4,18 @@ This is the primary metadata storage for Nexus, using an embedded redb database
 with optional Raft consensus for multi-node deployments.
 
 Architecture:
-    Standalone: Python -> Metastore (PyO3) -> redb (~5μs)
-    Consensus:  Python -> ZoneManager -> ZoneHandle (PyO3) -> Raft -> redb (~2-10ms)
-    Remote:     Python -> gRPC -> Rust (nexus_raft) -> redb (~200μs)
+    Without Raft: Python -> Metastore (PyO3) -> redb (~5μs)
+    With Raft:    Python -> ZoneManager -> ZoneHandle (PyO3) -> Raft -> redb (~2-10ms)
 
 Usage:
-    # Standalone mode (same box) - DEFAULT
+    # Without Raft (mode != 'federation'):
     store = RaftMetadataStore.embedded("/var/lib/nexus/metadata")
 
-    # Consensus mode (multi-node with Raft via ZoneManager)
+    # With Raft (mode='federation', via ZoneManager + ZoneHandle):
     from nexus.raft import ZoneManager
-    mgr = ZoneManager(node_id=1, base_path="/var/lib/nexus/zones")  # bind_addr from NEXUS_BIND_ADDR env
+    mgr = ZoneManager(node_id=1, base_path="/var/lib/nexus/zones")
     handle = mgr.create_zone("root", ["2@peer:2126"])
     store = RaftMetadataStore(engine=handle, zone_id="root")
-
-    # Remote mode (thin client)
-    store = await RaftMetadataStore.remote("10.0.0.2:2026")
 """
 
 import builtins
@@ -28,6 +24,7 @@ import logging
 from collections.abc import Iterator, Sequence
 from typing import Any
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.metadata import FileMetadata, PaginatedResult
 from nexus.core.metastore import CasResult, MetastoreABC
 
@@ -99,58 +96,41 @@ class RaftMetadataStore(MetastoreABC):
     """Primary metadata store for Nexus using embedded redb database.
 
     This store provides fast local metadata operations (~5μs) with optional
-    Raft consensus for multi-node replication.
-
-    Two modes of operation:
-    1. Standalone mode (DEFAULT): Direct redb via Metastore PyO3 (~5μs latency)
-    2. Remote mode: gRPC client (~200μs latency)
-
-    For consensus mode, use ZoneManager to create a ZoneHandle, then pass it
-    as the engine parameter:
+    Raft consensus for multi-node replication. The engine is always a local
+    PyO3 object — either a bare Metastore (no Raft) or a ZoneHandle (Raft-backed).
 
     Example:
-        # Standalone mode (default)
+        # Without Raft (mode != 'federation'):
         store = RaftMetadataStore.embedded("/var/lib/nexus/metadata")
         store.put(metadata)
 
-        # Consensus mode (via ZoneManager + ZoneHandle)
+        # With Raft (via ZoneManager + ZoneHandle):
         from nexus.raft import ZoneManager
-        mgr = ZoneManager(node_id=1, base_path="/var/lib/nexus/zones")  # bind_addr from NEXUS_BIND_ADDR env
+        mgr = ZoneManager(node_id=1, base_path="/var/lib/nexus/zones")
         handle = mgr.create_zone("root", ["2@peer:2126"])
         store = RaftMetadataStore(engine=handle, zone_id="root")
         store.put(metadata)  # replicated
-
-        # Remote mode (thin client)
-        store = await RaftMetadataStore.remote("10.0.0.2:2026")
     """
 
     def __init__(
         self,
-        engine: Any | None = None,
-        client: Any | None = None,
+        engine: Any,
         zone_id: str | None = None,
     ):
         """Initialize RaftMetadataStore.
 
-        Use the factory methods `embedded()` or `remote()`, or pass a
-        ZoneHandle from ZoneManager as the engine parameter.
+        Use the factory method ``embedded()`` or pass a ZoneHandle from
+        ZoneManager directly as the engine parameter.
 
         Args:
             engine: Metastore or ZoneHandle instance (PyO3 FFI)
-            client: RaftClient instance (gRPC)
             zone_id: Zone ID for this store
         """
-        if engine is None and client is None:
-            raise ValueError("Either engine or client must be provided")
+        if engine is None:
+            raise ValueError("engine must be provided")
 
         self._engine = engine
-        self._client = client
         self._zone_id = zone_id
-
-    @property
-    def _has_engine(self) -> bool:
-        """True if this store has an embedded engine (not a gRPC client)."""
-        return self._engine is not None
 
     def is_leader(self) -> bool:
         """Check if this node is the Raft leader for its zone.
@@ -303,30 +283,6 @@ class RaftMetadataStore(MetastoreABC):
         logger.info(f"Created embedded RaftMetadataStore at {db_path}")
         return cls(engine=metastore, zone_id=zone_id)
 
-    @classmethod
-    async def remote(
-        cls,
-        address: str,
-        zone_id: str | None = None,
-    ) -> "RaftMetadataStore":
-        """Create a remote Raft metadata store using gRPC.
-
-        This connects to a remote Raft node over gRPC (~200μs per operation).
-
-        Args:
-            address: Raft node address (e.g., "10.0.0.2:2026")
-            zone_id: Zone ID for this store
-
-        Returns:
-            RaftMetadataStore instance
-        """
-        from nexus.raft import RaftClient
-
-        client = RaftClient(address, zone_id=zone_id)
-        await client.connect()
-        logger.info(f"Created remote RaftMetadataStore connected to {address}")
-        return cls(client=client, zone_id=zone_id)
-
     def get(self, path: str) -> FileMetadata | None:
         """Get metadata for a file.
 
@@ -336,10 +292,7 @@ class RaftMetadataStore(MetastoreABC):
         Returns:
             FileMetadata if found, None otherwise
         """
-        if self._has_engine:
-            return self._get_engine(path)
-        else:
-            raise NotImplementedError("Remote mode requires async. Use get_async() instead.")
+        return self._get_engine(path)
 
     def put(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:
         """Store or update file metadata.
@@ -352,10 +305,7 @@ class RaftMetadataStore(MetastoreABC):
             EC mode: write token (int) for polling via is_committed().
             SC mode: None (write is already committed when this returns).
         """
-        if self._has_engine:
-            return self._put_engine(metadata, consistency=consistency)
-        else:
-            raise NotImplementedError("Remote mode requires async. Use put_async() instead.")
+        return self._put_engine(metadata, consistency=consistency)
 
     def put_if_version(
         self,
@@ -378,9 +328,7 @@ class RaftMetadataStore(MetastoreABC):
         Returns:
             CasResult indicating success and the current version.
         """
-        if self._has_engine:
-            return self._cas_put_engine(metadata, expected_version, consistency=consistency)
-        raise NotImplementedError("Remote CAS requires async. Use put_if_version_async() instead.")
+        return self._cas_put_engine(metadata, expected_version, consistency=consistency)
 
     def is_committed(self, token: int) -> str | None:
         """Check if an EC write token has been replicated to a majority.
@@ -393,9 +341,7 @@ class RaftMetadataStore(MetastoreABC):
             "pending" — local only, awaiting replication.
             None — invalid token or no replication log.
         """
-        if self._has_engine:
-            return self._engine.is_committed(token)
-        return None
+        return self._engine.is_committed(token)
 
     def delete(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
         """Delete file metadata.
@@ -407,10 +353,7 @@ class RaftMetadataStore(MetastoreABC):
         Returns:
             Dictionary with deleted file info or None
         """
-        if self._has_engine:
-            return self._delete_engine(path, consistency=consistency)
-        else:
-            raise NotImplementedError("Remote mode requires async. Use delete_async() instead.")
+        return self._delete_engine(path, consistency=consistency)
 
     def exists(self, path: str) -> bool:
         """Check if metadata exists for a path.
@@ -480,13 +423,8 @@ class RaftMetadataStore(MetastoreABC):
 
         # Check if any files exist with this prefix
         # We just need to find one file to confirm it's an implicit directory
-        if self._has_engine:
-            entries = self._engine.list_metadata(prefix)
-            return len(entries) > 0
-        else:
-            raise NotImplementedError(
-                "Remote mode requires async. Use is_implicit_directory_async() instead."
-            )
+        entries = self._engine.list_metadata(prefix)
+        return len(entries) > 0
 
     def list(
         self,
@@ -513,14 +451,12 @@ class RaftMetadataStore(MetastoreABC):
         # zone_id parameter accepted for API consistency but filtering is inherent.
         # RaftMetadataStore is zone-local. Non-zoned stores serve the "root" zone,
         # so zone_id="root" is always allowed. Only assert on specific zone_ids.
-        if zone_id is not None and zone_id != "root":
-            assert self._zone_id is not None, (
-                f"zone_id filter '{zone_id}' passed to a non-zone-scoped store"
-            )
-        if self._has_engine:
-            return self._list_engine(prefix, recursive)
-        else:
-            raise NotImplementedError("Remote mode requires async. Use list_async() instead.")
+        # When prefix is already zone-scoped (e.g. /zone/corp/...), zone_id is
+        # redundant — path prefix already constrains to the zone namespace.
+        if zone_id is not None and zone_id != ROOT_ZONE_ID:
+            if self._zone_id is None and not prefix.startswith(f"/zone/{zone_id}"):
+                raise ValueError(f"zone_id filter '{zone_id}' passed to a non-zone-scoped store")
+        return self._list_engine(prefix, recursive)
 
     def list_iter(
         self,
@@ -544,21 +480,18 @@ class RaftMetadataStore(MetastoreABC):
         Yields:
             FileMetadata entries matching the prefix
         """
-        if self._has_engine:
-            entries = self._engine.list_metadata(prefix)
-            for path, data in entries:
-                # Skip extended attribute keys (format: "meta:{path}:{key}")
-                if path.startswith("meta:"):
+        entries = self._engine.list_metadata(prefix)
+        for path, data in entries:
+            # Skip extended attribute keys (format: "meta:{path}:{key}")
+            if path.startswith("meta:"):
+                continue
+            # Apply path-based filters BEFORE expensive deserialization
+            if not recursive:
+                rel_path = path[len(prefix) :].lstrip("/")
+                if "/" in rel_path:
                     continue
-                # Apply path-based filters BEFORE expensive deserialization
-                if not recursive:
-                    rel_path = path[len(prefix) :].lstrip("/")
-                    if "/" in rel_path:
-                        continue
-                metadata = _deserialize_metadata(data)
-                yield metadata
-        else:
-            raise NotImplementedError("Remote mode requires async. Use list_async() instead.")
+            metadata = _deserialize_metadata(data)
+            yield metadata
 
     def list_paginated(
         self,
@@ -577,12 +510,10 @@ class RaftMetadataStore(MetastoreABC):
         Memory usage is O(limit) instead of O(total).
         """
         # RaftMetadataStore is zone-local: zone_id accepted for API consistency.
-        # RaftMetadataStore is zone-local. Non-zoned stores serve the "root" zone,
-        # so zone_id="root" is always allowed. Only assert on specific zone_ids.
-        if zone_id is not None and zone_id != "root":
-            assert self._zone_id is not None, (
-                f"zone_id filter '{zone_id}' passed to a non-zone-scoped store"
-            )
+        # When prefix is already zone-scoped, zone_id is redundant.
+        if zone_id is not None and zone_id != ROOT_ZONE_ID:
+            if self._zone_id is None and not prefix.startswith(f"/zone/{zone_id}"):
+                raise ValueError(f"zone_id filter '{zone_id}' passed to a non-zone-scoped store")
         from itertools import islice
 
         # Decode cursor if it's base64-encoded
@@ -626,17 +557,12 @@ class RaftMetadataStore(MetastoreABC):
 
     def close(self) -> None:
         """Close the metadata store and release resources."""
-        if self._has_engine:
-            if hasattr(self._engine, "shutdown"):
-                # ZoneHandle/ZoneManager: gracefully stop gRPC server + transport loop
-                self._engine.shutdown()
-            else:
-                # Metastore: just flush sled
-                self._engine.flush()
+        if hasattr(self._engine, "shutdown"):
+            # ZoneHandle/ZoneManager: gracefully stop gRPC server + transport loop
+            self._engine.shutdown()
         else:
-            # Remote client close is async
-            # Would need to handle this differently
-            pass
+            # Metastore: just flush sled
+            self._engine.flush()
 
     # =========================================================================
     # Revision Counter (Issue #1330 Phase 4.2)
@@ -653,9 +579,7 @@ class RaftMetadataStore(MetastoreABC):
         Returns:
             The new revision number after incrementing
         """
-        if self._has_engine:
-            return self._engine.increment_revision(zone_id)
-        raise NotImplementedError("Remote revision counter requires async")
+        return self._engine.increment_revision(zone_id)
 
     def get_revision(self, zone_id: str) -> int:
         """Get the current revision for a zone without incrementing.
@@ -666,9 +590,7 @@ class RaftMetadataStore(MetastoreABC):
         Returns:
             The current revision number (0 if not found)
         """
-        if self._has_engine:
-            return self._engine.get_revision(zone_id)
-        raise NotImplementedError("Remote revision counter requires async")
+        return self._engine.get_revision(zone_id)
 
     # =========================================================================
     # Batch Operations
@@ -689,17 +611,13 @@ class RaftMetadataStore(MetastoreABC):
         if not paths:
             return {}
 
-        if self._has_engine:
-            if hasattr(self._engine, "get_metadata_multi"):
-                results = self._engine.get_metadata_multi(list(paths))
-                return {
-                    path: _deserialize_metadata(data) if data is not None else None
-                    for path, data in results
-                }
-            # Fallback: individual calls when batch API not yet compiled
-            return {path: self.get(path) for path in paths}
-
-        # Fallback for remote mode
+        if hasattr(self._engine, "get_metadata_multi"):
+            results = self._engine.get_metadata_multi(list(paths))
+            return {
+                path: _deserialize_metadata(data) if data is not None else None
+                for path, data in results
+            }
+        # Fallback: individual calls when batch API not yet compiled
         return {path: self.get(path) for path in paths}
 
     def put_batch(self, metadata_list: Sequence[FileMetadata]) -> None:
@@ -725,14 +643,7 @@ class RaftMetadataStore(MetastoreABC):
 
         # Phase 2: apply all writes in a single FFI call
         try:
-            if self._has_engine:
-                self._engine.batch_set_metadata(serialized)
-            else:
-                raise NotImplementedError(
-                    "Remote mode requires async. Use put_batch_async() instead."
-                )
-        except NotImplementedError:
-            raise
+            self._engine.batch_set_metadata(serialized)
         except Exception as e:
             # Best-effort rollback: delete entries that were written
             paths_to_rollback = [path for path, _ in serialized]
@@ -756,11 +667,6 @@ class RaftMetadataStore(MetastoreABC):
         """
         if not paths:
             return
-
-        if not self._has_engine:
-            raise NotImplementedError(
-                "Remote mode requires async. Use delete_batch_async() instead."
-            )
 
         path_list = list(paths)
 
@@ -817,20 +723,15 @@ class RaftMetadataStore(MetastoreABC):
             key: Metadata key
             value: Metadata value (will be JSON serialized)
         """
-        if self._has_engine:
-            # Store in a separate namespace: "meta:{path}:{key}"
-            meta_key = f"meta:{path}:{key}"
-            if value is None:
-                # Delete the key
-                self._engine.delete_metadata(meta_key)
-            else:
-                # Store as JSON bytes
-                data = json.dumps(value).encode("utf-8")
-                self._engine.set_metadata(meta_key, data)
+        # Store in a separate namespace: "meta:{path}:{key}"
+        meta_key = f"meta:{path}:{key}"
+        if value is None:
+            # Delete the key
+            self._engine.delete_metadata(meta_key)
         else:
-            raise NotImplementedError(
-                "Remote mode requires async. Use set_file_metadata_async() instead."
-            )
+            # Store as JSON bytes
+            data = json.dumps(value).encode("utf-8")
+            self._engine.set_metadata(meta_key, data)
 
     def get_file_metadata(self, path: str, key: str) -> Any:
         """Get custom metadata value for a file.
@@ -842,19 +743,14 @@ class RaftMetadataStore(MetastoreABC):
         Returns:
             Metadata value or None if not found
         """
-        if self._has_engine:
-            meta_key = f"meta:{path}:{key}"
-            data = self._engine.get_metadata(meta_key)
-            if data is None:
-                return None
-            # Handle both bytes and list of ints (from PyO3)
-            if isinstance(data, list):
-                data = bytes(data)
-            return json.loads(data.decode("utf-8"))
-        else:
-            raise NotImplementedError(
-                "Remote mode requires async. Use get_file_metadata_async() instead."
-            )
+        meta_key = f"meta:{path}:{key}"
+        data = self._engine.get_metadata(meta_key)
+        if data is None:
+            return None
+        # Handle both bytes and list of ints (from PyO3)
+        if isinstance(data, list):
+            data = bytes(data)
+        return json.loads(data.decode("utf-8"))
 
     def get_file_metadata_bulk(self, paths: Sequence[str], key: str) -> dict[str, Any]:
         """Get custom metadata value for multiple files.
@@ -870,22 +766,20 @@ class RaftMetadataStore(MetastoreABC):
         """
         if not paths:
             return {}
-        if self._has_engine:
-            # Build meta keys and batch-fetch in one FFI call
-            meta_keys = [f"meta:{path}:{key}" for path in paths]
-            if hasattr(self._engine, "get_metadata_multi"):
-                results = self._engine.get_metadata_multi(meta_keys)
+        # Build meta keys and batch-fetch in one FFI call
+        meta_keys = [f"meta:{path}:{key}" for path in paths]
+        if hasattr(self._engine, "get_metadata_multi"):
+            results = self._engine.get_metadata_multi(meta_keys)
+        else:
+            results = [(k, self._engine.get_metadata(k)) for k in meta_keys]
+        out: dict[str, Any] = {}
+        for (_meta_key, data), path in zip(results, paths, strict=True):
+            if data is None:
+                out[path] = None
             else:
-                results = [(k, self._engine.get_metadata(k)) for k in meta_keys]
-            out: dict[str, Any] = {}
-            for (_meta_key, data), path in zip(results, paths, strict=True):
-                if data is None:
-                    out[path] = None
-                else:
-                    raw = bytes(data) if isinstance(data, list) else data
-                    out[path] = json.loads(raw.decode("utf-8"))
-            return out
-        return {path: self.get_file_metadata(path, key) for path in paths}
+                raw = bytes(data) if isinstance(data, list) else data
+                out[path] = json.loads(raw.decode("utf-8"))
+        return out
 
     def get_searchable_text(self, path: str) -> str | None:
         """Get cached searchable text for a file.
@@ -939,13 +833,10 @@ class RaftMetadataStore(MetastoreABC):
         Returns:
             True if lock was acquired
         """
-        if self._has_engine:
-            result = self._engine.acquire_lock(
-                path, holder_id, max_holders, ttl_secs, f"metadata:{holder_id}"
-            )
-            return result.acquired
-        else:
-            raise NotImplementedError("Remote locks require async")
+        result = self._engine.acquire_lock(
+            path, holder_id, max_holders, ttl_secs, f"metadata:{holder_id}"
+        )
+        return result.acquired
 
     def release_lock(self, path: str, holder_id: str) -> bool:
         """Release a distributed lock.
@@ -957,10 +848,7 @@ class RaftMetadataStore(MetastoreABC):
         Returns:
             True if holder was found and released, False if not owned
         """
-        if self._has_engine:
-            return self._engine.release_lock(path, holder_id)
-        else:
-            raise NotImplementedError("Remote locks require async")
+        return self._engine.release_lock(path, holder_id)
 
     def extend_lock(self, path: str, holder_id: str, ttl_secs: int = 30) -> bool:
         """Extend a lock's TTL (heartbeat).
@@ -973,10 +861,7 @@ class RaftMetadataStore(MetastoreABC):
         Returns:
             True if holder was found and TTL extended, False if not owned
         """
-        if self._has_engine:
-            return self._engine.extend_lock(path, holder_id, ttl_secs)
-        else:
-            raise NotImplementedError("Remote locks require async. Use extend_lock_async()")
+        return self._engine.extend_lock(path, holder_id, ttl_secs)
 
     def get_lock_info(self, path: str) -> dict[str, Any] | None:
         """Get lock information for a path.
@@ -988,25 +873,22 @@ class RaftMetadataStore(MetastoreABC):
             Dict with lock info if lock exists and has holders, None otherwise.
             Dict keys: path, max_holders, holders (list of holder dicts)
         """
-        if self._has_engine:
-            lock_info = self._engine.get_lock(path)
-            if lock_info is None or not lock_info.holders:
-                return None
-            return {
-                "path": lock_info.path,
-                "max_holders": lock_info.max_holders,
-                "holders": [
-                    {
-                        "lock_id": h.lock_id,
-                        "holder_info": h.holder_info,
-                        "acquired_at": h.acquired_at,
-                        "expires_at": h.expires_at,
-                    }
-                    for h in lock_info.holders
-                ],
-            }
-        else:
-            raise NotImplementedError("Remote lock info requires async")
+        lock_info = self._engine.get_lock(path)
+        if lock_info is None or not lock_info.holders:
+            return None
+        return {
+            "path": lock_info.path,
+            "max_holders": lock_info.max_holders,
+            "holders": [
+                {
+                    "lock_id": h.lock_id,
+                    "holder_info": h.holder_info,
+                    "acquired_at": h.acquired_at,
+                    "expires_at": h.expires_at,
+                }
+                for h in lock_info.holders
+            ],
+        }
 
     def list_locks(self, prefix: str = "", limit: int = 1000) -> builtins.list[dict[str, Any]]:
         """List all active locks matching a prefix.
@@ -1018,26 +900,23 @@ class RaftMetadataStore(MetastoreABC):
         Returns:
             List of lock info dicts
         """
-        if self._has_engine:
-            lock_infos = self._engine.list_locks(prefix, limit)
-            return [
-                {
-                    "path": lock.path,
-                    "max_holders": lock.max_holders,
-                    "holders": [
-                        {
-                            "lock_id": h.lock_id,
-                            "holder_info": h.holder_info,
-                            "acquired_at": h.acquired_at,
-                            "expires_at": h.expires_at,
-                        }
-                        for h in lock.holders
-                    ],
-                }
-                for lock in lock_infos
-            ]
-        else:
-            raise NotImplementedError("Remote list_locks requires async")
+        lock_infos = self._engine.list_locks(prefix, limit)
+        return [
+            {
+                "path": lock.path,
+                "max_holders": lock.max_holders,
+                "holders": [
+                    {
+                        "lock_id": h.lock_id,
+                        "holder_info": h.holder_info,
+                        "acquired_at": h.acquired_at,
+                        "expires_at": h.expires_at,
+                    }
+                    for h in lock.holders
+                ],
+            }
+            for lock in lock_infos
+        ]
 
     def force_release_lock(self, path: str) -> bool:
         """Force-release all holders of a lock (admin operation).
@@ -1048,40 +927,19 @@ class RaftMetadataStore(MetastoreABC):
         Returns:
             True if a lock was found and released, False if no lock exists
         """
-        if self._has_engine:
-            return self._engine.force_release_lock(path)
-        else:
-            raise NotImplementedError("Remote force_release requires async")
+        return self._engine.force_release_lock(path)
 
     # =========================================================================
-    # Async Methods (for RemoteNexusFS using remote mode)
+    # Async wrappers (sync engine, async interface for caller convenience)
     # =========================================================================
 
     async def get_async(self, path: str) -> FileMetadata | None:
-        """Get metadata for a file (async).
-
-        Args:
-            path: Virtual path
-
-        Returns:
-            FileMetadata if found, None otherwise
-        """
-        if self._has_engine:
-            return self._get_engine(path)
-        else:
-            return await self._client.get_metadata(path, zone_id=self._zone_id)
+        """Get metadata for a file (async wrapper over sync engine)."""
+        return self._get_engine(path)
 
     async def put_async(self, metadata: FileMetadata, *, consistency: str = "sc") -> None:
-        """Store or update file metadata (async).
-
-        Args:
-            metadata: File metadata to store
-            consistency: "sc" (wait for commit) or "ec" (fire-and-forget)
-        """
-        if self._has_engine:
-            self._put_engine(metadata, consistency=consistency)
-        else:
-            await self._client.put_metadata(metadata, zone_id=self._zone_id)
+        """Store or update file metadata (async wrapper over sync engine)."""
+        self._put_engine(metadata, consistency=consistency)
 
     async def delete_async(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
         """Delete file metadata (async).
@@ -1093,18 +951,7 @@ class RaftMetadataStore(MetastoreABC):
         Returns:
             Dictionary with deleted file info or None
         """
-        if self._has_engine:
-            return self._delete_engine(path, consistency=consistency)
-        else:
-            existing = await self.get_async(path)
-            await self._client.delete_metadata(path, zone_id=self._zone_id)
-            if existing:
-                return {
-                    "path": existing.path,
-                    "size": existing.size,
-                    "etag": existing.etag,
-                }
-            return None
+        return self._delete_engine(path, consistency=consistency)
 
     async def exists_async(self, path: str) -> bool:
         """Check if metadata exists for a path (async).
@@ -1138,20 +985,11 @@ class RaftMetadataStore(MetastoreABC):
             List of file metadata
         """
         # RaftMetadataStore is zone-local: zone_id accepted for API consistency.
-        # RaftMetadataStore is zone-local. Non-zoned stores serve the "root" zone,
-        # so zone_id="root" is always allowed. Only assert on specific zone_ids.
-        if zone_id is not None and zone_id != "root":
-            assert self._zone_id is not None, (
-                f"zone_id filter '{zone_id}' passed to a non-zone-scoped store"
-            )
-        if self._has_engine:
-            return self._list_engine(prefix, recursive)
-        else:
-            return await self._client.list_metadata(
-                prefix=prefix,
-                zone_id=self._zone_id,
-                recursive=recursive,
-            )
+        # When prefix is already zone-scoped, zone_id is redundant.
+        if zone_id is not None and zone_id != ROOT_ZONE_ID:
+            if self._zone_id is None and not prefix.startswith(f"/zone/{zone_id}"):
+                raise ValueError(f"zone_id filter '{zone_id}' passed to a non-zone-scoped store")
+        return self._list_engine(prefix, recursive)
 
     async def acquire_lock_async(
         self,
@@ -1171,19 +1009,10 @@ class RaftMetadataStore(MetastoreABC):
         Returns:
             True if lock was acquired
         """
-        if self._has_engine:
-            result = self._engine.acquire_lock(
-                path, holder_id, max_holders, ttl_secs, f"metadata:{holder_id}"
-            )
-            return result.acquired
-        else:
-            result = await self._client.acquire_lock(
-                lock_id=path,
-                holder_id=holder_id,
-                ttl_ms=ttl_secs * 1000,
-                zone_id=self._zone_id,
-            )
-            return result.acquired
+        result = self._engine.acquire_lock(
+            path, holder_id, max_holders, ttl_secs, f"metadata:{holder_id}"
+        )
+        return result.acquired
 
     async def release_lock_async(self, path: str, holder_id: str) -> bool:
         """Release a distributed lock (async).
@@ -1195,14 +1024,7 @@ class RaftMetadataStore(MetastoreABC):
         Returns:
             True if holder was found and released, False if not owned
         """
-        if self._has_engine:
-            return self._engine.release_lock(path, holder_id)
-        else:
-            return await self._client.release_lock(
-                lock_id=path,
-                holder_id=holder_id,
-                zone_id=self._zone_id,
-            )
+        return self._engine.release_lock(path, holder_id)
 
     async def extend_lock_async(self, path: str, holder_id: str, ttl_secs: int = 30) -> bool:
         """Extend a lock's TTL (async).
@@ -1215,22 +1037,8 @@ class RaftMetadataStore(MetastoreABC):
         Returns:
             True if holder was found and TTL extended, False if not owned
         """
-        if self._has_engine:
-            return self._engine.extend_lock(path, holder_id, ttl_secs)
-        else:
-            return await self._client.extend_lock(
-                lock_id=path,
-                holder_id=holder_id,
-                ttl_ms=ttl_secs * 1000,
-                zone_id=self._zone_id,
-            )
+        return self._engine.extend_lock(path, holder_id, ttl_secs)
 
     async def close_async(self) -> None:
         """Close the metadata store and release resources (async)."""
-        if self._has_engine:
-            if hasattr(self._engine, "shutdown"):
-                self._engine.shutdown()
-            else:
-                self._engine.flush()
-        else:
-            await self._client.close()
+        self.close()

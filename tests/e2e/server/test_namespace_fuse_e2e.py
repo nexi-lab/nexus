@@ -50,7 +50,7 @@ def _make_client() -> httpx.Client:
 
 
 def _wait_for_health(base_url: str, timeout: float = SERVER_STARTUP_TIMEOUT) -> None:
-    """Poll /health AND verify AsyncNexusFS is ready before returning."""
+    """Poll /health AND verify NexusFS is ready before returning."""
     deadline = time.monotonic() + timeout
     health_ok = False
     with _make_client() as client:
@@ -60,7 +60,7 @@ def _wait_for_health(base_url: str, timeout: float = SERVER_STARTUP_TIMEOUT) -> 
                     resp = client.get(f"{base_url}/health")
                     if resp.status_code == 200:
                         health_ok = True
-                        # Health is up, but AsyncNexusFS may still be initializing.
+                        # Health is up, but NexusFS may still be initializing.
                         # Probe a real API endpoint to confirm readiness.
                 if health_ok:
                     resp = client.get(
@@ -68,7 +68,7 @@ def _wait_for_health(base_url: str, timeout: float = SERVER_STARTUP_TIMEOUT) -> 
                         params={"path": "/"},
                         headers={"X-Nexus-Subject": "user:admin", "X-Nexus-Require-Admin": "true"},
                     )
-                    # Server wraps AsyncNexusFS errors as 500 (not 503).
+                    # Server wraps NexusFS errors as 500 (not 503).
                     # Only consider ready when we get a non-5xx response.
                     if resp.status_code < 500:
                         return  # Server fully ready
@@ -105,7 +105,7 @@ def server():
         "PYTHONPATH": str(Path(__file__).resolve().parents[2] / "src"),
         "NEXUS_BACKEND_ROOT": backend_root,
         "NEXUS_TENANT_ID": "fuse-ns-e2e-test",
-        # SQLite database for AsyncNexusFS initialization (required by lifespan)
+        # SQLite database for NexusFS initialization (required by lifespan)
         "NEXUS_DATABASE_URL": f"sqlite:///{db_path}",
         # CRITICAL: Permissions ENABLED for namespace testing
         "NEXUS_ENFORCE_PERMISSIONS": "true",

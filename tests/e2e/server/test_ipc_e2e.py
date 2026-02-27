@@ -203,7 +203,7 @@ def _read_file(client: httpx.Client, path: str) -> str:
 
     body = {
         "jsonrpc": "2.0",
-        "method": "read",
+        "method": "sys_read",
         "params": {"path": path},
         "id": "1",
     }
@@ -267,7 +267,7 @@ class TestIPCViaServer:
         """Verify unauthenticated requests are rejected (401)."""
         body = {
             "jsonrpc": "2.0",
-            "method": "mkdir",
+            "method": "sys_mkdir",
             "params": {"path": "/agents", "exist_ok": True},
             "id": "1",
         }
@@ -479,143 +479,6 @@ class TestIPCLocal:
         ids = {a.agent_id for a in python_agents}
         assert ids == {"coder", "tester"}
 
-    @pytest.mark.asyncio
-    async def test_cross_zone_ipc_roundtrip(self) -> None:
-        """E2E: cross-zone IPC with permissions — agent-a (zone-1) → agent-b (zone-2)."""
-        from typing import Any
-
-        from nexus.bricks.ipc.delivery import MessageProcessor, MessageSender
-        from nexus.bricks.ipc.envelope import MessageEnvelope, MessageType
-        from nexus.bricks.ipc.exceptions import CrossZoneDeliveryError
-        from nexus.bricks.ipc.provisioning import AgentProvisioner
-        from nexus.bricks.ipc.storage.cross_zone_driver import CrossZoneStorageDriver
-        from nexus.services.protocols.agent_registry import AgentInfo
-        from tests.unit.bricks.ipc.fakes import (
-            InMemoryEventPublisher,
-            InMemoryHotPathPublisher,
-            InMemoryStorageDriver,
-        )
-
-        # Inline fakes for this test
-        class _Registry:
-            def __init__(self) -> None:
-                self._agents: dict[str, AgentInfo] = {}
-
-            def add(self, agent_id: str, zone_id: str) -> None:
-                self._agents[agent_id] = AgentInfo(
-                    agent_id=agent_id,
-                    owner_id="e2e",
-                    zone_id=zone_id,
-                    name=agent_id,
-                    state="CONNECTED",
-                    generation=1,
-                )
-
-            async def get(self, agent_id: str) -> AgentInfo | None:
-                return self._agents.get(agent_id)
-
-            async def register(self, *a: Any, **kw: Any) -> AgentInfo:
-                raise NotImplementedError
-
-            async def transition(self, *a: Any, **kw: Any) -> AgentInfo:
-                raise NotImplementedError
-
-            async def heartbeat(self, agent_id: str) -> None:
-                pass
-
-            async def list_by_zone(self, zone_id: str) -> list[AgentInfo]:
-                return [a for a in self._agents.values() if a.zone_id == zone_id]
-
-            async def unregister(self, agent_id: str) -> bool:
-                return self._agents.pop(agent_id, None) is not None
-
-        class _Permissions:
-            def __init__(self, allow: bool = True) -> None:
-                self._allow = allow
-
-            async def rebac_check(self, *a: Any, **kw: Any) -> bool:
-                return self._allow
-
-            async def rebac_check_batch(self, checks: list, **kw: Any) -> list[bool]:
-                return [self._allow] * len(checks)
-
-            async def rebac_create(self, *a: Any, **kw: Any) -> dict:
-                return {}
-
-            async def rebac_delete(self, tuple_id: str) -> bool:
-                return True
-
-            async def rebac_expand(self, *a: Any, **kw: Any) -> list:
-                return []
-
-            async def rebac_list_tuples(self, *a: Any, **kw: Any) -> list:
-                return []
-
-        # Setup
-        storage = InMemoryStorageDriver()
-        registry = _Registry()
-        publisher = InMemoryHotPathPublisher()
-        event_pub = InMemoryEventPublisher()
-        permissions = _Permissions(allow=True)
-
-        zone_1 = "zone-1"
-        zone_2 = "zone-2"
-
-        # 1. Provision agents in their respective zones
-        prov_1 = AgentProvisioner(storage, zone_id=zone_1)
-        prov_2 = AgentProvisioner(storage, zone_id=zone_2)
-        await prov_1.provision("agent-a", skills=["sending"])
-        await prov_2.provision("agent-b", skills=["receiving"])
-
-        registry.add("agent-a", zone_1)
-        registry.add("agent-b", zone_2)
-
-        # 2. Create cross-zone driver for zone-1
-        driver = CrossZoneStorageDriver(
-            inner=storage,
-            agent_registry=registry,
-            local_zone_id=zone_1,
-            permission_checker=permissions,
-            hot_publisher=publisher,
-        )
-
-        # 3. Agent-A sends to Agent-B (cross-zone)
-        sender = MessageSender(driver, event_pub, zone_id=zone_1)
-        msg = MessageEnvelope(
-            sender="agent-a",
-            recipient="agent-b",
-            type=MessageType.TASK,
-            payload={"task": "e2e cross-zone test"},
-        )
-        path = await sender.send(msg)
-        assert path  # Message path returned
-
-        # 4. Agent-B processes in zone-2
-        received: list[MessageEnvelope] = []
-
-        async def handler(m: MessageEnvelope) -> None:
-            received.append(m)
-
-        processor = MessageProcessor(storage, "agent-b", handler, zone_id=zone_2)
-        count = await processor.process_inbox()
-
-        assert count >= 1
-        assert len(received) == 1
-        assert received[0].payload["task"] == "e2e cross-zone test"
-        assert received[0].sender == "agent-a"
-
-        # 5. Verify NATS notification was sent to target zone
-        assert len(publisher.published) >= 1
-        subjects = [s for s, _ in publisher.published]
-        assert any("zone-2" in s for s in subjects)
-
-        # 6. Deny permission and verify error
-        permissions._allow = False
-        msg2 = MessageEnvelope(
-            sender="agent-a",
-            recipient="agent-b",
-            type=MessageType.TASK,
-            payload={"task": "should be denied"},
-        )
-        with pytest.raises(CrossZoneDeliveryError):
-            await sender.send(msg2)
+    # NOTE: test_cross_zone_ipc_roundtrip removed — CrossZoneStorageDriver
+    # deleted in #1178 (IPC routed through kernel VFS). Cross-zone routing
+    # will be handled by kernel federation mechanisms.

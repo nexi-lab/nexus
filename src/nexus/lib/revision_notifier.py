@@ -90,18 +90,18 @@ class NullRevisionNotifier(RevisionNotifierBase):
     """No-op fallback used when RevisionNotifier construction fails."""
 
     @override
-    def notify_revision(self, _zone_id: str, revision: int) -> None:
+    def notify_revision(self, zone_id: str, revision: int) -> None:  # noqa: ARG002
         pass
 
     @override
-    def get_latest_revision(self, _zone_id: str) -> int:
+    def get_latest_revision(self, zone_id: str) -> int:  # noqa: ARG002
         return 0
 
     @override
     def wait_for_revision(
         self,
-        _zone_id: str,
-        _min_revision: int,
-        _timeout_ms: int,
+        zone_id: str,  # noqa: ARG002
+        min_revision: int,  # noqa: ARG002
+        timeout_ms: int,  # noqa: ARG002
     ) -> bool:
         return False

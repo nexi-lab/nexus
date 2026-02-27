@@ -111,9 +111,9 @@ export E2B_TEMPLATE_ID="yf6wfidzfb6i7n7iawob"  # Optional, this is the default
 ### With Nexus Client
 
 ```python
-from nexus_client import RemoteNexusFS
+import nexus
 
-nx = RemoteNexusFS("https://your-nexus-server.com", api_key="...")
+nx = nexus.connect(config={"mode": "remote", "url": "https://your-nexus-server.com", "api_key": "..."})
 
 # Create sandbox with E2B provider (uses template automatically)
 sandbox = nx.sandbox_create(

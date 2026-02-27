@@ -10,7 +10,7 @@ layer — they MUST NOT call async code directly.
 import logging
 from typing import TYPE_CHECKING, Any, cast
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.protocols.capabilities import ConnectorCapability
 from nexus.server.path_utils import (
     unscope_internal_dict,
@@ -56,7 +56,9 @@ def generate_download_url(
         backend_path = route.backend_path
 
         # S3 or GCS connector with signed URL support
-        if backend.has_capability(ConnectorCapability.SIGNED_URL):
+        if hasattr(backend, "has_capability") and backend.has_capability(
+            ConnectorCapability.SIGNED_URL
+        ):
             from dataclasses import replace
 
             if context and hasattr(context, "backend_path"):
@@ -80,7 +82,9 @@ def generate_download_url(
             }
 
         # Local backend - use streaming endpoint with signed token
-        if backend.has_capability(ConnectorCapability.ROOT_PATH):
+        if hasattr(backend, "has_capability") and backend.has_capability(
+            ConnectorCapability.ROOT_PATH
+        ):
             from urllib.parse import quote
 
             from nexus.server.streaming import _sign_stream_token
@@ -140,7 +144,7 @@ async def handle_read_async(
     # If not parsed, use sync read in thread with timeout
     if not parsed:
         read_result: bytes | dict[str, Any] = await to_thread_with_timeout(
-            nexus_fs.read,
+            nexus_fs.sys_read,
             params.path,
             context,
             return_metadata,
@@ -152,7 +156,7 @@ async def handle_read_async(
 
     # For parsed reads, read raw content with timeout first
     raw_result = await to_thread_with_timeout(
-        nexus_fs.read,
+        nexus_fs.sys_read,
         params.path,
         context,
         True,
@@ -211,13 +215,13 @@ def handle_write(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, An
     if lock_timeout_val is not None and lock_timeout_val != 30.0:
         kwargs["lock_timeout"] = lock_timeout_val
 
-    bytes_written = nexus_fs.write(params.path, content, **kwargs)
+    bytes_written = nexus_fs.sys_write(params.path, content, **kwargs)
     return {"bytes_written": bytes_written}
 
 
 def handle_exists(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle exists method."""
-    return {"exists": nexus_fs.exists(params.path, context=context)}
+    return {"exists": nexus_fs.sys_access(params.path, context=context)}
 
 
 def handle_list(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
@@ -243,7 +247,7 @@ def handle_list(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any
         kwargs["cursor"] = cursor
 
     _list_start = _time.time()
-    result = nexus_fs.list(params.path, **kwargs)
+    result = nexus_fs.sys_readdir(params.path, **kwargs)
     _list_elapsed = (_time.time() - _list_start) * 1000
 
     # Result is PaginatedResult when limit is provided
@@ -293,18 +297,18 @@ def handle_list(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any
 def handle_delete(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle delete method."""
     try:
-        nexus_fs.delete(params.path, context=context)
+        nexus_fs.sys_unlink(params.path, context=context)
     except TypeError:
-        nexus_fs.delete(params.path)
+        nexus_fs.sys_unlink(params.path)
     return {"deleted": True}
 
 
 def handle_rename(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle rename method."""
     try:
-        nexus_fs.rename(params.old_path, params.new_path, context=context)
+        nexus_fs.sys_rename(params.old_path, params.new_path, context=context)
     except TypeError:
-        nexus_fs.rename(params.old_path, params.new_path)
+        nexus_fs.sys_rename(params.old_path, params.new_path)
     return {"renamed": True}
 
 
@@ -322,7 +326,7 @@ def handle_mkdir(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, An
     if hasattr(params, "exist_ok") and params.exist_ok is not None:
         kwargs["exist_ok"] = params.exist_ok
 
-    nexus_fs.mkdir(params.path, **kwargs)
+    nexus_fs.sys_mkdir(params.path, **kwargs)
     return {"created": True}
 
 
@@ -334,7 +338,7 @@ def handle_rmdir(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, An
     if hasattr(params, "force") and params.force is not None:
         kwargs["force"] = params.force
 
-    nexus_fs.rmdir(params.path, **kwargs)
+    nexus_fs.sys_rmdir(params.path, **kwargs)
     return {"removed": True}
 
 
@@ -345,10 +349,51 @@ def handle_rmdir(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, An
 
 def handle_get_metadata(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle get_metadata method."""
-    metadata = nexus_fs.get_metadata(params.path, context=context)
+    metadata = nexus_fs.sys_stat(params.path, context=context)
     if isinstance(metadata, dict):
         metadata = unscope_internal_dict(metadata, ["path"])
     return {"metadata": metadata}
+
+
+def handle_set_metadata(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
+    """Handle set_metadata — persist metadata from RemoteMetastore.put().
+
+    Reconstructs a FileMetadata from the dict sent by the client and
+    stores it via the server-side metastore.
+    """
+    from nexus.contracts.metadata import FileMetadata
+
+    meta_dict: dict[str, Any] = params.metadata or {}
+    # Ensure path is set (prefer params.path over dict contents)
+    meta_dict["path"] = params.path
+
+    # Parse datetime strings back to datetime objects
+    from datetime import datetime
+
+    for dt_field in ("created_at", "modified_at"):
+        val = meta_dict.get(dt_field)
+        if isinstance(val, str):
+            meta_dict[dt_field] = datetime.fromisoformat(val)
+
+    file_meta = FileMetadata(
+        path=meta_dict.get("path", ""),
+        backend_name=meta_dict.get("backend_name", ""),
+        physical_path=meta_dict.get("physical_path", ""),
+        size=meta_dict.get("size", 0),
+        etag=meta_dict.get("etag"),
+        mime_type=meta_dict.get("mime_type"),
+        created_at=meta_dict.get("created_at"),
+        modified_at=meta_dict.get("modified_at"),
+        version=meta_dict.get("version", 1),
+        zone_id=meta_dict.get("zone_id"),
+        created_by=meta_dict.get("created_by"),
+        owner_id=meta_dict.get("owner_id"),
+        entry_type=meta_dict.get("entry_type", 0),
+        target_zone_id=meta_dict.get("target_zone_id"),
+        i_links_count=meta_dict.get("i_links_count", 0),
+    )
+    nexus_fs.metadata.put(file_meta)
+    return {"path": params.path, "ok": True}
 
 
 def handle_glob(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
@@ -423,4 +468,4 @@ async def handle_semantic_search_index(
 
 def handle_is_directory(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle is_directory method."""
-    return {"is_directory": nexus_fs.is_directory(params.path, context=context)}
+    return {"is_directory": nexus_fs.sys_is_directory(params.path, context=context)}

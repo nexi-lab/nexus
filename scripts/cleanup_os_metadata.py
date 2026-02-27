@@ -23,15 +23,15 @@ from pathlib import Path
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from nexus import connect
-from nexus.core.filters import is_os_metadata_file
+from nexus import NexusFilesystem, connect
+from nexus.fuse.filters import is_os_metadata_file
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
 def scan_and_remove(
-    nexus_fs: any,  # type: ignore[valid-type]
+    nexus_fs: NexusFilesystem,
     path: str = "/",
     dry_run: bool = True,
     deleted_count: list[int] | None = None,
@@ -49,7 +49,7 @@ def scan_and_remove(
 
     try:
         # List files in current directory
-        files = nexus_fs.list(path, recursive=False, details=False)  # type: ignore[attr-defined]
+        files = nexus_fs.sys_readdir(path, recursive=False, details=False)
 
         for file_path in files:
             # Handle both string and dict formats
@@ -68,13 +68,13 @@ def scan_and_remove(
                     logger.info(f"[DRY RUN] Would delete: {file_path}")
                 else:
                     try:
-                        nexus_fs.delete(file_path)  # type: ignore[attr-defined]
+                        nexus_fs.sys_unlink(file_path)
                         logger.info(f"Deleted: {file_path}")
                         deleted_count[0] += 1
                     except Exception as e:
                         logger.error(f"Error deleting {file_path}: {e}")
             # Recurse into directories
-            elif nexus_fs.is_directory(file_path):  # type: ignore[attr-defined]
+            elif nexus_fs.sys_is_directory(file_path):
                 scan_and_remove(nexus_fs, file_path, dry_run, deleted_count)
 
     except Exception as e:

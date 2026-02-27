@@ -6,6 +6,8 @@ contain consistent data with matching fields.
 Phase 1.4 of #1246/#1330 consolidation plan.
 """
 
+from __future__ import annotations
+
 import tempfile
 from collections.abc import Generator
 from pathlib import Path
@@ -55,11 +57,11 @@ def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]
 def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore) -> Generator[NexusFS, None, None]:
     raft_store = _try_create_raft_store(str(temp_dir / "raft-metadata"))
     if raft_store is None:
-        # Fallback to InMemoryMetastore with factory-style wiring
-        from nexus.storage.record_store_syncer import RecordStoreWriteObserver
-        from tests.helpers.in_memory_metadata_store import InMemoryMetastore
+        # Fallback to DictMetastore with factory-style wiring
+        from nexus.storage.record_store_write_observer import RecordStoreWriteObserver
+        from tests.helpers.dict_metastore import DictMetastore
 
-        metadata_store = InMemoryMetastore()
+        metadata_store = DictMetastore()
         write_observer = RecordStoreWriteObserver(record_store)
 
         nx = NexusFS(
@@ -93,7 +95,7 @@ class TestWriteConsistency:
     def test_new_file_exists_in_both_stores(
         self, nx: NexusFS, record_store: SQLAlchemyRecordStore
     ) -> None:
-        result = nx.write("/test.txt", b"hello world")
+        result = nx.sys_write("/test.txt", b"hello world")
 
         # Metastore has the file
         meta = nx.metadata.get("/test.txt")
@@ -119,7 +121,7 @@ class TestWriteConsistency:
         self, nx: NexusFS, record_store: SQLAlchemyRecordStore
     ) -> None:
         """All overlapping fields should match between Metastore and RecordStore."""
-        nx.write("/consistent.txt", b"data")
+        nx.sys_write("/consistent.txt", b"data")
 
         meta = nx.metadata.get("/consistent.txt")
         assert meta is not None
@@ -144,9 +146,9 @@ class TestWriteConsistency:
         self, nx: NexusFS, record_store: SQLAlchemyRecordStore
     ) -> None:
         """After update, version numbers should match across stores."""
-        nx.write("/ver.txt", b"v1")
-        nx.write("/ver.txt", b"v2")
-        nx.write("/ver.txt", b"v3")
+        nx.sys_write("/ver.txt", b"v1")
+        nx.sys_write("/ver.txt", b"v2")
+        nx.sys_write("/ver.txt", b"v3")
 
         meta = nx.metadata.get("/ver.txt")
         assert meta is not None
@@ -187,16 +189,16 @@ class TestDeleteConsistency:
     def test_delete_removes_from_metastore(
         self, nx: NexusFS, record_store: SQLAlchemyRecordStore
     ) -> None:
-        nx.write("/del.txt", b"content")
-        nx.delete("/del.txt")
+        nx.sys_write("/del.txt", b"content")
+        nx.sys_unlink("/del.txt")
 
         assert nx.metadata.get("/del.txt") is None
 
     def test_delete_soft_deletes_in_record_store(
         self, nx: NexusFS, record_store: SQLAlchemyRecordStore
     ) -> None:
-        nx.write("/del.txt", b"content")
-        nx.delete("/del.txt")
+        nx.sys_write("/del.txt", b"content")
+        nx.sys_unlink("/del.txt")
 
         with record_store.session_factory() as session:
             fp = (
@@ -211,8 +213,8 @@ class TestDeleteConsistency:
     def test_delete_audit_trail_exists(
         self, nx: NexusFS, record_store: SQLAlchemyRecordStore
     ) -> None:
-        nx.write("/del.txt", b"content")
-        nx.delete("/del.txt")
+        nx.sys_write("/del.txt", b"content")
+        nx.sys_unlink("/del.txt")
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)
@@ -233,8 +235,8 @@ class TestRenameConsistency:
     def test_rename_updates_metastore_path(
         self, nx: NexusFS, record_store: SQLAlchemyRecordStore
     ) -> None:
-        nx.write("/old.txt", b"content")
-        nx.rename("/old.txt", "/new.txt")
+        nx.sys_write("/old.txt", b"content")
+        nx.sys_rename("/old.txt", "/new.txt")
 
         assert nx.metadata.get("/old.txt") is None
         meta = nx.metadata.get("/new.txt")
@@ -242,8 +244,8 @@ class TestRenameConsistency:
         assert meta.path == "/new.txt"
 
     def test_rename_audit_trail(self, nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
-        nx.write("/old.txt", b"content")
-        nx.rename("/old.txt", "/new.txt")
+        nx.sys_write("/old.txt", b"content")
+        nx.sys_rename("/old.txt", "/new.txt")
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)

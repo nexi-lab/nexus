@@ -149,7 +149,7 @@ def test_http_concurrent_requests(
                 f"{base_url}/rpc",
                 json={
                     "jsonrpc": "2.0",
-                    "method": "list",
+                    "method": "sys_readdir",
                     "params": {"path": path, "recursive": False},
                     "id": request_id,
                 },
@@ -251,7 +251,7 @@ def test_in_process_thread_exhaustion(
         # Create test files (no permission check needed)
         for i in range(50):
             path = f"/test_file_{i}.txt"
-            nx.write(path, f"Test content {i}".encode())
+            nx.sys_write(path, f"Test content {i}".encode())
 
         # Now enable permissions
         nx._enforce_permissions = True
@@ -289,7 +289,7 @@ def test_in_process_thread_exhaustion(
             start = time.time()
             try:
                 # This is the slow path - list with permission checks
-                _result = nx.list("/", recursive=False, context=context)
+                _result = nx.sys_readdir("/", recursive=False, context=context)
                 end = time.time()
                 return RequestResult(
                     request_id=request_id,
@@ -367,7 +367,7 @@ async def test_async_thread_exhaustion(
         # Create test files (no permission check needed)
         for i in range(100):
             path = f"/test_file_{i}.txt"
-            nx.write(path, f"Test content {i}".encode())
+            nx.sys_write(path, f"Test content {i}".encode())
 
         # Now enable permissions
         nx._enforce_permissions = True
@@ -410,7 +410,7 @@ async def test_async_thread_exhaustion(
             thread_name = threading.current_thread().name
             start = time.time()
             try:
-                _result = nx.list("/", recursive=False, context=context)
+                _result = nx.sys_readdir("/", recursive=False, context=context)
                 end = time.time()
                 return RequestResult(
                     request_id=request_id,

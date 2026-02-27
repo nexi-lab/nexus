@@ -97,6 +97,7 @@ if _HAS_STRUCTLOG:
 def make_test_nexus(
     tmp_path,
     *,
+    backend=None,
     permissions=None,
     parsing=None,
     cache=None,
@@ -107,7 +108,6 @@ def make_test_nexus(
     is_admin=False,
     record_store=None,
     use_raft=False,
-    backend=None,
     metadata_store=None,
 ):
     """Create a NexusFS instance for testing with sensible defaults.
@@ -115,8 +115,13 @@ def make_test_nexus(
     Defaults: permissions off, no auto-parse, no distributed features.
     Avoids heavy I/O (event bus, lock manager, workflows) for fast tests.
 
+    A default LocalBackend is created and mounted at ``/`` (root) unless
+    a custom ``backend`` is provided. This mirrors ``create_nexus_fs()``
+    in the factory (``router.add_mount("/", backend)``).
+
     Args:
         tmp_path: pytest tmp_path fixture for backend/metadata storage.
+        backend: Backend to mount at ``/``. Default: LocalBackend(tmp_path / "data").
         permissions: PermissionConfig override. Default: enforce=False.
         parsing: ParseConfig override. Default: auto_parse=False.
         cache: CacheConfig override.
@@ -127,8 +132,7 @@ def make_test_nexus(
         is_admin: Admin flag.
         record_store: Optional RecordStoreABC.
         use_raft: Use RaftMetadataStore (requires Python 3.13).
-        backend: Override backend. Default: LocalBackend(tmp_path / "data").
-        metadata_store: Override metadata store. Default: InMemory or Raft.
+        metadata_store: Override metadata store. Default: DictMetastore or Raft.
 
     Returns:
         NexusFS instance ready for testing.
@@ -151,25 +155,17 @@ def make_test_nexus(
             enable_workflows=False,
         )
 
-    if backend is None:
-        from nexus.backends.local import LocalBackend
-
-        data_dir = tmp_path / "data"
-        data_dir.mkdir(exist_ok=True)
-        backend = LocalBackend(root_path=data_dir)
-
     if metadata_store is None:
         if use_raft:
             from nexus.storage.raft_metadata_store import RaftMetadataStore
 
             metadata_store = RaftMetadataStore.embedded(str(tmp_path / "raft"))
         else:
-            from tests.helpers.in_memory_metadata_store import InMemoryMetastore
+            from tests.helpers.dict_metastore import DictMetastore
 
-            metadata_store = InMemoryMetastore()
+            metadata_store = DictMetastore()
 
     nx = NexusFS(
-        backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,
         is_admin=is_admin,
@@ -182,15 +178,41 @@ def make_test_nexus(
         system_services=system_services,
     )
 
-    # Wire PermissionChecker via DI (same as factory/orchestrator.py, Issue #874)
-    from nexus.services.permissions.checker import PermissionChecker
+    # Mount backend at root (same as factory/orchestrator.py: router.add_mount("/", backend))
+    if backend is None:
+        from pathlib import Path
 
-    nx._permission_checker = PermissionChecker(
+        from nexus.backends.local import LocalBackend
+
+        data_dir = Path(tmp_path) / "data"
+        data_dir.mkdir(exist_ok=True)
+        backend = LocalBackend(root_path=str(data_dir))
+    nx.router.add_mount("/", backend)
+
+    # Wire PermissionCheckHook via DI (same as factory/orchestrator.py, Issue #899)
+    from nexus.services.permissions.checker import PermissionChecker
+    from nexus.services.permissions.permission_hook import PermissionCheckHook
+
+    _checker = PermissionChecker(
         permission_enforcer=nx._permission_enforcer,
         metadata_store=nx.metadata,
         default_context=nx._default_context,
         enforce_permissions=nx._enforce_permissions,
     )
+    _perm_hook = PermissionCheckHook(
+        checker=_checker,
+        metadata_store=nx.metadata,
+        default_context=nx._default_context,
+        enforce_permissions=nx._enforce_permissions,
+        permission_enforcer=nx._permission_enforcer,
+        descendant_checker=getattr(nx, "_descendant_checker", None),
+    )
+    nx._dispatch.register_intercept_read(_perm_hook)
+    nx._dispatch.register_intercept_write(_perm_hook)
+    nx._dispatch.register_intercept_delete(_perm_hook)
+    nx._dispatch.register_intercept_rename(_perm_hook)
+    nx._dispatch.register_intercept_mkdir(_perm_hook)
+    nx._dispatch.register_intercept_rmdir(_perm_hook)
 
     return nx
 

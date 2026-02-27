@@ -1,4 +1,4 @@
-"""Verify CacheStoreABC import identity and bricks/cache/ zero-core-imports (Issue #2055).
+"""Verify CacheStoreABC import identity and nexus/cache/ zero-core-imports (Issue #2055).
 
 After moving CacheStoreABC to contracts/cache_store.py, all import paths must
 resolve to the exact same class objects. Shim files have been deleted — there
@@ -24,28 +24,28 @@ class TestCacheStoreABCIdentity:
 
 
 class TestZeroViolations:
-    """bricks/cache/ must have zero imports from nexus.core."""
+    """nexus/cache/ must have zero imports from nexus.core."""
 
     def test_no_core_imports_in_cache_brick(self) -> None:
-        """Verify no runtime imports from nexus.core exist in bricks/cache/ modules."""
+        """Verify no runtime imports from nexus.core exist in nexus/cache/ modules."""
         import inspect
 
-        import nexus.bricks.cache.base
-        import nexus.bricks.cache.brick
-        import nexus.bricks.cache.domain
-        import nexus.bricks.cache.factory
-        import nexus.bricks.cache.inmemory
-        import nexus.bricks.cache.protocols
-        import nexus.bricks.cache.settings
+        import nexus.cache.base
+        import nexus.cache.brick
+        import nexus.cache.domain
+        import nexus.cache.factory
+        import nexus.cache.inmemory
+        import nexus.cache.protocols
+        import nexus.cache.settings
 
         modules_to_check = [
-            nexus.bricks.cache.base,
-            nexus.bricks.cache.brick,
-            nexus.bricks.cache.domain,
-            nexus.bricks.cache.factory,
-            nexus.bricks.cache.inmemory,
-            nexus.bricks.cache.protocols,
-            nexus.bricks.cache.settings,
+            nexus.cache.base,
+            nexus.cache.brick,
+            nexus.cache.domain,
+            nexus.cache.factory,
+            nexus.cache.inmemory,
+            nexus.cache.protocols,
+            nexus.cache.settings,
         ]
 
         for mod in modules_to_check:

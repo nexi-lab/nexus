@@ -5,27 +5,19 @@ brick-tier wrappers that implement ``NexusFilesystemABC`` and delegate to
 an inner ``NexusFilesystemABC``.  They are assembled by ``factory.py``.
 
 Current bricks:
-  - ScopedFilesystem       — sync path-scoping wrapper
-  - AsyncScopedFilesystem  — async path-scoping wrapper
+  - ScopedFilesystem       — sync path-scoping wrapper (async via asyncio.to_thread)
   - ScopedPathMixin        — shared path rewriting helpers
 """
-
-from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nexus.bricks.filesystem._scoped_base import ScopedPathMixin
-    from nexus.bricks.filesystem.async_scoped_filesystem import AsyncScopedFilesystem
     from nexus.bricks.filesystem.scoped_filesystem import ScopedFilesystem
 
 _lazy_imports_cache: dict[str, Any] = {}
 
 _LAZY_IMPORTS = {
-    "AsyncScopedFilesystem": (
-        "nexus.bricks.filesystem.async_scoped_filesystem",
-        "AsyncScopedFilesystem",
-    ),
     "ScopedFilesystem": (
         "nexus.bricks.filesystem.scoped_filesystem",
         "ScopedFilesystem",
@@ -54,7 +46,6 @@ def __getattr__(name: str) -> Any:
 
 
 __all__ = [
-    "AsyncScopedFilesystem",
     "ScopedFilesystem",
     "ScopedPathMixin",
 ]

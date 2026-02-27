@@ -43,7 +43,7 @@ class PermissionProtocol(Protocol):
     async def rebac_check_batch(
         self,
         checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
-        _zone_id: str | None = None,
+        zone_id: str | None = None,
     ) -> list[bool]: ...
 
     async def rebac_create(
@@ -63,7 +63,7 @@ class PermissionProtocol(Protocol):
         self,
         permission: str,
         object: tuple[str, str],
-        _zone_id: str | None = None,
+        zone_id: str | None = None,
         _limit: int = 100,
     ) -> list[tuple[str, str]]: ...
 

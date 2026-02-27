@@ -9,7 +9,8 @@ import hashlib
 from unittest.mock import MagicMock, PropertyMock
 
 from nexus.backends.backend import Backend
-from nexus.lib.response import HandlerResponse
+from nexus.contracts.exceptions import NexusFileNotFoundError
+from nexus.core.object_store import WriteResult
 
 
 def make_leaf(name: str = "local") -> MagicMock:
@@ -29,7 +30,6 @@ def make_leaf(name: str = "local") -> MagicMock:
     type(mock).is_connected = PropertyMock(return_value=True)
     type(mock).thread_safe = PropertyMock(return_value=True)
     type(mock).supports_rename = PropertyMock(return_value=False)
-    type(mock).has_virtual_filesystem = PropertyMock(return_value=False)
     type(mock).has_root_path = PropertyMock(return_value=True)
     type(mock).has_token_manager = PropertyMock(return_value=False)
     type(mock).has_data_dir = PropertyMock(return_value=False)
@@ -48,15 +48,15 @@ def make_storage_mock() -> tuple[MagicMock, dict[str, bytes]]:
     storage: dict[str, bytes] = {}
     mock = make_leaf("storage-mock")
 
-    def write_content(content: bytes, context: object = None) -> HandlerResponse:
+    def write_content(content: bytes, context: object = None) -> WriteResult:
         h = hashlib.sha256(content).hexdigest()
         storage[h] = content
-        return HandlerResponse.ok(data=h)
+        return WriteResult(content_hash=h, size=len(content))
 
-    def read_content(content_hash: str, context: object = None) -> HandlerResponse:
+    def read_content(content_hash: str, context: object = None) -> bytes:
         if content_hash in storage:
-            return HandlerResponse.ok(data=storage[content_hash])
-        return HandlerResponse.error(message="not found")
+            return storage[content_hash]
+        raise NexusFileNotFoundError(content_hash)
 
     def batch_read_content(
         content_hashes: list[str],
@@ -69,5 +69,5 @@ def make_storage_mock() -> tuple[MagicMock, dict[str, bytes]]:
     mock.write_content = MagicMock(side_effect=write_content)
     mock.read_content = MagicMock(side_effect=read_content)
     mock.batch_read_content = MagicMock(side_effect=batch_read_content)
-    mock.delete_content = MagicMock(return_value=HandlerResponse.ok(data=None))
+    mock.delete_content = MagicMock(return_value=None)
     return mock, storage

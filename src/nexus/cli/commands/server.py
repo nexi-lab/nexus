@@ -302,9 +302,9 @@ def _mount_fuse(
         nx: NexusFilesystem = get_filesystem(backend_config)
 
         # Set agent_id on remote filesystem for version attribution (issue #418)
-        # Only RemoteNexusFS has a settable agent_id property
+        # Only REMOTE profile NexusFS has a settable agent_id property
         if agent_id and hasattr(nx, "_agent_id"):
-            nx.agent_id = agent_id  # type: ignore[misc]
+            nx.agent_id = agent_id  # type: ignore[attr-defined]  # allowed
 
         # Create mount point if it doesn't exist
         mount_path = Path(mount_point)
@@ -496,10 +496,10 @@ def unmount(mount_point: str) -> None:
 @click.option("--port", default=2026, type=int, help="Server port (default: 2026)")
 @click.option(
     "--profile",
-    type=click.Choice(["kernel", "embedded", "lite", "full", "cloud"]),
+    type=click.Choice(["minimal", "embedded", "lite", "full", "cloud", "remote", "auto"]),
     default=None,
     envvar="NEXUS_PROFILE",
-    help="Deployment profile (kernel=bare VFS, embedded, lite, full, cloud)",
+    help="Deployment profile (minimal, embedded, lite, full, cloud, remote, auto)",
 )
 @click.option(
     "--api-key",
@@ -587,9 +587,9 @@ def serve(
         nexus serve --auth-type database --init --port 2026 --admin-user alice
 
         # Connect from Python
-        from nexus.remote import RemoteNexusFS
-        nx = RemoteNexusFS("http://localhost:2026", api_key="<admin-key>")
-        nx.write("/workspace/file.txt", b"Hello, World!")
+        import nexus
+        nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": "<admin-key>"})
+        nx.sys_write("/workspace/file.txt", b"Hello, World!")
 
         # Mount with FUSE
         from nexus.fuse import mount_nexus
@@ -783,7 +783,7 @@ def serve(
             enforce_zone_isolation = True
 
         # Determine server deployment mode from NEXUS_MODE env var
-        # Server always runs local NexusFS (never RemoteNexusFS)
+        # Server always runs local NexusFS (never REMOTE profile)
         raw_server_mode = os.getenv("NEXUS_MODE", "standalone")
 
         if raw_server_mode == "remote":
@@ -827,7 +827,7 @@ def serve(
                 if isinstance(nx, NexusFS):
                     nx._config = cfg
                 if cfg.backends:
-                    # Type check: backends can only be mounted on NexusFS, not RemoteNexusFS
+                    # Type check: backends can only be mounted on NexusFS, not remote NexusFS
                     if not isinstance(nx, NexusFS):
                         console.print(
                             "[yellow]⚠️  Warning: Multi-backend configuration is only supported for local NexusFS instances[/yellow]"
@@ -839,7 +839,6 @@ def serve(
                             backend_type = backend_def.get("type")
                             mount_point = backend_def.get("mount_point")
                             backend_cfg = backend_def.get("config", {})
-                            priority = backend_def.get("priority", 0)
                             readonly = backend_def.get("readonly", False)
 
                             if not backend_type or not mount_point:
@@ -868,13 +867,6 @@ def serve(
                                     continue
 
                                 # No database override - use config version
-                                # Check if mount already exists in router (shouldn't happen, but be safe)
-                                _mount_svc = cast(Any, nx).mount_service
-                                existing_mounts = run_sync(_mount_svc.list_mounts())
-                                mount_already_loaded = any(
-                                    m["mount_point"] == mount_point for m in existing_mounts
-                                )
-
                                 # Create backend instance with record store for caching
                                 backend = create_backend_from_config(
                                     backend_type,
@@ -886,9 +878,7 @@ def serve(
                                 nx.router.add_mount(
                                     mount_point,
                                     backend,
-                                    priority,
-                                    readonly,
-                                    replace=mount_already_loaded,
+                                    readonly=readonly,
                                 )
 
                                 readonly_str = " (read-only)" if readonly else ""
@@ -925,6 +915,7 @@ def serve(
                                         backend, "list_dir"
                                     ):
                                         try:
+                                            _mount_svc = cast(Any, nx).mount_service
                                             console.print(
                                                 f"    [dim]→ Syncing metadata from {backend_type}...[/dim]"
                                             )
@@ -953,13 +944,13 @@ def serve(
                     f"[yellow]⚠️  Warning: Could not load backends from config: {e}[/yellow]"
                 )
 
-        # Safety check: Server should never use RemoteNexusFS (would create circular dependency)
+        # Safety check: Server should never use a remote NexusFS (would create circular dependency)
         # This should never trigger due to NEXUS_URL clearing above, but kept as defensive check
-        from nexus.remote import RemoteNexusFS
+        from nexus.storage.remote_metastore import RemoteMetastore
 
-        if isinstance(nx, RemoteNexusFS):
+        if hasattr(nx, "metadata") and isinstance(nx.metadata, RemoteMetastore):
             console.print(
-                "[red]Error:[/red] Server cannot use RemoteNexusFS (circular dependency detected)"
+                "[red]Error:[/red] Server cannot use remote NexusFS (circular dependency detected)"
             )
             console.print("[yellow]This is unexpected - please report this bug.[/yellow]")
             console.print("[yellow]Workaround:[/yellow] Unset NEXUS_URL environment variable:")
@@ -1244,7 +1235,7 @@ def serve(
 
             from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
             from nexus.bricks.rebac.entity_registry import EntityRegistry
-            from nexus.constants import ROOT_ZONE_ID
+            from nexus.contracts.constants import ROOT_ZONE_ID
             from nexus.factory._record_store import create_record_store
 
             _record_store = create_record_store(db_url=db_url)
@@ -1299,7 +1290,7 @@ def serve(
                 try:
                     # Create /workspace directory directly via backend
                     try:
-                        backend.mkdir("/workspace").unwrap()
+                        backend.mkdir("/workspace")
                         console.print("[green]✓[/green] Created /workspace")
                     except Exception as mkdir_err:
                         # Directory might already exist, check and ignore
@@ -1329,6 +1320,28 @@ def serve(
                         f"[yellow]⚠️  Warning: Could not setup workspace: {workspace_err}[/yellow]"
                     )
                     console.print("[yellow]   You may need to manually create /workspace[/yellow]")
+
+                # Create default zones for multi-zone support
+                console.print()
+                console.print("[yellow]Creating default zones...[/yellow]")
+                try:
+                    from nexus.bricks.auth.zone_helpers import create_zone as _create_zone
+
+                    _default_zones = [
+                        ("corp", "Default Organization"),
+                        ("corp-eng", "Engineering Team"),
+                    ]
+                    with Session() as _zsession:
+                        for _zid, _zname in _default_zones:
+                            try:
+                                _create_zone(session=_zsession, zone_id=_zid, name=_zname)
+                                console.print(f"[green]✓[/green] Created zone: {_zid}")
+                            except ValueError:
+                                console.print(f"[green]✓[/green] Zone {_zid} already exists")
+                except Exception as zone_err:
+                    console.print(
+                        f"[yellow]⚠️  Warning: Could not create zones: {zone_err}[/yellow]"
+                    )
 
                 # Display API key
                 console.print()
@@ -1396,13 +1409,16 @@ def serve(
         console.print(f"  RPC methods: [cyan]http://{host}:{port}/api/nfs/{{method}}[/cyan]")
         console.print()
         console.print("[yellow]Connect from Python:[/yellow]")
-        console.print("  from nexus.remote import RemoteNexusFS")
-        console.print(f'  nx = RemoteNexusFS("http://{host}:{port}"', end="")
+        console.print("  import nexus")
         if api_key or auth_provider:
-            console.print(', api_key="<your-key>")')
+            console.print(
+                f'  nx = nexus.connect(config={{"mode": "remote", "url": "http://{host}:{port}", "api_key": "<your-key>"}})'
+            )
         else:
-            console.print(")")
-        console.print("  nx.write('/workspace/file.txt', b'Hello!')")
+            console.print(
+                f'  nx = nexus.connect(config={{"mode": "remote", "url": "http://{host}:{port}"}})'
+            )
+        console.print("  nx.sys_write('/workspace/file.txt', b'Hello!')")
         console.print()
 
         # ============================================
@@ -1432,10 +1448,10 @@ def serve(
             for path in common_paths:
                 try:
                     # Check if path exists and warm permission cache
-                    if nx.exists(path):
+                    if nx.sys_access(path):
                         # List directory to warm listing cache
                         try:
-                            nx.list(path, recursive=False, details=False)
+                            nx.sys_readdir(path, recursive=False, details=False)
                             warmed_count += 1
                         except Exception as e:
                             logger.debug("Failed to warm listing cache for %s: %s", path, e)

@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from nexus.bricks.memory.memory_paging.namespace_util import strip_tier_prefix
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -42,7 +43,7 @@ class ArchivalStore:
     def __init__(
         self,
         session_factory: "Callable[[], Session]",
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         namespace: str = "archival",
         vector_db: Any = None,
     ):

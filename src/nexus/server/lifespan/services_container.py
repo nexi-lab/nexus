@@ -52,13 +52,16 @@ class LifespanServices:
     brick_lifecycle_manager: Any = None
     brick_reconciler: Any = None
     eviction_manager: Any = None
-    scoped_hook_engine: Any = None
     write_observer: Any = None
     zone_lifecycle: Any = None
+    pipe_manager: Any = None  # DT_PIPE manager (Issue #809)
 
     # --- Issue #2195, #2360: EventLog + Scheduler (from SystemServices) ----
     event_log: Any = None
     scheduler_service: "SchedulerProtocol | None" = None
+
+    # --- DT_PIPE consumers (Issue #810) -----------------------------------
+    zoekt_pipe_consumer: Any = None
 
     # --- Brick services container ----------------------------------------
     brick_services: Any = None  # The whole BrickServices dataclass
@@ -113,9 +116,11 @@ class LifespanServices:
             ),
             brick_reconciler=(getattr(_sys, "brick_reconciler", None) if _sys else None),
             eviction_manager=(getattr(_sys, "eviction_manager", None) if _sys else None),
-            scoped_hook_engine=(getattr(_sys, "scoped_hook_engine", None) if _sys else None),
-            write_observer=getattr(nx, "_write_observer", None) if nx else None,
+            write_observer=(getattr(_sys, "write_observer", None) if _sys else None),
             zone_lifecycle=(getattr(_sys, "zone_lifecycle", None) if _sys else None),
+            pipe_manager=(getattr(_sys, "pipe_manager", None) if _sys else None),
+            # Issue #810: DT_PIPE Zoekt consumer
+            zoekt_pipe_consumer=(getattr(_brk, "zoekt_pipe_consumer", None) if _brk else None),
             # Issue #2195: EventLog + Scheduler
             event_log=(getattr(_sys, "event_log", None) if _sys else None),
             scheduler_service=(getattr(_sys, "scheduler_service", None) if _sys else None),

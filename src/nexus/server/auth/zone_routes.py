@@ -1,16 +1,19 @@
 """Zone management API routes.
 
 Provides endpoints for creating, updating, and managing zones.
+
+Auth: Uses the unified ``require_auth`` dependency (supports JWT + API key +
+static admin key) instead of the legacy JWT-only ``get_authenticated_user``.
 """
 
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
 from nexus.bricks.auth.providers.database_local import DatabaseLocalAuth
-from nexus.bricks.auth.user_queries import get_user_by_id
 from nexus.bricks.auth.zone_helpers import (
     create_zone,
     normalize_to_slug,
@@ -24,9 +27,9 @@ from nexus.lib.zone_helpers import (
 )
 from nexus.server.auth.auth_routes import (
     get_auth_provider,
-    get_authenticated_user,
     get_nexus_instance,
 )
+from nexus.server.dependencies import require_auth
 from nexus.storage.models import ZoneModel
 
 logger = logging.getLogger(__name__)
@@ -62,6 +65,7 @@ class ZoneResponse(BaseModel):
     is_active: bool
     created_at: str
     updated_at: str
+    limits: dict[str, Any] | None = None
 
 
 class ZoneListResponse(BaseModel):
@@ -73,6 +77,17 @@ class ZoneListResponse(BaseModel):
 
 def _zone_to_response(zone: ZoneModel) -> ZoneResponse:
     """Convert a ZoneModel to a ZoneResponse (DRY helper)."""
+    # Extract limits from zone settings (forward-compatible via extra='allow')
+    settings = zone.parsed_settings
+    limits = getattr(settings, "limits", None)
+    if limits is None:
+        # Provide default quota stub so the field is always present
+        limits = {
+            "max_storage_bytes": 0,
+            "max_files": 0,
+            "max_agents": 0,
+        }
+
     return ZoneResponse(
         zone_id=zone.zone_id,
         name=zone.name,
@@ -83,13 +98,14 @@ def _zone_to_response(zone: ZoneModel) -> ZoneResponse:
         is_active=zone.is_active,
         created_at=zone.created_at.isoformat(),
         updated_at=zone.updated_at.isoformat(),
+        limits=limits,
     )
 
 
 @router.post("", response_model=ZoneResponse, status_code=status.HTTP_201_CREATED)
 async def create_zone_endpoint(
     request: CreateZoneRequest,
-    user_info: tuple[str, str] = Depends(get_authenticated_user),
+    auth_result: dict[str, Any] = Depends(require_auth),
     auth: DatabaseLocalAuth = Depends(get_auth_provider),
 ) -> ZoneResponse:
     """Create a new zone.
@@ -98,8 +114,8 @@ async def create_zone_endpoint(
 
     Args:
         request: Zone creation request
-        user_info: Authenticated user (user_id, email) from JWT token
-        auth: Authentication provider
+        auth_result: Authenticated identity (JWT, API key, or static admin key)
+        auth: Authentication provider for DB session access
 
     Returns:
         Created zone information
@@ -109,7 +125,7 @@ async def create_zone_endpoint(
         401: Not authenticated
         500: Failed to assign creator as zone owner
     """
-    user_id, _email = user_info
+    user_id = auth_result["subject_id"]
 
     with auth.session_factory() as session:
         # Determine zone_id
@@ -176,7 +192,7 @@ async def create_zone_endpoint(
 @router.get("/{zone_id}", response_model=ZoneResponse)
 async def get_zone(
     zone_id: str,
-    user_info: tuple[str, str] = Depends(get_authenticated_user),
+    auth_result: dict[str, Any] = Depends(require_auth),
     auth: DatabaseLocalAuth = Depends(get_auth_provider),
 ) -> ZoneResponse:
     """Get zone information by ID.
@@ -186,8 +202,8 @@ async def get_zone(
 
     Args:
         zone_id: Zone identifier
-        user_info: Authenticated user (user_id, email) from JWT token
-        auth: Authentication provider
+        auth_result: Authenticated identity (JWT, API key, or static admin key)
+        auth: Authentication provider for DB session access
 
     Returns:
         Zone information
@@ -197,17 +213,14 @@ async def get_zone(
         403: User does not have access to this zone
         404: Zone not found
     """
-    user_id, _email = user_info
+    user_id = auth_result["subject_id"]
+    is_admin = auth_result.get("is_admin", False)
 
     with auth.session_factory() as session:
-        # Check if user is global admin
-        user = get_user_by_id(session, user_id)
-        is_global_admin = user and user.is_global_admin == 1
-
-        # Check zone access (global admins can access any zone)
+        # Check zone access (admins can access any zone)
         nx = get_nexus_instance()
         rebac_mgr = getattr(nx, "_rebac_manager", None) if nx else None
-        if not is_global_admin:
+        if not is_admin:
             if rebac_mgr is None:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
@@ -231,7 +244,7 @@ async def get_zone(
 
 @router.get("", response_model=ZoneListResponse)
 async def list_zones(
-    user_info: tuple[str, str] = Depends(get_authenticated_user),
+    auth_result: dict[str, Any] = Depends(require_auth),
     auth: DatabaseLocalAuth = Depends(get_auth_provider),
     limit: int = 100,
     offset: int = 0,
@@ -242,8 +255,8 @@ async def list_zones(
     they are members of.
 
     Args:
-        user_info: Authenticated user (user_id, email) from JWT token
-        auth: Authentication provider
+        auth_result: Authenticated identity (JWT, API key, or static admin key)
+        auth: Authentication provider for DB session access
         limit: Maximum number of zones to return
         offset: Number of zones to skip
 
@@ -253,14 +266,11 @@ async def list_zones(
     Raises:
         401: Not authenticated
     """
-    user_id, _email = user_info
+    user_id = auth_result["subject_id"]
+    is_admin = auth_result.get("is_admin", False)
 
     with auth.session_factory() as session:
-        # Check if user is global admin
-        user = get_user_by_id(session, user_id)
-        is_global_admin = user and user.is_global_admin == 1
-
-        if is_global_admin:
+        if is_admin:
             # Global admins see all active zones
             stmt = (
                 select(ZoneModel)
@@ -284,7 +294,15 @@ async def list_zones(
             # Regular users only see zones they belong to
             nx = get_nexus_instance()
             rebac_mgr = getattr(nx, "_rebac_manager", None) if nx else None
-            user_zone_ids = get_user_zones(rebac_mgr, user_id) if rebac_mgr else []
+            # API-key auth may include zone_id — restrict to that zone
+            auth_zone = auth_result.get("zone_id")
+            user_zone_ids = (
+                [auth_zone]
+                if auth_zone
+                else get_user_zones(rebac_mgr, user_id)
+                if rebac_mgr
+                else []
+            )
 
             if not user_zone_ids:
                 return ZoneListResponse(zones=[], total=0)
@@ -326,7 +344,7 @@ class ZoneDeprovisionResponse(BaseModel):
 )
 async def delete_zone_endpoint(
     zone_id: str,
-    user_info: tuple[str, str] = Depends(get_authenticated_user),
+    auth_result: dict[str, Any] = Depends(require_auth),
     auth: DatabaseLocalAuth = Depends(get_auth_provider),
 ) -> ZoneDeprovisionResponse:
     """Delete (deprovision) a zone.
@@ -343,25 +361,22 @@ async def delete_zone_endpoint(
 
     Args:
         zone_id: Zone identifier
-        user_info: Authenticated user (user_id, email) from JWT token
-        auth: Authentication provider
+        auth_result: Authenticated identity (JWT, API key, or static admin key)
+        auth: Authentication provider for DB session access
 
     Raises:
         403: User is not zone owner or global admin
         404: Zone not found or already terminated
     """
-    user_id, _email = user_info
+    user_id = auth_result["subject_id"]
+    is_admin = auth_result.get("is_admin", False)
 
     # Get zone lifecycle service
     nx = get_nexus_instance()
     zone_lifecycle = getattr(nx, "_zone_lifecycle", None) if nx else None
 
     with auth.session_factory() as session:
-        # Check authorization: must be zone owner or global admin
-        user = get_user_by_id(session, user_id)
-        is_global_admin = user and user.is_global_admin == 1
-
-        if not is_global_admin:
+        if not is_admin:
             # Check if user is zone member via ReBAC
             rebac_mgr = getattr(nx, "_rebac_manager", None) if nx else None
             if rebac_mgr is None:

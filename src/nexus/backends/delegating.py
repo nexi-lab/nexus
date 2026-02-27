@@ -23,7 +23,7 @@ from nexus.backends.backend import Backend
 if TYPE_CHECKING:
     from nexus.backends.backend import HandlerStatusResponse
     from nexus.contracts.types import OperationContext
-    from nexus.lib.response import HandlerResponse
+    from nexus.core.object_store import WriteResult
 
 logger = logging.getLogger(__name__)
 
@@ -90,10 +90,6 @@ class DelegatingBackend(Backend):
         return self._inner.supports_rename
 
     @property
-    def has_virtual_filesystem(self) -> bool:
-        return self._inner.has_virtual_filesystem
-
-    @property
     def has_root_path(self) -> bool:
         return self._inner.has_root_path
 
@@ -156,44 +152,18 @@ class DelegatingBackend(Backend):
 
     def write_content(
         self, content: bytes, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[str]":
+    ) -> "WriteResult":
         """Transform content via ``_transform_on_write``, then write to inner.
 
-        If ``_transform_on_write`` raises, returns an error response.
+        If ``_transform_on_write`` raises, the exception propagates.
         """
-        from nexus.lib.response import HandlerResponse
-
-        try:
-            transformed = self._transform_on_write(content)
-        except Exception as e:
-            logger.error("%s write transform failed: %s", self.__class__.__name__, e)
-            return HandlerResponse.error(
-                message=f"{self.__class__.__name__} write transform failed: {e}"
-            )
+        transformed = self._transform_on_write(content)
         return self._inner.write_content(transformed, context=context)
 
-    def read_content(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[bytes]":
+    def read_content(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
         """Read from inner, then transform via ``_transform_on_read``."""
-        from nexus.lib.response import HandlerResponse
-
-        response = self._inner.read_content(content_hash, context=context)
-        if not response.success or response.data is None:
-            return response
-
-        try:
-            transformed = self._transform_on_read(response.data)
-        except Exception as e:
-            logger.warning("%s read transform failed: %s", self.__class__.__name__, e)
-            return HandlerResponse.error(
-                message=f"{self.__class__.__name__} read transform failed: {e}"
-            )
-        # Identity transform (default): return original response to preserve
-        # backend_name and object identity for pass-through wrappers.
-        if transformed is response.data:
-            return response
-        return HandlerResponse.ok(data=transformed, backend_name=self.name)
+        data = self._inner.read_content(content_hash, context=context)
+        return self._transform_on_read(data)
 
     def batch_read_content(
         self,
@@ -226,24 +196,16 @@ class DelegatingBackend(Backend):
 
         return transformed
 
-    def delete_content(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[None]":
+    def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:
         return self._inner.delete_content(content_hash, context=context)
 
-    def content_exists(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[bool]":
+    def content_exists(self, content_hash: str, context: "OperationContext | None" = None) -> bool:
         return self._inner.content_exists(content_hash, context=context)
 
-    def get_content_size(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[int]":
+    def get_content_size(self, content_hash: str, context: "OperationContext | None" = None) -> int:
         return self._inner.get_content_size(content_hash, context=context)
 
-    def get_ref_count(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[int]":
+    def get_ref_count(self, content_hash: str, context: "OperationContext | None" = None) -> int:
         return self._inner.get_ref_count(content_hash, context=context)
 
     # === Directory Operations (delegate to inner) ===
@@ -254,7 +216,7 @@ class DelegatingBackend(Backend):
         parents: bool = False,
         exist_ok: bool = False,
         context: "OperationContext | None" = None,
-    ) -> "HandlerResponse[None]":
+    ) -> None:
         return self._inner.mkdir(path, parents=parents, exist_ok=exist_ok, context=context)
 
     def rmdir(
@@ -262,12 +224,10 @@ class DelegatingBackend(Backend):
         path: str,
         recursive: bool = False,
         context: "OperationContext | None" = None,
-    ) -> "HandlerResponse[None]":
+    ) -> None:
         return self._inner.rmdir(path, recursive=recursive, context=context)
 
-    def is_directory(
-        self, path: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[bool]":
+    def is_directory(self, path: str, context: "OperationContext | None" = None) -> bool:
         return self._inner.is_directory(path, context=context)
 
     def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:

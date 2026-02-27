@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.bricks.memory.memory_paging import MemoryPager
 from nexus.bricks.memory.service import Memory
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -108,7 +109,7 @@ class MemoryWithPaging(Memory):
         if enable_paging:
             self.pager = MemoryPager(
                 session_factory=session_factory,
-                zone_id=zone_id or "root",
+                zone_id=zone_id or ROOT_ZONE_ID,
                 main_capacity=main_capacity,
                 recall_max_age_hours=recall_max_age_hours,
                 warm_up=warm_up,

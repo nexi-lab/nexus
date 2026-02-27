@@ -10,6 +10,9 @@ use crate::types::*;
 pub struct InternedGraph {
     pub tuple_index: AHashSet<InternedTupleKey>,
     pub adjacency_list: AHashMap<InternedAdjacencyKey, Vec<InternedEntity>>,
+    /// Reverse adjacency: (object_type, object_id, relation) → [subjects].
+    /// Enables tupleToUserset resolution which needs "find subjects with relation on object".
+    pub reverse_adjacency: AHashMap<InternedAdjacencyKey, Vec<InternedEntity>>,
     pub userset_index: AHashMap<InternedUsersetKey, Vec<InternedUsersetEntry>>,
     /// Wildcard subject (*:*) symbol.
     pub wildcard_subject: Option<InternedEntity>,
@@ -27,6 +30,8 @@ impl InternedGraph {
 
         let mut tuple_index = AHashSet::new();
         let mut adjacency_list: AHashMap<InternedAdjacencyKey, Vec<InternedEntity>> =
+            AHashMap::new();
+        let mut reverse_adjacency: AHashMap<InternedAdjacencyKey, Vec<InternedEntity>> =
             AHashMap::new();
         let mut userset_index: AHashMap<InternedUsersetKey, Vec<InternedUsersetEntry>> =
             AHashMap::new();
@@ -53,6 +58,7 @@ impl InternedGraph {
                 tuple_index.insert(tuple_key);
             }
 
+            // Forward adjacency: subject → objects
             let adj_key = (tuple.subject_type, tuple.subject_id, tuple.relation);
             adjacency_list
                 .entry(adj_key)
@@ -61,11 +67,23 @@ impl InternedGraph {
                     entity_type: tuple.object_type,
                     entity_id: tuple.object_id,
                 });
+
+            // Reverse adjacency: object → subjects
+            // Required for tupleToUserset which needs "find subjects with relation on object"
+            let rev_key = (tuple.object_type, tuple.object_id, tuple.relation);
+            reverse_adjacency
+                .entry(rev_key)
+                .or_default()
+                .push(InternedEntity {
+                    entity_type: tuple.subject_type,
+                    entity_id: tuple.subject_id,
+                });
         }
 
         InternedGraph {
             tuple_index,
             adjacency_list,
+            reverse_adjacency,
             userset_index,
             wildcard_subject,
         }
@@ -106,15 +124,29 @@ impl InternedGraph {
         false
     }
 
-    /// Find related objects via adjacency list.
+    /// Find objects that a subject has a relation on (forward: subject → objects).
     pub fn find_related_objects(
+        &self,
+        subject: InternedEntity,
+        relation: Sym,
+    ) -> Vec<InternedEntity> {
+        let adj_key = (subject.entity_type, subject.entity_id, relation);
+        self.adjacency_list
+            .get(&adj_key)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Find subjects that have a relation on an object (reverse: object → subjects).
+    /// Required for tupleToUserset: "find who has `tupleset` relation on this object".
+    pub fn find_subjects_for_object(
         &self,
         object: InternedEntity,
         relation: Sym,
     ) -> Vec<InternedEntity> {
-        let adj_key = (object.entity_type, object.entity_id, relation);
-        self.adjacency_list
-            .get(&adj_key)
+        let rev_key = (object.entity_type, object.entity_id, relation);
+        self.reverse_adjacency
+            .get(&rev_key)
             .cloned()
             .unwrap_or_default()
     }
@@ -221,13 +253,24 @@ pub fn compute_permission_interned(
                 tupleset,
                 computed_userset,
             } => {
-                let related_objects = graph.find_related_objects(object, *tupleset);
+                // tupleToUserset checks BOTH directions:
+                //
+                // Forward (parent pattern): object acts as subject with tupleset relation
+                //   parent_viewer = {tupleset: "parent", computedUserset: "viewer"}
+                //   file:doc → parent → folder:docs, then check viewer on folder:docs
+                //
+                // Reverse (group pattern): others have tupleset relation ON object
+                //   group_viewer = {tupleset: "direct_viewer", computedUserset: "member"}
+                //   group:team → direct_viewer → file:/path, then check member on group:team
                 let mut allowed = false;
-                for related_obj in related_objects {
+
+                // Forward: object as subject → find objects it points to
+                let forward_targets = graph.find_related_objects(object, *tupleset);
+                for target in &forward_targets {
                     if compute_permission_interned(
                         subject,
                         *computed_userset,
-                        related_obj,
+                        *target,
                         graph,
                         namespaces,
                         memo_cache,
@@ -238,6 +281,27 @@ pub fn compute_permission_interned(
                         break;
                     }
                 }
+
+                // Reverse: find subjects that have tupleset relation ON object
+                if !allowed {
+                    let reverse_targets = graph.find_subjects_for_object(object, *tupleset);
+                    for target in &reverse_targets {
+                        if compute_permission_interned(
+                            subject,
+                            *computed_userset,
+                            *target,
+                            graph,
+                            namespaces,
+                            memo_cache,
+                            visited,
+                            depth + 1,
+                        ) {
+                            allowed = true;
+                            break;
+                        }
+                    }
+                }
+
                 allowed
             }
         }

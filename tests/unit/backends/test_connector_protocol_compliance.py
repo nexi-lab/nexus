@@ -149,7 +149,6 @@ class TestConnectorProtocolMethods:
         "is_connected",
         "is_passthrough",
         "has_root_path",
-        "has_virtual_filesystem",
         "has_token_manager",
     ]
 

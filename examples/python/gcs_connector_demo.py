@@ -156,7 +156,6 @@ def demo_with_server():
             mount_point=mount_point,
             backend_type="gcs_connector",
             backend_config=mount_config,
-            priority=10,
         )
         print_success(f"Mounted GCS connector at {mount_point}")
         print_info("  Backend type: gcs_connector")
@@ -170,19 +169,19 @@ def demo_with_server():
     # Write files
     print_section("2. Writing Files at Actual Paths")
 
-    nx.write(f"{mount_point}/hello.txt", b"Hello from Nexus GCS Connector!")
+    nx.sys_write(f"{mount_point}/hello.txt", b"Hello from Nexus GCS Connector!")
     print_success(f"Wrote: {mount_point}/hello.txt")
 
-    nx.write(
+    nx.sys_write(
         f"{mount_point}/data.json",
         json.dumps({"type": "connector", "backend": "gcs", "path_based": True}).encode(),
     )
     print_success(f"Wrote: {mount_point}/data.json")
 
-    nx.mkdir(f"{mount_point}/subdir", parents=True)
+    nx.sys_mkdir(f"{mount_point}/subdir", parents=True)
     print_success(f"Created: {mount_point}/subdir")
 
-    nx.write(f"{mount_point}/subdir/nested.txt", b"File in subdirectory")
+    nx.sys_write(f"{mount_point}/subdir/nested.txt", b"File in subdirectory")
     print_success(f"Wrote: {mount_point}/subdir/nested.txt")
 
     print_info("\nExpected GCS paths:")
@@ -201,18 +200,18 @@ def demo_with_server():
     # Read files back
     print_section("4. Reading Files via Nexus")
 
-    content = nx.read(f"{mount_point}/hello.txt")
+    content = nx.sys_read(f"{mount_point}/hello.txt")
     print(f"  Content: {content.decode()}")
     print_success("Read file successfully")
 
-    json_content = nx.read(f"{mount_point}/data.json")
+    json_content = nx.sys_read(f"{mount_point}/data.json")
     print(f"  JSON: {json_content.decode()}")
     print_success("Read JSON file successfully")
 
     # Directory operations
     print_section("5. Directory Operations")
 
-    files = nx.list(mount_point)
+    files = nx.sys_readdir(mount_point)
     print("Files in root:")
     for f in files:
         print(f"  - {f}")
@@ -221,10 +220,10 @@ def demo_with_server():
     # Cleanup
     print_section("6. Cleanup")
 
-    nx.delete(f"{mount_point}/hello.txt")
-    nx.delete(f"{mount_point}/data.json")
-    nx.delete(f"{mount_point}/subdir/nested.txt")
-    nx.delete(f"{mount_point}/subdir")
+    nx.sys_unlink(f"{mount_point}/hello.txt")
+    nx.sys_unlink(f"{mount_point}/data.json")
+    nx.sys_unlink(f"{mount_point}/subdir/nested.txt")
+    nx.sys_unlink(f"{mount_point}/subdir")
     print_success("Cleaned up test files")
 
     nx.remove_mount(mount_point)
@@ -265,23 +264,23 @@ def demo_local():
         print_info("  Prefix: nexus-demo/")
 
         # Add mount
-        nx.router.add_mount(mount_point="/workspace/gcs", backend=gcs_backend, priority=10)
+        nx.router.add_mount(mount_point="/workspace/gcs", backend=gcs_backend)
         print_success("Mounted GCS connector at /workspace/gcs")
 
         # Write files
         print_section("2. Writing Files to GCS")
 
-        nx.write("/workspace/gcs/hello.txt", b"Hello from local Nexus!")
+        nx.sys_write("/workspace/gcs/hello.txt", b"Hello from local Nexus!")
         print_success("Wrote: /workspace/gcs/hello.txt")
 
-        nx.write(
+        nx.sys_write(
             "/workspace/gcs/data.json",
             json.dumps({"local": True, "backend": "gcs_connector"}).encode(),
         )
         print_success("Wrote: /workspace/gcs/data.json")
 
-        nx.mkdir("/workspace/gcs/subdir", parents=True)
-        nx.write("/workspace/gcs/subdir/test.txt", b"Test file")
+        nx.sys_mkdir("/workspace/gcs/subdir", parents=True)
+        nx.sys_write("/workspace/gcs/subdir/test.txt", b"Test file")
         print_success("Wrote: /workspace/gcs/subdir/test.txt")
 
         print_info("\nFiles stored in GCS at:")
@@ -300,14 +299,14 @@ def demo_local():
         # Read files back
         print_section("4. Reading Files from GCS")
 
-        content = nx.read("/workspace/gcs/hello.txt")
+        content = nx.sys_read("/workspace/gcs/hello.txt")
         print(f"  hello.txt: {content.decode()}")
         print_success("Read successfully")
 
         # List directory
         print_section("5. Directory Listing")
 
-        files = nx.list("/workspace/gcs")
+        files = nx.sys_readdir("/workspace/gcs")
         print("Files:")
         for f in files:
             print(f"  - {f}")
@@ -319,7 +318,7 @@ def demo_local():
         nx.rm("/workspace/gcs/hello.txt")
         nx.rm("/workspace/gcs/data.json")
         nx.rm("/workspace/gcs/subdir/test.txt")
-        nx.rmdir("/workspace/gcs/subdir")
+        nx.sys_rmdir("/workspace/gcs/subdir")
         print_success("Cleaned up test files")
 
         print_info("\nGCS bucket cleanup (optional):")

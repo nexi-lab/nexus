@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from sqlalchemy import BigInteger, DateTime, Float, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import ValidationError
 from nexus.storage.models._base import Base, uuid_pk
 
@@ -92,7 +93,7 @@ class BackendChangeLogModel(Base):
         DateTime, nullable=False, default=lambda: datetime.now(UTC)
     )
 
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default=ROOT_ZONE_ID)
 
     __table_args__ = (
         UniqueConstraint("path", "backend_name", "zone_id", name="uq_backend_change_log"),
@@ -127,7 +128,7 @@ class SyncBacklogModel(Base):
 
     path: Mapped[str] = mapped_column(String(4096), nullable=False)
     backend_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default=ROOT_ZONE_ID)
 
     operation_type: Mapped[str] = mapped_column(String(50), nullable=False)
     content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -176,7 +177,7 @@ class ConflictLogModel(Base):
 
     path: Mapped[str] = mapped_column(String(4096), nullable=False)
     backend_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default=ROOT_ZONE_ID)
 
     strategy: Mapped[str] = mapped_column(String(50), nullable=False)
     outcome: Mapped[str] = mapped_column(String(50), nullable=False)

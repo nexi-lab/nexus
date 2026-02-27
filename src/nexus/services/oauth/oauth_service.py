@@ -13,7 +13,7 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from nexus.constants import DEFAULT_OAUTH_REDIRECT_URI
+from nexus.contracts.constants import DEFAULT_OAUTH_REDIRECT_URI
 from nexus.lib.rpc_decorator import rpc_expose
 from nexus.services.protocols.filesystem import NexusFilesystem
 
@@ -606,8 +606,10 @@ class OAuthService:
 
             try:
                 if self._filesystem is not None:
-                    self._filesystem.mkdir(skill_path, parents=True, exist_ok=True)
-                    self._filesystem.write(skill_file, skill_md.encode("utf-8"), context=context)
+                    self._filesystem.sys_mkdir(skill_path, parents=True, exist_ok=True)
+                    self._filesystem.sys_write(
+                        skill_file, skill_md.encode("utf-8"), context=context
+                    )
                     logger.info(f"Generated MCP skill: {skill_file}")
 
                     now = datetime.now(UTC)
@@ -632,7 +634,9 @@ class OAuthService:
                         tier="user",
                     )
                     mount_json = json_module.dumps(mount_config.to_dict(), indent=2)
-                    self._filesystem.write(mount_file, mount_json.encode("utf-8"), context=context)
+                    self._filesystem.sys_write(
+                        mount_file, mount_json.encode("utf-8"), context=context
+                    )
                     logger.info(f"Generated mount config: {mount_file}")
 
                     for tool in tools:
@@ -657,7 +661,7 @@ class OAuthService:
                         )
                         tool_file = f"{skill_path}{tool_name}.json"
                         tool_json = json_module.dumps(tool_def.to_dict(), indent=2)
-                        self._filesystem.write(
+                        self._filesystem.sys_write(
                             tool_file,
                             tool_json.encode("utf-8"),
                             context=context,

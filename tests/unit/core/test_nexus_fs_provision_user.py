@@ -53,9 +53,9 @@ def nx_with_db(tmp_path):
         session_factory=session_factory,
         entity_registry=mock_registry,
         api_key_creator=mock_key_creator,
-        backend=nx.backend,
+        backend=nx.router.route("/").backend,
         rebac_manager=nx._rebac_manager,
-        rmdir_fn=nx.rmdir,
+        rmdir_fn=nx.sys_rmdir,
         rebac_create_fn=MagicMock(),
         rebac_delete_fn=MagicMock(),
         register_workspace_fn=MagicMock(),
@@ -264,9 +264,9 @@ class TestProvisionUserPartialFailure:
             session_factory=None,
             entity_registry=mock_registry,
             api_key_creator=None,
-            backend=nx.backend,
+            backend=nx.router.route("/").backend,
             rebac_manager=MagicMock(),
-            rmdir_fn=nx.rmdir,
+            rmdir_fn=nx.sys_rmdir,
             rebac_create_fn=MagicMock(),
             rebac_delete_fn=MagicMock(),
             register_workspace_fn=MagicMock(),
@@ -298,7 +298,7 @@ class TestProvisionUserPartialFailure:
         the workspace creation fails, the path is still in the result dict.
         The key assertion is that provisioning doesn't abort.
         """
-        with patch.object(nx_with_db, "mkdir", side_effect=Exception("workspace error")):
+        with patch.object(nx_with_db, "sys_mkdir", side_effect=Exception("workspace error")):
             result = nx_with_db.provision_user(
                 user_id="alice",
                 email="alice@example.com",

@@ -2,14 +2,11 @@
 
 Issue #1264: Tests overlay resolution through the actual NexusFS kernel,
 using real LocalBackend, real SQLAlchemyRecordStore, and real WorkspaceRegistry.
-This verifies the overlay hooks in nexus_fs_core.py (read/delete) work
+This verifies the overlay hooks in nexus_fs.py (read/delete) work
 correctly when wired through the full dependency injection pipeline.
 
-No Raft required — uses InMemoryMetadata implementing MetastoreABC.
+No Raft required — uses DictMetastore implementing MetastoreABC.
 """
-
-from collections.abc import Sequence
-from typing import Any
 
 import pytest
 
@@ -17,59 +14,8 @@ from nexus.backends.local import LocalBackend
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.contracts.metadata import FileMetadata
 from nexus.contracts.workspace_manifest import ManifestEntry, WorkspaceManifest
-from nexus.core.metastore import CasResult, MetastoreABC
 from nexus.system_services.workspace.overlay_resolver import OverlayResolver
-
-
-class InMemoryMetastore(MetastoreABC):
-    """Full MetastoreABC implementation using an in-memory dict.
-
-    Replaces RaftMetadataStore for tests that don't need the Rust extension.
-    """
-
-    def __init__(self) -> None:
-        self._store: dict[str, FileMetadata] = {}
-
-    def get(self, path: str) -> FileMetadata | None:
-        return self._store.get(path)
-
-    def put(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:
-        self._store[metadata.path] = metadata
-        return None
-
-    def put_if_version(
-        self,
-        metadata: FileMetadata,
-        expected_version: int,
-        *,
-        consistency: str = "sc",
-    ) -> CasResult:
-        current = self._store.get(metadata.path)
-        current_ver = current.version if current else 0
-        if current_ver != expected_version:
-            return CasResult(success=False, current_version=current_ver)
-        self._store[metadata.path] = metadata
-        return CasResult(success=True, current_version=metadata.version)
-
-    def delete(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
-        if path in self._store:
-            del self._store[path]
-            return {"deleted": path}
-        return None
-
-    def exists(self, path: str) -> bool:
-        return path in self._store
-
-    def list(self, prefix: str = "", recursive: bool = True, **kwargs: Any) -> list[FileMetadata]:
-        return [meta for path, meta in self._store.items() if path.startswith(prefix)]
-
-    def delete_batch(self, paths: Sequence[str]) -> None:
-        for path in paths:
-            self._store.pop(path, None)
-
-    def close(self) -> None:
-        self._store.clear()
-
+from tests.helpers.dict_metastore import DictMetastore
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -91,9 +37,9 @@ def local_backend(storage_dir) -> LocalBackend:
 
 
 @pytest.fixture
-def metadata_store() -> InMemoryMetastore:
+def metadata_store() -> DictMetastore:
     """In-memory metadata store (replaces Raft)."""
-    return InMemoryMetastore()
+    return DictMetastore()
 
 
 @pytest.fixture
@@ -113,7 +59,7 @@ def base_manifest(local_backend: LocalBackend, base_content: dict[str, bytes]) -
     entries: dict[str, ManifestEntry] = {}
     for rel_path, content in base_content.items():
         result = local_backend.write_content(content)
-        content_hash = result.unwrap()
+        content_hash = result.content_hash
         entries[rel_path] = ManifestEntry(
             content_hash=content_hash,
             size=len(content),
@@ -127,12 +73,12 @@ def stored_manifest_hash(local_backend: LocalBackend, base_manifest: WorkspaceMa
     """Store base manifest in CAS and return its hash."""
     manifest_json = base_manifest.to_json()
     result = local_backend.write_content(manifest_json)
-    return result.unwrap()
+    return result.content_hash
 
 
 @pytest.fixture
 def overlay_resolver(
-    metadata_store: InMemoryMetastore,
+    metadata_store: DictMetastore,
     local_backend: LocalBackend,
 ) -> OverlayResolver:
     """Real OverlayResolver wired to real backend and metadata store."""
@@ -142,7 +88,7 @@ def overlay_resolver(
 @pytest.fixture
 def nexus_fs(
     local_backend: LocalBackend,
-    metadata_store: InMemoryMetastore,
+    metadata_store: DictMetastore,
     overlay_resolver: OverlayResolver,
     stored_manifest_hash: str,
 ):
@@ -167,6 +113,17 @@ def nexus_fs(
     # Inject overlay resolver post-construction (NexusFS.__init__ accepts it,
     # but factory doesn't pass it through yet)
     nx._overlay_resolver = overlay_resolver
+
+    # Ensure workspace_registry exists (factory may fail to create it if
+    # ReBACManager is unavailable — rebac_manager is optional for the registry)
+    if nx._workspace_registry is None:
+        from nexus.services.workspace.workspace_registry import WorkspaceRegistry
+
+        nx._workspace_registry = WorkspaceRegistry(
+            metadata=metadata_store,
+            rebac_manager=None,
+            session_factory=record_store.session_factory,
+        )
 
     # Register workspace with overlay config so _get_overlay_config() finds it
     nx._workspace_registry.register_workspace(
@@ -195,19 +152,19 @@ class TestNexusFSOverlayRead:
 
     def test_read_file_from_base_layer(self, nexus_fs, base_content):
         """NexusFS.read() returns content from base layer when file not in upper."""
-        content = nexus_fs.read("/ws/agent-a/src/app.py")
+        content = nexus_fs.sys_read("/ws/agent-a/src/app.py")
         assert content == base_content["src/app.py"]
 
     def test_read_all_base_files(self, nexus_fs, base_content):
         """All base layer files are readable through NexusFS."""
         for rel_path, expected in base_content.items():
-            content = nexus_fs.read(f"/ws/agent-a/{rel_path}")
+            content = nexus_fs.sys_read(f"/ws/agent-a/{rel_path}")
             assert content == expected, f"Mismatch for {rel_path}"
 
     def test_read_upper_layer_overrides_base(self, nexus_fs, metadata_store, local_backend):
         """File written to upper layer overrides base layer on read."""
         new_content = b"def main():\n    print('updated!')\n"
-        new_hash = local_backend.write_content(new_content).unwrap()
+        new_hash = local_backend.write_content(new_content).content_hash
 
         # Write to upper layer (metadata store)
         metadata_store.put(
@@ -222,18 +179,18 @@ class TestNexusFSOverlayRead:
         )
 
         # NexusFS should return upper layer content
-        content = nexus_fs.read("/ws/agent-a/src/app.py")
+        content = nexus_fs.sys_read("/ws/agent-a/src/app.py")
         assert content == new_content
 
     def test_read_nonexistent_file_raises(self, nexus_fs):
         """Reading a file that doesn't exist in base or upper raises error."""
         with pytest.raises(NexusFileNotFoundError):
-            nexus_fs.read("/ws/agent-a/nonexistent.py")
+            nexus_fs.sys_read("/ws/agent-a/nonexistent.py")
 
     def test_read_outside_overlay_workspace_raises(self, nexus_fs):
         """Reading outside the overlay workspace path raises error (no metadata)."""
         with pytest.raises(NexusFileNotFoundError):
-            nexus_fs.read("/other/path/file.txt")
+            nexus_fs.sys_read("/other/path/file.txt")
 
 
 # ---------------------------------------------------------------------------
@@ -247,33 +204,33 @@ class TestNexusFSOverlayWrite:
     def test_write_new_file_in_overlay_workspace(self, nexus_fs):
         """Writing a new file creates an upper layer entry."""
         new_content = b"print('new file')\n"
-        nexus_fs.write("/ws/agent-a/new_module.py", new_content)
+        nexus_fs.sys_write("/ws/agent-a/new_module.py", new_content)
 
         # Should be readable back
-        content = nexus_fs.read("/ws/agent-a/new_module.py")
+        content = nexus_fs.sys_read("/ws/agent-a/new_module.py")
         assert content == new_content
 
     def test_write_overrides_base_file(self, nexus_fs, base_content):
         """Writing to a base-layer path creates upper entry that overrides base."""
         # First verify base content
-        original = nexus_fs.read("/ws/agent-a/config.yaml")
+        original = nexus_fs.sys_read("/ws/agent-a/config.yaml")
         assert original == base_content["config.yaml"]
 
         # Write new content
         new_content = b"debug: false\nport: 9090\n"
-        nexus_fs.write("/ws/agent-a/config.yaml", new_content)
+        nexus_fs.sys_write("/ws/agent-a/config.yaml", new_content)
 
         # Should now return new content
-        content = nexus_fs.read("/ws/agent-a/config.yaml")
+        content = nexus_fs.sys_read("/ws/agent-a/config.yaml")
         assert content == new_content
 
     def test_write_then_read_base_files_still_work(self, nexus_fs, base_content):
         """Writing one file doesn't affect other base layer files."""
-        nexus_fs.write("/ws/agent-a/config.yaml", b"updated config\n")
+        nexus_fs.sys_write("/ws/agent-a/config.yaml", b"updated config\n")
 
         # Other base files should still be readable
-        assert nexus_fs.read("/ws/agent-a/src/utils.py") == base_content["src/utils.py"]
-        assert nexus_fs.read("/ws/agent-a/README.md") == base_content["README.md"]
+        assert nexus_fs.sys_read("/ws/agent-a/src/utils.py") == base_content["src/utils.py"]
+        assert nexus_fs.sys_read("/ws/agent-a/README.md") == base_content["README.md"]
 
 
 # ---------------------------------------------------------------------------
@@ -287,31 +244,31 @@ class TestNexusFSOverlayDelete:
     def test_delete_base_file_creates_whiteout(self, nexus_fs):
         """Deleting a base-layer file creates a whiteout marker."""
         # File exists in base
-        content = nexus_fs.read("/ws/agent-a/README.md")
+        content = nexus_fs.sys_read("/ws/agent-a/README.md")
         assert content is not None
 
         # Delete it (should create whiteout)
-        result = nexus_fs.delete("/ws/agent-a/README.md")
+        result = nexus_fs.sys_unlink("/ws/agent-a/README.md")
         assert result is not None
         assert result.get("overlay_whiteout") is True
 
         # Now reading should raise FileNotFoundError
         with pytest.raises(NexusFileNotFoundError):
-            nexus_fs.read("/ws/agent-a/README.md")
+            nexus_fs.sys_read("/ws/agent-a/README.md")
 
     def test_delete_upper_file_removes_normally(self, nexus_fs):
         """Deleting a file that exists only in upper layer removes it normally."""
         # Write a new file (upper only)
-        nexus_fs.write("/ws/agent-a/temp.py", b"temp content\n")
-        assert nexus_fs.read("/ws/agent-a/temp.py") == b"temp content\n"
+        nexus_fs.sys_write("/ws/agent-a/temp.py", b"temp content\n")
+        assert nexus_fs.sys_read("/ws/agent-a/temp.py") == b"temp content\n"
 
         # Delete it — this is a normal delete (not whiteout)
-        result = nexus_fs.delete("/ws/agent-a/temp.py")
+        result = nexus_fs.sys_unlink("/ws/agent-a/temp.py")
         assert result is not None
 
         # Should no longer be readable
         with pytest.raises(NexusFileNotFoundError):
-            nexus_fs.read("/ws/agent-a/temp.py")
+            nexus_fs.sys_read("/ws/agent-a/temp.py")
 
 
 # ---------------------------------------------------------------------------
@@ -324,13 +281,13 @@ class TestNonOverlayPathUnaffected:
 
     def test_write_and_read_non_overlay_path(self, nexus_fs):
         """Paths outside the overlay workspace go through normal NexusFS flow."""
-        nexus_fs.write("/regular/test.txt", b"hello world\n")
-        content = nexus_fs.read("/regular/test.txt")
+        nexus_fs.sys_write("/regular/test.txt", b"hello world\n")
+        content = nexus_fs.sys_read("/regular/test.txt")
         assert content == b"hello world\n"
 
     def test_delete_non_overlay_path(self, nexus_fs):
         """Delete on non-overlay path works normally."""
-        nexus_fs.write("/regular/to_delete.txt", b"goodbye\n")
-        result = nexus_fs.delete("/regular/to_delete.txt")
+        nexus_fs.sys_write("/regular/to_delete.txt", b"goodbye\n")
+        result = nexus_fs.sys_unlink("/regular/to_delete.txt")
         assert result is not None
         assert "overlay_whiteout" not in (result or {})

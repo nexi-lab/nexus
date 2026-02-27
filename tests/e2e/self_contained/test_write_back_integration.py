@@ -51,10 +51,10 @@ def mock_gateway(record_store):
     # Mock backend that records write_content calls
     mock_backend = MagicMock()
     mock_backend.name = "test_gcs"
-    write_response = MagicMock()
-    write_response.success = True
-    write_response.data = "new_content_hash"
-    mock_backend.write_content.return_value = write_response
+    mock_backend.capabilities = frozenset()  # No special capabilities — eligible for write-back
+    from nexus.core.object_store import WriteResult
+
+    mock_backend.write_content.return_value = WriteResult(content_hash="new_content_hash", size=11)
 
     gw.get_mount_for_path.return_value = {
         "mount_point": "/mnt/gcs",
@@ -74,7 +74,7 @@ def mock_gateway(record_store):
         }
     ]
     gw.metadata_get.return_value = MagicMock(mtime=datetime.now(UTC), content_hash="abc", size=1024)
-    gw.read.return_value = b"hello world"
+    gw.sys_read.return_value = b"hello world"
     return gw
 
 
@@ -375,8 +375,8 @@ class TestConflictIntegration:
         await service._process_all_backends()
 
         # Both conflict copy AND backend write should happen
-        mock_gateway.write.assert_called_once()
-        conflict_path = mock_gateway.write.call_args[0][0]
+        mock_gateway.sys_write.assert_called_once()
+        conflict_path = mock_gateway.sys_write.call_args[0][0]
         assert ".sync-conflict-" in conflict_path
 
         backend.write_content.assert_called_once()
@@ -507,3 +507,86 @@ class TestMultiZoneIntegration:
 
         backend = mock_gateway.get_mount_for_path.return_value["backend"]
         assert backend.write_content.call_count == 2
+
+
+# =============================================================================
+# External Content (Reference-Mode) Skip Tests
+# =============================================================================
+
+
+class TestExternalContentSkip:
+    """Write-back should skip external-content backends like LocalConnector."""
+
+    @pytest.mark.asyncio
+    async def test_skip_external_content_backends(self, mock_event_bus):
+        """Write-back should skip events from external-content backends (LocalConnector)."""
+        # Setup gateway where mount returns a backend with EXTERNAL_CONTENT capability
+        # (external-content backends like LocalConnector manage content externally,
+        # so write-back would double-write or be meaningless)
+        gw = MagicMock()
+        store = SQLAlchemyRecordStore(db_url="sqlite:///:memory:", create_tables=True)
+
+        mock_backend = MagicMock()
+        mock_backend.name = "test_local"
+        mock_backend.capabilities = frozenset(
+            {"external_content"}
+        )  # Triggers skip in _on_file_event
+
+        gw.get_mount_for_path.return_value = {
+            "mount_point": "/mnt/local",
+            "backend": mock_backend,
+            "backend_path": "docs/readme.md",
+            "readonly": False,
+            "backend_name": "test_local",
+            "conflict_strategy": None,
+        }
+
+        backlog_store = SyncBacklogStore(record_store=store)
+        change_log_store = ChangeLogStore(record_store=store)
+
+        service = WriteBackService(
+            gateway=gw,
+            event_bus=mock_event_bus,
+            backlog_store=backlog_store,
+            change_log_store=change_log_store,
+        )
+
+        # Fire a FILE_WRITE event
+        event = FileEvent(
+            type=FileEventType.FILE_WRITE,
+            path="/mnt/local/docs/readme.md",
+            zone_id="root",
+            etag="abc123",
+        )
+        await service._on_file_event(event)
+
+        # Assert backlog_store.enqueue() was NOT called — no pending entries
+        entries = backlog_store.fetch_pending("test_local", "root")
+        assert len(entries) == 0
+
+        store.close()
+
+    @pytest.mark.asyncio
+    async def test_non_external_content_backends_still_enqueued(self, mock_gateway, mock_event_bus):
+        """Write-back should still enqueue events from non-external-content backends (e.g. GCS)."""
+        backlog_store = SyncBacklogStore(record_store=mock_gateway.record_store)
+        change_log_store = ChangeLogStore(record_store=mock_gateway.record_store)
+
+        service = WriteBackService(
+            gateway=mock_gateway,
+            event_bus=mock_event_bus,
+            backlog_store=backlog_store,
+            change_log_store=change_log_store,
+        )
+
+        # Default mock_gateway backend has no EXTERNAL_CONTENT capability — eligible for write-back
+        event = FileEvent(
+            type=FileEventType.FILE_WRITE,
+            path="/mnt/gcs/project/file.txt",
+            zone_id="root",
+            etag="abc123",
+        )
+        await service._on_file_event(event)
+
+        entries = backlog_store.fetch_pending("test_gcs", "root")
+        assert len(entries) == 1

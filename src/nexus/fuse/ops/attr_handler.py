@@ -63,7 +63,7 @@ class AttrHandler:
             import grp
             import pwd
 
-            if not ctx.nexus_fs.exists(original_path):
+            if not ctx.nexus_fs.sys_access(original_path):
                 raise FuseOSError(errno.ENOENT)
 
             if uid != -1:
@@ -103,8 +103,8 @@ class AttrHandler:
         # If called via ftruncate (with fh), auth was at open().
         write_ctx = None if fh is not None else ctx.context
 
-        if ctx.nexus_fs.exists(original_path):
-            raw_content = ctx.nexus_fs.read(original_path, context=write_ctx)
+        if ctx.nexus_fs.sys_access(original_path):
+            raw_content = ctx.nexus_fs.sys_read(original_path, context=write_ctx)
             assert isinstance(raw_content, bytes), "Expected bytes from read()"
             content = raw_content
         else:
@@ -115,7 +115,7 @@ class AttrHandler:
         else:
             content += b"\x00" * (length - len(content))
 
-        ctx.nexus_fs.write(original_path, content, context=write_ctx)
+        ctx.nexus_fs.sys_write(original_path, content, context=write_ctx)
 
         ctx.cache.invalidate_path(original_path)
         if path != original_path:

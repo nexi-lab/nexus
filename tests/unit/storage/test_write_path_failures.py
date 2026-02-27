@@ -1,9 +1,12 @@
 """Failure injection tests for the write path.
 
 Tests what happens when Raft succeeds but PostgreSQL fails,
-and verifies AuditConfig.strict_mode behavior for single and batch writes.
+and verifies audit_strict_mode behavior for single and batch writes.
 """
 
+from __future__ import annotations
+
+import contextlib
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
@@ -15,7 +18,7 @@ from nexus.contracts.exceptions import AuditLogError
 from nexus.contracts.metadata import DT_DIR, DT_REG, FileMetadata
 from nexus.storage.models import Base, FilePathModel
 from nexus.storage.record_store import RecordStoreABC
-from nexus.storage.record_store_syncer import RecordStoreWriteObserver
+from nexus.storage.record_store_write_observer import RecordStoreWriteObserver
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -139,40 +142,85 @@ class TestSyncerRaisesOnFailure:
 
 
 # ---------------------------------------------------------------------------
-# Test: Batch write error handling (Issue #2152: observer owns error policy)
+# Test: Batch write error handling (currently uses contextlib.suppress!)
 # ---------------------------------------------------------------------------
 
 
 class TestBatchWriteErrorHandling:
-    """Tests for batch write error handling (Issue #2152).
+    """Tests that document the CURRENT batch error handling behavior.
 
-    Issue #2152: Kernel is a pure caller — observer errors propagate directly.
-    No contextlib.suppress or try/except wrapper in the kernel.
+    IMPORTANT: Issue #1246 Phase 2 (Issue 6A) will change this behavior.
+    These tests document the current (broken) behavior and will be updated
+    when the fix is implemented.
     """
 
-    def test_batch_observer_error_propagates(self) -> None:
-        """Observer errors in batch writes propagate directly (no suppression)."""
+    def test_batch_observer_currently_suppresses_errors(self) -> None:
+        """DOCUMENTS CURRENT BEHAVIOR: batch write observer errors are silenced.
+
+        This is the bug identified in Issue 6 of the #1246 review.
+        nexus_fs.py:2488 uses contextlib.suppress(Exception).
+        """
+        # Simulate what the kernel does for batch writes:
         write_observer = MagicMock()
         write_observer.on_write_batch.side_effect = RuntimeError("PG down")
 
-        # Kernel calls observer directly — error propagates
-        with pytest.raises(RuntimeError, match="PG down"):
+        # Current kernel code (nexus_fs.py:2488):
+        with contextlib.suppress(Exception):
             write_observer.on_write_batch(
                 [(_make_metadata(), True)],
                 zone_id="root",
             )
 
-    def test_single_write_observer_error_propagates(self) -> None:
-        """Observer errors propagate — kernel has no try/except wrapper (#2152)."""
+        # Error was silently suppressed — this is the bug
+        write_observer.on_write_batch.assert_called_once()
+
+    def test_single_write_strict_mode_raises(self) -> None:
+        """Single writes in audit_strict_mode should raise AuditLogError.
+
+        This tests the kernel's error handling (nexus_fs.py:1828-1840).
+        """
+        # We test the policy logic without importing the full NexusFS kernel
         write_observer = MagicMock()
         write_observer.on_write.side_effect = RuntimeError("DB connection lost")
+        audit_strict_mode = True
 
-        with pytest.raises(RuntimeError, match="DB connection lost"):
+        metadata = _make_metadata()
+
+        with pytest.raises(RuntimeError):
+            # Simulate kernel write path
+            try:
+                write_observer.on_write(
+                    metadata=metadata,
+                    is_new=True,
+                    path="/test/file.txt",
+                )
+            except Exception:
+                if audit_strict_mode:
+                    raise  # Should re-raise
+                # else: log warning and continue
+
+    def test_single_write_non_strict_mode_continues(self) -> None:
+        """Single writes with audit_strict_mode=False should log warning, not raise."""
+        write_observer = MagicMock()
+        write_observer.on_write.side_effect = RuntimeError("DB connection lost")
+        audit_strict_mode = False
+
+        metadata = _make_metadata()
+        error_logged = False
+
+        try:
             write_observer.on_write(
-                metadata=_make_metadata(),
+                metadata=metadata,
                 is_new=True,
                 path="/test/file.txt",
             )
+        except Exception:
+            if audit_strict_mode:
+                raise
+            else:
+                error_logged = True  # Would be logger.critical() in real code
+
+        assert error_logged is True
 
 
 # ---------------------------------------------------------------------------

@@ -139,10 +139,12 @@ class TestObjectIdentity:
 class TestZeroDependency:
     """Verify contracts/ modules are leaf modules with no nexus.* runtime imports."""
 
-    def test_contracts_types_has_zero_nexus_imports(self):
+    def test_contracts_types_has_zero_external_nexus_imports(self):
         mod_path = Path(importlib.import_module("nexus.contracts.types").__file__)
         imports = _get_runtime_nexus_imports(mod_path)
-        assert imports == [], f"contracts/types.py has runtime nexus imports: {imports}"
+        # Intra-package imports (nexus.contracts.*) are allowed
+        external = [i for i in imports if not i.startswith("nexus.contracts.")]
+        assert external == [], f"contracts/types.py has external runtime nexus imports: {external}"
 
     def test_contracts_exceptions_has_zero_nexus_imports(self):
         mod_path = Path(importlib.import_module("nexus.contracts.exceptions").__file__)

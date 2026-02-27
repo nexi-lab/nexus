@@ -1,4 +1,4 @@
-"""Edge case tests for TokenManager (server/auth/token_manager.py).
+"""Edge case tests for TokenManager (bricks/auth/oauth/token_manager.py).
 
 Phase 0 safety net: tests before moving TokenManager to auth brick.
 Covers:
@@ -23,10 +23,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from nexus.bricks.auth.oauth.token_manager import TokenManager
 from nexus.bricks.auth.oauth.types import OAuthCredential
-from nexus.bricks.cache.inmemory import InMemoryCacheStore
+from nexus.cache.inmemory import InMemoryCacheStore
 from nexus.contracts.exceptions import AuthenticationError
-from nexus.server.auth.token_manager import TokenManager
 
 # ---------------------------------------------------------------------------
 # Fixtures

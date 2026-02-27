@@ -283,7 +283,7 @@ class FirecrawlClient:
         """
         client = self._get_client()
 
-        response = await client.delete(f"{self.base_url}/crawl/{job_id}")
+        response = await client.sys_unlink(f"{self.base_url}/crawl/{job_id}")
         response.raise_for_status()
         data = response.json()
 

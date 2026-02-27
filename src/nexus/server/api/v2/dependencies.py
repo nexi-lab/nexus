@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 from fastapi import Depends, HTTPException, Request
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.protocols.vfs_core import VFSCoreProtocol
 from nexus.server.dependencies import get_operation_context, require_auth
 from nexus.services.protocols.llm_provider import LLMProviderProtocol
@@ -77,7 +77,7 @@ def _get_ace_context(nexus_fs: Any, auth_result: dict[str, Any]) -> ACEContext:
         backend=nexus_fs.memory.backend,
         user_id=context.user_id or "anonymous",
         agent_id=getattr(context, "agent_id", None),
-        zone_id=context.zone_id or "root",
+        zone_id=context.zone_id or ROOT_ZONE_ID,
         context=context,
     )
 
@@ -312,7 +312,7 @@ async def get_operation_logger(
     from nexus.storage.operation_logger import OperationLogger
 
     context = get_operation_context(auth_result)
-    _record_store = nexus_fs.record_store
+    _record_store = getattr(nexus_fs, "_record_store", None)
     session_factory = (
         _record_store.session_factory if _record_store is not None else nexus_fs.SessionLocal
     )

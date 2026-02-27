@@ -128,8 +128,8 @@ curl http://localhost:2026/health
 
 # Test from Python
 python -c "
-from nexus.remote import RemoteNexusFS
-nx = RemoteNexusFS('http://localhost:2026', api_key='demo-key-12345')
+import nexus
+nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": "demo-key-12345"})
 nx.write('/test.txt', b'Hello from Claude!')
 print('✓ Connected to Nexus server')
 "

@@ -12,7 +12,7 @@ from datetime import datetime
 
 import pytest
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.server.api.v2.routers.reputation import (
     _VALID_DIMENSIONS,
     TrustScoreResponse,

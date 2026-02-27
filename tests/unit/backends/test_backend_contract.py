@@ -6,12 +6,13 @@ from typing import Any
 import pytest
 
 from nexus.backends.backend import Backend
+from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
+from nexus.core.object_store import WriteResult
 from nexus.core.protocols.connector import (
     ConnectorProtocol,
     ContentStoreProtocol,
     DirectoryOpsProtocol,
 )
-from nexus.lib.response import HandlerResponse
 
 
 class _MockBackend(Backend):
@@ -29,70 +30,57 @@ class _MockBackend(Backend):
     def _hash(self, content: bytes) -> str:
         return hashlib.sha256(content).hexdigest()
 
-    def write_content(self, content: bytes, context: Any = None) -> HandlerResponse[str]:
+    def write_content(self, content: bytes, context: Any = None) -> WriteResult:
         content_hash = self._hash(content)
         if content_hash in self._content:
             self._ref_counts[content_hash] += 1
         else:
             self._content[content_hash] = content
             self._ref_counts[content_hash] = 1
-        return HandlerResponse.ok(data=content_hash, backend_name="mock")
+        return WriteResult(content_hash=content_hash, size=len(content))
 
-    def read_content(self, content_hash: str, context: Any = None) -> HandlerResponse[bytes]:
+    def read_content(self, content_hash: str, context: Any = None) -> bytes:
         if content_hash not in self._content:
-            return HandlerResponse.not_found(
-                path=content_hash, message="Content not found", backend_name="mock"
-            )
-        return HandlerResponse.ok(data=self._content[content_hash], backend_name="mock")
+            raise NexusFileNotFoundError(content_hash)
+        return self._content[content_hash]
 
-    def delete_content(self, content_hash: str, context: Any = None) -> HandlerResponse[None]:
+    def delete_content(self, content_hash: str, context: Any = None) -> None:
         if content_hash not in self._content:
-            return HandlerResponse.not_found(
-                path=content_hash, message="Content not found", backend_name="mock"
-            )
+            raise NexusFileNotFoundError(content_hash)
         self._ref_counts[content_hash] -= 1
         if self._ref_counts[content_hash] <= 0:
             del self._content[content_hash]
             del self._ref_counts[content_hash]
-        return HandlerResponse.ok(data=None, backend_name="mock")
 
-    def content_exists(self, content_hash: str, context: Any = None) -> HandlerResponse[bool]:
-        return HandlerResponse.ok(data=content_hash in self._content, backend_name="mock")
+    def content_exists(self, content_hash: str, context: Any = None) -> bool:
+        return content_hash in self._content
 
-    def get_content_size(self, content_hash: str, context: Any = None) -> HandlerResponse[int]:
+    def get_content_size(self, content_hash: str, context: Any = None) -> int:
         if content_hash not in self._content:
-            return HandlerResponse.not_found(
-                path=content_hash, message="Content not found", backend_name="mock"
-            )
-        return HandlerResponse.ok(data=len(self._content[content_hash]), backend_name="mock")
+            raise NexusFileNotFoundError(content_hash)
+        return len(self._content[content_hash])
 
-    def get_ref_count(self, content_hash: str, context: Any = None) -> HandlerResponse[int]:
-        return HandlerResponse.ok(data=self._ref_counts.get(content_hash, 0), backend_name="mock")
+    def get_ref_count(self, content_hash: str, context: Any = None) -> int:
+        return self._ref_counts.get(content_hash, 0)
 
     def mkdir(
         self, path: str, parents: bool = False, exist_ok: bool = False, context: Any = None
-    ) -> HandlerResponse[None]:
+    ) -> None:
         if path in self._dirs and not exist_ok:
-            return HandlerResponse.error("Directory exists", code=409, backend_name="mock")
+            raise BackendError("Directory exists", backend="mock")
         self._dirs.add(path)
         if parents:
             parts = path.strip("/").split("/")
             for i in range(1, len(parts)):
                 self._dirs.add("/" + "/".join(parts[:i]))
-        return HandlerResponse.ok(data=None, backend_name="mock")
 
-    def rmdir(
-        self, path: str, recursive: bool = False, context: Any = None
-    ) -> HandlerResponse[None]:
+    def rmdir(self, path: str, recursive: bool = False, context: Any = None) -> None:
         if path not in self._dirs:
-            return HandlerResponse.not_found(
-                path=path, message="Directory not found", backend_name="mock"
-            )
+            raise NexusFileNotFoundError(path)
         self._dirs.discard(path)
-        return HandlerResponse.ok(data=None, backend_name="mock")
 
-    def is_directory(self, path: str, context: Any = None) -> HandlerResponse[bool]:
-        return HandlerResponse.ok(data=path in self._dirs, backend_name="mock")
+    def is_directory(self, path: str, context: Any = None) -> bool:
+        return path in self._dirs
 
 
 class _IncompleteBackend:
@@ -134,74 +122,65 @@ class TestBackendContract:
 
     def test_write_then_read_roundtrip(self, backend: Backend) -> None:
         content = b"hello world"
-        write_resp = backend.write_content(content)
-        assert write_resp.success
-        content_hash = write_resp.data
+        write_result = backend.write_content(content)
+        content_hash = write_result.content_hash
         assert content_hash is not None
-        read_resp = backend.read_content(content_hash)
-        assert read_resp.success
-        assert read_resp.data == content
+        data = backend.read_content(content_hash)
+        assert data == content
 
     def test_content_exists_after_write(self, backend: Backend) -> None:
         content = b"test exists"
-        content_hash = backend.write_content(content).data
+        content_hash = backend.write_content(content).content_hash
         assert content_hash is not None
-        exists_resp = backend.content_exists(content_hash)
-        assert exists_resp.success
-        assert exists_resp.data is True
+        assert backend.content_exists(content_hash) is True
 
     def test_content_not_exists_for_unknown(self, backend: Backend) -> None:
-        exists_resp = backend.content_exists("0" * 64)
-        assert exists_resp.success
-        assert exists_resp.data is False
+        assert backend.content_exists("0" * 64) is False
 
     def test_delete_removes_content(self, backend: Backend) -> None:
         content = b"delete me"
-        content_hash = backend.write_content(content).data
+        content_hash = backend.write_content(content).content_hash
         assert content_hash is not None
-        del_resp = backend.delete_content(content_hash)
-        assert del_resp.success
-        assert backend.content_exists(content_hash).data is False
+        backend.delete_content(content_hash)
+        assert backend.content_exists(content_hash) is False
 
     def test_write_is_idempotent(self, backend: Backend) -> None:
         """CAS: writing same content twice returns same hash."""
         content = b"idempotent data"
-        resp1 = backend.write_content(content)
-        resp2 = backend.write_content(content)
-        assert resp1.data is not None
-        assert resp2.data is not None
-        assert resp1.data == resp2.data
+        result1 = backend.write_content(content)
+        result2 = backend.write_content(content)
+        assert result1.content_hash is not None
+        assert result2.content_hash is not None
+        assert result1.content_hash == result2.content_hash
 
     def test_get_content_size_correct(self, backend: Backend) -> None:
         content = b"measure me"
-        content_hash = backend.write_content(content).data
+        content_hash = backend.write_content(content).content_hash
         assert content_hash is not None
-        size_resp = backend.get_content_size(content_hash)
-        assert size_resp.success
-        assert size_resp.data == len(content)
+        size = backend.get_content_size(content_hash)
+        assert size == len(content)
 
     def test_get_ref_count_after_writes(self, backend: Backend) -> None:
         content = b"ref counting"
         backend.write_content(content)
-        content_hash = backend.write_content(content).data  # Second write
+        content_hash = backend.write_content(content).content_hash  # Second write
         assert content_hash is not None
-        ref_resp = backend.get_ref_count(content_hash)
-        assert ref_resp.success
-        assert ref_resp.data is not None
-        assert ref_resp.data >= 2
+        ref_count = backend.get_ref_count(content_hash)
+        assert ref_count is not None
+        assert ref_count >= 2
 
     def test_read_nonexistent_content_fails(self, backend: Backend) -> None:
-        read_resp = backend.read_content("a" * 64)
-        assert not read_resp.success
+        with pytest.raises((NexusFileNotFoundError, BackendError)):
+            backend.read_content("a" * 64)
 
     def test_delete_nonexistent_is_safe(self, backend: Backend) -> None:
-        """Deleting non-existent content should not raise."""
-        del_resp = backend.delete_content("b" * 64)
-        assert not del_resp.success
+        """Deleting non-existent content should raise."""
+        with pytest.raises((NexusFileNotFoundError, BackendError)):
+            backend.delete_content("b" * 64)
 
     def test_batch_read_partial_missing(self, backend: Backend) -> None:
         content = b"batch test"
-        real_hash = backend.write_content(content).data
+        real_hash = backend.write_content(content).content_hash
         assert real_hash is not None
         fake_hash = "c" * 64
         results = backend.batch_read_content([real_hash, fake_hash])
@@ -211,28 +190,23 @@ class TestBackendContract:
     # -- Directory Operations --
 
     def test_mkdir_creates_directory(self, backend: Backend) -> None:
-        resp = backend.mkdir("/testdir", exist_ok=True)
-        assert resp.success
-        is_dir_resp = backend.is_directory("/testdir")
-        assert is_dir_resp.success
-        assert is_dir_resp.data is True
+        backend.mkdir("/testdir", exist_ok=True)
+        assert backend.is_directory("/testdir") is True
 
     def test_rmdir_removes_directory(self, backend: Backend) -> None:
         backend.mkdir("/toremove", exist_ok=True)
-        assert backend.rmdir("/toremove").success
-        assert backend.is_directory("/toremove").data is False
+        backend.rmdir("/toremove")
+        assert backend.is_directory("/toremove") is False
 
     def test_is_directory_false_for_nonexistent(self, backend: Backend) -> None:
-        resp = backend.is_directory("/nonexistent")
-        assert resp.success
-        assert resp.data is False
+        assert backend.is_directory("/nonexistent") is False
 
     def test_mkdir_parents(self, backend: Backend) -> None:
-        assert backend.mkdir("/a/b/c", parents=True, exist_ok=True).success
+        backend.mkdir("/a/b/c", parents=True, exist_ok=True)
 
     def test_mkdir_exist_ok(self, backend: Backend) -> None:
         backend.mkdir("/existing", exist_ok=True)
-        assert backend.mkdir("/existing", exist_ok=True).success
+        backend.mkdir("/existing", exist_ok=True)
 
     # -- Capability Flags --
 
@@ -241,7 +215,6 @@ class TestBackendContract:
         assert isinstance(backend.is_connected, bool)
         assert isinstance(backend.is_passthrough, bool)
         assert isinstance(backend.has_root_path, bool)
-        assert isinstance(backend.has_virtual_filesystem, bool)
         assert isinstance(backend.has_token_manager, bool)
 
     def test_name_returns_string(self, backend: Backend) -> None:
@@ -274,12 +247,12 @@ class TestBackendContract:
 
     def test_write_with_context(self, backend: Backend) -> None:
         """Passing context=None should not crash."""
-        assert backend.write_content(b"ctx test", context=None).success
+        backend.write_content(b"ctx test", context=None)
 
     def test_read_with_context(self, backend: Backend) -> None:
-        content_hash = backend.write_content(b"ctx read", context=None).data
+        content_hash = backend.write_content(b"ctx read", context=None).content_hash
         assert content_hash is not None
-        assert backend.read_content(content_hash, context=None).success
+        backend.read_content(content_hash, context=None)
 
 
 class TestLocalBackendSpecific:

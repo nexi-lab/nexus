@@ -8,7 +8,7 @@ import pytest
 
 from nexus.bricks.skills.exceptions import SkillPermissionDeniedError
 from nexus.bricks.skills.importer import SkillImporter, SkillImportError
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext
 
 # Mock SKILL.md content with valid YAML frontmatter
@@ -129,9 +129,9 @@ def mock_filesystem():
     """Create a mock filesystem."""
     mock_fs = MagicMock()
     mock_fs.stat = MagicMock(return_value=None)  # File doesn't exist (no conflict)
-    mock_fs.exists = MagicMock(return_value=False)  # File doesn't exist (no conflict)
-    mock_fs.mkdir = MagicMock()
-    mock_fs.write = MagicMock()
+    mock_fs.sys_access = MagicMock(return_value=False)  # File doesn't exist (no conflict)
+    mock_fs.sys_mkdir = MagicMock()
+    mock_fs.sys_write = MagicMock()
     return mock_fs
 
 
@@ -317,7 +317,7 @@ class TestSkillImporter:
         zip_data = create_mock_skill_zip("test-skill", VALID_SKILL_MD)
 
         # Mock exists to return True (file exists)
-        importer._filesystem.exists = MagicMock(return_value=True)
+        importer._filesystem.sys_access = MagicMock(return_value=True)
 
         with pytest.raises(SkillImportError, match="already exist"):
             await importer.import_from_zip(
@@ -333,7 +333,7 @@ class TestSkillImporter:
         zip_data = create_mock_skill_zip("test-skill", VALID_SKILL_MD)
 
         # Mock exists to return True (file exists)
-        importer._filesystem.exists = MagicMock(return_value=True)
+        importer._filesystem.sys_access = MagicMock(return_value=True)
 
         # Should succeed with overwrite=True
         result = await importer.import_from_zip(

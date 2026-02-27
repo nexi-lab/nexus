@@ -32,6 +32,7 @@ from nexus.cli.commands import (
     metadata,
     migrate,
     mounts,
+    network,
     oauth,
     operations,
     plugins,
@@ -40,6 +41,7 @@ from nexus.cli.commands import (
     search,
     server,
     skills,
+    tls,
     versions,
     work,
     workflows,
@@ -83,6 +85,8 @@ def register_all_commands(cli: click.Group) -> None:
     cli.add_command(zone_mod.zone)  # v0.8.0: Zone federation + portability (Issue #1161, #1326)
     migrate.register_commands(cli)  # v1.0.0: Migration tools (Issue #165)
     context.register_commands(cli)  # Issue #1315: Context versioning
+    network.register_commands(cli)  # WireGuard mesh network for federation
+    tls.register_commands(cli)  # Issue #1250: TLS cert management for federation
 
 
 __all__ = [
@@ -112,5 +116,7 @@ __all__ = [
     "operations",
     "workflows",
     "context",  # Issue #1315: Context versioning
+    "network",  # WireGuard mesh network for federation
+    "tls",  # Issue #1250: TLS cert management
     "zone_mod",  # zone.py (federation + portability CLI)
 ]

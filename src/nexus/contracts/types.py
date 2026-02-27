@@ -1,9 +1,8 @@
 """Tier-neutral domain types for the Nexus VFS (Issue #1501).
 
 Canonical home for shared types imported by 72+ files across the codebase.
-This module has **zero** runtime imports from ``nexus.*`` --- only stdlib --- so
-bricks, services, and backends can depend on it without pulling in kernel
-internals.
+This module has zero runtime ``nexus.*`` imports --- no kernel internals ---
+so bricks, services, and backends can depend on it safely.
 
 Types:
     - ``Permission``: IntFlag for file operation permissions (read/write/execute/traverse).
@@ -19,6 +18,8 @@ from dataclasses import asdict, dataclass, field
 from enum import IntFlag, StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from nexus.contracts.constants import ROOT_ZONE_ID
+
 if TYPE_CHECKING:
     from nexus.storage.read_set import ReadSet
 
@@ -33,19 +34,19 @@ class VFSOperations(Protocol):
     never import from ``nexus.core`` at runtime.
     """
 
-    def mkdir(
+    def sys_mkdir(
         self, path: str, parents: bool = False, exist_ok: bool = False, context: Any = None
     ) -> None: ...
 
-    def write(self, path: str, content: bytes | str, context: Any = None, **kw: Any) -> Any: ...
+    def sys_write(self, path: str, content: bytes | str, context: Any = None, **kw: Any) -> Any: ...
 
-    def read(self, path: str, context: Any = None, **kw: Any) -> bytes: ...
+    def sys_read(self, path: str, context: Any = None, **kw: Any) -> bytes: ...
 
-    def exists(self, path: str, context: Any = None) -> bool: ...
+    def sys_access(self, path: str, context: Any = None) -> bool: ...
 
-    def list(self, path: str = "/", **kw: Any) -> list: ...
+    def sys_readdir(self, path: str = "/", **kw: Any) -> list: ...
 
-    def delete(self, path: str, **kw: Any) -> None: ...
+    def sys_unlink(self, path: str, **kw: Any) -> None: ...
 
 
 class Permission(IntFlag):
@@ -206,7 +207,7 @@ class ContextIdentity:
 
     Replaces the pattern::
 
-        zone_id = getattr(context, "zone_id", None) or "root"
+        zone_id = getattr(context, "zone_id", None) or ROOT_ZONE_ID
         user_id = getattr(context, "user_id", None) or "anonymous"
         is_admin = getattr(context, "is_admin", False)
 
@@ -230,9 +231,9 @@ def extract_context_identity(context: OperationContext | None) -> ContextIdentit
         Frozen ContextIdentity with zone_id, user_id, is_admin.
     """
     if context is None:
-        return ContextIdentity(zone_id="root", user_id="anonymous", is_admin=False)
+        return ContextIdentity(zone_id=ROOT_ZONE_ID, user_id="anonymous", is_admin=False)
     return ContextIdentity(
-        zone_id=getattr(context, "zone_id", None) or "root",
+        zone_id=getattr(context, "zone_id", None) or ROOT_ZONE_ID,
         user_id=(
             getattr(context, "user_id", None) or getattr(context, "subject_id", None) or "anonymous"
         ),
@@ -343,3 +344,31 @@ class SnapshotId:
     """Opaque identifier for a transactional snapshot."""
 
     id: str
+
+
+# ---------------------------------------------------------------------------
+# Audit configuration (moved from nexus.core.config, Issue #959)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class AuditConfig:
+    """Audit trail error-policy configuration (Issue #2152).
+
+    Controls what happens when audit logging (RecordStore sync) fails
+    during write operations. This is a P0 compliance concern — separate
+    from permission enforcement (PermissionConfig).
+
+    P0 COMPLIANCE: SOX, HIPAA, GDPR, PCI DSS require complete audit
+    trails. ``strict_mode=True`` (default) ensures writes fail if audit
+    logging fails, preventing silent audit gaps.
+
+    Note on async observers: ``strict_mode`` is enforced by the
+    synchronous ``RecordStoreWriteObserver``. The async
+    ``PipedRecordStoreWriteObserver`` enqueues events into a DT_PIPE
+    where the enqueue path cannot fail; actual error handling
+    (retry + drop) is managed by the background consumer, not by
+    ``strict_mode``.
+    """
+
+    strict_mode: bool = True

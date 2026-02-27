@@ -5,8 +5,8 @@ Covers boundary conditions, error handling, and unusual inputs.
 
 import pytest
 
-from nexus.bricks.cache.inmemory import InMemoryCacheStore
-from nexus.bricks.cache.settings import CacheSettings
+from nexus.cache.inmemory import InMemoryCacheStore
+from nexus.cache.settings import CacheSettings
 
 # ---------------------------------------------------------------------------
 # Null store fallback on failure
@@ -19,7 +19,7 @@ class TestNullStoreFallback:
     @pytest.mark.asyncio
     async def test_null_store_get_returns_none(self) -> None:
         """NullCacheStore.get() always returns None."""
-        from nexus.bricks.cache.brick import CacheBrick
+        from nexus.cache.brick import CacheBrick
 
         brick = CacheBrick()
         result = await brick.cache_store.get("any_key")
@@ -28,7 +28,7 @@ class TestNullStoreFallback:
     @pytest.mark.asyncio
     async def test_null_store_set_is_noop(self) -> None:
         """NullCacheStore.set() silently does nothing."""
-        from nexus.bricks.cache.brick import CacheBrick
+        from nexus.cache.brick import CacheBrick
 
         brick = CacheBrick()
         await brick.cache_store.set("key", b"value", ttl=300)
@@ -39,7 +39,7 @@ class TestNullStoreFallback:
     @pytest.mark.asyncio
     async def test_pubsub_with_null_store(self) -> None:
         """PubSub with NullCacheStore should return 0 receivers."""
-        from nexus.bricks.cache.brick import CacheBrick
+        from nexus.cache.brick import CacheBrick
 
         brick = CacheBrick()
         count = await brick.cache_store.publish("channel", b"msg")
@@ -57,7 +57,7 @@ class TestKeyValueEdgeCases:
     @pytest.mark.asyncio
     async def test_empty_prefix_handling(self) -> None:
         """Domain caches should handle empty zone_id prefix."""
-        from nexus.bricks.cache.brick import CacheBrick
+        from nexus.cache.brick import CacheBrick
 
         brick = CacheBrick(cache_store=InMemoryCacheStore())
         # Permission cache with empty zone_id
@@ -69,7 +69,7 @@ class TestKeyValueEdgeCases:
     @pytest.mark.asyncio
     async def test_very_long_key_handling(self) -> None:
         """CacheStore should handle very long keys without error."""
-        from nexus.bricks.cache.brick import CacheBrick
+        from nexus.cache.brick import CacheBrick
 
         store = InMemoryCacheStore()
         CacheBrick(cache_store=store)  # Verify brick accepts this store
@@ -81,7 +81,7 @@ class TestKeyValueEdgeCases:
     @pytest.mark.asyncio
     async def test_binary_value_handling(self) -> None:
         """CacheStore should handle binary values correctly."""
-        from nexus.bricks.cache.brick import CacheBrick
+        from nexus.cache.brick import CacheBrick
 
         store = InMemoryCacheStore()
         CacheBrick(cache_store=store)  # Verify brick accepts this store
@@ -93,7 +93,7 @@ class TestKeyValueEdgeCases:
     @pytest.mark.asyncio
     async def test_delete_nonexistent_key(self) -> None:
         """Deleting a non-existent key should return False."""
-        from nexus.bricks.cache.brick import CacheBrick
+        from nexus.cache.brick import CacheBrick
 
         store = InMemoryCacheStore()
         CacheBrick(cache_store=store)  # Verify brick accepts this store
@@ -112,7 +112,7 @@ class TestTTLEdgeCases:
     @pytest.mark.asyncio
     async def test_ttl_zero_means_no_expiry(self) -> None:
         """TTL=None should mean the key never expires."""
-        from nexus.bricks.cache.brick import CacheBrick
+        from nexus.cache.brick import CacheBrick
 
         store = InMemoryCacheStore()
         CacheBrick(cache_store=store)  # Verify brick accepts this store
@@ -123,7 +123,7 @@ class TestTTLEdgeCases:
     @pytest.mark.asyncio
     async def test_ttl_negative_ignored(self) -> None:
         """Negative TTL should still set (implementation may vary)."""
-        from nexus.bricks.cache.brick import CacheBrick
+        from nexus.cache.brick import CacheBrick
 
         store = InMemoryCacheStore()
         CacheBrick(cache_store=store)  # Verify brick accepts this store
@@ -144,7 +144,7 @@ class TestBatchEdgeCases:
     @pytest.mark.asyncio
     async def test_get_many_partial_miss(self) -> None:
         """get_many with mix of hits and misses."""
-        from nexus.bricks.cache.brick import CacheBrick
+        from nexus.cache.brick import CacheBrick
 
         store = InMemoryCacheStore()
         CacheBrick(cache_store=store)  # Verify brick accepts this store
@@ -157,7 +157,7 @@ class TestBatchEdgeCases:
     @pytest.mark.asyncio
     async def test_set_many_empty_dict(self) -> None:
         """set_many with empty dict should be no-op."""
-        from nexus.bricks.cache.brick import CacheBrick
+        from nexus.cache.brick import CacheBrick
 
         store = InMemoryCacheStore()
         CacheBrick(cache_store=store)  # Verify brick accepts this store
@@ -166,7 +166,7 @@ class TestBatchEdgeCases:
     @pytest.mark.asyncio
     async def test_pattern_delete_no_matches(self) -> None:
         """delete_by_pattern with no matches should return 0."""
-        from nexus.bricks.cache.brick import CacheBrick
+        from nexus.cache.brick import CacheBrick
 
         store = InMemoryCacheStore()
         CacheBrick(cache_store=store)  # Verify brick accepts this store

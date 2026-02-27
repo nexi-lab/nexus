@@ -80,10 +80,10 @@ cleanup() {
     python3 << 'CLEANUP'
 import sys, os
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
+import nexus
 
 nexus_url = os.getenv('NEXUS_URL', 'http://localhost:2026')
-nx = RemoteNexusFS(nexus_url, api_key=os.getenv('NEXUS_API_KEY'))
+nx = nexus.connect(config={"mode": "remote", "url": nexus_url, "api_key": os.getenv('NEXUS_API_KEY')})
 
 # Delete test agents (this will clean up entity registry)
 for agent_id in ['data_analyst', 'report_generator', 'code_reviewer', 'legacy_agent']:
@@ -170,7 +170,7 @@ print_test "Register agents with metadata using alice_meta's credentials"
 python3 << REGISTER_AGENTS
 import sys, os
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
+import nexus
 
 # Alice registers her agents
 alice_key = os.getenv('ALICE_KEY')
@@ -180,7 +180,7 @@ if not alice_key:
 
 nexus_url = os.getenv('NEXUS_URL', 'http://localhost:2026')
 print(f"Connecting to {nexus_url} with alice's key...")
-nx_alice = RemoteNexusFS(nexus_url, api_key=alice_key)
+nx_alice = nexus.connect(config={"mode": "remote", "url": nexus_url, "api_key": alice_key})
 
 # Register data_analyst with full metadata
 print("Registering data_analyst...")
@@ -209,7 +209,7 @@ if not bob_key:
     sys.exit(1)
 
 print(f"Connecting to {nexus_url} with bob's key...")
-nx_bob = RemoteNexusFS(nexus_url, api_key=bob_key)
+nx_bob = nexus.connect(config={"mode": "remote", "url": nexus_url, "api_key": bob_key})
 
 # Register code_reviewer with name only (no description)
 print("Registering code_reviewer...")
@@ -246,10 +246,10 @@ print_test "List all registered agents"
 python3 << 'LIST_AGENTS'
 import sys, os
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
+import nexus
 
 nexus_url = os.getenv('NEXUS_URL', 'http://localhost:2026')
-nx = RemoteNexusFS(nexus_url, api_key=os.getenv('NEXUS_API_KEY'))
+nx = nexus.connect(config={"mode": "remote", "url": nexus_url, "api_key": os.getenv('NEXUS_API_KEY')})
 
 agents = nx.list_agents()
 
@@ -328,10 +328,10 @@ print_test "Get details for 'data_analyst'"
 python3 << 'GET_AGENT'
 import sys, os, json
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
+import nexus
 
 nexus_url = os.getenv('NEXUS_URL', 'http://localhost:2026')
-nx = RemoteNexusFS(nexus_url, api_key=os.getenv('NEXUS_API_KEY'))
+nx = nexus.connect(config={"mode": "remote", "url": nexus_url, "api_key": os.getenv('NEXUS_API_KEY')})
 
 agent = nx.get_agent('data_analyst')
 if agent:
@@ -357,10 +357,10 @@ print_test "Get details for 'legacy_agent' (backward compatibility)"
 python3 << 'GET_LEGACY'
 import sys, os, json
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
+import nexus
 
 nexus_url = os.getenv('NEXUS_URL', 'http://localhost:2026')
-nx = RemoteNexusFS(nexus_url, api_key=os.getenv('NEXUS_API_KEY'))
+nx = nexus.connect(config={"mode": "remote", "url": nexus_url, "api_key": os.getenv('NEXUS_API_KEY')})
 
 agent = nx.get_agent('legacy_agent')
 if agent:

@@ -11,10 +11,12 @@ class DirEntryType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     DT_REG: _ClassVar[DirEntryType]
     DT_DIR: _ClassVar[DirEntryType]
     DT_MOUNT: _ClassVar[DirEntryType]
+    DT_PIPE: _ClassVar[DirEntryType]
 
 DT_REG: DirEntryType
 DT_DIR: DirEntryType
 DT_MOUNT: DirEntryType
+DT_PIPE: DirEntryType
 
 class FileMetadata(_message.Message):
     __slots__ = (

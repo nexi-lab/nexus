@@ -26,7 +26,7 @@ from nexus.bricks.rebac.manager import (
     TraversalStats,
     WriteResult,
 )
-from nexus.bricks.rebac.types import ConsistencyMode
+from nexus.contracts.rebac_types import ConsistencyMode
 from nexus.contracts.types import (
     OperationContext,
     Permission,

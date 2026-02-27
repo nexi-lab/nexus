@@ -78,14 +78,6 @@ def mock_file_watcher():
 
 
 @pytest.fixture
-def mock_metadata_cache():
-    """Create a mock metadata cache."""
-    cache = MagicMock()
-    cache.invalidate_path = MagicMock()
-    return cache
-
-
-@pytest.fixture
 def context():
     """Standard operation context."""
     return OperationContext(
@@ -110,7 +102,6 @@ class TestEventsServiceInit:
         mock_backend_passthrough,
         mock_event_bus,
         mock_lock_manager,
-        mock_metadata_cache,
     ):
         """Service stores all injected dependencies."""
         svc = EventsService(
@@ -118,14 +109,12 @@ class TestEventsServiceInit:
             event_bus=mock_event_bus,
             lock_manager=mock_lock_manager,
             zone_id="z1",
-            metadata_cache=mock_metadata_cache,
         )
         assert svc._backend is mock_backend_passthrough
         assert svc._event_bus is mock_event_bus
         assert svc._lock_manager is mock_lock_manager
         assert svc._file_watcher is None  # lazy-initialized, not injected
         assert svc._zone_id == "z1"
-        assert svc._metadata_cache is mock_metadata_cache
 
     def test_init_minimal(self, mock_backend_remote):
         """Service can be created with just a backend."""
@@ -134,8 +123,6 @@ class TestEventsServiceInit:
         assert svc._lock_manager is None
         assert svc._file_watcher is None
         assert svc._zone_id is None
-        assert svc._metadata_cache is None
-        assert svc._cache_invalidation_started is False
 
 
 # =============================================================================
@@ -365,50 +352,6 @@ class TestWaitForChangesDistributed:
 # =============================================================================
 # Cache invalidation
 # =============================================================================
-
-
-class TestCacheInvalidation:
-    """Tests for cache invalidation logic."""
-
-    def test_invalidate_cache_calls_cache(self, mock_backend_remote, mock_metadata_cache):
-        """_invalidate_cache_for_path calls cache.invalidate_path."""
-        svc = EventsService(backend=mock_backend_remote, metadata_cache=mock_metadata_cache)
-        svc._invalidate_cache_for_path("/test/file.txt")
-        mock_metadata_cache.invalidate_path.assert_called_once_with("/test/file.txt")
-
-    def test_invalidate_cache_noop_without_cache(self, mock_backend_remote):
-        """No error when metadata_cache is None."""
-        svc = EventsService(backend=mock_backend_remote)
-        svc._invalidate_cache_for_path("/test/file.txt")  # Should not raise
-
-    def test_should_auto_start_false_when_started(
-        self, mock_backend_passthrough, mock_metadata_cache
-    ):
-        """Auto-start returns False if already started."""
-        svc = EventsService(backend=mock_backend_passthrough, metadata_cache=mock_metadata_cache)
-        svc._cache_invalidation_started = True
-        assert svc._should_auto_start_cache_invalidation() is False
-
-    def test_should_auto_start_false_without_cache(self, mock_backend_passthrough):
-        """Auto-start returns False if no cache."""
-        svc = EventsService(backend=mock_backend_passthrough)
-        assert svc._should_auto_start_cache_invalidation() is False
-
-    def test_should_auto_start_true_with_cache_and_source(
-        self, mock_backend_passthrough, mock_metadata_cache
-    ):
-        """Auto-start returns True with cache + event source."""
-        svc = EventsService(backend=mock_backend_passthrough, metadata_cache=mock_metadata_cache)
-        assert svc._should_auto_start_cache_invalidation() is True
-
-    def test_stop_cache_invalidation_resets_flag(
-        self, mock_backend_passthrough, mock_metadata_cache
-    ):
-        """Stopping cache invalidation resets the started flag."""
-        svc = EventsService(backend=mock_backend_passthrough, metadata_cache=mock_metadata_cache)
-        svc._cache_invalidation_started = True
-        svc._stop_cache_invalidation()
-        assert svc._cache_invalidation_started is False
 
 
 # =============================================================================

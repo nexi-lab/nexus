@@ -24,15 +24,16 @@ from datetime import UTC
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from nexus.backends.backend import Backend
+from nexus.backends.backend import Backend, FileInfo
 from nexus.backends.cache_mixin import CacheConnectorMixin
 from nexus.backends.registry import (
     ArgType,
     ConnectionArg,
     register_connector,
 )
-from nexus.contracts.exceptions import BackendError
+from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
+from nexus.core.object_store import WriteResult
 from nexus.core.protocols.capabilities import ConnectorCapability
 from nexus.lib.response import HandlerResponse, timed_response
 
@@ -41,13 +42,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Type alias for casting error responses
-_BytesResponse = HandlerResponse[bytes]
-_StrResponse = HandlerResponse[str]
+# Type alias for casting error responses (service methods only)
 _ListDictResponse = HandlerResponse[list[dict[str, Any]]]
 _DictResponse = HandlerResponse[dict[str, Any]]
 _ListStrResponse = HandlerResponse[list[str]]
-_IntResponse = HandlerResponse[int]
 
 
 @register_connector(
@@ -90,16 +88,12 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
 
     _CAPABILITIES = frozenset(
         {
-            ConnectorCapability.VIRTUAL_FILESYSTEM,
+            ConnectorCapability.EXTERNAL_CONTENT,
             ConnectorCapability.DIRECTORY_LISTING,
             ConnectorCapability.CACHE_BULK_READ,
             ConnectorCapability.CACHE_SYNC,
         }
     )
-
-    @property
-    def has_virtual_filesystem(self) -> bool:  # noqa: D102
-        return True
 
     # Cache configuration: L1 only, no L2 (PostgreSQL)
     # Local disk is already fast, no need for persistent cache layer
@@ -234,12 +228,11 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
         """
         return self.local_path
 
-    @timed_response
     def get_file_info(
         self,
         path: str,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse:
+    ) -> "FileInfo":
         """
         Get file metadata for delta sync change detection (Issue #1127).
 
@@ -251,14 +244,13 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
             context: Operation context with optional backend_path
 
         Returns:
-            HandlerResponse with FileInfo containing:
-            - size: File size in bytes
-            - mtime: Last modification time
-            - backend_version: inode:mtime_ns string (changes on content/metadata change)
+            FileInfo containing size, mtime, backend_version
+
+        Raises:
+            NexusFileNotFoundError: If file does not exist
+            BackendError: On permission or OS errors
         """
         from datetime import datetime
-
-        from nexus.backends.backend import FileInfo
 
         try:
             # Get backend path
@@ -270,7 +262,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
             physical = self._to_physical(backend_path)
 
             if not physical.exists():
-                return HandlerResponse.not_found(path, backend_name=self.name)
+                raise NexusFileNotFoundError(path)
 
             # Get file stats
             stat = physical.stat(follow_symlinks=self.follow_symlinks)
@@ -282,32 +274,31 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
             # This combination detects both content changes (mtime) and file replacement (inode)
             backend_version = f"{stat.st_ino}:{stat.st_mtime_ns}"
 
-            file_info = FileInfo(
+            return FileInfo(
                 size=size,
                 mtime=mtime,
                 backend_version=backend_version,
                 content_hash=None,  # Not computed to avoid reading file content
             )
 
-            return HandlerResponse.ok(file_info, backend_name=self.name, path=path)
-
-        except FileNotFoundError:
-            return HandlerResponse.not_found(path, backend_name=self.name)
+        except NexusFileNotFoundError:
+            raise
+        except FileNotFoundError as e:
+            raise NexusFileNotFoundError(path) from e
         except PermissionError as e:
-            return HandlerResponse.error(f"Permission denied: {path} - {e}", backend_name=self.name)
+            raise BackendError(f"Permission denied: {path} - {e}") from e
         except OSError as e:
-            return HandlerResponse.error(f"Failed to get file info: {e}", backend_name=self.name)
+            raise BackendError(f"Failed to get file info: {e}") from e
 
     # =========================================================================
     # Content Operations (with L1 Caching)
     # =========================================================================
 
-    @timed_response
     def read_content(
         self,
         content_hash: str,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[bytes]:
+    ) -> bytes:
         """Read file content with L1 caching.
 
         For LocalConnectorBackend, content_hash is ignored - we use context.backend_path.
@@ -322,13 +313,14 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
             context: Operation context with backend_path
 
         Returns:
-            HandlerResponse with file bytes on success, error message on failure
+            File content as bytes
+
+        Raises:
+            BackendError: If context/backend_path missing, permission denied, or OS error
+            NexusFileNotFoundError: If file does not exist
         """
         if context is None or not context.backend_path:
-            return cast(
-                _BytesResponse,
-                HandlerResponse.error("LocalConnectorBackend requires context with backend_path"),
-            )
+            raise BackendError("LocalConnectorBackend requires context with backend_path")
 
         path = context.backend_path
         cache_path = context.virtual_path if context.virtual_path else path
@@ -339,11 +331,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
                 cached = self._read_from_cache(cache_path, original=True)
                 if cached and not cached.stale and cached.content_binary:
                     logger.info(f"[LocalConnectorBackend] L1 cache hit: {cache_path}")
-                    return HandlerResponse.ok(
-                        data=cached.content_binary,
-                        backend_name=self.name,
-                        path=path,
-                    )
+                    return cached.content_binary
             except Exception as e:
                 logger.debug("[CACHE] Cache read failed for %s: %s", cache_path, e)
 
@@ -352,22 +340,16 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
         physical = self._to_physical(path)
 
         if not physical.exists():
-            return cast(
-                _BytesResponse,
-                HandlerResponse.not_found(
-                    path=path,
-                    message=f"File not found: {path}",
-                ),
-            )
+            raise NexusFileNotFoundError(path)
         if not physical.is_file():
-            return cast(_BytesResponse, HandlerResponse.error(f"Not a file: {path}"))
+            raise BackendError(f"Not a file: {path}")
 
         try:
             content = physical.read_bytes()
         except PermissionError as e:
-            return cast(_BytesResponse, HandlerResponse.error(f"Permission denied: {path} - {e}"))
+            raise BackendError(f"Permission denied: {path} - {e}") from e
         except OSError as e:
-            return cast(_BytesResponse, HandlerResponse.error(f"Read error: {e}"))
+            raise BackendError(f"Read error: {e}") from e
 
         # Step 3: Populate L1 cache for future reads
         if self._has_caching():
@@ -381,22 +363,17 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
             except Exception as e:
                 logger.debug("[CACHE] Cache write failed for %s: %s", cache_path, e)
 
-        return HandlerResponse.ok(
-            data=content,
-            backend_name=self.name,
-            path=path,
-        )
+        return content
 
-    @timed_response
     def write_content(
         self,
         content: bytes,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[str]:
+    ) -> WriteResult:
         """Write content directly to local path.
 
         Unlike CAS-based backends, this writes directly to the file.
-        Returns content hash for consistency with other backends.
+        Returns WriteResult with content hash and size.
         Invalidates L1 cache after write.
 
         Args:
@@ -404,19 +381,19 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
             context: Operation context with backend_path
 
         Returns:
-            HandlerResponse with content hash (SHA-256) on success
+            WriteResult with content_hash (SHA-256) and size
+
+        Raises:
+            BackendError: If read-only, missing path, permission denied, or OS error
         """
         if self.readonly:
-            return cast(_StrResponse, HandlerResponse.error("Backend is read-only"))
+            raise BackendError("Backend is read-only")
 
         # Get path from context
         write_path = context.backend_path if context else None
 
         if write_path is None:
-            return cast(
-                _StrResponse,
-                HandlerResponse.error("Path required for local_connector backend"),
-            )
+            raise BackendError("Path required for local_connector backend")
 
         physical = self._to_physical(write_path)
 
@@ -437,15 +414,13 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
                 except Exception as e:
                     logger.debug("[CACHE] Cache write failed for %s: %s", cache_path, e)
 
-            # Return content hash for consistency
+            # Return content hash and size for consistency
             content_hash = hash_content(content)
-            return HandlerResponse.ok(data=content_hash)
+            return WriteResult(content_hash=content_hash, size=len(content))
         except PermissionError as e:
-            return cast(
-                _StrResponse, HandlerResponse.error(f"Permission denied: {write_path} - {e}")
-            )
+            raise BackendError(f"Permission denied: {write_path} - {e}") from e
         except OSError as e:
-            return cast(_StrResponse, HandlerResponse.error(f"Write error: {e}"))
+            raise BackendError(f"Write error: {e}") from e
 
     # =========================================================================
     # Directory Operations
@@ -601,59 +576,58 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
     # Backend Interface Methods (for Backend abstract base class)
     # =========================================================================
 
-    @timed_response
     def delete_content(
         self,
         content_hash: str,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[None]:
+    ) -> None:
         """Delete content by hash - not supported for local_connector.
 
         LocalConnectorBackend uses path-based access, not content-hash based.
         This method exists for Backend interface compatibility.
+
+        Raises:
+            BackendError: Always (hash-based deletion not supported)
         """
-        return HandlerResponse.error(
+        raise BackendError(
             "delete_content by hash not supported for local_connector. Use delete(path) instead."
         )
 
-    @timed_response
     def content_exists(
         self,
         content_hash: str,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[bool]:
+    ) -> bool:
         """Check if content exists by hash - not supported for local_connector."""
-        return HandlerResponse.ok(data=False)
+        return False
 
-    @timed_response
     def get_content_size(
         self,
         content_hash: str,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[int]:
-        """Get content size by hash - not supported for local_connector."""
-        return cast(
-            _IntResponse,
-            HandlerResponse.error("get_content_size by hash not supported for local_connector"),
-        )
+    ) -> int:
+        """Get content size by hash - not supported for local_connector.
 
-    @timed_response
+        Raises:
+            BackendError: Always (hash-based size lookup not supported)
+        """
+        raise BackendError("get_content_size by hash not supported for local_connector")
+
     def get_ref_count(
         self,
         content_hash: str,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[int]:
+    ) -> int:
         """Get reference count by hash - not supported for local_connector."""
-        return HandlerResponse.ok(data=0)
+        return 0
 
-    @timed_response
     def mkdir(
         self,
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[None]:
+    ) -> None:
         """Create a directory.
 
         Args:
@@ -662,30 +636,28 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
             exist_ok: Don't error if directory exists (always True for local_connector)
             context: Operation context (unused)
 
-        Returns:
-            HandlerResponse with None on success
+        Raises:
+            BackendError: If read-only, permission denied, or OS error
         """
         if self.readonly:
-            return HandlerResponse.error("Backend is read-only")
+            raise BackendError("Backend is read-only")
 
         physical = self._to_physical(path)
 
         try:
             # Always use parents=True, exist_ok=True for simplicity
             physical.mkdir(parents=True, exist_ok=True)
-            return HandlerResponse.ok(data=None)
         except PermissionError as e:
-            return HandlerResponse.error(f"Permission denied: {path} - {e}")
+            raise BackendError(f"Permission denied: {path} - {e}") from e
         except OSError as e:
-            return HandlerResponse.error(f"Mkdir error: {e}")
+            raise BackendError(f"Mkdir error: {e}") from e
 
-    @timed_response
     def rmdir(
         self,
         path: str,
         recursive: bool = False,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[None]:
+    ) -> None:
         """Remove a directory.
 
         Args:
@@ -693,21 +665,38 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
             recursive: If True, remove directory and contents (not supported)
             context: Operation context (unused)
 
-        Returns:
-            HandlerResponse with None on success
+        Raises:
+            BackendError: If recursive, read-only, permission denied, not a directory, or OS error
+            NexusFileNotFoundError: If directory does not exist
         """
         if recursive:
-            return HandlerResponse.error("Recursive rmdir not supported for safety")
-        return self.delete(path, context)
+            raise BackendError("Recursive rmdir not supported for safety")
+        if self.readonly:
+            raise BackendError("Backend is read-only")
 
-    @timed_response
+        physical = self._to_physical(path)
+
+        try:
+            if physical.is_dir():
+                physical.rmdir()
+            else:
+                raise BackendError(f"Not a directory: {path}")
+        except FileNotFoundError as e:
+            raise NexusFileNotFoundError(path) from e
+        except PermissionError as e:
+            raise BackendError(f"Permission denied: {path} - {e}") from e
+        except BackendError:
+            raise
+        except OSError as e:
+            raise BackendError(f"Rmdir error: {e}") from e
+
     def is_directory(
         self,
         path: str,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[bool]:
+    ) -> bool:
         """Check if path is a directory."""
-        return HandlerResponse.ok(data=self.is_dir(path, context))
+        return self.is_dir(path, context)
 
     @timed_response
     def rename(

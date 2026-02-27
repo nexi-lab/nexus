@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING, Any
 from nexus.backends.backend import Backend
 from nexus.backends.delegating import DelegatingBackend
 from nexus.backends.wrapper_metrics import WrapperMetrics
-from nexus.lib.response import HandlerResponse, timed_response
+from nexus.core.object_store import WriteResult
 from nexus.storage.content_cache import ContentCache
 
 if TYPE_CHECKING:
@@ -153,10 +153,7 @@ class CachingBackendWrapper(DelegatingBackend):
 
     # === Cached Content Operations ===
 
-    @timed_response
-    def read_content(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> HandlerResponse[bytes]:
+    def read_content(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
         """Read content with L1 → inner backend fallback.
 
         L2 is write-populate-only; reads never check L2.
@@ -166,34 +163,31 @@ class CachingBackendWrapper(DelegatingBackend):
             cached = self._l1_cache.get(content_hash)
             if cached is not None:
                 self._metrics.increment("l1_hits")
-                return HandlerResponse.ok(data=cached, backend_name=self.name)
+                return cached
             self._metrics.increment("l1_misses")
         except Exception as e:
             self._record_cache_error("l1_read", e)
 
-        # Inner backend read
-        response = self._inner.read_content(content_hash, context=context)
-        if response.success and response.data is not None:
-            # Populate L1
-            try:
-                self._l1_cache.put(content_hash, response.data)
-            except Exception as e:
-                self._record_cache_error("l1_populate", e)
-            # Schedule L2 population (fire-and-forget)
-            self._schedule_l2_populate(content_hash, response.data)
+        # Inner backend read (raises on failure — no response wrapping)
+        content = self._inner.read_content(content_hash, context=context)
 
-        return response
+        # Populate L1
+        try:
+            self._l1_cache.put(content_hash, content)
+        except Exception as e:
+            self._record_cache_error("l1_populate", e)
+        # Schedule L2 population (fire-and-forget)
+        self._schedule_l2_populate(content_hash, content)
 
-    @timed_response
+        return content
+
     def write_content(
         self, content: bytes, context: "OperationContext | None" = None
-    ) -> HandlerResponse[str]:
+    ) -> WriteResult:
         """Write content to inner backend, then handle cache based on strategy."""
-        response = self._inner.write_content(content, context=context)
-        if not response.success or response.data is None:
-            return response
+        result = self._inner.write_content(content, context=context)
 
-        content_hash = response.data
+        content_hash = result.content_hash
 
         if self._config.strategy == CacheStrategy.WRITE_THROUGH:
             # Populate L1 immediately
@@ -207,21 +201,14 @@ class CachingBackendWrapper(DelegatingBackend):
             # WRITE_AROUND: invalidate (content may have changed ref count, etc.)
             self._invalidate(content_hash)
 
-        return response
+        return result
 
-    @timed_response
-    def delete_content(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> HandlerResponse[None]:
+    def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:
         """Delete from inner backend and invalidate caches."""
-        response = self._inner.delete_content(content_hash, context=context)
+        self._inner.delete_content(content_hash, context=context)
         self._invalidate(content_hash)
-        return response
 
-    @timed_response
-    def content_exists(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> HandlerResponse[bool]:
+    def content_exists(self, content_hash: str, context: "OperationContext | None" = None) -> bool:
         """Always delegate to inner backend — source of truth for existence."""
         return self._inner.content_exists(content_hash, context=context)
 

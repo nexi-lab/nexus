@@ -4,6 +4,8 @@ Tests the service directly (not via FakeCoreMixin) — fire(), on_mutation(),
 start()/stop() lifecycle, and PipeManager integration.
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 from unittest.mock import AsyncMock, patch
@@ -11,7 +13,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from nexus.contracts.metadata import FileMetadata
-from nexus.lib.mutation_hooks import MutationEvent, MutationOp
+from nexus.core.file_events import FileEvent, FileEventType
 from nexus.system_services.lifecycle.workflow_dispatch_service import WorkflowDispatchService
 from nexus.system_services.pipe_manager import PipeManager
 
@@ -130,7 +132,7 @@ class TestFire:
 
 
 # ======================================================================
-# on_mutation() — PostMutationHook
+# on_mutation() — VFSObserver
 # ======================================================================
 
 
@@ -141,8 +143,8 @@ class TestOnMutation:
         svc, pm = _make_service()
         await svc.start()
 
-        event = MutationEvent(
-            operation=MutationOp.WRITE,
+        event = FileEvent(
+            type=FileEventType.FILE_WRITE,
             path="/test/file.txt",
             zone_id="root",
             revision=42,
@@ -171,8 +173,8 @@ class TestOnMutation:
         svc, pm = _make_service()
         await svc.start()
 
-        event = MutationEvent(
-            operation=MutationOp.DELETE,
+        event = FileEvent(
+            type=FileEventType.FILE_DELETE,
             path="/test/gone.txt",
             zone_id="root",
             revision=43,
@@ -192,8 +194,8 @@ class TestOnMutation:
         svc, pm = _make_service()
         await svc.start()
 
-        event = MutationEvent(
-            operation=MutationOp.RENAME,
+        event = FileEvent(
+            type=FileEventType.FILE_RENAME,
             path="/old/path.txt",
             zone_id="root",
             revision=44,

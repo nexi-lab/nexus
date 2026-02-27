@@ -1,42 +1,288 @@
-"""Composed filesystem ABC — union of all 7 sub-ABCs.
+"""Filesystem ABC — kernel syscall contract.
 
-Issue #2424: Decompose monolithic NexusFilesystem into domain-specific
-sub-ABCs following the ``collections.abc`` pattern::
+Linux analogy: the syscall table (``read``, ``write``, ``open``, ``unlink``,
+``stat``, ``readdir``, …). This is the **user-facing entry point** into the
+kernel — every RPC/CLI call resolves to one of these methods.
 
-    FileOpsABC + DiscoveryABC + DirectoryOpsABC + WorkspaceABC
-    + MemoryRegistryABC + SandboxABC + LifecycleABC
-    → NexusFilesystemABC
+Beneath this layer, NexusFS dispatches to ObjectStoreABC backends
+(``file_operations``), MetastoreABC (inode table), and hook pipelines.
 
-The narrow Protocol at ``services/protocols/filesystem.py`` is kept as-is
-for brick consumers that only need 7 methods.
+Service-layer operations (workspace, memory, sandbox) have their own
+protocols in ``services/protocols/`` and are NOT part of the kernel contract.
+
+Two tiers:
+  Tier 1: Abstract ``sys_`` syscalls — implementors MUST override.
+          Named after POSIX syscalls where a classic name exists;
+          historical baggage replaced with better names for our context.
+  Tier 2: Convenience methods — concrete, compose syscalls.
+          User-space utilities (like libc/coreutils). NOT abstract.
+          Overridable for optimization.
 """
 
-from __future__ import annotations
+import builtins
+from abc import ABC, abstractmethod
+from typing import Any
 
-from nexus.contracts.filesystem.directory_ops_abc import DirectoryOpsABC
-from nexus.contracts.filesystem.discovery_abc import DiscoveryABC
-from nexus.contracts.filesystem.file_ops_abc import FileOpsABC
-from nexus.contracts.filesystem.lifecycle_abc import LifecycleABC
-from nexus.contracts.filesystem.memory_registry_abc import MemoryRegistryABC
-from nexus.contracts.filesystem.sandbox_abc import SandboxABC
-from nexus.contracts.filesystem.workspace_abc import WorkspaceABC
+from nexus.contracts.types import OperationContext
 
 
-class NexusFilesystemABC(
-    FileOpsABC,
-    DiscoveryABC,
-    DirectoryOpsABC,
-    WorkspaceABC,
-    MemoryRegistryABC,
-    SandboxABC,
-    LifecycleABC,
-):
-    """Abstract base class for Nexus filesystem implementations.
+class NexusFilesystemABC(ABC):
+    """Kernel syscall contract — Linux VFS-aligned.
 
     All filesystem modes (Standalone, Remote, Federation) must implement
-    this interface to ensure consistent behavior across modes.
-
-    This is the composed ABC that inherits all 7 domain-specific sub-ABCs.
-    It adds no new methods — it is purely a union type following the
-    ``collections.abc`` pattern (Sized + Iterable + Container → Collection).
+    this interface. Service-layer concerns (workspace, memory, sandbox)
+    are deliberately excluded — they belong to their respective service
+    protocols, not the kernel.
     """
+
+    # ── Tier 1: Abstract Syscalls ──────────────────────────────────
+    #
+    # Content I/O — sys_read(2), sys_write(2)
+    # Metadata I/O — sys_stat(2), sys_setattr (chmod/chown/utimensat)
+    # Namespace — sys_unlink(2), sys_rename(2)
+    # Directory — sys_mkdir(2), sys_rmdir(2), sys_readdir(3)
+    # Query — sys_access(2), sys_is_directory
+    # System — get_top_level_mounts, close
+
+    # ── Content I/O ────────────────────────────────────────────────
+
+    @abstractmethod
+    def sys_read(
+        self, path: str, context: Any = None, return_metadata: bool = False
+    ) -> bytes | dict[str, Any]:
+        """Read file content (POSIX read(2)).
+
+        Args:
+            path: Virtual file path.
+            context: Operation context (auth, zone, etc.).
+            return_metadata: If True, return dict with content + metadata.
+
+        Returns:
+            Raw bytes, or dict with content + metadata if return_metadata=True.
+        """
+        ...
+
+    @abstractmethod
+    def sys_write(
+        self,
+        path: str,
+        content: bytes,
+        context: Any = None,
+        if_match: str | None = None,
+        if_none_match: bool = False,
+        force: bool = False,
+        lock: bool = False,
+        lock_timeout: float = 30.0,
+    ) -> dict[str, Any]:
+        """Write content to a file (POSIX write(2)).
+
+        Metadata (mtime, size, etag) updated as kernel side effect —
+        like Linux, where write() updates the inode's mtime/ctime/size.
+
+        Args:
+            path: Virtual file path.
+            content: File content as bytes.
+            context: Operation context.
+            if_match: CAS etag for optimistic concurrency.
+            if_none_match: If True, fail if file already exists.
+            force: Bypass CAS checks.
+            lock: Acquire distributed lock before writing.
+            lock_timeout: Max time to wait for lock (seconds).
+
+        Returns:
+            Dict with write result (path, etag, size, version, etc.).
+        """
+        ...
+
+    # ── Metadata I/O ───────────────────────────────────────────────
+
+    @abstractmethod
+    def sys_stat(self, path: str, context: Any = None) -> dict[str, Any] | None:
+        """Read all file metadata (POSIX stat(2)).
+
+        Returns:
+            Dict of metadata fields, or None if file not found.
+        """
+        ...
+
+    @abstractmethod
+    def sys_setattr(self, path: str, context: Any = None, **attrs: Any) -> dict[str, Any]:
+        """Update file metadata attributes (chmod/chown/utimensat analog).
+
+        Linux has separate chmod(2), chown(2), utimensat(2) — we combine
+        into one call (better for VFS).
+
+        Args:
+            path: Virtual file path.
+            context: Operation context.
+            **attrs: Metadata attributes to update.
+
+        Returns:
+            Dict with path and list of updated attributes.
+        """
+        ...
+
+    # ── Namespace ──────────────────────────────────────────────────
+
+    @abstractmethod
+    def sys_unlink(self, path: str, context: Any = None) -> dict[str, Any]:
+        """Remove a directory entry (POSIX unlink(2)).
+
+        NOT "delete" — unlink is precise: removes directory entry,
+        CAS refcount decrements. Content freed only when refcount=0.
+        """
+        ...
+
+    @abstractmethod
+    def sys_rename(self, old_path: str, new_path: str, context: Any = None) -> dict[str, Any]:
+        """Rename/move a file (POSIX rename(2))."""
+        ...
+
+    # ── Directory ──────────────────────────────────────────────────
+
+    @abstractmethod
+    def sys_mkdir(
+        self,
+        path: str,
+        parents: bool = False,
+        exist_ok: bool = False,
+        context: Any = None,
+    ) -> None:
+        """Create a directory (POSIX mkdir(2))."""
+        ...
+
+    @abstractmethod
+    def sys_rmdir(self, path: str, recursive: bool = False, context: Any = None) -> None:
+        """Remove a directory (POSIX rmdir(2))."""
+        ...
+
+    @abstractmethod
+    def sys_readdir(
+        self,
+        path: str = "/",
+        recursive: bool = True,
+        details: bool = False,
+        show_parsed: bool = True,
+        context: Any = None,
+    ) -> builtins.list[str] | builtins.list[dict[str, Any]]:
+        """List directory entries (POSIX readdir(3)).
+
+        Replaces ``list()`` — readdir is the POSIX name.
+        """
+        ...
+
+    # ── Query ──────────────────────────────────────────────────────
+
+    @abstractmethod
+    def sys_access(self, path: str, context: Any = None) -> bool:
+        """Check if a file exists (POSIX access(2)).
+
+        Simplified to existence check. Permission checks handled
+        separately by ReBAC service.
+        """
+        ...
+
+    @abstractmethod
+    def sys_is_directory(self, path: str, context: OperationContext | None = None) -> bool:
+        """Check if path is a directory.
+
+        Linux uses stat(2) + S_ISDIR macro — we provide direct check
+        for convenience.
+        """
+        ...
+
+    # ── System Info + Lifecycle ────────────────────────────────────
+
+    @abstractmethod
+    def get_top_level_mounts(self) -> builtins.list[str]:
+        """Get list of top-level mount names."""
+        ...
+
+    @abstractmethod
+    def close(self) -> None:
+        """Close the filesystem and release resources."""
+        ...
+
+    def __enter__(self) -> "NexusFilesystemABC":
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        """Context manager exit."""
+        self.close()
+
+    # ── Tier 2: Convenience Methods (user-space utilities) ─────────
+    #
+    # NOT abstract. Compose from syscalls. Overridable for optimization.
+    # Like libc/coreutils built on top of syscalls.
+
+    def append(
+        self,
+        path: str,
+        content: bytes | str,
+        context: Any = None,
+        if_match: str | None = None,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        """Append content to a file (like shell >>).
+
+        User-space: sys_read + sys_write.
+        """
+        try:
+            existing = self.sys_read(path, context)
+        except FileNotFoundError:
+            existing = b""
+        if isinstance(existing, dict):
+            existing = existing.get("content", b"")
+        if isinstance(content, str):
+            content = content.encode("utf-8")
+        if isinstance(existing, str):
+            existing = existing.encode("utf-8")
+        return self.sys_write(path, existing + content, context, if_match=if_match, force=force)
+
+    def edit(
+        self,
+        path: str,
+        edits: builtins.list[tuple[str, str]] | builtins.list[dict[str, Any]] | builtins.list[Any],
+        context: Any = None,
+        if_match: str | None = None,
+        fuzzy_threshold: float = 0.85,
+        preview: bool = False,
+    ) -> dict[str, Any]:
+        """Apply surgical search/replace edits to a file.
+
+        User-space: sys_read + modify + sys_write.
+        Override in NexusFS (requires EditEngine).
+        """
+        raise NotImplementedError("Override in NexusFS (requires EditEngine)")
+
+    def write_batch(
+        self,
+        files: builtins.list[tuple[str, bytes]],
+        context: Any = None,
+    ) -> builtins.list[dict[str, Any]]:
+        """Write multiple files. Default: N × sys_write."""
+        return [self.sys_write(p, c, context) for p, c in files]
+
+    def glob(self, pattern: str, path: str = "/", context: Any = None) -> builtins.list[str]:
+        """Find files matching a glob pattern (like glob(3)).
+
+        Requires SearchService. Override in NexusFS.
+        """
+        raise NotImplementedError("Override in NexusFS (requires SearchService)")
+
+    def grep(
+        self,
+        pattern: str,
+        path: str = "/",
+        file_pattern: str | None = None,
+        ignore_case: bool = False,
+        max_results: int = 1000,
+        search_mode: str = "auto",
+        context: Any = None,
+    ) -> builtins.list[dict[str, Any]]:
+        """Search file contents using regex patterns (like grep(1)).
+
+        Requires SearchService. Override in NexusFS.
+        """
+        raise NotImplementedError("Override in NexusFS (requires SearchService)")

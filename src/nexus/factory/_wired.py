@@ -48,6 +48,14 @@ def _boot_wired_services(
     t0 = time.perf_counter()
     _on = _make_gate(brick_on)
 
+    # Resolve the root backend from the router.
+    # NexusFS no longer has a .backend attribute — all backends live on the router.
+    _root_backend: Any = None
+    try:
+        _root_backend = nx.router.route("/").backend
+    except Exception:
+        logger.debug("[BOOT:WIRED] No root backend mounted — services needing backend will degrade")
+
     # --- NexusFSGateway: adapter breaking circular dep (Issue #1287) ---
     gateway: Any = None
     try:
@@ -57,6 +65,27 @@ def _boot_wired_services(
         logger.debug("[BOOT:WIRED] NexusFSGateway created")
     except Exception as exc:
         logger.warning("[BOOT:WIRED] NexusFSGateway unavailable: %s", exc)
+
+    # --- IPC KernelVFSAdapter: bind to NexusFS + mount LocalConnector ---
+    _ipc_adapter = getattr(brick_services, "ipc_storage_driver", None)
+    if _ipc_adapter is not None and hasattr(_ipc_adapter, "bind"):
+        try:
+            _ipc_adapter.bind(nx)
+
+            # Mount a LocalConnector at /agents for IPC file storage
+            from pathlib import Path
+
+            from nexus.backends.local_connector import LocalConnectorBackend
+
+            _ipc_data_dir = Path(getattr(nx, "_data_dir", "data")) / "ipc"
+            _ipc_data_dir.mkdir(parents=True, exist_ok=True)
+            _ipc_connector = LocalConnectorBackend(local_path=_ipc_data_dir)
+            nx.router.add_mount("/agents", _ipc_connector)
+            logger.debug(
+                "[BOOT:WIRED] IPC KernelVFSAdapter bound + LocalConnector mounted at /agents"
+            )
+        except Exception as exc:
+            logger.warning("[BOOT:WIRED] IPC adapter bind failed: %s", exc)
 
     # --- ReBACService: Permission and access control operations ---
     rebac_service: Any = None
@@ -68,7 +97,7 @@ def _boot_wired_services(
             enforce_permissions=nx._enforce_permissions,
             enable_audit_logging=True,
             circuit_breaker=brick_services.rebac_circuit_breaker,
-            file_reader=lambda path: nx.read(path),
+            file_reader=lambda path: nx.sys_read(path),
             permission_enforcer=nx._permission_enforcer,
         )
         logger.debug("[BOOT:WIRED] ReBACService created")
@@ -121,8 +150,7 @@ def _boot_wired_services(
                 database_url=os.getenv("TOKEN_MANAGER_DB"),
                 oauth_config=getattr(nx._config, "oauth", None) if nx._config else None,
                 mount_lister=lambda: [
-                    (m.mount_point, type(m.backend).__name__)
-                    for m in kernel_services.router.list_mounts()
+                    (m.mount_point, "mounted") for m in kernel_services.router.list_mounts()
                 ],
             )
             logger.debug("[BOOT:WIRED] OAuthService created")
@@ -272,16 +300,11 @@ def _boot_wired_services(
         try:
             from nexus.system_services.lifecycle.events_service import EventsService
 
-            metadata_cache = None
-            if hasattr(nx.metadata, "_cache"):
-                metadata_cache = nx.metadata._cache
-
             events_service = EventsService(
-                backend=nx.backend,
+                backend=_root_backend,
                 event_bus=brick_services.event_bus,
                 lock_manager=brick_services.lock_manager,
                 zone_id=None,
-                metadata_cache=metadata_cache,
             )
             logger.debug("[BOOT:WIRED] EventsService created")
         except Exception as exc:
@@ -289,11 +312,19 @@ def _boot_wired_services(
     else:
         logger.debug("[BOOT:WIRED] EventsService disabled by profile")
 
-    # --- RPC / helper services (Issue #2133: migrated from service_wiring.py) ---
+    # --- RPC / helper services (Issue #2133) ---
     # Pre-extract optional NexusFS attrs to avoid mypy getattr+None inference issues
     _nx_default_context: Any = getattr(nx, "_default_context", None)
     _nx_session_factory: Any = getattr(nx, "SessionLocal", None)
-    _nx_memory_config: Any = getattr(nx, "_memory_config", None)
+    # Build memory_config dict from _default_context (NexusFS stores the
+    # MemoryConfig dataclass as _memory_config_obj, not _memory_config).
+    _nx_memory_config: Any = None
+    if _nx_default_context is not None:
+        _nx_memory_config = {
+            "zone_id": getattr(_nx_default_context, "zone_id", None),
+            "user_id": getattr(_nx_default_context, "user_id", None),
+            "agent_id": getattr(_nx_default_context, "agent_id", None),
+        }
 
     workspace_rpc_service: Any = None
     try:
@@ -325,7 +356,7 @@ def _boot_wired_services(
             wallet_provisioner=brick_services.wallet_provisioner,
             api_key_creator=brick_services.api_key_creator,
             key_service=getattr(nx, "_key_service", None),
-            rmdir_fn=nx.rmdir if hasattr(nx, "rmdir") else None,
+            rmdir_fn=nx.sys_rmdir if hasattr(nx, "sys_rmdir") else None,
             rebac_create_fn=(rebac_service.rebac_create_sync if rebac_service else None),
             rebac_list_tuples_fn=(rebac_service.rebac_list_tuples_sync if rebac_service else None),
             rebac_delete_fn=(rebac_service.rebac_delete_sync if rebac_service else None),
@@ -343,9 +374,9 @@ def _boot_wired_services(
             session_factory=_nx_session_factory,
             entity_registry=system_services.entity_registry,
             api_key_creator=brick_services.api_key_creator,
-            backend=nx.backend,
+            backend=_root_backend,
             rebac_manager=system_services.rebac_manager,
-            rmdir_fn=nx.rmdir if hasattr(nx, "rmdir") else None,
+            rmdir_fn=nx.sys_rmdir if hasattr(nx, "sys_rmdir") else None,
             rebac_create_fn=(rebac_service.rebac_create_sync if rebac_service else None),
             rebac_delete_fn=(rebac_service.rebac_delete_sync if rebac_service else None),
             register_workspace_fn=(
@@ -391,10 +422,12 @@ def _boot_wired_services(
 
         ace_rpc_service = ACERPCService(
             session_factory=_nx_session_factory,
-            backend=nx.backend,
+            backend=_root_backend,
             default_context=_nx_default_context,
             entity_registry=system_services.entity_registry,
-            ensure_entity_registry_fn=getattr(nx, "_ensure_entity_registry", None),
+            ensure_entity_registry_fn=getattr(
+                getattr(nx, "_memory_provider", None), "ensure_entity_registry", None
+            ),
         )
         logger.debug("[BOOT:WIRED] ACERPCService created")
     except Exception as exc:
@@ -421,7 +454,7 @@ def _boot_wired_services(
 
         memory_provider = MemoryProvider(
             session_factory=_nx_session_factory,
-            backend=nx.backend,
+            backend=_root_backend,
             entity_registry=system_services.entity_registry,
             enable_paging=getattr(nx, "_enable_memory_paging", True),
             main_capacity=getattr(nx, "_memory_main_capacity", 100),
@@ -440,7 +473,7 @@ def _boot_wired_services(
 
             time_travel_service = TimeTravelService(
                 session_factory=_nx_session_factory,
-                backend=nx.backend,
+                backend=_root_backend,
                 default_zone_id=getattr(_nx_default_context, "zone_id", None),
             )
             logger.debug("[BOOT:WIRED] TimeTravelService created")
@@ -456,10 +489,10 @@ def _boot_wired_services(
 
             _undo_service = OperationUndoService(
                 router=kernel_services.router,
-                write_fn=nx.write,
-                delete_fn=nx.delete,
-                rename_fn=nx.rename,
-                exists_fn=nx.exists,
+                write_fn=nx.sys_write,
+                delete_fn=nx.sys_unlink,
+                rename_fn=nx.sys_rename,
+                exists_fn=nx.sys_access,
                 fallback_backend=getattr(nx, "backend", None),
             )
             operations_service = OperationsService(

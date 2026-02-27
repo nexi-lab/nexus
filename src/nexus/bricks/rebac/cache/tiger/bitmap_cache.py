@@ -25,7 +25,7 @@ from pyroaring import BitMap as RoaringBitmap
 from sqlalchemy import delete, insert, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.models.permissions import ReBACVersionSequenceModel as RVS
 from nexus.storage.models.permissions import TigerCacheModel as TC
 from nexus.storage.models.permissions import TigerDirectoryGrantsModel as TDG
@@ -121,6 +121,12 @@ class TigerCache:
         self._cache_ttl = 300  # 5 minutes (same for L1 and L2 for consistency)
         self._cache_max_size = 100_000  # Increased from 10k per Issue #979
         self._lock = threading.RLock()
+
+        # Stats counters for observability
+        self._stats_hits = 0
+        self._stats_misses = 0
+        self._stats_sets = 0
+        self._stats_invalidations = 0
 
         # Persistent thread pool for L2 operations (avoid per-operation creation)
         self._l2_executor: Any | None = None
@@ -356,6 +362,7 @@ class TigerCache:
                 bitmap, revision, cached_at = self._cache[key]
                 if time.time() - cached_at < self._cache_ttl:
                     result = int_id in bitmap
+                    self._stats_hits += 1
                     logger.debug(
                         f"Tiger Cache MEMORY HIT: {subject_type}:{subject_id} -> {permission} -> {resource_type}:{resource_id} = {result}"
                     )
@@ -368,12 +375,14 @@ class TigerCache:
         bitmap = self._load_from_db(key, conn)
         if bitmap is not None:
             result = int_id in bitmap
+            self._stats_hits += 1
             logger.debug(
                 f"Tiger Cache DB HIT: {subject_type}:{subject_id} -> {permission} -> {resource_type}:{resource_id} = {result}"
             )
             return result
 
         # Not in cache
+        self._stats_misses += 1
         logger.debug(
             f"Tiger Cache MISS: {subject_type}:{subject_id} -> {permission} -> {resource_type}:{resource_id}"
         )
@@ -891,6 +900,7 @@ class TigerCache:
         with self._lock:
             self._evict_if_needed()
             self._cache[key] = (bitmap, revision, time.time())
+            self._stats_sets += 1
 
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(f"[TIGER] Updated cache for {key}, {len(resource_int_ids)} resources")
@@ -987,6 +997,7 @@ class TigerCache:
             for key in keys_to_remove:
                 del self._cache[key]
 
+        self._stats_invalidations += count + dragonfly_count + len(keys_to_remove)
         logger.debug(
             f"[TIGER] Invalidated {count} L3 + {dragonfly_count} L2 + {len(keys_to_remove)} L1 entries"
         )
@@ -1009,6 +1020,25 @@ class TigerCache:
         """Clear in-memory cache."""
         with self._lock:
             self._cache.clear()
+
+    def get_stats(self) -> dict[str, Any]:
+        """Return cache statistics for observability.
+
+        Returns a dict with hit/miss/set/invalidation counts and L1 cache size.
+        Exposed via the /cache/stats endpoint.
+        """
+        with self._lock:
+            l1_size = len(self._cache)
+        return {
+            "hits": self._stats_hits,
+            "misses": self._stats_misses,
+            "sets": self._stats_sets,
+            "invalidations": self._stats_invalidations,
+            "l1_size": l1_size,
+            "l1_max_size": self._cache_max_size,
+            "l1_ttl_seconds": self._cache_ttl,
+            "l2_enabled": self._dragonfly is not None,
+        }
 
     def add_to_bitmap(
         self,
@@ -1185,6 +1215,11 @@ class TigerCache:
             with self._lock:
                 self._evict_if_needed()
                 self._cache[key] = (bitmap, revision, time.time())
+                # Also update the zone-agnostic key used by check_access()
+                if zone_id:
+                    compat_key = CacheKey(subject_type, subject_id, permission, resource_type)
+                    if compat_key in self._cache:
+                        self._cache[compat_key] = (bitmap, revision, time.time())
 
             logger.info(
                 f"[TIGER] Write-through: {subject_type}:{subject_id} granted {permission} "
@@ -1331,6 +1366,13 @@ class TigerCache:
             with self._lock:
                 self._evict_if_needed()
                 self._cache[key] = (bitmap, revision, time.time())
+                # Also update the zone-agnostic key used by check_access(),
+                # which creates CacheKey without zone_id (defaults to "").
+                # Without this, a stale entry from _load_from_db() survives the revoke.
+                if zone_id:
+                    compat_key = CacheKey(subject_type, subject_id, permission, resource_type)
+                    if compat_key in self._cache:
+                        self._cache[compat_key] = (bitmap, revision, time.time())
 
             logger.info(
                 f"[TIGER] Write-through revoke: {subject_type}:{subject_id} revoked {permission} "

@@ -74,6 +74,13 @@ def _get_async_read_session_factory(request: Request) -> Any:
 # =============================================================================
 
 
+def _normalize_path(path: str) -> str:
+    """Ensure path is absolute for ReBAC filter_list compatibility."""
+    if not path.startswith("/"):
+        return f"/{path}"
+    return path
+
+
 def _apply_rebac_filter(
     results: list[Any],
     permission_enforcer: Any | None,
@@ -83,24 +90,59 @@ def _apply_rebac_filter(
     """Apply ReBAC file-level permission filtering to search results.
 
     Returns (filtered_results, filter_time_ms).
+
+    Uses individual rebac_check() calls instead of filter_list() because:
+    1. filter_list() runs the NamespaceManager pre-filter which requires
+       mount table entries — search paths don't have mount entries.
+    2. rebac_check_bulk() routes through Rust acceleration which has a bug
+       that returns all-False despite correct tuples in the DB.
+    3. For search (10-30 results), individual checks are fast enough (~5ms/path).
     """
     if permission_enforcer is None:
         return results, 0.0
 
-    from nexus.contracts.types import OperationContext
+    rebac_manager = getattr(permission_enforcer, "rebac_manager", None)
+    if rebac_manager is None or not hasattr(rebac_manager, "rebac_check"):
+        return results, 0.0
 
-    ctx = OperationContext(
-        user_id=auth_result.get("user_id", "anonymous"),
-        zone_id=zone_id,
-        groups=auth_result.get("groups", []),
+    user_id = auth_result.get("subject_id") or auth_result.get("user_id", "anonymous")
+    subject = ("user", user_id)
+
+    # Build path→normalized lookup; ReBAC requires absolute paths
+    path_map = {_normalize_path(r.path): r.path for r in results}
+    abs_paths = list(path_map.keys())
+
+    logger.debug(
+        "[SEARCH-REBAC] rebac_check: user_id=%s, zone_id=%s, is_admin=%s, paths=%d",
+        user_id,
+        zone_id,
+        auth_result.get("is_admin", False),
+        len(abs_paths),
     )
-    result_paths = [r.path for r in results]
 
     filter_start = time.perf_counter()
-    permitted = set(permission_enforcer.filter_list(result_paths, ctx))
+    permitted_abs: set[str] = set()
+    try:
+        for abs_path in abs_paths:
+            allowed = rebac_manager.rebac_check(
+                subject=subject,
+                permission="read",
+                object=("file", abs_path),
+                zone_id=zone_id,
+            )
+            if allowed:
+                permitted_abs.add(abs_path)
+    except Exception:
+        logger.warning("ReBAC rebac_check failed, denying all results (fail-closed)", exc_info=True)
+        filter_ms = (time.perf_counter() - filter_start) * 1000
+        return [], filter_ms
     filter_ms = (time.perf_counter() - filter_start) * 1000
 
-    filtered = [r for r in results if r.path in permitted]
+    logger.debug("[SEARCH-REBAC] permitted %d/%d paths", len(permitted_abs), len(abs_paths))
+
+    # Map back: allowed absolute paths → original result paths
+    permitted_originals = {path_map[p] for p in permitted_abs if p in path_map}
+    filtered = [r for r in results if r.path in permitted_originals]
     return filtered, filter_ms
 
 

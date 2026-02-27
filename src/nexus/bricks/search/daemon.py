@@ -164,6 +164,9 @@ class SearchDaemon:
         self._latencies: list[float] = []
         self._max_latency_samples = 1000
 
+        # Per-search timing breakdown (set after each search() call)
+        self.last_search_timing: dict[str, float] = {}
+
         # FileReaderProtocol reference (set by FastAPI server)
         self._file_reader: Any = None
         # Adaptive-k provider (LEGO DI)
@@ -300,16 +303,25 @@ class SearchDaemon:
                 )
 
         start = time.perf_counter()
+        backend_ms = 0.0
+        rerank_ms = 0.0
 
         # Try Zoekt first for keyword queries
         if search_type == "keyword" and self.stats.zoekt_available:
+            backend_start = time.perf_counter()
             zoekt_results = await self._search_zoekt(query, limit, path_filter)
+            backend_ms = (time.perf_counter() - backend_start) * 1000
             if zoekt_results:
                 latency_ms = (time.perf_counter() - start) * 1000
                 self._track_latency(latency_ms)
+                self.last_search_timing = {
+                    "backend_ms": round(backend_ms, 2),
+                    "rerank_ms": 0.0,
+                }
                 return zoekt_results
 
         # Delegate to txtai backend
+        backend_start = time.perf_counter()
         raw_results = await self._backend.search(
             query,
             zone_id=effective_zone_id,
@@ -317,6 +329,7 @@ class SearchDaemon:
             search_type=search_type,
             path_filter=path_filter,
         )
+        backend_ms = (time.perf_counter() - backend_start) * 1000
 
         # Convert to SearchResult
         results = [
@@ -339,10 +352,17 @@ class SearchDaemon:
 
         # Async CE reranking (Decision #16)
         if self._should_rerank(rerank):
+            rerank_start = time.perf_counter()
             results = await self._rerank_async(query, results)
+            rerank_ms = (time.perf_counter() - rerank_start) * 1000
 
         latency_ms = (time.perf_counter() - start) * 1000
         self._track_latency(latency_ms)
+
+        self.last_search_timing = {
+            "backend_ms": round(backend_ms, 2),
+            "rerank_ms": round(rerank_ms, 2),
+        }
 
         return results
 
@@ -567,6 +587,8 @@ class SearchDaemon:
             "last_index_refresh": self.stats.last_index_refresh,
             "zoekt_available": self.stats.zoekt_available,
             "documents_indexed": self.stats.documents_indexed,
+            "bm25_documents": self.stats.documents_indexed,
+            "embedding_cache_connected": self._cache_brick is not None,
             "backend": self.config.search_backend,
             "reranker_enabled": self.config.reranker_enabled,
         }
@@ -577,6 +599,7 @@ class SearchDaemon:
             "status": "healthy" if self._initialized else "starting",
             "daemon_initialized": self._initialized,
             "backend_ready": self._backend is not None,
+            "bm25_index_loaded": self._initialized and self._backend is not None,
             "db_pool_ready": self._backend is not None,
             "zoekt_available": self.stats.zoekt_available,
         }

@@ -14,7 +14,7 @@ import pytest
 from nexus.proxy.brick import ProxyVFSBrick
 from nexus.proxy.circuit_breaker import CircuitState
 from nexus.proxy.config import ProxyBrickConfig
-from nexus.proxy.errors import OfflineQueuedError
+from nexus.proxy.errors import CircuitOpenError, OfflineQueuedError
 from nexus.proxy.transport import HttpTransport
 
 
@@ -136,7 +136,8 @@ class TestCircuitBreakerIntegration:
         async def handler(request: httpx.Request) -> httpx.Response:
             nonlocal call_count
             call_count += 1
-            if call_count <= 3:
+            # Enough failures for direct calls + replay attempts before recovery.
+            if call_count <= 6:
                 raise httpx.ConnectError("down")
             return _make_rpc_response(True)
 
@@ -155,15 +156,21 @@ class TestCircuitBreakerIntegration:
         await proxy.start()
 
         try:
-            # Trip the circuit
+            # Trip the circuit.  The replay engine runs concurrently and may
+            # record additional failures between our direct calls, so the
+            # circuit can open before all 3 iterations.  Once open, further
+            # calls raise CircuitOpenError instead of OfflineQueuedError.
             for _ in range(3):
-                with pytest.raises(OfflineQueuedError):
+                with pytest.raises((OfflineQueuedError, CircuitOpenError)):
                     await proxy.sys_access("/f", "z1")
 
             assert proxy.circuit_state is CircuitState.OPEN
 
-            # Wait for recovery timeout + replay
-            await asyncio.sleep(1.5)
+            # Wait for recovery timeout + replay.  With recovery_timeout=0.5 s
+            # the circuit enters HALF_OPEN after 0.5 s; each failed replay
+            # re-opens it for another 0.5 s.  3 s gives ample room for the
+            # handler to exhaust its failure budget and return a success.
+            await asyncio.sleep(3.0)
 
             # Circuit should have recovered via replay
             assert proxy.circuit_state is CircuitState.CLOSED

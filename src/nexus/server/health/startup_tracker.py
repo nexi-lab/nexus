@@ -29,8 +29,7 @@ class StartupPhase(StrEnum):
     BRICKS = "bricks"
     UPLOADS = "uploads"
     IPC = "ipc"
-    A2A_GRPC = "a2a_grpc"
-    VFS_GRPC = "vfs_grpc"
+    GRPC = "grpc"
 
 
 _ALL_PHASES: frozenset[StartupPhase] = frozenset(StartupPhase)

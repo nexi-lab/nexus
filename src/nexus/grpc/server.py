@@ -1,10 +1,11 @@
-"""VFS gRPC transport lifespan hook (#1133, #1202).
+"""gRPC server lifecycle — start/stop for the unified Nexus gRPC server (#1249).
 
-Starts and stops the optional gRPC server for the NexusVFSService.
+Manages a single ``grpc.aio.server()`` hosting ``NexusVFSService``.
 The server is disabled by default (port 0) and enabled by setting
 ``NEXUS_GRPC_PORT`` to a non-zero port number.
 
-Follows the same pattern as ``a2a_grpc.py``.
+A2A agent messaging is delivered over VFS (A2A-over-VFS), so there is
+no separate A2A gRPC servicer — all traffic flows through a single port.
 """
 
 import asyncio
@@ -20,15 +21,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-async def startup_vfs_grpc(app: "FastAPI", _svc: "LifespanServices") -> list[asyncio.Task]:
-    """Start the VFS gRPC server if configured."""
+async def startup_grpc(app: "FastAPI", _svc: "LifespanServices") -> list[asyncio.Task]:
+    """Start the gRPC server if configured."""
     port = int(os.environ.get("NEXUS_GRPC_PORT", "0"))
     if not port:
         return []
 
     nexus_fs = getattr(app.state, "nexus_fs", None)
     if nexus_fs is None:
-        logger.warning("VFS gRPC disabled: no nexus_fs on app.state")
+        logger.warning("gRPC disabled: no nexus_fs on app.state")
         return []
 
     exposed_methods = getattr(app.state, "exposed_methods", {})
@@ -39,7 +40,7 @@ async def startup_vfs_grpc(app: "FastAPI", _svc: "LifespanServices") -> list[asy
     import grpc.aio
 
     import nexus.grpc.vfs.vfs_pb2_grpc as vfs_pb2_grpc
-    from nexus.server.rpc.grpc_servicer import VFSServicer
+    from nexus.grpc.servicer import VFSServicer
 
     servicer = VFSServicer(
         nexus_fs=nexus_fs,
@@ -54,14 +55,14 @@ async def startup_vfs_grpc(app: "FastAPI", _svc: "LifespanServices") -> list[asy
     server.add_insecure_port(f"[::]:{port}")
     await server.start()
 
-    app.state.vfs_grpc_server = server
-    logger.info("VFS gRPC transport started on port %d", port)
+    app.state.grpc_server = server
+    logger.info("gRPC server started on port %d", port)
     return []
 
 
-async def shutdown_vfs_grpc(app: "FastAPI", _svc: "LifespanServices") -> None:
-    """Stop the VFS gRPC server if running."""
-    server = getattr(app.state, "vfs_grpc_server", None)
+async def shutdown_grpc(app: "FastAPI", _svc: "LifespanServices") -> None:
+    """Stop the gRPC server if running."""
+    server = getattr(app.state, "grpc_server", None)
     if server is not None:
         await server.stop(grace=5)
-        logger.info("VFS gRPC transport stopped")
+        logger.info("gRPC server stopped")

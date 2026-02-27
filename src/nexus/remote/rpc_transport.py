@@ -19,7 +19,7 @@ Issue #1202: gRPC for REMOTE profile.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import grpc
 from tenacity import (
@@ -36,6 +36,9 @@ from nexus.contracts.exceptions import (
 from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
 from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.remote.base_client import BaseRemoteNexusFS
+
+if TYPE_CHECKING:
+    from nexus.security.tls.config import ZoneTlsConfig
 
 logger = logging.getLogger(__name__)
 
@@ -71,15 +74,27 @@ class RPCTransport:
         auth_token: str | None = None,
         timeout: float = 90.0,
         connect_timeout: float = 5.0,
+        *,
+        tls_config: ZoneTlsConfig | None = None,
+        peer_ca_pem: bytes | None = None,
     ) -> None:
         self.server_address = server_address
         self._auth_token = auth_token or ""
         self._timeout = timeout
         self._connect_timeout = connect_timeout
 
-        self._channel: grpc.Channel = grpc.insecure_channel(
-            server_address, options=_CHANNEL_OPTIONS
-        )
+        if tls_config is not None:
+            root_ca = peer_ca_pem if peer_ca_pem is not None else tls_config.ca_pem
+            creds = grpc.ssl_channel_credentials(
+                root_certificates=root_ca,
+                private_key=tls_config.node_key_pem,
+                certificate_chain=tls_config.node_cert_pem,
+            )
+            self._channel: grpc.Channel = grpc.secure_channel(
+                server_address, creds, options=_CHANNEL_OPTIONS
+            )
+        else:
+            self._channel = grpc.insecure_channel(server_address, options=_CHANNEL_OPTIONS)
         self._stub = vfs_pb2_grpc.NexusVFSServiceStub(self._channel)
 
         # Reuse BaseRemoteNexusFS error handling (static method access)

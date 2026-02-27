@@ -321,6 +321,7 @@ def create_app(
         "llm_service",
         "oauth_service",
         "mount_service",
+        "search_service",
         "version_service",
         "share_link_service",
         "rebac_service",

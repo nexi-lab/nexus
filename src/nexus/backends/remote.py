@@ -99,7 +99,7 @@ class RemoteBackend(ObjectStoreABC):
 
     def write_content(self, content: bytes, context: OperationContext | None = None) -> WriteResult:
         path = self._to_server_path(context)
-        result = self._call_rpc("sys_write", {"path": path, "content": content})
+        result = self._transport.write_file(path, content)  # Typed RPC — raw bytes
         return WriteResult(
             content_hash=result.get("etag", ""),
             size=result.get("size", len(content)),
@@ -107,12 +107,7 @@ class RemoteBackend(ObjectStoreABC):
 
     def read_content(self, content_hash: str, context: OperationContext | None = None) -> bytes:
         path = self._to_server_path(context)
-        result = self._call_rpc("sys_read", {"path": path})
-        parsed = self._error_handler._parse_read_response(result)
-        if isinstance(parsed, dict):
-            # Server returned metadata dict — extract content if present
-            return bytes(parsed.get("content", b""))
-        return bytes(parsed)
+        return self._transport.read_file(path)  # Typed RPC — raw bytes, no JSON decode
 
     def delete_content(self, content_hash: str, context: OperationContext | None = None) -> None:
         """No-op: server-side deletion is handled by RemoteMetastore.delete().
@@ -177,8 +172,8 @@ class RemoteBackend(ObjectStoreABC):
     # === Lifecycle ===
 
     def connect(self, context: OperationContext | None = None) -> None:
-        """Health-check the remote server via gRPC channel readiness."""
-        self._transport.health_check()
+        """Health-check the remote server via Ping RPC."""
+        self._transport.ping()
 
     def disconnect(self, context: OperationContext | None = None) -> None:
         """No-op — transport lifecycle managed by factory."""

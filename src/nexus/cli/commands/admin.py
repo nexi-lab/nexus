@@ -25,6 +25,7 @@ from nexus.cli.utils import (
     REMOTE_URL_OPTION,
     console,
 )
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 # Type alias for the RPC transport callable returned by get_admin_rpc().
 AdminRPC = Callable[[str, dict[str, Any] | None], Any]
@@ -102,7 +103,7 @@ def admin() -> None:
 @click.option("--email", help="User email (for documentation purposes)")
 @click.option("--is-admin", is_flag=True, help="Grant admin privileges")
 @click.option("--expires-days", type=int, help="API key expiry in days")
-@click.option("--zone-id", default="default", help="Zone ID (default: 'default')")
+@click.option("--zone-id", default=ROOT_ZONE_ID, help="Zone ID (default: root)")
 @click.option("--subject-type", default="user", help="Subject type: user or agent")
 @click.option("--json-output", is_flag=True, help="Output as JSON")
 @REMOTE_API_KEY_OPTION

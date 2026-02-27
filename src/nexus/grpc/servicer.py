@@ -22,6 +22,7 @@ Issue #1249: Port consolidation — single gRPC server.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 import time
 from collections.abc import AsyncIterator
@@ -123,7 +124,7 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
         if self._auth_provider:
             result = await self._auth_provider.authenticate(token)
             if result:
-                return dict(result)
+                return dataclasses.asdict(result)
 
         return {}
 

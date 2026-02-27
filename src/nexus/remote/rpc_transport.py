@@ -157,6 +157,9 @@ class RPCTransport:
             self._error_handler._handle_rpc_error(error_dict)
 
         result = decode_rpc_message(response.payload)
+        # Unwrap server envelope: gRPC servicer wraps as {"result": actual_result}
+        if isinstance(result, dict) and "result" in result:
+            result = result["result"]
         logger.debug("RPCTransport.call_rpc OK: %s", method)
         return result
 

@@ -1684,6 +1684,8 @@ class NexusFS(  # type: ignore[misc]
             >>> content = nx.sys_read("/memory/by-user/alice/facts")  # Same memory!
         """
         path = self._validate_path(path)
+        # Normalize context dict to OperationContext dataclass (CLI passes dicts)
+        context = self._parse_context(context)
 
         # PRE-DISPATCH: virtual path resolvers (Issue #889)
         # Memory paths → MemoryIOHandler, virtual views → VirtualViewResolver
@@ -2609,6 +2611,9 @@ class NexusFS(  # type: ignore[misc]
         This method contains the actual write logic, extracted to support
         both locked and non-locked write paths without code duplication.
         """
+        # Normalize context dict to OperationContext dataclass (CLI passes dicts)
+        context = self._parse_context(context)
+
         # Route to backend with write access check FIRST (to check zone/agent isolation)
         # This must happen before permission check so AccessDeniedError is raised before PermissionError
         zone_id, agent_id, is_admin = self._get_routing_params(context)
@@ -3758,6 +3763,8 @@ class NexusFS(  # type: ignore[misc]
         """
         old_path = self._validate_path(old_path)
         new_path = self._validate_path(new_path)
+        # Normalize context dict to OperationContext dataclass (CLI passes dicts)
+        context = self._parse_context(context)
         self._check_zone_writable(context)  # Issue #2061: write-gating
 
         # Route both paths

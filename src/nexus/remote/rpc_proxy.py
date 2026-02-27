@@ -61,19 +61,34 @@ class RPCProxyBase:
 
     @classmethod
     def _get_param_names(cls, method_name: str) -> list[str]:
-        """Get parameter names for a method from the NexusFilesystemABC ABC.
+        """Get parameter names for a method from known service classes.
 
         Uses inspect.signature to extract parameter names, caching results
-        for performance. Falls back to empty list for non-ABC methods.
+        for performance. Falls back to empty list for unknown methods.
         """
         if method_name not in cls._param_name_cache:
             # Lazy import to avoid circular dependency
             from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
 
-            abc_method = getattr(NexusFilesystemABC, method_name, None)
-            if abc_method and callable(abc_method):
+            # Try NexusFilesystemABC first, then NexusFS, then RPC params
+            method = getattr(NexusFilesystemABC, method_name, None)
+            if method is None:
                 try:
-                    sig = inspect.signature(abc_method)
+                    import dataclasses as _dc
+
+                    from nexus.server._rpc_params_generated import METHOD_PARAMS
+
+                    params_cls = METHOD_PARAMS.get(method_name)
+                    if params_cls and _dc.is_dataclass(params_cls):
+                        names = [f.name for f in _dc.fields(params_cls)]
+                        cls._param_name_cache[method_name] = names
+                        return names
+                except (ImportError, AttributeError):
+                    pass
+
+            if method and callable(method):
+                try:
+                    sig = inspect.signature(method)
                     names = [p for p in sig.parameters if p != "self"]
                     cls._param_name_cache[method_name] = names
                 except (ValueError, TypeError):

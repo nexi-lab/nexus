@@ -657,6 +657,8 @@ module = [
     "nexus.raft.transport_pb2_grpc",
     "nexus.bricks.a2a.a2a_pb2",
     "nexus.bricks.a2a.a2a_pb2_grpc",
+    "nexus.grpc.vfs.vfs_pb2",
+    "nexus.grpc.vfs.vfs_pb2_grpc",
 ]
 # Generated gRPC/protobuf stubs — no type info available
 follow_imports = "skip"
@@ -670,6 +672,11 @@ disable_error_code = ["attr-defined"]
 [[tool.mypy.overrides]]
 module = ["nexus.bricks.a2a.grpc_server", "nexus.bricks.a2a.proto_converter"]
 # gRPC server and proto converter interact with generated a2a_pb2 module
+disable_error_code = ["attr-defined"]
+
+[[tool.mypy.overrides]]
+module = ["nexus.server.rpc.grpc_servicer", "nexus.remote.rpc_transport"]
+# VFS gRPC servicer and transport interact with generated vfs_pb2 module
 disable_error_code = ["attr-defined"]
 
 [[tool.mypy.overrides]]
@@ -771,6 +778,8 @@ exclude = [
     "src/nexus/core/protocols/",               # Generated at install time
     "src/nexus/bricks/a2a/a2a_pb2.py",         # Generated gRPC stub
     "src/nexus/bricks/a2a/a2a_pb2_grpc.py",   # Generated gRPC stub
+    "src/nexus/grpc/vfs/vfs_pb2.py",           # Generated gRPC stub
+    "src/nexus/grpc/vfs/vfs_pb2_grpc.py",      # Generated gRPC stub
 ]
 
 [tool.ruff.lint]

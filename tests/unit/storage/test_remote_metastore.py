@@ -1,12 +1,12 @@
-"""Tests for RemoteMetastore (Issue #844).
+"""Tests for RemoteMetastore (Issue #844, #1133).
 
 Verifies that RemoteMetastore correctly proxies MetastoreABC operations
-to a remote Nexus server via HTTP/JSON-RPC.
+to a remote Nexus server via RPCTransport (gRPC).
 """
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -20,17 +20,17 @@ from nexus.storage.remote_metastore import RemoteMetastore
 
 
 @pytest.fixture
-def metastore() -> RemoteMetastore:
-    """Create a RemoteMetastore with mocked httpx.Client."""
-    with patch("nexus.storage.remote_metastore.httpx.Client"):
-        return RemoteMetastore("http://localhost:2026")
+def mock_transport() -> MagicMock:
+    """Create a mock RPCTransport."""
+    transport = MagicMock()
+    transport.server_address = "localhost:2028"
+    return transport
 
 
 @pytest.fixture
-def metastore_with_auth() -> RemoteMetastore:
-    """Create a RemoteMetastore with API key."""
-    with patch("nexus.storage.remote_metastore.httpx.Client"):
-        return RemoteMetastore("http://localhost:2026", api_key="test-key-123")
+def metastore(mock_transport) -> RemoteMetastore:
+    """Create a RemoteMetastore with mocked RPCTransport."""
+    return RemoteMetastore(mock_transport)
 
 
 # ---------------------------------------------------------------------------
@@ -56,13 +56,8 @@ class TestRemoteMetastoreConformance:
 class TestRemoteMetastoreProperties:
     """RemoteMetastore configuration."""
 
-    def test_server_url_stored(self, metastore: RemoteMetastore) -> None:
-        assert metastore._server_url == "http://localhost:2026"
-
-    def test_server_url_trailing_slash_stripped(self) -> None:
-        with patch("nexus.storage.remote_metastore.httpx.Client"):
-            m = RemoteMetastore("http://localhost:2026/")
-        assert m._server_url == "http://localhost:2026"
+    def test_transport_stored(self, metastore: RemoteMetastore, mock_transport) -> None:
+        assert metastore._transport is mock_transport
 
 
 # ---------------------------------------------------------------------------
@@ -105,8 +100,8 @@ class TestRemoteMetastoreRPC:
             result = metastore.get("/error.txt")
             assert result is None
 
-    def test_put_calls_set_metadata(self, metastore: RemoteMetastore) -> None:
-        """put() should call _call_rpc('set_metadata', ...)."""
+    def test_put_calls_sys_setattr(self, metastore: RemoteMetastore) -> None:
+        """put() should call _call_rpc('sys_setattr', ...)."""
         metadata = FileMetadata(
             path="/test.txt",
             backend_name="local",
@@ -118,7 +113,7 @@ class TestRemoteMetastoreRPC:
 
             mock_rpc.assert_called_once()
             call_args = mock_rpc.call_args
-            assert call_args[0][0] == "set_metadata"
+            assert call_args[0][0] == "sys_setattr"
             assert call_args[0][1]["path"] == "/test.txt"
             assert call_args[0][1]["consistency"] == "sc"
 
@@ -220,7 +215,6 @@ class TestRemoteMetastoreRPC:
 class TestRemoteMetastoreLifecycle:
     """Connection lifecycle operations."""
 
-    def test_close_closes_session(self, metastore: RemoteMetastore) -> None:
-        """close() should close the httpx session."""
-        metastore.close()
-        metastore._session.close.assert_called_once()
+    def test_close_is_noop(self, metastore: RemoteMetastore) -> None:
+        """close() should be a no-op (transport lifecycle managed by factory)."""
+        metastore.close()  # Should not raise

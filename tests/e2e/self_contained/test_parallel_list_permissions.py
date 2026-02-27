@@ -447,16 +447,16 @@ class TestFilterListAdminBypass:
     def test_filter_list_admin_bypass_disabled(self) -> None:
         """When allow_admin_bypass=False, admin does NOT bypass permissions."""
         enforcer = _make_enforcer(
-            allowed_paths={"/zone/dir0/file0.txt"},
+            allowed_paths={"/data/dir0/file0.txt"},
             allow_admin_bypass=False,
         )
         admin_ctx = _make_context(user="admin_user", is_admin=True)
 
-        paths = ["/zone/dir0/file0.txt", "/zone/dir1/file1.txt"]
+        paths = ["/data/dir0/file0.txt", "/data/dir1/file1.txt"]
         result = enforcer.filter_list(paths, admin_ctx)
 
         # Admin bypass is disabled, so only allowed paths are returned
-        assert result == ["/zone/dir0/file0.txt"]
+        assert result == ["/data/dir0/file0.txt"]
 
     def test_filter_list_non_admin_no_bypass(self) -> None:
         """Non-admin user does not get bypass even with allow_admin_bypass=True."""

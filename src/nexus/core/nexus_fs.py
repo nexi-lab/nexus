@@ -493,6 +493,41 @@ class NexusFS(  # type: ignore[misc]
             # No parent (shouldn't happen for valid paths)
             return None
 
+    def _ensure_parent_directories(self, path: str, ctx: OperationContext) -> None:
+        """Create metadata entries for all parent directories that don't exist.
+
+        Walks from the immediate parent of *path* upward toward ``/``, collecting
+        every path that has no metastore entry, then creates directory metadata
+        entries from top to bottom (shallowest first) so that ``sys_readdir``
+        lists them correctly.
+
+        This is factored out of ``sys_mkdir`` so it can be called both on the
+        normal code-path *and* on the early-return path when the target path
+        already exists (e.g. a DT_MOUNT entry written by ``PathRouter.add_mount``).
+        """
+        parent_path = self._get_parent_path(path)
+        parents_to_create: list[str] = []
+
+        while parent_path and parent_path != "/":
+            if not self.metadata.exists(parent_path):
+                parents_to_create.append(parent_path)
+            else:
+                break
+            parent_path = self._get_parent_path(parent_path)
+
+        for parent_dir in reversed(parents_to_create):
+            self._create_directory_metadata(parent_dir, context=ctx)
+            if hasattr(self, "_hierarchy_manager"):
+                try:
+                    logger.debug(
+                        f"mkdir: Creating parent tuples for intermediate dir: {parent_dir}"
+                    )
+                    self._hierarchy_manager.ensure_parent_tuples(
+                        parent_dir, zone_id=ctx.zone_id or ROOT_ZONE_ID
+                    )
+                except Exception as e:
+                    logger.warning(f"mkdir: Failed to create parent tuples for {parent_dir}: {e}")
+
     def _create_directory_metadata(
         self, path: str, context: OperationContext | None = None
     ) -> None:
@@ -578,9 +613,14 @@ class NexusFS(  # type: ignore[misc]
             # When parents=True, behave like mkdir -p (don't raise error if exists)
             if not exist_ok and not parents:
                 raise FileExistsError(f"Directory already exists: {path}")
-            # If exist_ok=True (or parents=True) and directory exists, we still create metadata if it doesn't exist
+            # If exist_ok=True (or parents=True) and directory exists, we still
+            # need to create parent directory metadata entries.  DT_MOUNT entries
+            # are created by PathRouter.add_mount() *before* sys_mkdir is called,
+            # so the target path already exists in metastore but the parent
+            # directories (e.g. /mnt for /mnt/test) have no metadata yet.
             if existing is not None:
-                # Metadata already exists, nothing to do
+                if parents:
+                    self._ensure_parent_directories(path, ctx)
                 return
 
         # Create directory in backend
@@ -588,37 +628,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Create metadata entries for parent directories if parents=True
         if parents:
-            # Create metadata for all parent directories that don't have it
-            parent_path = self._get_parent_path(path)
-            parents_to_create = []
-
-            while parent_path and parent_path != "/":
-                if not self.metadata.exists(parent_path):
-                    parents_to_create.append(parent_path)
-                else:
-                    # Parent exists, stop walking up
-                    break
-                parent_path = self._get_parent_path(parent_path)
-
-            # Create parents from top to bottom (reverse order)
-            for parent_dir in reversed(parents_to_create):
-                self._create_directory_metadata(parent_dir, context=ctx)
-                # P0-3: Create parent tuples for each intermediate directory
-                # This ensures permission inheritance works for deeply nested paths
-                if hasattr(self, "_hierarchy_manager"):
-                    try:
-                        logger.debug(
-                            f"mkdir: Creating parent tuples for intermediate dir: {parent_dir}"
-                        )
-                        self._hierarchy_manager.ensure_parent_tuples(
-                            parent_dir, zone_id=ctx.zone_id or ROOT_ZONE_ID
-                        )
-                    except Exception as e:
-                        # Don't fail mkdir if parent tuple creation fails
-                        logger.warning(
-                            f"mkdir: Failed to create parent tuples for {parent_dir}: {e}"
-                        )
-                        pass
+            self._ensure_parent_directories(path, ctx)
 
         # Create explicit metadata entry for the directory
         self._create_directory_metadata(path, context=ctx)
@@ -859,7 +869,13 @@ class NexusFS(  # type: ignore[misc]
         path: str,
         context: OperationContext | None = None,
     ) -> bool:
-        """Check if path is a directory (explicit or implicit)."""
+        """Check if path is a directory (explicit or implicit).
+
+        A path is considered a directory if any of the following hold:
+        - It is an implicit directory (has children in metastore)
+        - Its metastore entry has ``entry_type`` DT_DIR or DT_MOUNT
+        - The backend reports it as a directory
+        """
         try:
             path = self._validate_path(path)
 
@@ -882,6 +898,12 @@ class NexusFS(  # type: ignore[misc]
                     # For explicit directories/files, use hierarchical access check
                     if not self._descendant_checker.has_access(path, Permission.READ, ctx):
                         return False
+
+            # Check metastore entry_type: DT_DIR and DT_MOUNT are directories.
+            # This is a fast ~5 us redb read that avoids calling into the backend.
+            meta = self.metadata.get(path)
+            if meta is not None and (meta.is_dir or meta.is_mount):
+                return True
 
             # Route with access control (read permission needed to check)
             route = self.router.route(

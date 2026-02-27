@@ -1,0 +1,14 @@
+# Environment variables
+.env
+
+# Generated data directories
+nexus-data/
+nexus-examples-data/
+nexus-sdk-examples-data/
+quick-start-data/
+nexus-examples-workspace/
+
+# Generated files
+*.zip
+*.pyc
+__pycache__/

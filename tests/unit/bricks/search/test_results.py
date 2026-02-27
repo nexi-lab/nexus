@@ -212,21 +212,6 @@ class TestBaseSearchResultMigration:
         assert isinstance(result, BaseSearchResult)
         assert result.search_type == "keyword"
 
-    def test_graph_enhanced_result_compat(self) -> None:
-        """GraphEnhancedSearchResult should still work as BaseSearchResult subclass."""
-        from nexus.bricks.search.graph_retrieval import GraphEnhancedSearchResult
-
-        result = GraphEnhancedSearchResult(
-            path="/src/test.py",
-            chunk_text="test",
-            score=0.85,
-            graph_score=0.7,
-            chunk_id="chunk-1",
-        )
-        assert isinstance(result, BaseSearchResult)
-        assert result.graph_score == 0.7
-        assert result.chunk_id == "chunk-1"
-
     @pytest.mark.parametrize(
         ("result_cls", "extra_kwargs"),
         [
@@ -240,22 +225,14 @@ class TestBaseSearchResultMigration:
                 {"search_type": "hybrid"},
                 id="daemon",
             ),
-            pytest.param(
-                "GraphEnhancedSearchResult",
-                {"graph_score": 0.6, "chunk_id": "c1"},
-                id="graph",
-            ),
         ],
     )
     def test_all_subclasses_share_base_fields(self, result_cls: str, extra_kwargs: dict) -> None:
         """All result subclasses should share identical base field behavior."""
-        # Import dynamically
         if result_cls == "BaseSearchResult":
             cls = BaseSearchResult
-        elif result_cls == "SearchResult":
-            from nexus.bricks.search.daemon import SearchResult as cls
         else:
-            from nexus.bricks.search.graph_retrieval import GraphEnhancedSearchResult as cls
+            from nexus.bricks.search.daemon import SearchResult as cls
 
         base_kwargs = {
             "path": "/test.py",

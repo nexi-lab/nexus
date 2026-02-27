@@ -8,40 +8,23 @@ logger = logging.getLogger(__name__)
 
 def _resolve_embedding_provider() -> Any:
     """Resolve the embedding provider from the search brick (factory-layer DI)."""
-    try:
-        from nexus.bricks.search.embeddings import create_embedding_provider
-
-        return create_embedding_provider(provider="openrouter")
-    except Exception:
-        logger.debug("[FACTORY] Embedding provider unavailable, semantic search disabled")
-        return None
+    # Removed: txtai handles this (Issue #2663)
+    # embeddings module was deleted; always return None.
+    return None
 
 
 def _resolve_graph_store_class() -> type[Any] | None:
     """Resolve the GraphStore class from the search brick (factory-layer DI)."""
-    try:
-        from nexus.bricks.search.graph_store import GraphStore
-
-        return GraphStore
-    except Exception:
-        logger.debug("[FACTORY] GraphStore class unavailable, graph storage disabled")
-        return None
+    # Removed: txtai handles this (Issue #2663)
+    # graph_store module was deleted; always return None.
+    return None
 
 
-def _resolve_vector_db(engine: Any) -> Any:
+def _resolve_vector_db(engine: Any) -> Any:  # noqa: ARG001
     """Resolve VectorDatabase from the search brick (factory-layer DI)."""
-    if engine is None:
-        return None
-    try:
-        from nexus.bricks.search.vector_db import VectorDatabase
-
-        _is_pg = not str(engine.url).startswith("sqlite")
-        vdb = VectorDatabase(engine, is_postgresql=_is_pg)
-        vdb.initialize()
-        return vdb
-    except Exception as exc:
-        logger.debug("[FACTORY] VectorDatabase unavailable: %s", exc)
-        return None
+    # Removed: txtai handles this (Issue #2663)
+    # vector_db module was deleted; always return None.
+    return None
 
 
 def create_memory_service(nx: Any) -> Any:

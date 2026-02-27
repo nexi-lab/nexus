@@ -1,15 +1,17 @@
-"""Search API v2 router (#2056).
+"""Search API v2 router (#2056, #2663).
 
 Provides search daemon endpoints:
 - GET  /api/v2/search/health   -- daemon health check (public, no auth)
 - GET  /api/v2/search/stats    -- daemon statistics
 - GET  /api/v2/search/query    -- execute search query
+- POST /api/v2/search/index    -- explicit document indexing
 - POST /api/v2/search/refresh  -- notify daemon of file change
 - POST /api/v2/search/expand   -- LLM-based query expansion
 
-Ported from v1 with improvements:
-- Top-level imports for QueryRouter, graph_enhanced_search
-- Generic error messages (don't leak internal details)
+Rewritten for txtai backend (#2663):
+- txtai handles hybrid BM25+dense fusion internally
+- Zone-level isolation via txtai SQL WHERE (brick layer)
+- File-level ReBAC filtering in router (server layer)
 """
 
 import logging
@@ -190,8 +192,6 @@ async def search_query(
                         "line_end": r.line_end,
                         "keyword_score": round(r.keyword_score, 4) if r.keyword_score else None,
                         "vector_score": round(r.vector_score, 4) if r.vector_score else None,
-                        "graph_score": round(r.graph_score, 4) if r.graph_score else None,
-                        "graph_context": r.graph_context.to_dict() if r.graph_context else None,
                     }
                     for r in results
                 ],
@@ -250,6 +250,28 @@ async def search_query(
         raise HTTPException(status_code=500, detail="Search query failed") from e
 
 
+@router.post("/index")
+async def search_index_documents(
+    request: Request,
+    auth_result: dict[str, Any] = Depends(require_auth),
+    search_daemon: Any = Depends(_get_search_daemon),
+) -> dict[str, Any]:
+    """Explicitly index documents (Decision #18: call-by-call indexing).
+
+    Request body: ``{"documents": [{"id": str, "text": str, "path": str, ...}]}``
+    """
+    from nexus.contracts.constants import ROOT_ZONE_ID
+
+    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
+    body = await request.json()
+    documents: list[dict[str, Any]] = body.get("documents", [])
+    if not documents:
+        raise HTTPException(status_code=400, detail="No documents provided")
+
+    count = await search_daemon.index_documents(documents, zone_id=zone_id)
+    return {"status": "indexed", "count": count, "zone_id": zone_id}
+
+
 @router.post("/refresh")
 async def search_refresh_notify(
     path: str = Query(..., description="Path of the changed file"),
@@ -260,21 +282,6 @@ async def search_refresh_notify(
     """Notify the search daemon of a file change for index refresh."""
     await search_daemon.notify_file_change(path, change_type)
     return {"status": "accepted", "path": path, "change_type": change_type}
-
-
-@router.post("/bulk-embed")
-async def search_bulk_embed(
-    batch_size: int = Query(50, description="Batch size for embedding"),
-    _auth_result: dict[str, Any] = Depends(require_auth),
-    search_daemon: Any = Depends(_get_search_daemon),
-) -> dict[str, Any]:
-    """Trigger bulk embedding of all BM25S-indexed documents.
-
-    Uses BM25S corpus as content source, registers files in file_paths,
-    and embeds via the standard IndexingPipeline (decoupled from BM25).
-    """
-    embedded = await search_daemon.bulk_embed_from_bm25s(batch_size=batch_size)
-    return {"status": "completed", "documents_embedded": embedded}
 
 
 @router.post("/expand")

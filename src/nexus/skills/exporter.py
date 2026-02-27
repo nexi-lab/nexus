@@ -187,7 +187,7 @@ class SkillExporter:
             ) from e
 
         # Separate files from directories
-        # Note: filesystem.list() may return directories with OR without trailing "/"
+        # Note: filesystem.sys_readdir() may return directories with OR without trailing "/"
         # We need to check each entry to determine if it's a directory
         file_paths = []
         directory_paths = []

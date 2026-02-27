@@ -354,11 +354,11 @@ class GmailConnectorBackend(
         skill_dir = posixpath.join(mount_path.rstrip("/"), self.SKILL_DIR)
 
         try:
-            filesystem.mkdir(skill_dir, parents=True, exist_ok=True)
+            filesystem.sys_mkdir(skill_dir, parents=True, exist_ok=True)
 
             skill_md_path = posixpath.join(skill_dir, "SKILL.md")
             content = self.generate_skill_doc(mount_path)
-            filesystem.write(skill_md_path, content.encode("utf-8"))
+            filesystem.sys_write(skill_md_path, content.encode("utf-8"))
             result["skill_md"] = skill_md_path
 
             return result

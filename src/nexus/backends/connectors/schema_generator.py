@@ -121,21 +121,21 @@ class SkillDocGenerator:
             return result
 
         try:
-            filesystem.mkdir(skill_dir, parents=True, exist_ok=True)
+            filesystem.sys_mkdir(skill_dir, parents=True, exist_ok=True)
 
             skill_md_path = posixpath.join(skill_dir, "SKILL.md")
             content = self.generate_skill_doc(mount_path)
-            filesystem.write(skill_md_path, content.encode("utf-8"))
+            filesystem.sys_write(skill_md_path, content.encode("utf-8"))
             result["skill_md"] = skill_md_path
             logger.info("Generated SKILL.md at %s", skill_md_path)
 
             if self._examples:
                 examples_dir = posixpath.join(skill_dir, "examples")
-                filesystem.mkdir(examples_dir, parents=True, exist_ok=True)
+                filesystem.sys_mkdir(examples_dir, parents=True, exist_ok=True)
 
                 for filename, file_content in self._examples.items():
                     example_path = posixpath.join(examples_dir, filename)
-                    filesystem.write(example_path, file_content.encode("utf-8"))
+                    filesystem.sys_write(example_path, file_content.encode("utf-8"))
                     result["examples"].append(example_path)
                     logger.debug("Generated example at %s", example_path)
 

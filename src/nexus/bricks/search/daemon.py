@@ -36,6 +36,29 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
+# Helpers
+# =============================================================================
+
+
+def _strip_zone_prefix(path: str) -> str:
+    """Strip ``/zone/{zone_id}/`` prefix from a path.
+
+    API clients may send zone-scoped paths (e.g. ``/zone/corp/docs/file.py``),
+    but NexusFS expects raw virtual paths (``/docs/file.py``).  The zone_id is
+    passed separately as a keyword argument.
+
+    Returns the original path unchanged if no zone prefix is present.
+    """
+    if path.startswith("/zone/"):
+        # "/zone/{zone_id}/rest/of/path" → "/rest/of/path"
+        parts = path[6:].split("/", 1)
+        if len(parts) > 1:
+            return f"/{parts[1]}"
+        return "/"
+    return path
+
+
+# =============================================================================
 # Data classes
 # =============================================================================
 
@@ -74,7 +97,7 @@ class DaemonConfig:
 
     # txtai backend (Decision #1, #2)
     search_backend: str = "txtai"
-    embedding_model: str = "all-MiniLM-L6-v2"
+    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     hybrid_search: bool = True
 
     # Indexing (Decision #18)
@@ -345,18 +368,66 @@ class SearchDaemon:
             return 0
         return await self._backend.delete(ids, zone_id=zone_id)
 
-    async def notify_file_change(self, path: str, content: str = "", *, zone_id: str = "") -> None:
-        """Queue file for auto-indexing (only active if auto_index_on_write=True)."""
-        if not self.config.auto_index_on_write:
+    async def notify_file_change(
+        self,
+        path: str,
+        change_type: str = "update",
+        *,
+        zone_id: str = "",
+    ) -> None:
+        """Handle a file change notification for index refresh.
+
+        When called explicitly (e.g. from the /refresh endpoint), this reads
+        the file content via ``_file_reader`` and upserts it into the backend
+        immediately — regardless of ``auto_index_on_write``.
+
+        For auto-indexing (background debounced loop), this queues the document
+        only when ``auto_index_on_write=True``.
+
+        Args:
+            path: Virtual path of the changed file (may include /zone/{id}/ prefix).
+            change_type: One of "create", "update", "delete".
+            zone_id: Zone namespace for isolation.
+        """
+        from nexus.contracts.constants import ROOT_ZONE_ID
+
+        effective_zone_id = zone_id or ROOT_ZONE_ID
+
+        # Strip /zone/{zone_id}/ prefix — NexusFS expects raw paths,
+        # but API clients may send zone-scoped paths.
+        read_path = _strip_zone_prefix(path)
+        # Use the stripped path for both storage and reading
+        store_path = read_path
+
+        # Handle deletions
+        if change_type == "delete":
+            await self.delete_documents([store_path], zone_id=effective_zone_id)
             return
-        async with self._index_lock:
-            self._pending_index_docs.append(
-                {
-                    "id": path,
-                    "text": content,
-                    "path": path,
-                    "zone_id": zone_id,
-                }
+
+        # Read content via FileReaderProtocol when available
+        content = ""
+        if self._file_reader is not None:
+            try:
+                content = await asyncio.to_thread(self._file_reader.read_text, read_path)
+            except Exception:
+                logger.warning("Failed to read file for indexing: %s", read_path, exc_info=True)
+                return
+
+        if not content:
+            logger.debug("No content for %s — skipping index", read_path)
+            return
+
+        doc = {"id": store_path, "text": content, "path": store_path}
+
+        # Explicit upsert into backend (works regardless of auto_index_on_write)
+        if self._backend:
+            count = await self._backend.upsert([doc], zone_id=effective_zone_id)
+            self.stats.documents_indexed += count
+            logger.info(
+                "Indexed file %s in zone %s (change_type=%s)",
+                store_path,
+                effective_zone_id,
+                change_type,
             )
 
     async def _auto_index_loop(self) -> None:
@@ -506,6 +577,7 @@ class SearchDaemon:
             "status": "healthy" if self._initialized else "starting",
             "daemon_initialized": self._initialized,
             "backend_ready": self._backend is not None,
+            "db_pool_ready": self._backend is not None,
             "zoekt_available": self.stats.zoekt_available,
         }
 

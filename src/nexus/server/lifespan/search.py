@@ -40,7 +40,9 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         config = DaemonConfig(
             database_url=svc.database_url,
             search_backend=os.environ.get("NEXUS_SEARCH_BACKEND", "txtai"),
-            embedding_model=os.environ.get("NEXUS_EMBEDDING_MODEL", "all-MiniLM-L6-v2"),
+            embedding_model=os.environ.get(
+                "NEXUS_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
+            ),
             hybrid_search=os.environ.get("NEXUS_HYBRID_SEARCH", "true").lower() == "true",
             auto_index_on_write=os.environ.get("NEXUS_AUTO_INDEX", "false").lower() == "true",
             reranker_enabled=os.environ.get("NEXUS_RERANKER_ENABLED", "true").lower() == "true",

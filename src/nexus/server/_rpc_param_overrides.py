@@ -13,6 +13,11 @@ from dataclasses import dataclass
 from typing import Any
 
 from nexus.contracts.constants import DEFAULT_OAUTH_REDIRECT_URI
+from nexus.server._rpc_params_generated import (
+    SysMkdirParams,
+    SysUnlinkParams,
+    SysWriteParams,
+)
 
 # ============================================================
 # 1. RPC-only field overrides
@@ -476,6 +481,11 @@ class NamespaceGetParams:
 
 OVERRIDE_METHOD_PARAMS: dict[str, type] = {
     "sys_read": ReadParams,
+    # Short aliases (backward-compat with nexus-test and CLI clients)
+    "read": ReadParams,
+    "write": SysWriteParams,
+    "delete": SysUnlinkParams,
+    "mkdir": SysMkdirParams,
     "oauth_get_auth_url": OAuthGetAuthUrlParams,
     "oauth_exchange_code": OAuthExchangeCodeParams,
     # Admin

@@ -192,16 +192,25 @@ class SearchDaemon:
         start_time = time.perf_counter()
         logger.info("Starting SearchDaemon — initializing txtai backend...")
 
-        # Create and start search backend
-        self._backend = create_backend(
-            self.config.search_backend,
-            database_url=self.config.database_url,
-            model=self.config.embedding_model,
-            hybrid=self.config.hybrid_search,
-        )
-        await self._backend.startup()
+        # Create and start search backend (graceful degradation)
+        try:
+            self._backend = create_backend(
+                self.config.search_backend,
+                database_url=self.config.database_url,
+                model=self.config.embedding_model,
+                hybrid=self.config.hybrid_search,
+            )
+            await self._backend.startup()
+        except Exception:
+            logger.error(
+                "Search backend failed to start. "
+                "Daemon will be initialized in degraded mode (no search results).",
+                exc_info=True,
+            )
+            self._backend = None
 
         # Init configurable CE reranker (Decision #16)
+        # _init_reranker already handles its own exceptions gracefully
         if self.config.reranker_enabled:
             self._init_reranker()
 
@@ -595,8 +604,14 @@ class SearchDaemon:
 
     def get_health(self) -> dict[str, Any]:
         """Get health status for health check endpoint."""
+        if self._initialized and self._backend is not None:
+            status = "healthy"
+        elif self._initialized:
+            status = "degraded"
+        else:
+            status = "starting"
         return {
-            "status": "healthy" if self._initialized else "starting",
+            "status": status,
             "daemon_initialized": self._initialized,
             "backend_ready": self._backend is not None,
             "bm25_index_loaded": self._initialized and self._backend is not None,

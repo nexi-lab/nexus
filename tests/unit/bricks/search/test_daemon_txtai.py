@@ -41,7 +41,7 @@ class TestDaemonConfig:
     def test_default_values(self) -> None:
         config = DaemonConfig()
         assert config.search_backend == "txtai"
-        assert config.embedding_model == "all-MiniLM-L6-v2"
+        assert config.embedding_model == "sentence-transformers/all-MiniLM-L6-v2"
         assert config.hybrid_search is True
         assert config.auto_index_on_write is False
         assert config.reranker_enabled is True
@@ -274,13 +274,17 @@ class TestSearchDaemonIndexing:
         assert len(daemon._pending_index_docs) == 0
 
     @pytest.mark.asyncio
-    async def test_notify_file_change_enabled(self) -> None:
-        """When auto_index_on_write=True, notify should queue the doc."""
-        config = DaemonConfig(auto_index_on_write=True)
+    async def test_notify_file_change_with_file_reader(self) -> None:
+        """When file_reader is set, notify should upsert directly."""
+        config = DaemonConfig()
         daemon = SearchDaemon(config)
-        await daemon.notify_file_change("/test.py", "content", zone_id="z")
-        assert len(daemon._pending_index_docs) == 1
-        assert daemon._pending_index_docs[0]["path"] == "/test.py"
+        mock_backend = AsyncMock()
+        mock_backend.upsert.return_value = 1
+        daemon._backend = mock_backend
+        daemon._file_reader = MagicMock()
+        daemon._file_reader.read_text.return_value = "file content"
+        await daemon.notify_file_change("/test.py", "update", zone_id="z")
+        assert daemon.stats.documents_indexed == 1
 
 
 # =============================================================================

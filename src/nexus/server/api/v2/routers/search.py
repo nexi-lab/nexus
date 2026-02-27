@@ -70,6 +70,41 @@ def _get_async_read_session_factory(request: Request) -> Any:
 
 
 # =============================================================================
+# ReBAC filtering helper
+# =============================================================================
+
+
+def _apply_rebac_filter(
+    results: list[Any],
+    permission_enforcer: Any | None,
+    auth_result: dict[str, Any],
+    zone_id: str,
+) -> tuple[list[Any], float]:
+    """Apply ReBAC file-level permission filtering to search results.
+
+    Returns (filtered_results, filter_time_ms).
+    """
+    if permission_enforcer is None:
+        return results, 0.0
+
+    from nexus.contracts.types import OperationContext
+
+    ctx = OperationContext(
+        user_id=auth_result.get("user_id", "anonymous"),
+        zone_id=zone_id,
+        groups=auth_result.get("groups", []),
+    )
+    result_paths = [r.path for r in results]
+
+    filter_start = time.perf_counter()
+    permitted = set(permission_enforcer.filter_list(result_paths, ctx))
+    filter_ms = (time.perf_counter() - filter_start) * 1000
+
+    filtered = [r for r in results if r.path in permitted]
+    return filtered, filter_ms
+
+
+# =============================================================================
 # Endpoints
 # =============================================================================
 
@@ -100,6 +135,7 @@ async def search_daemon_stats(
 
 @router.get("/query")
 async def search_query(
+    request: Request,
     q: str = Query(..., description="Search query text", min_length=1),
     type: str = Query("hybrid", description="Search type: keyword, semantic, or hybrid"),
     limit: int = Query(10, description="Maximum number of results", ge=1, le=100),
@@ -107,6 +143,9 @@ async def search_query(
     alpha: float = Query(0.5, description="Semantic vs keyword weight (0.0-1.0)", ge=0.0, le=1.0),
     fusion: str = Query("rrf", description="Fusion method: rrf, weighted, or rrf_weighted"),
     adaptive_k: bool = Query(False, description="Adaptive retrieval"),
+    rerank: bool | None = Query(
+        None, description="Override reranker (true/false, default: use config)"
+    ),
     graph_mode: str = Query(
         "none", description="Graph enhancement mode: none, low, high, dual, auto"
     ),
@@ -143,6 +182,9 @@ async def search_query(
             detail=f"Invalid graph_mode: {graph_mode}. Must be 'none', 'low', 'high', 'dual', or 'auto'",
         )
 
+    # ReBAC file-level permission enforcer (Decision #17)
+    permission_enforcer = getattr(request.app.state, "permission_enforcer", None)
+
     routing_info: dict[str, Any] | None = None
     effective_graph_mode = graph_mode
     effective_limit = limit
@@ -160,14 +202,21 @@ async def search_query(
             effective_limit,
         )
 
+    # Over-fetch when permission filtering is active to compensate for filtered results
+    fetch_limit = effective_limit
+    if permission_enforcer is not None:
+        fetch_limit = effective_limit * 3
+
     try:
+        filter_ms = 0.0
+
         if effective_graph_mode != "none":
             from nexus.services.search.graph_search_service import graph_enhanced_search
 
             results = await graph_enhanced_search(
                 query=q,
                 search_type=type,
-                limit=effective_limit,
+                limit=fetch_limit,
                 path_filter=path,
                 alpha=alpha,
                 graph_mode=effective_graph_mode,
@@ -176,6 +225,13 @@ async def search_query(
                 search_daemon=search_daemon,
                 zone_id=zone_id,
             )
+
+            # ReBAC file-level filtering (Decision #17)
+            results, filter_ms = _apply_rebac_filter(
+                results, permission_enforcer, auth_result, zone_id
+            )
+            results = results[:effective_limit]
+
             latency_ms = (time.perf_counter() - start_time) * 1000
 
             response: dict[str, Any] = {
@@ -197,6 +253,10 @@ async def search_query(
                 ],
                 "total": len(results),
                 "latency_ms": round(latency_ms, 2),
+                "latency_breakdown": {
+                    "total_ms": round(latency_ms, 2),
+                    "permission_filter_ms": round(filter_ms, 2),
+                },
             }
             if routing_info:
                 response["routing"] = routing_info
@@ -205,13 +265,23 @@ async def search_query(
         results = await search_daemon.search(
             query=q,
             search_type=type,
-            limit=effective_limit,
+            limit=fetch_limit,
             path_filter=path,
             alpha=alpha,
             fusion_method=fusion,
             adaptive_k=adaptive_k,
             zone_id=zone_id,
+            rerank=rerank,
         )
+
+        # Read sub-timings from daemon
+        daemon_timing = getattr(search_daemon, "last_search_timing", {})
+        backend_ms = daemon_timing.get("backend_ms", 0.0)
+        rerank_ms = daemon_timing.get("rerank_ms", 0.0)
+
+        # ReBAC file-level filtering (Decision #17)
+        results, filter_ms = _apply_rebac_filter(results, permission_enforcer, auth_result, zone_id)
+        results = results[:effective_limit]
 
         latency_ms = (time.perf_counter() - start_time) * 1000
 
@@ -230,16 +300,22 @@ async def search_query(
                     "keyword_score": round(r.keyword_score, 4) if r.keyword_score else None,
                     "vector_score": round(r.vector_score, 4) if r.vector_score else None,
                     "splade_score": round(r.splade_score, 4)
-                    if getattr(r, "splade_score", None)
+                    if r.splade_score is not None
                     else None,
                     "reranker_score": round(r.reranker_score, 4)
-                    if getattr(r, "reranker_score", None)
+                    if r.reranker_score is not None
                     else None,
                 }
                 for r in results
             ],
             "total": len(results),
             "latency_ms": round(latency_ms, 2),
+            "latency_breakdown": {
+                "total_ms": round(latency_ms, 2),
+                "backend_ms": round(backend_ms, 2),
+                "rerank_ms": round(rerank_ms, 2),
+                "permission_filter_ms": round(filter_ms, 2),
+            },
         }
         if routing_info:
             response["routing"] = routing_info

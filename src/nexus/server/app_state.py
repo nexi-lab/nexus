@@ -122,7 +122,9 @@ class NexusAppState:
 
     # === A2A ===
     a2a_task_manager: Any = None
-    a2a_grpc_server: Any = None
+
+    # === gRPC server (#1249) ===
+    grpc_server: Any = None
 
     # === Exposed methods ===
     exposed_methods: dict[str, Any] = field(default_factory=dict)

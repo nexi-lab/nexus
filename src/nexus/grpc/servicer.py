@@ -1,4 +1,4 @@
-"""VFS gRPC servicer — async handlers for NexusVFSService.
+"""gRPC servicer — async handlers for NexusVFSService.
 
 Phase 1 (PR #2667): Generic ``Call`` RPC — method name + JSON payload.
 Phase 2: Typed RPCs for content ops (Read/Write/Delete/StreamRead) with
@@ -16,6 +16,7 @@ status codes for transport-level errors only.
 
 Issue #1133: Unified gRPC transport.
 Issue #1202: gRPC for REMOTE profile.
+Issue #1249: Port consolidation — single gRPC server.
 """
 
 from __future__ import annotations

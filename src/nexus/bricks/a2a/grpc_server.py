@@ -1,8 +1,7 @@
 """A2A gRPC transport binding — server implementation (#1726).
 
-Implements the ``A2AService`` gRPC servicer that delegates all business
-logic to the existing ``TaskManager``.  The gRPC transport runs on a
-separate port and is config-gated (``NEXUS_A2A_GRPC_PORT``).
+Pending removal: A2A messaging moves to A2A-over-VFS (#1204).
+This file will be deleted when #1204 is complete.
 """
 
 import logging

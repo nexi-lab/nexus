@@ -131,7 +131,7 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
     Calls domain-specific initializers during startup and tears them
     down in reverse order during shutdown.
     """
-    from nexus.server.lifespan.a2a_grpc import shutdown_a2a_grpc, startup_a2a_grpc
+    from nexus.grpc.server import shutdown_grpc, startup_grpc
     from nexus.server.lifespan.bricks import shutdown_bricks, startup_bricks
     from nexus.server.lifespan.ipc import shutdown_ipc, startup_ipc
     from nexus.server.lifespan.observability import (
@@ -143,7 +143,6 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
     from nexus.server.lifespan.search import startup_search
     from nexus.server.lifespan.services import shutdown_services, startup_services
     from nexus.server.lifespan.uploads import startup_uploads
-    from nexus.server.lifespan.vfs_grpc import shutdown_vfs_grpc, startup_vfs_grpc
 
     # Collect all background tasks for clean shutdown
     bg_tasks: list[asyncio.Task] = []
@@ -199,11 +198,8 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
     bg_tasks.extend(await startup_ipc(app, svc))
     _done(StartupPhase.IPC)
 
-    bg_tasks.extend(await startup_a2a_grpc(app, svc))
-    _done(StartupPhase.A2A_GRPC)
-
-    bg_tasks.extend(await startup_vfs_grpc(app, svc))
-    _done(StartupPhase.VFS_GRPC)
+    bg_tasks.extend(await startup_grpc(app, svc))
+    _done(StartupPhase.GRPC)
 
     # Wire QueryObserverComponent into registry after services start (Issue #2072)
     _wire_query_observer(app, svc)
@@ -222,8 +218,7 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
             await asyncio.gather(*[t for t in bg_tasks if t], return_exceptions=True)
         logger.debug("Cancelled %d background tasks", len(bg_tasks))
 
-    await shutdown_vfs_grpc(app, svc)
-    await shutdown_a2a_grpc(app, svc)
+    await shutdown_grpc(app, svc)
     await shutdown_ipc(app, svc)
     await shutdown_bricks(app, svc)
     await shutdown_services(app, svc)

@@ -5,8 +5,8 @@ SSOT: proto/nexus/core/metadata.proto is the single source of truth
 for FileMetadata fields. This script generates:
 
   - src/nexus/core/metadata_pb2.py         (protobuf stubs via grpc_tools.protoc)
-  - src/nexus/core/metadata.py             (FileMetadata + PaginatedResult data classes)
-  - src/nexus/core/metastore.py            (MetastoreABC + AsyncMetastoreWrapper)
+  - src/nexus/core/metadata.py             (FileMetadata data class)
+  - src/nexus/core/metastore.py            (MetastoreABC — hand-maintained, not generated)
   - src/nexus/core/_compact_generated.py   (CompactFileMetadata + interning)
 
 Usage:
@@ -33,7 +33,6 @@ MAPPER_OUT = REPO_ROOT / "src" / "nexus" / "storage" / "_metadata_mapper_generat
 GENERATED_NAMES: dict[str, set[str]] = {
     "metadata": {
         "FileMetadata",
-        "PaginatedResult",
         "DT_REG",
         "DT_DIR",
         "DT_MOUNT",
@@ -41,7 +40,6 @@ GENERATED_NAMES: dict[str, set[str]] = {
     },
     "metastore": {
         "MetastoreABC",
-        "AsyncMetastoreWrapper",
     },
     "_compact_generated": {"CompactFileMetadata", "get_intern_pool_stats", "clear_intern_pool"},
     "_metadata_mapper_generated": {"MetadataMapper"},
@@ -340,7 +338,6 @@ To modify FileMetadata:
 
 Contains:
   - FileMetadata: Core file metadata dataclass
-  - PaginatedResult: Cursor-based pagination container
   - DT_REG, DT_DIR, DT_MOUNT, DT_PIPE: Directory entry type constants
 """
 
@@ -350,40 +347,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from nexus.contracts.backend_address import BackendAddress
+
 if TYPE_CHECKING:
     from nexus.core._compact_generated import CompactFileMetadata
 {enum_constants_block}
-
-@dataclass
-class PaginatedResult:
-    """Result container for paginated list operations.
-
-    Generated from: proto/nexus/core/metadata.proto
-
-    Supports cursor-based pagination for efficient traversal of large datasets
-    at 1M+ file scale without OOM or timeouts.
-
-    Attributes:
-        items: List of FileMetadata or dict items for current page
-        next_cursor: Opaque token for fetching next page (None if last page)
-        has_more: Whether more results exist beyond this page
-        total_count: Optional total count (expensive at scale, often None)
-    """
-
-    items: list[Any]
-    next_cursor: str | None
-    has_more: bool
-    total_count: int | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to JSON-serializable dict for API response."""
-        return {{
-            "items": self.items,
-            "next_cursor": self.next_cursor,
-            "has_more": self.has_more,
-            "total_count": self.total_count,
-        }}
-
 
 @dataclass(slots=True)
 class FileMetadata:
@@ -394,6 +362,23 @@ class FileMetadata:
 
 {fields_block}
 {enum_properties_block}
+    @property
+    def backend_address(self) -> BackendAddress:
+        """Parse backend_name into typed BackendAddress (type + origin node).
+
+        Returns:
+            BackendAddress with backend_type and optional origin.
+
+        Example:
+            >>> meta = FileMetadata(path="/a", backend_name="local@10.0.0.5:50051",
+            ...                     physical_path="abc", size=0)
+            >>> meta.backend_address.backend_type
+            'local'
+            >>> meta.backend_address.origin
+            '10.0.0.5:50051'
+        """
+        return BackendAddress.parse(self.backend_name)
+
     def to_dict(self) -> dict[str, Any]:
         """Serialize to JSON-compatible dict.
 
@@ -463,117 +448,6 @@ class FileMetadata:
             Full FileMetadata object
         """
         return compact.to_file_metadata()
-'''
-
-
-def _extract_protocol_methods(source: str) -> list[tuple[str, str, str]]:
-    """Extract method signatures from the generated MetastoreABC text.
-
-    Returns list of (method_name, params_after_self, return_type).
-    This derives async wrapper signatures from the protocol — true SSOT.
-    """
-    # Isolate the MetastoreABC class body
-    proto_match = re.search(r"class MetastoreABC.*?(?=\nclass |\Z)", source, re.DOTALL)
-    if not proto_match:
-        return []
-
-    proto_text = proto_match.group()
-    methods: list[tuple[str, str, str]] = []
-
-    # Match method defs (handles multi-line signatures via DOTALL)
-    for m in re.finditer(
-        r"def\s+(\w+)\s*\((.*?)\)\s*->\s*([\w\[\], |\"]+)\s*:",
-        proto_text,
-        re.DOTALL,
-    ):
-        name = m.group(1)
-        full_params = m.group(2)
-        return_type = m.group(3).strip()
-
-        # Normalize whitespace and strip 'self'
-        params = re.sub(r"\s+", " ", full_params).strip()
-        params = re.sub(r"^self\s*,?\s*", "", params).strip()
-        # Remove inline noqa comments (match only the code, not trailing params)
-        params = re.sub(r"\s*#\s*noqa:\s*[\w,]+", "", params).strip()
-        # Clean trailing comma
-        params = params.rstrip(", ")
-
-        methods.append((name, params, return_type))
-
-    return methods
-
-
-def _params_to_call_args(params: str) -> str:
-    """Extract argument names from a parameter string for a function call.
-
-    Example: ``"prefix: str = '', recursive: bool = True, **kwargs: Any"``
-    → ``"prefix, recursive, **kwargs"``
-
-    Handles keyword-only marker ``*``: params after bare ``*`` are emitted
-    as ``name=name`` (keyword arguments in the call expression).
-    """
-    if not params:
-        return ""
-    args: list[str] = []
-    keyword_only = False
-    for param in params.split(","):
-        param = param.strip()
-        if not param:
-            continue
-        # Bare * is the keyword-only separator — skip it, mark subsequent args
-        if param == "*":
-            keyword_only = True
-            continue
-        # Name is everything before ':' or '='
-        name = param.split(":")[0].split("=")[0].strip()
-        if keyword_only and not name.startswith("**"):
-            args.append(f"{name}={name}")
-        else:
-            args.append(name)
-    return ", ".join(args)
-
-
-def generate_async_wrapper(metadata_source: str) -> str:
-    """Generate AsyncMetastoreWrapper by parsing MetastoreABC.
-
-    Derives method signatures from the protocol text so that adding
-    a method to the protocol automatically produces its async counterpart.
-    """
-    methods = _extract_protocol_methods(metadata_source)
-    if not methods:
-        return ""
-
-    lines: list[str] = []
-    for name, params, return_type in methods:
-        async_name = f"a{name}"
-        call_args = _params_to_call_args(params)
-
-        sig_params = f", {params}" if params else ""
-        call_str = f", {call_args}" if call_args else ""
-
-        lines.append(
-            f"    async def {async_name}(self{sig_params}) -> {return_type}:\n"
-            f"        return await asyncio.to_thread(self._store.{name}{call_str})"
-        )
-
-    methods_block = "\n\n".join(lines)
-
-    return f'''
-
-class AsyncMetastoreWrapper:
-    """Async wrapper around any MetastoreABC implementation.
-
-    Generated from: scripts/gen_metadata.py
-    Derived from: MetastoreABC method signatures (SSOT).
-
-    Each ``aXXX(...)`` method delegates to ``asyncio.to_thread(store.XXX, ...)``.
-    Performance: sled ~5 us + to_thread ~50 us = 55 us per call.
-    """
-
-    def __init__(self, store: MetastoreABC) -> None:
-        self._store = store
-
-{methods_block}
 '''
 
 
@@ -1078,7 +952,7 @@ def audit_ssot_coverage() -> list[str]:
     tests_dir = REPO_ROOT / "tests"
 
     # Match single-line and multi-line imports from generated/managed modules
-    # e.g. from nexus.contracts.metadata import FileMetadata, PaginatedResult
+    # e.g. from nexus.contracts.metadata import FileMetadata
     # e.g. from nexus.core.metastore import MetastoreABC
     # e.g. from nexus.core._compact_generated import CompactFileMetadata
     import_re = re.compile(
@@ -1147,12 +1021,12 @@ def main() -> None:
     # 1. Generate protobuf stubs (metadata_pb2.py)
     generate_protobuf_stubs()
 
-    # 2. Generate Python dataclass (FileMetadata + PaginatedResult)
+    # 2. Generate Python dataclass (FileMetadata)
     metadata_content = generate_metadata_py(fields, enums)
     METADATA_OUT.write_text(metadata_content, encoding="utf-8")
     print(f"Generated: {METADATA_OUT}")
 
-    # 2b. MetastoreABC + AsyncMetastoreWrapper are hand-maintained in metastore.py
+    # 2b. MetastoreABC is hand-maintained in metastore.py
     # (not generated — the ABC methods are designed by hand, not derived from proto)
     print(f"Skipped:   {METASTORE_OUT} (hand-maintained)")
 

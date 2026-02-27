@@ -10,9 +10,9 @@ These tests verify end-to-end pagination behavior including:
 import pytest
 
 from nexus.backends import LocalBackend
-from nexus.contracts.metadata import PaginatedResult
 from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
+from nexus.lib.pagination import PaginatedResult
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 

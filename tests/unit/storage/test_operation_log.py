@@ -302,9 +302,13 @@ def test_undo_delete(
     path = "/test.txt"
     content = b"Test content"
 
-    # Write and delete
+    # Write the file and a duplicate so CAS content survives deletion.
+    # CAS ref-counting physically deletes the blob when ref_count reaches 0,
+    # so a second reference keeps the blob alive for the undo read below.
     result = nx.sys_write(path, content)
     content_hash = result["etag"]
+    nx.sys_write("/undo_shadow.txt", content)  # keeps ref_count > 0
+
     nx.sys_unlink(path)
     assert not nx.sys_access(path)
 

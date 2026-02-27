@@ -108,8 +108,9 @@ class TestTimeTravelDebug:
         """Test reading file that was deleted."""
         path = "/workspace/deleted.txt"
 
-        # Write file
+        # Write file (+ duplicate so CAS blob survives deletion via ref_count > 0)
         nx.sys_write(path, b"Content before delete")
+        nx.sys_write("/workspace/shadow_deleted.txt", b"Content before delete")
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)
@@ -247,8 +248,9 @@ class TestTimeTravelDebug:
         """Test diff when file was deleted between operations."""
         path = "/workspace/to_delete.txt"
 
-        # Create file
+        # Create file (+ duplicate so CAS blob survives deletion via ref_count > 0)
         nx.sys_write(path, b"Will be deleted")
+        nx.sys_write("/workspace/shadow_to_delete.txt", b"Will be deleted")
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)

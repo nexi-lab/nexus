@@ -1050,3 +1050,56 @@ class PermissionEnforcer:
                 result.append(path)
 
         return result
+
+    def filter_search_results(
+        self,
+        paths: list[str],
+        *,
+        user_id: str,
+        zone_id: str,
+        is_admin: bool = False,
+    ) -> list[str]:
+        """Filter search result paths by read permission using rebac_list_objects.
+
+        Unlike filter_list(), this method:
+        1. Skips the NamespaceManager pre-filter (search paths lack mount entries)
+        2. Uses rebac_list_objects() for O(1-query) batch filtering instead of
+           per-path rebac_check() calls
+
+        Performance: 1 SQL query + 1 Rust computation vs N individual checks.
+
+        Args:
+            paths: Absolute paths from search results
+            user_id: The authenticated user's ID
+            zone_id: Zone ID for isolation
+            is_admin: Whether the user is an admin (bypasses checks)
+
+        Returns:
+            Filtered list of paths the user can read
+        """
+        if not paths:
+            return []
+
+        # Admin bypass
+        if is_admin and self.allow_admin_bypass:
+            return paths
+
+        if self.rebac_manager is None or not hasattr(self.rebac_manager, "rebac_list_objects"):
+            return []  # fail-closed: no manager = no access
+
+        try:
+            accessible = self.rebac_manager.rebac_list_objects(
+                subject=("user", user_id),
+                permission="read",
+                object_type="file",
+                zone_id=zone_id,
+                limit=10000,
+            )
+            accessible_paths = {obj_id for _, obj_id in accessible}
+            return [p for p in paths if p in accessible_paths]
+        except Exception:
+            logger.warning(
+                "filter_search_results failed, denying all (fail-closed)",
+                exc_info=True,
+            )
+            return []  # fail-closed

@@ -300,6 +300,7 @@ Homepage = "https://github.com/nexi-lab/nexus"
 Documentation = "https://github.com/nexi-lab/nexus/blob/main/README.md"
 Repository = "https://github.com/nexi-lab/nexus"
 Issues = "https://github.com/nexi-lab/nexus/issues"
+Changelog = "https://github.com/nexi-lab/nexus/blob/main/CHANGELOG.md"
 
 [project.scripts]
 # CLI entry point - now separated from library code

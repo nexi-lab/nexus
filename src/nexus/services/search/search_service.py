@@ -1068,7 +1068,11 @@ class SearchService(SemanticSearchMixin):
         directories: set[str] = set()
 
         for meta in results:
-            if meta.mime_type == "inode/directory":
+            if (
+                meta.mime_type == "inode/directory"
+                or getattr(meta, "is_dir", False)
+                or getattr(meta, "is_mount", False)
+            ):
                 directories.add(meta.path)
 
         if not recursive:
@@ -1215,6 +1219,8 @@ class SearchService(SemanticSearchMixin):
             }
             for meta in results
             if meta.mime_type != "inode/directory"
+            and not getattr(meta, "is_dir", False)
+            and not getattr(meta, "is_mount", False)
         ]
         dir_results = [
             {
@@ -1247,7 +1253,13 @@ class SearchService(SemanticSearchMixin):
         """Build path-only results."""
         import time as _time
 
-        file_paths = [meta.path for meta in results if meta.mime_type != "inode/directory"]
+        file_paths = [
+            meta.path
+            for meta in results
+            if meta.mime_type != "inode/directory"
+            and not getattr(meta, "is_dir", False)
+            and not getattr(meta, "is_mount", False)
+        ]
         all_paths = file_paths + sorted(directories)
         all_paths.sort()
         logger.info(

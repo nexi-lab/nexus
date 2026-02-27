@@ -59,14 +59,18 @@ def test_mount_creates_directory_entry(nx_with_mount):
     assert nx.metadata.exists("/mnt")
     assert nx.metadata.exists("/mnt/test")
 
-    # Verify directories have correct MIME type
+    # Verify /mnt is recognized as a directory by the kernel
+    assert nx.sys_is_directory("/mnt")
     mnt_meta = nx.metadata.get("/mnt")
     assert mnt_meta is not None
-    assert mnt_meta.mime_type == "inode/directory"
 
+    # Verify mount point is a DT_MOUNT entry (created by PathRouter.add_mount,
+    # not overwritten by sys_mkdir which honours the existing entry) and is
+    # recognized as a directory by the kernel.
+    assert nx.sys_is_directory("/mnt/test")
     test_meta = nx.metadata.get("/mnt/test")
     assert test_meta is not None
-    assert test_meta.mime_type == "inode/directory"
+    assert test_meta.is_mount, f"Expected DT_MOUNT entry, got entry_type={test_meta.entry_type}"
 
 
 def test_mount_appears_in_listing(nx_with_mount):
@@ -141,11 +145,17 @@ def test_nested_mount_creates_all_parents(nx_with_mount):
     assert nx.metadata.exists("/a/b/c")
     assert nx.metadata.exists("/a/b/c/mount")
 
-    # Verify they all have directory MIME type
-    for path in ["/a", "/a/b", "/a/b/c", "/a/b/c/mount"]:
-        meta = nx.metadata.get(path)
-        assert meta is not None, f"Expected metadata for {path}"
-        assert meta.mime_type == "inode/directory", f"Expected directory type for {path}"
+    # Verify all paths are recognized as directories by the kernel.
+    # Parent directories are created by sys_mkdir, while the mount point
+    # itself is a DT_MOUNT created by PathRouter.add_mount.  Both are
+    # treated as directory-like by sys_is_directory.
+    for p in ["/a", "/a/b", "/a/b/c", "/a/b/c/mount"]:
+        assert nx.sys_is_directory(p), f"Expected {p} to be a directory"
+
+    # The mount point should be a DT_MOUNT entry
+    mount_meta = nx.metadata.get("/a/b/c/mount")
+    assert mount_meta is not None
+    assert mount_meta.is_mount, f"Expected DT_MOUNT, got entry_type={mount_meta.entry_type}"
 
 
 def test_sync_mount_ensures_directory_exists(nx_with_mount):

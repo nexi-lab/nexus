@@ -211,7 +211,7 @@ class TestPrefixValidationProperty:
             max_size=20,
         ).filter(lambda p: not p.startswith("/"))
     )
-    @settings(max_examples=50, deadline=None)
+    @settings(max_examples=50, deadline=None, database=None)
     def test_relative_paths_rejected(self, path):
         """All non-absolute paths should be rejected."""
         with pytest.raises(InvalidPrefixError):

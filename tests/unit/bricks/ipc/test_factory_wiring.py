@@ -82,7 +82,7 @@ class TestKernelVFSAdapter:
         assert not adapter.is_bound
 
         with __import__("pytest").raises(RuntimeError, match="bind"):
-            asyncio.get_event_loop().run_until_complete(adapter.sys_read("/test", "test-zone"))
+            asyncio.run(adapter.sys_read("/test", "test-zone"))
 
     def test_adapter_satisfies_vfs_operations_protocol(self) -> None:
         """KernelVFSAdapter structurally satisfies VFSOperations."""

@@ -104,7 +104,7 @@ class TestTimeTravelDebug:
         assert state_v3["content"] == b"Version 3"
         assert state_v3["operation_id"] == op_v3
 
-    def test_time_travel_file_deleted(self, nx, record_store, time_travel):
+    def test_time_travel_file_deleted(self, nx, backend, record_store, time_travel):
         """Test reading file that was deleted."""
         path = "/workspace/deleted.txt"
 
@@ -119,7 +119,8 @@ class TestTimeTravelDebug:
             assert len(ops_after_write) == 1
             op_write = ops_after_write[0].operation_id
 
-        # Delete file
+        # Delete file — hold extra CAS reference so blob survives unlink
+        backend.write_content(b"Content before delete")
         nx.sys_unlink(path)
 
         with record_store.session_factory() as session:
@@ -243,7 +244,7 @@ class TestTimeTravelDebug:
         assert diff["operation_2"]["content"] == b"New content"
         assert diff["size_diff"] == len(b"New content")
 
-    def test_time_travel_diff_file_deleted(self, nx, record_store, time_travel):
+    def test_time_travel_diff_file_deleted(self, nx, backend, record_store, time_travel):
         """Test diff when file was deleted between operations."""
         path = "/workspace/to_delete.txt"
 
@@ -255,7 +256,8 @@ class TestTimeTravelDebug:
             ops_created = logger.list_operations(path=path, limit=10)
             op_created = ops_created[0].operation_id
 
-        # Delete file
+        # Delete file — hold extra CAS reference so blob survives unlink
+        backend.write_content(b"Will be deleted")
         nx.sys_unlink(path)
 
         with record_store.session_factory() as session:

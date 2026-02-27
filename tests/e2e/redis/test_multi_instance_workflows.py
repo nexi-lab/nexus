@@ -338,7 +338,7 @@ class TestConcurrentAccess:
 
         async def write_content(nexus, content, delay):
             await asyncio.sleep(delay)
-            nexus.write(test_path, content)
+            nexus.sys_write(test_path, content)
 
         # Both try to write around the same time
         await asyncio.gather(

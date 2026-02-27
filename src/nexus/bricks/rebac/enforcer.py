@@ -1059,14 +1059,15 @@ class PermissionEnforcer:
         zone_id: str,
         is_admin: bool = False,
     ) -> list[str]:
-        """Filter search result paths by read permission using rebac_list_objects.
+        """Filter search result paths by read permission via bulk check.
 
         Unlike filter_list(), this method:
         1. Skips the NamespaceManager pre-filter (search paths lack mount entries)
-        2. Uses rebac_list_objects() for O(1-query) batch filtering instead of
-           per-path rebac_check() calls
+        2. Uses compute_permissions_bulk with fresh graph (unique tuple_version)
+           to check only the N search result paths — O(N) not O(total_zone_tuples)
 
-        Performance: 1 SQL query + 1 Rust computation vs N individual checks.
+        Performance: 1 SQL query + 1 Rust graph build + N permission checks.
+        Scales with search result count, NOT zone size.
 
         Args:
             paths: Absolute paths from search results
@@ -1084,22 +1085,53 @@ class PermissionEnforcer:
         if is_admin and self.allow_admin_bypass:
             return paths
 
-        if self.rebac_manager is None or not hasattr(self.rebac_manager, "rebac_list_objects"):
+        if self.rebac_manager is None:
             return []  # fail-closed: no manager = no access
 
         try:
-            accessible = self.rebac_manager.rebac_list_objects(
-                subject=("user", user_id),
-                permission="read",
-                object_type="file",
-                zone_id=zone_id,
-                limit=10000,
-            )
-            accessible_paths = {obj_id for _, obj_id in accessible}
-            return [p for p in paths if p in accessible_paths]
+            return self._filter_search_bulk(paths, user_id=user_id, zone_id=zone_id)
         except Exception:
             logger.warning(
                 "filter_search_results failed, denying all (fail-closed)",
                 exc_info=True,
             )
             return []  # fail-closed
+
+    def _filter_search_bulk(
+        self,
+        paths: list[str],
+        *,
+        user_id: str,
+        zone_id: str,
+    ) -> list[str]:
+        """Check only the given paths via Rust bulk permission check.
+
+        Uses a unique tuple_version (time_ns) to force a fresh graph build,
+        bypassing the stale GRAPH_CACHE bug in compute_permissions_bulk.
+        """
+        import time as time_module
+
+        from nexus.bricks.rebac.utils.fast import check_permissions_bulk_with_fallback
+
+        assert self.rebac_manager is not None  # caller already checked
+
+        # Fetch tuples for zone (1 SQL query) — includes cross-zone for user
+        tuples = self.rebac_manager._fetch_tuples_for_zone(
+            zone_id, include_cross_zone_for_user=user_id
+        )
+        namespace_configs = self.rebac_manager._get_namespace_configs_dict()
+
+        # Build checks: [(subject, permission, object), ...]
+        subject = ("user", user_id)
+        checks = [(subject, "read", ("file", p)) for p in paths]
+
+        # Use unique tuple_version to force fresh Rust graph (bypass stale cache)
+        results = check_permissions_bulk_with_fallback(
+            checks=checks,
+            tuples=tuples,
+            namespace_configs=namespace_configs,
+            tuple_version=time_module.time_ns(),
+        )
+
+        # results is dict[(subj_type, subj_id, perm, obj_type, obj_id) -> bool]
+        return [p for p in paths if results.get(("user", user_id, "read", "file", p), False)]

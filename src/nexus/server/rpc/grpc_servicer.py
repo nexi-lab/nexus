@@ -1,4 +1,9 @@
-"""VFS gRPC servicer — async handler for NexusVFSService.Call.
+"""VFS gRPC servicer — async handlers for NexusVFSService.
+
+Phase 1 (PR #2667): Generic ``Call`` RPC — method name + JSON payload.
+Phase 2: Typed RPCs for content ops (Read/Write/Delete/StreamRead) with
+native ``bytes`` fields (no base64), server-side streaming for large reads,
+and a ``Ping`` health check with server metadata.
 
 Mirrors the HTTP ``rpc_endpoint()`` in ``server/api/core/rpc.py`` but over
 gRPC.  Reuses the same dispatch infrastructure: ``parse_method_params()``,
@@ -6,8 +11,8 @@ gRPC.  Reuses the same dispatch infrastructure: ``parse_method_params()``,
 
 The servicer is generic — any gRPC client (REMOTE profile, federation
 peers, CLI tools) can call it.  Application-level errors are returned
-inside ``CallResponse.is_error=True`` with a JSON error dict payload,
-keeping gRPC status codes for transport-level errors only.
+inside response ``is_error`` / ``error_payload`` fields, keeping gRPC
+status codes for transport-level errors only.
 
 Issue #1133: Unified gRPC transport.
 Issue #1202: gRPC for REMOTE profile.
@@ -15,7 +20,10 @@ Issue #1202: gRPC for REMOTE profile.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
+from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from typing import Any
 
@@ -36,6 +44,9 @@ from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.server.protocol import RPCErrorCode, parse_method_params
 
 logger = logging.getLogger(__name__)
+
+# Captured at import time — used by Ping to report uptime.
+_SERVER_START_TIME = time.monotonic()
 
 
 def _error_payload(code: "RPCErrorCode", message: str, data: dict | None = None) -> bytes:
@@ -237,3 +248,267 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
                 payload=_error_payload(RPCErrorCode.INTERNAL_ERROR, f"Internal error: {e}"),
                 is_error=True,
             )
+
+    # ------------------------------------------------------------------
+    # Shared auth + context pipeline for typed RPCs
+    # ------------------------------------------------------------------
+
+    async def _auth_and_context(self, auth_token: str) -> tuple[dict[str, Any], Any]:
+        """Authenticate and build OperationContext — shared by all typed RPCs."""
+        from nexus.server.dependencies import get_operation_context
+
+        auth_result = await self._authenticate(auth_token)
+        if not auth_result.get("authenticated") and (self._api_key or self._auth_provider):
+            raise NexusPermissionError("Authentication required")
+        return auth_result, get_operation_context(auth_result)
+
+    # ------------------------------------------------------------------
+    # Typed RPCs — content operations (Phase 2)
+    # ------------------------------------------------------------------
+
+    async def Read(
+        self,
+        request: "vfs_pb2.ReadRequest",
+        _context: grpc.aio.ServicerContext,
+    ) -> "vfs_pb2.ReadResponse":
+        """Typed read — returns raw bytes, no JSON/base64 overhead."""
+        try:
+            _, op_context = await self._auth_and_context(request.auth_token)
+            result = await asyncio.to_thread(
+                self._nexus_fs.sys_read,
+                request.path,
+                op_context,
+                True,  # return_metadata — we need etag/size
+                False,  # parsed
+            )
+            if isinstance(result, dict):
+                content = result.get("content", b"")
+                if isinstance(content, str):
+                    content = content.encode("utf-8")
+                etag = result.get("etag", "")
+                size = result.get("size", len(content))
+            else:
+                content = result if isinstance(result, bytes) else b""
+                etag = ""
+                size = len(content)
+            return vfs_pb2.ReadResponse(content=content, etag=etag, size=size)
+        except NexusPermissionError as e:
+            return vfs_pb2.ReadResponse(
+                is_error=True,
+                error_payload=_error_payload(RPCErrorCode.PERMISSION_ERROR, str(e)),
+            )
+        except NexusFileNotFoundError as e:
+            return vfs_pb2.ReadResponse(
+                is_error=True,
+                error_payload=_error_payload(RPCErrorCode.FILE_NOT_FOUND, str(e)),
+            )
+        except InvalidPathError as e:
+            return vfs_pb2.ReadResponse(
+                is_error=True,
+                error_payload=_error_payload(RPCErrorCode.INVALID_PATH, str(e)),
+            )
+        except NexusError as e:
+            logger.warning("NexusError in gRPC Read %s: %s", request.path, e)
+            return vfs_pb2.ReadResponse(
+                is_error=True,
+                error_payload=_error_payload(RPCErrorCode.INTERNAL_ERROR, str(e)),
+            )
+        except Exception as e:
+            logger.exception("Error in gRPC Read %s", request.path)
+            return vfs_pb2.ReadResponse(
+                is_error=True,
+                error_payload=_error_payload(RPCErrorCode.INTERNAL_ERROR, f"Internal error: {e}"),
+            )
+
+    async def Write(
+        self,
+        request: "vfs_pb2.WriteRequest",
+        _context: grpc.aio.ServicerContext,
+    ) -> "vfs_pb2.WriteResponse":
+        """Typed write — accepts raw bytes, no JSON/base64 overhead."""
+        try:
+            _, op_context = await self._auth_and_context(request.auth_token)
+            kwargs: dict[str, Any] = {"context": op_context}
+            if request.etag:
+                kwargs["if_match"] = request.etag
+            result = await asyncio.to_thread(
+                self._nexus_fs.sys_write, request.path, request.content, **kwargs
+            )
+            etag = result.get("etag", "") if isinstance(result, dict) else ""
+            size = (
+                result.get("size", len(request.content))
+                if isinstance(result, dict)
+                else len(request.content)
+            )
+            return vfs_pb2.WriteResponse(etag=etag, size=size)
+        except NexusPermissionError as e:
+            return vfs_pb2.WriteResponse(
+                is_error=True,
+                error_payload=_error_payload(RPCErrorCode.PERMISSION_ERROR, str(e)),
+            )
+        except ConflictError as e:
+            return vfs_pb2.WriteResponse(
+                is_error=True,
+                error_payload=_error_payload(
+                    RPCErrorCode.CONFLICT,
+                    str(e),
+                    data={
+                        "path": e.path,
+                        "expected_etag": e.expected_etag,
+                        "current_etag": e.current_etag,
+                    },
+                ),
+            )
+        except NexusFileNotFoundError as e:
+            return vfs_pb2.WriteResponse(
+                is_error=True,
+                error_payload=_error_payload(RPCErrorCode.FILE_NOT_FOUND, str(e)),
+            )
+        except InvalidPathError as e:
+            return vfs_pb2.WriteResponse(
+                is_error=True,
+                error_payload=_error_payload(RPCErrorCode.INVALID_PATH, str(e)),
+            )
+        except ValidationError as e:
+            return vfs_pb2.WriteResponse(
+                is_error=True,
+                error_payload=_error_payload(RPCErrorCode.VALIDATION_ERROR, str(e)),
+            )
+        except NexusError as e:
+            logger.warning("NexusError in gRPC Write %s: %s", request.path, e)
+            return vfs_pb2.WriteResponse(
+                is_error=True,
+                error_payload=_error_payload(RPCErrorCode.INTERNAL_ERROR, str(e)),
+            )
+        except Exception as e:
+            logger.exception("Error in gRPC Write %s", request.path)
+            return vfs_pb2.WriteResponse(
+                is_error=True,
+                error_payload=_error_payload(RPCErrorCode.INTERNAL_ERROR, f"Internal error: {e}"),
+            )
+
+    async def Delete(
+        self,
+        request: "vfs_pb2.DeleteRequest",
+        _context: grpc.aio.ServicerContext,
+    ) -> "vfs_pb2.DeleteResponse":
+        """Typed delete — sys_unlink or sys_rmdir."""
+        try:
+            _, op_context = await self._auth_and_context(request.auth_token)
+            if request.recursive:
+                await asyncio.to_thread(
+                    self._nexus_fs.sys_rmdir, request.path, recursive=True, context=op_context
+                )
+            else:
+                await asyncio.to_thread(self._nexus_fs.sys_unlink, request.path, context=op_context)
+            return vfs_pb2.DeleteResponse(success=True)
+        except NexusPermissionError as e:
+            return vfs_pb2.DeleteResponse(
+                is_error=True,
+                error_payload=_error_payload(RPCErrorCode.PERMISSION_ERROR, str(e)),
+            )
+        except NexusFileNotFoundError as e:
+            return vfs_pb2.DeleteResponse(
+                is_error=True,
+                error_payload=_error_payload(RPCErrorCode.FILE_NOT_FOUND, str(e)),
+            )
+        except InvalidPathError as e:
+            return vfs_pb2.DeleteResponse(
+                is_error=True,
+                error_payload=_error_payload(RPCErrorCode.INVALID_PATH, str(e)),
+            )
+        except NexusError as e:
+            logger.warning("NexusError in gRPC Delete %s: %s", request.path, e)
+            return vfs_pb2.DeleteResponse(
+                is_error=True,
+                error_payload=_error_payload(RPCErrorCode.INTERNAL_ERROR, str(e)),
+            )
+        except Exception as e:
+            logger.exception("Error in gRPC Delete %s", request.path)
+            return vfs_pb2.DeleteResponse(
+                is_error=True,
+                error_payload=_error_payload(RPCErrorCode.INTERNAL_ERROR, f"Internal error: {e}"),
+            )
+
+    async def StreamRead(
+        self,
+        request: "vfs_pb2.StreamReadRequest",
+        context: grpc.aio.ServicerContext,
+    ) -> AsyncIterator["vfs_pb2.ReadChunk"]:
+        """Server-side streaming read — chunked delivery for large files."""
+        _DEFAULT_CHUNK_SIZE = 1_048_576  # 1 MB
+
+        try:
+            _, op_context = await self._auth_and_context(request.auth_token)
+            result = await asyncio.to_thread(
+                self._nexus_fs.sys_read,
+                request.path,
+                op_context,
+                False,  # return_metadata
+                False,  # parsed
+            )
+            content = result if isinstance(result, bytes) else b""
+        except NexusPermissionError as e:
+            yield vfs_pb2.ReadChunk(
+                is_error=True,
+                error_payload=_error_payload(RPCErrorCode.PERMISSION_ERROR, str(e)),
+            )
+            return
+        except NexusFileNotFoundError as e:
+            yield vfs_pb2.ReadChunk(
+                is_error=True,
+                error_payload=_error_payload(RPCErrorCode.FILE_NOT_FOUND, str(e)),
+            )
+            return
+        except (InvalidPathError, NexusError) as e:
+            code = (
+                RPCErrorCode.INVALID_PATH
+                if isinstance(e, InvalidPathError)
+                else RPCErrorCode.INTERNAL_ERROR
+            )
+            yield vfs_pb2.ReadChunk(is_error=True, error_payload=_error_payload(code, str(e)))
+            return
+        except Exception as e:
+            logger.exception("Error in gRPC StreamRead %s", request.path)
+            yield vfs_pb2.ReadChunk(
+                is_error=True,
+                error_payload=_error_payload(RPCErrorCode.INTERNAL_ERROR, f"Internal error: {e}"),
+            )
+            return
+
+        chunk_size = request.chunk_size if request.chunk_size > 0 else _DEFAULT_CHUNK_SIZE
+        offset = 0
+        while offset < len(content):
+            if context.cancelled():
+                return
+            end = min(offset + chunk_size, len(content))
+            is_last = end >= len(content)
+            yield vfs_pb2.ReadChunk(data=content[offset:end], offset=offset, is_last=is_last)
+            offset = end
+
+        # Empty file: yield a single empty chunk
+        if not content:
+            yield vfs_pb2.ReadChunk(data=b"", offset=0, is_last=True)
+
+    async def Ping(
+        self,
+        request: "vfs_pb2.PingRequest",
+        _context: grpc.aio.ServicerContext,
+    ) -> "vfs_pb2.PingResponse":
+        """Health check with server metadata."""
+        import contextlib
+
+        import nexus
+        from nexus.contracts.constants import ROOT_ZONE_ID
+
+        # Optionally validate auth (non-fatal for Ping — version/zone_id are public)
+        with contextlib.suppress(NexusPermissionError):
+            await self._auth_and_context(request.auth_token)
+
+        zone_id = ROOT_ZONE_ID
+        uptime = int(time.monotonic() - _SERVER_START_TIME)
+        return vfs_pb2.PingResponse(
+            version=nexus.__version__,
+            zone_id=zone_id,
+            uptime_seconds=uptime,
+        )

@@ -70,39 +70,25 @@ class TestRemoteBackendRPC:
         ctx.backend_path = backend_path
         return ctx
 
-    def test_write_content_calls_rpc(self, backend: RemoteBackend) -> None:
-        """write_content should call _call_rpc('write', ...) with absolute path."""
-        with patch.object(
-            backend,
-            "_call_rpc",
-            return_value={"etag": "abc123", "size": 5},
-        ) as mock_rpc:
-            ctx = self._make_ctx("/path/to/file.txt", "path/to/file.txt")
-            result = backend.write_content(b"hello", context=ctx)
+    def test_write_content_uses_typed_rpc(self, backend: RemoteBackend, mock_transport) -> None:
+        """write_content should call transport.write_file() (typed RPC)."""
+        mock_transport.write_file.return_value = {"etag": "abc123", "size": 5}
+        ctx = self._make_ctx("/path/to/file.txt", "path/to/file.txt")
+        result = backend.write_content(b"hello", context=ctx)
 
-            mock_rpc.assert_called_once_with(
-                "sys_write",
-                {"path": "/path/to/file.txt", "content": b"hello"},
-            )
-            assert isinstance(result, WriteResult)
-            assert result.content_hash == "abc123"
-            assert result.size == 5
+        mock_transport.write_file.assert_called_once_with("/path/to/file.txt", b"hello")
+        assert isinstance(result, WriteResult)
+        assert result.content_hash == "abc123"
+        assert result.size == 5
 
-    def test_read_content_calls_rpc(self, backend: RemoteBackend) -> None:
-        """read_content should call _call_rpc('read', ...) with absolute path."""
-        with (
-            patch.object(backend, "_call_rpc") as mock_rpc,
-            patch.object(
-                backend._error_handler,
-                "_parse_read_response",
-                return_value=b"content",
-            ),
-        ):
-            ctx = self._make_ctx("/file.txt", "file.txt")
-            result = backend.read_content("hash", context=ctx)
+    def test_read_content_uses_typed_rpc(self, backend: RemoteBackend, mock_transport) -> None:
+        """read_content should call transport.read_file() (typed RPC)."""
+        mock_transport.read_file.return_value = b"content"
+        ctx = self._make_ctx("/file.txt", "file.txt")
+        result = backend.read_content("hash", context=ctx)
 
-            mock_rpc.assert_called_once_with("sys_read", {"path": "/file.txt"})
-            assert result == b"content"
+        mock_transport.read_file.assert_called_once_with("/file.txt")
+        assert result == b"content"
 
     def test_delete_content_is_noop(self, backend: RemoteBackend) -> None:
         """delete_content is a no-op — server-side delete via RemoteMetastore."""
@@ -214,15 +200,15 @@ class TestRemoteBackendRPC:
 class TestRemoteBackendLifecycle:
     """Connection lifecycle operations."""
 
-    def test_connect_health_check(self, backend: RemoteBackend, mock_transport) -> None:
-        """connect should call transport.health_check()."""
-        mock_transport.health_check.return_value = True
+    def test_connect_uses_ping(self, backend: RemoteBackend, mock_transport) -> None:
+        """connect should call transport.ping() (typed Ping RPC)."""
+        mock_transport.ping.return_value = {"version": "0.7.2", "zone_id": "root", "uptime": 0}
         backend.connect()
-        mock_transport.health_check.assert_called_once()
+        mock_transport.ping.assert_called_once()
 
     def test_connect_raises_on_failure(self, backend: RemoteBackend, mock_transport) -> None:
         """connect should raise RemoteConnectionError on transport failure."""
-        mock_transport.health_check.side_effect = RemoteConnectionError(
+        mock_transport.ping.side_effect = RemoteConnectionError(
             "Connection failed",
             details={"server_address": "localhost:2028"},
         )

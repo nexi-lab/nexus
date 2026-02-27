@@ -39,6 +39,31 @@ class NexusVFSServiceStub(object):
                 request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.CallRequest.SerializeToString,
                 response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.CallResponse.FromString,
                 _registered_method=True)
+        self.Read = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/Read',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReadRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReadResponse.FromString,
+                _registered_method=True)
+        self.Write = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/Write',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.WriteRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.WriteResponse.FromString,
+                _registered_method=True)
+        self.Delete = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/Delete',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.DeleteRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.DeleteResponse.FromString,
+                _registered_method=True)
+        self.StreamRead = channel.unary_stream(
+                '/nexus.grpc.vfs.NexusVFSService/StreamRead',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StreamReadRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReadChunk.FromString,
+                _registered_method=True)
+        self.Ping = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/Ping',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.PingRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.PingResponse.FromString,
+                _registered_method=True)
 
 
 class NexusVFSServiceServicer(object):
@@ -52,6 +77,38 @@ class NexusVFSServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def Read(self, request, context):
+        """Typed RPCs for content operations — native bytes, no JSON/base64.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Write(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Delete(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def StreamRead(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Ping(self, request, context):
+        """Health check with server metadata.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_NexusVFSServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -59,6 +116,31 @@ def add_NexusVFSServiceServicer_to_server(servicer, server):
                     servicer.Call,
                     request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.CallRequest.FromString,
                     response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.CallResponse.SerializeToString,
+            ),
+            'Read': grpc.unary_unary_rpc_method_handler(
+                    servicer.Read,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReadRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReadResponse.SerializeToString,
+            ),
+            'Write': grpc.unary_unary_rpc_method_handler(
+                    servicer.Write,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.WriteRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.WriteResponse.SerializeToString,
+            ),
+            'Delete': grpc.unary_unary_rpc_method_handler(
+                    servicer.Delete,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.DeleteRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.DeleteResponse.SerializeToString,
+            ),
+            'StreamRead': grpc.unary_stream_rpc_method_handler(
+                    servicer.StreamRead,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StreamReadRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReadChunk.SerializeToString,
+            ),
+            'Ping': grpc.unary_unary_rpc_method_handler(
+                    servicer.Ping,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.PingRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.PingResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -88,6 +170,141 @@ class NexusVFSService(object):
             '/nexus.grpc.vfs.NexusVFSService/Call',
             nexus_dot_grpc_dot_vfs_dot_vfs__pb2.CallRequest.SerializeToString,
             nexus_dot_grpc_dot_vfs_dot_vfs__pb2.CallResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Read(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/Read',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReadRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReadResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Write(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/Write',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.WriteRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.WriteResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Delete(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/Delete',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.DeleteRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.DeleteResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def StreamRead(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/StreamRead',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StreamReadRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReadChunk.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Ping(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/Ping',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.PingRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.PingResponse.FromString,
             options,
             channel_credentials,
             insecure,

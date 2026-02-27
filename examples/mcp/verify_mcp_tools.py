@@ -5,7 +5,7 @@ can list all available tools.
 """
 
 from nexus import connect
-from nexus.mcp import create_mcp_server
+from nexus.bricks.mcp import create_mcp_server
 
 
 def main() -> None:

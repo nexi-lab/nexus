@@ -659,9 +659,11 @@ module = [
     "nexus.bricks.a2a.a2a_pb2_grpc",
     "nexus.grpc.vfs.vfs_pb2",
     "nexus.grpc.vfs.vfs_pb2_grpc",
+    "nexus.grpc.vfs",
 ]
 # Generated gRPC/protobuf stubs — no type info available
 follow_imports = "skip"
+ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "nexus.raft.client"

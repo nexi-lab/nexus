@@ -172,7 +172,7 @@ def remove_mount(mount_point: str, backend_config: BackendConfig) -> None:
 
         try:
             mount_svc = cast(Any, nx).mount_service
-            result = run_sync(mount_svc.remove_mount(mount_point))
+            result = run_sync(mount_svc.remove_mount(mount_point=mount_point))
             if result.get("removed"):
                 console.print("[green]✓[/green] Mount removed successfully")
             else:

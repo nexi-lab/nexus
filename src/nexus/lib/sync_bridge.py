@@ -41,7 +41,7 @@ import atexit
 import logging
 import threading
 from collections.abc import Coroutine
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast, overload
 
 logger = logging.getLogger(__name__)
 
@@ -236,8 +236,14 @@ def _run_bg_loop(loop: asyncio.AbstractEventLoop) -> None:
 # ---------------------------------------------------------------------------
 
 
+@overload
+def run_sync(coro: Coroutine[Any, Any, T], *, timeout: float | None = ...) -> T: ...
+@overload
+def run_sync(coro: T, *, timeout: float | None = ...) -> T: ...
+
+
 def run_sync(
-    coro: Coroutine[Any, Any, T],
+    coro: Coroutine[Any, Any, T] | T,
     *,
     timeout: float | None = 30.0,
 ) -> T:
@@ -250,30 +256,43 @@ def run_sync(
     * Running loop (e.g. FastAPI worker thread) →
       ``run_coroutine_threadsafe()`` to the background event loop.
 
+    If *coro* is not actually a coroutine (e.g. ``RemoteServiceProxy``
+    already resolved the RPC synchronously), the value is returned as-is.
+    This lets callers use ``run_sync()`` uniformly regardless of whether
+    the underlying service is local (async) or remote (sync RPC proxy).
+
     Args:
-        coro: The coroutine to execute.
+        coro: The coroutine to execute, or an already-resolved value.
         timeout: Max seconds to wait for the result.  ``None`` means
             wait indefinitely.  Default 30 s.
 
     Returns:
-        The coroutine's return value.
+        The coroutine's return value, or *coro* itself if not a coroutine.
 
     Raises:
         RuntimeError: If the background loop fails to start.
         TimeoutError: If *timeout* is exceeded.
         Exception: Any exception raised by the coroutine is re-raised.
     """
+    # If the caller passed a non-coroutine (e.g. RemoteServiceProxy already
+    # resolved the RPC synchronously), return the value as-is.
+    if not asyncio.iscoroutine(coro):
+        return coro
+
+    # Narrow type for mypy: after iscoroutine check, coro is a Coroutine.
+    real_coro = cast(Coroutine[Any, Any, T], coro)
+
     try:
         asyncio.get_running_loop()
         # We are inside an async context (e.g. a sync function called
         # from a FastAPI threadpool worker while the main loop runs).
         # Cannot use asyncio.run() — submit to the background loop.
         bg_loop = _ensure_background_loop()
-        future = asyncio.run_coroutine_threadsafe(coro, bg_loop)
+        future = asyncio.run_coroutine_threadsafe(real_coro, bg_loop)
         return future.result(timeout=timeout)
     except RuntimeError:
         # No running event loop → safe to use asyncio.run().
-        return asyncio.run(coro)
+        return asyncio.run(real_coro)
 
 
 def fire_and_forget(coro: Coroutine[Any, Any, Any]) -> None:

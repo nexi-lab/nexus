@@ -87,7 +87,7 @@ class TxtaiBackend:
         self,
         *,
         database_url: str | None = None,
-        model: str = "all-MiniLM-L6-v2",
+        model: str = "sentence-transformers/all-MiniLM-L6-v2",
         hybrid: bool = True,
         graph: bool = True,
     ) -> None:
@@ -98,7 +98,7 @@ class TxtaiBackend:
         self._embeddings: Any = None
 
     async def startup(self) -> None:
-        """Initialize txtai Embeddings with pgvector backend."""
+        """Initialize txtai Embeddings with pgvector backend (with fallback)."""
         from txtai import Embeddings
 
         config: dict[str, Any] = {
@@ -108,9 +108,28 @@ class TxtaiBackend:
             "objects": True,
         }
 
+        use_pgvector = False
         if self._database_url:
-            config["backend"] = "pgvector"
-            config["database"] = self._database_url
+            # Try pgvector backend — fall back to default if not available
+            try:
+                from txtai.ann import ANNFactory  # noqa: F401
+
+                # Quick check: does pgvector ANN exist?
+                _has_pgvector = hasattr(ANNFactory, "create") and "pgvector" in str(
+                    getattr(ANNFactory, "_BACKENDS", {})
+                )
+            except (ImportError, AttributeError):
+                _has_pgvector = False
+
+            if _has_pgvector:
+                config["backend"] = "pgvector"
+                config["database"] = self._database_url
+                use_pgvector = True
+            else:
+                logger.warning(
+                    "pgvector backend not available (install txtai[ann]). "
+                    "Falling back to default in-memory backend."
+                )
 
         if self._graph:
             config["graph"] = {"backend": "networkx"}
@@ -122,7 +141,7 @@ class TxtaiBackend:
             self._model,
             self._hybrid,
             self._graph,
-            bool(self._database_url),
+            use_pgvector,
         )
 
     async def shutdown(self) -> None:
@@ -145,13 +164,23 @@ class TxtaiBackend:
         return len(rows)
 
     async def upsert(self, documents: list[dict[str, Any]], *, zone_id: str) -> int:
-        """Upsert documents (insert-or-update)."""
+        """Upsert documents (insert-or-update).
+
+        Falls back to ``index()`` on first call when the ANN backend
+        hasn't been initialized yet.
+        """
         if not self._embeddings or not documents:
             return 0
 
         stamped = _stamp_zone_id(documents, zone_id)
         rows = [(doc["id"], doc, None) for doc in stamped]
-        await asyncio.to_thread(self._embeddings.upsert, rows)
+
+        # txtai requires index() for the first batch to initialize the ANN.
+        # After that, upsert() works for incremental updates.
+        if getattr(self._embeddings, "ann", None) is None:
+            await asyncio.to_thread(self._embeddings.index, rows)
+        else:
+            await asyncio.to_thread(self._embeddings.upsert, rows)
         return len(rows)
 
     async def delete(self, ids: list[str], *, zone_id: str) -> int:  # noqa: ARG002

@@ -276,11 +276,14 @@ async def search_index_documents(
 async def search_refresh_notify(
     path: str = Query(..., description="Path of the changed file"),
     change_type: str = Query("update", description="Type of change: create, update, delete"),
-    _auth_result: dict[str, Any] = Depends(require_auth),
+    auth_result: dict[str, Any] = Depends(require_auth),
     search_daemon: Any = Depends(_get_search_daemon),
 ) -> dict[str, Any]:
     """Notify the search daemon of a file change for index refresh."""
-    await search_daemon.notify_file_change(path, change_type)
+    from nexus.contracts.constants import ROOT_ZONE_ID
+
+    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
+    await search_daemon.notify_file_change(path, change_type, zone_id=zone_id)
     return {"status": "accepted", "path": path, "change_type": change_type}
 
 

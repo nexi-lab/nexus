@@ -11,7 +11,8 @@ from datetime import UTC, datetime
 
 from nexus.bricks.ipc.conventions import AGENTS_ROOT, dead_letter_path, inbox_path
 from nexus.bricks.ipc.envelope import MessageEnvelope
-from nexus.bricks.ipc.storage.protocol import IPCStorageDriver
+from nexus.bricks.ipc.protocols import VFSOperations
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +35,8 @@ class TTLSweeper:
 
     def __init__(
         self,
-        storage: IPCStorageDriver,
-        zone_id: str = "root",
+        storage: VFSOperations,
+        zone_id: str = ROOT_ZONE_ID,
         interval: float = DEFAULT_SWEEP_INTERVAL,
     ) -> None:
         self._storage = storage
@@ -117,7 +118,7 @@ class TTLSweeper:
 
             msg_path = f"{agent_inbox}/{filename}"
             try:
-                data = await self._storage.read(msg_path, self._zone_id)
+                data = await self._storage.sys_read(msg_path, self._zone_id)
                 envelope = MessageEnvelope.from_bytes(data)
                 if envelope.is_expired():
                     dest = f"{dead_letter_path(agent_id)}/{filename}"

@@ -192,7 +192,7 @@ class TestSkillLifecycleIntegration:
         assert nexus_fs.stat(skill_md_path) is not None
 
         # Verify SKILL.md content
-        skill_md_content = nexus_fs.read(skill_md_path).decode("utf-8")
+        skill_md_content = nexus_fs.sys_read(skill_md_path).decode("utf-8")
         assert "name: user-import-skill" in skill_md_content
         assert "This is a test skill" in skill_md_content
 
@@ -295,7 +295,7 @@ Content for skill {i}.
         assert result_v2["imported_skills"] == ["overwrite-skill"]
 
         # Verify content was updated
-        skill_md_content = nexus_fs.read(f"{skill_path}SKILL.md").decode("utf-8")
+        skill_md_content = nexus_fs.sys_read(f"{skill_path}SKILL.md").decode("utf-8")
         assert "Version 2" in skill_md_content
 
     def test_complete_lifecycle_import_list_export(self, nexus_fs, user_context):

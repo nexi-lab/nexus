@@ -25,7 +25,7 @@ from contextlib import suppress
 from datetime import datetime
 
 try:
-    from nexus.remote.client import RemoteNexusFS
+    import nexus
 except ImportError:
     print("❌ nexus-ai-fs not installed. Run: pip install nexus-ai-fs")
     sys.exit(1)
@@ -64,7 +64,7 @@ def main():
     print_section("1. Connecting to Remote Server")
 
     try:
-        nx = RemoteNexusFS(server_url=server_url, api_key=api_key)
+        nx = nexus.connect(config={"mode": "remote", "url": server_url, "api_key": api_key})
         print(f"✅ Connected to {server_url}")
     except Exception as e:
         print(f"❌ Failed to connect: {e}")
@@ -76,7 +76,7 @@ def main():
 
         # Create main workspace directory
         try:
-            nx.mkdir("/workspace/demo-project", parents=True)
+            nx.sys_mkdir("/workspace/demo-project", parents=True)
             print("✓ Created: /workspace/demo-project")
         except Exception as e:
             if "already exists" in str(e).lower():
@@ -129,7 +129,7 @@ def main():
 
         for dir_path in directories:
             try:
-                nx.mkdir(dir_path, parents=True)
+                nx.sys_mkdir(dir_path, parents=True)
                 print(f"✓ Created: {dir_path}")
             except Exception as e:
                 if "already exists" in str(e).lower():
@@ -152,7 +152,7 @@ def main():
         }
 
         config_path = "/workspace/demo-project/config/app.json"
-        nx.write(config_path, json.dumps(config_data, indent=2).encode())
+        nx.sys_write(config_path, json.dumps(config_data, indent=2).encode())
         print(f"✓ Written: {config_path}")
 
         # Write data files
@@ -173,14 +173,14 @@ def main():
         ]
 
         for file_path, content in data_files:
-            nx.write(file_path, content)
+            nx.sys_write(file_path, content)
             print(f"✓ Written: {file_path}")
 
         # Read files back
         print_section("4. Reading Files")
 
         try:
-            config_content = nx.read(config_path)
+            config_content = nx.sys_read(config_path)
             config = json.loads(config_content)
             print(f"📄 Config: {config['project_name']} v{config['version']}")
             print(f"   Settings: {json.dumps(config['settings'], indent=2)}")
@@ -191,7 +191,7 @@ def main():
         # List files
         print_section("5. Listing Files")
 
-        all_files = nx.list("/workspace/demo-project", recursive=True)
+        all_files = nx.sys_readdir("/workspace/demo-project", recursive=True)
         print(f"📂 Found {len(all_files)} files:")
         for file_path in sorted(all_files):
             print(f"   - {file_path}")
@@ -200,18 +200,18 @@ def main():
         print_section("6. File Operations")
 
         # Check if file exists
-        if nx.exists(config_path):
+        if nx.sys_access(config_path):
             print(f"✓ Config file exists: {config_path}")
 
         # Check if directory exists
-        if nx.is_directory("/workspace/demo-project/data"):
+        if nx.sys_is_directory("/workspace/demo-project/data"):
             print("✓ Data directory exists")
 
         # Update the config file to create a new version
         print("\n📝 Updating config file...")
         config_data["version"] = "1.0.1"
         config_data["updated_at"] = datetime.now().isoformat()
-        nx.write(config_path, json.dumps(config_data, indent=2).encode())
+        nx.sys_write(config_path, json.dumps(config_data, indent=2).encode())
         print("✓ Updated config to version 1.0.1")
 
         # Version history
@@ -232,7 +232,7 @@ def main():
         print_section("8. Server Information")
 
         try:
-            namespaces = nx.get_available_namespaces()
+            namespaces = nx.get_top_level_mounts()
             print(f"📋 Available namespaces: {', '.join(namespaces)}")
         except Exception as e:
             print(f"⚠️  Namespace listing: {e}")

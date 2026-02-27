@@ -12,6 +12,7 @@ from enum import StrEnum
 from sqlalchemy import DateTime, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.models._base import Base, _generate_uuid, _get_uuid_server_default
 
 
@@ -67,7 +68,7 @@ class SecretsAuditLogModel(Base):
     token_family_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
 
     # Context
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default=ROOT_ZONE_ID)
     ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
 
     # Additional details (JSON text — must NEVER contain secrets)

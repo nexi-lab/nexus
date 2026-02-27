@@ -19,6 +19,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.models._base import Base
 
 
@@ -33,9 +34,9 @@ class ReBACTupleModel(Base):
 
     tuple_id: Mapped[str] = mapped_column(String(36), primary_key=True)
 
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
-    subject_zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
-    object_zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default=ROOT_ZONE_ID)
+    subject_zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default=ROOT_ZONE_ID)
+    object_zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default=ROOT_ZONE_ID)
 
     subject_type: Mapped[str] = mapped_column(String(50), nullable=False)
     subject_id: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -210,7 +211,9 @@ class ReBACChangelogModel(Base):
     object_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     object_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root", index=True)
+    zone_id: Mapped[str] = mapped_column(
+        String(255), nullable=False, default=ROOT_ZONE_ID, index=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False, index=True
@@ -252,7 +255,7 @@ class ReBACCheckCacheModel(Base):
 
     cache_id: Mapped[str] = mapped_column(String(36), primary_key=True)
 
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default=ROOT_ZONE_ID)
 
     subject_type: Mapped[str] = mapped_column(String(50), nullable=False)
     subject_id: Mapped[str] = mapped_column(String(255), nullable=False)

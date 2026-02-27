@@ -15,12 +15,14 @@ All zones share one gRPC port (zone_id routing in transport layer).
 """
 
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.metadata import DT_DIR, DT_MOUNT, FileMetadata
 
 if TYPE_CHECKING:
+    from nexus.security.tls.config import ZoneTlsConfig
     from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 logger = logging.getLogger(__name__)
@@ -74,6 +76,16 @@ class ZoneManager:
                 "Build with: maturin develop -m rust/nexus_raft/Cargo.toml --features full"
             )
 
+        # Auto-generate TLS certs if none provided and none on disk (#1250)
+        self._tls_config: ZoneTlsConfig | None = None
+        if tls_cert_path is None and tls_key_path is None and tls_ca_path is None:
+            auto = self._auto_generate_tls(base_path, node_id)
+            if auto is not None:
+                tls_cert_path = str(auto.node_cert_path)
+                tls_key_path = str(auto.node_key_path)
+                tls_ca_path = str(auto.ca_cert_path)
+                self._tls_config = auto
+
         self._py_mgr = PyZoneManager(
             node_id,
             base_path,
@@ -91,6 +103,62 @@ class ZoneManager:
         self._tls_ca_path = tls_ca_path
         self._pending_mounts: dict[str, str] | None = None
         self._topology_initialized = False
+
+    @property
+    def tls_config(self) -> "ZoneTlsConfig | None":
+        """Resolved TLS config (auto-generated or from explicit paths)."""
+        if self._tls_config is not None:
+            return self._tls_config
+        # Build from explicit paths if all three were provided
+        if self._tls_cert_path and self._tls_key_path and self._tls_ca_path:
+            from nexus.security.tls.config import ZoneTlsConfig
+
+            return ZoneTlsConfig(
+                ca_cert_path=Path(self._tls_ca_path),
+                node_cert_path=Path(self._tls_cert_path),
+                node_key_path=Path(self._tls_key_path),
+                known_zones_path=Path(self._base_path) / "tls" / "known_zones",
+            )
+        return None
+
+    @staticmethod
+    def _auto_generate_tls(base_path: str, node_id: int) -> "ZoneTlsConfig | None":
+        """Auto-generate TLS certs on first startup; reuse on subsequent starts."""
+        from nexus.security.tls.config import ZoneTlsConfig
+
+        existing = ZoneTlsConfig.from_data_dir(base_path)
+        if existing is not None:
+            logger.debug("Auto-detected existing TLS certs in %s/tls/", base_path)
+            return existing
+
+        # Generate new CA + node cert
+        try:
+            from nexus.security.tls.certgen import (
+                cert_fingerprint,
+                generate_node_cert,
+                generate_zone_ca,
+                save_pem,
+            )
+
+            tls_dir = Path(base_path) / "tls"
+            ca_cert, ca_key = generate_zone_ca("auto")
+            save_pem(tls_dir / "ca.pem", ca_cert)
+            save_pem(tls_dir / "ca-key.pem", ca_key, is_private=True)
+
+            node_cert, node_key = generate_node_cert(node_id, "auto", ca_cert, ca_key)
+            save_pem(tls_dir / "node.pem", node_cert)
+            save_pem(tls_dir / "node-key.pem", node_key, is_private=True)
+
+            logger.info(
+                "Auto-generated TLS certs (CA fingerprint: %s)",
+                cert_fingerprint(ca_cert),
+            )
+            return ZoneTlsConfig.from_data_dir(base_path)
+        except Exception:
+            logger.debug(
+                "TLS auto-generation skipped (cryptography not available or error)", exc_info=True
+            )
+            return None
 
     def bootstrap(
         self,

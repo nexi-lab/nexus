@@ -36,7 +36,7 @@ from nats.js.api import (
 )
 from nats.js.errors import NotFoundError
 
-from nexus.constants import DEFAULT_NATS_URL
+from nexus.contracts.constants import DEFAULT_NATS_URL, ROOT_ZONE_ID
 from nexus.services.event_subsystem.bus.base import EventBusBase
 from nexus.services.event_subsystem.bus.decorators import requires_started
 from nexus.services.event_subsystem.bus.protocol import AckableEvent
@@ -177,7 +177,7 @@ class NatsEventBus(EventBusBase):
         if self._js is None:
             raise RuntimeError("NatsEventBus JetStream not initialized.")
 
-        zone_id = event.zone_id or "root"
+        zone_id = event.zone_id or ROOT_ZONE_ID
         event_type = event.type.value if isinstance(event.type, FileEventType) else event.type
         subject = self._subject(zone_id, event_type)
 
@@ -217,7 +217,7 @@ class NatsEventBus(EventBusBase):
 
         results = []
         for event in events:
-            zone_id = event.zone_id or "root"
+            zone_id = event.zone_id or ROOT_ZONE_ID
             event_type = event.type.value if isinstance(event.type, FileEventType) else event.type
             subject = self._subject(zone_id, event_type)
 

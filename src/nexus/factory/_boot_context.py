@@ -5,7 +5,8 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
-    from nexus.core.config import AuditConfig, DistributedConfig, PermissionConfig
+    from nexus.contracts.types import AuditConfig
+    from nexus.core.config import DistributedConfig, PermissionConfig
     from nexus.core.metastore import MetastoreABC
     from nexus.core.router import PathRouter
     from nexus.lib.performance_tuning import ProfileTuning

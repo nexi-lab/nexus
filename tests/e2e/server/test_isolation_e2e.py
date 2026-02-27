@@ -137,7 +137,7 @@ class TestIsolatedBackendWithFastAPI:
                 json={
                     "jsonrpc": "2.0",
                     "id": "1",
-                    "method": "write",
+                    "method": "sys_write",
                     "params": {"path": "/isolation-test.txt", "content": content_b64},
                 },
             )
@@ -149,7 +149,7 @@ class TestIsolatedBackendWithFastAPI:
                 json={
                     "jsonrpc": "2.0",
                     "id": "2",
-                    "method": "read",
+                    "method": "sys_read",
                     "params": {"path": "/isolation-test.txt"},
                 },
             )
@@ -174,7 +174,7 @@ class TestIsolatedBackendWithFastAPI:
                 json={
                     "jsonrpc": "2.0",
                     "id": "1",
-                    "method": "mkdir",
+                    "method": "sys_mkdir",
                     "params": {"path": "/isolated-dir"},
                 },
             )
@@ -205,7 +205,7 @@ class TestIsolatedBackendPermissions:
                 json={
                     "jsonrpc": "2.0",
                     "id": "1",
-                    "method": "read",
+                    "method": "sys_read",
                     "params": {"path": "/secret.txt"},
                 },
             )
@@ -227,7 +227,7 @@ class TestIsolatedBackendPermissions:
                 json={
                     "jsonrpc": "2.0",
                     "id": "1",
-                    "method": "read",
+                    "method": "sys_read",
                     "params": {"path": "/secret.txt"},
                 },
             )

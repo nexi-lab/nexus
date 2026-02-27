@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import Depends, Header, HTTPException, Request
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.server.token_utils import parse_sk_token
 
 if TYPE_CHECKING:
@@ -166,8 +166,10 @@ async def resolve_auth(
         _auth_cache: CacheStoreABC | None = getattr(_state, "auth_cache_store", None)
         cached_result = await _get_cached_auth(_auth_cache, token)
         if cached_result:
-            # Update x_agent_id and timing for this request
+            # Update per-request fields (zone header, agent ID, timing)
             # Safe: cached_result is already a copy from _get_cached_auth
+            if x_nexus_zone_id:
+                cached_result["zone_id"] = x_nexus_zone_id
             cached_result["x_agent_id"] = x_agent_id
             cached_result["_auth_time_ms"] = 0.0  # Cache hit = no auth time
             cached_result["_auth_cached"] = True
@@ -180,6 +182,8 @@ async def resolve_auth(
             if base is None:
                 return None
             coalesced = dict(base)
+            if x_nexus_zone_id:
+                coalesced["zone_id"] = x_nexus_zone_id
             coalesced["x_agent_id"] = x_agent_id
             coalesced["_auth_time_ms"] = 0.0
             coalesced["_auth_cached"] = True
@@ -205,7 +209,7 @@ async def resolve_auth(
                 "is_admin": result.is_admin,
                 "subject_type": result.subject_type,
                 "subject_id": result.subject_id,
-                "zone_id": result.zone_id,
+                "zone_id": x_nexus_zone_id or result.zone_id,
                 "inherit_permissions": result.inherit_permissions
                 if hasattr(result, "inherit_permissions")
                 else True,

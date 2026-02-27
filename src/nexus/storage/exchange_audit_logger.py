@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import desc, event, func, select
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.models.exchange_audit_log import ExchangeAuditLogModel
 
 if TYPE_CHECKING:
@@ -164,7 +165,7 @@ class ExchangeAuditLogger:
         currency: str = "credits",
         status: str,
         application: str,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         trace_id: str | None = None,
         metadata: dict[str, Any] | None = None,
         transfer_id: str | None = None,

@@ -28,7 +28,7 @@ from nexus.bricks.a2a.task_store import TaskStoreProtocol
 
 
 class InMemoryStorageDriver:
-    """Minimal fake for IPCStorageDriver used by VFSTaskStore tests."""
+    """Minimal fake for VFSOperations used by VFSTaskStore tests."""
 
     def __init__(self) -> None:
         self._files: dict[tuple[str, str], bytes] = {}
@@ -143,7 +143,7 @@ def store(request: pytest.FixtureRequest) -> TaskStoreProtocol:
     """Create a TaskStore instance for each backend."""
     if request.param == "in_memory":
         from nexus.bricks.a2a.stores.in_memory import CacheBackedTaskStore
-        from nexus.bricks.cache.inmemory import InMemoryCacheStore
+        from nexus.cache.inmemory import InMemoryCacheStore
 
         return CacheBackedTaskStore(InMemoryCacheStore())
     elif request.param == "vfs":

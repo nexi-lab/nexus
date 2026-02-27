@@ -51,9 +51,9 @@ from nexus.backends.slack_connector_utils import (
     list_channels,
     list_messages_from_channel,
 )
-from nexus.contracts.exceptions import BackendError
+from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
+from nexus.core.object_store import WriteResult
 from nexus.core.protocols.capabilities import OAUTH_CONNECTOR_CAPABILITIES, ConnectorCapability
-from nexus.lib.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
@@ -355,7 +355,9 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
 
     # === Backend interface methods ===
 
-    def write_content(self, content: bytes, context: "OperationContext | None" = None) -> str:
+    def write_content(
+        self, content: bytes, context: "OperationContext | None" = None
+    ) -> WriteResult:
         """
         Write content (post message to Slack).
 
@@ -408,17 +410,14 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
                 raise BackendError(f"Failed to post message: {error}", backend="slack")
 
             # Return message timestamp as content hash
-            return result["ts"]
+            return WriteResult(content_hash=result["ts"], size=len(content))
 
         except json.JSONDecodeError as e:
             raise BackendError(f"Invalid JSON content: {e}", backend="slack") from e
         except Exception as e:
             raise BackendError(f"Failed to write message: {e}", backend="slack") from e
 
-    @timed_response
-    def read_content(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[bytes]":
+    def read_content(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
         """
         Read channel content as YAML file from cache or Slack API.
 
@@ -429,18 +428,16 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
             context: Operation context with backend_path
 
         Returns:
-            HandlerResponse with channel messages as YAML bytes in data field
+            Channel messages as YAML bytes
 
         Raises:
             NexusFileNotFoundError: If channel doesn't exist
             BackendError: If read operation fails
         """
         if not context or not context.backend_path:
-            return HandlerResponse.error(
-                message="Slack connector requires backend_path in OperationContext",
-                code=400,
-                backend_name="slack",
-                path=content_hash,
+            raise BackendError(
+                "Slack connector requires backend_path in OperationContext",
+                backend="slack",
             )
 
         backend_path = context.backend_path
@@ -449,27 +446,15 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
         path_parts = backend_path.strip("/").split("/")
 
         if len(path_parts) != 2:
-            return HandlerResponse.not_found(
-                path=backend_path,
-                message=f"Invalid Slack path format: {backend_path}",
-                backend_name="slack",
-            )
+            raise NexusFileNotFoundError(backend_path)
 
         folder_type, filename = path_parts
 
         if folder_type not in self.FOLDER_TYPES:
-            return HandlerResponse.not_found(
-                path=backend_path,
-                message=f"Invalid folder type: {folder_type}",
-                backend_name="slack",
-            )
+            raise NexusFileNotFoundError(backend_path)
 
         if not filename.endswith(".yaml"):
-            return HandlerResponse.not_found(
-                path=backend_path,
-                message=f"Not a valid YAML file: {filename}",
-                backend_name="slack",
-            )
+            raise NexusFileNotFoundError(backend_path)
 
         # Extract channel name from filename
         channel_name = filename.replace(".yaml", "")
@@ -481,21 +466,13 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
         if self._has_caching():
             cached = self._read_from_cache(cache_path, original=True)
             if cached and not cached.stale and cached.content_binary:
-                return HandlerResponse.ok(
-                    data=cached.content_binary,
-                    backend_name="slack",
-                    path=backend_path,
-                )
+                return cached.content_binary
 
         # Fetch from Slack API
         # Get channel info
         channel = self._get_channel_by_name(channel_name, context)
         if not channel:
-            return HandlerResponse.not_found(
-                path=backend_path,
-                message=f"Channel not found: {channel_name}",
-                backend_name="slack",
-            )
+            raise NexusFileNotFoundError(backend_path)
 
         channel_id = channel["id"]
 
@@ -561,11 +538,7 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
             except Exception as e:
                 logger.debug("Slack cache write failed for %s: %s", cache_path, e)
 
-        return HandlerResponse.ok(
-            data=content,
-            backend_name="slack",
-            path=backend_path,
-        )
+        return content
 
     def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:
         """
@@ -599,7 +572,7 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
 
         try:
             # Try to read the message
-            self.read_content(content_hash, context).unwrap()
+            self.read_content(content_hash, context)
             return True
         except Exception as e:
             logger.debug("Slack content existence check failed: %s", e)
@@ -629,7 +602,7 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
                 return cached_size
 
         # Fallback: Read content to get size
-        content = self.read_content(content_hash, context).unwrap()
+        content = self.read_content(content_hash, context)
         return len(content)
 
     def get_ref_count(self, content_hash: str, context: "OperationContext | None" = None) -> int:

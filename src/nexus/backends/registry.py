@@ -73,7 +73,6 @@ _CONNECTOR_PROTOCOL_MEMBERS: frozenset[str] = frozenset(
         "is_connected",
         "is_passthrough",
         "has_root_path",
-        "has_virtual_filesystem",
         "has_token_manager",
         # CapabilityAwareProtocol (Issue #2069)
         "capabilities",

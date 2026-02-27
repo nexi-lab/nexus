@@ -21,11 +21,11 @@ from nexus.contracts.types import OperationContext
 def mock_gateway():
     """Create a mock NexusFSGateway with standard skill configuration."""
     gw = MagicMock()
-    gw.read.return_value = b""
-    gw.write.return_value = None
-    gw.mkdir.return_value = None
-    gw.exists.return_value = False
-    gw.list.return_value = []
+    gw.sys_read.return_value = b""
+    gw.sys_write.return_value = None
+    gw.sys_mkdir.return_value = None
+    gw.sys_access.return_value = False
+    gw.sys_readdir.return_value = []
     gw.rebac_create.return_value = {"tuple_id": "tuple-123"}
     gw.rebac_list_tuples.return_value = []
     gw.rebac_delete.return_value = True
@@ -71,7 +71,7 @@ class TestDiscoverSubscribed:
     def test_returns_subscribed_skills(self, svc, mock_gateway, ctx):
         """Subscribed filter returns only skills in .subscribed.yaml."""
         subs = {"subscribed_skills": ["/zone/acme/user/alice/skill/my-skill/"]}
-        mock_gateway.read.side_effect = lambda path, **kw: (
+        mock_gateway.sys_read.side_effect = lambda path, **kw: (
             yaml.dump(subs).encode() if ".subscribed" in path else SKILL_MD
         )
         mock_gateway.rebac_manager.rebac_check.return_value = False
@@ -84,7 +84,7 @@ class TestDiscoverSubscribed:
 
     def test_empty_subscriptions(self, svc, mock_gateway, ctx):
         """Empty subscriptions returns empty list."""
-        mock_gateway.read.side_effect = FileNotFoundError("not found")
+        mock_gateway.sys_read.side_effect = FileNotFoundError("not found")
 
         result = svc.discover(ctx, filter="subscribed")
         assert result == []
@@ -99,7 +99,7 @@ class TestDiscoverSubscribed:
                 return yaml.dump(subs).encode()
             return SKILL_MD
 
-        mock_gateway.read.side_effect = read_side
+        mock_gateway.sys_read.side_effect = read_side
         # Batch public-set lookup: _find_public_skills uses rebac_list_tuples
         mock_gateway.rebac_list_tuples.return_value = [
             {
@@ -132,9 +132,9 @@ class TestDiscoverOwned:
         skill_path = f"{user_dir}{skill_name}/"
         skill_md_path = f"{skill_path}SKILL.md"
 
-        mock_gateway.exists.side_effect = lambda p, **kw: p in (user_dir, skill_md_path)
-        mock_gateway.list.return_value = [f"{user_dir}{skill_name}/SKILL.md"]
-        mock_gateway.read.side_effect = lambda p, **kw: b"" if ".subscribed" in p else SKILL_MD
+        mock_gateway.sys_access.side_effect = lambda p, **kw: p in (user_dir, skill_md_path)
+        mock_gateway.sys_readdir.return_value = [f"{user_dir}{skill_name}/SKILL.md"]
+        mock_gateway.sys_read.side_effect = lambda p, **kw: b"" if ".subscribed" in p else SKILL_MD
         mock_gateway.rebac_manager.rebac_check.return_value = False
 
         result = svc.discover(ctx, filter="owned")
@@ -144,7 +144,7 @@ class TestDiscoverOwned:
 
     def test_empty_skill_directory(self, svc, mock_gateway, ctx):
         """Empty user skill directory returns empty list."""
-        mock_gateway.exists.return_value = False
+        mock_gateway.sys_access.return_value = False
 
         result = svc.discover(ctx, filter="owned")
         assert result == []
@@ -169,7 +169,7 @@ class TestDiscoverPublic:
                 "relation": "direct_viewer",
             }
         ]
-        mock_gateway.read.side_effect = lambda p, **kw: (
+        mock_gateway.sys_read.side_effect = lambda p, **kw: (
             yaml.dump({"subscribed_skills": []}).encode() if ".subscribed" in p else SKILL_MD
         )
 
@@ -181,7 +181,7 @@ class TestDiscoverPublic:
     def test_no_public_skills(self, svc, mock_gateway, ctx):
         """No public skills returns empty list."""
         mock_gateway.rebac_list_tuples.return_value = []
-        mock_gateway.read.side_effect = FileNotFoundError("not found")
+        mock_gateway.sys_read.side_effect = FileNotFoundError("not found")
 
         result = svc.discover(ctx, filter="public")
         assert result == []
@@ -214,7 +214,7 @@ class TestDiscoverShared:
             return []
 
         mock_gateway.rebac_list_tuples.side_effect = rebac_list_side
-        mock_gateway.read.side_effect = lambda p, **kw: (
+        mock_gateway.sys_read.side_effect = lambda p, **kw: (
             yaml.dump({"subscribed_skills": []}).encode() if ".subscribed" in p else SKILL_MD
         )
 
@@ -249,7 +249,7 @@ class TestDiscoverShared:
             return []
 
         mock_gateway.rebac_list_tuples.side_effect = rebac_list_side
-        mock_gateway.read.side_effect = lambda p, **kw: (
+        mock_gateway.sys_read.side_effect = lambda p, **kw: (
             yaml.dump({"subscribed_skills": []}).encode() if ".subscribed" in p else SKILL_MD
         )
 
@@ -268,11 +268,11 @@ class TestDiscoverAll:
     def test_all_collects_from_multiple_sources(self, svc, mock_gateway, ctx):
         """All filter collects from filesystem, public, and shared sources."""
         # No filesystem skills
-        mock_gateway.exists.return_value = False
-        mock_gateway.list.return_value = []
+        mock_gateway.sys_access.return_value = False
+        mock_gateway.sys_readdir.return_value = []
         # No public/shared skills
         mock_gateway.rebac_list_tuples.return_value = []
-        mock_gateway.read.side_effect = FileNotFoundError("not found")
+        mock_gateway.sys_read.side_effect = FileNotFoundError("not found")
 
         result = svc.discover(ctx, filter="all")
         assert result == []
@@ -297,7 +297,7 @@ class TestLoadSkillMetadata:
                 return SKILL_MD
             raise PermissionError("no access")
 
-        mock_gateway.read.side_effect = read_side
+        mock_gateway.sys_read.side_effect = read_side
 
         result = svc._load_skill_metadata(
             "/zone/other/user/bob/skill/public-skill/", ctx, is_public=True
@@ -308,7 +308,7 @@ class TestLoadSkillMetadata:
 
     def test_no_fallback_when_not_public(self, svc, mock_gateway, ctx):
         """Non-public skills don't attempt system context fallback."""
-        mock_gateway.read.side_effect = PermissionError("no access")
+        mock_gateway.sys_read.side_effect = PermissionError("no access")
 
         result = svc._load_skill_metadata(
             "/zone/acme/user/alice/skill/private/", ctx, is_public=False
@@ -412,7 +412,7 @@ class TestLoadAssignedSkills:
                 ]
             }
         }
-        mock_gateway.read.return_value = yaml.dump(config).encode()
+        mock_gateway.sys_read.return_value = yaml.dump(config).encode()
 
         result = svc._load_assigned_skills(ctx)
         assert len(result) == 2
@@ -422,7 +422,7 @@ class TestLoadAssignedSkills:
         ctx.agent_id = "alice,my-agent"
         ctx.subject_id = "alice,my-agent"
 
-        mock_gateway.read.return_value = yaml.dump({"name": "my-agent"}).encode()
+        mock_gateway.sys_read.return_value = yaml.dump({"name": "my-agent"}).encode()
 
         result = svc._load_assigned_skills(ctx)
         assert result == []
@@ -432,7 +432,7 @@ class TestLoadAssignedSkills:
         ctx.agent_id = "alice,my-agent"
         ctx.subject_id = "alice,my-agent"
 
-        mock_gateway.read.side_effect = FileNotFoundError("not found")
+        mock_gateway.sys_read.side_effect = FileNotFoundError("not found")
 
         result = svc._load_assigned_skills(ctx)
         assert result == []

@@ -91,8 +91,6 @@ class TestInitAppState:
         mock_sys.brick_lifecycle_manager = "blm"
         mock_sys.brick_reconciler = "br"
         mock_sys.eviction_manager = "em"
-        mock_sys.scoped_hook_engine = "she"
-
         mock_fs = MagicMock()
         mock_fs._system_services = mock_sys
         mock_fs._brick_services = "brk"
@@ -111,7 +109,6 @@ class TestInitAppState:
         assert app.state.brick_lifecycle_manager == "blm"
         assert app.state.brick_reconciler == "br"
         assert app.state.eviction_manager == "em"
-        assert app.state.scoped_hook_engine == "she"
 
     def test_none_nexus_fs_does_not_crash(self) -> None:
         """init_app_state should work fine with nexus_fs=None."""

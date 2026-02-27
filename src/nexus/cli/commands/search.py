@@ -71,7 +71,9 @@ def glob(
             filtered_matches = []
             for match in matches:
                 is_dir = (
-                    nx.is_directory(match) if hasattr(nx, "is_directory") else match.endswith("/")
+                    nx.sys_is_directory(match)
+                    if hasattr(nx, "is_directory")
+                    else match.endswith("/")
                 )
                 if (type == "d" and is_dir) or (type == "f" and not is_dir):
                     filtered_matches.append(match)
@@ -82,7 +84,7 @@ def glob(
         if long:
             for match in matches:
                 try:
-                    metadata = nx.read(match, return_metadata=True)
+                    metadata = nx.sys_read(match, return_metadata=True)
                     if isinstance(metadata, dict):
                         match_data.append(
                             {
@@ -262,7 +264,7 @@ def find_duplicates(path: str, json_output: bool, backend_config: BackendConfig)
 
         # Get all files under path
         with console.status(f"[yellow]Scanning files in {path}...[/yellow]", spinner="dots"):
-            all_files_raw = nx.list(path, recursive=True)
+            all_files_raw = nx.sys_readdir(path, recursive=True)
 
             # Handle PaginatedResult if limit was used (not expected here, but be safe)
             if hasattr(all_files_raw, "items"):

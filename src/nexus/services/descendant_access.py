@@ -10,6 +10,8 @@ Extracted from ``nexus.core.nexus_fs._has_descendant_access`` and
 import logging
 from typing import TYPE_CHECKING, Any
 
+from nexus.contracts.constants import ROOT_ZONE_ID
+
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext, Permission
 
@@ -113,7 +115,7 @@ class DescendantAccessChecker:
             Permission.TRAVERSE: "traverse",
         }
         rebac_permission = permission_map.get(permission, "read")
-        zone_id = context.zone_id or "root"
+        zone_id = context.zone_id or ROOT_ZONE_ID
 
         # =============================================================
         # Issue #919 OPTIMIZATION 1: Check DirectoryVisibilityCache (O(1))
@@ -240,7 +242,7 @@ class DescendantAccessChecker:
             try:
                 # Perform bulk permission check
                 results = self._rebac_manager.rebac_check_bulk(
-                    checks, zone_id=context.zone_id or "root"
+                    checks, zone_id=context.zone_id or ROOT_ZONE_ID
                 )
 
                 # OPTIMIZATION 5: Early exit on first accessible descendant
@@ -447,7 +449,7 @@ class DescendantAccessChecker:
         # PHASE 2: Perform ONE bulk permission check for everything
         try:
             results = self._rebac_manager.rebac_check_bulk(
-                all_checks, zone_id=context.zone_id or "root"
+                all_checks, zone_id=context.zone_id or ROOT_ZONE_ID
             )
         except Exception as e:
             logger.warning(f"has_access_bulk: Bulk check failed, falling back: {e}")

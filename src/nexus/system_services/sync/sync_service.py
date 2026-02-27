@@ -26,7 +26,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import ProgressCallback, SyncContext, SyncResult
 from nexus.lib.context_utils import get_zone_id
 from nexus.services.permission_utils import check_permission
@@ -190,11 +190,11 @@ class SyncService:
         """
         assert ctx.mount_point is not None
 
-        mount = self._gw.router.get_mount(ctx.mount_point)
-        if not mount:
+        if not self._gw.router.has_mount(ctx.mount_point):
             raise ValueError(f"Mount not found: {ctx.mount_point}")
 
-        backend = mount.backend
+        route = self._gw.router.route(ctx.mount_point)
+        backend = route.backend
         backend_name = type(backend).__name__
 
         if not hasattr(backend, "list_dir"):
@@ -1092,7 +1092,7 @@ class SyncService:
                     backend_path=backend_path,
                 )
                 # Note: content_hash is ignored by connectors - they use backend_path from context
-                result: int = backend.get_content_size("", size_context).unwrap()
+                result: int = backend.get_content_size("", size_context)
                 return result
         except (OSError, ValueError, AttributeError) as e:
             logger.debug(f"Could not get file size for {backend_path}: {e}")

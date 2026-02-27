@@ -54,7 +54,7 @@ def benchmark_nexus(benchmark_backend, benchmark_db):
         is_admin=True,
         permissions=PermissionConfig(enforce=False),
         parsing=ParseConfig(auto_parse=False),
-        cache=CacheConfig(enable_metadata_cache=True, enable_content_cache=True),
+        cache=CacheConfig(enable_content_cache=True),
     )
     yield nx
     nx.close()
@@ -74,7 +74,7 @@ def benchmark_nexus_with_permissions(benchmark_backend, benchmark_db):
         agent_id="benchmark_agent",
         permissions=PermissionConfig(enforce=True),
         parsing=ParseConfig(auto_parse=False),
-        cache=CacheConfig(enable_metadata_cache=True, enable_content_cache=True),
+        cache=CacheConfig(enable_content_cache=True),
     )
     yield nx
     nx.close()
@@ -99,23 +99,23 @@ def populated_nexus(benchmark_nexus, sample_files):
 
     # Create directory structure
     for i in range(10):
-        nx.mkdir(f"/dir_{i}", parents=True)
+        nx.sys_mkdir(f"/dir_{i}", parents=True)
         for j in range(10):
-            nx.mkdir(f"/dir_{i}/subdir_{j}", parents=True)
+            nx.sys_mkdir(f"/dir_{i}/subdir_{j}", parents=True)
 
     # Create files of various sizes
     for size_name, content in sample_files.items():
         if size_name != "xlarge":  # Skip xlarge for setup speed
-            nx.write(f"/test_{size_name}.bin", content)
+            nx.sys_write(f"/test_{size_name}.bin", content)
             # Create copies in subdirectories
             for i in range(5):
-                nx.write(f"/dir_{i}/test_{size_name}.bin", content)
+                nx.sys_write(f"/dir_{i}/test_{size_name}.bin", content)
 
     # Create many small files for glob/list benchmarks
     for i in range(100):
-        nx.write(f"/many_files/file_{i:04d}.txt", f"Content {i}".encode())
-        nx.write(f"/many_files/file_{i:04d}.py", f"# Python {i}".encode())
-        nx.write(f"/many_files/file_{i:04d}.json", f'{{"id": {i}}}'.encode())
+        nx.sys_write(f"/many_files/file_{i:04d}.txt", f"Content {i}".encode())
+        nx.sys_write(f"/many_files/file_{i:04d}.py", f"# Python {i}".encode())
+        nx.sys_write(f"/many_files/file_{i:04d}.json", f'{{"id": {i}}}'.encode())
 
     yield nx
 
@@ -129,8 +129,8 @@ def deep_directory_nexus(benchmark_nexus):
     current_path = ""
     for i in range(20):
         current_path += f"/level_{i}"
-        nx.mkdir(current_path, parents=True)
-        nx.write(f"{current_path}/file.txt", f"Content at depth {i}".encode())
+        nx.sys_mkdir(current_path, parents=True)
+        nx.sys_write(f"{current_path}/file.txt", f"Content at depth {i}".encode())
 
     yield nx
 

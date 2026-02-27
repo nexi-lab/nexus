@@ -34,7 +34,7 @@ repos:
         entry: .venv/bin/python -m mypy
         language: system
         types: [python]
-        exclude: ^(tests/|alembic/|examples/|benchmarks/|\.claude/|scripts/|nexus-plugin-)
+        exclude: ^(tests/|alembic/|examples/|benchmarks/|\.claude/|scripts/|nexus-plugin-)|_pb2(_grpc)?\.py$
 
   - repo: local
     hooks:

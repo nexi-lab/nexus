@@ -69,7 +69,7 @@ class SkillPackageService:
         if not skill_path and skill_name:
             user_skill_dir = f"/zone/{context.zone_id}/user/{context.user_id}/skill/"
             skill_path = f"{user_skill_dir}{skill_name}/"
-            if not self._fs.exists(skill_path, context=context):
+            if not self._fs.sys_access(skill_path, context=context):
                 skills = self._skill_service._discover_impl(context, filter="all")
                 for s in skills:
                     if s.name == skill_name:
@@ -88,7 +88,7 @@ class SkillPackageService:
 
         def collect_files(dir_path: str, _prefix: str = "") -> None:
             try:
-                items = self._fs.list(dir_path, context=context)
+                items = self._fs.sys_readdir(dir_path, context=context)
                 for item in items:
                     item_str = str(item)
                     if item_str.startswith(dir_path):
@@ -101,7 +101,7 @@ class SkillPackageService:
                     )
 
                     try:
-                        content = self._fs.read(full_path, context=context)
+                        content = self._fs.sys_read(full_path, context=context)
                         if isinstance(content, str):
                             content = content.encode("utf-8")
                         files_to_export.append((rel_path, content))
@@ -132,7 +132,7 @@ class SkillPackageService:
         skill_name_from_path = skill_path.rstrip("/").split("/")[-1]
 
         if output_path:
-            self._fs.write(output_path, zip_bytes, context=context)
+            self._fs.sys_write(output_path, zip_bytes, context=context)
             return {
                 "success": True,
                 "path": output_path,
@@ -190,7 +190,7 @@ class SkillPackageService:
             zip_bytes = zip_data
 
         if source_path:
-            raw_zip_data = self._fs.read(source_path, context=context)
+            raw_zip_data = self._fs.sys_read(source_path, context=context)
             if isinstance(raw_zip_data, str):
                 raw_zip_data = raw_zip_data.encode("utf-8")
         elif zip_bytes:
@@ -255,7 +255,7 @@ class SkillPackageService:
                 target_path += "/"
 
             skill_md_path = f"{target_path}SKILL.md"
-            if self._fs.exists(skill_md_path, context=context) and not allow_overwrite:
+            if self._fs.sys_access(skill_md_path, context=context) and not allow_overwrite:
                 raise SkillValidationError(
                     f"Skill already exists at {target_path}. Set allow_overwrite=true to overwrite."
                 )
@@ -288,7 +288,7 @@ class SkillPackageService:
                         context.zone_id,
                     )
                     try:
-                        self._fs.write(file_path, content, context=context)
+                        self._fs.sys_write(file_path, content, context=context)
                         files_imported.append(file_path)
                     except Exception as e:
                         logger.error(
@@ -331,7 +331,7 @@ class SkillPackageService:
             zip_bytes = zip_data
 
         if source_path:
-            raw_zip_data = self._fs.read(source_path, context=context)
+            raw_zip_data = self._fs.sys_read(source_path, context=context)
             if isinstance(raw_zip_data, str):
                 raw_zip_data = raw_zip_data.encode("utf-8")
         elif zip_bytes:

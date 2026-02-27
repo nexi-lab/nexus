@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from sqlalchemy import DateTime, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.models._base import Base, _generate_uuid
 
 
@@ -38,7 +39,7 @@ class AccessManifestModel(Base):
     zone_id: Mapped[str] = mapped_column(
         String(255),
         nullable=False,
-        default="root",
+        default=ROOT_ZONE_ID,
     )
 
     name: Mapped[str] = mapped_column(

@@ -19,19 +19,21 @@ Service container hierarchy (matches NEXUS-LEGO-ARCHITECTURE §2):
     BrickServices   — Tier 2: optional, silent on failure, hot-swappable
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from nexus.constants import DEFAULT_NATS_URL
+from nexus.contracts.constants import DEFAULT_NATS_URL
 
 if TYPE_CHECKING:
     from nexus.bricks.workflows.protocol import WorkflowProtocol
     from nexus.contracts.write_observer import WriteObserverProtocol
-    from nexus.services.protocols.entity_registry import EntityRegistryProtocol
+    from nexus.core.protocols.entity_registry import EntityRegistryProtocol
+    from nexus.core.protocols.permission_enforcer import PermissionEnforcerProtocol
+    from nexus.core.protocols.rebac_manager import ReBACManagerProtocol
+    from nexus.core.protocols.workspace_manager import WorkspaceManagerProtocol
     from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
-    from nexus.services.protocols.permission_enforcer import PermissionEnforcerProtocol
-    from nexus.services.protocols.rebac import ReBACBrickProtocol
-    from nexus.services.protocols.workspace_manager import WorkspaceManagerProtocol
 
 # ---------------------------------------------------------------------------
 # Config dataclasses (frozen — immutable, use dataclasses.replace() to copy)
@@ -47,7 +49,6 @@ class CacheConfig:
     NOT related to the CacheStore pillar (Dragonfly/ephemeral KV+PubSub).
     """
 
-    enable_metadata_cache: bool = True
     path_size: int = 512
     list_size: int = 1024
     kv_size: int = 256
@@ -69,32 +70,10 @@ class PermissionConfig:
     inherit: bool = True
     allow_admin_bypass: bool = False
     enforce_zone_isolation: bool = True
+    audit_strict_mode: bool = True
     enable_tiger_cache: bool = True
     enable_deferred: bool = True
     deferred_flush_interval: float = 0.05
-
-
-@dataclass(frozen=True)
-class AuditConfig:
-    """Audit trail error-policy configuration (Issue #2152).
-
-    Controls what happens when audit logging (RecordStore sync) fails
-    during write operations. This is a P0 compliance concern — separate
-    from permission enforcement (PermissionConfig).
-
-    P0 COMPLIANCE: SOX, HIPAA, GDPR, PCI DSS require complete audit
-    trails. ``strict_mode=True`` (default) ensures writes fail if audit
-    logging fails, preventing silent audit gaps.
-
-    Note on buffered observers: ``strict_mode`` is enforced by the
-    synchronous ``RecordStoreWriteObserver``. The async
-    ``BufferedRecordStoreWriteObserver`` enqueues events into a
-    ``WriteBuffer`` where the enqueue path cannot fail; actual error
-    handling (retry + drop) is managed by the ``WriteBuffer`` background
-    flush thread, not by ``strict_mode``.
-    """
-
-    strict_mode: bool = True
 
 
 @dataclass(frozen=True)
@@ -134,6 +113,31 @@ class ParseConfig:
     providers: tuple[dict[str, Any], ...] | None = None
 
 
+@dataclass(frozen=True)
+class IPCConfig:
+    """Inter-Process Communication (IPC) configuration (Issue #2037).
+
+    Controls message delivery limits, concurrency, delivery modes,
+    and deduplication for the filesystem-as-IPC subsystem.
+    """
+
+    # Message limits
+    max_inbox_size: int = 1000
+    max_payload_bytes: int = 1_048_576  # 1 MB
+    max_cold_concurrency: int = 100
+    max_handler_concurrency: int = 50
+
+    # Delivery mode: cold_only | hot_cold | hot_only
+    delivery_mode: str = "cold_only"
+
+    # Deduplication TTL (seconds)
+    dedup_ttl_seconds: int = 3600
+
+    # Retry configuration
+    max_retries: int = 3
+    retry_delays: tuple[float, ...] = (1.0, 2.0, 4.0)
+
+
 # ---------------------------------------------------------------------------
 # KernelServices — Tier 0: Storage Pillar validation
 # ---------------------------------------------------------------------------
@@ -169,15 +173,12 @@ class KernelServices:
 class SystemServices:
     """Tier 1 (SYSTEM) — critical + degradable services.
 
-    Contains two severity classes (Issue #2193, #2440):
+    Contains two severity classes (Issue #2193):
 
     **Critical** (BootError on failure):
-        write_observer — the only critical system service.
-
-    **Degradable — ReBAC** (NoOp fallback on failure, Issue #2440):
-        rebac_manager, audit_store, entity_registry, permission_enforcer.
-        When ReBAC is disabled or fails to init, NoOp stubs are injected
-        so the system boots without permission enforcement.
+        rebac_manager, audit_store, entity_registry, permission_enforcer,
+        write_observer — the "Trusted Computing Base outside the kernel"
+        per microkernel terminology (seL4/MINIX 3 pattern).
 
     **Degradable** (WARNING + None on failure):
         dir_visibility_cache, hierarchy_manager, deferred_permission_buffer,
@@ -189,28 +190,23 @@ class SystemServices:
 
     Issue #2034: Extracted from the monolithic KernelServices.
     Issue #2193: Absorbed former Tier 0 services per Liedtke's test.
-    Issue #2440: Demoted ReBAC from critical to degradable (Null Object).
     """
 
     # =================================================================
-    # CRITICAL services (BootError on failure)
+    # Former-kernel CRITICAL services (BootError on failure)
     # =================================================================
+
+    # ReBAC permission subsystem — critical (Issue #2133: typed with Protocols)
+    rebac_manager: ReBACManagerProtocol | None = None
+    audit_store: Any = None
+    entity_registry: EntityRegistryProtocol | None = None
+    permission_enforcer: PermissionEnforcerProtocol | None = None
 
     # Write sync — critical
-    write_observer: "WriteObserverProtocol | None" = None
+    write_observer: WriteObserverProtocol | None = None
 
     # =================================================================
-    # DEGRADABLE — ReBAC (NoOp fallback, Issue #2440)
-    # =================================================================
-
-    # ReBAC permission subsystem (Issue #2133: typed with Protocols)
-    rebac_manager: "ReBACBrickProtocol | None" = None
-    audit_store: Any = None
-    entity_registry: "EntityRegistryProtocol | None" = None
-    permission_enforcer: "PermissionEnforcerProtocol | None" = None
-
-    # =================================================================
-    # DEGRADABLE services (WARNING + None on failure)
+    # Former-kernel DEGRADABLE services (WARNING + None on failure)
     # =================================================================
 
     # ReBAC caching / hierarchy — degradable
@@ -221,13 +217,7 @@ class SystemServices:
     # Workspace subsystem — degradable
     workspace_registry: Any = None
     mount_manager: Any = None
-    workspace_manager: "WorkspaceManagerProtocol | None" = None
-
-    # VFS hook pipeline (Issue #2033 Phase 5) — degradable
-    hook_pipeline: Any = None
-
-    # Tiger Cache manager (Issue #2133: injected via factory)
-    tiger_cache_manager: Any = None
+    workspace_manager: WorkspaceManagerProtocol | None = None
 
     # =================================================================
     # Original system services (all degradable)
@@ -238,17 +228,11 @@ class SystemServices:
     async_agent_registry: Any = None
 
     # Namespace visibility (Issue #1502)
-    namespace_manager: "NamespaceManagerProtocol | None" = None
+    namespace_manager: NamespaceManagerProtocol | None = None
     async_namespace_manager: Any = None
 
     # Workspace branching (Issue #1315)
     context_branch_service: Any = None
-
-    # Namespace forking for speculative execution (Issue #1273)
-    namespace_fork_service: Any = None
-
-    # Hook engine chain (Issue #1257)
-    scoped_hook_engine: Any = None
 
     # Brick lifecycle (Issue #1704)
     brick_lifecycle_manager: Any = None
@@ -271,12 +255,14 @@ class SystemServices:
     # Zone lifecycle — ordered zone deprovisioning (Issue #2061)
     zone_lifecycle: Any = None
 
-    # Event Log WAL — append-only audit trail (Issue #1397, #2195)
+    # DT_PIPE manager — VFS named-pipe IPC (Issue #809)
+    pipe_manager: Any = None
+
+    # EventLog — append-only WAL for filesystem events (Issue #2195)
     event_log: Any = None
 
-    # Scheduler service — fair-share task scheduling (Issue #1212, #2195, #2360)
+    # Scheduler — task scheduling service (Issue #2195, #2360)
     scheduler_service: Any = None
-    scheduler_state_emitter: Any = None
 
 
 # ---------------------------------------------------------------------------
@@ -299,7 +285,7 @@ class BrickServices:
     # Infrastructure bricks
     event_bus: Any = None
     lock_manager: Any = None
-    workflow_engine: "WorkflowProtocol | None" = None
+    workflow_engine: WorkflowProtocol | None = None
     rebac_circuit_breaker: Any = None
 
     # Feature bricks
@@ -315,8 +301,7 @@ class BrickServices:
     cache_brick: Any = None  # CacheBrick — owns all cache domain services
 
     # --- IPC Brick (Issue #1727, LEGO §8) ---
-    ipc_storage_driver: Any = None  # IPCStorageDriver (RecordStore or VFS)
-    ipc_vfs_driver: Any = None  # IPCVFSDriver (Backend mounted at /agents)
+    ipc_storage_driver: Any = None  # KernelVFSAdapter (async bridge to NexusFS)
     ipc_provisioner: Any = None  # AgentProvisioner
 
     # --- Sandbox Brick (Issue #1307) ---
@@ -334,8 +319,10 @@ class BrickServices:
     version_service: Any = None  # VersionService (file history, rollback, diff)
 
     # --- Memory Brick (Issue #2177) ---
-    memory_router: Any = None  # MemoryViewRouter singleton
     memory_permission: Any = None  # MemoryPermissionProtocol adapter
+
+    # --- Search Brick (Issue #810) ---
+    zoekt_pipe_consumer: Any = None  # DT_PIPE consumer for Zoekt index notifications
 
     # --- Factory-created bricks (Issue #2134: moved from NexusFS flat params) ---
     parse_fn: Any = None  # Callable for parsing files (ParsersBrick)

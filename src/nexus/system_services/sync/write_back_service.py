@@ -20,7 +20,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext
 from nexus.services.event_subsystem.types import FileEvent, FileEventType
 
@@ -159,6 +159,19 @@ class WriteBackService:
 
         # Skip readonly mounts
         if mount_info["readonly"]:
+            return
+
+        # Skip external-content backends (e.g. LocalConnector, HN, IPC) — content is
+        # managed externally, write-back would double-write or be meaningless.
+        # Also skip RemoteBackend — server handles its own persistence.
+        from nexus.core.protocols.capabilities import ConnectorCapability
+
+        backend = mount_info["backend"]
+        _caps: frozenset[str] = getattr(backend, "capabilities", frozenset())
+        if (
+            ConnectorCapability.EXTERNAL_CONTENT in _caps
+            or getattr(backend, "name", "") == "remote"
+        ):
             return
 
         # Map event type to operation type
@@ -302,12 +315,7 @@ class WriteBackService:
         backend_file_info = None
         if hasattr(backend, "get_file_info"):
             try:
-                result = await asyncio.to_thread(backend.get_file_info, backend_path)
-                # Unwrap HandlerResponse if needed
-                if hasattr(result, "data") and hasattr(result, "success"):
-                    backend_file_info = result.data if result.success else None
-                else:
-                    backend_file_info = result
+                backend_file_info = await asyncio.to_thread(backend.get_file_info, backend_path)
             except FileNotFoundError:
                 pass  # File doesn't exist on backend yet — no conflict
             except Exception as exc:
@@ -354,11 +362,10 @@ class WriteBackService:
 
         op_ctx = dataclasses.replace(self._system_ctx, backend_path=backend_path)
         result = await asyncio.to_thread(backend.write_content, content, op_ctx)
-        if hasattr(result, "success") and not result.success:
-            raise RuntimeError(f"Backend write failed: {getattr(result, 'error', 'unknown')}")
+        # write_content now returns WriteResult directly, raises on error
 
         # Step 3: Update change log with new backend state
-        new_hash = getattr(result, "data", None) if hasattr(result, "data") else None
+        new_hash = result.content_hash
         self._change_log_store.upsert_change_log(
             path=entry.path,
             backend_name=entry.backend_name,
@@ -482,7 +489,7 @@ class WriteBackService:
         try:
             content = self._read_nexus_content(original_path)
             if content is not None:
-                self._gw.write(conflict_path, content)
+                self._gw.sys_write(conflict_path, content)
         except Exception as e:
             logger.warning(f"[WRITE_BACK] Failed to create conflict copy: {e}")
 
@@ -513,23 +520,19 @@ class WriteBackService:
         ctx = dataclasses.replace(self._system_ctx, backend_path=backend_path)
         if hasattr(backend, "delete"):
             result = await asyncio.to_thread(backend.delete, backend_path, ctx)
-        elif hasattr(backend, "delete_content"):
-            result = await asyncio.to_thread(backend.delete_content, backend_path, ctx)
+            # delete() is a service method that may still return HandlerResponse
+            if hasattr(result, "success") and not result.success:
+                raise RuntimeError(f"Backend delete failed: {getattr(result, 'error', 'unknown')}")
         else:
-            raise RuntimeError(
-                f"Backend {type(backend).__name__} supports neither delete nor delete_content"
-            )
-        if hasattr(result, "success") and not result.success:
-            raise RuntimeError(f"Backend delete failed: {getattr(result, 'error', 'unknown')}")
+            # delete_content raises on error, returns None on success
+            await asyncio.to_thread(backend.delete_content, backend_path, ctx)
 
     async def _handle_mkdir(self, backend: Any, backend_path: str) -> None:
         """Handle directory creation on the backend."""
         if not hasattr(backend, "mkdir"):
             raise RuntimeError(f"Backend {type(backend).__name__} does not support mkdir")
         ctx = dataclasses.replace(self._system_ctx, backend_path=backend_path)
-        result = await asyncio.to_thread(backend.mkdir, backend_path, context=ctx)
-        if hasattr(result, "success") and not result.success:
-            raise RuntimeError(f"Backend mkdir failed: {getattr(result, 'error', 'unknown')}")
+        await asyncio.to_thread(backend.mkdir, backend_path, context=ctx)
 
     def _read_nexus_content(self, path: str) -> bytes | None:
         """Read file content from NexusFS.
@@ -547,7 +550,7 @@ class WriteBackService:
             content_hash = getattr(meta, "content_hash", None)
             if content_hash is None:
                 return None
-            result = self._gw.read(path)
+            result = self._gw.sys_read(path)
             if isinstance(result, bytes):
                 return result
             return getattr(result, "data", None) if result else None

@@ -1,8 +1,6 @@
-"""Shared path-scoping logic for sync and async ScopedFilesystem variants.
+"""Shared path-scoping logic for ScopedFilesystem.
 
-Phase 6.1 (Issue #2033): DRY extraction of path rewriting helpers that
-were duplicated between ``scoped_filesystem.py`` and
-``async_scoped_filesystem.py``.
+Phase 6.1 (Issue #2033): DRY extraction of path rewriting helpers.
 
 Moved from core/ → services/filesystem/ → bricks/filesystem/ (Issue #2424).
 
@@ -12,8 +10,6 @@ Usage:
             super().__init__(root)
             self._fs = fs
 """
-
-from __future__ import annotations
 
 import builtins
 from typing import Any

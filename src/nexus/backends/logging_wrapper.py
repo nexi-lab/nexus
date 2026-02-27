@@ -35,7 +35,7 @@ from nexus.backends.delegating import DelegatingBackend
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend, HandlerStatusResponse
     from nexus.contracts.types import OperationContext
-    from nexus.lib.response import HandlerResponse
+    from nexus.core.object_store import WriteResult
 
 logger = logging.getLogger(__name__)
 
@@ -87,66 +87,56 @@ class LoggingBackendWrapper(DelegatingBackend):
 
     # === Content Operations (with logging) ===
 
-    def read_content(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[bytes]":
-        response, elapsed_ms = self._timed(
+    def read_content(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
+        content, elapsed_ms = self._timed(
             "read_content",
             lambda: self._inner.read_content(content_hash, context=context),
         )
         logger.debug(
-            "read_content hash=%s success=%s latency_ms=%.2f",
+            "read_content hash=%s success=True latency_ms=%.2f",
             content_hash[:12],
-            response.success,
             elapsed_ms,
         )
-        return response
+        return content
 
     def write_content(
         self, content: bytes, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[str]":
-        response, elapsed_ms = self._timed(
+    ) -> "WriteResult":
+        result, elapsed_ms = self._timed(
             "write_content",
             lambda: self._inner.write_content(content, context=context),
         )
         logger.debug(
-            "write_content size=%d success=%s hash=%s latency_ms=%.2f",
+            "write_content size=%d success=True hash=%s latency_ms=%.2f",
             len(content),
-            response.success,
-            response.data[:12] if response.data else "N/A",
+            result.content_hash[:12],
             elapsed_ms,
         )
-        return response
+        return result
 
-    def delete_content(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[None]":
-        response, elapsed_ms = self._timed(
+    def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:
+        _, elapsed_ms = self._timed(
             "delete_content",
             lambda: self._inner.delete_content(content_hash, context=context),
         )
         logger.debug(
-            "delete_content hash=%s success=%s latency_ms=%.2f",
+            "delete_content hash=%s success=True latency_ms=%.2f",
             content_hash[:12],
-            response.success,
             elapsed_ms,
         )
-        return response
 
-    def content_exists(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> "HandlerResponse[bool]":
-        response, elapsed_ms = self._timed(
+    def content_exists(self, content_hash: str, context: "OperationContext | None" = None) -> bool:
+        exists, elapsed_ms = self._timed(
             "content_exists",
             lambda: self._inner.content_exists(content_hash, context=context),
         )
         logger.debug(
             "content_exists hash=%s exists=%s latency_ms=%.2f",
             content_hash[:12],
-            response.data,
+            exists,
             elapsed_ms,
         )
-        return response
+        return exists
 
     def batch_read_content(
         self,
@@ -178,37 +168,33 @@ class LoggingBackendWrapper(DelegatingBackend):
         parents: bool = False,
         exist_ok: bool = False,
         context: "OperationContext | None" = None,
-    ) -> "HandlerResponse[None]":
-        response, elapsed_ms = self._timed(
+    ) -> None:
+        _, elapsed_ms = self._timed(
             "mkdir",
             lambda: self._inner.mkdir(path, parents=parents, exist_ok=exist_ok, context=context),
         )
         logger.debug(
-            "mkdir path=%s success=%s latency_ms=%.2f",
+            "mkdir path=%s success=True latency_ms=%.2f",
             path,
-            response.success,
             elapsed_ms,
         )
-        return response
 
     def rmdir(
         self,
         path: str,
         recursive: bool = False,
         context: "OperationContext | None" = None,
-    ) -> "HandlerResponse[None]":
-        response, elapsed_ms = self._timed(
+    ) -> None:
+        _, elapsed_ms = self._timed(
             "rmdir",
             lambda: self._inner.rmdir(path, recursive=recursive, context=context),
         )
         logger.debug(
-            "rmdir path=%s recursive=%s success=%s latency_ms=%.2f",
+            "rmdir path=%s recursive=%s success=True latency_ms=%.2f",
             path,
             recursive,
-            response.success,
             elapsed_ms,
         )
-        return response
 
     # === Connection Lifecycle (INFO level) ===
 

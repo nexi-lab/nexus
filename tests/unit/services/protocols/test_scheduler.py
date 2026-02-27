@@ -219,7 +219,7 @@ class TestInMemorySchedulerFunctional:
         status = await scheduler.get_status(task_id)
         assert status is not None
         assert status["status"] == "failed"
-        assert status["error"] == "something broke"
+        assert status["error_message"] == "something broke"
 
     async def test_classify(self) -> None:
         scheduler = InMemoryScheduler()

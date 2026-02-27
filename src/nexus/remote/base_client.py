@@ -1,7 +1,7 @@
-"""Base class for remote Nexus filesystem clients.
+"""Base class for remote Nexus transport layer.
 
-Extracts shared non-I/O logic used by both RemoteNexusFS (sync) and
-AsyncRemoteNexusFS (async) to eliminate code duplication.
+Provides shared non-I/O logic used by RemoteBackend, RemoteMetastore,
+and the REMOTE deployment profile transport layer.
 
 Shared concerns:
 - Negative cache management (via injectable NegativeCache protocol)
@@ -14,6 +14,7 @@ import base64
 import logging
 from typing import Any
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import (
     ConflictError,
     InvalidPathError,
@@ -29,10 +30,11 @@ logger = logging.getLogger(__name__)
 
 
 class BaseRemoteNexusFS:
-    """Base class containing shared non-I/O logic for remote clients.
+    """Base class containing shared non-I/O logic for remote transport.
 
-    Subclasses (RemoteNexusFS, AsyncRemoteNexusFS) provide the actual
-    HTTP transport via _call_rpc() (sync or async).
+    Used by RemoteBackend and RemoteMetastore for error handling and
+    response parsing. The _call_rpc() transport is provided by the
+    concrete backend/metastore implementations.
     """
 
     _negative_cache: NegativeCache
@@ -65,7 +67,7 @@ class BaseRemoteNexusFS:
 
     def _negative_cache_key(self, path: str) -> str:
         """Generate cache key with zone isolation."""
-        return f"{self._zone_id or 'root'}:{path}"
+        return f"{self._zone_id or ROOT_ZONE_ID}:{path}"
 
     def _negative_cache_check(self, path: str) -> bool:
         """Check if path is known to not exist (in negative cache).

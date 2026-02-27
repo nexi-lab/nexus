@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Any
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.factory._boot_context import _BootContext
 from nexus.factory._helpers import _make_gate, _resolve_tasks_db_path, _safe_create
 
@@ -148,6 +149,8 @@ def _boot_independent_bricks(
 
     # === Manually-wired bricks (complex conditional logic) ===
 
+    zoekt_pipe_consumer: Any = None  # Issue #810: DT_PIPE Zoekt consumer
+
     # --- Search Brick Import Validation (Issue #1520) ---
     if _on("search"):
         try:
@@ -159,6 +162,7 @@ def _boot_independent_bricks(
             logger.debug("[BOOT:BRICK] Search brick manifest not available")
 
         # Wire zoekt callbacks into backends (Issue #1520, #2188: DI via factory)
+        # Issue #810: Route through ZoektPipeConsumer for DT_PIPE decoupling.
         try:
             from nexus.bricks.search.config import search_config_from_env
             from nexus.bricks.search.zoekt_client import ZoektIndexManager
@@ -172,16 +176,22 @@ def _boot_independent_bricks(
                     enabled=True,
                     index_binary=_search_cfg.zoekt_index_binary,
                 )
+                # Wrap in ZoektPipeConsumer for DT_PIPE decoupling (#810)
+                from nexus.factory.zoekt_pipe_consumer import ZoektPipeConsumer
+
+                _zoekt_consumer = ZoektPipeConsumer(_zoekt_index_mgr)
+                zoekt_pipe_consumer = _zoekt_consumer
+
                 if (
                     hasattr(ctx.backend, "on_write_callback")
                     and ctx.backend.on_write_callback is None
                 ):
-                    ctx.backend.on_write_callback = _zoekt_index_mgr.notify_write
+                    ctx.backend.on_write_callback = _zoekt_consumer.notify_write
                 if (
                     hasattr(ctx.backend, "on_sync_callback")
                     and ctx.backend.on_sync_callback is None
                 ):
-                    ctx.backend.on_sync_callback = _zoekt_index_mgr.notify_sync_complete
+                    ctx.backend.on_sync_callback = _zoekt_consumer.notify_sync_complete
         except ImportError:
             logger.debug("[BOOT:BRICK] Zoekt not available, skipping callback wiring")
     else:
@@ -407,36 +417,29 @@ def _boot_independent_bricks(
             logger.debug("[BOOT:BRICK] TaskQueueService unavailable: %s", _tq_exc)
 
     # --- IPC Brick (Issue #1727, LEGO §8: Filesystem-as-IPC) ---
+    # IPC now goes through the kernel VFS (KernelVFSAdapter → NexusFS).
+    # A LocalConnector is mounted at /agents for actual file storage;
+    # KernelVFSAdapter wraps NexusFS sync calls in asyncio.to_thread().
     ipc_storage_driver: Any = None
-    ipc_vfs_driver: Any = None
     ipc_provisioner: Any = None
     if not _on("ipc"):
         logger.debug("[BOOT:BRICK] IPC brick disabled by profile")
-    elif ctx.record_store is not None:
+    else:
         try:
-            from nexus.bricks.ipc.driver import IPCVFSDriver
+            from nexus.bricks.ipc.kernel_adapter import KernelVFSAdapter
             from nexus.bricks.ipc.provisioning import AgentProvisioner
-            from nexus.bricks.ipc.storage.recordstore_driver import RecordStoreStorageDriver
 
-            ipc_storage_driver = RecordStoreStorageDriver(
-                record_store=ctx.record_store,
-            )
+            _ipc_zone = ctx.zone_id or ROOT_ZONE_ID
 
-            _ipc_zone = ctx.zone_id or "root"
-            ipc_vfs_driver = IPCVFSDriver(
-                storage=ipc_storage_driver,
-                zone_id=_ipc_zone,
-            )
-
-            # Mount at /agents in the PathRouter (higher priority than default /)
-            ctx.router.add_mount("/agents", ipc_vfs_driver, priority=10)
+            # Lazy adapter — will be bound to NexusFS in _boot_wired_services
+            ipc_storage_driver = KernelVFSAdapter(zone_id=_ipc_zone)
 
             ipc_provisioner = AgentProvisioner(
                 storage=ipc_storage_driver,
                 zone_id=_ipc_zone,
             )
             logger.debug(
-                "[BOOT:BRICK] IPC brick created (zone=%s, storage=RecordStoreStorageDriver)",
+                "[BOOT:BRICK] IPC brick created (zone=%s, storage=KernelVFSAdapter, unbound)",
                 _ipc_zone,
             )
         except Exception as _ipc_exc:
@@ -559,7 +562,6 @@ def _boot_independent_bricks(
         "snapshot_service": snapshot_service,
         "task_queue_service": task_queue_service,
         "ipc_storage_driver": ipc_storage_driver,
-        "ipc_vfs_driver": ipc_vfs_driver,
         "ipc_provisioner": ipc_provisioner,
         "agent_event_log": agent_event_log,
         "skill_service": skill_service,
@@ -568,13 +570,14 @@ def _boot_independent_bricks(
         "reputation_service": reputation_service,
         "version_service": version_service,
         "rebac_circuit_breaker": rebac_circuit_breaker,
-        "memory_router": memory_router,
         "memory_permission": memory_permission,
         # Governance Brick (Issue #2129)
         "governance_anomaly_service": governance_anomaly_service,
         "governance_collusion_service": governance_collusion_service,
         "governance_graph_service": governance_graph_service,
         "governance_response_service": governance_response_service,
+        # DT_PIPE consumers (Issue #810)
+        "zoekt_pipe_consumer": zoekt_pipe_consumer,
     }
 
     elapsed = time.perf_counter() - t0
@@ -596,20 +599,15 @@ def _boot_dependent_bricks(
     """Boot Tier 2b (DEPENDENT BRICK) — requires services from independent bricks.
 
     Discovers ``brick_factory.py`` modules with ``TIER="dependent"`` and
-    wires their hook handlers into the hook engine.
+    collects their artifact callbacks into ``bricks["artifact_observers"]``.
 
     Cross-brick factories (ToolInfo, GraphStore) are constructed here in the
     factory layer and injected into brick factories to respect LEGO Principle 3.
 
     Currently handles:
-    - Artifact auto-indexing (Issue #1861): registers hook handlers for
-      ``post_artifact_create`` and ``post_artifact_update`` phases.
+    - Artifact auto-indexing (Issue #1861): collects ``ArtifactCallback``
+      handlers for direct invocation by ``TaskManager``.
     """
-    hook_engine = system.get("scoped_hook_engine")
-    if hook_engine is None:
-        logger.debug("[BOOT:BRICK:DEP] No hook engine available, skipping dependent bricks")
-        return
-
     # Build cross-brick factories in the factory layer (not inside bricks)
     tool_info_factory: Callable[..., Any] | None = None
     graph_store_factory: Callable[..., Any] | None = None
@@ -626,7 +624,7 @@ def _boot_dependent_bricks(
             from nexus.bricks.search.graph_store import GraphStore
 
             _record_store = ctx.record_store
-            _zone_id = ctx.zone_id or "root"
+            _zone_id = ctx.zone_id or ROOT_ZONE_ID
 
             def _make_graph_store(session: Any) -> Any:
                 return GraphStore(
@@ -648,6 +646,8 @@ def _boot_dependent_bricks(
             graph_store_factory=graph_store_factory,
         )
 
+    artifact_observers: list[Any] = []
+
     for desc in _discover_brick_factories("dependent"):
         result = _safe_create(
             desc.result_key,
@@ -661,41 +661,19 @@ def _boot_dependent_bricks(
         if not handlers:
             continue
 
-        # Register each handler for both artifact phases
-        try:
-            import asyncio
+        # Collect handler functions as artifact observers
+        for h in handlers:
+            artifact_observers.append(h["handler"])
 
-            from nexus.services.protocols.hook_engine import (
-                POST_ARTIFACT_CREATE,
-                POST_ARTIFACT_UPDATE,
-                HookCapabilities,
-                HookSpec,
-            )
+        logger.debug(
+            "[BOOT:BRICK:DEP] Collected %d artifact observers from %s",
+            len(handlers),
+            desc.result_key,
+        )
 
-            _no_veto_caps = HookCapabilities(
-                can_veto=False,
-                can_modify_context=False,
-                max_timeout_ms=10000,
-            )
-
-            for h in handlers:
-                handler_fn = h["handler"]
-                handler_name = h["handler_name"]
-
-                for phase in (POST_ARTIFACT_CREATE, POST_ARTIFACT_UPDATE):
-                    spec = HookSpec(
-                        phase=phase,
-                        handler_name=handler_name,
-                        capabilities=_no_veto_caps,
-                    )
-
-                    # Boot runs in sync context (no event loop), so asyncio.run()
-                    # is safe for the async register_hook call.
-                    asyncio.run(hook_engine.register_hook(spec, handler_fn))
-
-            logger.debug(
-                "[BOOT:BRICK:DEP] Registered %d artifact indexing handlers",
-                len(handlers),
-            )
-        except Exception as exc:
-            logger.debug("[BOOT:BRICK:DEP] Failed to register artifact handlers: %s", exc)
+    bricks["artifact_observers"] = artifact_observers
+    if artifact_observers:
+        logger.debug(
+            "[BOOT:BRICK:DEP] Total artifact observers: %d",
+            len(artifact_observers),
+        )

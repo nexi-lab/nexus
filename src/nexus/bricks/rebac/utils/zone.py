@@ -8,7 +8,7 @@ Provides:
 
 from typing import Any
 
-from nexus.lib.zone import DEFAULT_ZONE, normalize_zone_id  # noqa: F401
+from nexus.lib.zone import normalize_zone_id  # noqa: F401
 
 # ==============================================================================
 # ReBAC Group Naming Helpers

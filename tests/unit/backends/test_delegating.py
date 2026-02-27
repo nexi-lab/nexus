@@ -21,7 +21,8 @@ import pytest
 
 from nexus.backends.backend import HandlerStatusResponse
 from nexus.backends.delegating import DelegatingBackend
-from nexus.lib.response import HandlerResponse
+from nexus.contracts.exceptions import NexusFileNotFoundError
+from nexus.core.object_store import WriteResult
 from tests.unit.backends.wrapper_test_helpers import make_leaf, make_storage_mock
 
 # ---------------------------------------------------------------------------
@@ -100,7 +101,7 @@ class TestDefaultHooks:
 
     def test_passthrough_write_delegates_to_inner(self) -> None:
         leaf = make_leaf()
-        expected = HandlerResponse.ok(data="hash123")
+        expected = WriteResult(content_hash="hash123")
         leaf.write_content.return_value = expected
         wrapper = DelegatingBackend(leaf)
 
@@ -110,15 +111,13 @@ class TestDefaultHooks:
 
     def test_passthrough_read_delegates_to_inner(self) -> None:
         leaf = make_leaf()
-        expected = HandlerResponse.ok(data=b"content")
+        expected = b"content"
         leaf.read_content.return_value = expected
         wrapper = DelegatingBackend(leaf)
 
         result = wrapper.read_content("hash123")
         leaf.read_content.assert_called_once_with("hash123", context=None)
-        # For identity transform, data is re-wrapped by DelegatingBackend
-        assert result.success
-        assert result.data == b"content"
+        assert result == b"content"
 
 
 # ---------------------------------------------------------------------------
@@ -134,7 +133,7 @@ class TestTransformOnWrite:
         wrapper = FakeTransformBackend(mock)
 
         resp = wrapper.write_content(b"hello")
-        assert resp.success
+        assert isinstance(resp, WriteResult)
 
         # Inner should receive transformed content
         call_args = mock.write_content.call_args
@@ -145,10 +144,8 @@ class TestTransformOnWrite:
         leaf = make_leaf()
         wrapper = FailingWriteBackend(leaf)
 
-        resp = wrapper.write_content(b"hello")
-        assert not resp.success
-        assert resp.error_message is not None
-        assert "transform" in resp.error_message.lower()
+        with pytest.raises(RuntimeError, match="write transform broken"):
+            wrapper.write_content(b"hello")
         # Inner should NOT have been called
         leaf.write_content.assert_not_called()
 
@@ -162,31 +159,27 @@ class TestTransformOnRead:
 
         # Write through wrapper (stores "TX:hello")
         write_resp = wrapper.write_content(b"hello")
-        assert write_resp.success
+        assert isinstance(write_resp, WriteResult)
 
         # Read through wrapper (strips "TX:" prefix)
-        read_resp = wrapper.read_content(write_resp.data)
-        assert read_resp.success
-        assert read_resp.data == b"hello"
+        read_resp = wrapper.read_content(write_resp.content_hash)
+        assert read_resp == b"hello"
 
     def test_error_response_propagated_from_inner(self) -> None:
         leaf = make_leaf()
-        leaf.read_content.return_value = HandlerResponse.error(message="not found")
+        leaf.read_content.side_effect = NexusFileNotFoundError("nonexistent")
         wrapper = FakeTransformBackend(leaf)
 
-        resp = wrapper.read_content("nonexistent")
-        assert not resp.success
-        assert "not found" in resp.error_message
+        with pytest.raises(NexusFileNotFoundError):
+            wrapper.read_content("nonexistent")
 
     def test_error_on_transform_failure(self) -> None:
         leaf = make_leaf()
-        leaf.read_content.return_value = HandlerResponse.ok(data=b"no-prefix")
+        leaf.read_content.return_value = b"no-prefix"
         wrapper = FakeTransformBackend(leaf)
 
-        resp = wrapper.read_content("some-hash")
-        assert not resp.success
-        assert resp.error_message is not None
-        assert "transform" in resp.error_message.lower()
+        with pytest.raises(ValueError, match="Missing TX: prefix"):
+            wrapper.read_content("some-hash")
 
 
 # ---------------------------------------------------------------------------
@@ -201,8 +194,8 @@ class TestBatchReadWithTransform:
         mock, storage = make_storage_mock()
         wrapper = FakeTransformBackend(mock)
 
-        h1 = wrapper.write_content(b"alpha").data
-        h2 = wrapper.write_content(b"beta").data
+        h1 = wrapper.write_content(b"alpha").content_hash
+        h2 = wrapper.write_content(b"beta").content_hash
 
         results = wrapper.batch_read_content([h1, h2])
         assert results[h1] == b"alpha"
@@ -212,7 +205,7 @@ class TestBatchReadWithTransform:
         mock, storage = make_storage_mock()
         wrapper = FakeTransformBackend(mock)
 
-        h1 = wrapper.write_content(b"exists").data
+        h1 = wrapper.write_content(b"exists").content_hash
         results = wrapper.batch_read_content([h1, "missing"])
         assert results[h1] == b"exists"
         assert results["missing"] is None

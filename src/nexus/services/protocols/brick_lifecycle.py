@@ -21,7 +21,7 @@ from enum import Enum, StrEnum
 from typing import Any, Protocol, runtime_checkable
 
 # ---------------------------------------------------------------------------
-# Lifecycle phase constants — open ``str`` values (same pattern as hook_engine.py)
+# Lifecycle phase constants — open ``str`` values
 # so bricks/extensions can define custom phases without modifying this module.
 # ---------------------------------------------------------------------------
 

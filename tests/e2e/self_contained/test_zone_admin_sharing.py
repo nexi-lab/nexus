@@ -51,7 +51,7 @@ def nx(temp_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[NexusFS, No
     )
 
     # Create /zone directory for zone-based paths
-    nx.mkdir("/zone", context=OperationContext(**admin_context))
+    nx.sys_mkdir("/zone", context=OperationContext(**admin_context))
 
     yield nx
     nx.close()
@@ -68,11 +68,11 @@ class TestZoneAdminSharing:
 
         # Create zone directory (using Windows-compatible path)
         zone_path = f"/zone/{zone_id}"
-        nx.mkdir(zone_path, context=OperationContext(**admin_context))
+        nx.sys_mkdir(zone_path, context=OperationContext(**admin_context))
 
         # Create a file owned by a regular user (bob)
         file_path = f"{zone_path}/doc.txt"
-        nx.write(file_path, b"test content", context=OperationContext(**admin_context))
+        nx.sys_write(file_path, b"test content", context=OperationContext(**admin_context))
 
         # Grant bob ownership
         nx.rebac_create(
@@ -118,11 +118,11 @@ class TestZoneAdminSharing:
 
         # Create zone directory
         zone_path = f"/zone/{zone_id}"
-        nx.mkdir(zone_path, context=OperationContext(**admin_context))
+        nx.sys_mkdir(zone_path, context=OperationContext(**admin_context))
 
         # Create a file
         file_path = f"{zone_path}/doc.txt"
-        nx.write(file_path, b"test content", context=OperationContext(**admin_context))
+        nx.sys_write(file_path, b"test content", context=OperationContext(**admin_context))
 
         # Grant bob ownership of file
         nx.rebac_create(
@@ -160,9 +160,9 @@ class TestZoneAdminSharing:
 
         # Create zone1
         zone1_path = "/zone/acme"
-        nx.mkdir(zone1_path, context=OperationContext(**admin_context))
+        nx.sys_mkdir(zone1_path, context=OperationContext(**admin_context))
         file1_path = f"{zone1_path}/doc.txt"
-        nx.write(file1_path, b"test", context=OperationContext(**admin_context))
+        nx.sys_write(file1_path, b"test", context=OperationContext(**admin_context))
         nx.rebac_create(
             subject=("user", "bob"),
             relation="direct_owner",
@@ -172,9 +172,9 @@ class TestZoneAdminSharing:
 
         # Create zone2
         zone2_path = "/zone/techcorp"
-        nx.mkdir(zone2_path, context=OperationContext(**admin_context))
+        nx.sys_mkdir(zone2_path, context=OperationContext(**admin_context))
         file2_path = f"{zone2_path}/doc.txt"
-        nx.write(file2_path, b"test", context=OperationContext(**admin_context))
+        nx.sys_write(file2_path, b"test", context=OperationContext(**admin_context))
         nx.rebac_create(
             subject=("user", "dave"),
             relation="direct_owner",
@@ -210,9 +210,9 @@ class TestZoneAdminSharing:
 
         # Create zone directory and file
         zone_path = f"/zone/{zone_id}"
-        nx.mkdir(zone_path, context=OperationContext(**admin_context))
+        nx.sys_mkdir(zone_path, context=OperationContext(**admin_context))
         file_path = f"{zone_path}/doc.txt"
-        nx.write(file_path, b"test content", context=OperationContext(**admin_context))
+        nx.sys_write(file_path, b"test content", context=OperationContext(**admin_context))
 
         # Grant bob ownership
         nx.rebac_create(
@@ -251,9 +251,9 @@ class TestZoneAdminSharing:
 
         # Create zone directory and file
         zone_path = f"/zone/{zone_id}"
-        nx.mkdir(zone_path, context=OperationContext(**admin_context))
+        nx.sys_mkdir(zone_path, context=OperationContext(**admin_context))
         file_path = f"{zone_path}/doc.txt"
-        nx.write(file_path, b"test content", context=OperationContext(**admin_context))
+        nx.sys_write(file_path, b"test content", context=OperationContext(**admin_context))
 
         # Grant bob ownership
         nx.rebac_create(
@@ -322,9 +322,9 @@ class TestBackwardCompatibility:
 
         # Create zone directory and file
         zone_path = f"/zone/{zone_id}"
-        nx.mkdir(zone_path, context=OperationContext(**admin_context))
+        nx.sys_mkdir(zone_path, context=OperationContext(**admin_context))
         file_path = f"{zone_path}/doc.txt"
-        nx.write(file_path, b"test content", context=OperationContext(**admin_context))
+        nx.sys_write(file_path, b"test content", context=OperationContext(**admin_context))
 
         # Grant bob ownership
         nx.rebac_create(

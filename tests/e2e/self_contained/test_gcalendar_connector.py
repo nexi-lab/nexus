@@ -311,7 +311,7 @@ class TestSkillDocGeneration:
 
             if skill_path:
                 # Read back and verify
-                content = nx.read(skill_path)
+                content = nx.sys_read(skill_path)
                 assert b"Gcalendar Connector" in content
                 assert b"agent_intent" in content
         finally:
@@ -425,7 +425,7 @@ end:
 
         response = calendar_backend.write_content(content, operation_context)
 
-        assert response.unwrap() == "test_event_123"
+        assert response.content_hash == "test_event_123"
 
     def test_update_event_success(self, calendar_backend, operation_context):
         """Test successful event update."""
@@ -437,7 +437,7 @@ summary: Updated Project Discussion
 
         response = calendar_backend.write_content(content, operation_context)
 
-        assert response.unwrap() == "updated"
+        assert response.content_hash == "updated"
 
     def test_list_calendars(self, calendar_backend, operation_context):
         """Test listing calendars."""

@@ -141,7 +141,7 @@ class PermissionChecker:
         # Fix #332: Virtual parsed views inherit permissions from
         # their original files.
         # ----------------------------------------------------------
-        from nexus.core.virtual_views import parse_virtual_path
+        from nexus.lib.virtual_views import parse_virtual_path
 
         def metadata_exists(check_path: str) -> bool:
             return self._metadata_store.exists(check_path)
@@ -176,6 +176,11 @@ class PermissionChecker:
         # ----------------------------------------------------------
         # ReBAC graph traversal via PermissionEnforcer
         # ----------------------------------------------------------
+        if self._permission_enforcer is None:
+            raise PermissionError(
+                f"Access denied: Permission enforcer unavailable (ReBAC degraded), "
+                f"cannot check {permission.name} permission for '{path}'"
+            )
         result = self._permission_enforcer.check(permission_path, permission, ctx)
         logger.debug(f"  -> permission_enforcer.check returned: {result}")
 

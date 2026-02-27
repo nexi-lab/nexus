@@ -140,7 +140,7 @@ def get_nexus_tools(nx):
         """
         try:
             # Read file content
-            content = nx.read(path)
+            content = nx.sys_read(path)
 
             # Handle bytes
             if isinstance(content, bytes):
@@ -194,10 +194,10 @@ def get_nexus_tools(nx):
             content_bytes = content.encode("utf-8") if isinstance(content, str) else content
 
             # Write file (Nexus creates parent directories automatically)
-            nx.write(path, content_bytes)
+            nx.sys_write(path, content_bytes)
 
             # Verify write was successful
-            if nx.exists(path):
+            if nx.sys_access(path):
                 size = len(content_bytes)
                 return f"Successfully wrote {size} bytes to {path}"
             else:

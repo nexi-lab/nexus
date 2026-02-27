@@ -13,7 +13,7 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from nexus.remote.client import RemoteNexusFS
+import nexus
 
 DATA_DIR = Path("/tmp/nexus_perf_data")
 NEXUS_URL = os.getenv("NEXUS_URL", "http://localhost:2026")
@@ -128,7 +128,7 @@ def test_nexus(file_count=1000):
     print(f"NEXUS - GREP {file_count} FILES")
     print(f"{'=' * 70}")
 
-    client = RemoteNexusFS(server_url=NEXUS_URL, api_key=NEXUS_API_KEY)
+    client = nexus.connect(config={"mode": "remote", "url": NEXUS_URL, "api_key": NEXUS_API_KEY})
 
     if file_count == 1000:
         source_dir = DATA_DIR / "grep_medium_1k"
@@ -158,7 +158,7 @@ def test_nexus(file_count=1000):
 
         for attempt in range(max_retries):
             try:
-                client.write(f"{nexus_path}/{file.name}", content)
+                client.sys_write(f"{nexus_path}/{file.name}", content)
                 upload_count += 1
                 upload_bytes += len(content)
                 uploaded = True
@@ -182,13 +182,13 @@ def test_nexus(file_count=1000):
     # Verification: Check uploaded files
     print("\n🔍 Verifying upload...")
     try:
-        uploaded_files = client.list(nexus_path, recursive=False)
+        uploaded_files = client.sys_readdir(nexus_path, recursive=False)
         print(f"  ✓ Found {len(uploaded_files)} files in Nexus")
 
         if uploaded_files:
             # Read first file to verify content
             first_file = uploaded_files[0]
-            content = client.read(first_file)
+            content = client.sys_read(first_file)
             has_pattern = SEARCH_PATTERN.encode() in content
             print(
                 f"  ✓ Sample file '{Path(first_file).name}': {len(content)} bytes, contains '{SEARCH_PATTERN}': {has_pattern}"
@@ -277,7 +277,7 @@ def test_sandbox_bash(file_count=1000):
     print(f"SANDBOX BASH - GREP {file_count} FILES (FUSE-mounted)")
     print(f"{'=' * 70}")
 
-    client = RemoteNexusFS(server_url=NEXUS_URL, api_key=NEXUS_API_KEY)
+    client = nexus.connect(config={"mode": "remote", "url": NEXUS_URL, "api_key": NEXUS_API_KEY})
     nexus_path = (
         "/perf_test/grep_medium_1000" if file_count == 1000 else "/perf_test/grep_medium_10000"
     )
@@ -412,7 +412,7 @@ def test_sandbox_python(file_count=1000):
     print(f"SANDBOX PYTHON - GREP {file_count} FILES (FUSE-mounted)")
     print(f"{'=' * 70}")
 
-    client = RemoteNexusFS(server_url=NEXUS_URL, api_key=NEXUS_API_KEY)
+    client = nexus.connect(config={"mode": "remote", "url": NEXUS_URL, "api_key": NEXUS_API_KEY})
     nexus_path = (
         "/perf_test/grep_medium_1000" if file_count == 1000 else "/perf_test/grep_medium_10000"
     )

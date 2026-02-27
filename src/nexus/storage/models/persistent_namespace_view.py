@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from sqlalchemy import DateTime, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.models._base import Base, _generate_uuid
 
 
@@ -39,7 +40,7 @@ class PersistentNamespaceViewModel(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_generate_uuid)
     subject_type: Mapped[str] = mapped_column(String(50), nullable=False)
     subject_id: Mapped[str] = mapped_column(String(255), nullable=False)
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default=ROOT_ZONE_ID)
     mount_paths_json: Mapped[str] = mapped_column(Text, nullable=False)
     grants_hash: Mapped[str] = mapped_column(String(16), nullable=False)
     revision_bucket: Mapped[int] = mapped_column(Integer, nullable=False)

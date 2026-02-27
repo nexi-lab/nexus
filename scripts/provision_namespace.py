@@ -24,7 +24,7 @@ from _core.constants import (
 )
 
 import nexus
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext
 
 
@@ -89,7 +89,7 @@ def provision_system_resources(nx: Any) -> None:
         # System default template
         template_id = generate_resource_id("resource", "default_template")
         template_path = system_path("resource", template_id)
-        nx.write(template_path, b'{"type": "template", "version": "1.0"}', context=context)
+        nx.sys_write(template_path, b'{"type": "template", "version": "1.0"}', context=context)
 
         # Grant system ownership
         nx.rebac_create(
@@ -107,7 +107,7 @@ def provision_system_resources(nx: Any) -> None:
         # System skill
         skill_id = generate_resource_id("skill", "summarize")
         skill_path = system_path("skill", skill_id)
-        nx.write(f"{skill_path}/skill.py", b"# Summarize skill", context=context)
+        nx.sys_write(f"{skill_path}/skill.py", b"# Summarize skill", context=context)
 
         # Grant system ownership
         nx.rebac_create(
@@ -139,7 +139,7 @@ def provision_zone_resources(nx: Any, zone_id: str) -> None:
         # Zone logo
         logo_id = generate_resource_id("resource", "company_logo")
         logo_path = zone_path(zone_id, "resource", logo_id)
-        nx.write(logo_path, b"# Company logo placeholder", context=context)
+        nx.sys_write(logo_path, b"# Company logo placeholder", context=context)
 
         # Grant zone ownership
         nx.rebac_create(
@@ -181,11 +181,11 @@ def provision_admin_user_folders(nx: Any, zone_id: str) -> None:
     # First, create and grant permissions on the parent user directory
     try:
         user_dir_path = f"/zone/{zone_id}/user:{admin_user_id}"
-        nx.mkdir(user_dir_path, parents=True, exist_ok=True, context=context)
+        nx.sys_mkdir(user_dir_path, parents=True, exist_ok=True, context=context)
 
         # Create placeholder file to make directory discoverable
         placeholder_path = f"{user_dir_path}/.placeholder"
-        nx.write(placeholder_path, b"", context=context)
+        nx.sys_write(placeholder_path, b"", context=context)
 
         # Grant admin user ownership on the user directory
         nx.rebac_create(
@@ -206,11 +206,11 @@ def provision_admin_user_folders(nx: Any, zone_id: str) -> None:
             folder_path = f"/zone/{zone_id}/user:{admin_user_id}/{resource_type}"
 
             # Create the directory
-            nx.mkdir(folder_path, parents=True, exist_ok=True, context=context)
+            nx.sys_mkdir(folder_path, parents=True, exist_ok=True, context=context)
 
             # Create a placeholder file to make the directory visible in listings
             placeholder_path = f"{folder_path}/.placeholder"
-            nx.write(placeholder_path, b"", context=context)
+            nx.sys_write(placeholder_path, b"", context=context)
 
             # Grant admin user ownership on the directory (CRITICAL: admin user must own these folders)
             nx.rebac_create(
@@ -239,7 +239,7 @@ def provision_admin_user_folders(nx: Any, zone_id: str) -> None:
         workspace_path = user_path(zone_id, admin_user_id, "workspace", workspace_id)
 
         # Create the workspace directory first
-        nx.mkdir(workspace_path, parents=True, exist_ok=True, context=admin_context)
+        nx.sys_mkdir(workspace_path, parents=True, exist_ok=True, context=admin_context)
 
         # Register the workspace (this will auto-grant ownership via ReBAC if rebac_manager is available)
         workspace_info = nx.register_workspace(
@@ -287,7 +287,7 @@ def provision_admin_user_folders(nx: Any, zone_id: str) -> None:
         if readme_source.exists():
             readme_content = readme_source.read_bytes()
             readme_path = f"{workspace_path}/README.md"
-            nx.write(readme_path, readme_content, context=admin_context)
+            nx.sys_write(readme_path, readme_content, context=admin_context)
             print("  ✓ Copied README.md from data/ to workspace")
         else:
             print(f"  ⚠ README.md not found at {readme_source}, skipping")
@@ -367,7 +367,7 @@ def provision_admin_user_folders(nx: Any, zone_id: str) -> None:
                 # Verify the permission was created by checking if agent can list the skill directory
                 try:
                     # Try to list the skill directory as the agent to verify access
-                    skill_list = nx.list(skill_creator_path, context=admin_context)
+                    skill_list = nx.sys_readdir(skill_creator_path, context=admin_context)
                     print(
                         f"    [DEBUG] Agent can list skill directory: {len(skill_list) if skill_list else 0} items"
                     )

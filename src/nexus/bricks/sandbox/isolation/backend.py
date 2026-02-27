@@ -20,7 +20,8 @@ from nexus.bricks.sandbox.isolation.errors import (
     IsolationError,
     IsolationTimeoutError,
 )
-from nexus.lib.response import HandlerResponse
+from nexus.contracts.exceptions import BackendError
+from nexus.core.object_store import WriteResult
 
 logger = logging.getLogger(__name__)
 
@@ -72,10 +73,6 @@ class IsolatedBackend(Backend):
         return bool(self._cached_prop("supports_rename"))
 
     @property
-    def has_virtual_filesystem(self) -> bool:
-        return bool(self._cached_prop("has_virtual_filesystem"))
-
-    @property
     def has_root_path(self) -> bool:
         return bool(self._cached_prop("has_root_path"))
 
@@ -109,33 +106,23 @@ class IsolatedBackend(Backend):
 
     # ── Content operations (CAS) ────────────────────────────────────────
 
-    def write_content(self, content: bytes, context: "Any | None" = None) -> HandlerResponse[str]:
-        return self._call("write_content", content, context=context)
+    def write_content(self, content: bytes, context: "Any | None" = None) -> WriteResult:
+        return cast(WriteResult, self._call("write_content", content, context=context))
 
-    def read_content(
-        self, content_hash: str, context: "Any | None" = None
-    ) -> HandlerResponse[bytes]:
-        return self._call("read_content", content_hash, context=context)
+    def read_content(self, content_hash: str, context: "Any | None" = None) -> bytes:
+        return cast(bytes, self._call("read_content", content_hash, context=context))
 
-    def delete_content(
-        self, content_hash: str, context: "Any | None" = None
-    ) -> HandlerResponse[None]:
-        return self._call("delete_content", content_hash, context=context)
+    def delete_content(self, content_hash: str, context: "Any | None" = None) -> None:
+        self._call("delete_content", content_hash, context=context)
 
-    def content_exists(
-        self, content_hash: str, context: "Any | None" = None
-    ) -> HandlerResponse[bool]:
-        return self._call("content_exists", content_hash, context=context)
+    def content_exists(self, content_hash: str, context: "Any | None" = None) -> bool:
+        return cast(bool, self._call("content_exists", content_hash, context=context))
 
-    def get_content_size(
-        self, content_hash: str, context: "Any | None" = None
-    ) -> HandlerResponse[int]:
-        return self._call("get_content_size", content_hash, context=context)
+    def get_content_size(self, content_hash: str, context: "Any | None" = None) -> int:
+        return cast(int, self._call("get_content_size", content_hash, context=context))
 
-    def get_ref_count(
-        self, content_hash: str, context: "Any | None" = None
-    ) -> HandlerResponse[int]:
-        return self._call("get_ref_count", content_hash, context=context)
+    def get_ref_count(self, content_hash: str, context: "Any | None" = None) -> int:
+        return cast(int, self._call("get_ref_count", content_hash, context=context))
 
     # ── Directory operations ────────────────────────────────────────────
 
@@ -145,19 +132,19 @@ class IsolatedBackend(Backend):
         parents: bool = False,
         exist_ok: bool = False,
         context: "Any | None" = None,
-    ) -> HandlerResponse[None]:
-        return self._call("mkdir", path, parents=parents, exist_ok=exist_ok, context=context)
+    ) -> None:
+        self._call("mkdir", path, parents=parents, exist_ok=exist_ok, context=context)
 
     def rmdir(
         self,
         path: str,
         recursive: bool = False,
         context: "Any | None" = None,
-    ) -> HandlerResponse[None]:
-        return self._call("rmdir", path, recursive=recursive, context=context)
+    ) -> None:
+        self._call("rmdir", path, recursive=recursive, context=context)
 
-    def is_directory(self, path: str, context: "Any | None" = None) -> HandlerResponse[bool]:
-        return self._call("is_directory", path, context=context)
+    def is_directory(self, path: str, context: "Any | None" = None) -> bool:
+        return cast(bool, self._call("is_directory", path, context=context))
 
     def list_dir(self, path: str, context: "Any | None" = None) -> list[str]:
         """Delegate to pool — propagates FileNotFoundError / NotImplementedError."""
@@ -184,8 +171,7 @@ class IsolatedBackend(Backend):
         context: "Any | None" = None,
     ) -> Iterator[bytes]:
         """Read full content via pool, then re-chunk locally."""
-        resp = self.read_content(content_hash, context=context)
-        content = resp.unwrap()
+        content = self.read_content(content_hash, context=context)
         for i in range(0, len(content), chunk_size):
             yield content[i : i + chunk_size]
 
@@ -193,7 +179,7 @@ class IsolatedBackend(Backend):
         self,
         chunks: Iterator[bytes],
         context: "Any | None" = None,
-    ) -> HandlerResponse[str]:
+    ) -> WriteResult:
         """Collect chunks locally, then write via pool."""
         content = b"".join(chunks)
         return self.write_content(content, context=context)
@@ -219,19 +205,19 @@ class IsolatedBackend(Backend):
 
     # ── Internal helpers ────────────────────────────────────────────────
 
-    def _call(self, method: str, *args: Any, **kwargs: Any) -> HandlerResponse[Any]:
-        """Delegate to pool.  Convert ``IsolationError`` → ``HandlerResponse.error()``."""
+    def _call(self, method: str, *args: Any, **kwargs: Any) -> Any:
+        """Delegate to pool.  Convert ``IsolationError`` → ``BackendError``."""
         try:
-            return cast(HandlerResponse[Any], self._pool.submit(method, args, kwargs))
+            return self._pool.submit(method, args, kwargs)
         except IsolationTimeoutError as exc:
-            return HandlerResponse.error(str(exc), code=504, backend_name=self.name)
+            raise BackendError(str(exc), backend=self.name) from exc
         except IsolationCallError as exc:
             cause = exc.cause
             if cause is not None and isinstance(cause, Exception):
-                return HandlerResponse.from_exception(cause, backend_name=self.name)
-            return HandlerResponse.error(str(exc), code=500, backend_name=self.name)
+                raise cause from exc
+            raise BackendError(str(exc), backend=self.name) from exc
         except IsolationError as exc:
-            return HandlerResponse.error(str(exc), code=503, backend_name=self.name)
+            raise BackendError(str(exc), backend=self.name) from exc
 
     def _cached_prop(self, prop: str) -> Any:
         """Read an immutable property, caching the result after first read.

@@ -13,9 +13,9 @@ from nexus.services.versioning.operation_undo_service import OperationUndoServic
 
 
 def _make_route(content: bytes) -> MagicMock:
-    """Return a mock Route whose backend.read_content(hash).unwrap() → content."""
+    """Return a mock Route whose backend.read_content(hash) → content."""
     route = MagicMock()
-    route.backend.read_content.return_value.unwrap.return_value = content
+    route.backend.read_content.return_value = content
     return route
 
 
@@ -184,7 +184,7 @@ class TestUndoUnknown:
 class TestFallbackBackend:
     def test_uses_fallback_when_router_fails(self) -> None:
         fallback = MagicMock()
-        fallback.read_content.return_value.unwrap.return_value = b"fallback-data"
+        fallback.read_content.return_value = b"fallback-data"
 
         router = MagicMock()
         router.route.side_effect = RuntimeError("route failed")

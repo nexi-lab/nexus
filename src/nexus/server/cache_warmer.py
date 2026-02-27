@@ -11,7 +11,6 @@ Use Cases:
 
 Architecture:
     CacheWarmer orchestrates warming across multiple cache layers:
-    - MetadataCache (L1 in-memory) - file metadata
     - LocalDiskCache (L2 SSD) - file content
     - ReBACPermissionCache - permission results
     - TigerCache - pre-materialized permission bitmaps
@@ -29,7 +28,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
@@ -404,7 +403,6 @@ class CacheWarmer:
     """Pre-populate caches based on access patterns.
 
     Orchestrates warming across multiple cache layers:
-    - MetadataCache: File metadata (getattr, exists, list)
     - LocalDiskCache: File content
     - ReBACPermissionCache: Permission check results
     - TigerCache: Pre-materialized permission bitmaps
@@ -737,7 +735,7 @@ class CacheWarmer:
         async with self._semaphore:
             try:
                 # Check if file exists (warms exists cache)
-                exists = self._nexus.exists(path)
+                exists = self._nexus.sys_access(path)
                 if not exists:
                     self._current_stats.skipped += 1
                     return
@@ -762,7 +760,7 @@ class CacheWarmer:
         async with self._semaphore:
             try:
                 # Read file content
-                content = self._nexus.read(path, context=context)
+                content = self._nexus.sys_read(path, context=context)
                 if content:
                     content_bytes = content if isinstance(content, bytes) else b""
                     self._current_stats.content_warmed += 1
@@ -836,7 +834,7 @@ class CacheWarmer:
 
         try:
             # List root directory
-            root_entries = self._nexus.list("/", recursive=False)
+            root_entries = self._nexus.sys_readdir("/", recursive=False)
             if isinstance(root_entries, list):
                 # Handle both list[str] and list[dict] return types
                 for entry in root_entries[:50]:

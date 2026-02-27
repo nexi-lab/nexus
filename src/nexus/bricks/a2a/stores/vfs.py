@@ -20,7 +20,7 @@ import re
 import time
 from collections import OrderedDict
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import Any
 
 from nexus.bricks.a2a.models import Task, TaskState
 
@@ -32,9 +32,6 @@ tasks_path = _ipc_conventions.tasks_path
 _ipc_envelope = _il.import_module("nexus.bricks.ipc.envelope")
 MessageEnvelope = _ipc_envelope.MessageEnvelope
 MessageType = _ipc_envelope.MessageType
-
-if TYPE_CHECKING:
-    from nexus.bricks.ipc.storage.protocol import IPCStorageDriver
 
 logger = logging.getLogger(__name__)
 
@@ -66,15 +63,15 @@ class VFSTaskStore:
     Parameters
     ----------
     storage:
-        An ``IPCStorageDriver`` implementation (VFS-backed, PostgreSQL,
-        or in-memory fake).
+        A ``VFSOperations`` implementation (kernel VFS via KernelVFSAdapter,
+        local filesystem, or in-memory fake).
     max_cache_size:
         Maximum entries in the task index before LRU eviction.
     """
 
     def __init__(
         self,
-        storage: "IPCStorageDriver",
+        storage: Any,
         max_cache_size: int = _DEFAULT_MAX_CACHE_SIZE,
     ) -> None:
         self._storage = storage
@@ -371,11 +368,12 @@ class VFSTaskStore:
 
         for entry in entries:
             if entry.endswith(suffix):
+                filename = str(entry)
                 self._index_put(
                     task_id,
-                    _IndexEntry(zone_id, agent_id, entry),
+                    _IndexEntry(zone_id, agent_id, filename),
                 )
-                return entry
+                return filename
         return None
 
     async def _scan_all_agents_for_task(

@@ -15,16 +15,13 @@ Related: Issue #1209
 
 import logging
 from decimal import Decimal, InvalidOperation
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
-from nexus.constants import ROOT_ZONE_ID
-
-if TYPE_CHECKING:
-    pass
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 logger = logging.getLogger(__name__)
 

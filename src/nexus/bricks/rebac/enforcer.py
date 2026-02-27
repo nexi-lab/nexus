@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.exc import OperationalError
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext, Permission
 
 
@@ -518,14 +518,17 @@ class PermissionEnforcer:
         # Get backend-specific object type for ReBAC check
         # This allows different backends (Postgres, Redis, etc.) to have different permission models
         object_type = "file"  # Default
-        object_id = path  # Default - use virtual path for permission checks
+        # Unscope zone-prefixed paths so object_id matches how ReBAC tuples
+        # are created (non-prefixed path + zone_id field for isolation).
+        from nexus.server.path_utils import unscope_internal_path
+
+        object_id = unscope_internal_path(path)  # Strip /zone/{id}/ prefix
 
         if self.router:
             try:
                 # Route path to backend to get object type
                 route = self.router.route(
                     path,
-                    zone_id=context.zone_id,
                     is_admin=context.is_admin,
                     check_write=False,
                 )
@@ -534,8 +537,13 @@ class PermissionEnforcer:
 
                 mapper = ObjectTypeMapper()
                 object_type = mapper.get_object_type(route.backend, route.backend_path)
-                object_id = mapper.get_object_id(
-                    route.backend, route.backend_path, virtual_path=path, object_type=object_type
+                object_id = unscope_internal_path(
+                    mapper.get_object_id(
+                        route.backend,
+                        route.backend_path,
+                        virtual_path=path,
+                        object_type=object_type,
+                    )
                 )
             except (KeyError, ValueError, AttributeError, LookupError, RuntimeError) as e:
                 # If routing fails, fall back to default "file" type with virtual path

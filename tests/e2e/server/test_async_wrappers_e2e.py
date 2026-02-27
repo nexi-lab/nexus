@@ -4,9 +4,8 @@ Tests the async wrappers against real (non-mocked) kernel implementations:
 1. AsyncAgentRegistry with real AgentRegistry + SQLite DB
 2. AsyncNamespaceManager with real NamespaceManager + ReBAC
 3. AsyncVFSRouter with real PathRouter + LocalBackend
-4. AsyncHookEngine with real PluginHooks
-5. Protocol isinstance conformance for all 4 wrappers
-6. Server factory wiring (import path validation)
+4. Protocol isinstance conformance for all wrappers
+5. Server factory wiring (import path validation)
 
 These are true integration tests — no mocks for the inner implementations.
 
@@ -24,17 +23,9 @@ import pytest
 
 from nexus.bricks.rebac.async_namespace_manager import AsyncNamespaceManager
 from nexus.core.router import PathNotMountedError, PathRouter
-from nexus.plugins.async_hooks import AsyncHookEngine
-from nexus.plugins.hooks import PluginHooks
 from nexus.services.agents.agent_registry import AgentRegistry, InvalidTransitionError
 from nexus.services.agents.async_agent_registry import AsyncAgentRegistry
 from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
-from nexus.services.protocols.hook_engine import (
-    HookContext,
-    HookEngineProtocol,
-    HookResult,
-    HookSpec,
-)
 from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
 from nexus.services.routing.async_router import AsyncVFSRouter
 from nexus.storage.record_store import SQLAlchemyRecordStore
@@ -65,12 +56,14 @@ def async_registry(sqlite_registry: AgentRegistry) -> AsyncAgentRegistry:
 def real_router(tmp_path: Path) -> PathRouter:
     """Real PathRouter with a local backend mount."""
     from nexus.backends.local import LocalBackend
+    from tests.helpers.dict_metastore import DictMetastore
 
     storage = tmp_path / "storage"
     storage.mkdir()
-    router = PathRouter()
+    metastore = DictMetastore()
+    router = PathRouter(metastore)
     backend = LocalBackend(root_path=str(storage))
-    router.add_mount("/workspace", backend, priority=10)
+    router.add_mount("/workspace", backend)
     return router
 
 
@@ -79,23 +72,13 @@ def async_router(real_router: PathRouter) -> AsyncVFSRouter:
     return AsyncVFSRouter(real_router)
 
 
-@pytest.fixture()
-def real_hooks() -> PluginHooks:
-    return PluginHooks()
-
-
-@pytest.fixture()
-def async_hooks(real_hooks: PluginHooks) -> AsyncHookEngine:
-    return AsyncHookEngine(real_hooks)
-
-
 # ---------------------------------------------------------------------------
-# 1. Protocol isinstance conformance (all 4 wrappers)
+# 1. Protocol isinstance conformance (all wrappers)
 # ---------------------------------------------------------------------------
 
 
 class TestProtocolConformance:
-    """All 4 async wrappers satisfy isinstance checks against their protocols."""
+    """Async wrappers satisfy isinstance checks against their protocols."""
 
     def test_agent_registry_protocol(self, async_registry: AsyncAgentRegistry) -> None:
         assert isinstance(async_registry, AgentRegistryProtocol)
@@ -110,9 +93,6 @@ class TestProtocolConformance:
         from nexus.core.protocols.vfs_router import VFSRouterProtocol
 
         assert isinstance(async_router, VFSRouterProtocol)
-
-    def test_hook_engine_protocol(self, async_hooks: AsyncHookEngine) -> None:
-        assert isinstance(async_hooks, HookEngineProtocol)
 
 
 # ---------------------------------------------------------------------------
@@ -205,11 +185,10 @@ class TestAsyncVFSRouterE2E:
     async def test_route_resolves(self, async_router: AsyncVFSRouter) -> None:
         from nexus.core.protocols.vfs_router import ResolvedPath
 
-        resolved = await async_router.route("/workspace/project/file.txt", zone_id="z1")
+        resolved = await async_router.route("/workspace/project/file.txt")
         assert isinstance(resolved, ResolvedPath)
         assert resolved.backend_path == "project/file.txt"
         assert resolved.mount_point == "/workspace"
-        assert resolved.zone_id == "z1"
 
     @pytest.mark.asyncio()
     async def test_not_mounted_raises(self, async_router: AsyncVFSRouter) -> None:
@@ -224,7 +203,7 @@ class TestAsyncVFSRouterE2E:
         assert len(mounts) >= 1
         assert all(isinstance(m, MountInfo) for m in mounts)
         workspace_mount = next(m for m in mounts if m.mount_point == "/workspace")
-        assert workspace_mount.priority == 10
+        assert workspace_mount.readonly is False
 
     @pytest.mark.asyncio()
     async def test_add_and_remove_mount(self, async_router: AsyncVFSRouter) -> None:
@@ -232,7 +211,7 @@ class TestAsyncVFSRouterE2E:
 
         mock_backend = MagicMock()
         mock_backend.name = "test-backend"
-        await async_router.add_mount("/test-mount", mock_backend, priority=5, readonly=True)
+        await async_router.add_mount("/test-mount", mock_backend, readonly=True)
 
         mounts = await async_router.list_mounts()
         test_mount = next((m for m in mounts if m.mount_point == "/test-mount"), None)
@@ -247,118 +226,7 @@ class TestAsyncVFSRouterE2E:
 
 
 # ---------------------------------------------------------------------------
-# 4. AsyncHookEngine with real PluginHooks
-# ---------------------------------------------------------------------------
-
-
-class TestAsyncHookEngineE2E:
-    """Hook lifecycle through AsyncHookEngine -> real PluginHooks."""
-
-    @pytest.mark.asyncio()
-    async def test_register_fire_unregister(self, async_hooks: AsyncHookEngine) -> None:
-        """Full hook lifecycle: register → fire → unregister."""
-        captured_contexts: list[HookContext] = []
-
-        async def handler(ctx: HookContext) -> HookResult:
-            captured_contexts.append(ctx)
-            return HookResult(proceed=True, modified_context=None, error=None)
-
-        # Register
-        spec = HookSpec(phase="pre_write", handler_name="e2e-test-hook", priority=10)
-        hook_id = await async_hooks.register_hook(spec, handler)
-        assert hook_id.id
-
-        # Fire
-        ctx = HookContext(
-            phase="pre_write",
-            path="/workspace/test.txt",
-            zone_id="z1",
-            agent_id="agent-1",
-            payload={"content": "hello"},
-        )
-        result = await async_hooks.fire("pre_write", ctx)
-        assert result.proceed is True
-        assert len(captured_contexts) == 1
-        assert captured_contexts[0].path == "/workspace/test.txt"
-
-        # Unregister
-        removed = await async_hooks.unregister_hook(hook_id)
-        assert removed is True
-
-        # Fire again — handler should NOT be called
-        await async_hooks.fire("pre_write", ctx)
-        assert len(captured_contexts) == 1  # still 1, not 2
-
-    @pytest.mark.asyncio()
-    async def test_veto_hook(self, async_hooks: AsyncHookEngine) -> None:
-        """Hook that vetoes stops the operation."""
-
-        async def veto_handler(_ctx: HookContext) -> HookResult:
-            return HookResult(proceed=False, modified_context=None, error="blocked by policy")
-
-        spec = HookSpec(phase="pre_delete", handler_name="veto-hook")
-        await async_hooks.register_hook(spec, veto_handler)
-
-        ctx = HookContext(
-            phase="pre_delete",
-            path="/workspace/protected.txt",
-            zone_id=None,
-            agent_id=None,
-            payload={},
-        )
-        result = await async_hooks.fire("pre_delete", ctx)
-        assert result.proceed is False
-        assert "pre_delete" in (result.error or "")
-
-    @pytest.mark.asyncio()
-    async def test_unknown_phase_raises(self, async_hooks: AsyncHookEngine) -> None:
-        """Unknown phase string raises ValueError."""
-        ctx = HookContext(phase="unknown", path=None, zone_id=None, agent_id=None, payload={})
-        with pytest.raises(ValueError, match="Unknown hook phase"):
-            await async_hooks.fire("unknown", ctx)
-
-    @pytest.mark.asyncio()
-    async def test_concurrent_register_fire_unregister(self, async_hooks: AsyncHookEngine) -> None:
-        """Concurrent hook lifecycle operations verify API safety under interleaving."""
-        call_count = 0
-
-        async def counting_handler(_ctx: HookContext) -> HookResult:
-            nonlocal call_count
-            call_count += 1
-            return HookResult(proceed=True, modified_context=None, error=None)
-
-        # Register 10 hooks concurrently
-        specs = [
-            HookSpec(phase="pre_write", handler_name=f"concurrent-{i}", priority=i)
-            for i in range(10)
-        ]
-        hook_ids = await asyncio.gather(
-            *[async_hooks.register_hook(spec, counting_handler) for spec in specs]
-        )
-        assert len(hook_ids) == 10
-        assert len({h.id for h in hook_ids}) == 10  # all unique IDs
-
-        # Fire while concurrently unregistering half the hooks
-        ctx = HookContext(
-            phase="pre_write", path="/ws/f.txt", zone_id=None, agent_id=None, payload={}
-        )
-        fire_task = asyncio.create_task(async_hooks.fire("pre_write", ctx))
-        unregister_tasks = [
-            asyncio.create_task(async_hooks.unregister_hook(hook_ids[i]))
-            for i in range(0, 10, 2)  # unregister even-indexed hooks
-        ]
-        results = await asyncio.gather(fire_task, *unregister_tasks)
-
-        # Fire completed successfully
-        fire_result = results[0]
-        assert isinstance(fire_result, HookResult)
-        assert fire_result.proceed is True
-        # At least some unregisters succeeded
-        assert any(results[1:])
-
-
-# ---------------------------------------------------------------------------
-# 5. Server factory import validation
+# 4. Server factory import validation
 # ---------------------------------------------------------------------------
 
 
@@ -389,14 +257,9 @@ class TestServerWiring:
 
         assert AsyncVFSRouter is not None
 
-    def test_async_hooks_import(self) -> None:
-        from nexus.plugins.async_hooks import AsyncHookEngine
-
-        assert AsyncHookEngine is not None
-
 
 # ---------------------------------------------------------------------------
-# 6. Server lifespan wiring simulation
+# 5. Server lifespan wiring simulation
 # ---------------------------------------------------------------------------
 
 
@@ -461,8 +324,8 @@ class TestServerLifespanWiring:
             record_store.close()
 
     @pytest.mark.asyncio()
-    async def test_all_four_wrappers_wired_together(self, tmp_path: Path) -> None:
-        """All 4 async wrappers initialized and operational simultaneously.
+    async def test_all_wrappers_wired_together(self, tmp_path: Path) -> None:
+        """All async wrappers initialized and operational simultaneously.
 
         Simulates a server with all wrappers active (as would happen
         when permissions are enabled and all subsystems are available).
@@ -473,16 +336,13 @@ class TestServerLifespanWiring:
         from nexus.bricks.rebac.async_namespace_manager import AsyncNamespaceManager
         from nexus.core.protocols.vfs_router import VFSRouterProtocol
         from nexus.core.router import PathRouter
-        from nexus.plugins.async_hooks import AsyncHookEngine
-        from nexus.plugins.hooks import PluginHooks
         from nexus.services.agents.agent_registry import AgentRegistry
         from nexus.services.agents.async_agent_registry import AsyncAgentRegistry
-        from nexus.services.protocols.hook_engine import HookEngineProtocol
         from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
         from nexus.services.routing.async_router import AsyncVFSRouter
 
         # 1. AgentRegistry + AsyncAgentRegistry (SQLite)
-        db_path = tmp_path / f"all4_{uuid.uuid4().hex[:8]}.db"
+        db_path = tmp_path / f"all3_{uuid.uuid4().hex[:8]}.db"
         record_store = SQLAlchemyRecordStore(db_url=f"sqlite:///{db_path}", create_tables=True)
         sync_registry = AgentRegistry(record_store=record_store, flush_interval=1)
         async_registry = AsyncAgentRegistry(sync_registry)
@@ -493,48 +353,24 @@ class TestServerLifespanWiring:
         # 3. PathRouter + AsyncVFSRouter (real LocalBackend)
         storage = tmp_path / "storage"
         storage.mkdir()
-        sync_router = PathRouter()
-        sync_router.add_mount("/workspace", LocalBackend(root_path=str(storage)), priority=10)
+        from tests.helpers.dict_metastore import DictMetastore
+
+        sync_router = PathRouter(DictMetastore())
+        sync_router.add_mount("/workspace", LocalBackend(root_path=str(storage)))
         async_router = AsyncVFSRouter(sync_router)
 
-        # 4. PluginHooks + AsyncHookEngine
-        sync_hooks = PluginHooks()
-        async_hooks = AsyncHookEngine(sync_hooks)
-
-        # All 4 satisfy their protocols
+        # All satisfy their protocols
         assert isinstance(async_registry, AgentRegistryProtocol)
         assert isinstance(async_ns, NamespaceManagerProtocol)
         assert isinstance(async_router, VFSRouterProtocol)
-        assert isinstance(async_hooks, HookEngineProtocol)
 
         try:
-            # Cross-wrapper interaction: register agent, route a path, fire a hook
+            # Cross-wrapper interaction: register agent, route a path
             agent_info = await async_registry.register("cross-agent", "admin", zone_id="z1")
             assert agent_info.agent_id == "cross-agent"
 
-            resolved = await async_router.route("/workspace/doc.txt", zone_id="z1")
+            resolved = await async_router.route("/workspace/doc.txt")
             assert resolved.backend_path == "doc.txt"
-            assert resolved.zone_id == "z1"
-
-            hook_fired = False
-
-            async def track_hook(_ctx: HookContext) -> HookResult:
-                nonlocal hook_fired
-                hook_fired = True
-                return HookResult(proceed=True, modified_context=None, error=None)
-
-            spec = HookSpec(phase="pre_write", handler_name="cross-test")
-            await async_hooks.register_hook(spec, track_hook)
-            ctx = HookContext(
-                phase="pre_write",
-                path="/workspace/doc.txt",
-                zone_id="z1",
-                agent_id="cross-agent",
-                payload={},
-            )
-            result = await async_hooks.fire("pre_write", ctx)
-            assert result.proceed is True
-            assert hook_fired is True
 
             # Cleanup
             await async_registry.unregister("cross-agent")

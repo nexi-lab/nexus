@@ -13,9 +13,10 @@ from nexus.backends.cas_blob_store import WriteResult
 from nexus.backends.local import LocalBackend
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.core.hash_fast import create_hasher, hash_content
+from nexus.core.object_store import WriteResult as ObjectStoreWriteResult
 from nexus.factory import create_nexus_fs
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from tests.helpers.in_memory_metadata_store import InMemoryMetastore
+from tests.helpers.dict_metastore import DictMetastore
 
 
 class TestBackendWriteStreamDefault:
@@ -23,7 +24,6 @@ class TestBackendWriteStreamDefault:
 
     def test_default_write_stream_collects_chunks(self) -> None:
         """Test that default implementation collects chunks and calls write_content."""
-        from nexus.lib.response import HandlerResponse
 
         class TestBackend(Backend):
             """Minimal test backend."""
@@ -39,37 +39,35 @@ class TestBackendWriteStreamDefault:
             def user_scoped(self) -> bool:
                 return False
 
-            def write_content(self, content: bytes, context=None) -> HandlerResponse[str]:
+            def write_content(self, content: bytes, context=None) -> ObjectStoreWriteResult:
                 self.written_content = content
-                return HandlerResponse.ok(hash_content(content))
+                return ObjectStoreWriteResult(content_hash=hash_content(content), size=len(content))
 
-            def read_content(self, content_hash: str, context=None) -> HandlerResponse[bytes]:
-                return HandlerResponse.ok(b"")
+            def read_content(self, content_hash: str, context=None) -> bytes:
+                return b""
 
-            def delete_content(self, content_hash: str, context=None) -> HandlerResponse[None]:
-                return HandlerResponse.ok(None)
+            def delete_content(self, content_hash: str, context=None) -> None:
+                pass
 
-            def content_exists(self, content_hash: str, context=None) -> HandlerResponse[bool]:
-                return HandlerResponse.ok(False)
+            def content_exists(self, content_hash: str, context=None) -> bool:
+                return False
 
-            def get_content_size(self, content_hash: str, context=None) -> HandlerResponse[int]:
-                return HandlerResponse.ok(0)
+            def get_content_size(self, content_hash: str, context=None) -> int:
+                return 0
 
-            def get_ref_count(self, content_hash: str, context=None) -> HandlerResponse[int]:
-                return HandlerResponse.ok(0)
+            def get_ref_count(self, content_hash: str, context=None) -> int:
+                return 0
 
             def mkdir(
                 self, path: str, parents: bool = False, exist_ok: bool = False, context=None
-            ) -> HandlerResponse[None]:
-                return HandlerResponse.ok(None)
+            ) -> None:
+                pass
 
-            def rmdir(
-                self, path: str, recursive: bool = False, context=None
-            ) -> HandlerResponse[None]:
-                return HandlerResponse.ok(None)
+            def rmdir(self, path: str, recursive: bool = False, context=None) -> None:
+                pass
 
-            def is_directory(self, path: str, context=None) -> HandlerResponse[bool]:
-                return HandlerResponse.ok(False)
+            def is_directory(self, path: str, context=None) -> bool:
+                return False
 
         backend = TestBackend()
 
@@ -78,7 +76,8 @@ class TestBackendWriteStreamDefault:
             yield b"World"
             yield b"!"
 
-        result_hash = backend.write_stream(chunks()).unwrap()
+        result = backend.write_stream(chunks())
+        result_hash = result.content_hash
 
         assert backend.written_content == b"Hello World!"
         assert result_hash == hash_content(b"Hello World!")
@@ -96,7 +95,7 @@ class TestLocalBackendStreaming:
         """Test that stream_content yields file content in chunks."""
         # Write some content first
         content = b"A" * 1000 + b"B" * 1000 + b"C" * 1000
-        content_hash = local_backend.write_content(content).unwrap()
+        content_hash = local_backend.write_content(content).content_hash
 
         # Stream with small chunks
         chunks = list(local_backend.stream_content(content_hash, chunk_size=500))
@@ -108,7 +107,7 @@ class TestLocalBackendStreaming:
     def test_stream_content_default_chunk_size(self, local_backend: LocalBackend) -> None:
         """Test stream_content with default chunk size."""
         content = b"test content"
-        content_hash = local_backend.write_content(content).unwrap()
+        content_hash = local_backend.write_content(content).content_hash
 
         chunks = list(local_backend.stream_content(content_hash))
 
@@ -128,10 +127,11 @@ class TestLocalBackendStreaming:
             yield b"Hello "
             yield b"World!"
 
-        content_hash = local_backend.write_stream(chunks()).unwrap()
+        result = local_backend.write_stream(chunks())
+        content_hash = result.content_hash
 
         # Verify content was written correctly
-        content = local_backend.read_content(content_hash).unwrap()
+        content = local_backend.read_content(content_hash)
         assert content == b"Hello World!"
 
     def test_write_stream_hash_matches_write_content(self, local_backend: LocalBackend) -> None:
@@ -139,13 +139,13 @@ class TestLocalBackendStreaming:
         content = b"Test content for hash comparison"
 
         # Write using write_content
-        hash1 = local_backend.write_content(content).unwrap()
+        hash1 = local_backend.write_content(content).content_hash
 
         # Write using write_stream
         def chunks():
             yield content
 
-        hash2 = local_backend.write_stream(chunks()).unwrap()
+        hash2 = local_backend.write_stream(chunks()).content_hash
 
         assert hash1 == hash2
 
@@ -154,15 +154,15 @@ class TestLocalBackendStreaming:
         content = b"Duplicate content"
 
         # First write
-        hash1 = local_backend.write_content(content).unwrap()
-        ref1 = local_backend.get_ref_count(hash1).unwrap()
+        hash1 = local_backend.write_content(content).content_hash
+        ref1 = local_backend.get_ref_count(hash1)
 
         # Second write via stream
         def chunks():
             yield content
 
-        hash2 = local_backend.write_stream(chunks()).unwrap()
-        ref2 = local_backend.get_ref_count(hash2).unwrap()
+        hash2 = local_backend.write_stream(chunks()).content_hash
+        ref2 = local_backend.get_ref_count(hash2)
 
         assert hash1 == hash2
         assert ref2 == ref1 + 1
@@ -177,10 +177,11 @@ class TestLocalBackendStreaming:
             for _ in range(num_chunks):
                 yield content_per_chunk
 
-        content_hash = local_backend.write_stream(chunks()).unwrap()
+        result = local_backend.write_stream(chunks())
+        content_hash = result.content_hash
 
         # Verify content
-        content = local_backend.read_content(content_hash).unwrap()
+        content = local_backend.read_content(content_hash)
         assert len(content) == chunk_size * num_chunks
         assert content == content_per_chunk * num_chunks
 
@@ -191,22 +192,22 @@ class TestLocalBackendStreaming:
             return
             yield  # Make it a generator
 
-        content_hash = local_backend.write_stream(chunks()).unwrap()
+        result = local_backend.write_stream(chunks())
+        content_hash = result.content_hash
 
         # Should write empty content
-        content = local_backend.read_content(content_hash).unwrap()
+        content = local_backend.read_content(content_hash)
         assert content == b""
 
-    def test_write_stream_returns_size_in_affected_rows(self, local_backend: LocalBackend) -> None:
-        """Test that write_stream returns file size via affected_rows (Issue #1625)."""
+    def test_write_stream_returns_size(self, local_backend: LocalBackend) -> None:
+        """Test that write_stream returns file size via .size (Issue #1625)."""
         content = b"Size tracking test" * 100
 
         def chunks():
             yield content
 
-        response = local_backend.write_stream(chunks())
-        assert response.success
-        assert response.affected_rows == len(content)
+        result = local_backend.write_stream(chunks())
+        assert result.size == len(content)
 
 
 class TestCreateHasher:
@@ -249,7 +250,7 @@ class TestCreateHasher:
 
     def test_incremental_hash_matches_oneshot(self) -> None:
         """Incremental create_hasher() produces same hash as hash_content() (Issue #1625)."""
-        rng = random.Random(42)  # noqa: S311 — deterministic, not crypto
+        rng = random.Random(42)  # noqa: S311 -- deterministic, not crypto
         for content in [b"", b"x", b"A" * 100_000, os.urandom(1_000_000)]:
             hasher = create_hasher()
             offset = 0
@@ -297,7 +298,7 @@ class TestCASBlobStoreStreaming:
         r1 = cas.store_streaming(iter([content]))
         assert r1.is_new is True
 
-        # Second write — same content
+        # Second write -- same content
         r2 = cas.store_streaming(iter([content]))
         assert r2.is_new is False
         assert r2.content_hash == r1.content_hash
@@ -364,8 +365,8 @@ class TestStreamingMemoryEfficiency:
         tracemalloc.start()
         baseline = tracemalloc.get_traced_memory()[0]
 
-        response = backend.write_stream(big_chunks())
-        assert response.success
+        result = backend.write_stream(big_chunks())
+        assert result.content_hash is not None
 
         _, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
@@ -374,12 +375,12 @@ class TestStreamingMemoryEfficiency:
         # Allow 2 MB for overhead (hasher state, temp file handle, etc.)
         net_peak = peak - baseline
         assert net_peak < 2 * 1024 * 1024, (
-            f"Net peak memory {net_peak / 1024 / 1024:.1f} MB exceeds 2 MB bound — "
+            f"Net peak memory {net_peak / 1024 / 1024:.1f} MB exceeds 2 MB bound -- "
             f"write_stream is likely buffering entire content"
         )
 
-        # Verify the content hash and size
-        assert response.affected_rows == total_bytes
+        # Verify the content size
+        assert result.size == total_bytes
 
 
 class TestBaseBlobConnectorStreamContent:
@@ -541,7 +542,7 @@ class TestReadRangeRPC:
         db_path = tmp_path / "metadata.db"
         nx = create_nexus_fs(
             backend=LocalBackend(data_dir),
-            metadata_store=InMemoryMetastore(),
+            metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             parsing=ParseConfig(auto_parse=False),
             permissions=PermissionConfig(enforce=False),
@@ -550,7 +551,7 @@ class TestReadRangeRPC:
         try:
             # Write a test file
             content = b"0123456789ABCDEF"
-            nx.write("/test.txt", content)
+            nx.sys_write("/test.txt", content)
 
             # Read ranges
             assert nx.read_range("/test.txt", 0, 5) == b"01234"
@@ -567,14 +568,14 @@ class TestReadRangeRPC:
         db_path = tmp_path / "metadata.db"
         nx = create_nexus_fs(
             backend=LocalBackend(data_dir),
-            metadata_store=InMemoryMetastore(),
+            metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             parsing=ParseConfig(auto_parse=False),
             permissions=PermissionConfig(enforce=False),
         )
 
         try:
-            nx.write("/test.txt", b"test content")
+            nx.sys_write("/test.txt", b"test content")
 
             # Negative start should raise
             with pytest.raises(ValueError, match="non-negative"):
@@ -594,14 +595,14 @@ class TestReadRangeRPC:
         db_path = tmp_path / "metadata.db"
         nx = create_nexus_fs(
             backend=LocalBackend(data_dir),
-            metadata_store=InMemoryMetastore(),
+            metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             parsing=ParseConfig(auto_parse=False),
             permissions=PermissionConfig(enforce=False),
         )
 
         try:
-            nx.write("/test.txt", b"test content")
+            nx.sys_write("/test.txt", b"test content")
 
             # Empty range should return empty bytes
             assert nx.read_range("/test.txt", 5, 5) == b""
@@ -616,7 +617,7 @@ class TestReadRangeRPC:
         db_path = tmp_path / "metadata.db"
         nx = create_nexus_fs(
             backend=LocalBackend(data_dir),
-            metadata_store=InMemoryMetastore(),
+            metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             parsing=ParseConfig(auto_parse=False),
             permissions=PermissionConfig(enforce=False),
@@ -624,7 +625,7 @@ class TestReadRangeRPC:
 
         try:
             content = b"short"
-            nx.write("/test.txt", content)
+            nx.sys_write("/test.txt", content)
 
             # Range beyond file size should return available content
             result = nx.read_range("/test.txt", 0, 100)
@@ -644,7 +645,7 @@ class TestStatRPC:
         db_path = tmp_path / "metadata.db"
         nx = create_nexus_fs(
             backend=LocalBackend(data_dir),
-            metadata_store=InMemoryMetastore(),
+            metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             parsing=ParseConfig(auto_parse=False),
             permissions=PermissionConfig(enforce=False),
@@ -653,7 +654,7 @@ class TestStatRPC:
         try:
             # Write a test file
             content = b"Hello, World!"
-            nx.write("/test.txt", content)
+            nx.sys_write("/test.txt", content)
 
             # stat() should return metadata
             info = nx.stat("/test.txt")
@@ -674,7 +675,7 @@ class TestStatRPC:
         db_path = tmp_path / "metadata.db"
         nx = create_nexus_fs(
             backend=LocalBackend(data_dir),
-            metadata_store=InMemoryMetastore(),
+            metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             parsing=ParseConfig(auto_parse=False),
             permissions=PermissionConfig(enforce=False),
@@ -694,7 +695,7 @@ class TestStatRPC:
         db_path = tmp_path / "metadata.db"
         nx = create_nexus_fs(
             backend=LocalBackend(data_dir),
-            metadata_store=InMemoryMetastore(),
+            metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             parsing=ParseConfig(auto_parse=False),
             permissions=PermissionConfig(enforce=False),
@@ -702,7 +703,7 @@ class TestStatRPC:
 
         try:
             # Create a file in a subdirectory to make an implicit directory
-            nx.write("/subdir/file.txt", b"content")
+            nx.sys_write("/subdir/file.txt", b"content")
 
             # stat() on the directory should work
             info = nx.stat("/subdir")

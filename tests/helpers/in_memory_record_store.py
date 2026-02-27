@@ -2,7 +2,7 @@
 
 Wraps an in-memory SQLite database with all tables created, providing a
 lightweight test double that supports real SQL operations without external
-dependencies. Follows the same pattern as InMemoryMetastore.
+dependencies. Follows the same pattern as DictMetastore.
 """
 
 from typing import Any

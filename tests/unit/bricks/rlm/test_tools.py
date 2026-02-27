@@ -16,7 +16,7 @@ from nexus.bricks.rlm.tools import (
     nexus_read,
     nexus_search,
 )
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 
 class TestNexusRead:

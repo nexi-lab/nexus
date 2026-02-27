@@ -44,31 +44,31 @@ def test_basic_operations():
         print("\n1. Testing write operation...")
         test_path = "/test/file.txt"
         content = "Hello, Nexus!"
-        nx.write(test_path, content.encode("utf-8"))
+        nx.sys_write(test_path, content.encode("utf-8"))
         print(f"   ✓ Wrote to {test_path}")
 
         # Test read
         print("\n2. Testing read operation...")
-        read_content = nx.read(test_path).decode("utf-8")
+        read_content = nx.sys_read(test_path).decode("utf-8")
         assert read_content == content, f"Content mismatch: {read_content} != {content}"
         print(f"   ✓ Read from {test_path}: {read_content}")
 
         # Test list
         print("\n3. Testing list operation...")
-        files = nx.list("/test")
+        files = nx.sys_readdir("/test")
         assert any("file.txt" in f for f in files), f"file.txt not found in {files}"
         print(f"   ✓ Listed /test: {len(files)} files")
 
         # Test exists
         print("\n4. Testing exists operation...")
-        assert nx.exists(test_path), f"{test_path} should exist"
+        assert nx.sys_access(test_path), f"{test_path} should exist"
         print(f"   ✓ File exists: {test_path}")
 
         # Test versioning (edit simulation)
         print("\n5. Testing versioning (multiple writes)...")
         for i in range(3):
             new_content = f"Version {i + 1}"
-            nx.write(test_path, new_content.encode("utf-8"))
+            nx.sys_write(test_path, new_content.encode("utf-8"))
             print(f"   ✓ Wrote version {i + 1}")
 
         versions = nx.list_versions(test_path)
@@ -77,16 +77,16 @@ def test_basic_operations():
 
         # Test glob
         print("\n6. Testing glob operation...")
-        nx.write("/test/file1.txt", b"content1")
-        nx.write("/test/file2.md", b"content2")
+        nx.sys_write("/test/file1.txt", b"content1")
+        nx.sys_write("/test/file2.md", b"content2")
         matches = nx.glob("/test/*.txt")
         print(f"   ✓ Glob /test/*.txt: {len(matches)} matches")
         assert len(matches) == 2, f"Expected 2 matches, got {len(matches)}"
 
         # Test grep (manual since NexusBackend does this)
         print("\n7. Testing content search (grep simulation)...")
-        nx.write("/test/searchable.txt", b"Hello World\nFoo Bar\nHello Again")
-        content_bytes = nx.read("/test/searchable.txt")
+        nx.sys_write("/test/searchable.txt", b"Hello World\nFoo Bar\nHello Again")
+        content_bytes = nx.sys_read("/test/searchable.txt")
         content_str = content_bytes.decode("utf-8")
         lines_with_hello = [
             (i + 1, line) for i, line in enumerate(content_str.splitlines()) if "Hello" in line

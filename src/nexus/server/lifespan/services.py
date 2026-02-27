@@ -48,12 +48,16 @@ async def startup_services(app: "FastAPI", svc: "LifespanServices") -> list[asyn
         bg_tasks.append(task_runner_task)
 
     await _startup_workflow_engine(app, svc)
+    await _startup_pipe_consumers(app, svc)
 
     return bg_tasks
 
 
 async def shutdown_services(app: "FastAPI", svc: "LifespanServices") -> None:
     """Shutdown services in reverse order."""
+    # Issue #809/#810: Stop DT_PIPE consumers
+    await _shutdown_pipe_consumers(app)
+
     # Issue #625: Stop workflow dispatch consumer
     wds = app.state.workflow_dispatch
     if wds is not None:
@@ -640,18 +644,6 @@ async def _startup_scheduler(app: "FastAPI", svc: "LifespanServices") -> None:
         # as part of the SchedulerProtocol contract.
         await scheduler.initialize(pool)
 
-        # Wire hook cleanup handler into state emitter (Issue #1257)
-        # Note: state_emitter is constructor-injected into AsyncAgentRegistry
-        # by factory._boot_system_services() — no post-construction wiring needed.
-        state_emitter = getattr(scheduler, "_state_emitter", None)
-        if state_emitter is not None:
-            scoped_hook_engine = svc.scoped_hook_engine
-            if scoped_hook_engine is not None:
-                from nexus.system_services.lifecycle.hook_engine import create_agent_cleanup_handler
-
-                state_emitter.add_handler(create_agent_cleanup_handler(scoped_hook_engine))
-                logger.debug("Hook cleanup handler registered on AgentStateEmitter")
-
         logger.info("Scheduler service initialized with Astraea (two-phase, PostgreSQL)")
     except ImportError as e:
         logger.debug("Scheduler async init not available: %s", e)
@@ -712,3 +704,66 @@ async def _startup_workflow_engine(app: "FastAPI", svc: "LifespanServices") -> N
             logger.info("Workflow dispatch service started")
         except Exception as e:
             logger.warning("Workflow dispatch service start failed (non-fatal): %s", e)
+
+
+async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> None:
+    """Inject PipeManager and start DT_PIPE consumers (Issue #809, #810).
+
+    Two consumers are started here:
+    1. PipedRecordStoreWriteObserver — async RecordStore sync via kernel IPC
+    2. ZoektPipeConsumer — async Zoekt index notifications via kernel IPC
+
+    Both follow the deferred-injection pattern: created in factory without
+    PipeManager, then PipeManager is injected here and start() spawns the
+    background consumer task.
+    """
+    pipe_manager = svc.pipe_manager
+    if pipe_manager is None:
+        return
+
+    # Issue #809: PipedRecordStoreWriteObserver
+    wo = svc.write_observer
+    if wo is not None and hasattr(wo, "set_pipe_manager"):
+        try:
+            wo.set_pipe_manager(pipe_manager)
+            await wo.start()
+            app.state.write_observer = wo
+            logger.info("[PIPE] PipedRecordStoreWriteObserver started")
+        except Exception as e:
+            logger.warning(
+                "[PIPE] PipedRecordStoreWriteObserver start failed: %s", e, exc_info=True
+            )
+
+    # Issue #810: ZoektPipeConsumer
+    zpc = svc.zoekt_pipe_consumer
+    if zpc is not None and hasattr(zpc, "set_pipe_manager"):
+        try:
+            zpc.set_pipe_manager(pipe_manager)
+            await zpc.start()
+            app.state.zoekt_pipe_consumer = zpc
+            logger.info("[PIPE] ZoektPipeConsumer started")
+        except Exception as e:
+            logger.warning("[PIPE] ZoektPipeConsumer start failed: %s", e, exc_info=True)
+
+
+async def _shutdown_pipe_consumers(app: "FastAPI") -> None:
+    """Stop DT_PIPE consumers (Issue #809, #810)."""
+    # Issue #809: PipedRecordStoreWriteObserver
+    wo = getattr(app.state, "write_observer", None)
+    if wo is not None and hasattr(wo, "stop"):
+        try:
+            await wo.stop()
+            logger.info("[PIPE] PipedRecordStoreWriteObserver stopped")
+        except Exception as e:
+            logger.warning(
+                "[PIPE] Error stopping PipedRecordStoreWriteObserver: %s", e, exc_info=True
+            )
+
+    # Issue #810: ZoektPipeConsumer
+    zpc = getattr(app.state, "zoekt_pipe_consumer", None)
+    if zpc is not None and hasattr(zpc, "stop"):
+        try:
+            await zpc.stop()
+            logger.info("[PIPE] ZoektPipeConsumer stopped")
+        except Exception as e:
+            logger.warning("[PIPE] Error stopping ZoektPipeConsumer: %s", e, exc_info=True)

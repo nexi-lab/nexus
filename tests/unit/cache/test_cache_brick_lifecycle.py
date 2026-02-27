@@ -32,7 +32,7 @@ class TestCacheBrickStart:
     @pytest.mark.asyncio
     async def test_start_connects_store(self) -> None:
         """start() should set the brick to active state."""
-        from nexus.bricks.cache.brick import CacheBrick
+        from nexus.cache.brick import CacheBrick
 
         brick = CacheBrick(cache_store=_make_mock_store())
         await brick.start()
@@ -41,7 +41,7 @@ class TestCacheBrickStart:
     @pytest.mark.asyncio
     async def test_start_idempotent(self) -> None:
         """Double start() should be safe (no error)."""
-        from nexus.bricks.cache.brick import CacheBrick
+        from nexus.cache.brick import CacheBrick
 
         brick = CacheBrick(cache_store=_make_mock_store())
         await brick.start()
@@ -51,7 +51,7 @@ class TestCacheBrickStart:
     @pytest.mark.asyncio
     async def test_start_failure_stays_stopped(self) -> None:
         """If start() fails, brick should remain not started."""
-        from nexus.bricks.cache.brick import CacheBrick
+        from nexus.cache.brick import CacheBrick
 
         store = _make_mock_store()
         store.health_check = AsyncMock(side_effect=ConnectionError("fail"))
@@ -72,7 +72,7 @@ class TestCacheBrickStop:
     @pytest.mark.asyncio
     async def test_stop_disconnects_store(self) -> None:
         """stop() should close the underlying store."""
-        from nexus.bricks.cache.brick import CacheBrick
+        from nexus.cache.brick import CacheBrick
 
         store = _make_mock_store()
         brick = CacheBrick(cache_store=store)
@@ -84,7 +84,7 @@ class TestCacheBrickStop:
     @pytest.mark.asyncio
     async def test_stop_idempotent(self) -> None:
         """Double stop() should be safe."""
-        from nexus.bricks.cache.brick import CacheBrick
+        from nexus.cache.brick import CacheBrick
 
         store = _make_mock_store()
         brick = CacheBrick(cache_store=store)
@@ -95,7 +95,7 @@ class TestCacheBrickStop:
     @pytest.mark.asyncio
     async def test_stop_without_start(self) -> None:
         """stop() before start() should be safe."""
-        from nexus.bricks.cache.brick import CacheBrick
+        from nexus.cache.brick import CacheBrick
 
         brick = CacheBrick()
         await brick.stop()  # Should not raise
@@ -112,7 +112,7 @@ class TestCacheBrickHealthCheck:
     @pytest.mark.asyncio
     async def test_health_check_healthy(self) -> None:
         """health_check() should return True when store is healthy."""
-        from nexus.bricks.cache.brick import CacheBrick
+        from nexus.cache.brick import CacheBrick
 
         store = _make_mock_store()
         store.health_check = AsyncMock(return_value=True)
@@ -123,7 +123,7 @@ class TestCacheBrickHealthCheck:
     @pytest.mark.asyncio
     async def test_health_check_degraded_null_store(self) -> None:
         """NullCacheStore health_check should return True (degraded but operational)."""
-        from nexus.bricks.cache.brick import CacheBrick
+        from nexus.cache.brick import CacheBrick
 
         brick = CacheBrick()  # NullCacheStore
         result = await brick.health_check()
@@ -132,7 +132,7 @@ class TestCacheBrickHealthCheck:
     @pytest.mark.asyncio
     async def test_health_check_unhealthy(self) -> None:
         """health_check() should return False when store connection is lost."""
-        from nexus.bricks.cache.brick import CacheBrick
+        from nexus.cache.brick import CacheBrick
 
         store = _make_mock_store()
         store.health_check = AsyncMock(return_value=False)
@@ -150,7 +150,7 @@ class TestCacheBrickLifecycleProtocol:
 
     def test_satisfies_lifecycle_protocol(self) -> None:
         """CacheBrick should be a structural match for BrickLifecycleProtocol."""
-        from nexus.bricks.cache.brick import CacheBrick
+        from nexus.cache.brick import CacheBrick
         from nexus.services.protocols.brick_lifecycle import BrickLifecycleProtocol
 
         brick = CacheBrick()
@@ -159,7 +159,7 @@ class TestCacheBrickLifecycleProtocol:
     @pytest.mark.asyncio
     async def test_lifecycle_with_null_store(self) -> None:
         """Full lifecycle with NullCacheStore should be no-op."""
-        from nexus.bricks.cache.brick import CacheBrick
+        from nexus.cache.brick import CacheBrick
 
         brick = CacheBrick()  # NullCacheStore fallback
         await brick.start()  # No-op
@@ -169,7 +169,7 @@ class TestCacheBrickLifecycleProtocol:
     @pytest.mark.asyncio
     async def test_full_lifecycle(self) -> None:
         """Full start → health → stop cycle with real mock store."""
-        from nexus.bricks.cache.brick import CacheBrick
+        from nexus.cache.brick import CacheBrick
 
         store = _make_mock_store()
         brick = CacheBrick(cache_store=store)

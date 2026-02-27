@@ -39,7 +39,7 @@ def test_provision_user() -> bool:
     backend = LocalBackend(root_path="/tmp/nexus_test")
     # Use in-memory SQLite database for testing
     metadata_store = RaftMetadataStore.embedded("sqlite:///:memory:".replace(".db", ""))
-    nx = nexus.NexusFS(backend=backend, metadata_store=metadata_store)
+    nx = nexus.create_nexus_fs(backend=backend, metadata_store=metadata_store)
     print("   ✓ NexusFS initialized with LocalBackend and in-memory database")
     print("   - Root path: /tmp/nexus_test")
     print("   - Database: sqlite:///:memory:")
@@ -138,7 +138,7 @@ def test_provision_user() -> bool:
     # Check workspace exists
     if result1.get("workspace_path"):
         try:
-            workspace_exists = nx.exists(result1["workspace_path"], context=admin_context)
+            workspace_exists = nx.sys_access(result1["workspace_path"], context=admin_context)
             print(f"   - Workspace exists: {workspace_exists} ✓")
         except Exception as e:
             print(f"   - Workspace check failed: {e} ✗")
@@ -155,7 +155,7 @@ def test_provision_user() -> bool:
 
     for dir_path in user_dirs:
         try:
-            exists = nx.exists(dir_path, context=admin_context)
+            exists = nx.sys_access(dir_path, context=admin_context)
             status = "✓" if exists else "✗"
             print(f"   - {dir_path.split('/')[-1]}: {exists} {status}")
         except Exception as e:

@@ -23,7 +23,7 @@ Usage:
 import logging
 import os
 
-from nexus.constants import DEFAULT_OTEL_ENDPOINT
+from nexus.contracts.constants import DEFAULT_OTEL_ENDPOINT
 
 # Re-export tier-neutral utilities so existing server-layer callers
 # (e.g. fastapi_server.py) continue to work without import changes.
@@ -134,7 +134,7 @@ def setup_telemetry(
         # Inject rebac tracer into permission tracing module
         from nexus.bricks.rebac.rebac_tracing import set_tracer as _set_rebac_tracer
 
-        _set_rebac_tracer(trace.get_tracer("nexus.rebac"))
+        _set_rebac_tracer(trace.get_tracer("nexus.bricks.rebac"))
 
         logger.info(
             f"OpenTelemetry initialized: service={_service_name}, "

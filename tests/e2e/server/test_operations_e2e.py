@@ -214,7 +214,7 @@ def _seed_file_operations(client: httpx.Client) -> None:
             client.post(
                 "/rpc",
                 json={
-                    "method": "write",
+                    "method": "sys_write",
                     "params": {
                         "path": f"/e2e-test/file-{i}.txt",
                         "content": f"e2e test content {i}",

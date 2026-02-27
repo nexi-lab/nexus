@@ -1,7 +1,5 @@
 """Runtime compatibility — pool creation with version detection."""
 
-from __future__ import annotations
-
 import concurrent.futures
 import sys
 from concurrent.futures import Executor, ProcessPoolExecutor

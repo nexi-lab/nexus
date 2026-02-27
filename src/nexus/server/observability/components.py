@@ -7,7 +7,6 @@ FunctionPairComponent replaces 5 near-identical adapter classes with a
 single generic class parameterized by start/shutdown callables.
 """
 
-import asyncio
 import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
@@ -97,10 +96,14 @@ class QueryObserverComponent:
 
 
 class WriteBufferComponent:
-    """Lifecycle component for WriteBuffer shutdown.
+    """Lifecycle component for write observer shutdown.
 
-    The WriteBuffer is started by the factory (not by this component).
+    The write observer is started in server lifespan (not by this component).
     This component manages its graceful shutdown during server teardown.
+
+    Issue #809: PipedRecordStoreWriteObserver replaces WriteBuffer.
+    Shutdown is now handled by _shutdown_pipe_consumers in services.py.
+    This component is kept for observability registry health reporting.
     """
 
     def __init__(self, write_observer: Any) -> None:
@@ -112,23 +115,10 @@ class WriteBufferComponent:
         return "write-buffer"
 
     async def start(self) -> None:
-        # WriteBuffer is started by the factory — mark as started
         self._started = True
 
     async def shutdown(self, timeout_ms: int = 5000) -> None:
-        if not self._started:
-            return
-        if self._wo is not None and hasattr(self._wo, "stop"):
-            try:
-                await asyncio.wait_for(
-                    asyncio.to_thread(self._wo.stop),
-                    timeout=timeout_ms / 1000.0,
-                )
-                logger.info("WriteBuffer stopped")
-            except TimeoutError:
-                logger.warning("WriteBuffer stop timed out after %dms", timeout_ms)
-            except Exception as e:
-                logger.warning("Error stopping WriteBuffer: %s", e, exc_info=True)
+        _ = timeout_ms  # Shutdown handled by _shutdown_pipe_consumers (Issue #809)
         self._started = False
 
     def is_healthy(self) -> bool:

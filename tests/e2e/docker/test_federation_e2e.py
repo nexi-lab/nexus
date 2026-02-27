@@ -25,7 +25,7 @@ import uuid
 import httpx
 import pytest
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.metadata import FileMetadata
 from nexus.raft.client import RaftClient
 
@@ -640,7 +640,7 @@ class TestgRPCDirectOperations:
                 )
                 await client.put_metadata(meta)
 
-                result = await client.get_metadata(f"/grpc-test-{uid}.txt")
+                result = await client.sys_stat(f"/grpc-test-{uid}.txt")
                 assert result is not None
                 assert result.size == 42
         except Exception as e:

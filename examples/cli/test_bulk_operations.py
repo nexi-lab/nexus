@@ -181,7 +181,7 @@ class LocalTestRunner(TestRunner):
     def _run_tests(self, nx) -> None:
         # Setup
         print_header("Setup: Create Test Files")
-        nx.mkdir(self.base, parents=True, exist_ok=True)
+        nx.sys_mkdir(self.base, parents=True, exist_ok=True)
         print_success(f"Created directory: {self.base}")
 
         test_files = [
@@ -195,8 +195,8 @@ class LocalTestRunner(TestRunner):
         for f in test_files:
             parent = str(Path(f).parent)
             if parent != self.base:
-                nx.mkdir(parent, parents=True, exist_ok=True)
-            nx.write(f, f"Content of {f}".encode())
+                nx.sys_mkdir(parent, parents=True, exist_ok=True)
+            nx.sys_write(f, f"Content of {f}".encode())
             print_success(f"Created: {f}")
 
         # Test 1: rename_bulk
@@ -213,7 +213,7 @@ class LocalTestRunner(TestRunner):
         print_info(f"Result: {result}")
 
         all_success = all(
-            result.get(old, {}).get("success", False) and nx.exists(new) for old, new in renames
+            result.get(old, {}).get("success", False) and nx.sys_access(new) for old, new in renames
         )
         for old, new in renames:
             if result.get(old, {}).get("success"):
@@ -256,7 +256,8 @@ class LocalTestRunner(TestRunner):
         print_info(f"Result: {result}")
 
         all_deleted = all(
-            result.get(p, {}).get("success", False) and not nx.exists(p) for p in files_to_delete
+            result.get(p, {}).get("success", False) and not nx.sys_access(p)
+            for p in files_to_delete
         )
         for p in files_to_delete:
             if result.get(p, {}).get("success"):
@@ -291,18 +292,18 @@ class LocalTestRunner(TestRunner):
         print_header("Test 5: delete_bulk with recursive directory deletion (explicit)")
         print_test("Deleting EXPLICIT directory with recursive=True")
 
-        nx.mkdir(f"{self.base}/to_delete", exist_ok=True)
-        nx.write(f"{self.base}/to_delete/a.txt", b"file a")
-        nx.write(f"{self.base}/to_delete/b.txt", b"file b")
-        nx.mkdir(f"{self.base}/to_delete/sub", exist_ok=True)
-        nx.write(f"{self.base}/to_delete/sub/c.txt", b"file c")
+        nx.sys_mkdir(f"{self.base}/to_delete", exist_ok=True)
+        nx.sys_write(f"{self.base}/to_delete/a.txt", b"file a")
+        nx.sys_write(f"{self.base}/to_delete/b.txt", b"file b")
+        nx.sys_mkdir(f"{self.base}/to_delete/sub", exist_ok=True)
+        nx.sys_write(f"{self.base}/to_delete/sub/c.txt", b"file c")
 
         result = nx.delete_bulk([f"{self.base}/to_delete"], recursive=True)
         print_info(f"Result: {result}")
 
-        success = result.get(f"{self.base}/to_delete", {}).get("success", False) and not nx.exists(
-            f"{self.base}/to_delete"
-        )
+        success = result.get(f"{self.base}/to_delete", {}).get(
+            "success", False
+        ) and not nx.sys_access(f"{self.base}/to_delete")
         self.record("delete_bulk with recursive=True works for explicit directory", success)
 
         # Test 6: delete_bulk on IMPLICIT directory
@@ -310,12 +311,12 @@ class LocalTestRunner(TestRunner):
         print_test("Deleting IMPLICIT directory (no mkdir, just files under it)")
 
         # Create files directly without mkdir - this creates an implicit directory
-        nx.write(f"{self.base}/implicit_dir/file1.txt", b"file 1")
-        nx.write(f"{self.base}/implicit_dir/file2.txt", b"file 2")
-        nx.write(f"{self.base}/implicit_dir/nested/file3.txt", b"file 3")
+        nx.sys_write(f"{self.base}/implicit_dir/file1.txt", b"file 1")
+        nx.sys_write(f"{self.base}/implicit_dir/file2.txt", b"file 2")
+        nx.sys_write(f"{self.base}/implicit_dir/nested/file3.txt", b"file 3")
 
         # Verify the implicit directory exists
-        implicit_exists = nx.exists(f"{self.base}/implicit_dir")
+        implicit_exists = nx.sys_access(f"{self.base}/implicit_dir")
         print_info(f"Implicit directory exists: {implicit_exists}")
 
         result = nx.delete_bulk([f"{self.base}/implicit_dir"], recursive=True)
@@ -323,7 +324,7 @@ class LocalTestRunner(TestRunner):
 
         success = result.get(f"{self.base}/implicit_dir", {}).get(
             "success", False
-        ) and not nx.exists(f"{self.base}/implicit_dir")
+        ) and not nx.sys_access(f"{self.base}/implicit_dir")
         self.record("delete_bulk works for IMPLICIT directory", success)
 
         # Test 7: rename_bulk on IMPLICIT directory
@@ -331,20 +332,20 @@ class LocalTestRunner(TestRunner):
         print_test("Renaming IMPLICIT directory (no mkdir, just files under it)")
 
         # Create another implicit directory
-        nx.write(f"{self.base}/implicit_rename/a.txt", b"file a")
-        nx.write(f"{self.base}/implicit_rename/b.txt", b"file b")
+        nx.sys_write(f"{self.base}/implicit_rename/a.txt", b"file a")
+        nx.sys_write(f"{self.base}/implicit_rename/b.txt", b"file b")
 
         # Verify it exists
-        implicit_exists = nx.exists(f"{self.base}/implicit_rename")
+        implicit_exists = nx.sys_access(f"{self.base}/implicit_rename")
         print_info(f"Implicit directory exists before rename: {implicit_exists}")
 
         result = nx.rename_bulk([(f"{self.base}/implicit_rename", f"{self.base}/implicit_renamed")])
         print_info(f"Result: {result}")
 
         # Check the rename worked
-        old_gone = not nx.exists(f"{self.base}/implicit_rename")
-        new_exists = nx.exists(f"{self.base}/implicit_renamed")
-        files_moved = nx.exists(f"{self.base}/implicit_renamed/a.txt") and nx.exists(
+        old_gone = not nx.sys_access(f"{self.base}/implicit_rename")
+        new_exists = nx.sys_access(f"{self.base}/implicit_renamed")
+        files_moved = nx.sys_access(f"{self.base}/implicit_renamed/a.txt") and nx.sys_access(
             f"{self.base}/implicit_renamed/b.txt"
         )
 
@@ -376,12 +377,12 @@ class RemoteTestRunner(TestRunner):
         return asyncio.run(self._run_async())
 
     async def _run_async(self) -> bool:
-        from nexus.remote import AsyncRemoteNexusFS
+        import nexus
 
         print_header("Bulk Operations Test (Remote Mode)")
         print_info(f"Server: {self.url}")
 
-        nx = AsyncRemoteNexusFS(self.url, api_key=self.api_key)
+        nx = nexus.connect(config={"mode": "remote", "url": self.url, "api_key": self.api_key})
 
         try:
             # Cleanup stale data
@@ -400,7 +401,7 @@ class RemoteTestRunner(TestRunner):
     async def _run_tests(self, nx) -> None:
         # Setup
         print_header("Setup: Create Test Files")
-        await nx.mkdir(self.base, parents=True, exist_ok=True)
+        await nx.sys_mkdir(self.base, parents=True, exist_ok=True)
         print_success(f"Created directory: {self.base}")
 
         test_files = [
@@ -414,8 +415,8 @@ class RemoteTestRunner(TestRunner):
         for f in test_files:
             parent = str(Path(f).parent)
             if parent != self.base:
-                await nx.mkdir(parent, parents=True, exist_ok=True)
-            await nx.write(f, f"Content of {f}".encode())
+                await nx.sys_mkdir(parent, parents=True, exist_ok=True)
+            await nx.sys_write(f, f"Content of {f}".encode())
             print_success(f"Created: {f}")
 
         # Test 1: rename_bulk
@@ -433,7 +434,7 @@ class RemoteTestRunner(TestRunner):
 
         all_success = True
         for old, new in renames:
-            if result.get(old, {}).get("success") and await nx.exists(new):
+            if result.get(old, {}).get("success") and await nx.sys_access(new):
                 print_success(f"Renamed: {old} -> {new}")
             else:
                 print_error(f"Failed: {old}")
@@ -475,7 +476,7 @@ class RemoteTestRunner(TestRunner):
 
         all_deleted = True
         for p in files_to_delete:
-            if result.get(p, {}).get("success") and not await nx.exists(p):
+            if result.get(p, {}).get("success") and not await nx.sys_access(p):
                 print_success(f"Deleted: {p}")
             else:
                 print_error(f"Failed: {p}")
@@ -508,18 +509,18 @@ class RemoteTestRunner(TestRunner):
         print_header("Test 5: delete_bulk with recursive directory deletion (explicit)")
         print_test("Deleting EXPLICIT directory with recursive=True")
 
-        await nx.mkdir(f"{self.base}/to_delete", exist_ok=True)
-        await nx.write(f"{self.base}/to_delete/a.txt", b"file a")
-        await nx.write(f"{self.base}/to_delete/b.txt", b"file b")
-        await nx.mkdir(f"{self.base}/to_delete/sub", exist_ok=True)
-        await nx.write(f"{self.base}/to_delete/sub/c.txt", b"file c")
+        await nx.sys_mkdir(f"{self.base}/to_delete", exist_ok=True)
+        await nx.sys_write(f"{self.base}/to_delete/a.txt", b"file a")
+        await nx.sys_write(f"{self.base}/to_delete/b.txt", b"file b")
+        await nx.sys_mkdir(f"{self.base}/to_delete/sub", exist_ok=True)
+        await nx.sys_write(f"{self.base}/to_delete/sub/c.txt", b"file c")
 
         result = await nx.delete_bulk([f"{self.base}/to_delete"], recursive=True)
         print_info(f"Result: {result}")
 
         success = result.get(f"{self.base}/to_delete", {}).get(
             "success", False
-        ) and not await nx.exists(f"{self.base}/to_delete")
+        ) and not await nx.sys_access(f"{self.base}/to_delete")
         self.record("delete_bulk with recursive=True works for explicit directory", success)
 
         # Test 6: delete_bulk on IMPLICIT directory
@@ -527,12 +528,12 @@ class RemoteTestRunner(TestRunner):
         print_test("Deleting IMPLICIT directory (no mkdir, just files under it)")
 
         # Create files directly without mkdir - this creates an implicit directory
-        await nx.write(f"{self.base}/implicit_dir/file1.txt", b"file 1")
-        await nx.write(f"{self.base}/implicit_dir/file2.txt", b"file 2")
-        await nx.write(f"{self.base}/implicit_dir/nested/file3.txt", b"file 3")
+        await nx.sys_write(f"{self.base}/implicit_dir/file1.txt", b"file 1")
+        await nx.sys_write(f"{self.base}/implicit_dir/file2.txt", b"file 2")
+        await nx.sys_write(f"{self.base}/implicit_dir/nested/file3.txt", b"file 3")
 
         # Verify the implicit directory exists
-        implicit_exists = await nx.exists(f"{self.base}/implicit_dir")
+        implicit_exists = await nx.sys_access(f"{self.base}/implicit_dir")
         print_info(f"Implicit directory exists: {implicit_exists}")
 
         result = await nx.delete_bulk([f"{self.base}/implicit_dir"], recursive=True)
@@ -540,7 +541,7 @@ class RemoteTestRunner(TestRunner):
 
         success = result.get(f"{self.base}/implicit_dir", {}).get(
             "success", False
-        ) and not await nx.exists(f"{self.base}/implicit_dir")
+        ) and not await nx.sys_access(f"{self.base}/implicit_dir")
         self.record("delete_bulk works for IMPLICIT directory", success)
 
         # Test 7: rename_bulk on IMPLICIT directory
@@ -548,11 +549,11 @@ class RemoteTestRunner(TestRunner):
         print_test("Renaming IMPLICIT directory (no mkdir, just files under it)")
 
         # Create another implicit directory
-        await nx.write(f"{self.base}/implicit_rename/a.txt", b"file a")
-        await nx.write(f"{self.base}/implicit_rename/b.txt", b"file b")
+        await nx.sys_write(f"{self.base}/implicit_rename/a.txt", b"file a")
+        await nx.sys_write(f"{self.base}/implicit_rename/b.txt", b"file b")
 
         # Verify it exists
-        implicit_exists = await nx.exists(f"{self.base}/implicit_rename")
+        implicit_exists = await nx.sys_access(f"{self.base}/implicit_rename")
         print_info(f"Implicit directory exists before rename: {implicit_exists}")
 
         result = await nx.rename_bulk(
@@ -561,11 +562,11 @@ class RemoteTestRunner(TestRunner):
         print_info(f"Result: {result}")
 
         # Check the rename worked
-        old_gone = not await nx.exists(f"{self.base}/implicit_rename")
-        new_exists = await nx.exists(f"{self.base}/implicit_renamed")
-        files_moved = await nx.exists(f"{self.base}/implicit_renamed/a.txt") and await nx.exists(
-            f"{self.base}/implicit_renamed/b.txt"
-        )
+        old_gone = not await nx.sys_access(f"{self.base}/implicit_rename")
+        new_exists = await nx.sys_access(f"{self.base}/implicit_renamed")
+        files_moved = await nx.sys_access(
+            f"{self.base}/implicit_renamed/a.txt"
+        ) and await nx.sys_access(f"{self.base}/implicit_renamed/b.txt")
 
         success = (
             result.get(f"{self.base}/implicit_rename", {}).get("success", False)

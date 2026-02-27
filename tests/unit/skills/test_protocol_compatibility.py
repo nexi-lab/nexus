@@ -1,7 +1,8 @@
 """Test that the narrow Skills Protocol is satisfied by core implementations.
 
 The skills module defines a narrow NexusFilesystem Protocol with only the
-7 methods it actually uses (read, write, list, exists, mkdir, delete, is_directory).
+7 methods it actually uses (sys_read, sys_write, sys_readdir, sys_access,
+sys_mkdir, sys_unlink, sys_is_directory).
 This test verifies that:
 
 1. All narrow Protocol methods exist on the core ABC (subset check)
@@ -24,8 +25,16 @@ try:
 except Exception:
     _raft_available = False
 
-# The 7 methods the skills module uses
-REQUIRED_METHODS = {"read", "write", "list", "exists", "mkdir", "delete", "is_directory"}
+# The 7 sys_ methods the skills module uses (POSIX-style syscall names)
+REQUIRED_METHODS = {
+    "sys_read",
+    "sys_write",
+    "sys_readdir",
+    "sys_access",
+    "sys_mkdir",
+    "sys_unlink",
+    "sys_is_directory",
+}
 
 
 def test_protocol_is_subset_of_abc() -> None:
@@ -73,13 +82,12 @@ def test_nexus_fs_satisfies_narrow_protocol() -> None:
     import tempfile
     from pathlib import Path
 
-    from nexus import LocalBackend, NexusFS
+    from nexus import NexusFS
     from nexus.core.config import PermissionConfig
 
     with tempfile.TemporaryDirectory() as tmpdir:
         metadata_store = RaftMetadataStore.embedded(str(Path(tmpdir) / "metadata"))
         nx = NexusFS(
-            backend=LocalBackend(tmpdir),
             metadata_store=metadata_store,
             permissions=PermissionConfig(),
         )
@@ -95,18 +103,18 @@ def test_nexus_fs_satisfies_narrow_protocol() -> None:
 
 
 def test_minimal_mock_satisfies_protocol() -> None:
-    """Verify a minimal mock with just the 7 methods passes isinstance()."""
+    """Verify a minimal mock with just the 7 sys_ methods passes isinstance()."""
 
     class MinimalFilesystem:
-        def read(self, path, context=None, return_metadata=False):
+        def sys_read(self, path, context=None, return_metadata=False):
             return b""
 
-        def write(
+        def sys_write(
             self, path, content, context=None, if_match=None, if_none_match=False, force=False
         ):
             return {}
 
-        def list(
+        def sys_readdir(
             self,
             path="/",
             recursive=True,
@@ -116,16 +124,16 @@ def test_minimal_mock_satisfies_protocol() -> None:
         ):
             return []
 
-        def exists(self, path):
+        def sys_access(self, path):
             return False
 
-        def mkdir(self, path, parents=False, exist_ok=False):
+        def sys_mkdir(self, path, parents=False, exist_ok=False):
             pass
 
-        def delete(self, path):
+        def sys_unlink(self, path):
             pass
 
-        def is_directory(self, path, context=None):
+        def sys_is_directory(self, path, context=None):
             return False
 
     mock = MinimalFilesystem()

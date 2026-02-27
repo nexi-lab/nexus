@@ -475,13 +475,13 @@ class TestHelperMethods:
 
     def test_read_content_text(self, memory_api):
         """_read_content should decode UTF-8 text."""
-        content_hash = memory_api.backend.write_content(b"Hello world").unwrap()
+        content_hash = memory_api.backend.write_content(b"Hello world").content_hash
         result = memory_api._read_content(content_hash)
         assert result == "Hello world"
 
     def test_read_content_binary(self, memory_api):
         """_read_content should hex-encode binary content."""
-        content_hash = memory_api.backend.write_content(b"\x00\x01\xff").unwrap()
+        content_hash = memory_api.backend.write_content(b"\x00\x01\xff").content_hash
         result = memory_api._read_content(content_hash)
         assert result == "0001ff"
 
@@ -496,13 +496,13 @@ class TestHelperMethods:
 
         content_hash = memory_api.backend.write_content(
             json.dumps({"key": "value"}).encode()
-        ).unwrap()
+        ).content_hash
         result = memory_api._read_content(content_hash, parse_json=True)
         assert result == {"key": "value"}
 
     def test_read_content_parse_json_fallback(self, memory_api):
         """_read_content with parse_json should fall back to text for non-JSON."""
-        content_hash = memory_api.backend.write_content(b"Not JSON").unwrap()
+        content_hash = memory_api.backend.write_content(b"Not JSON").content_hash
         result = memory_api._read_content(content_hash, parse_json=True)
         assert result == "Not JSON"
 

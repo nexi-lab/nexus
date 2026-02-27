@@ -38,10 +38,10 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.backends.backend import Backend, HandlerStatusResponse
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
-from nexus.contracts.exceptions import BackendError
+from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
+from nexus.core.object_store import WriteResult
 from nexus.core.protocols.capabilities import OAUTH_CONNECTOR_CAPABILITIES, ConnectorCapability
-from nexus.lib.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:
     from googleapiclient.discovery import Resource
@@ -117,7 +117,7 @@ class GoogleDriveConnectorBackend(Backend):
 
     _CAPABILITIES = OAUTH_CONNECTOR_CAPABILITIES | frozenset(
         {
-            ConnectorCapability.VIRTUAL_FILESYSTEM,
+            ConnectorCapability.EXTERNAL_CONTENT,
         }
     )
 
@@ -641,10 +641,9 @@ class GoogleDriveConnectorBackend(Backend):
 
         return parent_id, filename
 
-    @timed_response
     def write_content(
         self, content: bytes, context: "OperationContext | None" = None
-    ) -> HandlerResponse[str]:
+    ) -> WriteResult:
         """
         Write content to Google Drive and return its content hash.
 
@@ -656,14 +655,15 @@ class GoogleDriveConnectorBackend(Backend):
             context: Operation context with user_id and backend_path
 
         Returns:
-            HandlerResponse with content hash (SHA-256 as hex string) in data field
+            Content hash (SHA-256 as hex string)
+
+        Raises:
+            BackendError: If context is missing or write fails
         """
         if context is None or not hasattr(context, "backend_path") or context.backend_path is None:
-            return HandlerResponse.error(
-                message="Google Drive connector requires OperationContext with backend_path",
-                code=400,
-                is_expected=True,
-                backend_name=self.name,
+            raise BackendError(
+                "Google Drive connector requires OperationContext with backend_path",
+                backend="gdrive",
             )
 
         backend_path = context.backend_path
@@ -726,16 +726,9 @@ class GoogleDriveConnectorBackend(Backend):
             file_id = file["id"]
             logger.info(f"Created file '{filename}' in Drive (ID: {file_id})")
 
-        return HandlerResponse.ok(
-            data=content_hash,
-            backend_name=self.name,
-            path=backend_path,
-        )
+        return WriteResult(content_hash=content_hash, size=len(content))
 
-    @timed_response
-    def read_content(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> HandlerResponse[bytes]:
+    def read_content(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
         """
         Read content from Google Drive by path (not hash).
 
@@ -746,14 +739,16 @@ class GoogleDriveConnectorBackend(Backend):
             context: Operation context with backend_path
 
         Returns:
-            HandlerResponse with file content as bytes in data field
+            File content as bytes
+
+        Raises:
+            BackendError: If context is missing
+            NexusFileNotFoundError: If file does not exist at the given path
         """
         if context is None or not hasattr(context, "backend_path") or context.backend_path is None:
-            return HandlerResponse.error(
-                message="Google Drive connector requires OperationContext with backend_path",
-                code=400,
-                is_expected=True,
-                backend_name=self.name,
+            raise BackendError(
+                "Google Drive connector requires OperationContext with backend_path",
+                backend="gdrive",
             )
 
         backend_path = context.backend_path
@@ -788,11 +783,7 @@ class GoogleDriveConnectorBackend(Backend):
         files = results.get("files", [])
 
         if not files:
-            return HandlerResponse.not_found(
-                path=backend_path,
-                message=f"File not found: {backend_path}",
-                backend_name=self.name,
-            )
+            raise NexusFileNotFoundError(backend_path)
 
         file_id = files[0]["id"]
         mime_type = files[0].get("mimeType", "")
@@ -815,11 +806,7 @@ class GoogleDriveConnectorBackend(Backend):
         while not done:
             status, done = downloader.next_chunk()
 
-        return HandlerResponse.ok(
-            data=fh.getvalue(),
-            backend_name=self.name,
-            path=backend_path,
-        )
+        return fh.getvalue()
 
     def _get_export_format(self, mime_type: str, filename: str) -> str:
         """Get export MIME type for Google Workspace files.
@@ -849,10 +836,7 @@ class GoogleDriveConnectorBackend(Backend):
 
         return defaults.get(mime_type, "application/pdf")
 
-    @timed_response
-    def delete_content(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> HandlerResponse[None]:
+    def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:
         """
         Delete content from Google Drive by path.
 
@@ -862,15 +846,14 @@ class GoogleDriveConnectorBackend(Backend):
             content_hash: Ignored for connector backends
             context: Operation context with backend_path
 
-        Returns:
-            HandlerResponse indicating success or failure
+        Raises:
+            BackendError: If context is missing
+            NexusFileNotFoundError: If file does not exist at the given path
         """
         if context is None or not hasattr(context, "backend_path") or context.backend_path is None:
-            return HandlerResponse.error(
-                message="Google Drive connector requires OperationContext with backend_path",
-                code=400,
-                is_expected=True,
-                backend_name=self.name,
+            raise BackendError(
+                "Google Drive connector requires OperationContext with backend_path",
+                backend="gdrive",
             )
 
         backend_path = context.backend_path
@@ -903,11 +886,7 @@ class GoogleDriveConnectorBackend(Backend):
         files = results.get("files", [])
 
         if not files:
-            return HandlerResponse.not_found(
-                path=backend_path,
-                message=f"File not found: {backend_path}",
-                backend_name=self.name,
-            )
+            raise NexusFileNotFoundError(backend_path)
 
         file_id = files[0]["id"]
 
@@ -918,16 +897,7 @@ class GoogleDriveConnectorBackend(Backend):
 
         logger.info(f"Deleted file '{filename}' from Drive (ID: {file_id})")
 
-        return HandlerResponse.ok(
-            data=None,
-            backend_name=self.name,
-            path=backend_path,
-        )
-
-    @timed_response
-    def content_exists(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> HandlerResponse[bool]:
+    def content_exists(self, content_hash: str, context: "OperationContext | None" = None) -> bool:
         """
         Check if content exists in Google Drive by path.
 
@@ -938,13 +908,10 @@ class GoogleDriveConnectorBackend(Backend):
             context: Operation context with backend_path
 
         Returns:
-            HandlerResponse with True if file exists, False otherwise in data field
+            True if file exists, False otherwise
         """
         if context is None or not hasattr(context, "backend_path"):
-            return HandlerResponse.ok(
-                data=False,
-                backend_name=self.name,
-            )
+            return False
 
         service = self._get_drive_service(context)
 
@@ -975,16 +942,9 @@ class GoogleDriveConnectorBackend(Backend):
 
         files = results.get("files", [])
 
-        return HandlerResponse.ok(
-            data=len(files) > 0,
-            backend_name=self.name,
-            path=context.backend_path,
-        )
+        return len(files) > 0
 
-    @timed_response
-    def get_content_size(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> HandlerResponse[int]:
+    def get_content_size(self, content_hash: str, context: "OperationContext | None" = None) -> int:
         """Get content size from Google Drive.
 
         Args:
@@ -992,7 +952,10 @@ class GoogleDriveConnectorBackend(Backend):
             context: Operation context (optional)
 
         Returns:
-            HandlerResponse with content size in bytes in data field
+            Content size in bytes
+
+        Raises:
+            NexusFileNotFoundError: If file does not exist
         """
         try:
             service = self._get_drive_service(context)
@@ -1003,25 +966,14 @@ class GoogleDriveConnectorBackend(Backend):
                 # Google Workspace files don't have size
                 size = 0
 
-            return HandlerResponse.ok(
-                data=int(size),
-                backend_name=self.name,
-                path=content_hash,
-            )
+            return int(size)
 
         except Exception as e:
             if "File not found" in str(e):
-                return HandlerResponse.not_found(
-                    path=content_hash,
-                    message=f"File not found: {content_hash}",
-                    backend_name=self.name,
-                )
+                raise NexusFileNotFoundError(content_hash) from e
             raise
 
-    @timed_response
-    def get_ref_count(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> HandlerResponse[int]:
+    def get_ref_count(self, content_hash: str, context: "OperationContext | None" = None) -> int:
         """Get reference count (always 1 for connector backends).
 
         Connector backends don't do deduplication, so each file
@@ -1032,22 +984,18 @@ class GoogleDriveConnectorBackend(Backend):
             context: Operation context
 
         Returns:
-            HandlerResponse with 1 (no reference counting) in data field
+            1 (no reference counting)
         """
         # No deduplication - each file is unique
-        return HandlerResponse.ok(
-            data=1,
-            backend_name=self.name,
-        )
+        return 1
 
-    @timed_response
     def mkdir(
         self,
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[None]:
+    ) -> None:
         """Create directory in Google Drive.
 
         Args:
@@ -1056,46 +1004,32 @@ class GoogleDriveConnectorBackend(Backend):
             exist_ok: Don't raise error if directory exists
             context: Operation context
 
-        Returns:
-            HandlerResponse indicating success or failure
+        Raises:
+            BackendError: If context is missing or directory already exists (when exist_ok=False)
+            NexusFileNotFoundError: If parent directory does not exist (when parents=False)
         """
         path = path.strip("/")
         if not path:
             # Root always exists
-            return HandlerResponse.ok(
-                data=None,
-                backend_name=self.name,
-                path="/",
-            )
+            return None
 
         if context is None:
-            return HandlerResponse.error(
-                message="Google Drive connector mkdir requires OperationContext",
-                code=400,
-                is_expected=True,
-                backend_name=self.name,
-                path=path,
+            raise BackendError(
+                "Google Drive connector mkdir requires OperationContext",
+                backend="gdrive",
             )
 
         service = self._get_drive_service(context)
         root_folder_id = self._get_or_create_root_folder(service, context)
 
         # Check if folder exists
-        is_dir_response = self.is_directory(path)
-        if is_dir_response.success and is_dir_response.data:
+        if self.is_directory(path):
             if not exist_ok:
-                return HandlerResponse.error(
-                    message=f"Directory already exists: {path}",
-                    code=409,
-                    is_expected=True,
-                    backend_name=self.name,
-                    path=path,
+                raise BackendError(
+                    f"Directory already exists: {path}",
+                    backend="gdrive",
                 )
-            return HandlerResponse.ok(
-                data=None,
-                backend_name=self.name,
-                path=path,
-            )
+            return None
 
         # Navigate through path components to create folder hierarchy
         parts = path.split("/")
@@ -1136,29 +1070,20 @@ class GoogleDriveConnectorBackend(Backend):
 
                     files = results.get("files", [])
                     if not files:
-                        return HandlerResponse.not_found(
-                            path="/".join(parts[: i + 1]),
-                            message=f"Parent directory does not exist: {'/'.join(parts[: i + 1])}",
-                            backend_name=self.name,
-                        )
+                        raise NexusFileNotFoundError("/".join(parts[: i + 1]))
                     parent_id = files[0]["id"]
             else:
                 # Last folder - create it
                 parent_id = self._get_or_create_folder(service, folder_name, parent_id, context)
 
-        return HandlerResponse.ok(
-            data=None,
-            backend_name=self.name,
-            path=path,
-        )
+        return None
 
-    @timed_response
     def rmdir(
         self,
         path: str,
         recursive: bool = False,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[None]:
+    ) -> None:
         """Remove directory from Google Drive.
 
         Args:
@@ -1166,17 +1091,15 @@ class GoogleDriveConnectorBackend(Backend):
             recursive: Remove non-empty directory (moves to trash)
             context: Operation context (not used, authentication handled internally)
 
-        Returns:
-            HandlerResponse indicating success or failure
+        Raises:
+            BackendError: If trying to remove root or non-empty directory
+            NexusFileNotFoundError: If directory does not exist
         """
         path = path.strip("/")
         if not path:
-            return HandlerResponse.error(
-                message="Cannot remove root directory",
-                code=400,
-                is_expected=True,
-                backend_name=self.name,
-                path="/",
+            raise BackendError(
+                "Cannot remove root directory",
+                backend="gdrive",
             )
 
         service = self._get_drive_service(None)
@@ -1185,55 +1108,35 @@ class GoogleDriveConnectorBackend(Backend):
         # Resolve path to folder ID
         folder_id = self._resolve_path_to_folder_id(service, path, root_folder_id)
         if not folder_id:
-            return HandlerResponse.not_found(
-                path=path,
-                message=f"Directory not found: {path}",
-                backend_name=self.name,
-            )
+            raise NexusFileNotFoundError(path)
 
         if not recursive:
             # Check if directory is empty
             query = f"'{folder_id}' in parents and trashed=false"
             results = service.files().list(q=query, fields="files(id)", pageSize=1).execute()
             if results.get("files", []):
-                return HandlerResponse.error(
-                    message=f"Directory not empty: {path}",
-                    code=400,
-                    is_expected=True,
-                    backend_name=self.name,
-                    path=path,
+                raise BackendError(
+                    f"Directory not empty: {path}",
+                    backend="gdrive",
                 )
 
         # Move to trash (Google Drive doesn't permanently delete immediately)
         service.files().update(fileId=folder_id, body={"trashed": True}).execute()
 
-        return HandlerResponse.ok(
-            data=None,
-            backend_name=self.name,
-            path=path,
-        )
-
-    @timed_response
-    def is_directory(
-        self, path: str, context: "OperationContext | None" = None
-    ) -> HandlerResponse[bool]:
+    def is_directory(self, path: str, context: "OperationContext | None" = None) -> bool:
         """Check if path is a directory in Google Drive.
 
         Args:
             path: Path to check
 
         Returns:
-            HandlerResponse with True if path is a folder, False otherwise in data field
+            True if path is a folder, False otherwise
         """
         try:
             path = path.strip("/")
             if not path:
                 # Root is always a directory
-                return HandlerResponse.ok(
-                    data=True,
-                    backend_name=self.name,
-                    path="/",
-                )
+                return True
 
             service = self._get_drive_service(None)
             root_folder_id = self._get_or_create_root_folder(service, None)
@@ -1271,11 +1174,7 @@ class GoogleDriveConnectorBackend(Backend):
                 files = results.get("files", [])
                 if not files:
                     # Parent doesn't exist, so path doesn't exist
-                    return HandlerResponse.ok(
-                        data=False,
-                        backend_name=self.name,
-                        path=path,
-                    )
+                    return False
                 parent_id = files[0]["id"]
 
             # Check if target exists as a folder
@@ -1300,19 +1199,11 @@ class GoogleDriveConnectorBackend(Backend):
 
             files = results.get("files", [])
 
-            return HandlerResponse.ok(
-                data=len(files) > 0,
-                backend_name=self.name,
-                path=path,
-            )
+            return len(files) > 0
 
         except Exception:
             # On API errors, return False (can't verify = treat as not a directory)
-            return HandlerResponse.ok(
-                data=False,
-                backend_name=self.name,
-                path=path,
-            )
+            return False
 
     def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:
         """

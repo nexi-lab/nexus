@@ -1,14 +1,14 @@
 """Unit tests for MetastoreABC CAS (compare-and-swap) operations.
 
 Tests the CasResult dataclass, ABC default fallback, and
-InMemoryMetastore atomic CAS semantics.
+DictMetastore atomic CAS semantics.
 """
 
 import threading
 
 from nexus.contracts.metadata import FileMetadata
 from nexus.core.metastore import CasResult
-from tests.helpers.in_memory_metadata_store import InMemoryMetastore
+from tests.helpers.dict_metastore import DictMetastore
 
 
 def _make_metadata(path: str, version: int = 1) -> FileMetadata:
@@ -59,7 +59,7 @@ class TestAbcDefaultFallback:
     """Test the MetastoreABC.put_if_version() default implementation."""
 
     def test_abc_default_fallback_success(self) -> None:
-        store = InMemoryMetastore()
+        store = DictMetastore()
         meta_v1 = _make_metadata("/test/file.txt", version=1)
         store.put(meta_v1)
 
@@ -75,7 +75,7 @@ class TestAbcDefaultFallback:
         assert stored.version == 2
 
     def test_abc_default_fallback_mismatch(self) -> None:
-        store = InMemoryMetastore()
+        store = DictMetastore()
         meta_v1 = _make_metadata("/test/file.txt", version=1)
         store.put(meta_v1)
 
@@ -91,7 +91,7 @@ class TestAbcDefaultFallback:
         assert stored.version == 1
 
     def test_abc_default_create_new(self) -> None:
-        store = InMemoryMetastore()
+        store = DictMetastore()
 
         # CAS create: expected_version=0 for non-existent file
         meta = _make_metadata("/test/new.txt", version=1)
@@ -105,7 +105,7 @@ class TestAbcDefaultFallback:
         assert stored.version == 1
 
     def test_abc_default_create_exists(self) -> None:
-        store = InMemoryMetastore()
+        store = DictMetastore()
         meta_v1 = _make_metadata("/test/exists.txt", version=1)
         store.put(meta_v1)
 
@@ -117,10 +117,10 @@ class TestAbcDefaultFallback:
 
 
 class TestInMemoryCas:
-    """Test InMemoryMetastore.put_if_version() with atomic semantics."""
+    """Test DictMetastore.put_if_version() with atomic semantics."""
 
     def test_inmemory_cas_success(self) -> None:
-        store = InMemoryMetastore()
+        store = DictMetastore()
         meta_v1 = _make_metadata("/file.txt", version=1)
         store.put(meta_v1)
 
@@ -129,7 +129,7 @@ class TestInMemoryCas:
         assert result == CasResult(success=True, current_version=2)
 
     def test_inmemory_cas_mismatch(self) -> None:
-        store = InMemoryMetastore()
+        store = DictMetastore()
         meta_v3 = _make_metadata("/file.txt", version=3)
         store.put(meta_v3)
 
@@ -139,7 +139,7 @@ class TestInMemoryCas:
 
     def test_inmemory_cas_concurrent_single_winner(self) -> None:
         """Verify that under concurrent CAS, exactly one writer wins per round."""
-        store = InMemoryMetastore()
+        store = DictMetastore()
         meta_v1 = _make_metadata("/race.txt", version=1)
         store.put(meta_v1)
 
@@ -167,7 +167,7 @@ class TestInMemoryCas:
 
     def test_put_signature_compatibility(self) -> None:
         """Verify put() accepts consistency kwarg (ABC signature fix)."""
-        store = InMemoryMetastore()
+        store = DictMetastore()
         meta = _make_metadata("/file.txt", version=1)
         result = store.put(meta, consistency="ec")
         assert result is None

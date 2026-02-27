@@ -66,7 +66,7 @@ class TigerCacheProtocol(Protocol):
     Tiger cache stores pre-materialized permission bitmaps for O(1) list filtering.
     Each bitmap represents all resources a subject can access with a given permission.
 
-    Canonical implementation lives in ``nexus.bricks.cache``; this protocol is
+    Canonical implementation lives in ``nexus.cache``; this protocol is
     defined here so that ``nexus.bricks.rebac`` can type-reference it without
     a cross-brick import.
     """
@@ -117,7 +117,7 @@ class EmbeddingCacheProtocol(Protocol):
     Caches embedding vectors by content hash to avoid redundant API calls.
     Supports batch operations with deduplication for efficiency.
 
-    Canonical implementation lives in ``nexus.bricks.cache``; this protocol is
+    Canonical implementation lives in ``nexus.cache``; this protocol is
     defined here so that ``nexus.bricks.search`` can type-reference it without
     a cross-brick import.
     """

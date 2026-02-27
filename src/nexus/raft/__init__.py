@@ -6,12 +6,12 @@ for metadata and lock operations.
 Three access modes:
 1. Metastore (PyO3 FFI) - Direct redb access for embedded mode (~5μs)
 2. ZoneManager + ZoneHandle (PyO3 FFI) - Multi-zone Raft consensus (~2-10ms)
-3. RaftClient (gRPC) - For RemoteNexusFS to access Raft cluster (~200μs)
+3. RaftClient (gRPC) - For REMOTE profile NexusFS to access Raft cluster (~200μs)
 
 Architecture:
     Embedded:   NexusFS -> Metastore (PyO3) -> redb (~5μs)
     Consensus:  NexusFS -> ZoneManager -> ZoneHandle (PyO3) -> Raft -> redb (~2-10ms)
-    Remote:     RemoteNexusFS -> RaftClient (gRPC) -> Raft cluster (~200μs)
+    Remote:     REMOTE profile NexusFS -> RaftClient (gRPC) -> Raft cluster (~200μs)
 
 Example (Metastore - embedded mode):
     from nexus.raft import Metastore
@@ -40,7 +40,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # =========================================================================
-# gRPC client for remote Raft access (used by RemoteNexusFS)
+# gRPC client for remote Raft access (used by REMOTE profile NexusFS)
 # Declare with Any so mypy doesn't complain about None fallback.
 # =========================================================================
 _HAS_GRPC_CLIENT = False
@@ -48,7 +48,6 @@ RemoteLockInfo: Any = None
 LockResult: Any = None
 RaftClient: Any = None
 RaftClientConfig: Any = None
-RaftClientPool: Any = None
 RaftError: Any = None
 RaftNotLeaderError: Any = None
 
@@ -59,7 +58,6 @@ try:
     LockResult = _raft_client_mod.LockResult
     RaftClient = _raft_client_mod.RaftClient
     RaftClientConfig = _raft_client_mod.RaftClientConfig
-    RaftClientPool = _raft_client_mod.RaftClientPool
     RaftError = _raft_client_mod.RaftError
     RaftNotLeaderError = _raft_client_mod.RaftNotLeaderError
     _HAS_GRPC_CLIENT = True
@@ -127,9 +125,8 @@ def require_metastore() -> None:
 
 
 __all__ = [
-    # gRPC client (remote - for RemoteNexusFS)
+    # gRPC client (remote - for REMOTE profile NexusFS)
     "RaftClient",
-    "RaftClientPool",
     "RaftClientConfig",
     "RaftError",
     "RaftNotLeaderError",

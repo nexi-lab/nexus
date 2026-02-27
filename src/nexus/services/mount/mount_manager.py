@@ -12,13 +12,30 @@ Supports:
 
 import json
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 
-from nexus.core.router import MountConfig
 from nexus.storage.models import MountConfigModel
+
+
+@dataclass
+class MountConfig:
+    """Mount configuration for restore_mounts() return type.
+
+    This is a service-layer data transfer object. The kernel PathRouter no
+    longer exposes MountConfig (it uses _MountEntry internally). This DTO
+    carries the fields needed by callers of ``restore_mounts()`` to call
+    ``router.add_mount()``.
+    """
+
+    mount_point: str
+    backend: Any
+    readonly: bool = False
+    io_profile: str = "balanced"
+
 
 if TYPE_CHECKING:
     from nexus.storage.record_store import RecordStoreABC
@@ -43,7 +60,6 @@ class MountManager:
         ...     mount_point="/personal/alice",
         ...     backend_type="google_drive",
         ...     backend_config={"access_token": "...", "user_email": "alice@acme.com"},
-        ...     priority=10,
         ...     owner_user_id="alice",
         ... )
         >>>
@@ -67,7 +83,6 @@ class MountManager:
         mount_point: str,
         backend_type: str,
         backend_config: dict,
-        priority: int = 0,
         readonly: bool = False,
         io_profile: str = "balanced",
         owner_user_id: str | None = None,
@@ -80,7 +95,6 @@ class MountManager:
             mount_point: Virtual path where backend is mounted (e.g., "/personal/alice")
             backend_type: Type of backend (e.g., "google_drive", "gcs", "local")
             backend_config: Backend-specific configuration (dict) - will be JSON-encoded
-            priority: Mount priority (higher = preferred)
             readonly: Whether mount is read-only
             io_profile: I/O tuning profile (Issue #1413)
             owner_user_id: User ID who owns this mount
@@ -102,7 +116,6 @@ class MountManager:
             ...         "refresh_token": "1//xxx",
             ...         "user_email": "alice@acme.com"
             ...     },
-            ...     priority=10,
             ...     owner_user_id="google:alice123",
             ...     zone_id="acme",
             ...     description="Alice's personal Google Drive"
@@ -121,7 +134,6 @@ class MountManager:
                 mount_id=str(uuid.uuid4()),
                 mount_point=mount_point,
                 backend_type=backend_type,
-                priority=priority,
                 readonly=int(bool(readonly)),  # Convert to int for SQLite/PostgreSQL compatibility
                 backend_config=json.dumps(backend_config),
                 owner_user_id=owner_user_id,
@@ -145,7 +157,6 @@ class MountManager:
         self,
         mount_point: str,
         backend_config: dict | None = None,
-        priority: int | None = None,
         readonly: bool | None = None,
         description: str | None = None,
     ) -> bool:
@@ -154,7 +165,6 @@ class MountManager:
         Args:
             mount_point: Mount point to update
             backend_config: New backend config (if provided)
-            priority: New priority (if provided)
             readonly: New readonly status (if provided)
             description: New description (if provided)
 
@@ -178,8 +188,6 @@ class MountManager:
             # Update fields if provided
             if backend_config is not None:
                 mount_model.backend_config = json.dumps(backend_config)
-            if priority is not None:
-                mount_model.priority = priority
             if readonly is not None:
                 mount_model.readonly = bool(readonly)
             if description is not None:
@@ -206,7 +214,6 @@ class MountManager:
             >>> config = manager.get_mount("/personal/alice")
             >>> if config:
             ...     print(f"Backend: {config['backend_type']}")
-            ...     print(f"Priority: {config['priority']}")
         """
         with self._session_factory() as session:
             stmt = select(MountConfigModel).where(MountConfigModel.mount_point == mount_point)
@@ -220,7 +227,6 @@ class MountManager:
                 "mount_point": mount_model.mount_point,
                 "backend_type": mount_model.backend_type,
                 "backend_config": json.loads(mount_model.backend_config),
-                "priority": mount_model.priority,
                 "readonly": bool(mount_model.readonly),
                 "io_profile": mount_model.io_profile,
                 "owner_user_id": mount_model.owner_user_id,
@@ -261,8 +267,8 @@ class MountManager:
             if zone_id:
                 stmt = stmt.where(MountConfigModel.zone_id == zone_id)
 
-            # Order by priority (desc) then mount_point
-            stmt = stmt.order_by(MountConfigModel.priority.desc(), MountConfigModel.mount_point)
+            # Order by mount_point
+            stmt = stmt.order_by(MountConfigModel.mount_point)
 
             results = session.execute(stmt).scalars().all()
 
@@ -272,7 +278,6 @@ class MountManager:
                     "mount_point": m.mount_point,
                     "backend_type": m.backend_type,
                     "backend_config": json.loads(m.backend_config),
-                    "priority": m.priority,
                     "readonly": bool(m.readonly),
                     "io_profile": m.io_profile,
                     "owner_user_id": m.owner_user_id,
@@ -332,7 +337,7 @@ class MountManager:
             >>>
             >>> # Add to router
             >>> for mc in mount_configs:
-            ...     router.add_mount(mc.mount_point, mc.backend, mc.priority, mc.readonly)
+            ...     router.add_mount(mc.mount_point, mc.backend, mc.readonly)
         """
         mounts_data = self.list_mounts()
         mount_configs = []
@@ -346,7 +351,6 @@ class MountManager:
                 mount_config = MountConfig(
                     mount_point=mount_data["mount_point"],
                     backend=backend,
-                    priority=mount_data["priority"],
                     readonly=mount_data["readonly"],
                 )
 

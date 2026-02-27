@@ -128,10 +128,10 @@ class TestProxyWithRealFastAPIPermissions:
 
         try:
             # Write through proxy — exercises base64 encoding + _forward
-            await proxy.write("/proxy-e2e.txt", b"hello world", "root")
+            await proxy.sys_write("/proxy-e2e.txt", b"hello world", "root")
 
             # Read through proxy — exercises _forward + response decoding
-            data = await proxy.read("/proxy-e2e.txt", "root")
+            data = await proxy.sys_read("/proxy-e2e.txt", "root")
             assert data == b"hello world" or data == b"aGVsbG8gd29ybGQ="
         finally:
             await proxy.stop()
@@ -163,14 +163,14 @@ class TestProxyWithRealFastAPIPermissions:
                 json={
                     "jsonrpc": "2.0",
                     "id": "1",
-                    "method": "write",
+                    "method": "sys_write",
                     "params": {"path": "/e2e-check.txt", "content": "dGVzdA=="},
                 },
             )
             assert resp.status_code == 200
 
             # Now call exists() through the proxy's _forward() path
-            result = await proxy.exists("/e2e-check.txt", "root")
+            result = await proxy.sys_access("/e2e-check.txt", "root")
             # Result type varies — could be bool or truthy value
             assert result, "exists() should return truthy for existing file"
         finally:
@@ -209,7 +209,7 @@ class TestProxyPermissionDeniedRealServer:
 
         try:
             with pytest.raises(RemoteCallError) as exc_info:
-                await proxy.exists("/file.txt", "root")
+                await proxy.sys_access("/file.txt", "root")
 
             # Real server returns 401 for missing auth
             assert exc_info.value.status_code == 401
@@ -244,7 +244,7 @@ class TestProxyPermissionDeniedRealServer:
 
         try:
             with pytest.raises(RemoteCallError) as exc_info:
-                await proxy.exists("/file.txt", "root")
+                await proxy.sys_access("/file.txt", "root")
 
             assert exc_info.value.status_code == 401
             assert await proxy.pending_count() == 0
@@ -272,7 +272,7 @@ class TestProxyPermissionDeniedRealServer:
             # 5 auth failures — more than cb_failure_threshold
             for _ in range(5):
                 with pytest.raises(RemoteCallError):
-                    await proxy.mkdir("/denied", "root")
+                    await proxy.sys_mkdir("/denied", "root")
 
             # Circuit must still be CLOSED — auth errors are NOT connectivity failures
             assert proxy.circuit_state is CircuitState.CLOSED
@@ -309,7 +309,7 @@ class TestProxyPermissionDeniedMock:
 
         try:
             with pytest.raises(RemoteCallError) as exc_info:
-                await proxy.mkdir("/denied", "z1")
+                await proxy.sys_mkdir("/denied", "z1")
             assert exc_info.value.status_code == 403
             assert await proxy.pending_count() == 0
             assert proxy.circuit_state is CircuitState.CLOSED
@@ -358,9 +358,9 @@ class TestProxyOfflineQueueReplayE2E:
             await proxy.start()
             try:
                 with pytest.raises(OfflineQueuedError):
-                    await proxy.mkdir("/queued_dir1", "z1")
+                    await proxy.sys_mkdir("/queued_dir1", "z1")
                 with pytest.raises(OfflineQueuedError):
-                    await proxy.mkdir("/queued_dir2", "z1")
+                    await proxy.sys_mkdir("/queued_dir2", "z1")
 
                 assert await proxy.pending_count() == 2
 
@@ -396,12 +396,12 @@ class TestProxyOfflineQueueReplayE2E:
             try:
                 for _ in range(2):
                     with pytest.raises(OfflineQueuedError):
-                        await proxy.exists("/f", "z1")
+                        await proxy.sys_access("/f", "z1")
 
                 assert proxy.circuit_state is CircuitState.OPEN
 
                 with pytest.raises((CircuitOpenError, OfflineQueuedError)):
-                    await proxy.exists("/f", "z1")
+                    await proxy.sys_access("/f", "z1")
 
                 assert any("Circuit open" in r.message for r in caplog.records)
             finally:
@@ -428,7 +428,7 @@ class TestProxyOfflineQueueReplayE2E:
         await proxy.start()
         try:
             with pytest.raises(OfflineQueuedError):
-                await proxy.mkdir("/will_fail", "z1")
+                await proxy.sys_mkdir("/will_fail", "z1")
 
             await asyncio.sleep(1.5)
             assert await proxy.pending_count() == 0
@@ -463,7 +463,7 @@ class TestProxyOfflineQueueReplayE2E:
         try:
             for _ in range(3):
                 with pytest.raises(OfflineQueuedError):
-                    await proxy.exists("/f", "z1")
+                    await proxy.sys_access("/f", "z1")
 
             assert proxy.circuit_state is CircuitState.OPEN
 
@@ -501,11 +501,11 @@ class TestProxyPerformance:
         await proxy.start()
 
         try:
-            await proxy.exists("/f", "z1")  # warm up
+            await proxy.sys_access("/f", "z1")  # warm up
 
             start = time.monotonic()
             for _ in range(100):
-                await proxy.exists("/f", "z1")
+                await proxy.sys_access("/f", "z1")
             elapsed = time.monotonic() - start
 
             avg_ms = (elapsed / 100) * 1000

@@ -7,7 +7,7 @@ methods correctly and return the documented types.
 
 import pytest
 
-from nexus.bricks.cache.inmemory import InMemoryCacheStore
+from nexus.cache.inmemory import InMemoryCacheStore
 from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
 
 # ---------------------------------------------------------------------------

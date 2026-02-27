@@ -367,7 +367,7 @@ class TestEventBusIntegration:
 
         sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-        from nexus.bricks.cache.dragonfly import DragonflyClient
+        from nexus.cache.dragonfly import DragonflyClient
         from nexus.services.event_subsystem.bus.redis import RedisEventBus
         from nexus.services.event_subsystem.types import FileEvent, FileEventType
 
@@ -414,7 +414,7 @@ class TestEventBusIntegration:
 
         sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-        from nexus.bricks.cache.dragonfly import DragonflyClient
+        from nexus.cache.dragonfly import DragonflyClient
         from nexus.services.event_subsystem.bus.redis import RedisEventBus
         from nexus.services.event_subsystem.types import FileEvent, FileEventType
 

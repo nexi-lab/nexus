@@ -12,6 +12,7 @@ from nexus.cli.utils import (
     get_filesystem,
     handle_error,
 )
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 
 def register_commands(cli: click.Group) -> None:
@@ -42,7 +43,7 @@ def cache_group() -> None:
 @click.option(
     "--hours", type=int, default=24, help="Look back N hours for history-based warmup (default: 24)"
 )
-@click.option("-z", "--zone-id", type=str, default="default", help="Zone ID")
+@click.option("-z", "--zone-id", type=str, default=ROOT_ZONE_ID, help="Zone ID")
 @add_backend_options
 def warmup(
     path: str,
@@ -167,17 +168,6 @@ def stats(
         # Collect stats from various cache layers
         cache_stats: dict[str, Any] = {}
 
-        # Metadata cache stats
-        cache = getattr(nx, "metadata_cache", None)
-        if cache is None and hasattr(nx, "metadata"):
-            cache = getattr(nx.metadata, "_cache", None)
-        if cache:
-            cache_stats["metadata_cache"] = {
-                "path_cache_size": len(getattr(cache, "_path_cache", {})),
-                "list_cache_size": len(getattr(cache, "_list_cache", {})),
-                "exists_cache_size": len(getattr(cache, "_exists_cache", {})),
-            }
-
         # Content cache stats
         if hasattr(nx, "backend") and hasattr(nx.backend, "content_cache"):
             cc = nx.backend.content_cache
@@ -286,19 +276,6 @@ def clear(
         nx = get_filesystem(backend_config)
         cleared: list[str] = []
 
-        # Clear metadata cache
-        cache = getattr(nx, "metadata_cache", None)
-        if cache is None and hasattr(nx, "metadata"):
-            cache = getattr(nx.metadata, "_cache", None)
-        if (metadata or clear_all) and cache:
-            if hasattr(cache, "_path_cache"):
-                cache._path_cache.clear()
-            if hasattr(cache, "_list_cache"):
-                cache._list_cache.clear()
-            if hasattr(cache, "_exists_cache"):
-                cache._exists_cache.clear()
-            cleared.append("metadata")
-
         # Clear content cache
         if (
             (content or clear_all)
@@ -355,7 +332,7 @@ def clear(
 
 @cache_group.command(name="hot")
 @click.option("-n", "--limit", type=int, default=20, help="Number of hot files to show")
-@click.option("-z", "--zone-id", type=str, default="default", help="Zone ID")
+@click.option("-z", "--zone-id", type=str, default=ROOT_ZONE_ID, help="Zone ID")
 @click.option("-u", "--user", type=str, help="Filter by user")
 def hot(
     limit: int,

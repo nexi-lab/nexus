@@ -14,7 +14,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from nexus.bricks.ipc.conventions import AGENTS_ROOT, agent_card_path
-from nexus.bricks.ipc.storage.protocol import IPCStorageDriver
+from nexus.bricks.ipc.protocols import VFSOperations
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from nexus.contracts.cache_store import CacheStoreABC
@@ -60,8 +61,8 @@ class AgentDiscovery:
 
     def __init__(
         self,
-        storage: IPCStorageDriver,
-        zone_id: str = "root",
+        storage: VFSOperations,
+        zone_id: str = ROOT_ZONE_ID,
         cache_ttl_seconds: float = 10.0,
         cache_store: "CacheStoreABC | None" = None,
     ) -> None:
@@ -102,7 +103,7 @@ class AgentDiscovery:
         """
         card_path = agent_card_path(agent_id)
         try:
-            data = await self._storage.read(card_path, self._zone_id)
+            data = await self._storage.sys_read(card_path, self._zone_id)
             card_dict = json.loads(data)
         except Exception:
             logger.debug(

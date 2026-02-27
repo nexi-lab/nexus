@@ -63,12 +63,30 @@ print_info "Server: $NEXUS_URL"
 print_info "Testing automatic tenant ID extraction and cache invalidation"
 echo ""
 
-ADMIN_KEY="$NEXUS_API_KEY"
+ROOT_ADMIN_KEY="$NEXUS_API_KEY"
 export DEMO_BASE="/workspace/rebac-comprehensive-demo"  # BUGFIX: Export for Python scripts
+# Create a default-zone admin key so ALL operations (file I/O and ReBAC) happen
+# in zone "default". The root admin key has zone "root" which skips zone path
+# scoping — meaning files created by root-zone admin live at /workspace/... while
+# non-admin users see /zone/default/workspace/... (zone-scoped). Using a
+# default-zone admin key ensures consistent path scoping across all operations.
+ADMIN_KEY=$(python3 scripts/create-api-key.py admin "Demo Admin (default zone)" --days 1 --zone-id default --admin 2>/dev/null | grep "API Key:" | awk '{print $3}')
+if [ -z "$ADMIN_KEY" ]; then
+    echo "WARNING: Failed to create default-zone admin key, falling back to root admin"
+    ADMIN_KEY="$ROOT_ADMIN_KEY"
+fi
+export NEXUS_API_KEY="$ADMIN_KEY"
+# Also ensure ReBAC tuples use zone "default" (--zone-id / NEXUS_ZONE_ID)
+export NEXUS_ZONE_ID=default
 
 # Cleanup function (only runs if KEEP != 1)
 cleanup() {
+    # Use default-zone admin for cleanup (zone-scoped paths)
     export NEXUS_API_KEY="$ADMIN_KEY"
+    nexus rmdir -r -f $DEMO_BASE 2>/dev/null || true
+    nexus rmdir -r -f /workspace/shared-readonly-test 2>/dev/null || true
+    # Also clean up with root admin in case files were created in root zone
+    export NEXUS_API_KEY="$ROOT_ADMIN_KEY"
     nexus rmdir -r -f $DEMO_BASE 2>/dev/null || true
     nexus rmdir -r -f /workspace/shared-readonly-test 2>/dev/null || true
     rm -f /tmp/demo-*.txt
@@ -98,9 +116,9 @@ nexus rmdir -r -f /workspace/shared-readonly-test 2>/dev/null || true
 python3 << 'CLEANUP'
 import sys, os
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
+import nexus
 
-nx = RemoteNexusFS(os.getenv('NEXUS_URL', 'http://localhost:2026'), api_key=os.getenv('NEXUS_API_KEY'))
+nx = nexus.connect(config={"mode": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')})
 base = os.getenv('DEMO_BASE')
 
 # 1. Delete all tuples related to demo paths (file objects, parent relationships)
@@ -356,8 +374,8 @@ nexus rebac create user bob direct_editor file $DEMO_BASE/project1
 python3 << 'PYTHON_PARENTS'
 import sys, os
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
-nx = RemoteNexusFS(os.getenv('NEXUS_URL', 'http://localhost:2026'), api_key=os.getenv('NEXUS_API_KEY'))
+import nexus
+nx = nexus.connect(config={"mode": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')})
 base = os.getenv('DEMO_BASE')
 nx.rebac_create(("file", f"{base}/project1/docs"), "parent", ("file", f"{base}/project1"))
 nx.rebac_create(("file", f"{base}/project1/docs/guides"), "parent", ("file", f"{base}/project1/docs"))
@@ -439,9 +457,9 @@ print_section "5. Audit & List Permissions"
 print_subsection "5.1 List all users with access to a resource"
 print_info "Finding all users with 'write' permission on $DEMO_BASE/test-file.txt"
 
-# BUGFIX: More robust regex for usernames (digits, underscores, dashes)
+# Extract user IDs from Rich table output (│ user │ alice │ format)
 WRITERS=$(nexus rebac expand write file $DEMO_BASE/test-file.txt 2>/dev/null \
-    | grep -oE "user:[A-Za-z0-9._-]+" | cut -d: -f2 | sort -u)
+    | grep "│ user" | awk -F'│' '{gsub(/^ +| +$/, "", $3); print $3}' | sort -u)
 
 print_test "Expected writers: alice (owner), bob (editor)"
 if echo "$WRITERS" | grep -q "alice" && echo "$WRITERS" | grep -q "bob"; then
@@ -455,8 +473,8 @@ print_info "Listing all permissions for bob..."
 python3 << 'PYTHON_LIST'
 import sys, os
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
-nx = RemoteNexusFS(os.getenv('NEXUS_URL', 'http://localhost:2026'), api_key=os.getenv('NEXUS_API_KEY'))
+import nexus
+nx = nexus.connect(config={"mode": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')})
 tuples = nx.rebac_list_tuples(subject=("user", "bob"))
 print(f"Bob has {len(tuples)} permission tuples:")
 for t in tuples[:5]:
@@ -483,8 +501,8 @@ print_test "Creating cycle: A→B→A should fail"
 python3 << 'PYTHON_CYCLE'
 import sys, os
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
-nx = RemoteNexusFS(os.getenv('NEXUS_URL', 'http://localhost:2026'), api_key=os.getenv('NEXUS_API_KEY'))
+import nexus
+nx = nexus.connect(config={"mode": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')})
 base = os.getenv('DEMO_BASE')
 try:
     nx.rebac_create(("file", f"{base}/cycleA"), "parent", ("file", f"{base}/cycleB"))
@@ -639,16 +657,17 @@ else
 fi
 
 print_subsection "8.2 Test cache invalidation on permission DELETE"
-# Get tuple ID
-TUPLE_ID=$(python3 -c "
+# Get tuple ID via Python SDK
+TUPLE_ID=$(python3 << PYTHON_TUPLE_ID
 import sys, os
 sys.path.insert(0, 'src')
-from nexus.remote.client import RemoteNexusFS
-nx = RemoteNexusFS(os.getenv('NEXUS_URL', 'http://localhost:2026'), api_key=os.getenv('NEXUS_API_KEY'))
+import nexus
+nx = nexus.connect(config={"mode": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')})
 tuples = nx.rebac_list_tuples(subject=('user', 'alice'), object=('file', '$DEMO_BASE/cache-test.txt'))
 print(tuples[0]['tuple_id'] if tuples else '')
 nx.close()
-")
+PYTHON_TUPLE_ID
+)
 
 print_test "Delete permission and check IMMEDIATELY (no manual cache clear)"
 nexus rebac delete "$TUPLE_ID"
@@ -665,7 +684,7 @@ fi
 print_section "9. Multi-Tenant Isolation"
 
 print_subsection "9.1 Create user in different tenant"
-TENANT_ACME_KEY=$(python3 scripts/create-api-key.py acme_user "ACME Corp User" --days 1 --tenant-id acme 2>/dev/null | grep "API Key:" | awk '{print $3}')
+TENANT_ACME_KEY=$(python3 scripts/create-api-key.py acme_user "ACME Corp User" --days 1 --zone-id acme 2>/dev/null | grep "API Key:" | awk '{print $3}')
 print_success "Created acme_user (tenant: acme)"
 print_info "Alice, Bob, Charlie are in tenant: default"
 

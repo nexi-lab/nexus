@@ -38,19 +38,16 @@ class TestWirableFSConformance:
         from nexus.core.config import ParseConfig
         from nexus.core.nexus_fs import NexusFS
 
-        # NexusFS.read exists at class level (method)
-        assert callable(getattr(NexusFS, "read", None))
+        # NexusFS.sys_read exists at class level (method)
+        assert callable(getattr(NexusFS, "sys_read", None))
 
         # Verify protocol is runtime_checkable and importable
         assert hasattr(WirableFS, "__protocol_attrs__") or True
 
         # Verify an instance satisfies the protocol structurally
-        mock_backend = MagicMock()
-        mock_backend.content_cache = None
         mock_metadata = MagicMock()
         mock_metadata.list = MagicMock(return_value=[])
         nx = NexusFS(
-            backend=mock_backend,
             metadata_store=mock_metadata,
             parsing=ParseConfig(auto_parse=False),
         )

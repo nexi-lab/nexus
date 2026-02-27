@@ -26,6 +26,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import (
     ConflictError,
     InvalidPathError,
@@ -165,7 +166,7 @@ def create_async_files_router(
             return OperationContext(
                 user_id="anonymous",
                 groups=[],
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
             )
         return get_operation_context(auth_result)
 
@@ -527,7 +528,7 @@ def create_async_files_router(
 
             def _full_generator() -> Iterator[bytes]:
                 """Sync generator wrapping NexusFS.read()."""
-                data = fs.read(path, context=context)
+                data = fs.sys_read(path, context=context)
                 if isinstance(data, bytes):
                     for i in range(0, len(data), chunk_size):
                         yield data[i : i + chunk_size]

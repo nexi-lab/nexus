@@ -12,7 +12,7 @@ Categories:
 from dataclasses import dataclass
 from typing import Any
 
-from nexus.constants import DEFAULT_OAUTH_REDIRECT_URI
+from nexus.contracts.constants import DEFAULT_OAUTH_REDIRECT_URI
 
 # ============================================================
 # 1. RPC-only field overrides
@@ -441,7 +441,25 @@ class SkillsListApprovalsParams:
 
 
 # ============================================================
-# 7. Namespace override (RPC name differs from method name)
+# 7. RemoteMetastore Parameters (metadata proxy for REMOTE profile)
+# ============================================================
+
+
+@dataclass
+class SetMetadataParams:
+    """Parameters for set_metadata() — store/update file metadata.
+
+    Called by RemoteMetastore.put() to persist DT_MOUNT entries and
+    metadata updates from the REMOTE deployment profile.
+    """
+
+    path: str
+    metadata: dict[str, Any] | None = None
+    consistency: str = "sc"
+
+
+# ============================================================
+# 8. Namespace override (RPC name differs from method name)
 # ============================================================
 
 
@@ -457,7 +475,7 @@ class NamespaceGetParams:
 # ============================================================
 
 OVERRIDE_METHOD_PARAMS: dict[str, type] = {
-    "read": ReadParams,
+    "sys_read": ReadParams,
     "oauth_get_auth_url": OAuthGetAuthUrlParams,
     "oauth_exchange_code": OAuthExchangeCodeParams,
     # Admin
@@ -504,4 +522,6 @@ OVERRIDE_METHOD_PARAMS: dict[str, type] = {
     "skills_list_approvals": SkillsListApprovalsParams,
     # Namespace
     "namespace_get": NamespaceGetParams,
+    # RemoteMetastore
+    "sys_setattr": SetMetadataParams,
 }

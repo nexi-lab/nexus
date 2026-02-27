@@ -18,7 +18,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from pydantic import BaseModel, Field
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +99,7 @@ async def get_snapshot_context(request: Request) -> tuple[Any, str, str | None]:
     if snapshot_service is None:
         raise HTTPException(status_code=503, detail="Snapshot service not available")
 
-    zone_id = "root"
+    zone_id = ROOT_ZONE_ID
     agent_id = None
 
     # Lazy import to avoid circular dependencies

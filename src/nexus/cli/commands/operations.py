@@ -4,8 +4,6 @@ CAS-backed operation logging for all filesystem operations.
 Provides audit trail, undo capability, and debugging support.
 """
 
-from __future__ import annotations
-
 import click
 from rich.table import Table
 

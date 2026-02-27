@@ -61,7 +61,6 @@ class NexusAppState:
     brick_lifecycle_manager: Any = None
     brick_reconciler: Any = None
     eviction_manager: Any = None
-    scoped_hook_engine: Any = None
 
     # === Database sessions ===
     async_session_factory: Any = None
@@ -123,7 +122,9 @@ class NexusAppState:
 
     # === A2A ===
     a2a_task_manager: Any = None
-    a2a_grpc_server: Any = None
+
+    # === gRPC server (#1249) ===
+    grpc_server: Any = None
 
     # === Exposed methods ===
     exposed_methods: dict[str, Any] = field(default_factory=dict)
@@ -194,4 +195,3 @@ def _flatten_nexus_fs(app: "FastAPI", nexus_fs: Any) -> None:
         app.state.brick_lifecycle_manager = getattr(_sys, "brick_lifecycle_manager", None)
         app.state.brick_reconciler = getattr(_sys, "brick_reconciler", None)
         app.state.eviction_manager = getattr(_sys, "eviction_manager", None)
-        app.state.scoped_hook_engine = getattr(_sys, "scoped_hook_engine", None)

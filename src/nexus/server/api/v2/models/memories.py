@@ -29,6 +29,7 @@ class MemoryStoreRequest(ApiModel):
     valid_at: str | None = Field(None, description="When fact became valid (ISO-8601)")
     classify_stability: bool = Field(True, description="Auto-classify temporal stability")
     detect_evolution: bool = Field(False, description="Detect evolution relationships (#1190)")
+    generate_embedding: bool = Field(True, description="Generate embedding for semantic search")
     metadata: dict[str, Any] | None = Field(None, description="Additional metadata")
 
 

@@ -23,7 +23,7 @@ Related: Issue #1459 (decomposition), Issue #773 (zone isolation)
 
 import logging
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.rebac_types import CROSS_ZONE_ALLOWED_RELATIONS
 
 logger = logging.getLogger(__name__)

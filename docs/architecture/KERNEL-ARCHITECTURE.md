@@ -90,7 +90,7 @@ not by domain or implementation.
 | **Metastore** | `MetastoreABC` | Ordered KV, CAS, prefix scan, optional Raft SC | **Required** — sole kernel init param |
 | **ObjectStore** | `ObjectStoreABC` (= `Backend`) | Streaming I/O, immutable blobs, petabyte scale | **Interface only** — instances mounted dynamically |
 | **RecordStore** | `RecordStoreABC` | Relational ACID, JOINs, FK, vector search | **Services only** — optional, injected for ReBAC/Auth/etc. |
-| **CacheStore** | `CacheStoreABC` | Ephemeral KV, Pub/Sub, TTL | **Optional** — ABC in `contracts/` (like `include/linux/fscache.h`), kernel accepts via DI, services consume; defaults to `NullCacheStore` |
+| **CacheStore** | `CacheStoreABC` | Ephemeral KV, Pub/Sub, TTL | **Optional** — kernel defines ABC, services consume; defaults to `NullCacheStore` |
 
 **Orthogonality:** Between pillars = different query patterns. Within pillars = interchangeable
 drivers (deployment-time config). See `data-storage-matrix.md` for full proof.
@@ -133,7 +133,7 @@ See `ops-scenario-matrix.md` for full Ops-Scenario affinity proof.
 
 ---
 
-## 3. Kernel vs Services Boundary
+## 3. Kernel Interfaces & Primitives
 
 ### Kernel Interfaces (`nexus.core`)
 
@@ -142,12 +142,21 @@ See `ops-scenario-matrix.md` for full Ops-Scenario affinity proof.
 | `MetastoreABC` | `struct inode_operations` | Typed FileMetadata CRUD (the inode layer) |
 | `VFSRouterProtocol` | VFS `lookup_slow()` | Path resolution only — mount CRUD lives in Service `MountProtocol` |
 | `ObjectStoreABC` (= `Backend`) | `struct file_operations` | Blob I/O interface (read/write/delete/list) |
-| `CacheStoreABC` | `include/linux/fscache.h` | Ephemeral KV + Pub/Sub primitives — ABC in `contracts/`, kernel accepts optionally, services/bricks consume |
+| `CacheStoreABC` | (no direct analogue) | Ephemeral KV + Pub/Sub primitives |
 | `VFSLockManagerProtocol` | per-inode `i_rwsem` | Path-level RW locking with hierarchy awareness |
 | `PipeManagerProtocol` | `pipe(2)` + `fs/pipe.c` | Named pipe lifecycle + MPMC data path (see §6 Kernel Tier) |
+| VFS dispatch | `file->f_op` + `security_hook_heads` + `fsnotify` | Three-phase dispatch at VFS operation points (see §3 VFS Dispatch) |
 
 `MetastoreABC` is kernel because it IS the inode layer — the typed contract
 between VFS and storage. Without it, the kernel cannot describe files.
+
+`VFSLockManager` (`core/lock_fast.py`) provides rwsem semantics with hierarchical
+ancestor/descendant conflict detection. Rust-accelerated (PyO3), Python fallback.
+Distinct from service-layer advisory locking (LockProtocol / `ops-scenario-matrix.md` S9).
+
+> **Gap:** VFSLockManager is created in `NexusFS.__init__` but not yet wired into the
+> write path. Intent: local coroutine concurrency lock, complementing the distributed
+> RaftLockManager — like Linux `i_rwsem` (local) coexisting with `flock(2)` (distributed).
 
 ### NexusFS — Syscall Dispatch Layer
 
@@ -157,14 +166,93 @@ user-facing operations (read, write, list, mkdir, mount). NexusFS contains
 **no service business logic** — services are accessed through `ServiceRegistry`
 (Phase 2) or thin delegation stubs (Phase 1).
 
-`factory.py` is the init system (analogous to systemd): constructs kernel + drivers
-+ services and wires them together. NexusFS receives pre-built dependencies via its
-constructor and never auto-creates services.
+The published user-facing contract is `NexusFilesystemABC` (in `contracts/filesystem/`) —
+a composed ABC of 7 sub-ABCs (FileOps, Discovery, DirectoryOps, Workspace, Memory, Sandbox,
+Lifecycle). `connect()` returns this type. Relationship: POSIX spec (contract) vs Linux kernel
+(implementation) — clients program against the contract, kernel implements it.
+
+`NexusFS` contains the VFS operation implementations directly (like `vfs_read`,
+`vfs_write` in Linux). Permission checking flows through KernelDispatch
+INTERCEPT hooks (LSM pattern), not kernel attributes.
+
+`factory.py` is the init system (analogous to systemd): constructs drivers
++ services and wires them together. NexusFS creates its own kernel
+infrastructure (dispatch, locks, pipes) with empty callback lists, and
+receives external dependencies (drivers, services) via constructor DI.
+Factory registers callbacks into kernel-owned infrastructure at boot —
+like Linux `security_init()` creates empty `security_hook_heads`, then
+LSM modules call `security_add_hooks()` to populate them.
 
 > *Resolved:* Event mixins fully extracted — `NexusFSEventsMixin` removed (#573),
 > `FileWatcher` moved to `services/watch/` (#706), orphaned kernel attrs cleaned (#656).
 > `_wire_services()` deleted — all service creation moved to `factory._boot_wired_services()` (#643).
 > Remaining: replace `KernelServices` dataclass with `ServiceRegistry`.
+
+### Kernel VFS Dispatch
+
+The kernel provides callback-based dispatch at VFS operation points (read,
+write, delete, rename, mkdir, rmdir). Like Linux's `security_hook_heads` and
+`fsnotify_group`, these are kernel-internal callback lists.
+
+**Decision (Issue #625):** Kernel **owns** dispatch infrastructure — creates
+`KernelDispatch` with empty callback lists at init. Factory **registers**
+callbacks into kernel-owned dispatch at boot. Empty lists = no-op dispatch
+= kernel operates with zero services.
+
+Three-phase dispatch per VFS operation:
+
+| Phase | Semantics | Short-circuit? | Linux Analogue | Mechanism |
+|-------|-----------|----------------|----------------|-----------|
+| **PRE-DISPATCH** | First-match short-circuit | Yes (skips pipeline) | VFS `file->f_op` dispatch (procfs, sysfs) | `KernelDispatch.resolve_*()` |
+| **INTERCEPT** | Synchronous, ordered (pre + post) | Yes (abort/policy) | LSM security hooks | `intercept_pre_*()` / `intercept_post_*()` |
+| **OBSERVE** | Fire-and-forget | No | `fsnotify()` / `notifier_call_chain()` | `KernelDispatch.notify()` |
+
+**Implementation** (`core/kernel_dispatch.py`, Issues #900, #889):
+
+`KernelDispatch` is a single class that owns all three phases.
+
+PRE-DISPATCH (Issue #889) resolves virtual path operations before the
+normal VFS pipeline runs. Registered `VFSPathResolver` instances are
+checked in order; the first whose `matches(path)` returns True handles
+the entire operation (read/write/delete). Each resolver owns its own
+permission semantics — like procfs has `proc_pid_permission` separate
+from ext4's `ext4_permission`. Current resolvers: `MemoryIOHandler`
+(memory virtual paths), `VirtualViewResolver` (parsed views like
+`report_parsed.pdf.md`). Empty resolver chain = no-op = zero overhead.
+
+INTERCEPT phase dispatches registered interceptor hooks — per-operation
+hook lists (`register_intercept_read/write/delete/rename/mkdir/rmdir`).
+Hooks can modify context (e.g. filter CSV columns, update cache bitmaps).
+The audit write observer is a factory-registered interceptor, not a kernel
+built-in; its error policy (abort vs log-and-continue) is observer-level
+config, not dispatch-level.
+
+OBSERVE phase broadcasts a frozen `FileEvent` to all registered
+`VFSObserver` instances. `FileEvent` is the single kernel-defined I/O
+event type — used by both OBSERVE (local, fire-and-forget) and EventBus
+(distributed delivery). Analogous to Linux `fsnotify_event`.
+Used for cache invalidation, workflow triggers, telemetry.
+Failures logged, never abort.
+
+**Contracts:**
+- `FileEvent`/`FileEventType` in `core/file_events.py` (kernel-defined data type).
+- `VFSPathResolver` — PRE-DISPATCH protocol for virtual path resolvers
+  (in `contracts/vfs_hooks.py`).
+- Hook protocols (`VFSReadHook`, `VFSWriteHook`, etc.), context dataclasses
+  (`ReadHookContext`, `WriteHookContext`, etc.), `VFSObserver` — in
+  `contracts/vfs_hooks.py` (tier-neutral, like `include/linux/notifier.h`).
+- Concrete implementations in `services/hooks/` (policy, like SELinux/AppArmor).
+
+**Registration API** (factory registers at boot):
+- `dispatch.register_resolver(resolver)` — PRE-DISPATCH resolvers (first-match)
+- `dispatch.register_intercept_read(hook)` — INTERCEPT hooks (per-operation)
+- `dispatch.register_observe(observer)` — OBSERVE observers (all mutations)
+
+**Distinction from HookEngineProtocol (S15/P17):** The kernel notification
+dispatch is an internal mechanism — always-on infrastructure that dispatches
+at operation points. `HookEngineProtocol` is the service-layer API for
+plugin/user hook registration (like netfilter userspace config) — an optional
+service brick that sits above kernel dispatch.
 
 ### Service Protocols (`nexus.services.protocols`)
 
@@ -226,6 +314,7 @@ They must **never** import from: `nexus.core`, `nexus.services`, `nexus.server`,
 | `Base`, `TimestampMixin` (ORM base/mixins) | `lib/db_base.py` | Schema helpers with implementation (uuid gen, server_default) |
 | `EmailList`, `ISODateTimeStr` (Pydantic Annotated) | `lib/validators.py` | Annotated types with validation logic |
 | `get_database_url()` (env var resolution) | `lib/env.py` | Implementation helper |
+| `NexusFilesystemABC` (composed ABC) | `contracts/filesystem/` | Published user-facing API contract (`connect()` return type) |
 | `path_matches_pattern()` (glob matching) | `lib/path_utils.py` | Pure utility function |
 | `PathInterner`, `SegmentedPathInterner` (string interning) | `lib/path_interner.py` | Generic utility (like `lib/string.c` in Linux) |
 | `is_os_metadata_file()` (OS file filter) | `fuse/filters.py` | Single-layer (FUSE only) |
@@ -269,12 +358,19 @@ the same codebase. Two orthogonal axes:
 
 | Profile | Target | Bricks | Linux Analogue |
 |---------|--------|--------|----------------|
+| **minimal** | Bare minimum runnable (Issue #2194) | 1 (storage only) | initramfs |
 | **embedded** | MCU, WASM (<1 MB) | 2 (storage + eventlog) | BusyBox |
 | **lite** | Pi, Jetson, mobile (512 MB-4 GB) | 8 (+namespace, agent, permissions, cache, ipc, scheduler) | Alpine |
 | **full** | Desktop, laptop (4-32 GB) | 21 (all except federation) | Ubuntu Desktop |
 | **cloud** | k8s, serverless (unlimited) | 22 (all) | Ubuntu Server |
+| **remote** | Client-side proxy (Issue #844) | 0 (zero local bricks) | NFS client |
 
-Profile hierarchy: `embedded ⊂ lite ⊂ full ⊆ cloud`
+Profile hierarchy: `minimal ⊂ embedded ⊂ lite ⊂ full ⊆ cloud`
+
+REMOTE is orthogonal — not in the hierarchy. It has zero local bricks because all
+operations proxy to a remote server via `RemoteBackend`. The client runs the same
+NexusFS kernel with `RemoteMetastore` (stateless proxy to server SSOT) + `PathRouter`
+(local path resolution) + `RemoteBackend` mounted at `/`. Same class, different components.
 
 **Mechanism:** `factory.py` (the init system) resolves the active profile via
 `NEXUS_PROFILE` env var -> `DeploymentProfile` enum -> `resolve_enabled_bricks()`
@@ -283,17 +379,22 @@ Profile hierarchy: `embedded ⊂ lite ⊂ full ⊆ cloud`
 construction. Individual brick overrides via `FeaturesConfig` YAML always win over
 profile defaults.
 
-**Source of truth:** `src/nexus/core/deployment_profile.py` (22 canonical brick names,
-4 profile-to-brick mappings, `resolve_enabled_bricks()` merge function).
+**Source of truth:** `src/nexus/contracts/deployment_profile.py` (22 canonical brick names,
+6 profile-to-brick mappings, `resolve_enabled_bricks()` merge function).
 
 ### 5.2 Network Modes
 
 | Mode | Description | Metastore | Services |
 |------|-------------|-----------|----------|
 | **Standalone** | Single process, local storage | redb (local) | Optional |
-| **Client-Server** | RemoteNexusFS connects to a NexusFS server | redb (local) on server | On server |
+| **Remote** | NexusFS(profile=REMOTE) with RemoteBackend | RemoteMetastore (stateless proxy) | Zero (server-side) |
 | **Federation** | Multiple nodes sharing zones via Raft | redb (Raft) | Per-node |
-| **Embedded** | Minimal kernel on constrained devices | redb (local) | None (profile: embedded) |
+
+Remote mode uses the same NexusFS class as standalone — not a separate remote client class.
+`RemoteMetastore` is a stateless proxy — all metadata queries go directly to the server
+(SSOT), no local cache or invalidation. `PathRouter` resolves mount paths locally,
+actual I/O goes to the server via `RemoteBackend`.
+This is the NFS-client model: same VFS kernel, remote storage backend.
 
 Driver selection is config-time: same binary, different `NEXUS_METASTORE`, `NEXUS_RECORD_STORE`, etc.
 
@@ -313,7 +414,31 @@ Three tiers, mirroring Linux's kernel → system → user space communication:
 
 **Selection rule:** Consensus write path → System (gRPC, 1:1). Agent-to-agent messaging → System (IPC, 1:1 queue). Notification read path → User Space (EventBus, 1:N fan-out to 100s of observers). Internal signaling → Kernel (Pipe, zero-copy).
 
-See `federation-memo.md` §7j for Pipe design.
+### Kernel Tier: Native Pipes
+
+Two-layer pipe architecture (matches Linux `kfifo` + `fs/pipe.c`):
+
+```
+┌─────────────────────────────────────────┐
+│ PipeManager (core/pipe_manager.py)      │  ← fs/pipe.c: VFS named pipe
+│   mkpipe() / destroy() / pipe_read()   │     lifecycle, per-pipe lock (MPMC)
+│   DT_PIPE inode in MetastoreABC        │
+├─────────────────────────────────────────┤
+│ RingBuffer (core/pipe.py)              │  ← kfifo: kernel-internal SPSC
+│   write_nowait() / read_nowait()       │     deque + asyncio.Event pair
+│   Process heap memory (no pillar)      │
+└─────────────────────────────────────────┘
+```
+
+- **Inode** (DT_PIPE FileMetadata) in MetastoreABC — VFS path visibility, ReBAC, observability
+- **Data** (bytes in ring buffer) in process heap — like Linux `kmalloc`'d pipe buffer
+- **SPSC → MPMC**: RingBuffer is lock-free SPSC (GIL-atomic). PipeManager wraps with
+  per-pipe `asyncio.Lock` for MPMC safety using lock→try→unlock→wait→retry (deadlock-free).
+
+Services depend on `PipeManagerProtocol` (defined in `core/pipe_manager.py`,
+matching `VFSLockManagerProtocol` pattern). Kernel creates the concrete `PipeManager`.
+
+See `federation-memo.md` §7j for Pipe design rationale.
 
 ### System Tier
 
@@ -327,21 +452,15 @@ IPC for agent messaging — 1:1 queue semantics using VFS as transport.
 
 `EventBusProtocol` (service protocol in `nexus.services.event_bus.protocol`) provides
 pub/sub for file system change notifications. Kernel defines only the event data types
-(`FileEvent`, `FileEventType` in `nexus.core.event_bus`).
+(`FileEvent`, `FileEventType` in `nexus.core.file_events`).
 
 Linux analogue: `dbus-daemon` (1:N broadcast). Consumed by `WatchProtocol` (S8) and
 `EventLogProtocol` (S17). Backends: Redis/Dragonfly (current default), NATS JetStream
 (preferred long-term). All should route through `CacheStoreABC` pub/sub.
+Target: EventBus delivery registered as `VFSObserver` on `KernelDispatch`, replacing
+`_publish_file_event()` direct calls (#969).
 
 **Federation gap:** EventBus is currently zone-local. Cross-zone event propagation not yet designed.
-
----
-
-## 7. RecordStoreABC Pattern
-
-Services consume `RecordStoreABC.session_factory` + SQLAlchemy ORM.
-Direct SQL or raw driver access is an abstraction break.
-This ensures driver interchangeability (PostgreSQL ↔ SQLite) without code changes.
 
 ---
 

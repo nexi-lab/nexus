@@ -44,8 +44,6 @@ from google.adk import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types as genai_types
 
-import nexus
-
 
 def connect_to_nexus(tenant_id: str = "adk-demo", agent_id: str = "file-agent"):
     """
@@ -63,13 +61,13 @@ def connect_to_nexus(tenant_id: str = "adk-demo", agent_id: str = "file-agent"):
     api_key = os.getenv("NEXUS_API_KEY")
 
     if server_url:
-        from nexus.remote import RemoteNexusFS
+        import nexus
 
         print(f"Connecting to Nexus server at {server_url}...")
         print(f"  Tenant: {tenant_id}")
         print(f"  Agent: {agent_id}")
 
-        nx = RemoteNexusFS(server_url=server_url, api_key=api_key)
+        nx = nexus.connect(config={"mode": "remote", "url": server_url, "api_key": api_key})
         nx.tenant_id = tenant_id
         nx.agent_id = agent_id
         print("✓ Connected to Nexus server")
@@ -188,7 +186,7 @@ def create_nexus_tools(nx):
             - read_file("/scripts/large.py", preview_only=True) → First 100 lines
         """
         try:
-            content = nx.read(path)
+            content = nx.sys_read(path)
 
             # Handle bytes
             if isinstance(content, bytes):
@@ -225,9 +223,9 @@ def create_nexus_tools(nx):
         """
         try:
             content_bytes = content.encode("utf-8") if isinstance(content, str) else content
-            nx.write(path, content_bytes)
+            nx.sys_write(path, content_bytes)
 
-            if nx.exists(path):
+            if nx.sys_access(path):
                 return f"Successfully wrote {len(content_bytes)} bytes to {path}"
             else:
                 return f"Error: Failed to write file {path}"
@@ -309,7 +307,7 @@ class DataProcessor:
 
     print(f"Creating {len(test_files)} test Python files...")
     for path, content in test_files.items():
-        nx.write(path, content.encode("utf-8"))
+        nx.sys_write(path, content.encode("utf-8"))
         print(f"✓ Created: {path}")
 
     print("\n✓ Test data setup complete!")
@@ -329,7 +327,7 @@ def cleanup_test_data(nx, test_files):
             print(f"  - {path}")
         print("\nTo clean up manually:")
         print(
-            f'  python -c "import nexus; nx = nexus.connect(); [nx.delete(p) for p in {list(test_files)}]"'
+            f'  python -c "import nexus; nx = nexus.connect(); [nx.sys_unlink(p) for p in {list(test_files)}]"'
         )
         return
 
@@ -338,14 +336,14 @@ def cleanup_test_data(nx, test_files):
     print("=" * 70)
     for path in test_files:
         try:
-            nx.delete(path)
+            nx.sys_unlink(path)
             print(f"✓ Deleted: {path}")
         except Exception as e:
             print(f"⚠ Could not delete {path}: {e}")
 
     # Clean up reports directory
     try:
-        nx.delete("/reports/async-patterns.md")
+        nx.sys_unlink("/reports/async-patterns.md")
         print("✓ Deleted: /reports/async-patterns.md")
     except Exception:
         pass

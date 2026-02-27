@@ -39,27 +39,23 @@ class TestFullRoundTrip:
     def test_write_read_delete_cycle(self, backend: IsolatedBackend) -> None:
         data = b"integration-roundtrip"
         wr = backend.write_content(data)
-        assert wr.success is True
+        assert wr.content_hash  # WriteResult with content_hash
 
-        rd = backend.read_content(wr.data)
-        assert rd.success is True
-        assert rd.data == data
+        rd = backend.read_content(wr.content_hash)
+        assert rd == data
 
-        dl = backend.delete_content(wr.data)
-        assert dl.success is True
+        backend.delete_content(wr.content_hash)
 
-        ex = backend.content_exists(wr.data)
-        assert ex.data is False
+        ex = backend.content_exists(wr.content_hash)
+        assert ex is False
 
     def test_directory_operations(self, backend: IsolatedBackend) -> None:
-        mk = backend.mkdir("/integration-dir", exist_ok=True)
-        assert mk.success is True
+        backend.mkdir("/integration-dir", exist_ok=True)
 
         is_dir = backend.is_directory("/integration-dir")
-        assert is_dir.data is True
+        assert is_dir is True
 
-        rm = backend.rmdir("/integration-dir")
-        assert rm.success is True
+        backend.rmdir("/integration-dir")
 
 
 class TestLargeContent:
@@ -67,12 +63,11 @@ class TestLargeContent:
         """1MB content passes through the isolation boundary correctly."""
         data = b"X" * (1024 * 1024)
         wr = backend.write_content(data)
-        assert wr.success is True
+        assert wr.content_hash
 
-        rd = backend.read_content(wr.data)
-        assert rd.success is True
-        assert len(rd.data) == len(data)
-        assert rd.data == data
+        rd = backend.read_content(wr.content_hash)
+        assert len(rd) == len(data)
+        assert rd == data
 
 
 class TestConcurrentRequests:
@@ -81,11 +76,11 @@ class TestConcurrentRequests:
         # Write one piece of content
         data = b"concurrent-test"
         wr = backend.write_content(data)
-        content_hash = wr.data
+        content_hash = wr.content_hash
 
         def read_one(_: int) -> bool:
             rd = backend.read_content(content_hash)
-            return rd.success and rd.data == data
+            return rd == data
 
         with ThreadPoolExecutor(max_workers=5) as tp:
             results = list(tp.map(read_one, range(10)))
@@ -111,16 +106,18 @@ class TestPoolRestartRecovery:
                         pass
                 # Pool should have restarted — next valid call should work
                 wr = backend.write_content(b"after-restart")
-                assert wr.success is True
+                assert wr.content_hash  # WriteResult with content_hash
             finally:
                 backend.disconnect()
 
 
 class TestShutdownAndReconnect:
     def test_disconnect_then_error(self) -> None:
-        """After disconnect, calls return error (not crash)."""
+        """After disconnect, calls raise BackendError (not crash)."""
+        from nexus.contracts.exceptions import BackendError
+
         with tempfile.TemporaryDirectory() as td:
             b = IsolatedBackend(_cfg(backend_kwargs={"storage_dir": td + "/store"}))
             b.disconnect()
-            resp = b.write_content(b"after-shutdown")
-            assert resp.success is False
+            with pytest.raises(BackendError):
+                b.write_content(b"after-shutdown")

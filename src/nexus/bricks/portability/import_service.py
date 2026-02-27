@@ -26,6 +26,7 @@ from nexus.bricks.portability.models import (
     PermissionRecord,
     ZoneImportOptions,
 )
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from nexus.contracts.portability_types import PortabilityFSProtocol
@@ -331,7 +332,7 @@ class ZoneImportService:
             try:
                 # Use system context for import (privileged operation)
                 import_context = _create_import_context()
-                write_result = self.nexus_fs.write(
+                write_result = self.nexus_fs.sys_write(
                     path=remapped_path,
                     content=content,
                     context=import_context,
@@ -565,7 +566,7 @@ class ZoneImportService:
                     object_id = options.remap_path(object_id)
 
                 # Determine target zone
-                target_zone = options.target_zone_id or "root"
+                target_zone = options.target_zone_id or ROOT_ZONE_ID
 
                 # Write tuple to ReBAC
                 rebac_manager.rebac_write(

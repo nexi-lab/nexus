@@ -7,6 +7,7 @@ managed by a ``StreamRegistry`` (injected via DI).
 
 import logging
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -26,14 +27,16 @@ from nexus.bricks.a2a.models import (
     TaskStatusUpdateEvent,
     is_valid_transition,
 )
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
+
+# Callback type: (artifact, task_id, zone_id) -> None
+ArtifactCallback = Callable[[Any, str, str], Awaitable[None]]
 
 if TYPE_CHECKING:
     import asyncio
 
     from nexus.bricks.a2a.stream_registry import StreamRegistry
     from nexus.bricks.a2a.task_store import TaskStoreProtocol
-    from nexus.services.protocols.hook_engine import HookEngineProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +59,7 @@ class TaskManager:
         self,
         store: "TaskStoreProtocol | None" = None,
         stream_registry: "StreamRegistry | None" = None,
-        hook_engine: "HookEngineProtocol | None" = None,
+        artifact_observers: "list[ArtifactCallback] | None" = None,
     ) -> None:
         if store is not None:
             self._store: TaskStoreProtocol = store
@@ -73,7 +76,7 @@ class TaskManager:
 
             self._stream_registry = _SR()
 
-        self._hook_engine = hook_engine
+        self._artifact_observers = artifact_observers or []
 
     @property
     def stream_registry(self) -> "StreamRegistry":
@@ -246,8 +249,8 @@ class TaskManager:
         """Add an artifact to a task.
 
         Pushes an artifact update event to any active SSE streams,
-        then fires ``post_artifact_create`` / ``post_artifact_update``
-        hooks for downstream indexing (Issue #1861).
+        then notifies artifact observers for downstream indexing
+        (Issue #1861).
         """
         task = await self._store.get(task_id, zone_id=zone_id)
         if task is None:
@@ -264,27 +267,12 @@ class TaskManager:
         )
         self._stream_registry.push_event(task_id, {"artifactUpdate": event.model_dump(mode="json")})
 
-        # Fire artifact indexing hooks (Issue #1861)
-        if self._hook_engine is not None:
-            from nexus.services.protocols.hook_engine import (
-                POST_ARTIFACT_CREATE,
-                POST_ARTIFACT_UPDATE,
-                HookContext,
-            )
-
-            phase = POST_ARTIFACT_CREATE if append else POST_ARTIFACT_UPDATE
-            hook_ctx = HookContext(
-                phase=phase,
-                path=None,
-                zone_id=zone_id,
-                agent_id=None,
-                payload={
-                    "artifact": artifact,
-                    "task_id": task_id,
-                    "zone_id": zone_id,
-                },
-            )
-            await self._hook_engine.fire(phase, hook_ctx)
+        # Notify artifact observers (Issue #1861)
+        for _obs in self._artifact_observers:
+            try:
+                await _obs(artifact, task_id, zone_id)
+            except Exception as exc:
+                logger.warning("Artifact observer failed: %s", exc)
 
         return task
 

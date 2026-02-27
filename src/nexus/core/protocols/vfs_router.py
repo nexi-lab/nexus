@@ -1,18 +1,21 @@
 """VFS router kernel protocol (Issue #1383).
 
 Defines the contract for virtual path routing to storage backends.
-Existing implementation: ``nexus.core.router.PathRouter`` (sync).
+Existing implementation: ``nexus.core.router.PathRouter`` (sync, metastore-backed).
 
 References:
     - docs/architecture/KERNEL-ARCHITECTURE.md §3
     - Issue #1383: Define 6 kernel protocol interfaces
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from nexus.core.protocols.connector import ConnectorProtocol
+    from nexus.core.object_store import ObjectStoreABC
+
 
 @dataclass(frozen=True, slots=True)
 class ResolvedPath:
@@ -26,14 +29,13 @@ class ResolvedPath:
         backend_path: Path relative to the matched backend root.
         mount_point: The mount point that matched.
         readonly: Whether the mount is read-only.
-        zone_id: Zone/organization ID associated with the route.
     """
 
     virtual_path: str
     backend_path: str
     mount_point: str
     readonly: bool
-    zone_id: str | None
+
 
 @dataclass(frozen=True, slots=True)
 class MountInfo:
@@ -44,41 +46,43 @@ class MountInfo:
 
     Attributes:
         mount_point: Virtual path prefix (e.g. "/workspace").
-        priority: Mount priority (higher = preferred on overlap).
         readonly: Whether the mount is read-only.
+        admin_only: Whether the mount requires admin privileges.
     """
 
     mount_point: str
-    priority: int
     readonly: bool
+    admin_only: bool = False
+
 
 @runtime_checkable
 class VFSRouterProtocol(Protocol):
     """Kernel contract for virtual path routing.
 
-    All methods are async.  The existing ``PathRouter`` (sync) conforms once
-    wrapped with an async adapter.
+    All methods are sync — metastore-backed PathRouter reads are ~5 μs
+    via redb's Rust in-memory cache. No async overhead needed.
     """
 
-    async def route(
+    def route(
         self,
         virtual_path: str,
         *,
-        zone_id: str | None = None,
         is_admin: bool = False,
         check_write: bool = False,
     ) -> ResolvedPath: ...
 
-    async def add_mount(
+    def add_mount(
         self,
         mount_point: str,
-        backend: "ConnectorProtocol",
+        backend: ObjectStoreABC,
         *,
-        priority: int = 0,
         readonly: bool = False,
+        admin_only: bool = False,
         io_profile: str = "balanced",
     ) -> None: ...
 
-    async def remove_mount(self, mount_point: str) -> bool: ...
+    def remove_mount(self, mount_point: str) -> bool: ...
 
-    async def list_mounts(self) -> list[MountInfo]: ...
+    def list_mounts(self) -> list[MountInfo]: ...
+
+    def get_mount_points(self) -> list[str]: ...

@@ -31,7 +31,6 @@ from nexus.services.protocols.brick_lifecycle import (
     BrickState,
     ZoneState,
 )
-from nexus.services.protocols.hook_engine import HookEngineProtocol, HookResult
 from nexus.system_services.lifecycle.brick_lifecycle import BrickLifecycleManager
 
 # ---------------------------------------------------------------------------
@@ -129,17 +128,6 @@ def _build_dag_bricks(
         names.append(name)
 
     return names
-
-
-def _make_mock_hook_engine() -> MagicMock:
-    """Create a mock HookEngineProtocol that always proceeds."""
-    engine = AsyncMock(spec=HookEngineProtocol)
-    engine.fire = AsyncMock(
-        return_value=HookResult(proceed=True, modified_context=None, error=None)
-    )
-    engine.register_hook = AsyncMock(return_value=MagicMock(id="hook-1"))
-    engine.unregister_hook = AsyncMock(return_value=True)
-    return engine
 
 
 # ---------------------------------------------------------------------------
@@ -517,68 +505,7 @@ class TestDAGOrderingAtScale:
 
 
 # ---------------------------------------------------------------------------
-# 9. TestHookIntegrationOverhead
-# ---------------------------------------------------------------------------
-
-
-class TestHookIntegrationOverhead:
-    """Benchmark mount_all with and without hook engine to measure overhead."""
-
-    def test_mount_all_without_hooks(self, loop: asyncio.AbstractEventLoop) -> None:
-        """Baseline: mount_all(100) without hook engine."""
-        manager = BrickLifecycleManager()
-        _build_dag_bricks(manager, 100, levels=5)
-
-        t0 = time.perf_counter()
-        report = loop.run_until_complete(manager.mount_all())
-        elapsed_ms = (time.perf_counter() - t0) * 1000
-
-        assert report.active == 100
-        assert elapsed_ms < BUDGET_MOUNT_ALL_100_MS
-
-    def test_mount_all_with_hooks(self, loop: asyncio.AbstractEventLoop) -> None:
-        """mount_all(100) with mock hook engine (fires 2 hooks per brick)."""
-        engine = _make_mock_hook_engine()
-        manager = BrickLifecycleManager(hook_engine=engine)
-        _build_dag_bricks(manager, 100, levels=5)
-
-        t0 = time.perf_counter()
-        report = loop.run_until_complete(manager.mount_all())
-        elapsed_ms = (time.perf_counter() - t0) * 1000
-
-        assert report.active == 100
-        # PRE_MOUNT + POST_MOUNT per brick = 200 calls
-        assert engine.fire.call_count == 200
-        assert elapsed_ms < BUDGET_MOUNT_ALL_100_MS
-
-    def test_hook_overhead_bounded(self, loop: asyncio.AbstractEventLoop) -> None:
-        """Hook overhead is < 50% of the no-hook baseline."""
-        # Without hooks
-        manager_no_hooks = BrickLifecycleManager()
-        _build_dag_bricks(manager_no_hooks, 100, levels=5)
-        t0 = time.perf_counter()
-        loop.run_until_complete(manager_no_hooks.mount_all())
-        time_no_hooks = time.perf_counter() - t0
-
-        # With hooks
-        engine = _make_mock_hook_engine()
-        manager_with_hooks = BrickLifecycleManager(hook_engine=engine)
-        _build_dag_bricks(manager_with_hooks, 100, levels=5)
-        t0 = time.perf_counter()
-        loop.run_until_complete(manager_with_hooks.mount_all())
-        time_with_hooks = time.perf_counter() - t0
-
-        # Overhead ratio — allow generous margin since mock overhead is included
-        if time_no_hooks > 0:
-            overhead_ratio = (time_with_hooks - time_no_hooks) / max(time_no_hooks, 1e-9)
-            assert overhead_ratio < 1.5, (
-                f"Hook overhead {overhead_ratio:.1%} exceeds 150% of baseline "
-                f"(no_hooks={time_no_hooks * 1000:.1f}ms, with_hooks={time_with_hooks * 1000:.1f}ms)"
-            )
-
-
-# ---------------------------------------------------------------------------
-# 10. TestHealthReportAtScale
+# 9. TestHealthReportAtScale
 # ---------------------------------------------------------------------------
 
 
@@ -605,7 +532,7 @@ class TestHealthReportAtScale:
 
 
 # ---------------------------------------------------------------------------
-# 11. TestZoneDeprovisionAtScale
+# 10. TestZoneDeprovisionAtScale
 # ---------------------------------------------------------------------------
 
 

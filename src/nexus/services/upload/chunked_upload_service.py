@@ -17,9 +17,8 @@ import zlib
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import (
-    BackendError,
     UploadChecksumMismatchError,
     UploadExpiredError,
     UploadNotFoundError,
@@ -585,16 +584,11 @@ class ChunkedUploadService:
         from nexus.core.hash_fast import hash_content
 
         chunk_hash = hash_content(data)
-        response = await asyncio.to_thread(self._backend.write_content, data)
-        if not response.success:
-            raise BackendError(
-                f"Failed to store chunk {part_number} for upload {session.upload_id}",
-                backend=getattr(self._backend, "name", "unknown"),
-            )
+        result = await asyncio.to_thread(self._backend.write_content, data)
         return {
             "etag": chunk_hash,
             "part_number": part_number,
-            "content_hash": response.data,
+            "content_hash": result.content_hash,
         }
 
     async def _assemble_and_write(
@@ -627,25 +621,14 @@ class ChunkedUploadService:
             for part_info in sorted_parts:
                 part_hash = part_info.get("content_hash")
                 if part_hash:
-                    response = await asyncio.to_thread(self._backend.read_content, part_hash)
-                    if response.success and response.data:
-                        assembled.extend(response.data)
-                    else:
-                        raise BackendError(
-                            f"Failed to read chunk {part_info['part_number']}",
-                            backend=getattr(self._backend, "name", "unknown"),
-                        )
+                    content = await asyncio.to_thread(self._backend.read_content, part_hash)
+                    assembled.extend(content)
 
             # Write assembled content
             content = bytes(assembled)
             _write = self._backend.write_content
-            response = await asyncio.to_thread(_write, content)  # type: ignore[arg-type]
-            if not response.success or response.data is None:
-                raise BackendError(
-                    "Failed to write assembled content",
-                    backend=getattr(self._backend, "name", "unknown"),
-                )
-            content_hash = str(response.data)
+            result = await asyncio.to_thread(_write, content)
+            content_hash = result.content_hash
 
         # Update session to completed
         completed = UploadSession(

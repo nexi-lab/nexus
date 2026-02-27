@@ -112,6 +112,7 @@ class LLMService:
         use_search: bool = True,
         search_mode: str = "semantic",
         provider: "LLMProvider | None" = None,
+        context: Any = None,
     ) -> str:
         """Read document with LLM and return answer.
 
@@ -167,6 +168,7 @@ class LLMService:
             max_tokens=max_tokens,
             use_search=use_search,
             search_mode=search_mode,
+            context=context,
         )
 
         return result.answer
@@ -184,6 +186,7 @@ class LLMService:
         search_limit: int = 10,
         include_citations: bool = True,
         provider: "LLMProvider | None" = None,
+        context: Any = None,
     ) -> "DocumentReadResult":
         """Read document with LLM and return detailed result.
 
@@ -253,6 +256,7 @@ class LLMService:
             search_mode=search_mode,
             search_limit=search_limit,
             include_citations=include_citations,
+            context=context,
         )
 
     @rpc_expose(description="Stream document reading response")
@@ -266,6 +270,7 @@ class LLMService:
         use_search: bool = True,
         search_mode: str = "semantic",
         provider: "LLMProvider | None" = None,
+        context: Any = None,
     ) -> AsyncIterator[str]:
         """Stream document reading response.
 
@@ -327,6 +332,7 @@ class LLMService:
             max_tokens=max_tokens,
             use_search=use_search,
             search_mode=search_mode,
+            context=context,
         ):
             yield chunk
 

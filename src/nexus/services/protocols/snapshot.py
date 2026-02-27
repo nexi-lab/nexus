@@ -4,7 +4,7 @@ Defines the contract and frozen data models for transactional filesystem snapsho
 Agents can begin a transaction, perform writes/deletes, and atomically commit
 or rollback to the pre-transaction state.
 
-Follows patterns from hook_engine.py.
+Follows patterns from brick_lifecycle.py.
 """
 
 from dataclasses import dataclass
@@ -94,7 +94,7 @@ class SnapshotServiceProtocol(Protocol):
 
     Async methods are used for DB-backed operations.
     Sync methods (track_write, track_delete, is_tracked) are called
-    from the synchronous write path in nexus_fs_core.py.
+    from the synchronous write path in nexus_fs.py.
     """
 
     async def begin(

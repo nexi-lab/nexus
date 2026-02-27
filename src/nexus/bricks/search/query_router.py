@@ -16,7 +16,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from nexus.bricks.search.strategies import (
+from nexus.contracts.search_types import (
     AGGREGATION_WORDS,
     COMPARISON_WORDS,
     COMPLEX_PATTERNS,

@@ -2,7 +2,7 @@
 
 Federation is NOT kernel. It is an optional subsystem at the same level as
 CacheStore/RecordStore. Without federation, NexusFS gracefully degrades to
-client-server mode (RemoteNexusFS) or single-node standalone mode.
+client-server mode (REMOTE profile) or single-node standalone mode.
 
 Layering:
     NexusFederation (this file) — orchestration / service layer
@@ -18,7 +18,12 @@ See: docs/architecture/federation-memo.md §6.9
 
 import logging
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+from nexus.contracts.constants import ROOT_ZONE_ID
+
+if TYPE_CHECKING:
+    from nexus.security.tls.trust_store import TofuTrustStore
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +57,7 @@ class NexusFederation:
         self,
         zone_manager: Any,
         client_factory: Callable[[str], Any] | None = None,
+        trust_store: "TofuTrustStore | None" = None,
     ) -> None:
         """Initialize federation orchestrator.
 
@@ -60,22 +66,33 @@ class NexusFederation:
             client_factory: Factory that creates a RaftClient for a given
                 peer address. If None, auto-creates RaftClients with TLS
                 config from the ZoneManager.
+            trust_store: TOFU trust store for peer zone CA verification.
+                Auto-created from ZoneManager's tls_config if None.
         """
         self._mgr = zone_manager
+        self._trust_store = trust_store
+        if trust_store is None:
+            tls_cfg = getattr(zone_manager, "tls_config", None)
+            if tls_cfg is not None:
+                from nexus.security.tls.trust_store import TofuTrustStore
+
+                self._trust_store = TofuTrustStore(tls_cfg.known_zones_path)
+
         if client_factory is not None:
             self._client_factory = client_factory
         else:
             # Auto-build factory with TLS config from ZoneManager
             from nexus.raft.client import RaftClient, RaftClientConfig
 
-            tls_cert = getattr(zone_manager, "tls_cert_path", None)
-            tls_key = getattr(zone_manager, "tls_key_path", None)
-            tls_ca = getattr(zone_manager, "tls_ca_path", None)
-            config = RaftClientConfig(
-                tls_cert_path=tls_cert,
-                tls_key_path=tls_key,
-                tls_ca_path=tls_ca,
-            )
+            tls_cfg = getattr(zone_manager, "tls_config", None)
+            if tls_cfg is not None:
+                config = RaftClientConfig(
+                    tls_cert_path=str(tls_cfg.node_cert_path),
+                    tls_key_path=str(tls_cfg.node_key_path),
+                    tls_ca_path=str(tls_cfg.ca_cert_path),
+                )
+            else:
+                config = RaftClientConfig()
             self._client_factory = lambda addr: RaftClient(address=addr, config=config)
 
     async def share(
@@ -100,7 +117,7 @@ class NexusFederation:
         Returns:
             The new zone's ID.
         """
-        root_zone = self._mgr.root_zone_id or "root"
+        root_zone = self._mgr.root_zone_id or ROOT_ZONE_ID
 
         # Step 1: Create zone + copy subtree + DT_MOUNT in parent
         new_zone_id: str = self._mgr.share_subtree(
@@ -163,14 +180,14 @@ class NexusFederation:
             ValueError: If remote_path is not a DT_MOUNT on peer.
             RuntimeError: If zone discovery or join fails.
         """
-        root_zone = self._mgr.root_zone_id or "root"
+        root_zone = self._mgr.root_zone_id or ROOT_ZONE_ID
 
         # Step 1: Discover zone via peer's DT_MOUNT
         client = self._client_factory(peer_addr)
         try:
-            metadata = await client.get_metadata(
+            metadata = await client.sys_stat(
                 path=remote_path,
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
             )
 
             if metadata is None:

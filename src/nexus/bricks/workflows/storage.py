@@ -17,7 +17,7 @@ from sqlalchemy import select
 
 from nexus.bricks.workflows.loader import WorkflowLoader
 from nexus.bricks.workflows.types import WorkflowDefinition, WorkflowExecution
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)

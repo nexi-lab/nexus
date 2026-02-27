@@ -210,7 +210,7 @@ class MCPService:
                     raise RuntimeError("Filesystem not configured for MCPService")
 
                 items = await asyncio.to_thread(
-                    self._filesystem.list, mount.tools_path, recursive=False
+                    self._filesystem.sys_readdir, mount.tools_path, recursive=False
                 )
 
                 for item in items:
@@ -220,7 +220,7 @@ class MCPService:
                             continue
                         try:
                             # Read tool definition file (run in thread)
-                            raw = await asyncio.to_thread(self._filesystem.read, item)
+                            raw = await asyncio.to_thread(self._filesystem.sys_read, item)
                             if isinstance(raw, bytes):
                                 text = raw.decode("utf-8")
                             elif isinstance(raw, str):

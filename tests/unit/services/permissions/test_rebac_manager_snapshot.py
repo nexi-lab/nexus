@@ -26,7 +26,7 @@ from sqlalchemy.pool import StaticPool
 from nexus.bricks.rebac.manager import (
     EnhancedReBACManager,
 )
-from nexus.bricks.rebac.types import (
+from nexus.contracts.rebac_types import (
     ConsistencyLevel,
     ConsistencyMode,
     ConsistencyRequirement,

@@ -49,16 +49,16 @@ def tool_exists(server, tool_name: str) -> bool:
 def mock_nx_basic():
     """Create a basic mock NexusFS with file operations."""
     nx = Mock()
-    nx.read = Mock(return_value=b"test content")
-    nx.write = Mock()
-    nx.delete = Mock()
-    nx.list = Mock(return_value=["/file1.txt", "/file2.txt"])
+    nx.sys_read = Mock(return_value=b"test content")
+    nx.sys_write = Mock()
+    nx.sys_unlink = Mock()
+    nx.sys_readdir = Mock(return_value=["/file1.txt", "/file2.txt"])
     nx.glob = Mock(return_value=["test.py", "main.py"])
     nx.grep = Mock(return_value=[{"file": "test.py", "line": 10, "content": "match"}])
-    nx.exists = Mock(return_value=True)
-    nx.is_directory = Mock(return_value=False)
-    nx.mkdir = Mock()
-    nx.rmdir = Mock()
+    nx.sys_access = Mock(return_value=True)
+    nx.sys_is_directory = Mock(return_value=False)
+    nx.sys_mkdir = Mock()
+    nx.sys_rmdir = Mock()
     nx.edit = Mock(
         return_value={
             "success": True,
@@ -75,8 +75,8 @@ def mock_nx_basic():
 def mock_nx_with_memory():
     """Create mock NexusFS with memory system."""
     nx = Mock()
-    nx.read = Mock(return_value=b"test")
-    nx.write = Mock()
+    nx.sys_read = Mock(return_value=b"test")
+    nx.sys_write = Mock()
 
     # Add memory system
     nx.memory = Mock()
@@ -95,8 +95,8 @@ def mock_nx_with_memory():
 def mock_nx_with_workflows():
     """Create mock NexusFS with workflow system."""
     nx = Mock()
-    nx.read = Mock(return_value=b"test")
-    nx.write = Mock()
+    nx.sys_read = Mock(return_value=b"test")
+    nx.sys_write = Mock()
 
     # Add workflows system
     nx.workflows = Mock()
@@ -114,8 +114,8 @@ def mock_nx_with_search():
     from unittest.mock import AsyncMock
 
     nx = Mock()
-    nx.read = Mock(return_value=b"test")
-    nx.write = Mock()
+    nx.sys_read = Mock(return_value=b"test")
+    nx.sys_write = Mock()
 
     # Add async semantic_search method
     async def mock_semantic_search(query, path="/", limit=10, **kwargs):
@@ -130,8 +130,8 @@ def mock_nx_with_search():
 def mock_nx_with_sandbox():
     """Create mock NexusFS with sandbox support."""
     nx = Mock()
-    nx.read = Mock(return_value=b"test")
-    nx.write = Mock()
+    nx.sys_read = Mock(return_value=b"test")
+    nx.sys_write = Mock()
 
     # Add sandbox support
     nx.sandbox_available = True
@@ -164,8 +164,8 @@ def mock_nx_with_sandbox():
 def mock_nx_no_sandbox():
     """Create mock NexusFS without sandbox support."""
     nx = Mock()
-    nx.read = Mock(return_value=b"test")
-    nx.write = Mock()
+    nx.sys_read = Mock(return_value=b"test")
+    nx.sys_write = Mock()
     nx.sandbox_available = False
 
     return nx
@@ -177,16 +177,16 @@ def mock_nx_full():
     nx = Mock()
 
     # Basic file operations
-    nx.read = Mock(return_value=b"test content")
-    nx.write = Mock()
-    nx.delete = Mock()
-    nx.list = Mock(return_value=["/file1.txt"])
+    nx.sys_read = Mock(return_value=b"test content")
+    nx.sys_write = Mock()
+    nx.sys_unlink = Mock()
+    nx.sys_readdir = Mock(return_value=["/file1.txt"])
     nx.glob = Mock(return_value=["test.py"])
     nx.grep = Mock(return_value=[{"file": "test.py", "line": 10, "content": "match"}])
-    nx.exists = Mock(return_value=True)
-    nx.is_directory = Mock(return_value=False)
-    nx.mkdir = Mock()
-    nx.rmdir = Mock()
+    nx.sys_access = Mock(return_value=True)
+    nx.sys_is_directory = Mock(return_value=False)
+    nx.sys_mkdir = Mock()
+    nx.sys_rmdir = Mock()
 
     # Memory system
     nx.memory = Mock()
@@ -233,11 +233,11 @@ class TestFileOperationTools:
         result = read_tool.fn(path="/test.txt")
 
         assert result == "test content"
-        mock_nx_basic.read.assert_called_once_with("/test.txt")
+        mock_nx_basic.sys_read.assert_called_once_with("/test.txt")
 
     def test_read_file_bytes_content(self, mock_nx_basic):
         """Test reading file with bytes content."""
-        mock_nx_basic.read.return_value = b"binary content"
+        mock_nx_basic.sys_read.return_value = b"binary content"
         server = create_mcp_server(nx=mock_nx_basic)
 
         read_tool = get_tool(server, "nexus_read_file")
@@ -247,7 +247,7 @@ class TestFileOperationTools:
 
     def test_read_file_error(self, mock_nx_basic):
         """Test read file error handling."""
-        mock_nx_basic.read.side_effect = FileNotFoundError("File not found")
+        mock_nx_basic.sys_read.side_effect = FileNotFoundError("File not found")
         server = create_mcp_server(nx=mock_nx_basic)
 
         read_tool = get_tool(server, "nexus_read_file")
@@ -265,16 +265,16 @@ class TestFileOperationTools:
 
         assert "Successfully wrote" in result
         assert "/test.txt" in result
-        mock_nx_basic.write.assert_called_once()
+        mock_nx_basic.sys_write.assert_called_once()
 
         # Verify content was encoded
-        call_args = mock_nx_basic.write.call_args[0]
+        call_args = mock_nx_basic.sys_write.call_args[0]
         assert call_args[0] == "/test.txt"
         assert call_args[1] == b"new content"
 
     def test_write_file_error(self, mock_nx_basic):
         """Test write file error handling."""
-        mock_nx_basic.write.side_effect = PermissionError("Permission denied")
+        mock_nx_basic.sys_write.side_effect = PermissionError("Permission denied")
         server = create_mcp_server(nx=mock_nx_basic)
 
         write_tool = get_tool(server, "nexus_write_file")
@@ -292,11 +292,11 @@ class TestFileOperationTools:
 
         assert "Successfully deleted" in result
         assert "/test.txt" in result
-        mock_nx_basic.delete.assert_called_once_with("/test.txt")
+        mock_nx_basic.sys_unlink.assert_called_once_with("/test.txt")
 
     def test_delete_file_error(self, mock_nx_basic):
         """Test delete file error handling."""
-        mock_nx_basic.delete.side_effect = FileNotFoundError("File not found")
+        mock_nx_basic.sys_unlink.side_effect = FileNotFoundError("File not found")
         server = create_mcp_server(nx=mock_nx_basic)
 
         delete_tool = get_tool(server, "nexus_delete_file")
@@ -320,7 +320,7 @@ class TestFileOperationTools:
         assert "count" in response
         assert isinstance(response["items"], list)
         assert "/file1.txt" in response["items"]
-        mock_nx_basic.list.assert_called_once_with("/data", recursive=False, details=True)
+        mock_nx_basic.sys_readdir.assert_called_once_with("/data", recursive=False, details=True)
 
     def test_list_files_recursive(self, mock_nx_basic):
         """Test listing files recursively."""
@@ -329,11 +329,11 @@ class TestFileOperationTools:
         list_tool = get_tool(server, "nexus_list_files")
         list_tool.fn(path="/data", recursive=True, details=True)
 
-        mock_nx_basic.list.assert_called_once_with("/data", recursive=True, details=True)
+        mock_nx_basic.sys_readdir.assert_called_once_with("/data", recursive=True, details=True)
 
     def test_list_files_error(self, mock_nx_basic):
         """Test list files error handling."""
-        mock_nx_basic.list.side_effect = FileNotFoundError("Directory not found")
+        mock_nx_basic.sys_readdir.side_effect = FileNotFoundError("Directory not found")
         server = create_mcp_server(nx=mock_nx_basic)
 
         list_tool = get_tool(server, "nexus_list_files")
@@ -344,8 +344,8 @@ class TestFileOperationTools:
 
     def test_file_info_exists(self, mock_nx_basic):
         """Test getting file info for existing file."""
-        mock_nx_basic.exists.return_value = True
-        mock_nx_basic.is_directory.return_value = False
+        mock_nx_basic.sys_access.return_value = True
+        mock_nx_basic.sys_is_directory.return_value = False
         server = create_mcp_server(nx=mock_nx_basic)
 
         info_tool = get_tool(server, "nexus_file_info")
@@ -358,7 +358,7 @@ class TestFileOperationTools:
 
     def test_file_info_not_found(self, mock_nx_basic):
         """Test getting file info for non-existent file."""
-        mock_nx_basic.exists.return_value = False
+        mock_nx_basic.sys_access.return_value = False
         server = create_mcp_server(nx=mock_nx_basic)
 
         info_tool = get_tool(server, "nexus_file_info")
@@ -369,8 +369,8 @@ class TestFileOperationTools:
 
     def test_file_info_directory(self, mock_nx_basic):
         """Test getting file info for directory."""
-        mock_nx_basic.exists.return_value = True
-        mock_nx_basic.is_directory.return_value = True
+        mock_nx_basic.sys_access.return_value = True
+        mock_nx_basic.sys_is_directory.return_value = True
         server = create_mcp_server(nx=mock_nx_basic)
 
         info_tool = get_tool(server, "nexus_file_info")
@@ -549,11 +549,11 @@ class TestDirectoryOperationTools:
 
         assert "Successfully created directory" in result
         assert "/new_dir" in result
-        mock_nx_basic.mkdir.assert_called_once_with("/new_dir")
+        mock_nx_basic.sys_mkdir.assert_called_once_with("/new_dir")
 
     def test_mkdir_error(self, mock_nx_basic):
         """Test mkdir error handling."""
-        mock_nx_basic.mkdir.side_effect = PermissionError("Permission denied")
+        mock_nx_basic.sys_mkdir.side_effect = PermissionError("Permission denied")
         server = create_mcp_server(nx=mock_nx_basic)
 
         mkdir_tool = get_tool(server, "nexus_mkdir")
@@ -571,7 +571,7 @@ class TestDirectoryOperationTools:
 
         assert "Successfully removed directory" in result
         assert "/old_dir" in result
-        mock_nx_basic.rmdir.assert_called_once_with("/old_dir", recursive=False)
+        mock_nx_basic.sys_rmdir.assert_called_once_with("/old_dir", recursive=False)
 
     def test_rmdir_recursive(self, mock_nx_basic):
         """Test removing a directory recursively."""
@@ -580,11 +580,11 @@ class TestDirectoryOperationTools:
         rmdir_tool = get_tool(server, "nexus_rmdir")
         rmdir_tool.fn(path="/old_dir", recursive=True)
 
-        mock_nx_basic.rmdir.assert_called_once_with("/old_dir", recursive=True)
+        mock_nx_basic.sys_rmdir.assert_called_once_with("/old_dir", recursive=True)
 
     def test_rmdir_error(self, mock_nx_basic):
         """Test rmdir error handling."""
-        mock_nx_basic.rmdir.side_effect = FileNotFoundError("Directory not found")
+        mock_nx_basic.sys_rmdir.side_effect = FileNotFoundError("Directory not found")
         server = create_mcp_server(nx=mock_nx_basic)
 
         rmdir_tool = get_tool(server, "nexus_rmdir")
@@ -1204,7 +1204,7 @@ class TestResources:
 
         from fastmcp.server.context import Context, _current_context
 
-        mock_nx_basic.read.return_value = b"resource content"
+        mock_nx_basic.sys_read.return_value = b"resource content"
         server = create_mcp_server(nx=mock_nx_basic)
 
         resource = get_resource_template(server, "nexus://files/")
@@ -1217,7 +1217,7 @@ class TestResources:
             _current_context.reset(token)
 
         assert result == "resource content"
-        mock_nx_basic.read.assert_called_once_with("/data/file.txt")
+        mock_nx_basic.sys_read.assert_called_once_with("/data/file.txt")
 
     async def test_file_resource_bytes(self, mock_nx_basic):
         """Test file resource with bytes content."""
@@ -1225,7 +1225,7 @@ class TestResources:
 
         from fastmcp.server.context import Context, _current_context
 
-        mock_nx_basic.read.return_value = b"binary data"
+        mock_nx_basic.sys_read.return_value = b"binary data"
         server = create_mcp_server(nx=mock_nx_basic)
 
         resource = get_resource_template(server, "nexus://files/")
@@ -1245,7 +1245,7 @@ class TestResources:
 
         from fastmcp.server.context import Context, _current_context
 
-        mock_nx_basic.read.side_effect = FileNotFoundError("File not found")
+        mock_nx_basic.sys_read.side_effect = FileNotFoundError("File not found")
         server = create_mcp_server(nx=mock_nx_basic)
 
         resource = get_resource_template(server, "nexus://files/")
@@ -1308,23 +1308,25 @@ class TestServerCreation:
 
     def test_server_with_remote_url(self):
         """Test creating server with remote URL."""
-        with patch("nexus.remote.RemoteNexusFS") as mock_remote:
+        with patch("nexus.connect") as mock_connect:
             mock_instance = Mock()
-            mock_instance.read = Mock(return_value=b"test")
-            mock_instance.write = Mock()
-            mock_remote.return_value = mock_instance
+            mock_instance.sys_read = Mock(return_value=b"test")
+            mock_instance.sys_write = Mock()
+            mock_connect.return_value = mock_instance
 
             server = create_mcp_server(remote_url="http://localhost:2026", api_key="test-key")
 
-            mock_remote.assert_called_once_with("http://localhost:2026", api_key="test-key")
+            mock_connect.assert_called_once_with(
+                config={"mode": "remote", "url": "http://localhost:2026", "api_key": "test-key"}
+            )
             assert server is not None
 
     def test_server_with_auto_connect(self):
         """Test creating server with auto-connect."""
         with patch("nexus.connect") as mock_connect:
             mock_nx = Mock()
-            mock_nx.read = Mock(return_value=b"test")
-            mock_nx.write = Mock()
+            mock_nx.sys_read = Mock(return_value=b"test")
+            mock_nx.sys_write = Mock()
             mock_connect.return_value = mock_nx
 
             server = create_mcp_server()

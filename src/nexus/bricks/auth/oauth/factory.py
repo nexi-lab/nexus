@@ -14,7 +14,7 @@ from pydantic import ValidationError
 
 from nexus.bricks.auth.oauth.base_provider import BaseOAuthProvider
 from nexus.bricks.auth.oauth.config import OAuthConfig, OAuthProviderConfig
-from nexus.constants import DEFAULT_OAUTH_REDIRECT_URI
+from nexus.contracts.constants import DEFAULT_OAUTH_REDIRECT_URI
 
 logger = logging.getLogger(__name__)
 

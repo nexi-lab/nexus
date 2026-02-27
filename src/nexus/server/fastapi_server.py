@@ -39,7 +39,7 @@ from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.gzip import GZipMiddleware
 
-from nexus.constants import DEFAULT_NEXUS_URL, ROOT_ZONE_ID
+from nexus.contracts.constants import DEFAULT_NEXUS_URL, ROOT_ZONE_ID
 from nexus.contracts.exceptions import (
     NexusError,
 )
@@ -321,8 +321,10 @@ def create_app(
         "llm_service",
         "oauth_service",
         "mount_service",
+        "search_service",
         "version_service",
         "share_link_service",
+        "rebac_service",
     ):
         _brick_svc = getattr(nexus_fs, _attr_name, None)
         if _brick_svc is not None:
@@ -376,7 +378,6 @@ def create_app(
                 nexus_fs.SessionLocal,
                 webhook_timeout=app.state.profile_tuning.network.webhook_timeout,
             )
-            nexus_fs.subscription_manager = app.state.subscription_manager
             set_subscription_manager(app.state.subscription_manager)
             # Issue #625: Forward subscription_manager to workflow dispatch service
             wds = getattr(app.state, "workflow_dispatch", None)
@@ -430,6 +431,7 @@ def create_app(
     limiter = Limiter(
         key_func=_get_rate_limit_key,
         default_limits=[RATE_LIMIT_AUTHENTICATED] if rate_limit_enabled else [],
+        headers_enabled=rate_limit_enabled,
         storage_uri=redis_url,
         strategy="fixed-window",
         enabled=rate_limit_enabled,
@@ -439,6 +441,13 @@ def create_app(
     _rate_limiting_mod.limiter = limiter
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+    # Add SlowAPI middleware so default_limits and rate-limit headers are applied
+    # to all endpoints (not just those with explicit @limiter.limit() decorators).
+    if rate_limit_enabled:
+        from slowapi.middleware import SlowAPIMiddleware
+
+        app.add_middleware(SlowAPIMiddleware)
 
     # Register Nexus exception handlers for error classification
 
@@ -527,19 +536,6 @@ def create_app(
     except Exception:
         logger.warning("Failed to register QueryObserverCollector", exc_info=True)
 
-    # Register WriteBuffer → Prometheus collector bridge (Issue #1370)
-    try:
-        from prometheus_client import REGISTRY
-
-        from nexus.server.wb_metrics_collector import WriteBufferCollector
-
-        if app.state.write_observer is not None and hasattr(app.state.write_observer, "metrics"):
-            REGISTRY.register(WriteBufferCollector(app.state.write_observer))
-    except ImportError:
-        pass
-    except Exception:
-        logger.warning("Failed to register WriteBufferCollector", exc_info=True)
-
     # Instrument FastAPI with OpenTelemetry (Issue #764)
     try:
         from nexus.server.telemetry import instrument_fastapi_app
@@ -590,6 +586,18 @@ def _register_routes(app: FastAPI) -> None:
         logger.info("Zone management routes registered")
     except ImportError as e:
         logger.warning(f"Failed to import zone routes: {e}. Zone management unavailable.")
+
+    # Test hooks REST API (Issue #2) — only when NEXUS_TEST_HOOKS=true
+    import os
+
+    if os.getenv("NEXUS_TEST_HOOKS") == "true":
+        try:
+            from nexus.core.test_hooks import build_test_hooks_router
+
+            app.include_router(build_test_hooks_router())
+            logger.info("Test hooks routes registered (NEXUS_TEST_HOOKS=true)")
+        except ImportError as e:
+            logger.warning(f"Failed to import test hooks router: {e}")
 
     # API v2 routes — centralized registration via versioning module (#995)
     from nexus.server.api.v2.versioning import (
@@ -652,13 +660,6 @@ def _register_routes(app: FastAPI) -> None:
             except Exception:
                 return None
 
-        # Extract hook engine for artifact auto-indexing (Issue #1861)
-        _a2a_hook_engine = getattr(
-            getattr(app.state.nexus_fs, "_system_services", None),
-            "scoped_hook_engine",
-            None,
-        )
-
         a2a_router, a2a_task_manager = create_a2a_router(
             nexus_fs=app.state.nexus_fs,
             config=None,
@@ -666,7 +667,6 @@ def _register_routes(app: FastAPI) -> None:
             auth_required=a2a_auth_required,
             auth_fn=_a2a_auth_adapter,
             data_dir=getattr(app.state, "data_dir", None),
-            hook_engine=_a2a_hook_engine,
         )
         app.state.a2a_task_manager = a2a_task_manager  # Expose for gRPC transport
         app.include_router(a2a_router)

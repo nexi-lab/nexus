@@ -14,7 +14,7 @@ from nexus.backends.caching_backend_wrapper import (
     CacheWrapperConfig,
     CachingBackendWrapper,
 )
-from nexus.lib.response import HandlerResponse
+from nexus.core.object_store import WriteResult
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -27,11 +27,6 @@ def _make_mock_backend(name: str = "mock") -> MagicMock:
     backend.name = name
     backend.describe.return_value = name
     return backend
-
-
-def _ok_response(data: object) -> HandlerResponse:
-    """Build a HandlerResponse.ok for testing."""
-    return HandlerResponse.ok(data=data, backend_name="mock")
 
 
 # ---------------------------------------------------------------------------
@@ -81,18 +76,17 @@ class TestL1CacheHitMiss:
     def test_l1_cache_miss_delegates_to_inner(self) -> None:
         """First read_content delegates to inner backend (L1 miss)."""
         inner = _make_mock_backend()
-        inner.read_content.return_value = _ok_response(b"file-data")
+        inner.read_content.return_value = b"file-data"
         wrapper = CachingBackendWrapper(inner=inner)
 
         response = wrapper.read_content("hash123")
-        assert response.success
-        assert response.data == b"file-data"
+        assert response == b"file-data"
         inner.read_content.assert_called_once()
 
     def test_l1_cache_hit_avoids_inner(self) -> None:
         """Second read_content with same hash returns from L1 (no inner call)."""
         inner = _make_mock_backend()
-        inner.read_content.return_value = _ok_response(b"file-data")
+        inner.read_content.return_value = b"file-data"
         wrapper = CachingBackendWrapper(inner=inner)
 
         # First read — populates L1
@@ -101,14 +95,13 @@ class TestL1CacheHitMiss:
 
         # Second read — should hit L1
         response = wrapper.read_content("hash123")
-        assert response.success
-        assert response.data == b"file-data"
+        assert response == b"file-data"
         inner.read_content.assert_not_called()
 
     def test_l1_miss_increments_miss_counter(self) -> None:
         """L1 miss is tracked in stats."""
         inner = _make_mock_backend()
-        inner.read_content.return_value = _ok_response(b"data")
+        inner.read_content.return_value = b"data"
         wrapper = CachingBackendWrapper(inner=inner)
 
         wrapper.read_content("hash_a")
@@ -118,7 +111,7 @@ class TestL1CacheHitMiss:
     def test_l1_hit_increments_hit_counter(self) -> None:
         """L1 hit is tracked in stats."""
         inner = _make_mock_backend()
-        inner.read_content.return_value = _ok_response(b"data")
+        inner.read_content.return_value = b"data"
         wrapper = CachingBackendWrapper(inner=inner)
 
         wrapper.read_content("hash_b")
@@ -138,8 +131,8 @@ class TestCacheInvalidation:
     def test_write_around_invalidates_l1(self) -> None:
         """After write_content, cached content for that hash is evicted."""
         inner = _make_mock_backend()
-        inner.read_content.return_value = _ok_response(b"original")
-        inner.write_content.return_value = _ok_response("hash_x")
+        inner.read_content.return_value = b"original"
+        inner.write_content.return_value = WriteResult(content_hash="hash_x")
 
         config = CacheWrapperConfig(strategy=CacheStrategy.WRITE_AROUND)
         wrapper = CachingBackendWrapper(inner=inner, config=config)
@@ -152,15 +145,15 @@ class TestCacheInvalidation:
         wrapper.write_content(b"new-data")
 
         # Next read should go to inner (L1 was invalidated)
-        inner.read_content.return_value = _ok_response(b"new-data")
+        inner.read_content.return_value = b"new-data"
         response = wrapper.read_content("hash_x")
         inner.read_content.assert_called_once()
-        assert response.data == b"new-data"
+        assert response == b"new-data"
 
     def test_write_through_populates_l1(self) -> None:
         """WRITE_THROUGH strategy populates L1 on write."""
         inner = _make_mock_backend()
-        inner.write_content.return_value = _ok_response("hash_y")
+        inner.write_content.return_value = WriteResult(content_hash="hash_y")
 
         config = CacheWrapperConfig(strategy=CacheStrategy.WRITE_THROUGH)
         wrapper = CachingBackendWrapper(inner=inner, config=config)
@@ -169,8 +162,7 @@ class TestCacheInvalidation:
 
         # L1 should have the content now; read should not call inner
         response = wrapper.read_content("hash_y")
-        assert response.success
-        assert response.data == b"content-data"
+        assert response == b"content-data"
         inner.read_content.assert_not_called()
 
 
@@ -283,7 +275,7 @@ class TestL2WritePopulateOnly:
     def test_clear_cache_resets_all_counters(self) -> None:
         """clear_cache() resets WrapperMetrics counters."""
         inner = _make_mock_backend()
-        inner.read_content.return_value = _ok_response(b"data")
+        inner.read_content.return_value = b"data"
         wrapper = CachingBackendWrapper(inner=inner)
 
         wrapper.read_content("hash_z")

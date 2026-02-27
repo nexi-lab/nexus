@@ -33,13 +33,26 @@ OUTPUT_PATH = (
     Path(__file__).resolve().parent.parent / "src" / "nexus" / "server" / "_rpc_params_generated.py"
 )
 
+
 # Methods whose Param classes are hand-written in _rpc_param_overrides.py.
 # The codegen skips these entirely so the override takes precedence.
-OVERRIDE_METHODS: set[str] = {
-    "read",  # RPC-only fields: return_url, expires_in
-    "oauth_get_auth_url",  # Uses DEFAULT_OAUTH_REDIRECT_URI constant
-    "oauth_exchange_code",  # Uses DEFAULT_OAUTH_REDIRECT_URI constant
-}
+# Auto-populated from OVERRIDE_METHOD_PARAMS keys at generation time.
+def _load_override_methods() -> set[str]:
+    """Load method names from _rpc_param_overrides.OVERRIDE_METHOD_PARAMS."""
+    try:
+        from nexus.server._rpc_param_overrides import OVERRIDE_METHOD_PARAMS
+
+        return set(OVERRIDE_METHOD_PARAMS.keys())
+    except ImportError:
+        # Fallback if overrides module not importable
+        return {
+            "sys_read",
+            "oauth_get_auth_url",
+            "oauth_exchange_code",
+        }
+
+
+OVERRIDE_METHODS: set[str] = _load_override_methods()
 
 # Methods that should be excluded from codegen entirely (streaming, internal, etc.)
 EXCLUDED_METHODS: set[str] = {
@@ -86,24 +99,29 @@ EXCLUDED_METHODS: set[str] = {
 # Modules to scan for @rpc_expose methods.  We inspect each class in each
 # module and collect all methods that have ``_rpc_exposed = True``.
 MODULES_TO_SCAN: list[str] = [
-    "nexus.core.nexus_fs_core",
     "nexus.core.nexus_fs",
-    "nexus.services.search_service",
-    "nexus.services.search_listing_mixin",
-    "nexus.services.search_grep_mixin",
-    "nexus.services.search_semantic",
-    "nexus.services.share_link_service",
-    "nexus.services.version_service",
-    "nexus.services.events_service",
+    # Search (reorganized from flat nexus.services.search_*)
+    "nexus.services.search.search_service",
+    "nexus.services.search.search_semantic",
+    # Services (reorganized into sub-packages)
+    "nexus.services.share_link.share_link_service",
+    "nexus.services.versioning.version_service",
+    "nexus.services.mount.mount_service",
+    "nexus.services.oauth.oauth_service",
+    "nexus.services.memory_service",
+    "nexus.services.ace_rpc_service",
+    "nexus.services.workspace_rpc_service",
+    "nexus.services.user_provisioning",
+    "nexus.services.agents.agent_service",
+    # System services
+    "nexus.system_services.lifecycle.events_service",
+    "nexus.system_services.lifecycle.task_queue_service",
+    # Brick services with @rpc_expose
     "nexus.bricks.llm.llm_service",
     "nexus.bricks.mcp.mcp_service",
-    "nexus.services.mount_service",
-    "nexus.services.oauth_service",
     "nexus.bricks.rebac.rebac_service",
-    "nexus.services.skill_service",
-    # Brick services with @rpc_expose (Issue #2035, Follow-up 1)
-    "nexus.skills.service",
-    "nexus.skills.package_service",
+    "nexus.bricks.skills.service",
+    "nexus.bricks.skills.package_service",
 ]
 
 # Types that signal "operation context" — parameters with these types are
@@ -138,6 +156,12 @@ NON_SERIALIZABLE_TYPES: set[str] = {
     "ProgressCallback | None",
 }
 
+# Regex patterns for non-serializable types (checked after _annotation_str).
+# Catches resolved Callable types that don't match exact string entries above.
+NON_SERIALIZABLE_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"Callable"),
+]
+
 # Fields typed as tuple that need __post_init__ list→tuple conversion
 TUPLE_FIELD_PATTERN = re.compile(r"tuple\[")
 
@@ -161,10 +185,14 @@ def _annotation_str(annotation: Any) -> str:
             return "str"
         return result
 
+    # Handle NoneType → "None" (before get_origin, which returns None for NoneType)
+    if annotation is type(None):
+        return "None"
+
     origin = get_origin(annotation)
     args = get_args(annotation)
 
-    # Handle None / NoneType in unions
+    # Handle None / NoneType in unions (fallback)
     if origin is type(None):
         return "None"
 
@@ -346,7 +374,9 @@ def _generate_param_class(
             continue
 
         # Exclude non-serializable types (callbacks, etc.)
-        if ann_str in NON_SERIALIZABLE_TYPES:
+        if ann_str in NON_SERIALIZABLE_TYPES or any(
+            p.search(ann_str) for p in NON_SERIALIZABLE_PATTERNS
+        ):
             continue
 
         # Apply type rewrites

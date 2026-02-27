@@ -339,7 +339,6 @@ def rebac_delete_cmd(
     try:
         nx = get_filesystem(backend_config)
 
-        # Delete tuple
         deleted = nx.rebac_service.rebac_delete_sync(tuple_id)  # type: ignore[attr-defined]
 
         nx.close()
@@ -360,6 +359,7 @@ def rebac_delete_cmd(
 @click.argument("object_type", type=str)
 @click.argument("object_id", type=str)
 @add_backend_options
+@add_context_options
 def rebac_check_cmd(
     subject_type: str,
     subject_id: str,
@@ -367,6 +367,7 @@ def rebac_check_cmd(
     object_type: str,
     object_id: str,
     backend_config: BackendConfig,
+    operation_context: dict[str, Any],
 ) -> None:
     """Check if subject has permission on object.
 
@@ -385,11 +386,13 @@ def rebac_check_cmd(
     try:
         nx = get_filesystem(backend_config)
 
-        # Check permission
+        # Check permission (pass zone_id from --zone-id or NEXUS_ZONE_ID)
+        zone = operation_context.get("zone")
         granted = nx.rebac_service.rebac_check_sync(  # type: ignore[attr-defined]
             subject=(subject_type, subject_id),
             permission=permission,
             object=(object_type, object_id),
+            zone_id=zone,
         )
 
         nx.close()
@@ -415,11 +418,13 @@ def rebac_check_cmd(
 @click.argument("object_type", type=str)
 @click.argument("object_id", type=str)
 @add_backend_options
+@add_context_options
 def rebac_expand_cmd(
     permission: str,
     object_type: str,
     object_id: str,
     backend_config: BackendConfig,
+    operation_context: dict[str, Any],
 ) -> None:
     """Find all subjects with a given permission on an object.
 
@@ -438,10 +443,12 @@ def rebac_expand_cmd(
     try:
         nx = get_filesystem(backend_config)
 
-        # Expand permission
+        # Expand permission (pass zone_id from --zone-id or NEXUS_ZONE_ID)
+        zone = operation_context.get("zone")
         subjects = nx.rebac_service.rebac_expand_sync(  # type: ignore[attr-defined]
             permission=permission,
             object=(object_type, object_id),
+            zone_id=zone,
         )
 
         nx.close()

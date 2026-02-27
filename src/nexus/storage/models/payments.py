@@ -10,6 +10,7 @@ from typing import Any
 from sqlalchemy import BigInteger, Boolean, DateTime, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.models._base import Base, uuid_pk
 
 
@@ -22,7 +23,7 @@ class AgentWalletMeta(Base):
     __tablename__ = "agent_wallet_meta"
 
     agent_id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default=ROOT_ZONE_ID)
     tigerbeetle_account_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)
     x402_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
     x402_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -48,7 +49,7 @@ class PaymentTransactionMeta(Base):
     __tablename__ = "payment_transaction_meta"
 
     id: Mapped[str] = uuid_pk()
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default=ROOT_ZONE_ID)
     tigerbeetle_transfer_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)
     from_agent_id: Mapped[str] = mapped_column(String(64), nullable=False)
     to_agent_id: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -79,7 +80,7 @@ class CreditReservationMeta(Base):
     __tablename__ = "credit_reservation_meta"
 
     id: Mapped[str] = uuid_pk()
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default=ROOT_ZONE_ID)
     tigerbeetle_transfer_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)
     agent_id: Mapped[str] = mapped_column(String(64), nullable=False)
     amount: Mapped[int] = mapped_column(BigInteger, nullable=False)
@@ -106,7 +107,7 @@ class UsageEvent(Base):
     __tablename__ = "usage_events"
 
     id: Mapped[str] = uuid_pk()
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default=ROOT_ZONE_ID)
     agent_id: Mapped[str] = mapped_column(String(64), nullable=False)
     event_type: Mapped[str] = mapped_column(String(50), nullable=False)
     amount: Mapped[int] = mapped_column(BigInteger, nullable=False)

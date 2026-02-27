@@ -11,8 +11,8 @@ Usage:
     fs = NexusFS(backend=backend, metadata_store=proxy)
 
     # All operations transparently cross zone boundaries:
-    fs.write("/shared/file.txt", data)  # → resolves to zone-beta
-    fs.read("/local/file.txt")          # → stays in root zone
+    fs.sys_write("/shared/file.txt", data)  # → resolves to zone-beta
+    fs.sys_read("/local/file.txt")          # → stays in root zone
 """
 
 import logging
@@ -20,7 +20,7 @@ from collections.abc import Iterator, Sequence
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.metadata import FileMetadata, PaginatedResult
 from nexus.core.metastore import CasResult, MetastoreABC
 

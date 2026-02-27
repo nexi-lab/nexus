@@ -50,7 +50,7 @@ use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use raft::eraftpb::{ConfChange, ConfChangeType, ConfState, Entry, EntryType, Message};
+use raft::eraftpb::{ConfChange, ConfChangeType, ConfState, Entry, EntryType, Message, Snapshot};
 use raft::{Config, RawNode, Storage};
 use slog::{o, Logger};
 use tokio::sync::{mpsc, oneshot, RwLock};
@@ -91,6 +91,13 @@ pub struct RaftConfig {
 
     /// Tick interval (how often to call tick()).
     pub tick_interval: Duration,
+
+    /// Skip ConfState bootstrap for joining nodes.
+    ///
+    /// When true, the node starts with an empty ConfState and waits for
+    /// the leader to send a snapshot with the correct voter set.
+    /// Per raft contract: joining nodes must NOT bootstrap themselves.
+    pub skip_bootstrap: bool,
 }
 
 impl Default for RaftConfig {
@@ -104,6 +111,7 @@ impl Default for RaftConfig {
             max_inflight_msgs: 256,
             is_witness: false,
             tick_interval: Duration::from_millis(10),
+            skip_bootstrap: false,
         }
     }
 }
@@ -351,7 +359,11 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
             .initial_state()
             .map_err(|e| RaftError::Storage(e.to_string()))?;
 
-        if initial_state.conf_state.voters.is_empty() && !config.peers.is_empty() {
+        if initial_state.conf_state.voters.is_empty() && !config.skip_bootstrap {
+            // Bootstrap: create initial voter set for a NEW cluster.
+            // Joining nodes (skip_bootstrap=true) must NOT bootstrap — they
+            // start uninitialized and receive the correct ConfState via
+            // snapshot from the leader (per raft contract).
             let mut voters = vec![config.id];
             voters.extend(config.peers.iter());
             let cs = ConfState {
@@ -720,6 +732,10 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
                         .raw_node
                         .campaign()
                         .map_err(|e| RaftError::Raft(e.to_string()));
+                    // Sync cached role so handle.is_leader() reflects the
+                    // post-campaign state before the next advance() cycle.
+                    // For single-node: campaign() grants self-vote → Leader.
+                    self.update_cached_status();
                     let _ = tx.send(result);
                 }
             }
@@ -768,13 +784,26 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
             self.apply_entries(committed).await?;
         }
 
-        // Handle snapshot
+        // Handle snapshot (received from leader during catch-up / join)
         if !ready.snapshot().is_empty() {
             let snapshot = ready.snapshot();
+            tracing::info!(
+                index = snapshot.get_metadata().index,
+                term = snapshot.get_metadata().term,
+                voters = ?snapshot.get_metadata().get_conf_state().voters,
+                "Applying snapshot from leader"
+            );
             self.raw_node
                 .mut_store()
                 .apply_snapshot(snapshot)
                 .map_err(|e| RaftError::Storage(e.to_string()))?;
+            // Restore state machine from snapshot data (raft contract:
+            // application must restore its state from the snapshot).
+            if !snapshot.data.is_empty() {
+                let mut sm = self.state_machine.write().await;
+                sm.restore_snapshot(&snapshot.data)
+                    .map_err(|e| RaftError::Storage(format!("restore snapshot: {e}")))?;
+            }
         }
 
         // Persist entries and hard state
@@ -886,10 +915,17 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
                             ConfChangeType::AddNode | ConfChangeType::AddLearnerNode => {
                                 if !cc.context.is_empty() {
                                     let address = String::from_utf8_lossy(&cc.context).to_string();
+                                    // Normalize: tonic Endpoint requires a URI scheme.
+                                    // JoinZone may send bare "host:port" — add http:// if missing.
+                                    let endpoint = if address.starts_with("http") {
+                                        address
+                                    } else {
+                                        format!("http://{}", address)
+                                    };
                                     peer_map
                                         .write()
                                         .unwrap()
-                                        .insert(cc.node_id, NodeAddress::new(cc.node_id, address));
+                                        .insert(cc.node_id, NodeAddress::new(cc.node_id, endpoint));
                                 }
                             }
                             ConfChangeType::RemoveNode => {
@@ -905,6 +941,53 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
                         voters = ?cs.voters,
                         "raft.conf_change.applied",
                     );
+
+                    // After AddNode: create snapshot and compact log so raft-rs
+                    // sends snapshot (not AppendEntries) to the new follower.
+                    // Per raft contract: the initial ConfState is only in the
+                    // snapshot — new followers MUST receive a snapshot to learn
+                    // about all voters. Without this, the joiner would only see
+                    // voters added via ConfChange entries, missing the bootstrap
+                    // voters.
+                    if matches!(
+                        cc.get_change_type(),
+                        ConfChangeType::AddNode | ConfChangeType::AddLearnerNode
+                    ) {
+                        let sm_data = sm.snapshot().map_err(|e| {
+                            RaftError::Storage(format!("snapshot for new voter: {e}"))
+                        })?;
+                        let mut snapshot = Snapshot::new();
+                        {
+                            let meta = snapshot.mut_metadata();
+                            meta.index = entry.index;
+                            meta.term = entry.term;
+                            *meta.mut_conf_state() = cs.clone();
+                        }
+                        snapshot.data = sm_data.into();
+
+                        // Store snapshot WITHOUT clearing entries (we are the
+                        // leader and need entries for other followers).
+                        self.raw_node
+                            .mut_store()
+                            .store_snapshot(&snapshot)
+                            .map_err(|e| RaftError::Storage(format!("store snapshot: {e}")))?;
+                        // Compact log up to this entry so raft-rs detects
+                        // Compacted when probing the new follower and falls
+                        // back to sending the snapshot.
+                        self.raw_node
+                            .mut_store()
+                            .compact(entry.index)
+                            .map_err(|e| {
+                                RaftError::Storage(format!("compact after AddNode: {e}"))
+                            })?;
+
+                        tracing::info!(
+                            index = entry.index,
+                            node_id = cc.node_id,
+                            voters = ?cs.voters,
+                            "Created snapshot and compacted log for new voter catch-up"
+                        );
+                    }
 
                     // Notify waiting JoinZone caller (if any)
                     if let Some(tx) = self.pending_conf_changes.remove(&cc.node_id) {
@@ -1083,21 +1166,25 @@ mod tests {
             tokio::spawn(run_test_driver(driver, i, all_handles, shutdown_rx));
         }
 
-        // Give drivers a moment to start
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        // Yield to let spawned driver tasks start
+        tokio::task::yield_now().await;
 
         // Phase 3: Trigger election on node 1
         handles[0].campaign().await.unwrap();
 
-        // Wait for leader election
+        // Wait for leader election.
+        // The drivers run on 10ms intervals; election needs ~3 rounds of
+        // message exchange (MsgVote → MsgVoteResp → leader heartbeat).
+        let mut leader_elected = false;
         for _ in 0..200 {
             tokio::time::sleep(Duration::from_millis(10)).await;
             if handles.iter().any(|h| h.is_leader()) {
+                leader_elected = true;
                 break;
             }
         }
+        assert!(leader_elected, "Leader election must complete");
 
-        // Verify exactly one leader
         let mut leader_count = 0;
         let mut leader_idx = 0;
         for (i, handle) in handles.iter().enumerate() {
@@ -1119,21 +1206,29 @@ mod tests {
             "Proposal should succeed"
         );
 
-        // Wait for replication to followers
-        tokio::time::sleep(Duration::from_millis(200)).await;
-
-        // Verify all nodes have the metadata
-        for (i, handle) in handles.iter().enumerate() {
-            let value = handle
-                .with_state_machine(|sm| sm.get_metadata("/test.txt"))
-                .await
-                .unwrap();
-            assert!(
-                value.is_some(),
-                "Node {} should have /test.txt metadata after replication",
-                i + 1
-            );
+        // Wait for replication: poll until all nodes have the data,
+        // instead of a blanket sleep.
+        let mut all_replicated = false;
+        for _ in 0..200 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            let mut ok = true;
+            for handle in &handles {
+                let has_it = handle
+                    .with_state_machine(|sm| sm.get_metadata("/test.txt"))
+                    .await
+                    .map(|v| v.is_some())
+                    .unwrap_or(false);
+                if !has_it {
+                    ok = false;
+                    break;
+                }
+            }
+            if ok {
+                all_replicated = true;
+                break;
+            }
         }
+        assert!(all_replicated, "Replication to all nodes must complete");
 
         // Phase 5: EC propose — returns immediately without waiting for commit
         let ec_cmd = Command::SetMetadata {
@@ -1145,6 +1240,84 @@ mod tests {
 
         // Shutdown all drivers
         let _ = shutdown_tx.send(true);
+    }
+
+    /// Regression test: single-node ConfState must include self as voter.
+    ///
+    /// Before the fix, empty `config.peers` skipped ConfState bootstrap,
+    /// leaving the voter set empty.  This violated raft-rs's contract:
+    /// `RawNode` expects the node to be in the voter set before `campaign()`.
+    /// The result was a panic at `raft.rs:1225` (`unwrap()` on `None`).
+    ///
+    /// The fix: bootstrap ConfState with `voters=[self.id]` even when
+    /// `config.peers` is empty (single-node cluster).
+    ///
+    /// This test is deterministic: no async, no timers, no polling.
+    /// It verifies the persisted ConfState directly after ZoneConsensus::new().
+    #[test]
+    fn test_single_node_conf_state_includes_self() {
+        let dir = TempDir::new().unwrap();
+
+        // Create ZoneConsensus, then drop to release redb lock.
+        {
+            let storage = RaftStorage::open(dir.path()).unwrap();
+            let store = RedbStore::open(dir.path().join("sm")).unwrap();
+            let state_machine = FullStateMachine::new(&store).unwrap();
+
+            let config = RaftConfig {
+                id: 1,
+                peers: vec![], // single-node: no peers
+                ..Default::default()
+            };
+
+            // Before the fix, this skipped ConfState bootstrap when peers
+            // was empty, leaving voters=[].
+            let (_handle, _driver) =
+                ZoneConsensus::new(config, storage, state_machine, None).unwrap();
+        }
+
+        // Re-open storage (redb lock released) and verify ConfState.
+        let storage = RaftStorage::open(dir.path()).unwrap();
+        let state = Storage::initial_state(&storage).unwrap();
+        assert_eq!(
+            state.conf_state.voters,
+            vec![1],
+            "Single-node ConfState must include self as voter"
+        );
+    }
+
+    /// Verify multi-node ConfState includes all voters.
+    ///
+    /// Per raft-rs contract: all initial cluster members must be in
+    /// ConfState.voters before RawNode::new().
+    #[test]
+    fn test_multi_node_conf_state_includes_all_voters() {
+        let dir = TempDir::new().unwrap();
+
+        {
+            let storage = RaftStorage::open(dir.path()).unwrap();
+            let store = RedbStore::open(dir.path().join("sm")).unwrap();
+            let state_machine = FullStateMachine::new(&store).unwrap();
+
+            let config = RaftConfig {
+                id: 1,
+                peers: vec![2, 3],
+                ..Default::default()
+            };
+
+            let (_handle, _driver) =
+                ZoneConsensus::new(config, storage, state_machine, None).unwrap();
+        }
+
+        let storage = RaftStorage::open(dir.path()).unwrap();
+        let state = Storage::initial_state(&storage).unwrap();
+        let mut voters = state.conf_state.voters.clone();
+        voters.sort();
+        assert_eq!(
+            voters,
+            vec![1, 2, 3],
+            "Multi-node ConfState must include self and all peers"
+        );
     }
 
     #[tokio::test]
@@ -1162,5 +1335,56 @@ mod tests {
             matches!(result.unwrap_err(), RaftError::NotLeader { .. }),
             "Should be NotLeader error"
         );
+    }
+
+    /// Regression test: after campaign() on a single-node cluster,
+    /// is_leader() must return true IMMEDIATELY — without needing advance().
+    ///
+    /// Previously, update_cached_status() was only called inside advance(),
+    /// so the cached role stayed Follower until the next transport loop tick.
+    /// Callers (PyO3 set_metadata) that checked is_leader() right after
+    /// create_zone() would get "not leader" errors.
+    #[tokio::test]
+    async fn test_single_node_is_leader_after_campaign_without_advance() {
+        let dir = TempDir::new().unwrap();
+        let storage = RaftStorage::open(dir.path()).unwrap();
+        let store = RedbStore::open(dir.path().join("sm")).unwrap();
+        let state_machine = FullStateMachine::new(&store).unwrap();
+
+        let config = RaftConfig {
+            id: 1,
+            peers: vec![],
+            ..Default::default()
+        };
+
+        let (handle, mut driver) =
+            ZoneConsensus::new(config, storage, state_machine, None).unwrap();
+
+        // Before campaign: should be Follower
+        assert_eq!(handle.role(), NodeRole::Follower);
+        assert!(!handle.is_leader());
+
+        // Spawn campaign on a separate task (it blocks waiting for driver response).
+        // Then drive process_messages() to dequeue and process the Campaign msg.
+        let campaign_handle = handle.clone();
+        let campaign_task = tokio::spawn(async move { campaign_handle.campaign().await });
+
+        // Yield to let the campaign task send the message
+        tokio::task::yield_now().await;
+
+        // Process the Campaign message in the driver (no advance!)
+        driver.process_messages();
+
+        // Wait for campaign to complete
+        campaign_task.await.unwrap().unwrap();
+
+        // is_leader() must be true now — the cached status was synced
+        // inside the campaign handler, not deferred to advance().
+        assert!(
+            handle.is_leader(),
+            "is_leader() must be true after campaign() + process_messages(), without advance()"
+        );
+        assert_eq!(handle.role(), NodeRole::Leader);
+        assert_eq!(handle.leader_id(), Some(1));
     }
 }

@@ -17,7 +17,7 @@ import dataclasses
 import logging
 from typing import Any
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 logger = logging.getLogger(__name__)
 
@@ -83,32 +83,35 @@ def build_dispatch_table() -> dict[str, DispatchEntry]:
         handle_rmdir,
         handle_search,
         handle_semantic_search_index,
+        handle_set_metadata,
         handle_write,
     )
 
     return {
-        # Core filesystem operations
-        "read": DispatchEntry(handle_read_async, is_async=True),
-        "write": DispatchEntry(
+        # Core filesystem syscalls (sys_ prefix — Linux VFS aligned)
+        "sys_read": DispatchEntry(handle_read_async, is_async=True),
+        "sys_write": DispatchEntry(
             handle_write, event_type="file_write", event_size_key="bytes_written"
         ),
-        "exists": DispatchEntry(handle_exists),
-        "list": DispatchEntry(handle_list),
-        "delete": DispatchEntry(handle_delete, event_type="file_delete"),
-        "rename": DispatchEntry(
+        "sys_access": DispatchEntry(handle_exists),
+        "sys_readdir": DispatchEntry(handle_list),
+        "sys_unlink": DispatchEntry(handle_delete, event_type="file_delete"),
+        "sys_rename": DispatchEntry(
             handle_rename,
             event_type="file_rename",
             event_path_attr="new_path",
             event_old_path_attr="old_path",
         ),
         "copy": DispatchEntry(handle_copy),
-        "mkdir": DispatchEntry(handle_mkdir, event_type="dir_create"),
-        "rmdir": DispatchEntry(handle_rmdir, event_type="dir_delete"),
-        "get_metadata": DispatchEntry(handle_get_metadata),
+        "sys_mkdir": DispatchEntry(handle_mkdir, event_type="dir_create"),
+        "sys_rmdir": DispatchEntry(handle_rmdir, event_type="dir_delete"),
+        "sys_stat": DispatchEntry(handle_get_metadata),
+        "sys_setattr": DispatchEntry(handle_set_metadata),
+        "sys_is_directory": DispatchEntry(handle_is_directory),
+        # User-space utilities (not syscalls, but dispatched via RPC)
         "glob": DispatchEntry(handle_glob),
         "grep": DispatchEntry(handle_grep),
         "search": DispatchEntry(handle_search),
-        "is_directory": DispatchEntry(handle_is_directory),
         # Delta sync
         "delta_read": DispatchEntry(handle_delta_read),
         "delta_write": DispatchEntry(handle_delta_write),
@@ -278,7 +281,13 @@ async def _auto_dispatch(
         elif hasattr(params, param_name):
             kwargs[param_name] = getattr(params, param_name)
 
-    if asyncio.iscoroutinefunction(func):
+    if inspect.isasyncgenfunction(func):
+        # Async generator (e.g. llm_read_stream): collect chunks into a string
+        chunks: list[str] = []
+        async for chunk in func(**kwargs):
+            chunks.append(str(chunk))
+        return "".join(chunks)
+    elif asyncio.iscoroutinefunction(func):
         return await func(**kwargs)
     else:
         timeout = 300.0 if method == "sync_mount" else None

@@ -15,6 +15,8 @@ from datetime import UTC, datetime
 from sqlalchemy import DateTime, String, Text, TextClause, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from nexus.contracts.constants import ROOT_ZONE_ID
+
 
 def _generate_uuid() -> str:
     """Generate a UUID string (UUIDv4).
@@ -69,7 +71,7 @@ class TimestampMixin:
 class ZoneIsolationMixin:
     """Mixin providing a zone_id column for multi-zone isolation."""
 
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default=ROOT_ZONE_ID)
 
 
 class ResourceConfigMixin:

@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from cachetools import TTLCache
 
-from nexus.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import PermissionDeniedError
 from nexus.contracts.search_types import (
     GLOB_RUST_THRESHOLD,
@@ -226,9 +226,24 @@ class SearchService(SemanticSearchMixin):
         return self._list_thread_pool
 
     def _get_namespace_prefixes(self) -> tuple[str, ...]:
-        """Get known namespace prefixes from router (dynamic) or fallback (static)."""
-        if self.router and hasattr(self.router, "_namespaces"):
-            return tuple(f"{ns}/" for ns in self.router._namespaces)
+        """Get known mount-point prefixes from router (dynamic) or fallback (static).
+
+        Uses ``get_mount_points()`` to derive top-level prefixes from active
+        mounts.  Falls back to hardcoded defaults when no router is available.
+        """
+        if self.router and hasattr(self.router, "get_mount_points"):
+            try:
+                mount_points = self.router.get_mount_points()
+                # Extract top-level segments from mount points (e.g. "/workspace" -> "workspace/")
+                prefixes: set[str] = set()
+                for mp in mount_points:
+                    top = mp.lstrip("/").split("/")[0]
+                    if top:
+                        prefixes.add(f"{top}/")
+                if prefixes:
+                    return tuple(sorted(prefixes))
+            except Exception:
+                pass
         return ("workspace/", "shared/", "external/", "system/", "archives/")
 
     def _should_prepend_recursive_wildcard(self, pattern: str) -> bool:
@@ -378,13 +393,15 @@ class SearchService(SemanticSearchMixin):
                 zone_id, _agent_id, is_admin = self._get_routing_params(context)
                 route = self.router.route(
                     path,
-                    zone_id=zone_id,
                     is_admin=is_admin,
                     check_write=False,
                 )
+                from nexus.core.protocols.capabilities import ConnectorCapability
+
+                _caps: frozenset[str] = getattr(route.backend, "capabilities", frozenset())
                 is_dynamic_connector = (
                     route.backend.user_scoped and route.backend.has_token_manager
-                ) or route.backend.has_virtual_filesystem
+                ) or ConnectorCapability.EXTERNAL_CONTENT in _caps
 
                 if is_dynamic_connector:
                     return self._list_dynamic_connector(path, route, recursive, details, context)
@@ -411,6 +428,13 @@ class SearchService(SemanticSearchMixin):
         if path and not path.endswith("/"):
             path = path + "/"
         list_prefix = path if path != "/" else ""
+
+        # Zone-scope the list prefix when called from internal methods (e.g., glob)
+        # that bypass the RPC layer's _scope_params_for_zone path prefixing.
+        if list_zone_id and list_zone_id != ROOT_ZONE_ID:
+            zone_scope = f"/zone/{list_zone_id}"
+            if list_prefix and not list_prefix.startswith(zone_scope):
+                list_prefix = f"{zone_scope}{list_prefix}"
 
         # OPTIMIZATION: For non-recursive, try sparse directory index + Tiger bitmap
         _use_fast_path = False
@@ -936,7 +960,8 @@ class SearchService(SemanticSearchMixin):
                 all_files = [
                     f
                     for f in all_files
-                    if tiger_cache.get_or_create_int_id("file", f.path) in _accessible_int_ids
+                    if tiger_cache._resource_map.get_or_create_int_id("file", f.path)
+                    in _accessible_int_ids
                 ]
                 logger.info(
                     f"[PREDICATE-PUSHDOWN] Service-layer filter: "
@@ -1043,7 +1068,11 @@ class SearchService(SemanticSearchMixin):
         directories: set[str] = set()
 
         for meta in results:
-            if meta.mime_type == "inode/directory":
+            if (
+                meta.mime_type == "inode/directory"
+                or getattr(meta, "is_dir", False)
+                or getattr(meta, "is_mount", False)
+            ):
                 directories.add(meta.path)
 
         if not recursive:
@@ -1190,6 +1219,8 @@ class SearchService(SemanticSearchMixin):
             }
             for meta in results
             if meta.mime_type != "inode/directory"
+            and not getattr(meta, "is_dir", False)
+            and not getattr(meta, "is_mount", False)
         ]
         dir_results = [
             {
@@ -1222,7 +1253,13 @@ class SearchService(SemanticSearchMixin):
         """Build path-only results."""
         import time as _time
 
-        file_paths = [meta.path for meta in results if meta.mime_type != "inode/directory"]
+        file_paths = [
+            meta.path
+            for meta in results
+            if meta.mime_type != "inode/directory"
+            and not getattr(meta, "is_dir", False)
+            and not getattr(meta, "is_mount", False)
+        ]
         all_paths = file_paths + sorted(directories)
         all_paths.sort()
         logger.info(
@@ -1358,7 +1395,7 @@ class SearchService(SemanticSearchMixin):
                     size = 0
                     if self._gw_backend:
                         try:
-                            size = len(self._gw_backend.read_content(mem.content_hash).unwrap())
+                            size = len(self._gw_backend.read_content(mem.content_hash))
                         except Exception:
                             logger.debug("Failed to read memory content size: %s", mem.memory_id)
                     detail_results.append(
@@ -1485,7 +1522,10 @@ class SearchService(SemanticSearchMixin):
                 full_pattern = "**/" + full_pattern
         else:
             base_path = path[1:] if path.startswith("/") else path
-            full_pattern = base_path + pattern
+            # Strip leading "/" from pattern to avoid double-slash when
+            # base_path already ends with "/" (e.g., zone-scoped paths).
+            pattern_part = pattern.lstrip("/") if pattern.startswith("/") else pattern
+            full_pattern = base_path + pattern_part
 
         # Phase 4: Execute strategy-specific matching
         match_start = time.time()

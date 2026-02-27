@@ -26,7 +26,7 @@ from nexus.bricks.a2a.handlers import dispatch
 from nexus.bricks.a2a.models import A2AErrorData, A2ARequest, A2AResponse
 from nexus.bricks.a2a.streaming import handle_streaming
 from nexus.bricks.a2a.task_manager import TaskManager
-from nexus.constants import DEFAULT_NEXUS_URL
+from nexus.contracts.constants import DEFAULT_NEXUS_URL
 
 logger = logging.getLogger(__name__)
 
@@ -273,7 +273,6 @@ def create_a2a_router(
     auth_required: bool = False,
     auth_fn: Any = None,
     data_dir: str | None = None,
-    hook_engine: Any = None,
 ) -> tuple[APIRouter, TaskManager]:
     """Create the A2A protocol FastAPI router.
 
@@ -290,8 +289,6 @@ def create_a2a_router(
             are persisted as MessageEnvelope JSON files under
             ``{data_dir}/agents/{agent_id}/tasks/`` (§17.6 convergence).
             When None, tasks are stored in-memory only.
-        hook_engine: Optional HookEngineProtocol instance for artifact
-            indexing hooks (Issue #1861).
 
     Returns:
         Tuple of (configured FastAPI APIRouter, TaskManager instance).
@@ -303,10 +300,10 @@ def create_a2a_router(
 
         storage = LocalStorageDriver(root=data_dir)
         store = VFSTaskStore(storage=storage)
-        task_manager = TaskManager(store=store, hook_engine=hook_engine)
+        task_manager = TaskManager(store=store)
 
     if task_manager is None:
-        task_manager = TaskManager(hook_engine=hook_engine)
+        task_manager = TaskManager()
 
     router = build_router(
         _nexus_fs=nexus_fs,

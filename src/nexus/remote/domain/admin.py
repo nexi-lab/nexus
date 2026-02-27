@@ -6,6 +6,8 @@ Issue #1603: Decompose remote/client.py into domain clients.
 import builtins
 from typing import Any
 
+from nexus.contracts.constants import ROOT_ZONE_ID
+
 
 class AsyncAdminClient:
     """Async Admin API client for managing API keys."""
@@ -17,7 +19,7 @@ class AsyncAdminClient:
         self,
         user_id: str,
         name: str,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         is_admin: bool = False,
         expires_days: int | None = None,
         subject_type: str | None = None,

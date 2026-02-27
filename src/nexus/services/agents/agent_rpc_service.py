@@ -13,6 +13,7 @@ import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.rpc import rpc_expose
 from nexus.contracts.types import VFSOperations, parse_operation_context
 
@@ -116,7 +117,7 @@ class AgentRPCService:
 
         config_yaml = yaml.dump(config_data, default_flow_style=False, sort_keys=False)
         ctx = parse_operation_context(context)
-        self._vfs.write(config_path, config_yaml.encode("utf-8"), context=ctx)
+        self._vfs.sys_write(config_path, config_yaml.encode("utf-8"), context=ctx)
 
     # ------------------------------------------------------------------
     # Directory & Permission Helpers
@@ -133,11 +134,11 @@ class AgentRPCService:
     ) -> None:
         try:
             ctx = parse_operation_context(context)
-            self._vfs.mkdir(agent_dir, parents=True, exist_ok=True, context=ctx)
+            self._vfs.sys_mkdir(agent_dir, parents=True, exist_ok=True, context=ctx)
             self._write_agent_config(config_path, config_data, context)
 
             if self._rebac_manager:
-                zone_id = self._extract_zone_id(context) or "root"
+                zone_id = self._extract_zone_id(context) or ROOT_ZONE_ID
                 try:
                     self._rebac_manager.rebac_write(
                         subject=("agent", agent_id),
@@ -325,8 +326,10 @@ class AgentRPCService:
             did_doc = create_did_document(agent_did, public_key)
             identity_dir = f"{agent_dir}/.identity"
             ctx = parse_operation_context(context)
-            self._vfs.mkdir(identity_dir, parents=True, exist_ok=True, context=ctx)
-            self._vfs.write(f"{identity_dir}/did.json", json.dumps(did_doc, indent=2), context=ctx)
+            self._vfs.sys_mkdir(identity_dir, parents=True, exist_ok=True, context=ctx)
+            self._vfs.sys_write(
+                f"{identity_dir}/did.json", json.dumps(did_doc, indent=2), context=ctx
+            )
             _logger.info("[KYA] Wrote DID document to %s/did.json", identity_dir)
         except Exception as e:
             _logger.warning("[KYA] Failed to write DID document: %s", e)
@@ -385,7 +388,7 @@ class AgentRPCService:
         user_id = self._extract_user_id(context)
         if not user_id:
             raise ValueError("user_id required in context to register agent")
-        zone_id = self._extract_zone_id(context) or "root"
+        zone_id = self._extract_zone_id(context) or ROOT_ZONE_ID
 
         agent_name_part = agent_id.split(",", 1)[1] if "," in agent_id else agent_id
         agent_dir = f"/zone/{zone_id}/user/{user_id}/agent/{agent_name_part}"
@@ -460,7 +463,7 @@ class AgentRPCService:
         user_id = self._extract_user_id(context)
         if not user_id:
             raise ValueError("user_id required in context to update agent")
-        zone_id = self._extract_zone_id(context) or "root"
+        zone_id = self._extract_zone_id(context) or ROOT_ZONE_ID
 
         agent_name_part = agent_id.split(",", 1)[1] if "," in agent_id else agent_id
         agent_dir = f"/zone/{zone_id}/user/{user_id}/agent/{agent_name_part}"
@@ -474,7 +477,7 @@ class AgentRPCService:
             raise ValueError(f"Agent not found: {agent_id}") from e
 
         ctx = parse_operation_context(context)
-        existing_content = self._vfs.read(config_path, context=ctx)
+        existing_content = self._vfs.sys_read(config_path, context=ctx)
         if isinstance(existing_content, dict):
             existing_config = existing_content
         else:
@@ -490,7 +493,7 @@ class AgentRPCService:
             existing_config["metadata"].update(metadata)
 
         updated_yaml = yaml.dump(existing_config, default_flow_style=False, sort_keys=False)
-        self._vfs.write(config_path, updated_yaml.encode("utf-8"), context=ctx)
+        self._vfs.sys_write(config_path, updated_yaml.encode("utf-8"), context=ctx)
 
         if self._entity_registry and (name is not None or description is not None):
             entity = self._entity_registry.get_entity("agent", agent_id)
@@ -644,14 +647,14 @@ class AgentRPCService:
         try:
             if "," in agent_id:
                 user_id, agent_name_part = agent_id.split(",", 1)
-                zone_id = self._extract_zone_id(_context) or "root"
+                zone_id = self._extract_zone_id(_context) or ROOT_ZONE_ID
                 agent_dir = f"/zone/{zone_id}/user/{user_id}/agent/{agent_name_part}"
 
                 # Delete directory
                 if self._rmdir_fn:
                     try:
                         ctx = parse_operation_context(_context)
-                        if self._vfs.exists(agent_dir, context=ctx):
+                        if self._vfs.sys_access(agent_dir, context=ctx):
                             self._rmdir_fn(agent_dir, recursive=True, context=ctx, is_admin=True)
                     except Exception as e:
                         logger.warning("Failed to delete agent directory %s: %s", agent_dir, e)
@@ -716,7 +719,7 @@ class AgentRPCService:
 
         # Wallet cleanup
         if self._wallet_provisioner is not None:
-            zone_id_for_wallet = self._extract_zone_id(_context) or "root"
+            zone_id_for_wallet = self._extract_zone_id(_context) or ROOT_ZONE_ID
             try:
                 cleanup_fn = getattr(self._wallet_provisioner, "cleanup", None)
                 if cleanup_fn is not None:
@@ -821,10 +824,10 @@ class AgentRPCService:
             if "," not in entity_id:
                 return None
             user_id, agent_name = entity_id.split(",", 1)
-            zone_id = self._extract_zone_id(context) or "root"
+            zone_id = self._extract_zone_id(context) or ROOT_ZONE_ID
             config_path = f"/zone/{zone_id}/user/{user_id}/agent/{agent_name}/config.yaml"
             ctx = parse_operation_context(context)
-            content = self._vfs.read(config_path, context=ctx)
+            content = self._vfs.sys_read(config_path, context=ctx)
             import yaml
 
             if isinstance(content, bytes):
@@ -847,10 +850,10 @@ class AgentRPCService:
             if "," not in entity.entity_id:
                 return
             user_id, agent_name = entity.entity_id.split(",", 1)
-            zone_id = self._extract_zone_id(context) or "root"
+            zone_id = self._extract_zone_id(context) or ROOT_ZONE_ID
             config_path = f"/zone/{zone_id}/user/{user_id}/agent/{agent_name}/config.yaml"
             ctx = parse_operation_context(context)
-            content = self._vfs.read(config_path, context=ctx)
+            content = self._vfs.sys_read(config_path, context=ctx)
             import yaml
 
             if not isinstance(content, bytes):

@@ -18,7 +18,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from nexus.contracts.workspace_manifest import ManifestEntry, WorkspaceManifest
-from nexus.lib.response import HandlerResponse
+from nexus.core.object_store import WriteResult
 from nexus.storage.models._base import Base
 from nexus.storage.models.filesystem import WorkspaceSnapshotModel
 from nexus.system_services.workspace.context_branch import ContextBranchService
@@ -44,12 +44,12 @@ class FakeCAS:
         self._snap_counter = 0
 
     def read_content(self, content_hash, context=None):
-        return HandlerResponse.ok(self.store[content_hash])
+        return self.store[content_hash]
 
     def write_content(self, data, context=None):
         h = hashlib.sha256(data).hexdigest()
         self.store[h] = data
-        return HandlerResponse.ok(h)
+        return WriteResult(content_hash=h, size=len(data))
 
 
 class FakeWorkspaceManager:

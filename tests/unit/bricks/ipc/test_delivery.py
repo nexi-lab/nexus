@@ -5,7 +5,6 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from nexus.bricks.cache.inmemory import InMemoryCacheStore
 from nexus.bricks.ipc.conventions import (
     dead_letter_path,
     inbox_path,
@@ -13,7 +12,7 @@ from nexus.bricks.ipc.conventions import (
     outbox_path,
     processed_path,
 )
-from nexus.bricks.ipc.delivery import DeliveryMode, MessageProcessor, MessageSender
+from nexus.bricks.ipc.delivery import MessageProcessor, MessageSender
 from nexus.bricks.ipc.envelope import MessageEnvelope, MessageType
 from nexus.bricks.ipc.exceptions import (
     EnvelopeValidationError,
@@ -21,11 +20,10 @@ from nexus.bricks.ipc.exceptions import (
     InboxNotFoundError,
 )
 from nexus.bricks.ipc.provisioning import AgentProvisioner
+from nexus.cache.inmemory import InMemoryCacheStore
 
 from .fakes import (
     InMemoryEventPublisher,
-    InMemoryHotPathPublisher,
-    InMemoryHotPathSubscriber,
     InMemoryVFS,
 )
 
@@ -79,7 +77,7 @@ class TestMessageSender:
         assert path.startswith("/agents/agent:bob/inbox/")
         assert path.endswith(".json")
         # Verify file was written
-        data = await vfs.read(path, ZONE)
+        data = await vfs.sys_read(path, ZONE)
         restored = MessageEnvelope.from_bytes(data)
         assert restored.id == env.id
         # Verify EventBus notification
@@ -210,7 +208,7 @@ class TestMessageProcessor:
         await _provision_agent(vfs, "agent:bob")
         env = _make_envelope()
         msg_path = message_path_in_inbox("agent:bob", env.id, env.timestamp)
-        await vfs.write(msg_path, env.to_bytes(), ZONE)
+        await vfs.sys_write(msg_path, env.to_bytes(), ZONE)
 
         received: list[MessageEnvelope] = []
 
@@ -234,7 +232,7 @@ class TestMessageProcessor:
         await _provision_agent(vfs, "agent:bob")
         env = _make_envelope()
         msg_path = message_path_in_inbox("agent:bob", env.id, env.timestamp)
-        await vfs.write(msg_path, env.to_bytes(), ZONE)
+        await vfs.sys_write(msg_path, env.to_bytes(), ZONE)
 
         async def failing_handler(msg: MessageEnvelope) -> None:
             raise RuntimeError("Handler exploded")
@@ -255,7 +253,7 @@ class TestMessageProcessor:
         old_ts = datetime(2020, 1, 1, tzinfo=UTC)
         env = _make_envelope(timestamp=old_ts, ttl_seconds=60)
         msg_path = message_path_in_inbox("agent:bob", env.id, env.timestamp)
-        await vfs.write(msg_path, env.to_bytes(), ZONE)
+        await vfs.sys_write(msg_path, env.to_bytes(), ZONE)
 
         handler_called = False
 
@@ -276,7 +274,7 @@ class TestMessageProcessor:
         await _provision_agent(vfs, "agent:bob")
         env = _make_envelope(msg_id="msg_dup")
         msg_path = message_path_in_inbox("agent:bob", env.id, env.timestamp)
-        await vfs.write(msg_path, env.to_bytes(), ZONE)
+        await vfs.sys_write(msg_path, env.to_bytes(), ZONE)
 
         call_count = 0
 
@@ -296,7 +294,7 @@ class TestMessageProcessor:
         ts2 = datetime.now(UTC) + timedelta(seconds=1)
         env2 = _make_envelope(msg_id="msg_dup", timestamp=ts2)
         msg_path2 = message_path_in_inbox("agent:bob", env2.id, env2.timestamp)
-        await vfs.write(msg_path2, env2.to_bytes(), ZONE)
+        await vfs.sys_write(msg_path2, env2.to_bytes(), ZONE)
 
         # Process again — should skip duplicate
         await processor.process_inbox()
@@ -306,7 +304,7 @@ class TestMessageProcessor:
     async def test_process_malformed_message(self, vfs: InMemoryVFS) -> None:
         await _provision_agent(vfs, "agent:bob")
         msg_path = "/agents/agent:bob/inbox/20260212T100000_msg_bad.json"
-        await vfs.write(msg_path, b"not valid json {{{", ZONE)
+        await vfs.sys_write(msg_path, b"not valid json {{{", ZONE)
 
         async def handler(msg: MessageEnvelope) -> None:
             pass  # Should never be called
@@ -345,7 +343,7 @@ class TestMessageProcessor:
         for ts, mid in [(ts1, "msg_01"), (ts2, "msg_02"), (ts3, "msg_03")]:
             env = _make_envelope(msg_id=mid, timestamp=ts)
             path = message_path_in_inbox("agent:bob", env.id, env.timestamp)
-            await vfs.write(path, env.to_bytes(), ZONE)
+            await vfs.sys_write(path, env.to_bytes(), ZONE)
 
         async def handler(msg: MessageEnvelope) -> None:
             received_ids.append(msg.id)
@@ -418,7 +416,7 @@ class TestConcurrentProcessing:
         await _provision_agent(vfs, "agent:bob")
         env = _make_envelope(msg_id="msg_concurrent")
         msg_path = message_path_in_inbox("agent:bob", env.id, env.timestamp)
-        await vfs.write(msg_path, env.to_bytes(), ZONE)
+        await vfs.sys_write(msg_path, env.to_bytes(), ZONE)
 
         call_count = 0
 
@@ -427,7 +425,7 @@ class TestConcurrentProcessing:
             call_count += 1
             await asyncio.sleep(0.01)
 
-        from nexus.bricks.cache.inmemory import InMemoryCacheStore
+        from nexus.cache.inmemory import InMemoryCacheStore
 
         cache_store = InMemoryCacheStore()
         p1 = MessageProcessor(vfs, "agent:bob", handler, zone_id=ZONE, cache_store=cache_store)
@@ -448,241 +446,6 @@ class TestConcurrentProcessing:
 
         # Dedup cache populated — a third sweep would skip
         assert await cache_store.exists(f"ipc:dedup:{ZONE}:msg_concurrent")
-
-
-class TestHotColdDelivery:
-    """Tests for tiered hot/cold message delivery (#1747, LEGO 17.7)."""
-
-    @pytest.fixture
-    def vfs(self) -> InMemoryVFS:
-        return InMemoryVFS()
-
-    @pytest.fixture
-    def hot_pub(self) -> InMemoryHotPathPublisher:
-        return InMemoryHotPathPublisher()
-
-    @pytest.fixture
-    def hot_sub(self) -> InMemoryHotPathSubscriber:
-        return InMemoryHotPathSubscriber()
-
-    # --- MessageSender tests ---
-
-    @pytest.mark.asyncio
-    async def test_hot_cold_send_publishes_nats_and_writes_file(
-        self, vfs: InMemoryVFS, hot_pub: InMemoryHotPathPublisher
-    ) -> None:
-        """HOT_COLD mode: NATS publish + async filesystem write both fire."""
-        await _provision_agent(vfs, "agent:bob")
-        await _provision_agent(vfs, "agent:alice")
-        sender = MessageSender(
-            vfs,
-            zone_id=ZONE,
-            hot_publisher=hot_pub,
-            delivery_mode=DeliveryMode.HOT_COLD,
-        )
-        env = _make_envelope()
-        path = await sender.send(env)
-        await sender.drain()
-
-        # Hot path: NATS publish captured
-        assert len(hot_pub.published) == 1
-        assert hot_pub.published[0][0] == "agents.agent:bob.inbox"
-        # Verify hot bytes are compact (no indentation)
-        assert b"\n" not in hot_pub.published[0][1]
-
-        # Cold path: file written (after drain)
-        inbox_files = await vfs.list_dir(inbox_path("agent:bob"), ZONE)
-        assert len(inbox_files) == 1
-
-        # Return value is the hot:// synthetic path (hot succeeded)
-        assert path.startswith("hot://")
-
-    @pytest.mark.asyncio
-    async def test_nats_down_falls_back_to_sync_cold(self, vfs: InMemoryVFS) -> None:
-        """When NATS publish fails, HOT_COLD degrades to synchronous cold."""
-        await _provision_agent(vfs, "agent:bob")
-        await _provision_agent(vfs, "agent:alice")
-        failing_pub = InMemoryHotPathPublisher(should_fail=True)
-        sender = MessageSender(
-            vfs,
-            zone_id=ZONE,
-            hot_publisher=failing_pub,
-            delivery_mode=DeliveryMode.HOT_COLD,
-        )
-        env = _make_envelope()
-        path = await sender.send(env)
-
-        # Cold path: file written synchronously (fallback)
-        assert path.startswith("/agents/agent:bob/inbox/")
-        data = await vfs.read(path, ZONE)
-        restored = MessageEnvelope.from_bytes(data)
-        assert restored.id == env.id
-
-    @pytest.mark.asyncio
-    async def test_hot_only_no_filesystem_write(
-        self, vfs: InMemoryVFS, hot_pub: InMemoryHotPathPublisher
-    ) -> None:
-        """HOT_ONLY mode: no filesystem write occurs."""
-        await _provision_agent(vfs, "agent:bob")
-        sender = MessageSender(
-            vfs,
-            zone_id=ZONE,
-            hot_publisher=hot_pub,
-            delivery_mode=DeliveryMode.HOT_ONLY,
-        )
-        env = _make_envelope()
-        path = await sender.send(env)
-
-        # Hot path fired
-        assert len(hot_pub.published) == 1
-        # No cold write
-        inbox_files = await vfs.list_dir(inbox_path("agent:bob"), ZONE)
-        assert len(inbox_files) == 0
-        # Synthetic path
-        assert path.startswith("hot://")
-
-    @pytest.mark.asyncio
-    async def test_graceful_drain_completes_pending_cold_writes(
-        self, vfs: InMemoryVFS, hot_pub: InMemoryHotPathPublisher
-    ) -> None:
-        """drain() awaits all pending background cold-write tasks."""
-        await _provision_agent(vfs, "agent:bob")
-        await _provision_agent(vfs, "agent:alice")
-        sender = MessageSender(
-            vfs,
-            zone_id=ZONE,
-            hot_publisher=hot_pub,
-            delivery_mode=DeliveryMode.HOT_COLD,
-        )
-
-        # Send multiple messages
-        for i in range(5):
-            await sender.send(_make_envelope(msg_id=f"msg_drain_{i}"))
-
-        # Before drain, tasks might not be complete
-        assert len(sender._pending_tasks) >= 0  # at least some created
-
-        # After drain, all cold writes complete
-        await sender.drain()
-        inbox_files = await vfs.list_dir(inbox_path("agent:bob"), ZONE)
-        assert len(inbox_files) == 5
-
-    @pytest.mark.asyncio
-    async def test_default_delivery_mode_is_cold_only_when_no_hot_publisher(
-        self, vfs: InMemoryVFS
-    ) -> None:
-        """Backwards compat: no hot_publisher -> COLD_ONLY regardless of mode."""
-        sender = MessageSender(
-            vfs,
-            zone_id=ZONE,
-            delivery_mode=DeliveryMode.HOT_COLD,  # Requested, but no publisher
-        )
-        assert sender._mode == DeliveryMode.COLD_ONLY
-
-    # --- MessageProcessor hot-path tests ---
-
-    @pytest.mark.asyncio
-    async def test_hot_cold_dedup_prevents_double_processing(
-        self,
-        vfs: InMemoryVFS,
-        hot_sub: InMemoryHotPathSubscriber,
-    ) -> None:
-        """Same message via hot + cold: handler invoked only once."""
-        await _provision_agent(vfs, "agent:bob")
-        env = _make_envelope(msg_id="msg_dedup_hc")
-        call_count = 0
-
-        async def handler(msg: MessageEnvelope) -> None:
-            nonlocal call_count
-            call_count += 1
-
-        cache_store = InMemoryCacheStore()
-        processor = MessageProcessor(
-            vfs,
-            "agent:bob",
-            handler,
-            zone_id=ZONE,
-            hot_subscriber=hot_sub,
-            cache_store=cache_store,
-        )
-        await processor.start()
-
-        # Deliver via hot path
-        await hot_sub.inject("agents.agent:bob.inbox", env.to_hot_bytes())
-        # Give the event loop a chance to process
-        await asyncio.sleep(0.05)
-
-        assert call_count == 1
-
-        # Now deliver same message via cold path
-        msg_path = message_path_in_inbox("agent:bob", env.id, env.timestamp)
-        await vfs.write(msg_path, env.to_bytes(), ZONE)
-        await processor.process_inbox()
-
-        # Handler should NOT be called again (deduped)
-        assert call_count == 1
-
-        await processor.stop()
-
-    @pytest.mark.asyncio
-    async def test_hot_path_ttl_expired_skips_handler(
-        self,
-        vfs: InMemoryVFS,
-        hot_sub: InMemoryHotPathSubscriber,
-    ) -> None:
-        """Expired messages on hot path are dropped without invoking handler."""
-        await _provision_agent(vfs, "agent:bob")
-        old_ts = datetime(2020, 1, 1, tzinfo=UTC)
-        env = _make_envelope(msg_id="msg_expired_hot", timestamp=old_ts, ttl_seconds=60)
-        handler_called = False
-
-        async def handler(msg: MessageEnvelope) -> None:
-            nonlocal handler_called
-            handler_called = True
-
-        processor = MessageProcessor(
-            vfs, "agent:bob", handler, zone_id=ZONE, hot_subscriber=hot_sub
-        )
-        await processor.start()
-
-        await hot_sub.inject("agents.agent:bob.inbox", env.to_hot_bytes())
-        await asyncio.sleep(0.05)
-
-        assert not handler_called
-        await processor.stop()
-
-    @pytest.mark.asyncio
-    async def test_hot_cold_backpressure_inbox_full_still_delivers_hot(
-        self,
-        vfs: InMemoryVFS,
-        hot_pub: InMemoryHotPathPublisher,
-    ) -> None:
-        """When inbox is full, HOT_COLD background cold write fails but hot succeeds."""
-        await _provision_agent(vfs, "agent:bob")
-        await _provision_agent(vfs, "agent:alice")
-        sender = MessageSender(
-            vfs,
-            zone_id=ZONE,
-            hot_publisher=hot_pub,
-            delivery_mode=DeliveryMode.HOT_COLD,
-            max_inbox_size=1,
-        )
-
-        # Fill inbox
-        env_fill = _make_envelope(msg_id="msg_fill")
-        await MessageSender(vfs, zone_id=ZONE).send(env_fill)
-
-        # Send via hot_cold — hot should succeed, background cold will fail silently
-        env = _make_envelope(msg_id="msg_hot_bp")
-        path = await sender.send(env)
-        await sender.drain()
-
-        # Hot delivery succeeded
-        assert len(hot_pub.published) == 1
-        assert path.startswith("hot://")
-        # Inbox still has only 1 file (cold write failed due to backpressure)
-        inbox_files = await vfs.list_dir(inbox_path("agent:bob"), ZONE)
-        assert len(inbox_files) == 1
 
 
 # ===========================================================================
@@ -755,7 +518,7 @@ class TestSignedDelivery:
         env = _make_envelope()
         path = await sender.send(env)
 
-        data = await vfs.read(path, ZONE)
+        data = await vfs.sys_read(path, ZONE)
         restored = MessageEnvelope.from_bytes(data)
         assert restored.signature is not None
         assert restored.signer_did is not None
@@ -772,7 +535,7 @@ class TestSignedDelivery:
         env = _make_envelope()
         signed_env = signer.sign(env)
         msg_path = message_path_in_inbox("agent:bob", signed_env.id, signed_env.timestamp)
-        await vfs.write(msg_path, signed_env.to_bytes(), ZONE)
+        await vfs.sys_write(msg_path, signed_env.to_bytes(), ZONE)
 
         received: list[MessageEnvelope] = []
 
@@ -805,7 +568,7 @@ class TestSignedDelivery:
         # Tamper with payload after signing
         tampered = signed_env.model_copy(update={"payload": {"action": "tampered"}})
         msg_path = message_path_in_inbox("agent:bob", tampered.id, tampered.timestamp)
-        await vfs.write(msg_path, tampered.to_bytes(), ZONE)
+        await vfs.sys_write(msg_path, tampered.to_bytes(), ZONE)
 
         handler_called = False
 
@@ -838,7 +601,7 @@ class TestSignedDelivery:
 
         env = _make_envelope()  # unsigned
         msg_path = message_path_in_inbox("agent:bob", env.id, env.timestamp)
-        await vfs.write(msg_path, env.to_bytes(), ZONE)
+        await vfs.sys_write(msg_path, env.to_bytes(), ZONE)
 
         handler_called = False
 
@@ -871,7 +634,7 @@ class TestSignedDelivery:
 
         env = _make_envelope()  # unsigned
         msg_path = message_path_in_inbox("agent:bob", env.id, env.timestamp)
-        await vfs.write(msg_path, env.to_bytes(), ZONE)
+        await vfs.sys_write(msg_path, env.to_bytes(), ZONE)
 
         received: list[MessageEnvelope] = []
 
@@ -900,7 +663,7 @@ class TestSignedDelivery:
 
         env = _make_envelope()  # unsigned
         msg_path = message_path_in_inbox("agent:bob", env.id, env.timestamp)
-        await vfs.write(msg_path, env.to_bytes(), ZONE)
+        await vfs.sys_write(msg_path, env.to_bytes(), ZONE)
 
         received: list[MessageEnvelope] = []
 

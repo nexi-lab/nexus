@@ -17,6 +17,8 @@ from typing import Any
 import pytest
 
 from nexus.backends.backend import Backend
+from nexus.contracts.exceptions import NexusFileNotFoundError
+from nexus.core.object_store import WriteResult
 from nexus.core.protocols.connector import (
     BatchContentProtocol,
     ConnectorProtocol,
@@ -27,7 +29,6 @@ from nexus.core.protocols.connector import (
     PassthroughProtocol,
     StreamingProtocol,
 )
-from nexus.lib.response import HandlerResponse
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -49,60 +50,49 @@ class _MockBackend(Backend):
     def _hash(self, content: bytes) -> str:
         return hashlib.sha256(content).hexdigest()
 
-    def write_content(self, content: bytes, context: Any = None) -> HandlerResponse[str]:
+    def write_content(self, content: bytes, context: Any = None) -> WriteResult:
         h = self._hash(content)
         if h in self._content:
             self._ref_counts[h] += 1
         else:
             self._content[h] = content
             self._ref_counts[h] = 1
-        return HandlerResponse.ok(data=h, backend_name="mock")
+        return WriteResult(content_hash=h, size=len(content))
 
-    def read_content(self, content_hash: str, context: Any = None) -> HandlerResponse[bytes]:
+    def read_content(self, content_hash: str, context: Any = None) -> bytes:
         if content_hash not in self._content:
-            return HandlerResponse.not_found(
-                path=content_hash, message="Not found", backend_name="mock"
-            )
-        return HandlerResponse.ok(data=self._content[content_hash], backend_name="mock")
+            raise NexusFileNotFoundError(content_hash)
+        return self._content[content_hash]
 
-    def delete_content(self, content_hash: str, context: Any = None) -> HandlerResponse[None]:
+    def delete_content(self, content_hash: str, context: Any = None) -> None:
         if content_hash not in self._content:
-            return HandlerResponse.not_found(
-                path=content_hash, message="Not found", backend_name="mock"
-            )
+            raise NexusFileNotFoundError(content_hash)
         self._ref_counts[content_hash] -= 1
         if self._ref_counts[content_hash] <= 0:
             del self._content[content_hash]
             del self._ref_counts[content_hash]
-        return HandlerResponse.ok(data=None, backend_name="mock")
 
-    def content_exists(self, content_hash: str, context: Any = None) -> HandlerResponse[bool]:
-        return HandlerResponse.ok(data=content_hash in self._content, backend_name="mock")
+    def content_exists(self, content_hash: str, context: Any = None) -> bool:
+        return content_hash in self._content
 
-    def get_content_size(self, content_hash: str, context: Any = None) -> HandlerResponse[int]:
+    def get_content_size(self, content_hash: str, context: Any = None) -> int:
         if content_hash not in self._content:
-            return HandlerResponse.not_found(
-                path=content_hash, message="Not found", backend_name="mock"
-            )
-        return HandlerResponse.ok(data=len(self._content[content_hash]), backend_name="mock")
+            raise NexusFileNotFoundError(content_hash)
+        return len(self._content[content_hash])
 
-    def get_ref_count(self, content_hash: str, context: Any = None) -> HandlerResponse[int]:
-        return HandlerResponse.ok(data=self._ref_counts.get(content_hash, 0), backend_name="mock")
+    def get_ref_count(self, content_hash: str, context: Any = None) -> int:
+        return self._ref_counts.get(content_hash, 0)
 
     def mkdir(
         self, path: str, parents: bool = False, exist_ok: bool = False, context: Any = None
-    ) -> HandlerResponse[None]:
+    ) -> None:
         self._dirs.add(path)
-        return HandlerResponse.ok(data=None, backend_name="mock")
 
-    def rmdir(
-        self, path: str, recursive: bool = False, context: Any = None
-    ) -> HandlerResponse[None]:
+    def rmdir(self, path: str, recursive: bool = False, context: Any = None) -> None:
         self._dirs.discard(path)
-        return HandlerResponse.ok(data=None, backend_name="mock")
 
-    def is_directory(self, path: str, context: Any = None) -> HandlerResponse[bool]:
-        return HandlerResponse.ok(data=path in self._dirs, backend_name="mock")
+    def is_directory(self, path: str, context: Any = None) -> bool:
+        return path in self._dirs
 
 
 class _IncompleteClass:

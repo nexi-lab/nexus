@@ -3,7 +3,7 @@
 import logging
 import stat
 import time
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 from fuse import FuseOSError
 
@@ -22,9 +22,6 @@ from nexus.fuse.ops._shared import (
     try_rust,
 )
 from nexus.lib.virtual_views import should_add_virtual_views
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 
@@ -77,14 +74,14 @@ class MetadataHandler:
                 return attrs
 
         # Check if it's a directory
-        if ctx.nexus_fs.is_directory(original_path, context=ctx.context):
+        if ctx.nexus_fs.sys_is_directory(original_path, context=ctx.context):
             metadata = get_metadata(ctx, original_path)
             return build_dir_attrs(metadata)
 
         # Validate namespace visibility
         check_namespace_visible(ctx, original_path)
 
-        if not ctx.nexus_fs.exists(original_path):
+        if not ctx.nexus_fs.sys_access(original_path):
             import errno
 
             raise FuseOSError(errno.ENOENT)
@@ -234,7 +231,9 @@ class MetadataHandler:
 
         # Python path: list from filesystem
         list_start = time.time()
-        files_raw = ctx.nexus_fs.list(path, recursive=False, details=True, context=ctx.context)
+        files_raw = ctx.nexus_fs.sys_readdir(
+            path, recursive=False, details=True, context=ctx.context
+        )
         list_elapsed = time.time() - list_start
         files = files_raw if isinstance(files_raw, list) else []
         logger.info(
@@ -244,7 +243,7 @@ class MetadataHandler:
         for file_info in files:
             if isinstance(file_info, str):
                 file_path = file_info
-                is_dir = ctx.nexus_fs.is_directory(file_path, context=ctx.context)
+                is_dir = ctx.nexus_fs.sys_is_directory(file_path, context=ctx.context)
             else:
                 file_path = str(file_info.get("path", ""))
                 is_dir = file_info.get("is_directory", False)

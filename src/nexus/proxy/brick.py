@@ -216,9 +216,12 @@ class ProxyVFSBrick(ProxyBrick):
 
     Per KERNEL-ARCHITECTURE.md §4, ``zone_id`` is forwarded to the remote
     server for zone-scoped isolation.
+
+    Method names use the ``sys_`` prefix to match the kernel syscall convention
+    (Issue #834).
     """
 
-    async def read(self, path: str, zone_id: str) -> bytes:
+    async def sys_read(self, path: str, zone_id: str) -> bytes:
         result = await self._forward("read", path=path, zone_id=zone_id)
         if isinstance(result, bytes):
             return result
@@ -226,27 +229,31 @@ class ProxyVFSBrick(ProxyBrick):
             return result.encode()
         raise TypeError(f"Expected bytes or str from remote read, got {type(result).__name__}")
 
-    async def write(self, path: str, data: bytes, zone_id: str) -> None:
+    async def sys_write(self, path: str, data: bytes, zone_id: str) -> None:
         if len(data) > self._config.stream_threshold_bytes:
             await self._forward_stream("write", data, path=path, zone_id=zone_id)
             return
         encoded = base64.b64encode(data).decode()
         await self._forward("write", path=path, content=encoded, zone_id=zone_id)
 
-    async def list_dir(self, path: str, zone_id: str) -> list[str]:
+    async def sys_readdir(self, path: str, zone_id: str) -> list[str]:
         return cast(list[str], await self._forward("list_dir", path=path, zone_id=zone_id))
 
-    async def rename(self, src: str, dst: str, zone_id: str) -> None:
+    # Convenience alias — proxy tests and callers may still use list_dir.
+    async def list_dir(self, path: str, zone_id: str) -> list[str]:
+        return await self.sys_readdir(path, zone_id)
+
+    async def sys_rename(self, src: str, dst: str, zone_id: str) -> None:
         await self._forward("rename", src=src, dst=dst, zone_id=zone_id)
 
-    async def mkdir(self, path: str, zone_id: str) -> None:
+    async def sys_mkdir(self, path: str, zone_id: str) -> None:
         await self._forward("mkdir", path=path, zone_id=zone_id)
+
+    async def sys_access(self, path: str, zone_id: str) -> bool:
+        return cast(bool, await self._forward("exists", path=path, zone_id=zone_id))
 
     async def count_dir(self, path: str, zone_id: str) -> int:
         return cast(int, await self._forward("count_dir", path=path, zone_id=zone_id))
-
-    async def exists(self, path: str, zone_id: str) -> bool:
-        return cast(bool, await self._forward("exists", path=path, zone_id=zone_id))
 
 
 class ProxyEventLogBrick(ProxyBrick):

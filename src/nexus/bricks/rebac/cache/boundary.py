@@ -32,14 +32,11 @@ Example:
 import logging
 import os
 import threading
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from cachetools import TTLCache
 
-from nexus.constants import ROOT_ZONE_ID
-
-if TYPE_CHECKING:
-    pass
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 logger = logging.getLogger(__name__)
 

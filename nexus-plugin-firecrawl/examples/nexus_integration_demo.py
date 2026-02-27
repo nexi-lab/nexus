@@ -163,14 +163,14 @@ async def demo_nexusfs_integration() -> None:
 
                 # List files
                 scraped_dir = "/workspace/scraped"
-                if nx.exists(scraped_dir):
-                    for file in nx.list(scraped_dir, recursive=True):
+                if nx.sys_access(scraped_dir):
+                    for file in nx.sys_readdir(scraped_dir, recursive=True):
                         print(f"   • {file}")
 
                     # Read the content
                     file_path = "/workspace/scraped/example_com/index.md"
-                    if nx.exists(file_path):
-                        raw_content = nx.read(file_path)
+                    if nx.sys_access(file_path):
+                        raw_content = nx.sys_read(file_path)
                         content = (
                             raw_content.decode("utf-8")
                             if isinstance(raw_content, bytes)
@@ -207,7 +207,7 @@ async def demo_programmatic_usage() -> None:
         print("await plugin.scrape('https://example.com')")
         print("")
         print("# Content automatically in NexusFS!")
-        print("content = nx.read('/workspace/scraped/example_com/index.md')")
+        print("content = nx.sys_read('/workspace/scraped/example_com/index.md')")
         print("```")
         return
 
@@ -238,8 +238,8 @@ async def demo_programmatic_usage() -> None:
 
             # Access the content
             path = "/workspace/scraped/example_com/index.md"
-            if nx.exists(path):
-                raw_content = nx.read(path)
+            if nx.sys_access(path):
+                raw_content = nx.sys_read(path)
                 content = (
                     raw_content.decode("utf-8")
                     if isinstance(raw_content, bytes)

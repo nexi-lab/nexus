@@ -78,6 +78,7 @@ class TestAdaptiveRetrievalFastAPI:
             alpha: float = 0.5,
             fusion_method: str = "rrf",
             adaptive_k: bool = False,
+            **kwargs: object,
         ):
             # Record the call
             search_calls.append(

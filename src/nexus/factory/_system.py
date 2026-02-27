@@ -320,10 +320,10 @@ def _boot_system_services(
         logger.debug("[BOOT:SYSTEM] EventDeliveryWorker disabled by profile")
     elif ctx.db_url.startswith(("postgres", "postgresql")):
         try:
-            from nexus.services.event_log.delivery_worker import EventDeliveryWorker
+            from nexus.system_services.event_subsystem.log.delivery import EventDeliveryWorker
 
             delivery_worker = EventDeliveryWorker(
-                session_factory=ctx.record_store.session_factory,
+                record_store=ctx.record_store,
                 poll_interval_ms=200,
                 batch_size=50,
             )
@@ -455,8 +455,8 @@ def _boot_system_services(
         logger.debug("[BOOT:SYSTEM] EventLog disabled by profile")
     else:
         try:
-            from nexus.services.event_log.factory import create_event_log
-            from nexus.services.event_log.protocol import EventLogConfig
+            from nexus.system_services.event_subsystem.log.factory import create_event_log
+            from nexus.system_services.event_subsystem.log.protocol import EventLogConfig
 
             event_log = create_event_log(EventLogConfig())
             if event_log is not None:

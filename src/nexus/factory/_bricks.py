@@ -177,7 +177,7 @@ def _boot_independent_bricks(
                     index_binary=_search_cfg.zoekt_index_binary,
                 )
                 # Wrap in ZoektPipeConsumer for DT_PIPE decoupling (#810)
-                from nexus.search.zoekt_pipe_consumer import ZoektPipeConsumer
+                from nexus.factory.zoekt_pipe_consumer import ZoektPipeConsumer
 
                 _zoekt_consumer = ZoektPipeConsumer(_zoekt_index_mgr)
                 zoekt_pipe_consumer = _zoekt_consumer

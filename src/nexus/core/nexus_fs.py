@@ -578,9 +578,9 @@ class NexusFS(  # type: ignore[misc]
             # When parents=True, behave like mkdir -p (don't raise error if exists)
             if not exist_ok and not parents:
                 raise FileExistsError(f"Directory already exists: {path}")
-            # If exist_ok=True (or parents=True) and directory exists, we still create metadata if it doesn't exist
-            if existing is not None:
-                # Metadata already exists, nothing to do
+            # If target already has metadata but parents=True, still create parent dirs
+            if existing is not None and not parents:
+                # Metadata already exists and no parents needed, nothing to do
                 return
 
         # Create directory in backend

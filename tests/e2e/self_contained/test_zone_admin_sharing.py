@@ -326,11 +326,12 @@ class TestBackwardCompatibility:
         file_path = f"{zone_path}/doc.txt"
         nx.sys_write(file_path, b"test content", context=OperationContext(**admin_context))
 
-        # Grant bob ownership
+        # Grant bob ownership using unscoped path (enforcer convention per d909e3cdd:
+        # grants are stored with non-prefixed paths + zone_id for isolation)
         nx.rebac_create(
             subject=("user", "bob"),
             relation="direct_owner",
-            object=("file", file_path),
+            object=("file", "/doc.txt"),
             zone_id=zone_id,
             context=admin_context,
         )

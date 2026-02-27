@@ -130,13 +130,7 @@ async def nexus_fs(temp_nexus_dir, db_path_agent1, shared_event_bus):
     nexus._event_bus = shared_event_bus
     nexus.events_service._event_bus = shared_event_bus
 
-    # Start cache invalidation (events from other instances will invalidate local cache)
-    nexus.events_service._start_cache_invalidation()
-
     yield nexus
-
-    # Stop cache invalidation
-    nexus.events_service._stop_cache_invalidation()
 
 
 @pytest.fixture
@@ -170,13 +164,7 @@ async def second_nexus_fs(temp_nexus_dir, db_path_agent2, shared_event_bus):
     nexus._event_bus = shared_event_bus
     nexus.events_service._event_bus = shared_event_bus
 
-    # Start cache invalidation (events from other instances will invalidate local cache)
-    nexus.events_service._start_cache_invalidation()
-
     yield nexus
-
-    # Stop cache invalidation
-    nexus.events_service._stop_cache_invalidation()
 
 
 # =============================================================================

@@ -59,10 +59,41 @@ def get_admin_rpc(url: str | None, api_key: str | None) -> AdminRPC:
         )
         sys.exit(1)
 
-    from nexus.backends.remote import RemoteBackend
+    import uuid
 
-    backend = RemoteBackend(server_url=url, api_key=api_key)
-    return backend._call_rpc
+    import httpx
+
+    from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
+
+    client = httpx.Client(
+        base_url=url.rstrip("/"),
+        headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
+        timeout=httpx.Timeout(connect=5, read=30, write=30, pool=30),
+    )
+
+    def _call_rpc(method: str, params: dict[str, Any] | None = None) -> Any:
+        rpc_body = {
+            "jsonrpc": "2.0",
+            "id": str(uuid.uuid4()),
+            "method": method,
+            "params": params,
+        }
+        payload = encode_rpc_message(rpc_body)
+        resp = client.post(
+            f"/api/nfs/{method}",
+            content=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        resp.raise_for_status()
+        result = decode_rpc_message(resp.content)
+        # Unwrap JSON-RPC envelope
+        if isinstance(result, dict):
+            if "error" in result and result["error"]:
+                raise RuntimeError(result["error"].get("message", str(result["error"])))
+            return result.get("result", result)
+        return result
+
+    return _call_rpc
 
 
 @click.group()

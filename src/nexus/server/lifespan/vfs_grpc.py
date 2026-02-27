@@ -38,7 +38,7 @@ async def startup_vfs_grpc(app: "FastAPI", _svc: "LifespanServices") -> list[asy
 
     import grpc.aio
 
-    from nexus.grpc.vfs import vfs_pb2_grpc
+    import nexus.grpc.vfs.vfs_pb2_grpc as vfs_pb2_grpc
     from nexus.server.rpc.grpc_servicer import VFSServicer
 
     servicer = VFSServicer(

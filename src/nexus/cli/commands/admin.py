@@ -10,6 +10,7 @@ All commands require:
 """
 
 import json
+import os
 import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -59,10 +60,16 @@ def get_admin_rpc(url: str | None, api_key: str | None) -> AdminRPC:
         )
         sys.exit(1)
 
-    from nexus.backends.remote import RemoteBackend
+    from urllib.parse import urlparse
 
-    backend = RemoteBackend(server_url=url, api_key=api_key)
-    return backend._call_rpc
+    from nexus.remote.rpc_transport import RPCTransport
+
+    parsed = urlparse(url)
+    grpc_port = int(os.environ.get("NEXUS_GRPC_PORT", "2028"))
+    grpc_address = f"{parsed.hostname}:{grpc_port}"
+
+    transport = RPCTransport(server_address=grpc_address, auth_token=api_key)
+    return transport.call_rpc
 
 
 @click.group()

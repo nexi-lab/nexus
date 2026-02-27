@@ -222,6 +222,8 @@ def connect(
 
     # ── Mode: remote ─────────────────────────────────────────────────
     if cfg.mode == "remote":
+        from urllib.parse import urlparse
+
         server_url = cfg.url or os.getenv("NEXUS_URL")
         if not server_url:
             raise ValueError(
@@ -232,23 +234,28 @@ def connect(
         timeout = int(cfg.timeout) if hasattr(cfg, "timeout") else 30
         connect_timeout = int(cfg.connect_timeout) if hasattr(cfg, "connect_timeout") else 5
 
+        # Build gRPC address from NEXUS_URL hostname + NEXUS_GRPC_PORT.
+        grpc_port = int(os.getenv("NEXUS_GRPC_PORT", "2028"))
+        parsed = urlparse(server_url)
+        grpc_address = f"{parsed.hostname}:{grpc_port}"
+
+        # Single shared RPCTransport (gRPC channel) for all remote proxies.
+        from nexus.remote.rpc_transport import RPCTransport
+
+        transport = RPCTransport(
+            server_address=grpc_address,
+            auth_token=api_key,
+            timeout=float(timeout),
+            connect_timeout=float(connect_timeout),
+        )
+
         # RemoteBackend + RemoteMetastore — stateless proxies, server is SSOT.
         from nexus.backends.remote import RemoteBackend
         from nexus.factory import create_nexus_fs as _create_remote_nfs
         from nexus.storage.remote_metastore import RemoteMetastore
 
-        remote_backend = RemoteBackend(
-            server_url=server_url,
-            api_key=api_key,
-            timeout=timeout,
-            connect_timeout=connect_timeout,
-        )
-        remote_metastore = RemoteMetastore(
-            server_url=server_url,
-            api_key=api_key,
-            timeout=timeout,
-            connect_timeout=connect_timeout,
-        )
+        remote_backend = RemoteBackend(transport)
+        remote_metastore = RemoteMetastore(transport)
 
         # In REMOTE mode, server enforces permissions — disable client-side.
         from nexus.core.config import PermissionConfig as _PermissionConfig
@@ -262,11 +269,11 @@ def connect(
         nfs.router.add_mount("/", remote_backend)
 
         # Wire service proxies for REMOTE profile (Issue #1171).
-        # Fills all 25+ service slots with RemoteServiceProxy — like
-        # mount -t nfs: forwards method calls to the server via HTTP.
+        # Fills all 25+ service slots with RemoteServiceProxy — forwards
+        # method calls to the server via gRPC.
         from nexus.factory._remote import _boot_remote_services
 
-        _boot_remote_services(nfs, call_rpc=remote_backend._call_rpc)
+        _boot_remote_services(nfs, call_rpc=transport.call_rpc)
 
         return nfs
 

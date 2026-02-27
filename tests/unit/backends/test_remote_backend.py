@@ -1,7 +1,7 @@
-"""Tests for RemoteBackend (Issue #844).
+"""Tests for RemoteBackend (Issue #844, #1133).
 
 Verifies that RemoteBackend correctly proxies ObjectStoreABC operations
-to a remote Nexus server via HTTP/JSON-RPC.
+to a remote Nexus server via RPCTransport (gRPC).
 """
 
 from __future__ import annotations
@@ -22,17 +22,17 @@ from nexus.core.object_store import WriteResult
 
 
 @pytest.fixture
-def backend() -> RemoteBackend:
-    """Create a RemoteBackend with mocked httpx.Client."""
-    with patch("nexus.backends.remote.httpx.Client"):
-        return RemoteBackend("http://localhost:2026")
+def mock_transport() -> MagicMock:
+    """Create a mock RPCTransport."""
+    transport = MagicMock()
+    transport.server_address = "localhost:2028"
+    return transport
 
 
 @pytest.fixture
-def backend_with_auth() -> RemoteBackend:
-    """Create a RemoteBackend with API key."""
-    with patch("nexus.backends.remote.httpx.Client"):
-        return RemoteBackend("http://localhost:2026", api_key="test-key-123")
+def backend(mock_transport) -> RemoteBackend:
+    """Create a RemoteBackend with mocked RPCTransport."""
+    return RemoteBackend(mock_transport)
 
 
 # ---------------------------------------------------------------------------
@@ -46,13 +46,8 @@ class TestRemoteBackendProperties:
     def test_name_is_remote(self, backend: RemoteBackend) -> None:
         assert backend.name == "remote"
 
-    def test_server_url_stored(self, backend: RemoteBackend) -> None:
-        assert backend._server_url == "http://localhost:2026"
-
-    def test_server_url_trailing_slash_stripped(self) -> None:
-        with patch("nexus.backends.remote.httpx.Client"):
-            b = RemoteBackend("http://localhost:2026/")
-        assert b._server_url == "http://localhost:2026"
+    def test_transport_stored(self, backend: RemoteBackend, mock_transport) -> None:
+        assert backend._transport is mock_transport
 
 
 # ---------------------------------------------------------------------------
@@ -219,30 +214,25 @@ class TestRemoteBackendRPC:
 class TestRemoteBackendLifecycle:
     """Connection lifecycle operations."""
 
-    def test_connect_health_check(self, backend: RemoteBackend) -> None:
-        """connect should call GET /api/health."""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        backend._session.get.return_value = mock_response
-
+    def test_connect_health_check(self, backend: RemoteBackend, mock_transport) -> None:
+        """connect should call transport.health_check()."""
+        mock_transport.health_check.return_value = True
         backend.connect()
-        backend._session.get.assert_called_once()
+        mock_transport.health_check.assert_called_once()
 
-    def test_connect_raises_on_bad_status(self, backend: RemoteBackend) -> None:
-        """connect should raise RemoteConnectionError on non-200."""
-        mock_response = MagicMock()
-        mock_response.status_code = 503
-        backend._session.get.return_value = mock_response
-
+    def test_connect_raises_on_failure(self, backend: RemoteBackend, mock_transport) -> None:
+        """connect should raise RemoteConnectionError on transport failure."""
+        mock_transport.health_check.side_effect = RemoteConnectionError(
+            "Connection failed",
+            details={"server_address": "localhost:2028"},
+        )
         with pytest.raises(RemoteConnectionError):
             backend.connect()
 
-    def test_disconnect_closes_session(self, backend: RemoteBackend) -> None:
-        """disconnect should close the httpx session."""
-        backend.disconnect()
-        backend._session.close.assert_called_once()
+    def test_disconnect_is_noop(self, backend: RemoteBackend) -> None:
+        """disconnect should be a no-op (transport lifecycle managed by factory)."""
+        backend.disconnect()  # Should not raise
 
-    def test_close_alias(self, backend: RemoteBackend) -> None:
-        """close() should close the httpx session."""
-        backend.close()
-        backend._session.close.assert_called_once()
+    def test_close_is_noop(self, backend: RemoteBackend) -> None:
+        """close() should be a no-op (transport lifecycle managed by factory)."""
+        backend.close()  # Should not raise

@@ -1,0 +1,29 @@
+// VFS gRPC transport — generic Call RPC for REMOTE profile.
+//
+// Replaces HTTP/JSON-RPC transport in RemoteBackend and RemoteMetastore
+// with a single gRPC channel. The dispatch table on the server side is
+// the same as the HTTP endpoint (/api/nfs/{method}).
+//
+// Issue #1133: Unified gRPC transport.
+// Issue #1202: gRPC for REMOTE profile.
+
+syntax = "proto3";
+
+package nexus.grpc.vfs;
+
+service NexusVFSService {
+  // Generic dispatch RPC — method name + JSON-encoded params.
+  // Server routes to the same dispatch_method() as the HTTP endpoint.
+  rpc Call(CallRequest) returns (CallResponse);
+}
+
+message CallRequest {
+  string method = 1;      // "sys_read", "sys_write", "workspace_snapshot", ...
+  bytes payload = 2;      // JSON-encoded params dict (rpc_codec)
+  string auth_token = 3;  // Bearer token (same as HTTP Authorization header)
+}
+
+message CallResponse {
+  bytes payload = 1;      // JSON-encoded result or error dict
+  bool is_error = 2;      // If true, payload is JSON-RPC error dict
+}

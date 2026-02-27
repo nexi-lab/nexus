@@ -17,17 +17,25 @@ jobs:
 
       - name: Reject merge commits in PR branch
         run: |
-          # Get the merge base between PR branch and target
-          BASE_SHA=${{ github.event.pull_request.base.sha || github.sha }}
-          HEAD_SHA=${{ github.event.pull_request.head.sha || github.sha }}
-
           # For merge_group events, skip (queue handles rebase)
           if [ "${{ github.event_name }}" = "merge_group" ]; then
             echo "✅ Merge queue event — skipping merge commit check"
             exit 0
           fi
 
-          echo "Checking commits between $BASE_SHA and $HEAD_SHA for merge commits..."
+          HEAD_SHA=${{ github.event.pull_request.head.sha || github.sha }}
+          BASE_REF=${{ github.event.pull_request.base.ref }}
+
+          # Compute merge-base dynamically from the base branch ref.
+          # Using base.sha is unreliable — it's a frozen snapshot that doesn't
+          # update when the PR base branch is changed via `gh pr edit --base`.
+          BASE_SHA=$(git merge-base "origin/${BASE_REF}" "$HEAD_SHA" 2>/dev/null || echo "")
+          if [ -z "$BASE_SHA" ]; then
+            echo "⚠️ Could not compute merge-base for origin/${BASE_REF}..${HEAD_SHA}, skipping"
+            exit 0
+          fi
+
+          echo "Checking commits between $BASE_SHA (merge-base of origin/${BASE_REF}) and $HEAD_SHA for merge commits..."
 
           # Find any merge commits (commits with 2+ parents) in the PR
           MERGE_COMMITS=$(git rev-list --merges "$BASE_SHA".."$HEAD_SHA" 2>/dev/null || true)

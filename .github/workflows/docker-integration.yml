@@ -20,7 +20,7 @@ on:
       # Docker-related files
       - 'Dockerfile'
       - 'docker-compose*.yml'
-      - 'scripts/docker-demo.sh'
+      - 'docker-demo.sh'
       - 'docker-entrypoint.sh'
       - '.github/workflows/docker-integration.yml'
       # Core source files that affect Docker integration

@@ -1,0 +1,66 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nexus-plugin-skill-seekers"
+version = "0.2.0"
+description = "Skill Seekers integration plugin for Nexus - generate skills from documentation"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "Nexus Team", email = "support@nexus.example.com"}
+]
+keywords = ["nexus", "plugin", "skill-seekers", "skills", "documentation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    "click>=8.1.0",
+    "rich>=13.0.0",
+    "pyyaml>=6.0",
+    "requests>=2.31.0",
+    "beautifulsoup4>=4.12.0",
+    "markdown>=3.5.0",
+    "skill-seekers>=2.1.0",  # Integration with yusufkaraaslan/Skill_Seekers
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "mypy>=1.5.0",
+    "ruff>=0.0.287",
+]
+
+[project.urls]
+Homepage = "https://github.com/nexi-lab/nexus-plugin-skill-seekers"
+Repository = "https://github.com/nexi-lab/nexus-plugin-skill-seekers"
+Issues = "https://github.com/nexi-lab/nexus-plugin-skill-seekers/issues"
+
+[project.entry-points."nexus.plugins"]
+skill-seekers = "nexus_skill_seekers.plugin:SkillSeekersPlugin"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true

@@ -1,8 +1,11 @@
-// VFS gRPC transport — generic Call RPC for REMOTE profile.
+// VFS gRPC transport for REMOTE profile and federation peers.
 //
-// Replaces HTTP/JSON-RPC transport in RemoteBackend and RemoteMetastore
-// with a single gRPC channel. The dispatch table on the server side is
-// the same as the HTTP endpoint (/api/nfs/{method}).
+// Phase 1 (PR #2667): Generic Call RPC — method name + JSON payload.
+// Phase 2: Typed RPCs for content ops (native bytes, no base64 overhead)
+//          + server-side streaming for large reads + Ping health check.
+//
+// Generic Call stays for 25+ service proxy methods and metadata ops.
+// Typed RPCs only for content-heavy operations (Read/Write/Delete/StreamRead).
 //
 // Issue #1133: Unified gRPC transport.
 // Issue #1202: gRPC for REMOTE profile.
@@ -15,7 +18,18 @@ service NexusVFSService {
   // Generic dispatch RPC — method name + JSON-encoded params.
   // Server routes to the same dispatch_method() as the HTTP endpoint.
   rpc Call(CallRequest) returns (CallResponse);
+
+  // Typed RPCs for content operations — native bytes, no JSON/base64.
+  rpc Read(ReadRequest) returns (ReadResponse);
+  rpc Write(WriteRequest) returns (WriteResponse);
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+  rpc StreamRead(StreamReadRequest) returns (stream ReadChunk);
+
+  // Health check with server metadata.
+  rpc Ping(PingRequest) returns (PingResponse);
 }
+
+// --- Generic dispatch messages (Phase 1, unchanged) ---
 
 message CallRequest {
   string method = 1;      // "sys_read", "sys_write", "workspace_snapshot", ...
@@ -26,4 +40,69 @@ message CallRequest {
 message CallResponse {
   bytes payload = 1;      // JSON-encoded result or error dict
   bool is_error = 2;      // If true, payload is JSON-RPC error dict
+}
+
+// --- Typed content messages (Phase 2) ---
+
+message ReadRequest {
+  string path = 1;
+  string auth_token = 2;
+}
+
+message ReadResponse {
+  bytes content = 1;       // Raw file bytes — no base64
+  string etag = 2;
+  int64 size = 3;
+  bool is_error = 4;
+  bytes error_payload = 5; // JSON error dict (same format as CallResponse)
+}
+
+message WriteRequest {
+  string path = 1;
+  bytes content = 2;       // Raw file bytes — no base64
+  string auth_token = 3;
+  string etag = 4;         // Optional: CAS etag for conditional write
+}
+
+message WriteResponse {
+  string etag = 1;
+  int64 size = 2;
+  bool is_error = 3;
+  bytes error_payload = 4;
+}
+
+message DeleteRequest {
+  string path = 1;
+  string auth_token = 2;
+  bool recursive = 3;      // For rmdir
+}
+
+message DeleteResponse {
+  bool success = 1;
+  bool is_error = 2;
+  bytes error_payload = 3;
+}
+
+message StreamReadRequest {
+  string path = 1;
+  string auth_token = 2;
+  int64 chunk_size = 3;    // Bytes per chunk (default 1MB server-side)
+}
+
+message ReadChunk {
+  bytes data = 1;
+  int64 offset = 2;
+  bool is_last = 3;
+  bool is_error = 4;
+  bytes error_payload = 5;
+}
+
+message PingRequest {
+  string auth_token = 1;
+}
+
+message PingResponse {
+  string version = 1;
+  string zone_id = 2;
+  int64 uptime_seconds = 3;
 }

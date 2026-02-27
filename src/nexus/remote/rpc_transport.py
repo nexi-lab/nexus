@@ -4,11 +4,13 @@ Client-side gRPC transport that replaces the duplicated HTTP/JSON-RPC
 transport (httpx + tenacity) in ``RemoteBackend`` and ``RemoteMetastore``
 with a single gRPC channel.
 
-The underlying ``NexusVFSService`` gRPC endpoint is generic — the server
-servicer dispatches to the same ``dispatch_method()`` pipeline as the HTTP
-``/api/nfs/{method}`` endpoint.  This makes the gRPC endpoint usable by
-any client (REMOTE profile, federation peers, CLI tools), though this
-particular class lives in ``nexus.remote`` for the REMOTE profile use case.
+Phase 1 (PR #2667): Generic ``call_rpc()`` — method name + JSON payload.
+Phase 2: Typed methods (``read_file``, ``write_file``, ``delete_file``,
+``stream_read``, ``ping``) with native ``bytes`` fields — no JSON/base64
+overhead for content operations.
+
+Generic ``call_rpc()`` stays for 25+ service proxy methods and metadata ops.
+Typed methods only for content-heavy operations and health checks.
 
 Issue #1133: Unified gRPC transport.
 Issue #1202: gRPC for REMOTE profile.
@@ -127,25 +129,7 @@ class RPCTransport:
         try:
             response = self._stub.Call(request, timeout=timeout)
         except grpc.RpcError as exc:
-            code = exc.code()
-            details = exc.details()
-            if code == grpc.StatusCode.UNAVAILABLE:
-                raise RemoteConnectionError(
-                    f"gRPC server unavailable: {details}",
-                    details={"server_address": self.server_address},
-                    method=method,
-                ) from exc
-            if code == grpc.StatusCode.DEADLINE_EXCEEDED:
-                raise RemoteTimeoutError(
-                    f"gRPC call timed out after {timeout}s",
-                    details={
-                        "timeout": timeout,
-                        "server_address": self.server_address,
-                    },
-                    method=method,
-                ) from exc
-            # Other gRPC transport errors — let tenacity retry
-            raise
+            self._raise_transport_error(exc, timeout, method)
 
         # Application-level error (gRPC status OK, but is_error flag set)
         if response.is_error:
@@ -162,24 +146,172 @@ class RPCTransport:
         return result
 
     # ------------------------------------------------------------------
+    # Typed RPCs — content operations (Phase 2)
+    # ------------------------------------------------------------------
+
+    def _handle_typed_error(self, error_payload: bytes) -> None:
+        """Decode error_payload and raise the appropriate NexusError."""
+        error_dict = decode_rpc_message(error_payload)
+        self._error_handler._handle_rpc_error(error_dict)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def read_file(self, path: str, read_timeout: float | None = None) -> bytes:
+        """Read file content via typed Read RPC — no JSON/base64 overhead.
+
+        Returns:
+            Raw file content as bytes.
+        """
+        request = vfs_pb2.ReadRequest(path=path, auth_token=self._auth_token)
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            response = self._stub.Read(request, timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "Read")
+        if response.is_error:
+            self._handle_typed_error(response.error_payload)
+        return bytes(response.content)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def write_file(
+        self,
+        path: str,
+        content: bytes,
+        etag: str | None = None,
+        read_timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Write file content via typed Write RPC — no JSON/base64 overhead.
+
+        Returns:
+            Dict with ``etag`` and ``size``.
+        """
+        request = vfs_pb2.WriteRequest(
+            path=path, content=content, auth_token=self._auth_token, etag=etag or ""
+        )
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            response = self._stub.Write(request, timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "Write")
+        if response.is_error:
+            self._handle_typed_error(response.error_payload)
+        return {"etag": response.etag, "size": response.size}
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def delete_file(
+        self,
+        path: str,
+        recursive: bool = False,
+        read_timeout: float | None = None,
+    ) -> bool:
+        """Delete file or directory via typed Delete RPC.
+
+        Returns:
+            True on success.
+        """
+        request = vfs_pb2.DeleteRequest(path=path, auth_token=self._auth_token, recursive=recursive)
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            response = self._stub.Delete(request, timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "Delete")
+        if response.is_error:
+            self._handle_typed_error(response.error_payload)
+        return bool(response.success)
+
+    def stream_read(
+        self,
+        path: str,
+        chunk_size: int = 1_048_576,
+        read_timeout: float | None = None,
+    ) -> bytes:
+        """Read large file via streaming RPC — assembles chunks client-side.
+
+        Returns:
+            Complete file content as bytes.
+        """
+        request = vfs_pb2.StreamReadRequest(
+            path=path, auth_token=self._auth_token, chunk_size=chunk_size
+        )
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        chunks: list[bytes] = []
+        try:
+            for chunk in self._stub.StreamRead(request, timeout=timeout):
+                if chunk.is_error:
+                    self._handle_typed_error(chunk.error_payload)
+                chunks.append(chunk.data)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "StreamRead")
+        return b"".join(chunks)
+
+    def ping(self) -> dict[str, Any]:
+        """Ping server — returns version, zone_id, uptime."""
+        request = vfs_pb2.PingRequest(auth_token=self._auth_token)
+        try:
+            response = self._stub.Ping(request, timeout=self._connect_timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, self._connect_timeout, "Ping")
+        return {
+            "version": response.version,
+            "zone_id": response.zone_id,
+            "uptime": response.uptime_seconds,
+        }
+
+    # ------------------------------------------------------------------
+    # Transport error handling (shared)
+    # ------------------------------------------------------------------
+
+    def _raise_transport_error(self, exc: grpc.RpcError, timeout: float, method: str) -> None:
+        """Convert gRPC transport errors to RemoteConnectionError/RemoteTimeoutError."""
+        code = exc.code()
+        details = exc.details()
+        if code == grpc.StatusCode.UNAVAILABLE:
+            raise RemoteConnectionError(
+                f"gRPC server unavailable: {details}",
+                details={"server_address": self.server_address},
+                method=method,
+            ) from exc
+        if code == grpc.StatusCode.DEADLINE_EXCEEDED:
+            raise RemoteTimeoutError(
+                f"gRPC call timed out after {timeout}s",
+                details={"timeout": timeout, "server_address": self.server_address},
+                method=method,
+            ) from exc
+        raise
+
+    # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
     def health_check(self) -> bool:
-        """Check gRPC channel connectivity.
+        """Check server health via Ping RPC.
 
         Returns:
-            True if the channel is ready within ``connect_timeout``.
+            True if the server responds to Ping.
 
         Raises:
-            RemoteConnectionError: Channel failed to connect.
+            RemoteConnectionError: Server is unreachable.
         """
         try:
-            grpc.channel_ready_future(self._channel).result(timeout=self._connect_timeout)
+            self.ping()
             return True
-        except grpc.FutureTimeoutError as exc:
+        except (grpc.RpcError, RemoteConnectionError) as exc:
             raise RemoteConnectionError(
-                f"gRPC health check timed out after {self._connect_timeout}s",
+                f"gRPC health check failed: {exc}",
                 details={"server_address": self.server_address},
             ) from exc
 

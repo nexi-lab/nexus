@@ -217,7 +217,6 @@ nav:
     - Directory Operations: examples/directory-operations.md
     - Permission Management: examples/permissions.md
     - Workspace & Sessions: examples/workspace-session.md
-    - Agentic Context Engineering (ACE): examples/ace.md
     - DeepAgents Integration: examples/deepagents.md
     - LangGraph Integration: examples/langgraph.md
     - "📘 LangGraph Migration Tutorial": examples/langgraph-migration.md

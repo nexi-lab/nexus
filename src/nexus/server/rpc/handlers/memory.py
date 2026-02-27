@@ -82,7 +82,7 @@ def handle_query_memories(nexus_fs: NexusFS, params: Any, context: Any) -> dict[
         embedding_provider_obj = None
         if params.embedding_provider:
             try:
-                from nexus.search.embeddings import create_embedding_provider
+                from nexus.bricks.search.embeddings import create_embedding_provider
 
                 embedding_provider_obj = create_embedding_provider(
                     provider=params.embedding_provider

@@ -1,0 +1,322 @@
+"""txtai search backend with Protocol + Registry (Issue #2663).
+
+Provides:
+- SearchBackendProtocol: pluggable backend contract
+- TxtaiBackend: adapter wrapping txtai Embeddings for hybrid BM25+dense search
+- Backend registry: dict-based factory for creating backends by name
+
+All documents are stamped with zone_id metadata. Searches enforce
+``WHERE zone_id = :zone_id`` via txtai SQL syntax for namespace isolation.
+
+Graph methods provide semantic graph search using txtai's built-in graph module.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from typing import Any, Protocol, cast, runtime_checkable
+
+from nexus.bricks.search.results import BaseSearchResult
+
+logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Protocol
+# =============================================================================
+
+
+@runtime_checkable
+class SearchBackendProtocol(Protocol):
+    """Backend contract for pluggable search engines."""
+
+    async def index(self, documents: list[dict[str, Any]], *, zone_id: str) -> int:
+        """Index a batch of documents (full rebuild).
+
+        Each document dict must contain: ``id``, ``text``, ``path``, ``zone_id``.
+        """
+        ...
+
+    async def upsert(self, documents: list[dict[str, Any]], *, zone_id: str) -> int:
+        """Upsert documents (insert-or-update)."""
+        ...
+
+    async def delete(self, ids: list[str], *, zone_id: str) -> int:
+        """Delete documents by id."""
+        ...
+
+    async def search(
+        self,
+        query: str,
+        *,
+        limit: int = 10,
+        zone_id: str,
+        search_type: str = "hybrid",
+        path_filter: str | None = None,
+    ) -> list[BaseSearchResult]:
+        """Search for documents matching *query* within *zone_id*."""
+        ...
+
+    async def startup(self) -> None:
+        """Initialize resources (connections, model loading, etc.)."""
+        ...
+
+    async def shutdown(self) -> None:
+        """Release resources."""
+        ...
+
+
+# =============================================================================
+# txtai Backend
+# =============================================================================
+
+
+def _escape_sql_string(value: str) -> str:
+    """Escape single-quotes for txtai SQL syntax."""
+    return value.replace("'", "''")
+
+
+class TxtaiBackend:
+    """Search backend wrapping txtai ``Embeddings`` for hybrid BM25+dense search.
+
+    Uses pgvector as storage backend with namespace (zone_id) isolation.
+    """
+
+    def __init__(
+        self,
+        *,
+        database_url: str | None = None,
+        model: str = "all-MiniLM-L6-v2",
+        hybrid: bool = True,
+        graph: bool = True,
+    ) -> None:
+        self._database_url = database_url
+        self._model = model
+        self._hybrid = hybrid
+        self._graph = graph
+        self._embeddings: Any = None
+
+    async def startup(self) -> None:
+        """Initialize txtai Embeddings with pgvector backend."""
+        from txtai import Embeddings
+
+        config: dict[str, Any] = {
+            "path": self._model,
+            "content": True,
+            "hybrid": self._hybrid,
+            "objects": True,
+        }
+
+        if self._database_url:
+            config["backend"] = "pgvector"
+            config["database"] = self._database_url
+
+        if self._graph:
+            config["graph"] = {"backend": "networkx"}
+
+        self._embeddings = Embeddings(config)
+
+        logger.info(
+            "txtai backend started: model=%s, hybrid=%s, graph=%s, pgvector=%s",
+            self._model,
+            self._hybrid,
+            self._graph,
+            bool(self._database_url),
+        )
+
+    async def shutdown(self) -> None:
+        """Release txtai resources."""
+        if self._embeddings is not None:
+            await asyncio.to_thread(self._embeddings.close)
+            self._embeddings = None
+        logger.info("txtai backend shut down")
+
+    # ----- Index operations ---------------------------------------------------
+
+    async def index(self, documents: list[dict[str, Any]], *, zone_id: str) -> int:
+        """Index documents (full rebuild for zone_id)."""
+        if not self._embeddings or not documents:
+            return 0
+
+        stamped = _stamp_zone_id(documents, zone_id)
+        rows = [(doc["id"], doc, None) for doc in stamped]
+        await asyncio.to_thread(self._embeddings.index, rows)
+        return len(rows)
+
+    async def upsert(self, documents: list[dict[str, Any]], *, zone_id: str) -> int:
+        """Upsert documents (insert-or-update)."""
+        if not self._embeddings or not documents:
+            return 0
+
+        stamped = _stamp_zone_id(documents, zone_id)
+        rows = [(doc["id"], doc, None) for doc in stamped]
+        await asyncio.to_thread(self._embeddings.upsert, rows)
+        return len(rows)
+
+    async def delete(self, ids: list[str], *, zone_id: str) -> int:  # noqa: ARG002
+        """Delete documents by id."""
+        if not self._embeddings or not ids:
+            return 0
+
+        await asyncio.to_thread(self._embeddings.delete, ids)
+        return len(ids)
+
+    # ----- Search -------------------------------------------------------------
+
+    async def search(
+        self,
+        query: str,
+        *,
+        limit: int = 10,
+        zone_id: str,
+        search_type: str = "hybrid",  # noqa: ARG002
+        path_filter: str | None = None,
+    ) -> list[BaseSearchResult]:
+        """Search with mandatory zone_id isolation via txtai SQL WHERE clause."""
+        if not self._embeddings:
+            return []
+
+        escaped_query = _escape_sql_string(query)
+        sql = f"SELECT id, text, score, path, zone_id FROM txtai WHERE similar('{escaped_query}')"
+        sql += f" AND zone_id = '{_escape_sql_string(zone_id)}'"
+        if path_filter:
+            sql += f" AND path LIKE '{_escape_sql_string(path_filter)}%'"
+        sql += f" LIMIT {int(limit)}"
+
+        raw: list[dict[str, Any]] = await asyncio.to_thread(self._embeddings.search, sql)
+
+        return [
+            BaseSearchResult(
+                path=r.get("path", ""),
+                chunk_text=r.get("text", ""),
+                score=float(r.get("score", 0.0)),
+            )
+            for r in raw
+        ]
+
+    # ----- Graph search -------------------------------------------------------
+
+    async def graph_search(
+        self,
+        query: str,
+        *,
+        zone_id: str,
+        hops: int = 2,  # noqa: ARG002
+        limit: int = 10,
+    ) -> list[BaseSearchResult]:
+        """Graph-augmented search using txtai's semantic graph."""
+        if not self._embeddings or not getattr(self._embeddings, "graph", None):
+            return []
+
+        raw = await asyncio.to_thread(self._embeddings.graph.search, query, limit=limit)
+
+        results: list[BaseSearchResult] = []
+        for r in raw:
+            row = r if isinstance(r, dict) else {"text": str(r), "score": 0.0}
+            if row.get("zone_id") != zone_id:
+                continue
+            results.append(
+                BaseSearchResult(
+                    path=row.get("path", ""),
+                    chunk_text=row.get("text", ""),
+                    score=float(row.get("score", 0.0)),
+                )
+            )
+        return results
+
+    async def get_entity_neighbors(
+        self,
+        entity_id: str,
+        *,
+        zone_id: str,
+        hops: int = 2,
+    ) -> list[dict[str, Any]]:
+        """N-hop entity traversal via txtai graph.
+
+        Returns list of neighbor dicts with ``id``, ``text``, ``score`` keys.
+        """
+        if not self._embeddings or not getattr(self._embeddings, "graph", None):
+            return []
+
+        graph = self._embeddings.graph
+        try:
+            # txtai's graph exposes a networkx-compatible interface
+            import networkx as nx
+
+            g = graph.backend if hasattr(graph, "backend") else graph
+            if not isinstance(g, nx.Graph):
+                return []
+
+            if entity_id not in g:
+                return []
+
+            neighbors: set[str] = set()
+            current_layer = {entity_id}
+            for _ in range(hops):
+                next_layer: set[str] = set()
+                for node in current_layer:
+                    for nbr in g.neighbors(node):
+                        if nbr not in neighbors and nbr != entity_id:
+                            next_layer.add(nbr)
+                neighbors.update(next_layer)
+                current_layer = next_layer
+
+            results: list[dict[str, Any]] = []
+            for nid in neighbors:
+                data = g.nodes.get(nid, {})
+                if data.get("zone_id") != zone_id:
+                    continue
+                results.append(
+                    {
+                        "id": nid,
+                        "text": data.get("text", ""),
+                        "score": float(data.get("score", 0.0)),
+                    }
+                )
+            return results
+
+        except ImportError:
+            return []
+
+
+# =============================================================================
+# Helpers
+# =============================================================================
+
+
+def _stamp_zone_id(documents: list[dict[str, Any]], zone_id: str) -> list[dict[str, Any]]:
+    """Return new document list with zone_id stamped on each (immutable)."""
+    return [{**doc, "zone_id": zone_id} for doc in documents]
+
+
+# =============================================================================
+# Backend Registry (Decision #2, #8)
+# =============================================================================
+
+
+SEARCH_BACKENDS: dict[str, type] = {
+    "txtai": TxtaiBackend,
+}
+
+
+def create_backend(name: str, **kwargs: Any) -> SearchBackendProtocol:
+    """Create a search backend by registry name.
+
+    Args:
+        name: Backend name (e.g. "txtai")
+        **kwargs: Forwarded to backend constructor
+
+    Returns:
+        An instance satisfying :class:`SearchBackendProtocol`
+
+    Raises:
+        ValueError: If *name* is not registered
+    """
+    factory = SEARCH_BACKENDS.get(name)
+    if factory is None:
+        available = ", ".join(sorted(SEARCH_BACKENDS))
+        msg = f"Unknown search backend: {name!r}. Available: [{available}]"
+        raise ValueError(msg)
+    backend: Any = factory(**kwargs)
+    return cast(SearchBackendProtocol, backend)

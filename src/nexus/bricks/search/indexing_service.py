@@ -18,11 +18,21 @@ from typing import Any
 
 from sqlalchemy import delete, func, select
 
-from nexus.bricks.search.embeddings import EmbeddingProvider
+# Removed: txtai handles this (Issue #2663)
+# from nexus.bricks.search.embeddings import EmbeddingProvider
+# from nexus.bricks.search.vector_db import VectorDatabase
+try:
+    from nexus.bricks.search.embeddings import EmbeddingProvider
+except ImportError:
+    EmbeddingProvider = Any
+try:
+    from nexus.bricks.search.vector_db import VectorDatabase
+except ImportError:
+    VectorDatabase = Any
+
 from nexus.bricks.search.indexing import IndexingPipeline, IndexResult
 from nexus.bricks.search.models import DocumentChunkModel, FilePathModel
 from nexus.bricks.search.protocols import FileReaderProtocol
-from nexus.bricks.search.vector_db import VectorDatabase
 
 logger = logging.getLogger(__name__)
 

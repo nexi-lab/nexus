@@ -102,6 +102,9 @@ dependencies = [
     "fastcdc>=1.5.0",
     # BM25S for 500x faster ranked text search (Issue #796)
     "bm25s>=0.2.0",
+    # txtai unified search: hybrid BM25+dense, pgvector backend, semantic graph (Issue #2663)
+    "txtai[database,graph]>=9.0",
+    "faiss-cpu>=1.11.0; platform_machine=='x86_64' or platform_machine=='aarch64' or platform_machine=='arm64'",
     # Rapidfuzz for fast fuzzy string matching in edit engine (Issue #800)
     # 10-100x faster than difflib (Rust-backed)
     "rapidfuzz>=3.0.0",

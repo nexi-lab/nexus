@@ -20,7 +20,10 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from nexus.bricks.search.indexing_service import IndexingService
     from nexus.bricks.search.pipeline_indexer import PipelineIndexer
-    from nexus.bricks.search.query_service import QueryService
+
+    # Removed: txtai handles this (Issue #2663)
+    # from nexus.bricks.search.query_service import QueryService
+    QueryService = Any
 
 
 def _result_to_dict(r: Any) -> dict[str, Any]:

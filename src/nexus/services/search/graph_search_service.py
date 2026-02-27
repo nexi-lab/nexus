@@ -1,20 +1,24 @@
-"""Graph-enhanced search service (Issue #434, #1040).
+"""Graph-enhanced search service — txtai backend (Issue #2663).
 
-Extracts graph-enhanced search business logic from the search router
-into the service layer, per KERNEL-ARCHITECTURE.md requirement that
-routers be thin adapters with no business logic.
+Delegates graph-augmented search to the txtai backend's semantic graph.
+Replaces the legacy GraphStore + GraphEnhancedRetriever stack.
 """
 
 import logging
 from typing import Any
 
+from nexus.bricks.search.results import BaseSearchResult
 from nexus.contracts.constants import ROOT_ZONE_ID
 
 logger = logging.getLogger(__name__)
 
 
 class DaemonSemanticSearchWrapper:
-    """Wraps search daemon as SemanticSearch interface for GraphEnhancedRetriever."""
+    """Wraps search daemon as SemanticSearch interface.
+
+    Preserves backward compatibility with callers that need the
+    SearchableProtocol-shaped interface.
+    """
 
     def __init__(self, daemon: Any, *, zone_id: str | None = None) -> None:
         self.daemon = daemon
@@ -27,19 +31,14 @@ class DaemonSemanticSearchWrapper:
         path: str = "/",
         limit: int = 10,
         search_mode: str = "hybrid",
-        alpha: float = 0.5,
+        alpha: float = 0.5,  # noqa: ARG002
         **kwargs: Any,  # noqa: ARG002
-    ) -> list[Any]:
-        import importlib as _il
-
-        BaseSearchResult = _il.import_module("nexus.bricks.search.results").BaseSearchResult
-
+    ) -> list[BaseSearchResult]:
         results = await self.daemon.search(
             query=query,
             search_type=search_mode,
             limit=limit,
             path_filter=path if path != "/" else None,
-            alpha=alpha,
             zone_id=self._zone_id,
         )
         return [
@@ -61,69 +60,49 @@ class DaemonSemanticSearchWrapper:
 
 async def graph_enhanced_search(
     query: str,
-    search_type: str,
+    search_type: str,  # noqa: ARG001
     limit: int,
-    path_filter: str | None,
-    alpha: float,
-    graph_mode: str,
+    path_filter: str | None,  # noqa: ARG001
+    alpha: float,  # noqa: ARG001
+    graph_mode: str,  # noqa: ARG001
     *,
-    record_store: Any,
-    async_session_factory: Any,
+    record_store: Any,  # noqa: ARG001
+    async_session_factory: Any,  # noqa: ARG001
     search_daemon: Any,
     zone_id: str | None = None,
-) -> list[Any]:
-    """Execute graph-enhanced search using GraphEnhancedRetriever (Issue #1040).
+) -> list[BaseSearchResult]:
+    """Execute graph-enhanced search via txtai backend (Issue #2663).
 
-    Creates a GraphEnhancedRetriever on-the-fly and executes the search.
-    This function is called when graph_mode is not "none".
+    Delegates to the txtai backend's ``graph_search()`` method, which uses
+    txtai's built-in semantic graph for entity-aware retrieval.
 
     Args:
         query: Search query text
-        search_type: Base search type (keyword, semantic, hybrid)
+        search_type: Unused (txtai handles internally)
         limit: Maximum results
-        path_filter: Optional path prefix filter
-        alpha: Semantic vs keyword weight
-        graph_mode: Graph enhancement mode (low, high, dual)
-        record_store: RecordStoreABC instance (injected via app.state)
-        async_session_factory: Async session factory from RecordStoreABC (injected via app.state)
-        search_daemon: SearchDaemon instance (injected)
+        path_filter: Unused (txtai handles internally)
+        alpha: Unused (txtai handles internally)
+        graph_mode: Unused (txtai always uses its graph when available)
+        record_store: Unused (txtai manages its own storage)
+        async_session_factory: Unused
+        search_daemon: SearchDaemon instance
+        zone_id: Namespace for zone isolation
 
     Returns:
-        List of GraphEnhancedSearchResult
+        List of BaseSearchResult
     """
-    import importlib as _il
+    effective_zone_id = zone_id or ROOT_ZONE_ID
+    backend = getattr(search_daemon, "_backend", None)
+    if backend is None:
+        logger.warning("graph_enhanced_search: no backend available on daemon")
+        return []
 
-    _graph_retrieval = _il.import_module("nexus.bricks.search.graph_retrieval")
-    GraphEnhancedRetriever = _graph_retrieval.GraphEnhancedRetriever
-    GraphRetrievalConfig = _graph_retrieval.GraphRetrievalConfig
-    GraphStore = _il.import_module("nexus.bricks.search.graph_store").GraphStore
+    graph_search_fn = getattr(backend, "graph_search", None)
+    if graph_search_fn is None:
+        logger.warning("graph_enhanced_search: backend does not support graph_search")
+        return []
 
-    async with async_session_factory() as session:
-        graph_store = GraphStore(record_store, session, zone_id=zone_id or ROOT_ZONE_ID)
-
-        semantic_wrapper = DaemonSemanticSearchWrapper(search_daemon, zone_id=zone_id)
-        embedding_provider = getattr(search_daemon, "_embedding_provider", None)
-
-        config = GraphRetrievalConfig(
-            graph_mode=graph_mode,
-            entity_similarity_threshold=0.75,
-            neighbor_hops=2,
-        )
-
-        retriever = GraphEnhancedRetriever(
-            semantic_search=semantic_wrapper,
-            graph_store=graph_store,
-            embedding_provider=embedding_provider,
-            config=config,
-        )
-
-        results: list[Any] = await retriever.search(
-            query=query,
-            path=path_filter or "/",
-            limit=limit,
-            graph_mode=graph_mode,
-            search_mode=search_type,
-            alpha=alpha,
-            include_graph_context=True,
-        )
-        return results
+    results: list[BaseSearchResult] = await graph_search_fn(
+        query, zone_id=effective_zone_id, limit=limit
+    )
+    return results

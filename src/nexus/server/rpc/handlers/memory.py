@@ -79,18 +79,14 @@ def handle_query_memories(nexus_fs: NexusFS, params: Any, context: Any) -> dict[
     memory_api = _get_memory_api_with_context(nexus_fs, context)
 
     if params.query:
+        # Removed: txtai handles this (Issue #2663)
+        # embeddings module was deleted; embedding provider is no longer created here.
         embedding_provider_obj = None
         if params.embedding_provider:
-            try:
-                from nexus.bricks.search.embeddings import create_embedding_provider
-
-                embedding_provider_obj = create_embedding_provider(
-                    provider=params.embedding_provider
-                )
-            except Exception as e:
-                logger.debug(
-                    "Failed to create embedding provider %s: %s", params.embedding_provider, e
-                )
+            logger.debug(
+                "Embedding provider %s requested but embeddings module removed (Issue #2663)",
+                params.embedding_provider,
+            )
 
         search_mode = params.search_mode or "hybrid"
         memories = memory_api.search(

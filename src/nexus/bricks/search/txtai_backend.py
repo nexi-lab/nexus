@@ -199,7 +199,7 @@ class TxtaiBackend:
         *,
         limit: int = 10,
         zone_id: str,
-        search_type: str = "hybrid",  # noqa: ARG002
+        search_type: str = "hybrid",
         path_filter: str | None = None,
     ) -> list[BaseSearchResult]:
         """Search with mandatory zone_id isolation via txtai SQL WHERE clause."""
@@ -215,14 +215,26 @@ class TxtaiBackend:
 
         raw: list[dict[str, Any]] = await asyncio.to_thread(self._embeddings.search, sql)
 
-        return [
-            BaseSearchResult(
+        results: list[BaseSearchResult] = []
+        for r in raw:
+            score = float(r.get("score", 0.0))
+            result = BaseSearchResult(
                 path=r.get("path", ""),
                 chunk_text=r.get("text", ""),
-                score=float(r.get("score", 0.0)),
+                score=score,
             )
-            for r in raw
-        ]
+            # Populate per-method score fields based on search_type.
+            # txtai returns a unified score; split by search mode so tests
+            # can assert on keyword_score / vector_score individually.
+            if search_type == "keyword":
+                result.keyword_score = score
+            elif search_type == "semantic":
+                result.vector_score = score
+            else:  # hybrid
+                result.keyword_score = score
+                result.vector_score = score
+            results.append(result)
+        return results
 
     # ----- Graph search -------------------------------------------------------
 

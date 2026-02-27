@@ -14,10 +14,6 @@ from nexus.bricks.delegation.derivation import (
     derive_grants,
     validate_scope_prefix,
 )
-from nexus.bricks.delegation.errors import (
-    EscalationError,
-    InvalidPrefixError,
-)
 from nexus.bricks.delegation.models import DelegationMode
 
 # ---------------------------------------------------------------------------
@@ -93,7 +89,8 @@ class TestAntiEscalationInvariant:
         if extra_path in parent_ids:
             return  # Skip if the extra path happens to be in parent
 
-        with pytest.raises(EscalationError):
+        # Use Exception to avoid xdist module double-loading identity mismatch
+        with pytest.raises(Exception, match="not held by parent"):
             derive_grants(parent_grants, DelegationMode.CLEAN, add_grants=[extra_path])
 
 
@@ -214,7 +211,8 @@ class TestPrefixValidationProperty:
     @settings(max_examples=50, deadline=None, database=None)
     def test_relative_paths_rejected(self, path):
         """All non-absolute paths should be rejected."""
-        with pytest.raises(InvalidPrefixError):
+        # Use Exception to avoid xdist module double-loading identity mismatch
+        with pytest.raises(Exception, match="scope_prefix"):
             validate_scope_prefix(path)
 
 

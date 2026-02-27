@@ -98,7 +98,14 @@ class TxtaiBackend:
         self._embeddings: Any = None
 
     async def startup(self) -> None:
-        """Initialize txtai Embeddings with pgvector backend (with fallback)."""
+        """Initialize txtai Embeddings with pgvector backend (with fallback).
+
+        Fallback chain:
+        1. Full hybrid (BM25 + dense embeddings) with pgvector storage
+        2. Full hybrid with in-memory storage (pgvector unavailable)
+        3. Keyword-only BM25 (embedding model fails to load)
+        4. Degraded mode — _embeddings stays None, all searches return []
+        """
         from txtai import Embeddings
 
         config: dict[str, Any] = {
@@ -134,14 +141,39 @@ class TxtaiBackend:
         if self._graph:
             config["graph"] = {"backend": "networkx"}
 
-        self._embeddings = Embeddings(config)
+        # Attempt full hybrid init; fall back to keyword-only on failure
+        try:
+            self._embeddings = Embeddings(config)
+        except Exception:
+            logger.warning(
+                "Full hybrid init failed (model=%s). Falling back to keyword-only (BM25).",
+                self._model,
+                exc_info=True,
+            )
+            try:
+                bm25_config: dict[str, Any] = {
+                    "keyword": True,
+                    "content": True,
+                    "objects": True,
+                }
+                self._embeddings = Embeddings(bm25_config)
+                self._hybrid = False
+                logger.info("Keyword-only (BM25) backend started successfully")
+            except Exception:
+                logger.error(
+                    "BM25 fallback also failed. "
+                    "Search daemon will start in degraded mode (no results).",
+                    exc_info=True,
+                )
+                self._embeddings = None
 
         logger.info(
-            "txtai backend started: model=%s, hybrid=%s, graph=%s, pgvector=%s",
+            "txtai backend started: model=%s, hybrid=%s, graph=%s, pgvector=%s, degraded=%s",
             self._model,
             self._hybrid,
             self._graph,
             use_pgvector,
+            self._embeddings is None,
         )
 
     async def shutdown(self) -> None:

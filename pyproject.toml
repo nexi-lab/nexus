@@ -939,6 +939,10 @@ ignore_imports = [
     "nexus.core.config -> nexus.bricks.workflows.protocol",
     "nexus.core.nexus_fs -> nexus.bricks.rebac.entity_registry",
     "nexus.core.nexus_fs -> nexus.bricks.rebac.tiger_cache_manager",
+    # parsers fallback in __init__ — pre-existing, now visible after parsers/ → bricks/parsers/ move
+    "nexus.core.nexus_fs -> nexus.bricks.parsers.markitdown_parser",
+    "nexus.core.nexus_fs -> nexus.bricks.parsers.registry",
+    "nexus.core.nexus_fs -> nexus.bricks.parsers.providers.registry",
     # --- services importing bricks ---
     "nexus.services.ace.consolidation -> nexus.bricks.search.embeddings",
     "nexus.services.oauth.oauth_service -> nexus.bricks.auth.oauth.credential_service",

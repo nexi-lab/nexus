@@ -11,6 +11,7 @@ For remote servers, commands call the RPC API (add_mount, remove_mount, etc.).
 For local instances, commands interact directly with the NexusFS methods.
 """
 
+import inspect
 import json
 import sys
 from typing import Any, cast
@@ -25,6 +26,17 @@ from nexus.cli.utils import (
     handle_error,
 )
 from nexus.lib.sync_bridge import run_sync
+
+
+def _await_if_needed(result: Any) -> Any:
+    """Resolve a service call result that may be a coroutine or a plain value.
+
+    In local mode the service returns a coroutine (async def); in remote mode
+    the RemoteServiceProxy returns the value synchronously.
+    """
+    if inspect.iscoroutine(result):
+        return run_sync(result)
+    return result
 
 
 @click.group(name="mounts")
@@ -116,7 +128,7 @@ def add_mount(
 
         try:
             mount_svc = cast(Any, nx).mount_service
-            mount_id = run_sync(
+            mount_id = _await_if_needed(
                 mount_svc.add_mount(
                     mount_point=mount_point,
                     backend_type=backend_type,
@@ -172,7 +184,7 @@ def remove_mount(mount_point: str, backend_config: BackendConfig) -> None:
 
         try:
             mount_svc = cast(Any, nx).mount_service
-            result = run_sync(mount_svc.remove_mount(mount_point))
+            result = _await_if_needed(mount_svc.remove_mount(mount_point=mount_point))
             if result.get("removed"):
                 console.print("[green]✓[/green] Mount removed successfully")
             else:
@@ -220,7 +232,7 @@ def list_mounts(
         # Call list_mounts via mount_service (async) with sync bridge
         try:
             mount_svc = cast(Any, nx).mount_service
-            mounts = run_sync(mount_svc.list_mounts())
+            mounts = _await_if_needed(mount_svc.list_mounts())
         except AttributeError:
             console.print("[red]Error:[/red] This Nexus instance doesn't support listing mounts")
             console.print("[yellow]Hint:[/yellow] Make sure you're using the latest Nexus version")
@@ -277,7 +289,7 @@ def mount_info(mount_point: str, show_config: bool, backend_config: BackendConfi
         # Call get_mount via mount_service (async) with sync bridge
         try:
             mount_svc = cast(Any, nx).mount_service
-            mount = run_sync(mount_svc.get_mount(mount_point))
+            mount = _await_if_needed(mount_svc.get_mount(mount_point=mount_point))
         except AttributeError:
             console.print("[red]Error:[/red] This Nexus instance doesn't support mount info")
             console.print("[yellow]Hint:[/yellow] Make sure you're using the latest Nexus version")

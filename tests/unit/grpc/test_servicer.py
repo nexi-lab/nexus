@@ -17,8 +17,8 @@ from nexus.contracts.exceptions import (
     NexusPermissionError,
     ValidationError,
 )
+from nexus.grpc.servicer import VFSServicer
 from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
-from nexus.server.rpc.grpc_servicer import VFSServicer
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -208,7 +208,7 @@ class TestVFSServicerAuth:
 
     @pytest.mark.anyio
     async def test_open_access_no_key(self, servicer) -> None:
-        """No api_key and no auth_provider → open access (anonymous)."""
+        """No api_key and no auth_provider -> open access (anonymous)."""
         request = _make_request("sys_stat", {"path": "/"})
         context = MagicMock()
 
@@ -223,7 +223,7 @@ class TestVFSServicerAuth:
 
     @pytest.mark.anyio
     async def test_valid_api_key(self, servicer_with_key) -> None:
-        """Valid api_key in request auth_token → authenticated."""
+        """Valid api_key in request auth_token -> authenticated."""
         request = _make_request("sys_stat", {"path": "/"}, auth_token="test-api-key")
         context = MagicMock()
 
@@ -238,7 +238,7 @@ class TestVFSServicerAuth:
 
     @pytest.mark.anyio
     async def test_missing_api_key_rejected(self, servicer_with_key) -> None:
-        """Missing auth_token when api_key is configured → auth error."""
+        """Missing auth_token when api_key is configured -> auth error."""
         request = _make_request("sys_stat", {"path": "/"}, auth_token="")
         context = MagicMock()
 
@@ -250,7 +250,7 @@ class TestVFSServicerAuth:
 
     @pytest.mark.anyio
     async def test_wrong_api_key_rejected(self, servicer_with_key) -> None:
-        """Wrong auth_token when api_key is configured → auth error."""
+        """Wrong auth_token when api_key is configured -> auth error."""
         request = _make_request("sys_stat", {"path": "/"}, auth_token="wrong-key")
         context = MagicMock()
 
@@ -286,9 +286,7 @@ class TestVFSServicerTypedRPCs:
         request = _make_typed_request("ReadRequest", path="/test.txt", auth_token="")
         context = MagicMock()
 
-        with patch(
-            "nexus.server.rpc.grpc_servicer.asyncio.to_thread", new_callable=AsyncMock
-        ) as mock_thread:
+        with patch("nexus.grpc.servicer.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
             mock_thread.return_value = {"content": b"hello world", "etag": "sha256-abc", "size": 11}
             response = await servicer.Read(request, context)
 
@@ -304,7 +302,7 @@ class TestVFSServicerTypedRPCs:
         context = MagicMock()
 
         with patch(
-            "nexus.server.rpc.grpc_servicer.asyncio.to_thread",
+            "nexus.grpc.servicer.asyncio.to_thread",
             new_callable=AsyncMock,
             side_effect=NexusFileNotFoundError("/missing.txt"),
         ):
@@ -323,7 +321,7 @@ class TestVFSServicerTypedRPCs:
         context = MagicMock()
 
         with patch(
-            "nexus.server.rpc.grpc_servicer.asyncio.to_thread",
+            "nexus.grpc.servicer.asyncio.to_thread",
             new_callable=AsyncMock,
             return_value={"etag": "sha256-xyz", "size": 4},
         ):
@@ -342,7 +340,7 @@ class TestVFSServicerTypedRPCs:
         context = MagicMock()
 
         with patch(
-            "nexus.server.rpc.grpc_servicer.asyncio.to_thread",
+            "nexus.grpc.servicer.asyncio.to_thread",
             new_callable=AsyncMock,
             side_effect=ConflictError("/file.txt", expected_etag="old", current_etag="new"),
         ):
@@ -361,7 +359,7 @@ class TestVFSServicerTypedRPCs:
         context = MagicMock()
 
         with patch(
-            "nexus.server.rpc.grpc_servicer.asyncio.to_thread",
+            "nexus.grpc.servicer.asyncio.to_thread",
             new_callable=AsyncMock,
             return_value=None,
         ):
@@ -377,7 +375,7 @@ class TestVFSServicerTypedRPCs:
         context = MagicMock()
 
         with patch(
-            "nexus.server.rpc.grpc_servicer.asyncio.to_thread",
+            "nexus.grpc.servicer.asyncio.to_thread",
             new_callable=AsyncMock,
             return_value=None,
         ) as mock_thread:
@@ -399,7 +397,7 @@ class TestVFSServicerTypedRPCs:
         context.cancelled.return_value = False
 
         with patch(
-            "nexus.server.rpc.grpc_servicer.asyncio.to_thread",
+            "nexus.grpc.servicer.asyncio.to_thread",
             new_callable=AsyncMock,
             return_value=b"hello world!",  # 12 bytes
         ):
@@ -426,7 +424,7 @@ class TestVFSServicerTypedRPCs:
         context.cancelled.return_value = False
 
         with patch(
-            "nexus.server.rpc.grpc_servicer.asyncio.to_thread",
+            "nexus.grpc.servicer.asyncio.to_thread",
             new_callable=AsyncMock,
             return_value=b"",
         ):
@@ -447,7 +445,7 @@ class TestVFSServicerTypedRPCs:
         context = MagicMock()
 
         with patch(
-            "nexus.server.rpc.grpc_servicer.asyncio.to_thread",
+            "nexus.grpc.servicer.asyncio.to_thread",
             new_callable=AsyncMock,
             side_effect=NexusFileNotFoundError("/missing.bin"),
         ):

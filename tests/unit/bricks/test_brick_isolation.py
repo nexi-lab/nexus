@@ -23,7 +23,6 @@ _BRICK_MODULES = [
     # ReBAC brick (Issue #2179)
     "nexus.bricks.rebac.rebac_tracing",
     "nexus.bricks.rebac.domain",
-    "nexus.bricks.rebac.types",
     "nexus.bricks.rebac.circuit_breaker",
     "nexus.bricks.rebac.entity_registry",
     "nexus.bricks.rebac.memory_permission_enforcer",

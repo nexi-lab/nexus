@@ -10,6 +10,7 @@ All commands require:
 """
 
 import json
+import os
 import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -59,41 +60,16 @@ def get_admin_rpc(url: str | None, api_key: str | None) -> AdminRPC:
         )
         sys.exit(1)
 
-    import uuid
+    from urllib.parse import urlparse
 
-    import httpx
+    from nexus.remote.rpc_transport import RPCTransport
 
-    from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
+    parsed = urlparse(url)
+    grpc_port = int(os.environ.get("NEXUS_GRPC_PORT", "2028"))
+    grpc_address = f"{parsed.hostname}:{grpc_port}"
 
-    client = httpx.Client(
-        base_url=url.rstrip("/"),
-        headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
-        timeout=httpx.Timeout(connect=5, read=30, write=30, pool=30),
-    )
-
-    def _call_rpc(method: str, params: dict[str, Any] | None = None) -> Any:
-        rpc_body = {
-            "jsonrpc": "2.0",
-            "id": str(uuid.uuid4()),
-            "method": method,
-            "params": params,
-        }
-        payload = encode_rpc_message(rpc_body)
-        resp = client.post(
-            f"/api/nfs/{method}",
-            content=payload,
-            headers={"Content-Type": "application/json"},
-        )
-        resp.raise_for_status()
-        result = decode_rpc_message(resp.content)
-        # Unwrap JSON-RPC envelope
-        if isinstance(result, dict):
-            if "error" in result and result["error"]:
-                raise RuntimeError(result["error"].get("message", str(result["error"])))
-            return result.get("result", result)
-        return result
-
-    return _call_rpc
+    transport = RPCTransport(server_address=grpc_address, auth_token=api_key)
+    return transport.call_rpc
 
 
 @click.group()

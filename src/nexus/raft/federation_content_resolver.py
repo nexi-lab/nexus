@@ -44,6 +44,17 @@ _CHANNEL_OPTIONS = [
 class FederationContentResolver:
     """VFSPathResolver that dispatches reads to remote content owners.
 
+    **Read-only by design.** Content writes and deletes are always local:
+    - Write: kernel writes CAS content to the local backend; metadata
+      routing (which zone owns the path) is handled transparently by
+      FederatedMetadataProxy (DI). The proxy enriches ``backend_name``
+      with the writer node's address so future reads can locate content.
+    - Delete: kernel deletes local CAS content. Remote CAS orphans are
+      cleaned by GC (future work, not federation-critical).
+
+    ``matches()`` always returns ``False`` so writes/deletes pass through
+    the resolver chain to the kernel's normal codepath.
+
     Implements the ``try_read`` protocol (merged matches+read):
     a single call looks up metadata, decides local vs remote, and
     either returns content (handled) or metadata hint (not handled).

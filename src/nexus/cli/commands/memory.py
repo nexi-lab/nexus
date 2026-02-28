@@ -246,19 +246,16 @@ def search(
 
     try:
         # Create embedding provider if specified
+        # Removed: txtai handles this (Issue #2663)
+        # embeddings module was deleted; embedding provider is no longer created here.
         embedding_provider_obj = None
         if embedding_provider and search_mode in ("semantic", "hybrid"):
-            try:
-                from nexus.bricks.search.embeddings import create_embedding_provider
-
-                embedding_provider_obj = create_embedding_provider(provider=embedding_provider)
-            except Exception as e:
-                click.echo(
-                    f"Warning: Failed to create embedding provider '{embedding_provider}': {e}",
-                    err=True,
-                )
-                click.echo("Falling back to keyword search.", err=True)
-                search_mode = "keyword"
+            click.echo(
+                "Warning: Embedding provider creation is no longer supported here. "
+                "Use txtai-based search instead (Issue #2663).",
+                err=True,
+            )
+            search_mode = "keyword"
 
         results = nx.memory.search(  # type: ignore[attr-defined]
             query=query_text,

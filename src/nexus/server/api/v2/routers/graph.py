@@ -83,7 +83,15 @@ async def _graph_session(
     record_store: Any, async_session_factory: Any, zone_id: str
 ) -> AsyncIterator[Any]:
     """Create a GraphStore from the RecordStoreABC async session factory."""
-    from nexus.bricks.search.graph_store import GraphStore
+    # Removed: txtai handles this (Issue #2663)
+    # graph_store module was deleted. Raise 503 until txtai graph is wired.
+    try:
+        from nexus.bricks.search.graph_store import GraphStore
+    except ImportError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Graph store not available (migrating to txtai, Issue #2663)",
+        ) from exc
 
     async with async_session_factory() as session:
         yield GraphStore(record_store, session, zone_id=zone_id)

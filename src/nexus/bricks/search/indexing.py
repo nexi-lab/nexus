@@ -26,7 +26,13 @@ from nexus.bricks.search.contextual_chunking import (
     ContextualChunker,
     ContextualChunkResult,
 )
-from nexus.bricks.search.embeddings import EmbeddingProvider
+
+# Removed: txtai handles this (Issue #2663)
+# from nexus.bricks.search.embeddings import EmbeddingProvider
+try:
+    from nexus.bricks.search.embeddings import EmbeddingProvider
+except ImportError:
+    EmbeddingProvider = Any
 
 logger = logging.getLogger(__name__)
 

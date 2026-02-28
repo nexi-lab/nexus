@@ -620,22 +620,9 @@ def _boot_dependent_bricks(
         logger.debug("[BOOT:BRICK:DEP] ToolInfo not available")
 
     if ctx.record_store is not None:
-        try:
-            from nexus.bricks.search.graph_store import GraphStore
-
-            _record_store = ctx.record_store
-            _zone_id = ctx.zone_id or ROOT_ZONE_ID
-
-            def _make_graph_store(session: Any) -> Any:
-                return GraphStore(
-                    record_store=_record_store,
-                    session=session,
-                    zone_id=_zone_id,
-                )
-
-            graph_store_factory = _make_graph_store
-        except ImportError:
-            logger.debug("[BOOT:BRICK:DEP] GraphStore not available")
+        # Removed: txtai handles this (Issue #2663)
+        # graph_store module was deleted; graph_store_factory stays None.
+        logger.debug("[BOOT:BRICK:DEP] GraphStore not available (deleted, Issue #2663)")
 
     def _create_dependent(descriptor: BrickFactoryDescriptor) -> Any:
         return descriptor.create_fn(

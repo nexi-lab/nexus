@@ -58,7 +58,6 @@ class TestNexusFSServiceComposition:
         assert hasattr(fs, "mcp_service"), "MCPService not instantiated"
         assert hasattr(fs, "llm_service"), "LLMService not instantiated"
         assert hasattr(fs, "oauth_service"), "OAuthService not instantiated"
-        assert hasattr(fs, "skill_service"), "SkillService not instantiated"
         assert hasattr(fs, "search_service"), "SearchService not instantiated"
         assert hasattr(fs, "share_link_service"), "ShareLinkService not instantiated"
         assert hasattr(fs, "events_service"), "EventsService not instantiated"
@@ -70,7 +69,6 @@ class TestNexusFSServiceComposition:
         assert fs.mcp_service is not None
         assert fs.llm_service is not None
         assert fs.oauth_service is not None
-        assert fs.skill_service is not None
         assert fs.search_service is not None
         assert fs.share_link_service is not None
         assert fs.events_service is not None
@@ -93,9 +91,6 @@ class TestNexusFSServiceComposition:
         # Services that take filesystem should have it
         assert fs.mcp_service._filesystem == fs
         assert fs.llm_service.nexus_fs == fs
-        # SkillService is directly instantiated
-        assert fs.skill_service is not None
-
         # SearchService should have metadata and permission_enforcer
         assert fs.search_service.metadata == fs.metadata
         assert fs.search_service._permission_enforcer == fs._permission_enforcer

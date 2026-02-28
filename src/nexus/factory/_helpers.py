@@ -57,8 +57,6 @@ _FACTORY_SKIP: frozenset[str] = frozenset(
         "manifest_metrics",  # observability helper, not a brick
         "ipc_storage_driver",  # internal to ipc_vfs_driver
         "ipc_provisioner",  # provisioning helper, not a brick
-        "skill_service",  # wired later via NexusFS gateway adapters
-        "skill_package_service",  # wired later via NexusFS gateway adapters
         "agent_event_log",  # event log, not a lifecycle brick
         "rebac_circuit_breaker",  # Issue #2034: passive resilience wrapper, no lifecycle
         "memory_permission",  # singleton component for Memory brick (Issue #2177)

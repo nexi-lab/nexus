@@ -167,7 +167,7 @@ def _startup_tiger_cache(app: "FastAPI", svc: "LifespanServices") -> list[asynci
 
                     from sqlalchemy.engine import Engine
 
-                    from nexus.services.permissions.cache.tiger.expander import (
+                    from nexus.bricks.rebac.cache.tiger.expander import (
                         DirectoryGrantExpander,
                     )
 

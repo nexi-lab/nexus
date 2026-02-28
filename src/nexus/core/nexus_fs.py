@@ -3648,8 +3648,9 @@ class NexusFS(  # type: ignore[misc]
         if route.readonly:
             raise PermissionError(f"Cannot delete from read-only path: {path}")
 
-        # Check if file exists in metadata
-        meta = self.metadata.get(path)
+        # Check if file exists in metadata.
+        # Use prefetched hint from resolve_delete() if available (#1311)
+        meta = _result if _result is not None else self.metadata.get(path)
 
         # Issue #1264: If file exists only in base layer, create whiteout instead of deleting
         if meta is None and getattr(self, "_overlay_resolver", None):

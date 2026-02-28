@@ -2,7 +2,7 @@
 
 Re-exports from ``nexus.contracts.agent_types`` — the canonical home for these
 pure domain types.  This module preserves backward compatibility for existing
-``from nexus.services.agents.agent_record import ...`` imports.
+``from nexus.system_services.agents.agent_record import ...`` imports.
 
 See ``nexus.contracts.agent_types`` for full documentation.
 """

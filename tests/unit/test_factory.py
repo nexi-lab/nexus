@@ -214,7 +214,7 @@ class TestBootSystemServices:
         with (
             caplog.at_level(logging.WARNING, logger="nexus.factory"),
             patch(
-                "nexus.services.agents.agent_registry.AgentRegistry",
+                "nexus.system_services.agents.agent_registry.AgentRegistry",
                 side_effect=RuntimeError("agent db error"),
             ),
         ):

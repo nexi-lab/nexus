@@ -593,7 +593,7 @@ class TestSignedIPCWithFastAPI:
         """Agent registration provisions DID + keypair for signing.
 
         Note: DID provisioning requires the server's KeyService to be
-        initialized (nexus.identity.models). When the module is unavailable
+        initialized (nexus.bricks.identity). When the module is unavailable
         (e.g. lightweight test environments), agent registration still succeeds
         but without DID fields — the test validates both paths.
         """
@@ -643,6 +643,6 @@ class TestSignedIPCWithFastAPI:
             # This is acceptable: signing infrastructure (tested above in
             # TestSignedIPCE2E) works independently of the server endpoint.
             pytest.skip(
-                "Server KeyService not initialized (nexus.identity.models unavailable); "
+                "Server KeyService not initialized (nexus.bricks.identity unavailable); "
                 "DID provisioning via register_agent not testable in this environment"
             )

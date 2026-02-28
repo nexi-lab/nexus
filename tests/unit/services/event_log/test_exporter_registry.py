@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock
 import pytest
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.services.event_subsystem.log.exporter_registry import ExporterRegistry
-from nexus.services.event_subsystem.types import FileEvent, FileEventType
+from nexus.system_services.event_subsystem.log.exporter_registry import ExporterRegistry
+from nexus.system_services.event_subsystem.types import FileEvent, FileEventType
 
 
 def _make_event(event_id: str = "evt-1", path: str = "/test.txt") -> FileEvent:

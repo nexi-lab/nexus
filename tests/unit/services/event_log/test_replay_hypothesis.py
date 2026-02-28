@@ -18,9 +18,9 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.services.event_subsystem.log.replay import EventReplayService
 from nexus.storage.models import OperationLogModel
 from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.system_services.event_subsystem.log.replay import EventReplayService
 
 
 @pytest.fixture

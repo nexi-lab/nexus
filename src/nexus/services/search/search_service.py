@@ -1296,8 +1296,18 @@ class SearchService(SemanticSearchMixin):
         buffer_multiplier = 1.5
         fetch_limit = int(limit * buffer_multiplier)
         collected_items: builtins.list[Any] = []
-        current_cursor = cursor
         has_more = True
+
+        # Decode encoded cursor to plain path for paginate_iter
+        current_cursor_path: str | None = None
+        if cursor:
+            from nexus.lib.pagination import CursorError, decode_cursor
+
+            try:
+                filters = {"prefix": list_prefix, "recursive": recursive, "zone_id": list_zone_id}
+                current_cursor_path = decode_cursor(cursor, filters).path
+            except CursorError:
+                current_cursor_path = None
 
         while len(collected_items) < limit and has_more:
             from nexus.lib.pagination import paginate_iter
@@ -1305,7 +1315,7 @@ class SearchService(SemanticSearchMixin):
             batch = paginate_iter(
                 self.metadata.list_iter(prefix=list_prefix, recursive=recursive),
                 limit=fetch_limit,
-                cursor_path=current_cursor,
+                cursor_path=current_cursor_path,
             )
 
             from nexus.contracts.constants import SYSTEM_PATH_PREFIX
@@ -1323,7 +1333,7 @@ class SearchService(SemanticSearchMixin):
 
             collected_items.extend(filtered_items)
             has_more = batch.has_more
-            current_cursor = batch.next_cursor
+            current_cursor_path = batch.next_cursor  # already a plain path
             if not batch.items:
                 break
 

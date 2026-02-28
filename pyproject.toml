@@ -618,6 +618,7 @@ module = [
     "nexus.bricks.rebac.zone_graph_loader",
     "nexus.bricks.rebac.namespace_manager",
     "nexus.bricks.rebac.manager",
+    "nexus.system_services.event_subsystem.bus.redis",
 ]
 # cachetools returns Any from generic cache
 disable_error_code = ["import-untyped", "no-any-return"]
@@ -750,7 +751,7 @@ module = [
     "nexus.services.mount_manager",
     "nexus.services.mount_service",
     "nexus.services.search_service",
-    "nexus.services.event_subsystem.log.exporters.factory",
+    "nexus.system_services.event_subsystem.log.exporters.factory",
     "nexus.bricks.portability.import_service",
     "nexus.server.lifespan.realtime",
 ]

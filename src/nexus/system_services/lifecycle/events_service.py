@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
     from nexus.core.protocols.connector import ConnectorProtocol
     from nexus.lib.distributed_lock import LockManagerBase
-    from nexus.services.event_bus.base import EventBusBase
+    from nexus.system_services.event_subsystem.bus.base import EventBusBase
 
 
 class EventsService:
@@ -193,7 +193,7 @@ class EventsService:
         # Layer 1: Same-box local watching (fallback)
         if self._is_same_box():
             logger.debug(f"Using same-box file watcher for {path}")
-            from nexus.services.event_subsystem.types import FileEvent
+            from nexus.system_services.event_subsystem.types import FileEvent
 
             assert isinstance(self._backend, PassthroughProtocol), (
                 "Backend must implement PassthroughProtocol for this operation"

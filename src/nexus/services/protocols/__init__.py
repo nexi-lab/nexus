@@ -31,7 +31,6 @@ from nexus.contracts.workflow_types import (
     NexusOperationsProtocol,
 )
 from nexus.lib.rpc_decorator import rpc_expose
-from nexus.services.event_subsystem.log.protocol import EventLogConfig, EventLogProtocol
 from nexus.services.protocols.adaptive_k import AdaptiveKProtocol
 from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
 from nexus.services.protocols.auth import APIKeyCreatorProtocol
@@ -81,6 +80,7 @@ from nexus.services.protocols.watch import WatchProtocol
 from nexus.services.protocols.workflow_dispatch import WorkflowDispatchProtocol
 from nexus.services.protocols.workspace_manager import WorkspaceManagerProtocol
 from nexus.services.protocols.write_back import WriteBackProtocol
+from nexus.system_services.event_subsystem.log.protocol import EventLogConfig, EventLogProtocol
 
 # Brick import via importlib to avoid services→bricks tier violation
 NamespaceMount = _il.import_module("nexus.bricks.rebac.namespace_manager").NamespaceMount

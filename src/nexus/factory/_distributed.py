@@ -25,8 +25,8 @@ def _create_event_log_wal() -> Any:
     try:
         from pathlib import Path
 
-        from nexus.services.event_subsystem.log.factory import create_event_log
-        from nexus.services.event_subsystem.log.protocol import EventLogConfig
+        from nexus.system_services.event_subsystem.log.factory import create_event_log
+        from nexus.system_services.event_subsystem.log.protocol import EventLogConfig
 
         wal_dir = os.getenv("NEXUS_WAL_DIR", ".nexus-data/wal")
         sync_mode_raw = os.getenv("NEXUS_WAL_SYNC_MODE", "every")
@@ -86,7 +86,7 @@ def _create_distributed_infra(
 
         # Initialize event bus
         if dist.event_bus_backend == "nats":
-            from nexus.services.event_subsystem.bus.factory import create_event_bus
+            from nexus.system_services.event_subsystem.bus.factory import create_event_bus
 
             event_bus = create_event_bus(
                 backend="nats",
@@ -104,7 +104,7 @@ def _create_distributed_infra(
             event_url_resolved = coordination_url_resolved or get_dragonfly_url()
             if event_url_resolved:
                 from nexus.cache.dragonfly import DragonflyClient
-                from nexus.services.event_subsystem.bus import RedisEventBus
+                from nexus.system_services.event_subsystem.bus import RedisEventBus
 
                 event_client = DragonflyClient(url=event_url_resolved)
                 event_bus = RedisEventBus(

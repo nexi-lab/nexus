@@ -14,7 +14,6 @@ Domain modules:
     models.sharing         -- Share link models
     models.infrastructure  -- System config, sandbox, session models
     models.agents          -- Agent lifecycle models
-    models.ace             -- Trajectory and playbook models
     models.sync            -- Sync and conflict models
     models.file_path       -- FilePathModel
     models.version_history -- VersionHistoryModel
@@ -41,11 +40,6 @@ from nexus.storage.models.a2a import A2ATaskModel as A2ATaskModel
 
 # Domain: Access Manifests (Issue #1754)
 from nexus.storage.models.access_manifest import AccessManifestModel as AccessManifestModel
-
-# Domain: ACE (Trajectories, Feedback, Playbooks)
-from nexus.storage.models.ace import PlaybookModel as PlaybookModel
-from nexus.storage.models.ace import TrajectoryFeedbackModel as TrajectoryFeedbackModel
-from nexus.storage.models.ace import TrajectoryModel as TrajectoryModel
 
 # Domain: Agents
 from nexus.storage.models.agents import AgentEventModel as AgentEventModel

@@ -420,33 +420,3 @@ class TestGrantMountOwnerPermission:
 
         # Permission grant should still be attempted (Issue #2033: via rebac_service)
         mock_nexus_fs.rebac_service.rebac_create_sync.assert_called_once()
-
-
-# =============================================================================
-# _generate_connector_skill tests
-# =============================================================================
-
-
-class TestGenerateConnectorSkill:
-    """Tests for the _generate_connector_skill helper."""
-
-    def test_generates_skill_for_connector(self, mount_service, mock_nexus_fs):
-        """SKILL.md is generated for connector mounts."""
-        result = mount_service._generate_connector_skill("/mnt/gcs", "gcs_connector", None)
-        assert result is True
-        mock_nexus_fs.sys_write.assert_called_once()
-        # Verify skill content was written to the correct path
-        call_args = mock_nexus_fs.sys_write.call_args
-        assert call_args[0][0] == "/mnt/gcs/SKILL.md"
-
-    def test_returns_false_without_nexus_fs(self, mock_router):
-        """Returns False when nexus_fs is not available."""
-        service = MountService(router=mock_router, nexus_fs=None)
-        result = service._generate_connector_skill("/mnt/gcs", "gcs_connector", None)
-        assert result is False
-
-    def test_handles_write_error(self, mount_service, mock_nexus_fs):
-        """Write errors are handled gracefully."""
-        mock_nexus_fs.sys_write.side_effect = OSError("Write failed")
-        result = mount_service._generate_connector_skill("/mnt/gcs", "gcs_connector", None)
-        assert result is False

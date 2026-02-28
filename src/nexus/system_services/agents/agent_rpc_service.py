@@ -345,7 +345,7 @@ class AgentRPCService:
             raise RuntimeError("AgentRegistry not initialized and no session_factory available.")
         if self._record_store is None:
             raise RuntimeError("record_store is required to initialize AgentRegistry")
-        from nexus.services.agents.agent_registry import AgentRegistry
+        from nexus.system_services.agents.agent_registry import AgentRegistry
 
         self._agent_registry = AgentRegistry(
             record_store=self._record_store,
@@ -746,7 +746,7 @@ class AgentRPCService:
         """Transition an agent's lifecycle state with optimistic locking."""
         if not self._agent_registry:
             raise ValueError("AgentRegistry not available")
-        from nexus.services.agents.agent_record import AgentState
+        from nexus.system_services.agents.agent_record import AgentState
 
         try:
             target = AgentState(target_state)
@@ -786,7 +786,7 @@ class AgentRPCService:
             raise ValueError("AgentRegistry not available")
         state_enum = None
         if state:
-            from nexus.services.agents.agent_record import AgentState
+            from nexus.system_services.agents.agent_record import AgentState
 
             try:
                 state_enum = AgentState(state)

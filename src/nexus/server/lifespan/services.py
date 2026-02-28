@@ -159,7 +159,7 @@ def _startup_agent_registry(app: "FastAPI", svc: "LifespanServices") -> None:
     """Initialize AgentRegistry for agent lifecycle tracking (Issue #1240)."""
     if svc.nexus_fs and svc.session_factory:
         try:
-            from nexus.services.agents.agent_registry import AgentRegistry
+            from nexus.system_services.agents.agent_registry import AgentRegistry
 
             _bg = getattr(svc.profile_tuning, "background_task", None)
             app.state.agent_registry = AgentRegistry(
@@ -176,14 +176,14 @@ def _startup_agent_registry(app: "FastAPI", svc: "LifespanServices") -> None:
                 perm_enforcer.agent_registry = app.state.agent_registry
 
             # Issue #1440: Create async wrapper for protocol conformance
-            from nexus.services.agents.async_agent_registry import AsyncAgentRegistry
+            from nexus.system_services.agents.async_agent_registry import AsyncAgentRegistry
 
             app.state.async_agent_registry = AsyncAgentRegistry(app.state.agent_registry)
 
             # Issue #2172: Create AgentWarmupService with step registry
             try:
-                from nexus.services.agents.agent_warmup import AgentWarmupService
-                from nexus.services.agents.warmup_steps import register_standard_steps
+                from nexus.system_services.agents.agent_warmup import AgentWarmupService
+                from nexus.system_services.agents.warmup_steps import register_standard_steps
 
                 app.state.agent_warmup_service = AgentWarmupService(
                     agent_registry=app.state.agent_registry,
@@ -562,9 +562,9 @@ def _startup_agent_tasks(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         # Fallback: construct EvictionManager here if factory didn't create one
         try:
             from nexus.server.background_tasks import agent_eviction_task
-            from nexus.services.agents.eviction_manager import EvictionManager
-            from nexus.services.agents.eviction_policy import LRUEvictionPolicy
-            from nexus.services.agents.resource_monitor import ResourceMonitor
+            from nexus.system_services.agents.eviction_manager import EvictionManager
+            from nexus.system_services.agents.eviction_policy import LRUEvictionPolicy
+            from nexus.system_services.agents.resource_monitor import ResourceMonitor
 
             resource_monitor = ResourceMonitor(tuning=_eviction_tuning)
             eviction_policy = LRUEvictionPolicy()

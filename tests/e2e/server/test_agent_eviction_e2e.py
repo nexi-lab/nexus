@@ -14,10 +14,10 @@ import pytest
 
 from nexus.contracts.agent_types import AgentState, EvictionReason
 from nexus.lib.performance_tuning import EvictionTuning
-from nexus.services.agents.agent_registry import AgentRegistry
-from nexus.services.agents.eviction_manager import EvictionManager
-from nexus.services.agents.eviction_policy import LRUEvictionPolicy
-from nexus.services.agents.resource_monitor import ResourceMonitor
+from nexus.system_services.agents.agent_registry import AgentRegistry
+from nexus.system_services.agents.eviction_manager import EvictionManager
+from nexus.system_services.agents.eviction_policy import LRUEvictionPolicy
+from nexus.system_services.agents.resource_monitor import ResourceMonitor
 from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
 
@@ -86,8 +86,8 @@ class TestAgentEvictionE2E:
         mem.percent = 90.0
 
         with (
-            patch("nexus.services.agents.resource_monitor.psutil") as mock_psutil,
-            patch("nexus.services.agents.resource_monitor._HAS_PSUTIL", True),
+            patch("nexus.system_services.agents.resource_monitor.psutil") as mock_psutil,
+            patch("nexus.system_services.agents.resource_monitor._HAS_PSUTIL", True),
         ):
             mock_psutil.virtual_memory.return_value = mem
 
@@ -125,8 +125,8 @@ class TestAgentEvictionE2E:
         mem.percent = 90.0
 
         with (
-            patch("nexus.services.agents.resource_monitor.psutil") as mock_psutil,
-            patch("nexus.services.agents.resource_monitor._HAS_PSUTIL", True),
+            patch("nexus.system_services.agents.resource_monitor.psutil") as mock_psutil,
+            patch("nexus.system_services.agents.resource_monitor._HAS_PSUTIL", True),
         ):
             mock_psutil.virtual_memory.return_value = mem
             await eviction_manager.run_cycle()
@@ -155,7 +155,7 @@ class TestAgentEvictionE2E:
         registry.transition("agent-1", AgentState.CONNECTED, expected_generation=0)
 
         # Mock normal memory
-        with patch("nexus.services.agents.resource_monitor._HAS_PSUTIL", False):
+        with patch("nexus.system_services.agents.resource_monitor._HAS_PSUTIL", False):
             result = await eviction_manager.run_cycle()
 
         assert result.evicted == 0

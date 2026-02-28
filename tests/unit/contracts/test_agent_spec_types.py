@@ -385,7 +385,7 @@ class TestDetectDrift:
 class TestSerializationRoundTrip:
     def test_spec_round_trip_via_registry_helpers(self) -> None:
         """Verify spec → dict → spec preserves all fields via AgentRegistry helpers."""
-        from nexus.services.agents.agent_registry import AgentRegistry
+        from nexus.system_services.agents.agent_registry import AgentRegistry
 
         spec = AgentSpec(
             agent_type="analyst",
@@ -413,16 +413,16 @@ class TestSerializationRoundTrip:
         assert restored.spec_generation == spec.spec_generation
 
     def test_parse_none_returns_none(self) -> None:
-        from nexus.services.agents.agent_registry import AgentRegistry
+        from nexus.system_services.agents.agent_registry import AgentRegistry
 
         assert AgentRegistry._parse_spec_json(None, "test") is None
 
     def test_parse_empty_returns_none(self) -> None:
-        from nexus.services.agents.agent_registry import AgentRegistry
+        from nexus.system_services.agents.agent_registry import AgentRegistry
 
         assert AgentRegistry._parse_spec_json("", "test") is None
 
     def test_parse_corrupt_returns_none(self) -> None:
-        from nexus.services.agents.agent_registry import AgentRegistry
+        from nexus.system_services.agents.agent_registry import AgentRegistry
 
         assert AgentRegistry._parse_spec_json("{invalid json", "test") is None

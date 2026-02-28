@@ -21,7 +21,7 @@ from nexus.bricks.delegation.service import DelegationService
 from nexus.bricks.rebac.entity_registry import EntityRegistry
 from nexus.bricks.rebac.manager import EnhancedReBACManager
 from nexus.contracts.agent_types import AgentState
-from nexus.services.agents.agent_registry import AgentRegistry
+from nexus.system_services.agents.agent_registry import AgentRegistry
 from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
 # ---------------------------------------------------------------------------
@@ -344,7 +344,9 @@ class TestBridgeReliabilityE2E:
         for i in range(10):
             small_registry.register(f"hb-warn-{i}", "alice")
 
-        with caplog.at_level(logging.WARNING, logger="nexus.services.agents.heartbeat_buffer"):
+        with caplog.at_level(
+            logging.WARNING, logger="nexus.system_services.agents.heartbeat_buffer"
+        ):
             for i in range(10):
                 small_registry.heartbeat(f"hb-warn-{i}")
 

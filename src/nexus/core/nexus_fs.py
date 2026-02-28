@@ -3837,6 +3837,20 @@ class NexusFS(  # type: ignore[misc]
         # is_implicit_dir was already computed above - also check for explicit directory
         is_directory = is_implicit_dir or (meta and meta.mime_type == "inode/directory")
 
+        # PRE-INTERCEPT: pre-rename hooks (Issue #900 / #1312)
+        from nexus.contracts.vfs_hooks import RenameHookContext
+
+        _rename_ctx = RenameHookContext(
+            old_path=old_path,
+            new_path=new_path,
+            context=context,
+            zone_id=zone_id,
+            agent_id=agent_id,
+            is_directory=bool(is_directory),
+            metadata=meta,
+        )
+        self._dispatch.intercept_pre_rename(_rename_ctx)
+
         # For path-based connector backends, we need to move the actual file
         # in the backend storage (not just metadata)
         if old_route.backend.supports_rename is True:
@@ -3907,18 +3921,7 @@ class NexusFS(  # type: ignore[misc]
         else:
             logger.warning("[RENAME-REBAC] SKIPPED - no _rebac_manager available")
 
-        # Issue #900: Unified two-phase dispatch — INTERCEPT (observer + hooks)
-        from nexus.contracts.vfs_hooks import RenameHookContext
-
-        _rename_ctx = RenameHookContext(
-            old_path=old_path,
-            new_path=new_path,
-            context=context,
-            zone_id=zone_id,
-            agent_id=agent_id,
-            is_directory=bool(is_directory),
-            metadata=meta,
-        )
+        # POST-INTERCEPT: post-rename hooks (Issue #900)
         self._dispatch.intercept_post_rename(_rename_ctx)
 
         return {}

@@ -607,7 +607,7 @@ module = [
     "nexus.core.rebac_cache",
     "nexus.core.permission_boundary_cache",
     "nexus.core.agent_registry",
-    "nexus.identity.key_service",
+    "nexus.bricks.identity.key_service",
     "nexus.core.reputation_service",
     "nexus.bricks.rebac.cache.iterator",
     "nexus.bricks.rebac.cache.result_cache",

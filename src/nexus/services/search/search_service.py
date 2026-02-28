@@ -1278,8 +1278,7 @@ class SearchService(SemanticSearchMixin):
         context: Any,
     ) -> Any:
         """Paginated list with over-fetch strategy for permission filtering (Issue #937)."""
-        from nexus.contracts.metadata import PaginatedResult
-        from nexus.lib.pagination import encode_cursor
+        from nexus.lib.pagination import PaginatedResult, encode_cursor
 
         context = context or self._default_context
         import time as _time
@@ -1301,12 +1300,12 @@ class SearchService(SemanticSearchMixin):
         has_more = True
 
         while len(collected_items) < limit and has_more:
-            batch = self.metadata.list_paginated(
-                prefix=list_prefix,
-                recursive=recursive,
+            from nexus.lib.pagination import paginate_iter
+
+            batch = paginate_iter(
+                self.metadata.list_iter(prefix=list_prefix, recursive=recursive),
                 limit=fetch_limit,
-                cursor=current_cursor,
-                zone_id=list_zone_id,
+                cursor_path=current_cursor,
             )
 
             from nexus.contracts.constants import SYSTEM_PATH_PREFIX

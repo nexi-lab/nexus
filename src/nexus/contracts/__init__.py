@@ -81,7 +81,6 @@ from nexus.contracts.metadata import (
     DT_PIPE,
     DT_REG,
     FileMetadata,
-    PaginatedResult,
 )
 from nexus.contracts.rebac_types import (
     CROSS_ZONE_ALLOWED_RELATIONS,
@@ -125,7 +124,6 @@ __all__ = [
     "DT_PIPE",
     "DT_REG",
     "FileMetadata",
-    "PaginatedResult",
     # Validators
     "EmailAddress",
     "EmailList",

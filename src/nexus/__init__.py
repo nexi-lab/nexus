@@ -331,8 +331,14 @@ def connect(
 
         node_id = int(os.environ.get("NEXUS_NODE_ID", "1"))
         bind_addr = os.environ.get("NEXUS_BIND_ADDR", DEFAULT_GRPC_BIND_ADDR)
+        advertise_addr = os.environ.get("NEXUS_ADVERTISE_ADDR")
         zones_dir = os.environ.get("NEXUS_DATA_DIR", str(Path(metadata_path).parent / "zones"))
-        zone_mgr = ZoneManager(node_id=node_id, base_path=zones_dir, bind_addr=bind_addr)
+        zone_mgr = ZoneManager(
+            node_id=node_id,
+            base_path=zones_dir,
+            bind_addr=bind_addr,
+            advertise_addr=advertise_addr,
+        )
 
         # Parse peer addresses for multi-node Raft groups
         peers_str = os.environ.get("NEXUS_PEERS", "")
@@ -480,10 +486,34 @@ def connect(
     if cfg.mode == "federation":
         nx_fs._zone_mgr = zone_mgr
 
+        # Register federation content resolver (PRE-DISPATCH, Issue #163)
+        # Registered LAST so Pipe/Memory/VirtualView resolvers get priority.
+        _register_federation_resolver(nx_fs, zone_mgr)
+
     # Restore saved mounts (application-layer startup I/O)
     _restore_mounts(nx_fs)
 
     return nx_fs
+
+
+def _register_federation_resolver(nx_fs: "NexusFS", zone_mgr: Any) -> None:
+    """Register FederationContentResolver for remote content reads (#163).
+
+    Registered LAST in the resolver chain so that Pipe/Memory/VirtualView
+    resolvers handle their paths first.  Federation resolver is a generic
+    fallback for CAS-backed content that may live on a remote peer.
+    """
+    from nexus.raft.federation_content_resolver import FederationContentResolver
+
+    root_route = nx_fs.router.route("/", is_admin=True, check_write=False)
+    resolver = FederationContentResolver(
+        metastore=nx_fs.metadata,
+        backend=root_route.backend,
+        self_address=zone_mgr.advertise_addr,
+        tls_config=zone_mgr.tls_config,
+    )
+    nx_fs._dispatch.register_resolver(resolver)
+    logger.info("Federation content resolver registered (self=%s)", zone_mgr.advertise_addr)
 
 
 def _restore_mounts(nx_fs: "NexusFS") -> None:

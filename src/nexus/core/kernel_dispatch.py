@@ -128,11 +128,22 @@ class KernelDispatch:
     ) -> tuple[bool, Any]:
         """PRE-DISPATCH: first-match resolver for read.
 
-        Returns (handled, result).  If handled is True the caller
-        must return result and skip the normal VFS pipeline.
+        Returns (handled, result):
+            handled=True,  result=content  — resolver handled the read.
+            handled=False, result=metadata — resolver passed a prefetched hint.
+            handled=False, result=None     — no resolver matched.
+
+        Resolvers implementing ``try_read()`` merge match+read into one
+        call, eliminating redundant metadata lookups.  Legacy resolvers
+        using ``matches()``+``read()`` are still supported.
         """
         for r in self._resolvers:
-            if r.matches(path):
+            try_read = getattr(r, "try_read", None)
+            if try_read is not None:
+                handled, result = try_read(path, return_metadata=return_metadata, context=context)
+                if handled or result is not None:
+                    return handled, result
+            elif r.matches(path):
                 return True, r.read(path, return_metadata=return_metadata, context=context)
         return False, None
 

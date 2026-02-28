@@ -31,13 +31,13 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 from nexus.contracts.agent_types import AgentState
-from nexus.services.agents.agent_registry import (
+from nexus.storage.models import Base
+from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.system_services.agents.agent_registry import (
     AgentRegistry,
     InvalidTransitionError,
     StaleAgentError,
 )
-from nexus.storage.models import Base
-from nexus.storage.record_store import SQLAlchemyRecordStore
 
 # PostgreSQL connection for E2E tests
 POSTGRES_URL = os.getenv(

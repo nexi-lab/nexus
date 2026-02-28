@@ -26,9 +26,9 @@ from nexus.contracts.qos import EVICTION_ORDER, EvictionContext, PressureLevel, 
 if TYPE_CHECKING:
     from nexus.contracts.agent_types import AgentRecord
     from nexus.lib.performance_tuning import EvictionTuning
-    from nexus.services.agents.agent_registry import AgentRegistry
-    from nexus.services.agents.eviction_policy import EvictionPolicy
-    from nexus.services.agents.resource_monitor import ResourceMonitor
+    from nexus.system_services.agents.agent_registry import AgentRegistry
+    from nexus.system_services.agents.eviction_policy import EvictionPolicy
+    from nexus.system_services.agents.resource_monitor import ResourceMonitor
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +127,7 @@ class EvictionManager:
             EvictionResult with eviction counts and reason.
         """
         from nexus.contracts.agent_types import AgentState
-        from nexus.services.agents.agent_registry import (
+        from nexus.system_services.agents.agent_registry import (
             InvalidTransitionError,
             StaleAgentError,
         )
@@ -287,7 +287,7 @@ class EvictionManager:
             EvictionResult with eviction outcome.
         """
         from nexus.contracts.agent_types import AgentState
-        from nexus.services.agents.agent_registry import (
+        from nexus.system_services.agents.agent_registry import (
             InvalidTransitionError,
             StaleAgentError,
         )

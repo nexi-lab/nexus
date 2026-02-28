@@ -23,7 +23,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.services.agents.heartbeat_buffer import HeartbeatBuffer
+from nexus.system_services.agents.heartbeat_buffer import HeartbeatBuffer
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -183,14 +183,18 @@ class TestCapacityWarning:
             max_buffer_size=10,
         )
         # Record 7 agents (below 80%)
-        with caplog.at_level(logging.WARNING, logger="nexus.services.agents.heartbeat_buffer"):
+        with caplog.at_level(
+            logging.WARNING, logger="nexus.system_services.agents.heartbeat_buffer"
+        ):
             caplog.clear()
             for i in range(7):
                 buf.record(f"agent-{i}")
             assert "capacity" not in caplog.text
 
         # Record the 8th agent (hits 80%)
-        with caplog.at_level(logging.WARNING, logger="nexus.services.agents.heartbeat_buffer"):
+        with caplog.at_level(
+            logging.WARNING, logger="nexus.system_services.agents.heartbeat_buffer"
+        ):
             caplog.clear()
             buf.record("agent-7")
             assert "capacity" in caplog.text
@@ -203,7 +207,9 @@ class TestCapacityWarning:
             flush_interval=9999,
             max_buffer_size=100,
         )
-        with caplog.at_level(logging.WARNING, logger="nexus.services.agents.heartbeat_buffer"):
+        with caplog.at_level(
+            logging.WARNING, logger="nexus.system_services.agents.heartbeat_buffer"
+        ):
             for i in range(79):
                 buf.record(f"agent-{i}")
             assert "capacity" not in caplog.text

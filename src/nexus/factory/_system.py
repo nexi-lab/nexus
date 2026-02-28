@@ -246,8 +246,8 @@ def _boot_system_services(
     async_agent_registry: Any = None
     if _on("agent_registry") and ctx.record_store is not None:
         try:
-            from nexus.services.agents.agent_registry import AgentRegistry
-            from nexus.services.agents.async_agent_registry import AsyncAgentRegistry
+            from nexus.system_services.agents.agent_registry import AgentRegistry
+            from nexus.system_services.agents.async_agent_registry import AsyncAgentRegistry
 
             agent_registry = AgentRegistry(
                 record_store=ctx.record_store,
@@ -266,9 +266,9 @@ def _boot_system_services(
     eviction_manager: Any = None
     if agent_registry is not None:
         try:
-            from nexus.services.agents.eviction_manager import EvictionManager
-            from nexus.services.agents.eviction_policy import QoSEvictionPolicy
-            from nexus.services.agents.resource_monitor import ResourceMonitor
+            from nexus.system_services.agents.eviction_manager import EvictionManager
+            from nexus.system_services.agents.eviction_policy import QoSEvictionPolicy
+            from nexus.system_services.agents.resource_monitor import ResourceMonitor
 
             eviction_tuning = ctx.profile_tuning.eviction
             resource_monitor = ResourceMonitor(tuning=eviction_tuning)

@@ -19,15 +19,15 @@ from nexus import LocalBackend, NexusFS
 from nexus.contracts.types import OperationContext
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
-from nexus.services.agents.agent_service import (
+from nexus.storage.models import APIKeyModel
+from nexus.storage.raft_metadata_store import RaftMetadataStore
+from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.system_services.agents.agent_service import (
     AgentService,
     _extract_user_id,
     _extract_zone_id,
     create_agent_service,
 )
-from nexus.storage.models import APIKeyModel
-from nexus.storage.raft_metadata_store import RaftMetadataStore
-from nexus.storage.record_store import SQLAlchemyRecordStore
 
 
 @pytest.fixture

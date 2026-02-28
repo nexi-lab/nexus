@@ -273,7 +273,7 @@ class UserProvisioningService:
         agent_paths: list[str] = []
         if create_agents:
             try:
-                from nexus.services.agents.agent_provisioning import create_standard_agents
+                from nexus.system_services.agents.agent_provisioning import create_standard_agents
 
                 agent_results = create_standard_agents(self._vfs, user_id, admin_context)
                 for agent_name, agent_result in agent_results.items():
@@ -542,7 +542,7 @@ class UserProvisioningService:
                 )
                 if create_agents:
                     try:
-                        from nexus.services.agents.agent_provisioning import (
+                        from nexus.system_services.agents.agent_provisioning import (
                             grant_skill_builder_permissions,
                         )
 

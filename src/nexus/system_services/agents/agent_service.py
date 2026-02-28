@@ -125,7 +125,7 @@ class AgentService:
                 "to create one. Provide a record_store when constructing AgentService."
             )
 
-        from nexus.services.agents.agent_registry import AgentRegistry
+        from nexus.system_services.agents.agent_registry import AgentRegistry
 
         self._agent_registry = AgentRegistry(
             record_store=self._record_store,

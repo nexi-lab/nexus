@@ -23,8 +23,8 @@ from nexus.services.protocols.agent_registry import AgentInfo
 
 if TYPE_CHECKING:
     from nexus.contracts.agent_types import AgentRecord, AgentSpec, AgentStatus
-    from nexus.services.agents.agent_registry import AgentRegistry
     from nexus.services.scheduler.events import AgentStateEmitter
+    from nexus.system_services.agents.agent_registry import AgentRegistry
 
 
 def _to_agent_info(record: "AgentRecord") -> AgentInfo:

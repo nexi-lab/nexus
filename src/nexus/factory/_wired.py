@@ -343,7 +343,7 @@ def _boot_wired_services(
 
     agent_rpc_service: Any = None
     try:
-        from nexus.services.agents.agent_rpc_service import AgentRPCService
+        from nexus.system_services.agents.agent_rpc_service import AgentRPCService
 
         agent_rpc_service = AgentRPCService(
             vfs=nx,

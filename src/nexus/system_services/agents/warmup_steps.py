@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from nexus.contracts.agent_warmup_types import WarmupContext
-    from nexus.services.agents.agent_warmup import AgentWarmupService
+    from nexus.system_services.agents.agent_warmup import AgentWarmupService
 
 logger = logging.getLogger(__name__)
 

@@ -3,7 +3,7 @@
 Defines the contract for mount lifecycle operations: add, remove, list, get mounts
 and connectors.
 
-Existing implementation: ``nexus.services.mount_core_service.MountCoreService``
+Existing implementation: ``nexus.bricks.mount.mount_core_service.MountCoreService``
 
 References:
     - docs/design/KERNEL-ARCHITECTURE.md §1 (service DI)

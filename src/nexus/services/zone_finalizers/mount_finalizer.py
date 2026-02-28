@@ -6,10 +6,7 @@ directory index, hierarchy tuples, and permission tuples.
 """
 
 import logging
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from nexus.services.mount.mount_core_service import MountCoreService
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +14,7 @@ logger = logging.getLogger(__name__)
 class MountZoneFinalizer:
     """Finalizer that removes all mount points belonging to a zone."""
 
-    def __init__(self, mount_service: "MountCoreService | Any") -> None:
+    def __init__(self, mount_service: Any) -> None:
         self._mount_service = mount_service
 
     @property

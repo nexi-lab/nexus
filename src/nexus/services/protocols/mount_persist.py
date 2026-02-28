@@ -2,7 +2,7 @@
 
 Defines the contract for persisting and loading mount configurations in the DB.
 
-Existing implementation: ``nexus.services.mount_persist_service.MountPersistService``
+Existing implementation: ``nexus.bricks.mount.mount_persist_service.MountPersistService``
 
 References:
     - docs/design/KERNEL-ARCHITECTURE.md §1 (service DI)

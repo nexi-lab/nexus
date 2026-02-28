@@ -50,7 +50,7 @@ class MountManager:
 
     Example:
         >>> from nexus import NexusFS
-        >>> from nexus.services.mount.mount_manager import MountManager
+        >>> from nexus.bricks.mount.mount_manager import MountManager
         >>>
         >>> nx = NexusFS(...)
         >>> manager = MountManager(nx._record_store)

@@ -34,7 +34,6 @@ from nexus.lib.context_utils import get_user_identity, get_zone_id
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
-    from nexus.system_services.sync.sync_service import SyncService
 
     from .mount_core_service import MountCoreService
     from .mount_manager import MountManager
@@ -52,7 +51,7 @@ class MountPersistService:
         self,
         mount_manager: "MountManager | None",
         mount_service: "MountCoreService",
-        sync_service: "SyncService | None" = None,
+        sync_service: Any = None,
     ):
         """Initialize persist service.
 

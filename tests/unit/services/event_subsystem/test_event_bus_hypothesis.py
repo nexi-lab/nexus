@@ -4,7 +4,7 @@ from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
 from nexus.lib.path_utils import path_matches_pattern
-from nexus.services.event_subsystem.types import FileEvent, FileEventType
+from nexus.system_services.event_subsystem.types import FileEvent, FileEventType
 
 # Strategy for generating valid file paths
 valid_paths = st.text(

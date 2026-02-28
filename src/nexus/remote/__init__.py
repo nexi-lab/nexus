@@ -12,7 +12,6 @@ Domain-specific operations are organized into domain clients:
 - ShareLinksClient / AsyncShareLinksClient
 - MemoryClient / AsyncMemoryClient
 - AsyncAdminClient (async-only)
-- AsyncACEClient (async-only)
 - AsyncLLMClient (async-only)
 
 Example:
@@ -27,7 +26,6 @@ from nexus.contracts.exceptions import (
     RemoteTimeoutError,
 )
 from nexus.remote.domain import (
-    AsyncACEClient,
     AsyncAdminClient,
     AsyncLLMClient,
     AsyncMCPClient,
@@ -64,6 +62,5 @@ __all__ = [
     "AsyncMemoryClient",
     # Async-only domain clients
     "AsyncAdminClient",
-    "AsyncACEClient",
     "AsyncLLMClient",
 ]

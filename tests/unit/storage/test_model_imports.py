@@ -72,10 +72,6 @@ EXPECTED_MODELS = [
     "AgentEventModel",
     # Delegation (Issue #1271)
     "DelegationRecordModel",
-    # ACE
-    "TrajectoryModel",
-    "TrajectoryFeedbackModel",
-    "PlaybookModel",
     # Sync
     "SyncJobModel",
     "BackendChangeLogModel",

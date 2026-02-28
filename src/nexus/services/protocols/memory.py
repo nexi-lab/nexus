@@ -24,8 +24,6 @@ class MemoryProtocol(Protocol):
     """Service contract for AI agent memory management.
 
     Covers core CRUD, state lifecycle, versioning, search, and maintenance.
-    ACE/trajectory operations are intentionally excluded — see
-    ``TrajectoryProtocol`` (task #549) for those concerns.
 
     Note: ``builtins.list`` is used for type annotations because the ``list``
     method on this protocol shadows the builtin ``list`` type.

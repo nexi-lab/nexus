@@ -42,8 +42,6 @@ _WIRED_FIELDS: list[str] = [
     "llm_service",
     "llm_subsystem",
     "oauth_service",
-    "skill_service",
-    "skill_package_service",
     "search_service",
     "share_link_service",
     "events_service",

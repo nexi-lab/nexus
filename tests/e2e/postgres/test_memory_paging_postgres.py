@@ -16,7 +16,6 @@ Run:
 
 import shutil
 import tempfile
-from typing import Any
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -120,45 +119,12 @@ def app(tmp_path, pg_engine, pg_session_factory, api_keys):
     tmpdir = tempfile.mkdtemp(prefix="nexus-pg-paging-")
     backend = LocalBackend(root_path=tmpdir)
 
-    # In-memory metadata store (same stub as in fastapi e2e test)
-    from collections.abc import Sequence
-
-    from nexus.contracts.metadata import FileMetadata
-    from nexus.core.metastore import MetastoreABC
-
-    class InMemoryMetadataStore(MetastoreABC):
-        def __init__(self) -> None:
-            self._store: dict[str, FileMetadata] = {}
-
-        def get(self, path: str) -> FileMetadata | None:
-            return self._store.get(path)
-
-        def put(self, metadata: FileMetadata) -> None:
-            self._store[metadata.path] = metadata
-
-        def delete(self, path: str) -> dict[str, Any] | None:
-            removed = self._store.pop(path, None)
-            return {"path": path} if removed else None
-
-        def exists(self, path: str) -> bool:
-            return path in self._store
-
-        def list(
-            self, prefix: str = "", recursive: bool = True, **kwargs: Any
-        ) -> list[FileMetadata]:
-            return [m for p, m in self._store.items() if p.startswith(prefix)]
-
-        def get_batch(self, paths: Sequence[str]) -> dict[str, FileMetadata | None]:
-            return {p: self._store.get(p) for p in paths}
-
-        def close(self) -> None:
-            self._store.clear()
-
     from nexus.storage.record_store import SQLAlchemyRecordStore
+    from tests.helpers.dict_metastore import DictMetastore
 
     record_db_path = tmp_path / "pg_records.db"
     record_store = SQLAlchemyRecordStore(db_path=str(record_db_path))
-    metadata_store = InMemoryMetadataStore()
+    metadata_store = DictMetastore()
 
     nx = NexusFS(
         backend=backend,

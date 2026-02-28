@@ -412,8 +412,6 @@ class TestBrickServices:
             "ipc_storage_driver",
             "ipc_provisioner",
             "agent_event_log",
-            "skill_service",
-            "skill_package_service",
             "delegation_service",
             "reputation_service",
             "version_service",

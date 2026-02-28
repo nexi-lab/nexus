@@ -92,14 +92,14 @@ __all__ = [
     "OAuthConfig",
     "MCPConfig",
     "BackendConfig",
-    # Models (moved from nexus.bricks.skills)
+    # Models
     "MCPMount",
     "MCPToolConfig",
     "MCPToolDefinition",
     "MCPToolExample",
-    # Mount manager (moved from nexus.bricks.skills)
+    # Mount manager
     "MCPMountManager",
     "MCPMountError",
-    # Exporter (moved from nexus.bricks.skills)
+    # Exporter
     "MCPToolExporter",
 ]

@@ -274,8 +274,6 @@ class TestBootBrickServices:
             "task_queue_service",
             "ipc_storage_driver",
             "ipc_provisioner",
-            "skill_service",
-            "skill_package_service",
             "delegation_service",
             "reputation_service",
             "version_service",

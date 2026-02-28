@@ -37,7 +37,7 @@ New projects should use nexus.sdk for a cleaner API.
 PERFORMANCE NOTE:
 -----------------
 This module uses lazy imports to minimize startup time. Heavy modules like
-nexus.bricks.skills, nexus.core.nexus_fs, and nexus.remote are only loaded when
+nexus.core.nexus_fs and nexus.remote are only loaded when
 first accessed. This reduces import time from ~10s to ~1s for simple use cases.
 """
 
@@ -53,7 +53,7 @@ __license__ = "Apache-2.0"
 # LAZY IMPORTS for performance optimization
 # =============================================================================
 # These modules are imported lazily via __getattr__ to avoid loading heavy
-# dependencies (skills, nexus_fs, remote) on module import.
+# dependencies (nexus_fs, remote) on module import.
 # This significantly speeds up CLI startup and FUSE mount initialization.
 
 if TYPE_CHECKING:
@@ -63,15 +63,6 @@ if TYPE_CHECKING:
     from nexus.backends.backend import Backend
     from nexus.backends.gcs import GCSBackend
     from nexus.backends.local import LocalBackend
-    from nexus.bricks.skills.exporter import SkillExporter, SkillExportError
-    from nexus.bricks.skills.manager import SkillManager, SkillManagerError
-    from nexus.bricks.skills.models import Skill, SkillMetadata
-    from nexus.bricks.skills.parser import SkillParseError, SkillParser
-    from nexus.bricks.skills.registry import (
-        SkillDependencyError,
-        SkillNotFoundError,
-        SkillRegistry,
-    )
     from nexus.config import NexusConfig, load_config
     from nexus.contracts.exceptions import (
         BackendError,
@@ -117,18 +108,6 @@ _LAZY_IMPORTS = {
     # Core - heavy
     "NexusFilesystem": ("nexus.contracts.filesystem.filesystem_abc", "NexusFilesystemABC"),
     "NexusFS": ("nexus.core.nexus_fs", "NexusFS"),
-    # Skills - very heavy
-    "Skill": ("nexus.bricks.skills.models", "Skill"),
-    "SkillDependencyError": ("nexus.bricks.skills.registry", "SkillDependencyError"),
-    "SkillExporter": ("nexus.bricks.skills.exporter", "SkillExporter"),
-    "SkillExportError": ("nexus.bricks.skills.exporter", "SkillExportError"),
-    "SkillManager": ("nexus.bricks.skills.manager", "SkillManager"),
-    "SkillManagerError": ("nexus.bricks.skills.manager", "SkillManagerError"),
-    "SkillMetadata": ("nexus.bricks.skills.models", "SkillMetadata"),
-    "SkillNotFoundError": ("nexus.bricks.skills.registry", "SkillNotFoundError"),
-    "SkillParseError": ("nexus.bricks.skills.parser", "SkillParseError"),
-    "SkillParser": ("nexus.bricks.skills.parser", "SkillParser"),
-    "SkillRegistry": ("nexus.bricks.skills.registry", "SkillRegistry"),
 }
 
 
@@ -573,16 +552,4 @@ __all__ = [
     "BackendError",
     "InvalidPathError",
     "MetadataError",
-    # Skills System
-    "SkillRegistry",
-    "SkillExporter",
-    "SkillManager",
-    "SkillParser",
-    "Skill",
-    "SkillMetadata",
-    "SkillNotFoundError",
-    "SkillDependencyError",
-    "SkillManagerError",
-    "SkillParseError",
-    "SkillExportError",
 ]

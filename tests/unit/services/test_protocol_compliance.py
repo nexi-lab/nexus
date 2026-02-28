@@ -10,13 +10,7 @@ checks a concrete class against a Protocol for:
 Usage::
 
     from tests.unit.services.test_protocol_compliance import assert_protocol_compliance
-    from nexus.services.protocols import SkillsProtocol
-    from nexus.bricks.skills.skill_service_adapter import SkillService
-
-    def test_skill_service_protocol():
-        assert_protocol_compliance(SkillService, SkillsProtocol)
-
-Parameterized tests for all 8 domain protocols are included below.
+Parameterized tests for all 7 domain protocols are included below.
 """
 
 import inspect
@@ -154,13 +148,6 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
         "nexus.services.protocols.llm",
         "nexus.bricks.llm.llm_service.LLMService",
         True,  # Fixed: llm_read_stream uses def (not async) in protocol for async generator compat
-    ),
-    # ── Phase 1.5: Protocol updated to unprefixed names matching service ──
-    (
-        "SkillsProtocol",
-        "nexus.services.protocols.skills",
-        "nexus.bricks.skills.skill_service_adapter.SkillService",
-        True,
     ),
     (
         "MountProtocol",
@@ -398,7 +385,6 @@ _PROTOCOL_FILES: list[tuple[str, str]] = [
     ("scheduler", "nexus/services/protocols/scheduler.py"),
     ("search", "nexus/services/protocols/search.py"),
     ("share_link", "nexus/services/protocols/share_link.py"),
-    ("skills", "nexus/services/protocols/skills.py"),
     ("snapshot", "nexus/services/protocols/snapshot.py"),
     ("trajectory", "nexus/services/protocols/trajectory.py"),
     ("version", "nexus/services/protocols/version.py"),

@@ -27,7 +27,7 @@ class SandboxAuditLogger:
     Usage::
 
         audit = SandboxAuditLogger()
-        audit.log_creation("abc123", profile, agent_id="user1,SkillBuilder")
+        audit.log_creation("abc123", profile, agent_id="user1,UntrustedAgent")
         audit.log_violation("abc123", "network_escape", "curl to 8.8.8.8")
         audit.log_destruction("abc123")
     """

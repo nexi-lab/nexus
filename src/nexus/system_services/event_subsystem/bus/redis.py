@@ -221,13 +221,55 @@ class RedisEventBus(EventBusBase):
         Returns:
             FileEvent if matched, None on timeout
         """
+        try:
+            return await self._wait_for_event_impl(
+                zone_id,
+                path_pattern,
+                timeout,
+                since_revision,
+                use_fresh_connection=False,
+            )
+        except RuntimeError as exc:
+            if "attached to a different loop" in str(exc):
+                logger.debug("Pubsub event-loop mismatch; retrying with fresh connection")
+                return await self._wait_for_event_impl(
+                    zone_id,
+                    path_pattern,
+                    timeout,
+                    since_revision,
+                    use_fresh_connection=True,
+                )
+            raise
 
+    async def _wait_for_event_impl(
+        self,
+        zone_id: str,
+        path_pattern: str,
+        timeout: float,
+        since_revision: int | None,
+        *,
+        use_fresh_connection: bool = False,
+    ) -> FileEvent | None:
+        """Internal implementation for wait_for_event."""
         channel = self._channel_name(zone_id)
-        pubsub = self._redis.client.pubsub()
+        fresh_client = None
+
+        if use_fresh_connection:
+            import redis.asyncio as aioredis
+
+            fresh_client = aioredis.Redis(
+                connection_pool=aioredis.ConnectionPool.from_url(
+                    self._redis.url,
+                    decode_responses=False,
+                )
+            )
+            pubsub = fresh_client.pubsub()
+        else:
+            pubsub = self._redis.client.pubsub()
 
         try:
             await pubsub.subscribe(channel)
-            logger.debug(f"Subscribed to {channel} for pattern {path_pattern}")
+            logger.debug("Subscribed to %s for pattern %s", channel, path_pattern)
 
             loop = asyncio.get_running_loop()
             deadline = loop.time() + timeout
@@ -235,7 +277,7 @@ class RedisEventBus(EventBusBase):
             while True:
                 remaining = deadline - loop.time()
                 if remaining <= 0:
-                    logger.debug(f"Timeout waiting for event on {channel}")
+                    logger.debug("Timeout waiting for event on %s", channel)
                     return None
 
                 try:
@@ -253,7 +295,7 @@ class RedisEventBus(EventBusBase):
                     try:
                         event = FileEvent.from_json(message["data"])
                     except (json.JSONDecodeError, KeyError) as e:
-                        logger.warning(f"Invalid event message: {e}")
+                        logger.warning("Invalid event message: %s", e)
                         continue
 
                     if event.matches_path_pattern(path_pattern):
@@ -262,11 +304,14 @@ class RedisEventBus(EventBusBase):
                             event.revision is None or event.revision <= since_revision
                         ):
                             logger.debug(
-                                f"Skipping event {event.type} on {event.path}: "
-                                f"revision {event.revision} <= since_revision {since_revision}"
+                                "Skipping event %s on %s: revision %s <= since_revision %s",
+                                event.type,
+                                event.path,
+                                event.revision,
+                                since_revision,
                             )
                             continue
-                        logger.debug(f"Matched event: {event.type} on {event.path}")
+                        logger.debug("Matched event: %s on %s", event.type, event.path)
                         return event
 
                 except TimeoutError:
@@ -276,7 +321,9 @@ class RedisEventBus(EventBusBase):
 
         finally:
             await pubsub.unsubscribe(channel)
-            await pubsub.aclose()
+            await pubsub.close()
+            if fresh_client:
+                await fresh_client.close()
 
     @requires_started
     async def subscribe(

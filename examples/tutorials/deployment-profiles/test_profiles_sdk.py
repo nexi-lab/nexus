@@ -113,10 +113,17 @@ def test_profile(profile: str) -> dict[str, str]:
     print("  STAT")
     try:
         info = nx.sys_stat("/project/src/main.py")
-        path_v = info.get("path", "?") if isinstance(info, dict) else getattr(info, "path", "?")
-        size_v = info.get("size", "?") if isinstance(info, dict) else getattr(info, "size", "?")
-        print(f"    OK   /project/src/main.py => path={path_v}, size={size_v}")
-        row["stat"] = "OK"
+        size_v = info.get("size", None) if isinstance(info, dict) else getattr(info, "size", None)
+        expected_size = len(FILES["/project/src/main.py"])
+        if size_v is not None and int(size_v) == expected_size:
+            print(f"    OK   /project/src/main.py => size={size_v} (correct)")
+            row["stat"] = "OK"
+        elif size_v is not None:
+            print(f"    FAIL /project/src/main.py => size={size_v}, expected {expected_size}")
+            row["stat"] = "FAIL"
+        else:
+            print(f"    WARN /project/src/main.py => size not in stat, raw: {info}")
+            row["stat"] = "OK"  # stat worked, just no size field
     except Exception as e:
         print(f"    FAIL: {e}")
         row["stat"] = "FAIL"
@@ -126,8 +133,15 @@ def test_profile(profile: str) -> dict[str, str]:
     try:
         entries = nx.sys_readdir("/project/src")
         names = sorted(entries) if isinstance(entries, list) else entries
-        print(f"    OK   /project/src => {names}")
-        row["list"] = "OK"
+        # Verify main.py and utils.py are listed
+        found = {str(e) for e in (names if isinstance(names, list) else [])}
+        expected_names = {"main.py", "utils.py", "/project/src/main.py", "/project/src/utils.py"}
+        if found & expected_names:
+            print(f"    OK   /project/src => {names}")
+            row["list"] = "OK"
+        else:
+            print(f"    FAIL /project/src => {names} (missing expected files)")
+            row["list"] = "FAIL"
     except Exception as e:
         print(f"    FAIL: {e}")
         row["list"] = "FAIL"
@@ -135,10 +149,21 @@ def test_profile(profile: str) -> dict[str, str]:
     # --- GLOB ---
     print("  GLOB")
     try:
-        matches = nx.glob("**/*.py")
-        paths = sorted(matches) if isinstance(matches, list) else matches
-        print(f"    OK   **/*.py => {paths}")
-        row["glob"] = "OK"
+        result = nx.glob("**/*.py")
+        # Handle both list and dict return types
+        if isinstance(result, dict) and "matches" in result:
+            paths = sorted(result["matches"])
+        elif isinstance(result, list):
+            paths = sorted(result)
+        else:
+            paths = []
+        py_paths = [p for p in paths if ".py" in str(p)]
+        if len(py_paths) >= 3:  # main.py, utils.py, test_utils.py
+            print(f"    OK   **/*.py => {py_paths}")
+            row["glob"] = "OK"
+        else:
+            print(f"    FAIL **/*.py => {paths} (expected >= 3 .py files)")
+            row["glob"] = "FAIL"
     except Exception as e:
         print(f"    FAIL: {e}")
         row["glob"] = "FAIL"
@@ -146,10 +171,23 @@ def test_profile(profile: str) -> dict[str, str]:
     # --- GREP ---
     print("  GREP")
     try:
-        matches = nx.grep("TODO")
+        result = nx.grep("TODO")
+        # Handle list, dict with 'matches', or dict with 'results'
+        if isinstance(result, dict) and "results" in result:
+            matches = result["results"]
+        elif isinstance(result, dict) and "matches" in result:
+            matches = result["matches"]
+        elif isinstance(result, list):
+            matches = result
+        else:
+            matches = result
         count = len(matches) if isinstance(matches, list) else "?"
-        print(f"    OK   'TODO' => {count} match(es)")
-        row["grep"] = "OK"
+        if isinstance(matches, list) and len(matches) >= 2:
+            print(f"    OK   'TODO' => {count} match(es)")
+            row["grep"] = "OK"
+        else:
+            print(f"    FAIL 'TODO' => {count} match(es), expected >= 2")
+            row["grep"] = "FAIL"
     except Exception as e:
         print(f"    FAIL: {e}")
         row["grep"] = "FAIL"

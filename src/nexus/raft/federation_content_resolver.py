@@ -1,9 +1,9 @@
 """FederationContentResolver — PRE-DISPATCH resolver for remote content (#163).
 
-Registered as a VFSPathResolver in KernelDispatch.  On every read,
+Registered as a VFSPathResolver in KernelDispatch.  On every read/delete,
 looks up metadata once:
 
-    - Remote origin → resolver handles the read (fetch via Read RPC).
+    - Remote origin → resolver handles the operation (gRPC RPC to peer).
     - Local origin  → resolver passes prefetched metadata back as hint
                       so the kernel skips its own metastore.get().
 
@@ -42,11 +42,19 @@ _CHANNEL_OPTIONS = [
 
 
 class FederationContentResolver:
-    """VFSPathResolver that dispatches reads to remote content owners.
+    """VFSPathResolver that dispatches reads and deletes to remote content owners.
 
-    Implements the ``try_read`` protocol (merged matches+read):
+    Content writes are always local — the kernel writes CAS content to the
+    local backend; metadata routing is handled transparently by
+    FederatedMetadataProxy (DI), which enriches ``backend_name`` with the
+    writer node's address so future reads can locate content.
+
+    ``matches()`` always returns ``False`` so writes pass through the
+    resolver chain to the kernel's normal codepath.
+
+    Implements the ``try_read`` and ``try_delete`` protocols:
     a single call looks up metadata, decides local vs remote, and
-    either returns content (handled) or metadata hint (not handled).
+    either handles the operation (remote) or passes back to the kernel (local).
 
     Args:
         metastore: MetastoreABC for metadata lookup.
@@ -118,7 +126,66 @@ class FederationContentResolver:
             }
         return True, content
 
-    # === gRPC Remote Fetch ===
+    def try_delete(
+        self,
+        path: str,
+        *,
+        _context: Any = None,
+        **_kwargs: Any,
+    ) -> tuple[bool, Any]:
+        """Single-call resolve: metadata lookup + local/remote decision for delete.
+
+        Symmetric with ``try_read``. If content origin is remote, delegates
+        the full ``sys_unlink`` to the origin peer via gRPC Delete RPC.
+        The remote node applies its own permissions, hooks, and observers.
+
+        Returns:
+            (True, {})           — handled: remote peer deleted file.
+            (False, FileMetadata) — not handled: local content, metadata hint.
+            (False, None)         — not handled: no metadata found.
+        """
+        meta = self._metastore.get(path)
+        if meta is None or not meta.backend_name:
+            return False, None
+
+        addr = BackendAddress.parse(meta.backend_name)
+        if not addr.has_origin or addr.origin == self._self_address:
+            # Local content — kernel handles delete
+            return False, meta
+
+        # Remote content — delegate full sys_unlink to origin peer
+        assert addr.origin is not None
+        logger.info(
+            "Federation delete: %s -> %s (etag=%s)",
+            path,
+            addr.origin,
+            (meta.etag or "")[:12],
+        )
+        self._delete_on_peer(addr.origin, path)
+        return True, {}
+
+    # === gRPC Remote Operations ===
+
+    def _delete_on_peer(self, address: str, virtual_path: str) -> None:
+        """Dispatch sync Delete RPC to origin peer (full sys_unlink)."""
+        from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
+
+        channel = self._build_channel(address)
+        try:
+            stub = vfs_pb2_grpc.NexusVFSServiceStub(channel)
+            request = vfs_pb2.DeleteRequest(path=virtual_path, auth_token="")
+            response = stub.Delete(request, timeout=self._timeout)
+
+            if response.is_error:
+                logger.warning(
+                    "Federation Delete RPC to %s returned error for %s",
+                    address,
+                    virtual_path,
+                )
+        except grpc.RpcError as exc:
+            logger.warning("Federation Delete RPC to %s failed: %s", address, exc)
+        finally:
+            channel.close()
 
     def _fetch_from_peer(self, address: str, virtual_path: str) -> bytes:
         """Dispatch sync Read RPC to origin peer."""
@@ -166,19 +233,9 @@ class FederationContentResolver:
         except Exception as exc:
             logger.warning("Failed to persist replicated content: %s", exc)
 
-    # === Legacy VFSPathResolver compat (matches/read/write/delete) ===
-    # KernelDispatch prefers try_read when available; these are fallbacks.
+    # === VFSPathResolver compat ===
+    # resolve_write uses matches() — must return False so writes pass through.
+    # read/write/delete legacy methods removed: try_read/try_delete are used instead.
 
     def matches(self, _path: str) -> bool:
-        return False  # Read-only: writes/deletes pass through
-
-    def read(
-        self, path: str, *, return_metadata: bool = False, context: Any = None
-    ) -> bytes | dict:
-        raise NotImplementedError("Use try_read()")
-
-    def write(self, path: str, content: bytes) -> dict[str, Any]:
-        raise NotImplementedError("FederationContentResolver is read-only")
-
-    def delete(self, path: str, *, context: Any = None) -> None:
-        raise NotImplementedError("FederationContentResolver is read-only")
+        return False

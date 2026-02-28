@@ -743,8 +743,8 @@ module = [
     "nexus.services.change_log_store",  # unused-ignore from suppressed no-any-return
     "nexus.services.sync_backlog_store",
     "nexus.services.version_service",
-    "nexus.services.mount_manager",
-    "nexus.services.mount_service",
+    "nexus.bricks.mount.mount_manager",
+    "nexus.bricks.mount.mount_service",
     "nexus.services.search_service",
     "nexus.services.event_subsystem.log.exporters.factory",
     "nexus.bricks.portability.import_service",
@@ -859,6 +859,7 @@ modules = [
     "nexus.bricks.llm",
     "nexus.bricks.mcp",
     "nexus.bricks.memory",
+    "nexus.bricks.mount",
     "nexus.bricks.parsers",
     "nexus.bricks.pay",
     "nexus.bricks.portability",
@@ -972,9 +973,9 @@ ignore_imports = [
     "nexus.services.delegation.service -> nexus.bricks.rebac.entity_registry",
     "nexus.services.delegation.service -> nexus.bricks.rebac.namespace_manager",
     "nexus.server.telemetry -> nexus.bricks.rebac.rebac_tracing",
-    # --- services importing non-layer modules ---
-    "nexus.services.mount.mount_persist_service -> nexus.system_services.sync.sync_service",
-    "nexus.services.mount.mount_core_service -> nexus.backends.service_map",
+    # --- bricks importing non-layer modules ---
+    "nexus.bricks.mount.mount_persist_service -> nexus.system_services.sync.sync_service",
+    "nexus.bricks.mount.mount_core_service -> nexus.backends.service_map",
     # --- non-layer module chain hops ---
     "nexus.backends.cache_mixin -> nexus.backends.sync_pipeline",
     "nexus.factory -> nexus.factory.orchestrator",

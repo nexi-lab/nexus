@@ -163,7 +163,7 @@ def _boot_wired_services(
     mount_core_service: Any = None
     if gateway is not None:
         try:
-            from nexus.services.mount.mount_core_service import MountCoreService
+            from nexus.bricks.mount.mount_core_service import MountCoreService
 
             mount_core_service = MountCoreService(gateway)
             logger.debug("[BOOT:WIRED] MountCoreService created")
@@ -196,7 +196,7 @@ def _boot_wired_services(
     mount_persist_service: Any = None
     if mount_core_service is not None:
         try:
-            from nexus.services.mount.mount_persist_service import MountPersistService
+            from nexus.bricks.mount.mount_persist_service import MountPersistService
 
             mount_persist_service = MountPersistService(
                 mount_manager=system_services.mount_manager,
@@ -211,7 +211,7 @@ def _boot_wired_services(
     # Moved after sub-services so DI deps are available (Issue #636).
     mount_service: Any = None
     try:
-        from nexus.services.mount.mount_service import MountService
+        from nexus.bricks.mount.mount_service import MountService
 
         mount_service = MountService(
             router=kernel_services.router,

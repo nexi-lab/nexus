@@ -37,8 +37,6 @@ ProgressCallback = Callable[[int, str], None]
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
-    from nexus.core.nexus_fs import NexusFS as NexusFilesystem
-    from nexus.core.router import PathRouter
 
     from .mount_manager import MountManager
 
@@ -62,9 +60,9 @@ class MountService:
 
     def __init__(
         self,
-        router: "PathRouter",
+        router: Any,
         mount_manager: "MountManager | None" = None,
-        nexus_fs: "NexusFilesystem | None" = None,
+        nexus_fs: Any = None,
         *,
         sync_service: Any = None,
         sync_job_service: Any = None,

@@ -244,7 +244,7 @@ class TestMountServiceSmoke:
 
     def test_mount_service_init(self, mock_router):
         """Test MountService can be instantiated."""
-        from nexus.services.mount.mount_service import MountService
+        from nexus.bricks.mount.mount_service import MountService
 
         service = MountService(router=mock_router)
         assert service.router is mock_router
@@ -252,7 +252,7 @@ class TestMountServiceSmoke:
     @pytest.mark.asyncio
     async def test_list_mounts_basic(self, mock_router):
         """Test list_mounts can be called."""
-        from nexus.services.mount.mount_service import MountService
+        from nexus.bricks.mount.mount_service import MountService
 
         service = MountService(router=mock_router)
 
@@ -306,8 +306,8 @@ class TestServiceIntegrationSmoke:
 
         from nexus.bricks.llm.llm_service import LLMService
         from nexus.bricks.mcp.mcp_service import MCPService
+        from nexus.bricks.mount.mount_service import MountService
         from nexus.bricks.rebac.rebac_service import ReBACService
-        from nexus.services.mount.mount_service import MountService
         from nexus.services.oauth.oauth_service import OAuthService
         from nexus.services.search.search_service import SearchService
         from nexus.services.versioning.version_service import VersionService

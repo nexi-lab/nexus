@@ -103,7 +103,7 @@ MODULES_TO_SCAN: list[str] = [
     # Services (reorganized into sub-packages)
     "nexus.services.share_link.share_link_service",
     "nexus.services.versioning.version_service",
-    "nexus.services.mount.mount_service",
+    "nexus.bricks.mount.mount_service",
     "nexus.services.oauth.oauth_service",
     "nexus.services.memory_service",
     "nexus.services.ace_rpc_service",

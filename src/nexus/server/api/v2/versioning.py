@@ -88,41 +88,29 @@ def build_v2_registry(
     """
     registry = RouterRegistry()
 
-    # ---- ACE core routers ----
+    # ---- Core v2 routers ----
     try:
         from nexus.server.api.v2.routers import (
             audit,
             conflicts,
-            consolidation,
-            curate,
-            feedback,
             memories,
             mobile_search,
             operations,
-            playbooks,
-            reflect,
             sync_push,
-            trajectories,
         )
 
-        _ace_routers: list[RouterEntry] = [
+        _core_routers: list[RouterEntry] = [
             RouterEntry(router=memories.router, name="memories", endpoint_count=14),
-            RouterEntry(router=trajectories.router, name="trajectories", endpoint_count=5),
-            RouterEntry(router=feedback.router, name="feedback", endpoint_count=5),
-            RouterEntry(router=playbooks.router, name="playbooks", endpoint_count=6),
-            RouterEntry(router=reflect.router, name="reflect", endpoint_count=1),
-            RouterEntry(router=curate.router, name="curate", endpoint_count=2),
-            RouterEntry(router=consolidation.router, name="consolidation", endpoint_count=4),
             RouterEntry(router=mobile_search.router, name="mobile_search", endpoint_count=2),
             RouterEntry(router=conflicts.router, name="conflicts", endpoint_count=3),
             RouterEntry(router=operations.router, name="operations", endpoint_count=2),
             RouterEntry(router=audit.router, name="audit", endpoint_count=5),
             RouterEntry(router=sync_push.router, name="sync_push", endpoint_count=1),
         ]
-        for entry in _ace_routers:
+        for entry in _core_routers:
             registry.add(entry)
     except ImportError as e:
-        logger.warning("Failed to import ACE v2 routes: %s", e)
+        logger.warning("Failed to import core v2 routes: %s", e)
 
     # ---- Events replay router (Issue #1139, #2056) ----
     try:

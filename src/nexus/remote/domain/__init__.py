@@ -1,13 +1,12 @@
 """Domain client modules for the remote Nexus filesystem.
 
 Each domain client encapsulates a group of related RPC methods
-(skills, sandbox, OAuth, MCP, share links, memory, admin, ACE, LLM).
+(skills, sandbox, OAuth, MCP, share links, memory, admin, LLM).
 Both sync and async variants are co-located in the same file.
 
 Issue #1603: Decompose remote/client.py into domain clients.
 """
 
-from nexus.remote.domain.ace import AsyncACEClient
 from nexus.remote.domain.admin import AsyncAdminClient
 from nexus.remote.domain.llm import AsyncLLMClient
 from nexus.remote.domain.mcp import AsyncMCPClient, MCPClient
@@ -31,6 +30,5 @@ __all__ = [
     "MemoryClient",
     "AsyncMemoryClient",
     "AsyncAdminClient",
-    "AsyncACEClient",
     "AsyncLLMClient",
 ]

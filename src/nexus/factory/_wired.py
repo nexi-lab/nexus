@@ -416,23 +416,6 @@ def _boot_wired_services(
     except Exception as exc:
         logger.debug("[BOOT:WIRED] MetadataExportService unavailable: %s", exc)
 
-    ace_rpc_service: Any = None
-    try:
-        from nexus.services.ace_rpc_service import ACERPCService
-
-        ace_rpc_service = ACERPCService(
-            session_factory=_nx_session_factory,
-            backend=_root_backend,
-            default_context=_nx_default_context,
-            entity_registry=system_services.entity_registry,
-            ensure_entity_registry_fn=getattr(
-                getattr(nx, "_memory_provider", None), "ensure_entity_registry", None
-            ),
-        )
-        logger.debug("[BOOT:WIRED] ACERPCService created")
-    except Exception as exc:
-        logger.debug("[BOOT:WIRED] ACERPCService unavailable: %s", exc)
-
     descendant_checker: Any = None
     try:
         from nexus.services.descendant_access import DescendantAccessChecker
@@ -528,7 +511,6 @@ def _boot_wired_services(
         user_provisioning_service=user_provisioning_service,
         sandbox_rpc_service=sandbox_rpc_service,
         metadata_export_service=metadata_export_service,
-        ace_rpc_service=ace_rpc_service,
         descendant_checker=descendant_checker,
         memory_provider=memory_provider,
     )

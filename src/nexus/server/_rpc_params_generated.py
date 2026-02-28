@@ -14,17 +14,6 @@ from typing import Any
 
 __all__ = [
     "AccessShareLinkParams",
-    "AceAddFeedbackParams",
-    "AceCompleteTrajectoryParams",
-    "AceCreatePlaybookParams",
-    "AceGetEffectiveScoreParams",
-    "AceGetPlaybookParams",
-    "AceGetTrajectoryFeedbackParams",
-    "AceLogTrajectoryStepParams",
-    "AceMarkForRelearningParams",
-    "AceQueryPlaybooksParams",
-    "AceQueryTrajectoriesParams",
-    "AceStartTrajectoryParams",
     "AddMountParams",
     "AgentHeartbeatParams",
     "AgentListByZoneParams",
@@ -155,114 +144,6 @@ class AccessShareLinkParams:
     password: str | None = None
     ip_address: str | None = None
     user_agent: str | None = None
-
-
-@dataclass
-class AceAddFeedbackParams:
-    """Parameters for ace_add_feedback(): Add feedback to a completed trajectory."""
-
-    trajectory_id: str
-    feedback_type: str
-    score: float | None = None
-    source: str | None = None
-    message: str | None = None
-    metrics: dict | None = None
-    context: dict | None = None
-
-
-@dataclass
-class AceCompleteTrajectoryParams:
-    """Parameters for ace_complete_trajectory(): Complete a trajectory with outcome."""
-
-    trajectory_id: str
-    status: str
-    success_score: float | None = None
-    error_message: str | None = None
-    context: dict | None = None
-
-
-@dataclass
-class AceCreatePlaybookParams:
-    """Parameters for ace_create_playbook(): Create a new playbook."""
-
-    name: str
-    description: str | None = None
-    scope: str = "agent"
-    context: dict | None = None
-
-
-@dataclass
-class AceGetEffectiveScoreParams:
-    """Parameters for ace_get_effective_score(): Get effective score for a trajectory."""
-
-    trajectory_id: str
-    strategy: str = "latest"
-    context: dict | None = None
-
-
-@dataclass
-class AceGetPlaybookParams:
-    """Parameters for ace_get_playbook(): Get playbook details."""
-
-    playbook_id: str
-    context: dict | None = None
-
-
-@dataclass
-class AceGetTrajectoryFeedbackParams:
-    """Parameters for ace_get_trajectory_feedback(): Get all feedback for a trajectory."""
-
-    trajectory_id: str
-    context: dict | None = None
-
-
-@dataclass
-class AceLogTrajectoryStepParams:
-    """Parameters for ace_log_trajectory_step(): Log a step in an execution trajectory."""
-
-    trajectory_id: str
-    step_type: str
-    description: str
-    result: Any = None
-    context: dict | None = None
-
-
-@dataclass
-class AceMarkForRelearningParams:
-    """Parameters for ace_mark_for_relearning(): Mark trajectory for re-learning."""
-
-    trajectory_id: str
-    reason: str
-    priority: int = 5
-    context: dict | None = None
-
-
-@dataclass
-class AceQueryPlaybooksParams:
-    """Parameters for ace_query_playbooks(): Query playbooks."""
-
-    scope: str | None = None
-    limit: int = 50
-    context: dict | None = None
-
-
-@dataclass
-class AceQueryTrajectoriesParams:
-    """Parameters for ace_query_trajectories(): Query execution trajectories."""
-
-    task_type: str | None = None
-    status: str | None = None
-    limit: int = 50
-    context: dict | None = None
-
-
-@dataclass
-class AceStartTrajectoryParams:
-    """Parameters for ace_start_trajectory(): Start tracking a new execution trajectory for ACE learning."""
-
-    task_description: str
-    task_type: str | None = None
-    context: dict | None = None
 
 
 @dataclass
@@ -1418,17 +1299,6 @@ class WriteBatchParams:
 
 METHOD_PARAMS: dict[str, type] = {
     "access_share_link": AccessShareLinkParams,
-    "ace_add_feedback": AceAddFeedbackParams,
-    "ace_complete_trajectory": AceCompleteTrajectoryParams,
-    "ace_create_playbook": AceCreatePlaybookParams,
-    "ace_get_effective_score": AceGetEffectiveScoreParams,
-    "ace_get_playbook": AceGetPlaybookParams,
-    "ace_get_trajectory_feedback": AceGetTrajectoryFeedbackParams,
-    "ace_log_trajectory_step": AceLogTrajectoryStepParams,
-    "ace_mark_for_relearning": AceMarkForRelearningParams,
-    "ace_query_playbooks": AceQueryPlaybooksParams,
-    "ace_query_trajectories": AceQueryTrajectoriesParams,
-    "ace_start_trajectory": AceStartTrajectoryParams,
     "add_mount": AddMountParams,
     "agent_heartbeat": AgentHeartbeatParams,
     "agent_list_by_zone": AgentListByZoneParams,

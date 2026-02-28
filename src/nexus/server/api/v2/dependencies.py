@@ -1,14 +1,13 @@
 """Shared dependencies for API v2 endpoints.
 
-Provides FastAPI dependency injection for ACE components with
-proper authentication context. All routers should import deps
-from here instead of duplicating inline helpers.
+Provides FastAPI dependency injection with proper authentication context.
+All routers should import deps from here instead of duplicating inline helpers.
 
 Issue #2138: Protocol return types replace ``Any`` for static type safety.
 """
 
 import logging
-from typing import TYPE_CHECKING, Any, NamedTuple, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import Depends, HTTPException, Request
 
@@ -38,48 +37,6 @@ def _get_require_auth() -> Any:
 def _get_operation_context(auth_result: dict[str, Any]) -> "OperationContext":
     """Build an OperationContext from *auth_result*."""
     return cast("OperationContext", get_operation_context(auth_result))
-
-
-# =============================================================================
-# DRY helper for ACE manager context extraction (#2138)
-# =============================================================================
-
-
-class ACEContext(NamedTuple):
-    """Common context for ACE manager construction."""
-
-    session: Any
-    backend: Any
-    user_id: str
-    agent_id: str | None
-    zone_id: str
-    context: "OperationContext"
-
-
-def _get_ace_context(nexus_fs: Any, auth_result: dict[str, Any]) -> ACEContext:
-    """Extract common ACE context from NexusFS and auth result.
-
-    Centralizes the repeated pattern of:
-    - Building OperationContext from auth_result
-    - Extracting session/backend from nexus_fs.memory
-    - Deriving user_id/agent_id/zone_id
-
-    Args:
-        nexus_fs: NexusFS instance
-        auth_result: Authenticated user context dict
-
-    Returns:
-        ACEContext named tuple with all common fields.
-    """
-    context = get_operation_context(auth_result)
-    return ACEContext(
-        session=nexus_fs.memory.session,
-        backend=nexus_fs.memory.backend,
-        user_id=context.user_id or "anonymous",
-        agent_id=getattr(context, "agent_id", None),
-        zone_id=context.zone_id or ROOT_ZONE_ID,
-        context=context,
-    )
 
 
 # =============================================================================
@@ -149,7 +106,7 @@ async def get_llm_provider(
 
 
 # =============================================================================
-# ACE manager dependencies
+# Service dependencies
 # =============================================================================
 
 
@@ -172,135 +129,6 @@ async def get_write_back_service(request: Request) -> WriteBackProtocol:
     return cast(WriteBackProtocol, service)
 
 
-async def get_trajectory_manager(
-    nexus_fs: Any = Depends(get_nexus_fs),
-    auth_result: dict[str, Any] = Depends(require_auth),
-) -> Any:
-    """Get TrajectoryManager with current user context."""
-    from nexus.services.ace.trajectory import TrajectoryManager
-
-    ace = _get_ace_context(nexus_fs, auth_result)
-    return TrajectoryManager(
-        session=ace.session,
-        backend=ace.backend,
-        user_id=ace.user_id,
-        agent_id=ace.agent_id,
-        zone_id=ace.zone_id,
-        context=ace.context,
-    )
-
-
-async def get_feedback_manager(
-    nexus_fs: Any = Depends(get_nexus_fs),
-) -> Any:
-    """Get FeedbackManager instance."""
-    from nexus.services.ace.feedback import FeedbackManager
-
-    session = nexus_fs.memory.session
-    return FeedbackManager(session=session)
-
-
-async def get_playbook_manager(
-    nexus_fs: Any = Depends(get_nexus_fs),
-    auth_result: dict[str, Any] = Depends(require_auth),
-) -> Any:
-    """Get PlaybookManager with current user context."""
-    from nexus.services.ace.playbook import PlaybookManager
-
-    ace = _get_ace_context(nexus_fs, auth_result)
-    return PlaybookManager(
-        session=ace.session,
-        backend=ace.backend,
-        user_id=ace.user_id,
-        agent_id=ace.agent_id,
-        zone_id=ace.zone_id,
-        context=ace.context,
-    )
-
-
-async def get_reflector(
-    nexus_fs: Any = Depends(get_nexus_fs),
-    auth_result: dict[str, Any] = Depends(require_auth),
-) -> Any:
-    """Get Reflector with current user context.
-
-    Requires LLM provider for reflection analysis.
-    """
-    from nexus.services.ace.reflection import Reflector
-    from nexus.services.ace.trajectory import TrajectoryManager
-
-    ace = _get_ace_context(nexus_fs, auth_result)
-    llm_provider = nexus_fs.llm_provider
-
-    traj_manager = TrajectoryManager(
-        session=ace.session,
-        backend=ace.backend,
-        user_id=ace.user_id,
-        agent_id=ace.agent_id,
-        zone_id=ace.zone_id,
-        context=ace.context,
-    )
-
-    return Reflector(
-        session=ace.session,
-        backend=ace.backend,
-        llm_provider=llm_provider,
-        trajectory_manager=traj_manager,
-        user_id=ace.user_id,
-        agent_id=ace.agent_id,
-        zone_id=ace.zone_id,
-    )
-
-
-async def get_curator(
-    nexus_fs: Any = Depends(get_nexus_fs),
-    auth_result: dict[str, Any] = Depends(require_auth),
-) -> Any:
-    """Get Curator with current user context."""
-    from nexus.services.ace.curation import Curator
-    from nexus.services.ace.playbook import PlaybookManager
-
-    ace = _get_ace_context(nexus_fs, auth_result)
-
-    playbook_manager = PlaybookManager(
-        session=ace.session,
-        backend=ace.backend,
-        user_id=ace.user_id,
-        agent_id=ace.agent_id,
-        zone_id=ace.zone_id,
-        context=ace.context,
-    )
-
-    return Curator(
-        session=ace.session,
-        backend=ace.backend,
-        playbook_manager=playbook_manager,
-    )
-
-
-async def get_consolidation_engine(
-    nexus_fs: Any = Depends(get_nexus_fs),
-    auth_result: dict[str, Any] = Depends(require_auth),
-) -> Any:
-    """Get ConsolidationEngine with current user context.
-
-    Requires LLM provider for consolidation summaries.
-    """
-    from nexus.services.ace.consolidation import ConsolidationEngine
-
-    ace = _get_ace_context(nexus_fs, auth_result)
-    llm_provider = nexus_fs.llm_provider
-
-    return ConsolidationEngine(
-        session=ace.session,
-        backend=ace.backend,
-        llm_provider=llm_provider,
-        user_id=ace.user_id,
-        agent_id=ace.agent_id,
-        zone_id=ace.zone_id,
-    )
-
-
 async def get_operation_logger(
     nexus_fs: Any = Depends(get_nexus_fs),
     auth_result: dict[str, Any] = Depends(require_auth),
@@ -320,33 +148,6 @@ async def get_operation_logger(
     zone_id = context.zone_id or ROOT_ZONE_ID
 
     return OperationLogger(session=session), zone_id
-
-
-async def get_hierarchy_manager(
-    nexus_fs: Any = Depends(get_nexus_fs),
-    auth_result: dict[str, Any] = Depends(require_auth),
-) -> Any:
-    """Get HierarchicalMemoryManager with current user context."""
-    from nexus.services.ace.consolidation import ConsolidationEngine
-    from nexus.services.ace.memory_hierarchy import HierarchicalMemoryManager
-
-    ace = _get_ace_context(nexus_fs, auth_result)
-    llm_provider = nexus_fs.llm_provider
-
-    consolidation_engine = ConsolidationEngine(
-        session=ace.session,
-        backend=ace.backend,
-        llm_provider=llm_provider,
-        user_id=ace.user_id,
-        agent_id=ace.agent_id,
-        zone_id=ace.zone_id,
-    )
-
-    return HierarchicalMemoryManager(
-        consolidation_engine=consolidation_engine,
-        session=ace.session,
-        zone_id=ace.zone_id,
-    )
 
 
 async def get_exchange_audit_logger(

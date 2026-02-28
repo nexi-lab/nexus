@@ -381,7 +381,6 @@ class WiredServices:
     user_provisioning_service: Any = None
     sandbox_rpc_service: Any = None
     metadata_export_service: Any = None
-    ace_rpc_service: Any = None
     descendant_checker: Any = None
     memory_provider: Any = None
 

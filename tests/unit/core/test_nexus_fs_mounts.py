@@ -845,8 +845,8 @@ class TestMountContextUtilsIntegration:
 
         # Patch in mount_core_service where the functions are actually imported
         with (
-            patch("nexus.services.mount.mount_core_service.get_zone_id") as mock_get_zone,
-            patch("nexus.services.mount.mount_core_service.get_user_identity") as mock_get_user,
+            patch("nexus.bricks.mount.mount_core_service.get_zone_id") as mock_get_zone,
+            patch("nexus.bricks.mount.mount_core_service.get_user_identity") as mock_get_user,
         ):
             mock_get_zone.return_value = "test_zone"
             mock_get_user.return_value = ("user", "alice")

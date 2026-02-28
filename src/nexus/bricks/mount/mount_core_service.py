@@ -24,15 +24,18 @@ Example:
     ```
 """
 
+import importlib
 import logging
 from typing import TYPE_CHECKING, Any
 
 from nexus.lib.context_utils import get_user_identity, get_zone_id
-from nexus.services.permission_utils import check_permission
+
+# Lazy-load to avoid brick→services tier violation (LEGO Principle 3)
+_perm_mod = importlib.import_module("nexus.services.permission_utils")
+check_permission = _perm_mod.check_permission
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
-    from nexus.services.gateway import NexusFSGateway
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +59,7 @@ class MountCoreService:
 
     def __init__(
         self,
-        gateway: "NexusFSGateway",
+        gateway: Any,
         persist_service: Any = None,
         rmdir_fn: Any = None,
         token_manager_fn: Any = None,
@@ -301,7 +304,7 @@ class MountCoreService:
         Returns:
             True if mount exists
         """
-        return self._gw.router.has_mount(mount_point)
+        return bool(self._gw.router.has_mount(mount_point))
 
     def list_connectors(self, category: str | None = None) -> list[dict[str, Any]]:
         """List available connector types.
@@ -437,7 +440,7 @@ class MountCoreService:
         Delegates to shared permission_utils.check_permission.
         Raises PermissionCheckError on infrastructure failures.
         """
-        return check_permission(self._gw, path, permission, context)
+        return bool(check_permission(self._gw, path, permission, context))
 
     def _check_mount_permission(
         self,

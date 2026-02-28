@@ -152,7 +152,7 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
     (
         "MountProtocol",
         "nexus.services.protocols.mount",
-        "nexus.services.mount.mount_service.MountService",
+        "nexus.bricks.mount.mount_service.MountService",
         True,  # Fixed: added delete_connector, context param naming, full_sync param
     ),
     (

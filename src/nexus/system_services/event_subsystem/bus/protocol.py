@@ -20,6 +20,11 @@ class PubSubClientProtocol(Protocol):
         """Underlying async client with pubsub() and publish() methods."""
         ...
 
+    @property
+    def url(self) -> str:
+        """Connection URL for creating fresh connections."""
+        ...
+
     async def health_check(self) -> bool:
         """Check if the backend is healthy."""
         ...

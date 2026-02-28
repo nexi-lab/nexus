@@ -495,17 +495,19 @@ User:           NexusFilesystem (ABC)      — (no ABC needed, inherently asymme
 Kernel/Service: NexusFS                    NexusFederation (orchestration)
 HAL:            MetastoreABC               ZoneManager (wraps PyO3)
 Driver:         RaftMetadataStore          PyZoneManager (Rust/redb/Raft)
-Comms:          —                          RaftClient (gRPC to peers)
+Comms:          —                          gRPC inline (VFS + ZoneApi)
 ```
 
 Federation does NOT need a remote implementation (unlike NexusFS → nexus.connect())
 because zone operations are inherently asymmetric: you always operate locally on
-your ZoneManager and call peers via RaftClient. No "remote federation proxy" scenario.
+your ZoneManager and call peers via inline gRPC. No "remote federation proxy" scenario.
 
 **`NexusFederation` class** (`nexus.raft.federation`):
-- Orchestrates ZoneManager (local ops) + RaftClient (peer gRPC)
-- Dependencies injected: `ZoneManager`, client factory
+- Orchestrates ZoneManager (local ops) + inline gRPC (peer communication)
+- Dependencies injected: `ZoneManager`, optional `TofuTrustStore`
 - Exposes `share()` and `join()` as high-level async workflows
+- Only two RPCs needed: `NexusVFSService.Call("sys_stat")` for discovery,
+  `ZoneApiService.JoinZone` for Raft ConfChange
 - CLI and future REST/MCP endpoints are thin wrappers over this class
 
 **CLI `nexus mount`** (merged with FUSE mount via argument detection):

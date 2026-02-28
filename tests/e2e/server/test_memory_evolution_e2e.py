@@ -13,7 +13,6 @@ import json
 import shutil
 import tempfile
 import time
-from collections.abc import Sequence
 from typing import Any
 
 import pytest
@@ -23,48 +22,9 @@ from sqlalchemy.orm import sessionmaker
 
 from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
 from nexus.bricks.auth.providers.discriminator import DiscriminatingAuthProvider
-from nexus.contracts.metadata import FileMetadata
 from nexus.core.config import PermissionConfig
-from nexus.core.metastore import MetastoreABC
 from nexus.storage.models import Base
-
-# ==============================================================================
-# In-memory metadata store stub (avoids LocalRaft dependency)
-# ==============================================================================
-
-
-class InMemoryMetadataStore(MetastoreABC):
-    """Minimal in-memory metadata store for tests that don't need file ops."""
-
-    def __init__(self) -> None:
-        self._store: dict[str, FileMetadata] = {}
-
-    def get(self, path: str) -> FileMetadata | None:
-        return self._store.get(path)
-
-    def put(self, metadata: FileMetadata) -> None:
-        self._store[metadata.path] = metadata
-
-    def delete(self, path: str) -> dict[str, Any] | None:
-        removed = self._store.pop(path, None)
-        if removed:
-            return {"path": path}
-        return None
-
-    def exists(self, path: str) -> bool:
-        return path in self._store
-
-    def list(  # noqa: A003
-        self, prefix: str = "", recursive: bool = True, **kwargs: Any
-    ) -> list[FileMetadata]:
-        return [m for p, m in self._store.items() if p.startswith(prefix)]
-
-    def get_batch(self, paths: Sequence[str]) -> dict[str, FileMetadata | None]:
-        return {p: self._store.get(p) for p in paths}
-
-    def close(self) -> None:
-        self._store.clear()
-
+from tests.helpers.dict_metastore import DictMetastore
 
 # ==============================================================================
 # Fixtures
@@ -153,7 +113,7 @@ def app_with_auth(tmp_path, db_session_factory, api_keys):
     tmpdir = tempfile.mkdtemp(prefix="nexus-evolution-e2e-")
 
     backend = LocalBackend(root_path=tmpdir)
-    metadata_store = InMemoryMetadataStore()
+    metadata_store = DictMetastore()
 
     record_db_path = tmp_path / "records.db"
     record_store = SQLAlchemyRecordStore(db_path=str(record_db_path))

@@ -16,51 +16,13 @@ Run: pytest tests/e2e/server/test_credentials_e2e.py -v
 import shutil
 import tempfile
 import uuid
-from collections.abc import Sequence
 from typing import Any
 
 import pytest
 
-from nexus.contracts.metadata import FileMetadata
 from nexus.core.config import ParseConfig, PermissionConfig
-from nexus.core.metastore import MetastoreABC
 from nexus.storage.models import Base
-
-# ---------------------------------------------------------------------------
-# In-memory metadata store (same pattern as test_identity_e2e.py)
-# ---------------------------------------------------------------------------
-
-
-class InMemoryMetadataStore(MetastoreABC):
-    def __init__(self) -> None:
-        self._store: dict[str, FileMetadata] = {}
-
-    def get(self, path: str) -> FileMetadata | None:
-        return self._store.get(path)
-
-    def put(self, metadata: FileMetadata) -> None:
-        self._store[metadata.path] = metadata
-
-    def delete(self, path: str) -> dict[str, Any] | None:
-        removed = self._store.pop(path, None)
-        return {"path": path} if removed else None
-
-    def exists(self, path: str) -> bool:
-        return path in self._store
-
-    def list(self, prefix: str = "", recursive: bool = True, **kwargs: Any) -> list[FileMetadata]:
-        return [m for p, m in self._store.items() if p.startswith(prefix)]
-
-    def get_batch(self, paths: Sequence[str]) -> dict[str, FileMetadata | None]:
-        return {p: self._store.get(p) for p in paths}
-
-    def is_implicit_directory(self, path: str) -> bool:
-        prefix = path.rstrip("/") + "/"
-        return any(p.startswith(prefix) for p in self._store)
-
-    def close(self) -> None:
-        self._store.clear()
-
+from tests.helpers.dict_metastore import DictMetastore
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -137,7 +99,7 @@ def app(tmp_path: Any, db_path: Any, session_factory: Any, api_keys: Any) -> Any
 
     tmpdir = tempfile.mkdtemp(prefix="nexus-cred-e2e-")
     backend = LocalBackend(root_path=tmpdir)
-    metadata_store = InMemoryMetadataStore()
+    metadata_store = DictMetastore()
     record_store = SQLAlchemyRecordStore(db_url=f"sqlite:///{db_path}")
 
     nx = NexusFS(

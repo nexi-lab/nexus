@@ -116,6 +116,13 @@ def build_dispatch_table() -> dict[str, DispatchEntry]:
         "list": DispatchEntry(handle_list),
         "delete": DispatchEntry(handle_delete, event_type="file_delete"),
         "mkdir": DispatchEntry(handle_mkdir, event_type="dir_create"),
+        "rmdir": DispatchEntry(handle_rmdir, event_type="dir_delete"),
+        "rename": DispatchEntry(
+            handle_rename,
+            event_type="file_rename",
+            event_path_attr="new_path",
+            event_old_path_attr="old_path",
+        ),
         # User-space utilities (not syscalls, but dispatched via RPC)
         "glob": DispatchEntry(handle_glob),
         "grep": DispatchEntry(handle_grep),

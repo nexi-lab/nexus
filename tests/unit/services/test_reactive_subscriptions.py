@@ -9,12 +9,12 @@ import time
 import pytest
 
 from nexus.lib.path_utils import path_matches_pattern
-from nexus.services.event_subsystem.subscriptions import (
+from nexus.storage.read_set import ReadSet, ReadSetRegistry
+from nexus.system_services.event_subsystem.subscriptions import (
     ReactiveSubscriptionManager,
     Subscription,
 )
-from nexus.services.event_subsystem.types import FileEvent
-from nexus.storage.read_set import ReadSet, ReadSetRegistry
+from nexus.system_services.event_subsystem.types import FileEvent
 
 # ---------------------------------------------------------------------------
 # TestSubscription

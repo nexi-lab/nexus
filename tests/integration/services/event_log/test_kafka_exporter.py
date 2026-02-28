@@ -9,7 +9,7 @@ Issue #1138: Event Stream Export.
 import pytest
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.services.event_subsystem.types import FileEvent, FileEventType
+from nexus.system_services.event_subsystem.types import FileEvent, FileEventType
 
 # Skip if testcontainers or aiokafka not installed
 pytest.importorskip("testcontainers")
@@ -46,8 +46,8 @@ def kafka_bootstrap(kafka_container) -> str:
 
 @pytest.fixture
 def exporter(kafka_bootstrap: str):
-    from nexus.services.event_subsystem.log.exporters.config import KafkaExporterConfig
-    from nexus.services.event_subsystem.log.exporters.kafka_exporter import KafkaExporter
+    from nexus.system_services.event_subsystem.log.exporters.config import KafkaExporterConfig
+    from nexus.system_services.event_subsystem.log.exporters.kafka_exporter import KafkaExporter
 
     config = KafkaExporterConfig(
         bootstrap_servers=kafka_bootstrap,
@@ -87,8 +87,8 @@ class TestKafkaExporter:
         await exporter.close()
 
     async def test_connection_failure_handling(self) -> None:
-        from nexus.services.event_subsystem.log.exporters.config import KafkaExporterConfig
-        from nexus.services.event_subsystem.log.exporters.kafka_exporter import KafkaExporter
+        from nexus.system_services.event_subsystem.log.exporters.config import KafkaExporterConfig
+        from nexus.system_services.event_subsystem.log.exporters.kafka_exporter import KafkaExporter
 
         config = KafkaExporterConfig(bootstrap_servers="localhost:19999")
         bad_exporter = KafkaExporter(config)

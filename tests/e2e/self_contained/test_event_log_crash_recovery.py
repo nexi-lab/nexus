@@ -12,11 +12,11 @@ from pathlib import Path
 
 import pytest
 
-from nexus.services.event_subsystem.log import EventLogConfig
-from nexus.services.event_subsystem.types import FileEvent, FileEventType
+from nexus.system_services.event_subsystem.log import EventLogConfig
+from nexus.system_services.event_subsystem.types import FileEvent, FileEventType
 
 try:
-    from nexus.services.event_subsystem.log.wal import WALEventLog, is_available
+    from nexus.system_services.event_subsystem.log.wal import WALEventLog, is_available
 
     if not is_available():
         pytest.skip("_nexus_wal extension not available", allow_module_level=True)

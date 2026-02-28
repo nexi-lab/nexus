@@ -63,7 +63,7 @@ def _get_replay_service(request: Request) -> Any:
     if record_store is None:
         raise HTTPException(status_code=503, detail="Database not configured")
 
-    from nexus.services.event_subsystem.log.replay import EventReplayService
+    from nexus.system_services.event_subsystem.log.replay import EventReplayService
 
     service = EventReplayService(record_store)
     request.app.state.replay_service = service

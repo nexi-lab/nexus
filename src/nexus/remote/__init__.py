@@ -5,7 +5,6 @@ deployment profile. Use ``nexus.connect(config={"mode": "remote", ...})``
 to create a remote NexusFS instance.
 
 Domain-specific operations are organized into domain clients:
-- SkillsClient / AsyncSkillsClient
 - SandboxClient / AsyncSandboxClient
 - OAuthClient / AsyncOAuthClient
 - MCPClient / AsyncMCPClient
@@ -33,13 +32,11 @@ from nexus.remote.domain import (
     AsyncOAuthClient,
     AsyncSandboxClient,
     AsyncShareLinksClient,
-    AsyncSkillsClient,
     MCPClient,
     MemoryClient,
     OAuthClient,
     SandboxClient,
     ShareLinksClient,
-    SkillsClient,
 )
 
 __all__ = [
@@ -48,8 +45,6 @@ __all__ = [
     "RemoteConnectionError",
     "RemoteTimeoutError",
     # Domain clients (sync + async)
-    "SkillsClient",
-    "AsyncSkillsClient",
     "SandboxClient",
     "AsyncSandboxClient",
     "OAuthClient",

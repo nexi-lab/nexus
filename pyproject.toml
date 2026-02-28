@@ -607,7 +607,7 @@ module = [
     "nexus.core.rebac_cache",
     "nexus.core.permission_boundary_cache",
     "nexus.core.agent_registry",
-    "nexus.identity.key_service",
+    "nexus.bricks.identity.key_service",
     "nexus.core.reputation_service",
     "nexus.bricks.rebac.cache.iterator",
     "nexus.bricks.rebac.cache.result_cache",
@@ -727,7 +727,6 @@ disable_error_code = ["attr-defined", "no-any-return", "import-untyped"]
 [[tool.mypy.overrides]]
 module = [
     "nexus.cache.backend_wrapper",
-    "nexus.isolation.backend",
     "nexus.ipc.driver",
 ]
 disable_error_code = ["return-value", "override"]
@@ -752,7 +751,7 @@ module = [
     "nexus.services.mount_service",
     "nexus.services.search_service",
     "nexus.services.event_subsystem.log.exporters.factory",
-    "nexus.portability.import_service",
+    "nexus.bricks.portability.import_service",
     "nexus.server.lifespan.realtime",
 ]
 # MetastoreABC arg-type / return-value mismatches from API evolution

@@ -472,8 +472,8 @@ class TestSecurityModuleIntegration:
         assert callable(validate_llm_output)
         assert callable(enforce_injection_policy)
 
-    def test_backward_compat_server_security_import(self):
-        """Re-export shim: nexus.server.security still works."""
+    def test_lib_security_import(self):
+        """Security utilities importable from nexus.lib.security."""
         from nexus.lib.security import (
             detect_injection_patterns,
             sanitize_for_prompt,

@@ -17,7 +17,7 @@ from unittest.mock import patch
 
 import pytest
 
-from nexus.server.security.url_validator import validate_outbound_url
+from nexus.lib.security.url_validator import validate_outbound_url
 
 
 class TestBlockedIPRanges:

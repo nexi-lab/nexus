@@ -31,7 +31,9 @@ from nexus.services.protocols.llm_provider import LLMProviderProtocol
 from nexus.storage.models import MemoryModel
 
 if TYPE_CHECKING:
-    from nexus.bricks.search.embeddings import EmbeddingProvider
+    # Removed: txtai handles this (Issue #2663)
+    # from nexus.bricks.search.embeddings import EmbeddingProvider
+    EmbeddingProvider = Any
 
 logger = logging.getLogger(__name__)
 
@@ -737,19 +739,13 @@ Provide only the consolidated summary, no additional commentary.
             return list(memory_vectors), warnings
 
         # Create embedding provider if not provided
+        # Removed: txtai handles this (Issue #2663)
+        # embeddings module was deleted; cannot auto-create provider.
         if embedding_provider is None:
-            try:
-                import importlib as _il
-
-                create_embedding_provider = _il.import_module(
-                    "nexus.bricks.search.embeddings"
-                ).create_embedding_provider
-                embedding_provider = create_embedding_provider("openai", "text-embedding-3-small")
-            except Exception as e:
-                msg = f"Could not create embedding provider: {e}"
-                logger.warning("Could not create embedding provider: %s", e)
-                warnings.append(msg)
-                return list(memory_vectors), warnings
+            msg = "Embedding provider not available (embeddings module removed, Issue #2663)"
+            logger.warning(msg)
+            warnings.append(msg)
+            return list(memory_vectors), warnings
 
         # Build result list (copy to avoid mutation)
         result = list(memory_vectors)

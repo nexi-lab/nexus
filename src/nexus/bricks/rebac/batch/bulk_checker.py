@@ -255,7 +255,9 @@ class BulkPermissionChecker:
             if not cache_misses:
                 total_elapsed = (time_module.perf_counter() - bulk_start) * 1000
                 logger.debug(
-                    f"[BULK-PERF] ✅ All {len(checks)} checks satisfied from L1 cache in {total_elapsed:.1f}ms"
+                    "[BULK-PERF] All %d checks satisfied from L1 cache in %.1fms",
+                    len(checks),
+                    total_elapsed,
                 )
         else:
             cache_misses = list(checks)
@@ -313,7 +315,8 @@ class BulkPermissionChecker:
         if not tiger_remaining:
             total_elapsed = (time_module.perf_counter() - bulk_start) * 1000
             logger.debug(
-                f"[BULK-PERF] ✅ All checks satisfied from L1 + Tiger cache in {total_elapsed:.1f}ms"
+                "[BULK-PERF] All checks satisfied from L1 + Tiger cache in %.1fms",
+                total_elapsed,
             )
 
         return tiger_remaining
@@ -665,18 +668,17 @@ class BulkPermissionChecker:
         )
 
         rust_available = is_rust_available()
-        logger.warning(
-            f"[BULK-DEBUG] cache_misses={len(cache_misses)}, rust_available={rust_available}, tuples_graph={len(tuples_graph)}"
+        logger.debug(
+            "[BULK] cache_misses=%d, rust_available=%s, tuples_graph=%d",
+            len(cache_misses),
+            rust_available,
+            len(tuples_graph),
         )
 
         if not (rust_available and len(cache_misses) >= 1):
             return False
 
         try:
-            logger.warning(
-                f"⚡ [BULK-DEBUG] Attempting Rust acceleration for {len(cache_misses)} checks"
-            )
-
             # Get all namespace configs
             object_types = {obj[0] for _, _, obj in cache_misses}
             namespace_configs: dict[str, Any] = {}
@@ -743,13 +745,14 @@ class BulkPermissionChecker:
                 ),
             )
 
-            logger.warning(
-                f"✅ [BULK-DEBUG] Rust acceleration successful for {len(cache_misses)} checks"
+            logger.debug(
+                "[BULK] Rust acceleration successful for %d checks",
+                len(cache_misses),
             )
             return True
 
         except (RuntimeError, ValueError) as e:
-            logger.warning(f"[BULK-DEBUG] Rust acceleration failed: {e}, falling back to Python")
+            logger.debug("[BULK] Rust acceleration failed: %s, falling back to Python", e)
             return False
 
     def _phase_python_compute(
@@ -763,8 +766,9 @@ class BulkPermissionChecker:
         memo_stats: dict[str, int],
     ) -> None:
         """Phase 2b: Python fallback computation."""
-        logger.warning(
-            f"🐍 [BULK-DEBUG] Using SLOW Python path for {len(cache_misses)} checks (rust_available=False)"
+        logger.debug(
+            "[BULK] Using Python fallback for %d checks (rust_available=False)",
+            len(cache_misses),
         )
         for check in cache_misses:
             subject, permission, obj = check

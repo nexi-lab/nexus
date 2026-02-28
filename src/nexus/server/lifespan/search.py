@@ -1,6 +1,7 @@
-"""Search startup: Hot Search Daemon (Issue #951).
+"""Search startup: txtai-backed Search Daemon (Issue #2663).
 
 Extracted from fastapi_server.py (#1602).
+Rewritten for txtai backend (#2663).
 """
 
 import asyncio
@@ -36,27 +37,21 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
     try:
         from nexus.bricks.search.daemon import DaemonConfig, SearchDaemon
 
-        # Issue #2071: source max_indexing_concurrency from profile tuning
-        _search_tuning = svc.profile_tuning
-        _max_indexing = _search_tuning.search.search_max_concurrency if _search_tuning else None
-
-        _daemon_kwargs: dict = {
-            "database_url": svc.database_url,
-            "bm25s_index_dir": os.getenv("NEXUS_BM25S_INDEX_DIR", ".nexus-data/bm25s"),
-            "db_pool_min_size": int(os.getenv("NEXUS_SEARCH_POOL_MIN", "10")),
-            "db_pool_max_size": int(os.getenv("NEXUS_SEARCH_POOL_MAX", "50")),
-            "refresh_enabled": os.getenv("NEXUS_SEARCH_REFRESH", "true").lower()
-            in ("true", "1", "yes"),
-            # Issue #1024: Entropy-aware filtering for redundant content
-            "entropy_filtering": os.getenv("NEXUS_ENTROPY_FILTERING", "false").lower()
-            in ("true", "1", "yes"),
-            "entropy_threshold": float(os.getenv("NEXUS_ENTROPY_THRESHOLD", "0.35")),
-            "entropy_alpha": float(os.getenv("NEXUS_ENTROPY_ALPHA", "0.5")),
-        }
-        if _max_indexing is not None:
-            _daemon_kwargs["max_indexing_concurrency"] = _max_indexing
-
-        config = DaemonConfig(**_daemon_kwargs)
+        config = DaemonConfig(
+            database_url=svc.database_url,
+            search_backend=os.environ.get("NEXUS_SEARCH_BACKEND", "txtai"),
+            embedding_model=os.environ.get(
+                "NEXUS_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
+            ),
+            hybrid_search=os.environ.get("NEXUS_HYBRID_SEARCH", "true").lower() == "true",
+            auto_index_on_write=os.environ.get("NEXUS_AUTO_INDEX", "false").lower() == "true",
+            reranker_enabled=os.environ.get("NEXUS_RERANKER_ENABLED", "true").lower() == "true",
+            reranker_model=os.environ.get(
+                "NEXUS_RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2"
+            ),
+            reranker_top_k=int(os.environ.get("NEXUS_RERANKER_TOP_K", "25")),
+            query_timeout_seconds=float(os.environ.get("NEXUS_QUERY_TIMEOUT", "10.0")),
+        )
 
         # Inject async_session_factory from RecordStoreABC when available
         _record_store = svc.record_store
@@ -65,7 +60,7 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
             with contextlib.suppress(Exception):
                 _async_sf = _record_store.async_session_factory
 
-        # Issue #2188: Create ZoektClient via DI (no module-level globals)
+        # Issue #2188: Create ZoektClient via DI
         _zoekt_client = None
         with contextlib.suppress(ImportError):
             from nexus.bricks.search.config import search_config_from_env
@@ -79,7 +74,7 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
                     enabled=True,
                 )
 
-        # CacheBrick is available from startup_permissions (runs before search)
+        # CacheBrick is available from startup_permissions
         _cache_brick = getattr(app.state, "cache_brick", None)
 
         app.state.search_daemon = SearchDaemon(
@@ -91,10 +86,11 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         await app.state.search_daemon.startup()
         app.state.search_daemon_enabled = True
 
-        # Issue #1520: Set FileReaderProtocol for index refresh (replaces _nexus_fs)
-        from nexus.factory import _NexusFSFileReader
+        # Issue #1520: Set FileReaderProtocol for index refresh
+        with contextlib.suppress(Exception):
+            from nexus.factory import _NexusFSFileReader
 
-        app.state.search_daemon._file_reader = _NexusFSFileReader(svc.nexus_fs)
+            app.state.search_daemon._file_reader = _NexusFSFileReader(svc.nexus_fs)
 
         # Issue #2036: Inject AdaptiveKProtocol (LEGO compliance)
         with contextlib.suppress(Exception):
@@ -118,8 +114,8 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
 
         stats = app.state.search_daemon.get_stats()
         logger.info(
-            "Search Daemon started: %d docs indexed, startup=%.1fms",
-            stats["bm25_documents"],
+            "Search Daemon started: backend=%s, startup=%.1fms",
+            stats.get("backend", "txtai"),
             stats["startup_time_ms"],
         )
     except Exception as e:

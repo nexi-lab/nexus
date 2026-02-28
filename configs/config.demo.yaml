@@ -108,14 +108,6 @@ auth:
 enforce_permissions: true            # Enable permission enforcement by default (use --no-permissions to disable)
 enforce_zone_isolation: true         # Enable zone isolation by default (use --no-zone-isolation to disable)
 
-# Features
-features:
-  semantic_search: false  # Disabled for demo
-  llm_read: false         # Disabled for demo
-  agent_memory: true
-  job_system: false       # Disabled for demo
-  mcp_server: true
-
 # Monitoring
 monitoring:
   logging:

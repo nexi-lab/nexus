@@ -15,7 +15,7 @@ from unittest.mock import MagicMock
 import pytest
 from sqlalchemy import create_engine, text
 
-from nexus.services.permissions.consistency.revision import (
+from nexus.bricks.rebac.consistency.revision import (
     get_zone_revision_for_grant,
     increment_version_token,
 )

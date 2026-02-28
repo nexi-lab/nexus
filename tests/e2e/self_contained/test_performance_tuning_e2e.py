@@ -257,7 +257,7 @@ class TestDIWiring:
         """TigerCache constructor accepts custom l2_max_workers."""
         from unittest.mock import MagicMock
 
-        from nexus.services.permissions.cache.tiger.bitmap_cache import TigerCache
+        from nexus.bricks.rebac.cache.tiger.bitmap_cache import TigerCache
 
         cache = TigerCache(engine=MagicMock(), l2_max_workers=8)
         assert cache._l2_max_workers == 8

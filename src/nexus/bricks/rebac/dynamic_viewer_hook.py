@@ -1,6 +1,6 @@
 """DynamicViewerReadHook — column-level CSV filtering (INTERCEPT read).
 
-Issue #625: Lives in services/rebac/ (service-layer, not kernel).
+Issue #625: ReBAC brick hook for dynamic viewer grants.
 """
 
 import logging

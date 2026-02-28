@@ -1,7 +1,7 @@
 """Zone ID normalization — tier-neutral utility.
 
-Moved from ``nexus.services.permissions.utils.zone`` (Issue #194) so that
-kernel code can call ``normalize_zone_id`` without importing from services/.
+Moved from ``nexus.bricks.rebac.utils.zone`` (Issue #194) so that
+kernel code can call ``normalize_zone_id`` without importing from bricks/.
 
 Replaces the 48+ inline ``zone_id or ROOT_ZONE_ID`` occurrences with a single
 canonical function so the default zone sentinel is defined in one place.

@@ -190,8 +190,8 @@ def make_test_nexus(
     nx.router.add_mount("/", backend)
 
     # Wire PermissionCheckHook via DI (same as factory/orchestrator.py, Issue #899)
-    from nexus.services.permissions.checker import PermissionChecker
-    from nexus.services.permissions.permission_hook import PermissionCheckHook
+    from nexus.bricks.rebac.checker import PermissionChecker
+    from nexus.bricks.rebac.permission_hook import PermissionCheckHook
 
     _checker = PermissionChecker(
         permission_enforcer=nx._permission_enforcer,

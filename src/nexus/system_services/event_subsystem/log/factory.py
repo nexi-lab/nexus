@@ -34,7 +34,7 @@ def create_event_log(
     """
     # Prefer Rust WAL
     try:
-        from nexus.system_services.event_subsystem.log.wal_backend import WALEventLog, is_available
+        from nexus.system_services.event_subsystem.log.wal import WALEventLog, is_available
 
         if is_available():
             log: EventLogProtocol = WALEventLog(config)

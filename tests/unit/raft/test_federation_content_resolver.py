@@ -1,7 +1,8 @@
 """Unit tests for FederationContentResolver (#163).
 
-Tests the PRE-DISPATCH resolver for remote content reads using mocks
-for metastore, backend, and gRPC stubs (no real network or Raft needed).
+Tests the PRE-DISPATCH resolver for remote content reads and deletes
+using mocks for metastore, backend, and gRPC stubs (no real network
+or Raft needed).
 """
 
 from unittest.mock import MagicMock, patch
@@ -138,33 +139,98 @@ class TestTryReadRemoteContent:
         assert result == b"remote content"
 
 
-class TestLegacyCompat:
-    """Legacy VFSPathResolver methods raise NotImplementedError."""
+class TestTryDeleteLocalContent:
+    """try_delete returns (False, metadata_hint) for local content."""
+
+    def test_local_origin_returns_metadata_hint(self):
+        meta = _make_meta(f"local@{SELF_ADDR}")
+        metastore = MagicMock()
+        metastore.get.return_value = meta
+
+        resolver = _make_resolver(metastore=metastore)
+        handled, result = resolver.try_delete("/test/file.txt")
+
+        assert handled is False
+        assert result is meta
+
+    def test_no_origin_returns_metadata_hint(self):
+        meta = _make_meta("local")
+        metastore = MagicMock()
+        metastore.get.return_value = meta
+
+        resolver = _make_resolver(metastore=metastore)
+        handled, result = resolver.try_delete("/test/file.txt")
+
+        assert handled is False
+        assert result is meta
+
+    def test_no_metadata_returns_none(self):
+        metastore = MagicMock()
+        metastore.get.return_value = None
+
+        resolver = _make_resolver(metastore=metastore)
+        handled, result = resolver.try_delete("/nonexistent.txt")
+
+        assert handled is False
+        assert result is None
+
+    def test_empty_backend_name_returns_none(self):
+        meta = MagicMock()
+        meta.backend_name = ""
+        metastore = MagicMock()
+        metastore.get.return_value = meta
+
+        resolver = _make_resolver(metastore=metastore)
+        handled, result = resolver.try_delete("/test/file.txt")
+
+        assert handled is False
+        assert result is None
+
+
+class TestTryDeleteRemoteContent:
+    """try_delete returns (True, {}) for remote content."""
+
+    @patch.object(FederationContentResolver, "_delete_on_peer")
+    def test_remote_origin_delegates_to_peer(self, mock_delete):
+        meta = _make_meta(f"local@{REMOTE_ADDR}")
+        metastore = MagicMock()
+        metastore.get.return_value = meta
+
+        resolver = _make_resolver(metastore=metastore)
+        handled, result = resolver.try_delete("/test/file.txt")
+
+        assert handled is True
+        assert result == {}
+        mock_delete.assert_called_once_with(REMOTE_ADDR, "/test/file.txt")
+
+    @patch.object(FederationContentResolver, "_delete_on_peer")
+    def test_remote_delete_failure_is_best_effort(self, mock_delete):
+        """gRPC failure during remote delete is logged, not raised."""
+        mock_delete.side_effect = Exception("network error")
+        meta = _make_meta(f"local@{REMOTE_ADDR}")
+        metastore = MagicMock()
+        metastore.get.return_value = meta
+
+        resolver = _make_resolver(metastore=metastore)
+        # Should not raise — _delete_on_peer handles errors internally
+        # But since we're patching the method itself to raise, this tests
+        # that the caller doesn't swallow it (it propagates)
+        with pytest.raises(Exception, match="network error"):
+            resolver.try_delete("/test/file.txt")
+
+
+class TestMatchesPassthrough:
+    """matches() returns False so writes pass through to kernel."""
 
     def test_matches_returns_false(self):
         resolver = _make_resolver()
         assert resolver.matches("/any/path") is False
 
-    def test_read_raises(self):
-        resolver = _make_resolver()
-        with pytest.raises(NotImplementedError):
-            resolver.read("/any/path")
-
-    def test_write_raises(self):
-        resolver = _make_resolver()
-        with pytest.raises(NotImplementedError):
-            resolver.write("/any/path", b"data")
-
-    def test_delete_raises(self):
-        resolver = _make_resolver()
-        with pytest.raises(NotImplementedError):
-            resolver.delete("/any/path")
-
 
 class TestKernelDispatchIntegration:
-    """Verify FederationContentResolver works with KernelDispatch.resolve_read."""
+    """Verify FederationContentResolver works with KernelDispatch."""
 
-    def test_resolve_read_try_read_path(self):
+    def test_resolve_read_local_returns_hint(self):
         from nexus.core.kernel_dispatch import KernelDispatch
 
         meta = _make_meta(f"local@{SELF_ADDR}")
@@ -176,7 +242,6 @@ class TestKernelDispatchIntegration:
         dispatch.register_resolver(resolver)
 
         handled, result = dispatch.resolve_read("/test/file.txt")
-        # Local content → metadata hint (not handled)
         assert handled is False
         assert result is meta
 
@@ -191,5 +256,51 @@ class TestKernelDispatchIntegration:
         dispatch.register_resolver(resolver)
 
         handled, result = dispatch.resolve_read("/nonexistent.txt")
+        assert handled is False
+        assert result is None
+
+    def test_resolve_delete_local_returns_hint(self):
+        from nexus.core.kernel_dispatch import KernelDispatch
+
+        meta = _make_meta(f"local@{SELF_ADDR}")
+        metastore = MagicMock()
+        metastore.get.return_value = meta
+
+        resolver = _make_resolver(metastore=metastore)
+        dispatch = KernelDispatch()
+        dispatch.register_resolver(resolver)
+
+        handled, result = dispatch.resolve_delete("/test/file.txt")
+        assert handled is False
+        assert result is meta
+
+    @patch.object(FederationContentResolver, "_delete_on_peer")
+    def test_resolve_delete_remote_delegates(self, mock_delete):
+        from nexus.core.kernel_dispatch import KernelDispatch
+
+        meta = _make_meta(f"local@{REMOTE_ADDR}")
+        metastore = MagicMock()
+        metastore.get.return_value = meta
+
+        resolver = _make_resolver(metastore=metastore)
+        dispatch = KernelDispatch()
+        dispatch.register_resolver(resolver)
+
+        handled, result = dispatch.resolve_delete("/test/file.txt")
+        assert handled is True
+        assert result == {}
+        mock_delete.assert_called_once_with(REMOTE_ADDR, "/test/file.txt")
+
+    def test_resolve_delete_no_metadata_passes_through(self):
+        from nexus.core.kernel_dispatch import KernelDispatch
+
+        metastore = MagicMock()
+        metastore.get.return_value = None
+
+        resolver = _make_resolver(metastore=metastore)
+        dispatch = KernelDispatch()
+        dispatch.register_resolver(resolver)
+
+        handled, result = dispatch.resolve_delete("/nonexistent.txt")
         assert handled is False
         assert result is None

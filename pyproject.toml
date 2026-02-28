@@ -725,7 +725,6 @@ disable_error_code = ["attr-defined", "no-any-return", "import-untyped"]
 [[tool.mypy.overrides]]
 module = [
     "nexus.cache.backend_wrapper",
-    "nexus.isolation.backend",
     "nexus.ipc.driver",
 ]
 disable_error_code = ["return-value", "override"]

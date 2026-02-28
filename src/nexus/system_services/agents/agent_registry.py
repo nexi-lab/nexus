@@ -50,8 +50,8 @@ from nexus.contracts.agent_types import (
     validate_transition,
 )
 from nexus.contracts.qos import EVICTION_ORDER, AgentQoS
-from nexus.services.agents.heartbeat_buffer import HeartbeatBuffer
 from nexus.storage.models import AgentRecordModel
+from nexus.system_services.agents.heartbeat_buffer import HeartbeatBuffer
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session

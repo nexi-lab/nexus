@@ -112,7 +112,7 @@ MODULES_TO_SCAN: list[str] = [
     "nexus.services.ace_rpc_service",
     "nexus.services.workspace_rpc_service",
     "nexus.services.user_provisioning",
-    "nexus.services.agents.agent_service",
+    "nexus.system_services.agents.agent_service",
     # System services
     "nexus.system_services.lifecycle.events_service",
     "nexus.system_services.lifecycle.task_queue_service",

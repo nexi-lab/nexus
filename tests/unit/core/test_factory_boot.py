@@ -246,7 +246,7 @@ class TestBootSystemServices:
 
         patches = [
             patch(
-                "nexus.services.agents.agent_registry.AgentRegistry.__init__",
+                "nexus.system_services.agents.agent_registry.AgentRegistry.__init__",
                 side_effect=RuntimeError("agent fail"),
             ),
             patch(

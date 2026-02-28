@@ -35,7 +35,7 @@ from nexus.contracts.agent_warmup_types import (
 )
 
 if TYPE_CHECKING:
-    from nexus.services.agents.agent_registry import AgentRegistry
+    from nexus.system_services.agents.agent_registry import AgentRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -254,7 +254,10 @@ class AgentWarmupService:
         - Agent unregistered during warmup (ValueError)
         - Concurrent warmup (StaleAgentError / InvalidTransitionError)
         """
-        from nexus.services.agents.agent_registry import InvalidTransitionError, StaleAgentError
+        from nexus.system_services.agents.agent_registry import (
+            InvalidTransitionError,
+            StaleAgentError,
+        )
 
         try:
             self._registry.transition(

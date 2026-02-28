@@ -13,13 +13,20 @@
   [Architecture](docs/architecture/KERNEL-ARCHITECTURE.md) • [PyPI](https://pypi.org/project/nexus-ai-fs/) • [Examples](examples/)
 </div>
 
-The AI-native filesystem for cognitive agents.
+An operating system for AI agents.
 
 ⚠️ **Beta**: Nexus is under active development. APIs may change.
 
 ## What is Nexus?
 
-Nexus is a virtual filesystem server for AI agents. It unifies files, databases, APIs, and SaaS tools into a single path-based API with built-in permissions, memory, semantic search, and skills lifecycle management. Humans curate context via the Control Panel; agents operate within it.
+Nexus is an operating system for AI agents. Like Linux provides processes with a unified interface to hardware (files, sockets, devices), Nexus provides agents with a unified interface to data (files, databases, APIs, SaaS tools) — through syscalls, a virtual filesystem, permissions, and loadable services.
+
+**Why an OS, not a framework?**
+- **Kernel** with VFS, syscall dispatch, and inode-like metadata — not an application-layer wrapper
+- **Drivers** swapped at config-time via dependency injection (redb, S3, PostgreSQL) — like compiled-in kernel drivers
+- **Services** loaded/unloaded at runtime following the Linux Loadable Kernel Module pattern — not plugins
+- **Deployment profiles** that select which services to include from the same codebase — like Linux distros (Ubuntu, Alpine, BusyBox) built from the same kernel
+- **Zones** as the fundamental isolation and consensus unit (1 zone = 1 Raft group) — like cgroups/namespaces for data
 
 ## Quick Start
 
@@ -68,35 +75,57 @@ nexus memory store "Important fact" --type fact
 
 ## Architecture
 
-Nexus follows an OS-inspired layered architecture with three tiers:
+```
+┌──────────────────────────────────────────────────────────────┐
+│  SERVICES (user space)                                       │
+│  Loadable at runtime. ReBAC, Auth, Agents, Search, Skills…   │
+└──────────────────────────────────────────────────────────────┘
+                          ↓ protocol interface
+┌──────────────────────────────────────────────────────────────┐
+│  KERNEL                                                      │
+│  VFS, MetastoreABC, ObjectStoreABC, syscall dispatch,        │
+│  pipes, lock manager, three-phase dispatch (LSM hooks)       │
+└──────────────────────────────────────────────────────────────┘
+                          ↓ dependency injection
+┌──────────────────────────────────────────────────────────────┐
+│  DRIVERS                                                     │
+│  redb, S3, PostgreSQL, Dragonfly, LocalDisk, gRPC…           │
+└──────────────────────────────────────────────────────────────┘
+```
 
-| Tier | What it contains | Swap time |
-|------|-----------------|-----------|
-| **Kernel** | VFS, MetastoreABC, ObjectStoreABC, syscall dispatch | Never (static core) |
-| **Drivers** | redb, S3, PostgreSQL, Dragonfly, SearchBrick | Config-time (DI at startup) |
-| **Services** | 23 protocols — ReBAC, Mount, Auth, Agents, Search, Skills, … | Runtime (load/unload) |
+| Tier | Linux Analogue | Nexus | Swap time |
+|------|---------------|-------|-----------|
+| **Kernel** | vmlinuz (scheduler, mm, VFS) | VFS, MetastoreABC, syscall dispatch | Never |
+| **Drivers** | Compiled-in drivers (`=y`) | redb, S3, PostgreSQL, SearchBrick | Config-time (DI) |
+| **Services** | Loadable kernel modules (`insmod`/`rmmod`) | 23 protocols — ReBAC, Mount, Auth, Agents, … | Runtime |
+
+**Invariant:** Services depend on kernel interfaces, never the reverse. The kernel operates with zero services loaded.
 
 ### Four Storage Pillars
 
-| Pillar | ABC | Capability |
-|--------|-----|------------|
-| **Metastore** | `MetastoreABC` | Ordered KV, CAS, prefix scan (kernel-required) |
-| **ObjectStore** | `ObjectStoreABC` | Streaming blob I/O, petabyte scale |
-| **RecordStore** | `RecordStoreABC` | Relational ACID, JOINs, vector search |
-| **CacheStore** | `CacheStoreABC` | Ephemeral KV, Pub/Sub, TTL |
+Storage is abstracted by **capability** (access pattern + consistency guarantee), not by domain:
 
-### Deployment Profiles
+| Pillar | ABC | Capability | Kernel role |
+|--------|-----|------------|-------------|
+| **Metastore** | `MetastoreABC` | Ordered KV, CAS, prefix scan, optional Raft SC | Required — sole kernel init param |
+| **ObjectStore** | `ObjectStoreABC` | Streaming blob I/O, petabyte scale | Interface only — mounted dynamically |
+| **RecordStore** | `RecordStoreABC` | Relational ACID, JOINs, vector search | Services only — optional |
+| **CacheStore** | `CacheStoreABC` | Ephemeral KV, Pub/Sub, TTL | Optional — defaults to `NullCacheStore` |
 
-| Profile | Target | Bricks |
-|---------|--------|--------|
-| **minimal** | Bare minimum runnable | 1 (storage only) |
-| **embedded** | MCU, WASM (<1 MB) | 2 |
-| **lite** | Pi, Jetson, mobile | 8 |
-| **full** | Desktop, laptop | 21 |
-| **cloud** | k8s, serverless | 22 (all) |
-| **remote** | Client-side proxy | 0 (NFS-client model) |
+### Deployment Profiles (Distros)
 
-See [Kernel Architecture](docs/architecture/KERNEL-ARCHITECTURE.md) for details.
+Same kernel, different service sets — like Linux distros:
+
+| Profile | Linux Analogue | Target | Services |
+|---------|---------------|--------|----------|
+| **minimal** | initramfs | Bare minimum | 1 |
+| **embedded** | BusyBox | MCU, WASM (<1 MB) | 2 |
+| **lite** | Alpine | Pi, Jetson, mobile | 8 |
+| **full** | Ubuntu Desktop | Desktop, laptop | 21 |
+| **cloud** | Ubuntu Server | k8s, serverless | 22 (all) |
+| **remote** | NFS client | Client-side proxy | 0 |
+
+See [Kernel Architecture](docs/architecture/KERNEL-ARCHITECTURE.md) for the full design.
 
 ## Examples
 

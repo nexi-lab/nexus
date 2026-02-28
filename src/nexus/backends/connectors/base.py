@@ -21,9 +21,16 @@ from pydantic import ValidationError as PydanticValidationError
 from nexus.contracts.exceptions import ValidationError as CoreValidationError
 
 if TYPE_CHECKING:
+    from typing import Protocol as _Protocol
+
     from nexus.backends.connectors.error_formatter import SkillErrorFormatter
     from nexus.backends.connectors.schema_generator import SkillDocGenerator
-    from nexus.bricks.skills.protocols import SkillRegistryProtocol
+
+    class SkillRegistryProtocol(_Protocol):
+        """Stub protocol (skills brick removed)."""
+
+        ...
+
 
 logger = logging.getLogger(__name__)
 

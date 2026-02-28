@@ -227,34 +227,6 @@ def _boot_wired_services(
     except Exception as exc:
         logger.warning("[BOOT:WIRED] MountService unavailable: %s", exc)
 
-    # --- SkillService: Skill management (Issue #2035) ---
-    skill_service: Any = brick_services.skill_service
-    if skill_service is None and _on("skills") and gateway is not None:
-        try:
-            from nexus.bricks.skills.skill_service_adapter import SkillService as _SkillService
-
-            skill_service = _SkillService(gateway=gateway)
-            logger.debug("[BOOT:WIRED] SkillService created")
-        except Exception as exc:
-            logger.debug("[BOOT:WIRED] SkillService unavailable: %s", exc)
-    elif not _on("skills"):
-        logger.debug("[BOOT:WIRED] SkillService disabled by profile")
-
-    # --- SkillPackageService: Skill export/import/validate (Issue #2035) ---
-    skill_package_service: Any = getattr(brick_services, "skill_package_service", None)
-    if skill_package_service is None and _on("skills") and skill_service is not None:
-        try:
-            from nexus.bricks.skills.package_service import SkillPackageService as _SkillPkgSvc
-
-            skill_package_service = _SkillPkgSvc(
-                fs=skill_service._fs,
-                perms=skill_service._perms,
-                skill_service=skill_service,
-            )
-            logger.debug("[BOOT:WIRED] SkillPackageService created")
-        except Exception:
-            logger.warning("[BOOT:WIRED] SkillPackageService unavailable (optional)")
-
     # --- SearchService: list/glob/grep are kernel-level VFS operations (Issue #2194) ---
     # Always create SearchService regardless of "search" brick — basic directory
     # listing, glob matching, and grep must work even in KERNEL-only mode.
@@ -383,7 +355,6 @@ def _boot_wired_services(
                 workspace_rpc_service.register_workspace if workspace_rpc_service else None
             ),
             register_agent_fn=(agent_rpc_service.register_agent if agent_rpc_service else None),
-            skills_import_fn=getattr(nx, "skills_import", None),
             list_cache=getattr(nx, "_list_cache", None),
             exists_cache=getattr(nx, "_exists_cache", None),
         )
@@ -498,8 +469,6 @@ def _boot_wired_services(
         llm_service=llm_service,
         llm_subsystem=llm_subsystem,
         oauth_service=oauth_service,
-        skill_service=skill_service,
-        skill_package_service=skill_package_service,
         search_service=search_service,
         share_link_service=share_link_service,
         events_service=events_service,

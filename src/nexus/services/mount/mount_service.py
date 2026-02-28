@@ -193,10 +193,6 @@ class MountService:
             # Grant direct_owner permission to the user who created the mount
             self._grant_mount_owner_permission(mount_point, context)
 
-            # Generate SKILL.md for connector backends
-            if backend_type.endswith("_connector") or backend_type in ("google_drive", "gdrive"):
-                self._generate_connector_skill(mount_point, backend_type, context)
-
             return mount_point  # Return mount_point as the mount ID
 
         # Run in thread pool to avoid blocking event loop
@@ -701,10 +697,6 @@ class MountService:
             # Grant direct_owner permission to the user who saved the mount
             self._grant_mount_owner_permission(mount_point, context)
 
-            # Generate SKILL.md for connector backends
-            if backend_type.endswith("_connector") or backend_type in ("google_drive", "gdrive"):
-                self._generate_connector_skill(mount_point, backend_type, context)
-
             return mount_id
 
         return await asyncio.to_thread(_save_mount_sync)
@@ -1137,50 +1129,3 @@ class MountService:
             logger.warning(
                 "[MOUNT-PERMISSION] No context provided, skipping permission grant for mount point"
             )
-
-    def _generate_connector_skill(
-        self, mount_point: str, backend_type: str, context: "OperationContext | None"
-    ) -> bool:
-        """Generate SKILL.md for a connector mount.
-
-        Creates a skill file that documents the connector backend for LLMs.
-
-        Args:
-            mount_point: The virtual path of the mount
-            backend_type: Backend type identifier
-            context: Operation context
-
-        Returns:
-            True if skill was generated successfully
-        """
-        if not self.nexus_fs or not hasattr(self.nexus_fs, "sys_write"):
-            logger.warning("[CONNECTOR-SKILL] NexusFS not available, skipping skill generation")
-            return False
-
-        try:
-            # Generate skill content
-            skill_content = f"""# {mount_point} Connector
-
-Backend Type: {backend_type}
-Mount Point: {mount_point}
-
-## Overview
-This is a connector mount that provides access to external resources through Nexus.
-
-## Capabilities
-- Read files from external backend
-- List directory contents
-- Sync metadata with Nexus database
-
-## Usage
-Files in this mount are accessible through standard Nexus file operations.
-Use sync_mount() to refresh metadata from the backend.
-"""
-
-            skill_path = f"{mount_point}/SKILL.md"
-            self.nexus_fs.sys_write(skill_path, skill_content.encode("utf-8"), context=context)
-            logger.info(f"✓ Generated SKILL.md for connector mount: {skill_path}")
-            return True
-        except Exception as e:
-            logger.warning(f"Failed to generate SKILL.md for {mount_point}: {e}")
-            return False

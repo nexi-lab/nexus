@@ -15,7 +15,6 @@ Architecture:
         - search.py: Discovery commands (glob, grep, find-duplicates)
         - permissions.py: Permission commands (chmod, chown, chgrp, getfacl, setfacl)
         - rebac.py: Relationship-based access control
-        - skills.py: Skills management commands
         - versions.py: Version tracking commands
         - plugins.py: Plugin management commands
         - server.py: Server commands (serve, mount, unmount)

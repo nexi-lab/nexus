@@ -1,17 +1,10 @@
-"""Narrow filesystem protocol shared by Skills and MCP bricks.
+"""Narrow filesystem protocol for MCP and other bricks.
 
 This defines only the filesystem methods that bricks actually use,
 rather than mirroring the full NexusFilesystemABC (1,000+ LOC).
 
 Any object implementing these 7 sys_ methods can serve as a filesystem for bricks:
 sys_read, sys_write, sys_readdir, sys_access, sys_mkdir, sys_unlink, sys_is_directory.
-
-Moved from nexus.bricks.skills.protocols (Issue #2035) to services/protocols/
-because both Skills and MCP bricks depend on this contract.
-
-Verification:
-- Run: pytest tests/unit/skills/test_protocol_compatibility.py
-- Contract test verifies NexusFilesystemABC satisfies this protocol
 """
 
 from typing import Any, Protocol, runtime_checkable
@@ -19,9 +12,9 @@ from typing import Any, Protocol, runtime_checkable
 
 @runtime_checkable
 class NexusFilesystem(Protocol):
-    """Narrow filesystem protocol for bricks (Skills, MCP).
+    """Narrow filesystem protocol for bricks (MCP, etc.).
 
-    Contains only the methods used by skills and MCP code,
+    Contains only the methods used by MCP and other brick code,
     using the sys_ prefix convention matching NexusFilesystemABC:
     - sys_read: Read file content
     - sys_write: Write file content

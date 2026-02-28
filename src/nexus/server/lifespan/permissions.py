@@ -202,7 +202,7 @@ def _startup_backfill(_app: "FastAPI", svc: "LifespanServices") -> list[asyncio.
             _nexus_fs = svc.nexus_fs  # Capture for closure
 
             async def _backfill_system_paths() -> None:
-                for prefix in ["/skills", "/sessions"]:
+                for prefix in ["/sessions"]:
                     try:
                         created = await asyncio.to_thread(
                             _nexus_fs.metadata.backfill_directory_index,

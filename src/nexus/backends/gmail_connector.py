@@ -127,7 +127,6 @@ class GmailConnectorBackend(
         {
             ConnectorCapability.CACHE_BULK_READ,
             ConnectorCapability.CACHE_SYNC,
-            ConnectorCapability.SKILL_DOC,
         }
     )
 

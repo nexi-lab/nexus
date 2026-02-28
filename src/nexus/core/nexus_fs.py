@@ -1688,12 +1688,11 @@ class NexusFS(  # type: ignore[misc]
         context = self._parse_context(context)
 
         # PRE-DISPATCH: virtual path resolvers (Issue #889)
-        # Memory paths → MemoryIOHandler, virtual views → VirtualViewResolver
-        _handled, _result = self._dispatch.resolve_read(
+        _handled, _resolve_hint = self._dispatch.resolve_read(
             path, return_metadata=return_metadata, context=context
         )
         if _handled:
-            return _result
+            return _resolve_hint
 
         # PRE-INTERCEPT: pre-read hooks (Issue #899)
         perm_check_start = time.time()
@@ -1759,7 +1758,8 @@ class NexusFS(  # type: ignore[misc]
             return content
 
         # Check if file exists in metadata (for regular backends)
-        meta = self.metadata.get(path)
+        # _resolve_hint may carry prefetched metadata from a resolver
+        meta = _resolve_hint if _resolve_hint is not None else self.metadata.get(path)
 
         # Issue #1264: Overlay resolution — check base layer if upper layer has no entry
         if (meta is None or meta.etag is None) and getattr(self, "_overlay_resolver", None):

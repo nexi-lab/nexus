@@ -7,7 +7,7 @@ Thin adapter that wraps the sync ``AgentRegistry`` to satisfy
 Emits ``AgentStateEvent`` on successful state transitions when
 an ``AgentStateEmitter`` is provided (Issue #1274).
 
-Follows the established ``AsyncMetastoreWrapper`` pattern.
+Uses ``asyncio.to_thread`` for I/O-bound method delegation.
 
 References:
     - Issue #1440: Async wrappers for 4 sync kernel protocols

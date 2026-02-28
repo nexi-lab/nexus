@@ -21,8 +21,8 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.contracts.metadata import FileMetadata, PaginatedResult
-from nexus.core.metastore import CasResult, MetastoreABC
+from nexus.contracts.metadata import FileMetadata
+from nexus.core.metastore import MetastoreABC
 
 if TYPE_CHECKING:
     from nexus.raft.zone_path_resolver import ResolvedPath, ZonePathResolver
@@ -135,17 +135,6 @@ class FederatedMetadataProxy(MetastoreABC):
         zone_meta = self._to_zone_metadata(metadata, resolved)
         return resolved.store.put(zone_meta, consistency=consistency)
 
-    def put_if_version(
-        self,
-        metadata: FileMetadata,
-        expected_version: int,
-        *,
-        consistency: str = "sc",
-    ) -> CasResult:
-        resolved = self._resolve(metadata.path)
-        zone_meta = self._to_zone_metadata(metadata, resolved)
-        return resolved.store.put_if_version(zone_meta, expected_version, consistency=consistency)
-
     def is_committed(self, token: int) -> str | None:
         return self._root_store.is_committed(token)
 
@@ -220,20 +209,6 @@ class FederatedMetadataProxy(MetastoreABC):
         resolve_path = prefix if prefix else "/"
         resolved = self._resolve(resolve_path)
         yield from self._walk_mount_tree(resolved, recursive, **kwargs)
-
-    def list_paginated(
-        self,
-        prefix: str = "",
-        recursive: bool = True,
-        limit: int = 1000,
-        cursor: str | None = None,
-        zone_id: str | None = None,
-    ) -> PaginatedResult:
-        resolve_path = prefix if prefix else "/"
-        resolved = self._resolve(resolve_path)
-        result = resolved.store.list_paginated(resolved.path, recursive, limit, cursor, zone_id)
-        result.items = [self._remap_metadata(m, resolved.mount_chain) for m in result.items]
-        return result
 
     def close(self) -> None:
         self._root_store.close()

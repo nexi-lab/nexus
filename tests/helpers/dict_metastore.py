@@ -11,7 +11,7 @@ from collections.abc import Iterator, Sequence
 from typing import Any
 
 from nexus.contracts.metadata import FileMetadata
-from nexus.core.metastore import CasResult, MetastoreABC, PaginatedResult
+from nexus.core.metastore import MetastoreABC
 
 
 class DictMetastore(MetastoreABC):
@@ -34,21 +34,6 @@ class DictMetastore(MetastoreABC):
         del consistency
         self._store[metadata.path] = metadata
         return None
-
-    def put_if_version(
-        self,
-        metadata: FileMetadata,
-        expected_version: int,
-        *,
-        consistency: str = "sc",
-    ) -> CasResult:
-        del consistency
-        current = self._store.get(metadata.path)
-        current_ver = current.version if current else 0
-        if current_ver != expected_version:
-            return CasResult(success=False, current_version=current_ver)
-        self._store[metadata.path] = metadata
-        return CasResult(success=True, current_version=metadata.version)
 
     def delete(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
         del consistency
@@ -78,27 +63,6 @@ class DictMetastore(MetastoreABC):
         self, prefix: str = "", recursive: bool = True, **_kw: Any
     ) -> Iterator[FileMetadata]:
         yield from self.list(prefix, recursive)
-
-    def list_paginated(
-        self,
-        prefix: str = "",
-        recursive: bool = True,
-        limit: int = 1000,
-        cursor: str | None = None,
-        _zone_id: str | None = None,
-    ) -> PaginatedResult:
-        del _zone_id
-        all_items = self.list(prefix, recursive)
-        start = int(cursor) if cursor else 0
-        page = all_items[start : start + limit]
-        has_more = start + limit < len(all_items)
-        next_cursor = page[-1].path if has_more and page else None
-        return PaginatedResult(
-            items=page,
-            next_cursor=next_cursor,
-            has_more=has_more,
-            total_count=len(all_items),
-        )
 
     def get_batch(self, paths: Sequence[str]) -> dict[str, FileMetadata | None]:
         return {p: self._store.get(p) for p in paths}

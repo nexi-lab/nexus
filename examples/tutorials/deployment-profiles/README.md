@@ -217,6 +217,56 @@ Run the automated test:
 python3 examples/tutorials/deployment-profiles/test_remote_client.py
 ```
 
+## Test Coverage Matrix
+
+All core filesystem operations (write, read, stat, list, glob, grep) have been
+verified across the following dimensions:
+
+### By Profile × Client Interface
+
+| Profile    | Python SDK (standalone) | Python SDK (remote) | CLI (gRPC) | Server startup |
+|------------|:-----------------------:|:-------------------:|:----------:|:--------------:|
+| `minimal`  | OK                      | OK                  | OK         | OK             |
+| `embedded` | OK                      | —                   | OK         | OK             |
+| `lite`     | OK                      | —                   | OK         | OK             |
+| `full`     | OK                      | —                   | OK         | OK             |
+| `cloud`    | OK                      | —                   | OK         | OK             |
+| `remote`   | OK                      | —                   | OK         | OK             |
+| `auto`     | OK                      | —                   | OK         | OK             |
+
+### By Mode
+
+| Mode          | Server startup | Python SDK | CLI   |
+|---------------|:--------------:|:----------:|:-----:|
+| `standalone`  | 7/7 profiles   | 7/7        | 7/7   |
+| `federation`  | 7/7 profiles   | —          | —     |
+| `remote`      | n/a (client)   | OK         | OK    |
+
+Note: remote mode tested against a `minimal` server. The gRPC transport
+is profile-agnostic so one server profile is sufficient.
+
+### By Operation × Interface
+
+| Operation | Python SDK (standalone) | Python SDK (remote) | CLI (gRPC)        |
+|-----------|:-----------------------:|:-------------------:|:-----------------:|
+| write     | OK                      | OK                  | OK                |
+| read      | OK (byte-exact)         | OK (byte-exact)     | OK (content match)|
+| stat      | OK (size verified)      | OK (size verified)  | OK (size present) |
+| list      | OK (entries verified)   | OK (entries verified)| OK (entries match)|
+| glob      | OK (3 .py files)        | OK (2 .py files)    | OK (3 .py files)  |
+| grep      | OK (>= 2 matches)      | OK (>= 2 matches)   | OK (>= 2 matches) |
+| delete    | —                       | OK (verified gone)  | —                 |
+
+### Test Scripts
+
+| Script                         | What it tests                                          |
+|--------------------------------|--------------------------------------------------------|
+| `test_profiles_serve.py`      | Server startup + health check, 7 profiles              |
+| `test_profiles_sdk.py`        | 6 ops × 7 profiles, Python SDK standalone              |
+| `test_profiles_cli.py`        | 6 ops × 7 profiles, CLI via gRPC against server        |
+| `test_profiles_federation.py` | Server startup with federation mode, 7 profiles        |
+| `test_remote_client.py`       | 8 ops via Python SDK remote client vs minimal server   |
+
 ## Cleanup
 
 ```bash

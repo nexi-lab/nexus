@@ -352,7 +352,6 @@ class OAuthService:
         import httpx
 
         from nexus.backends.service_map import ServiceMap
-        from nexus.services.protocols.skill_doc import generate_skill_md
 
         _mcp_models = _il.import_module("nexus.bricks.mcp.models")
         MCPMount = _mcp_models.MCPMount
@@ -563,54 +562,17 @@ class OAuthService:
                     f"Klavis list-tools failed: {tools_resp.status_code} - {tools_resp.text}"
                 )
 
-            # Step 6: Generate SKILL.md, mount.json, and tool files
+            # Step 6: Generate mount.json and tool files
             service_name = ServiceMap.get_service_name(mcp=provider) or provider
-            skill_base_path = f"/skills/users/{user_id}/"
-            skill_path = f"{skill_base_path}{service_name}/"
-            skill_file = f"{skill_path}SKILL.md"
-            mount_file = f"{skill_path}mount.json"
+            mcp_base_path = f"/zone/{context.zone_id if context else 'default'}/user/{user_id}/mcp/"
+            mcp_path = f"{mcp_base_path}{service_name}/"
+            mount_file = f"{mcp_path}mount.json"
 
             service_info = ServiceMap.get_service_info(service_name)
-            data_mount_path = skill_path
-            logger.info(
-                f"Looking for connector mount: service={service_name}, "
-                f"connector={service_info.connector if service_info else None}"
-            )
-            if service_info and service_info.connector and self._mount_lister is not None:
-                mount_entries = self._mount_lister()
-                logger.info(f"Found {len(mount_entries)} mounts via mount_lister")
-                connector_variants = [
-                    service_info.connector.lower().replace("_", ""),
-                    service_info.connector.lower().replace("_connector", ""),
-                    "googledrive",
-                ]
-                for mount_point_str, backend_type in mount_entries:
-                    backend_type_lower = backend_type.lower()
-                    logger.info(f"  Mount: {mount_point_str} -> {backend_type_lower}")
-                    for variant in connector_variants:
-                        if variant in backend_type_lower:
-                            data_mount_path = mount_point_str
-                            logger.info(
-                                f"Found connector mount at {data_mount_path} (matched {variant})"
-                            )
-                            break
-                    if data_mount_path != skill_path:
-                        break
-            logger.info(f"Using mount path for SKILL.md: {data_mount_path}")
-
-            skill_md = generate_skill_md(
-                service_name=service_name,
-                mount_path=data_mount_path,
-                mcp_tools=tools,
-            )
 
             try:
                 if self._filesystem is not None:
-                    self._filesystem.sys_mkdir(skill_path, parents=True, exist_ok=True)
-                    self._filesystem.sys_write(
-                        skill_file, skill_md.encode("utf-8"), context=context
-                    )
-                    logger.info(f"Generated MCP skill: {skill_file}")
+                    self._filesystem.sys_mkdir(mcp_path, parents=True, exist_ok=True)
 
                     now = datetime.now(UTC)
                     mount_config = MCPMount(
@@ -625,7 +587,7 @@ class OAuthService:
                         klavis_strata_id=instance_id,
                         auth_type="oauth",
                         auth_config={"klavis_user_id": klavis_user_id},
-                        tools_path=skill_path,
+                        tools_path=mcp_path,
                         mounted=True,
                         mounted_at=now,
                         last_sync=now,
@@ -659,7 +621,7 @@ class OAuthService:
                             created_at=now,
                             modified_at=now,
                         )
-                        tool_file = f"{skill_path}{tool_name}.json"
+                        tool_file = f"{mcp_path}{tool_name}.json"
                         tool_json = json_module.dumps(tool_def.to_dict(), indent=2)
                         self._filesystem.sys_write(
                             tool_file,
@@ -667,10 +629,10 @@ class OAuthService:
                             context=context,
                         )
 
-                    logger.info(f"Generated {len(tools)} tool definitions in {skill_path}")
+                    logger.info(f"Generated {len(tools)} tool definitions in {mcp_path}")
 
             except Exception as e:
-                logger.warning(f"Failed to write skill files: {e}")
+                logger.warning(f"Failed to write MCP config files: {e}")
 
             return {
                 "provider": provider,
@@ -679,9 +641,8 @@ class OAuthService:
                 "is_authenticated": True,
                 "tools": tools,
                 "tool_count": len(tools),
-                "skill_path": skill_file,
                 "mount_path": mount_file,
-                "tools_path": skill_path,
+                "tools_path": mcp_path,
                 "user_id": klavis_user_id,
             }
 

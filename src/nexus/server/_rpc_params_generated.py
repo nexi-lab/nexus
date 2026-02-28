@@ -97,16 +97,6 @@ __all__ = [
     "SaveMountParams",
     "SemanticSearchIndexParams",
     "ShareWithUserParams",
-    "SkillsDiscoverParams",
-    "SkillsExportParams",
-    "SkillsGetPromptContextParams",
-    "SkillsImportParams",
-    "SkillsLoadParams",
-    "SkillsShareParams",
-    "SkillsSubscribeParams",
-    "SkillsUnshareParams",
-    "SkillsUnsubscribeParams",
-    "SkillsValidateZipParams",
     "SnapshotBeginParams",
     "SnapshotCommitParams",
     "SnapshotRollbackParams",
@@ -692,7 +682,7 @@ class ProvisionUserParams:
     api_key_name: str | None = None
     api_key_expires_at: str | None = None
     create_agents: bool = True
-    import_skills: bool = True
+    import_skills: bool = False
 
 
 @dataclass
@@ -954,99 +944,6 @@ class ShareWithUserParams:
         """Convert lists to tuples (JSON deserializes tuples as lists)."""
         if isinstance(self.resource, list):
             object.__setattr__(self, "resource", tuple(self.resource))
-
-
-@dataclass
-class SkillsDiscoverParams:
-    """Parameters for skills_discover(): RPC wrapper for discover()."""
-
-    filter: str = "all"
-    context: Any | None = None
-
-
-@dataclass
-class SkillsExportParams:
-    """Parameters for skills_export(): Export a skill to .skill (ZIP) format."""
-
-    skill_path: str | None = None
-    skill_name: str | None = None
-    output_path: str | None = None
-    format: str = "generic"
-    include_dependencies: bool = False
-    context: Any | None = None
-
-
-@dataclass
-class SkillsGetPromptContextParams:
-    """Parameters for skills_get_prompt_context(): RPC wrapper for get_prompt_context()."""
-
-    max_skills: int = 50
-    context: Any | None = None
-
-
-@dataclass
-class SkillsImportParams:
-    """Parameters for skills_import(): Import a skill from .skill (ZIP) format."""
-
-    source_path: str | None = None
-    zip_bytes: bytes | str | None = None
-    zip_data: str | None = None
-    target_path: str | None = None
-    allow_overwrite: bool = False
-    context: Any | None = None
-    tier: str | None = None
-
-
-@dataclass
-class SkillsLoadParams:
-    """Parameters for skills_load(): RPC wrapper for load()."""
-
-    skill_path: str
-    context: Any | None = None
-
-
-@dataclass
-class SkillsShareParams:
-    """Parameters for skills_share(): RPC wrapper for share()."""
-
-    skill_path: str
-    share_with: str
-    context: Any | None = None
-
-
-@dataclass
-class SkillsSubscribeParams:
-    """Parameters for skills_subscribe(): RPC wrapper for subscribe()."""
-
-    skill_path: str
-    context: Any | None = None
-
-
-@dataclass
-class SkillsUnshareParams:
-    """Parameters for skills_unshare(): RPC wrapper for unshare()."""
-
-    skill_path: str
-    unshare_from: str
-    context: Any | None = None
-
-
-@dataclass
-class SkillsUnsubscribeParams:
-    """Parameters for skills_unsubscribe(): RPC wrapper for unsubscribe()."""
-
-    skill_path: str
-    context: Any | None = None
-
-
-@dataclass
-class SkillsValidateZipParams:
-    """Parameters for skills_validate_zip(): Validate a .skill (ZIP) package without importing it."""
-
-    source_path: str | None = None
-    zip_bytes: bytes | str | None = None
-    zip_data: str | None = None
-    context: Any | None = None
 
 
 @dataclass
@@ -1382,16 +1279,6 @@ METHOD_PARAMS: dict[str, type] = {
     "save_mount": SaveMountParams,
     "semantic_search_index": SemanticSearchIndexParams,
     "share_with_user": ShareWithUserParams,
-    "skills_discover": SkillsDiscoverParams,
-    "skills_export": SkillsExportParams,
-    "skills_get_prompt_context": SkillsGetPromptContextParams,
-    "skills_import": SkillsImportParams,
-    "skills_load": SkillsLoadParams,
-    "skills_share": SkillsShareParams,
-    "skills_subscribe": SkillsSubscribeParams,
-    "skills_unshare": SkillsUnshareParams,
-    "skills_unsubscribe": SkillsUnsubscribeParams,
-    "skills_validate_zip": SkillsValidateZipParams,
     "snapshot_begin": SnapshotBeginParams,
     "snapshot_commit": SnapshotCommitParams,
     "snapshot_rollback": SnapshotRollbackParams,

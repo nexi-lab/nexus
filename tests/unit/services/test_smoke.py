@@ -235,41 +235,6 @@ class TestSearchServiceSmoke:
 
 
 # =============================================================================
-# SkillService Smoke Tests
-# =============================================================================
-
-
-class TestSkillServiceSmoke:
-    """Smoke tests for SkillService."""
-
-    def test_skill_service_init(self):
-        """Test SkillService can be instantiated with a gateway."""
-        from unittest.mock import MagicMock
-
-        from nexus.bricks.skills.skill_service_adapter import SkillService
-
-        mock_gateway = MagicMock()
-        service = SkillService(gateway=mock_gateway)
-        # After Issue #2035, SkillService uses protocol adapters (_fs, _perms)
-        assert service._fs is not None
-        assert service._perms is not None
-
-    @pytest.mark.asyncio
-    async def test_skills_discover_requires_gateway(self):
-        """Test skills_discover requires a properly configured gateway."""
-        from unittest.mock import MagicMock
-
-        from nexus.bricks.skills.skill_service_adapter import SkillService
-
-        mock_gateway = MagicMock()
-        mock_gateway.get_context.return_value = None
-        service = SkillService(gateway=mock_gateway)
-        # Service should be initialized even with mock gateway
-        assert service._fs is not None
-        assert service._perms is not None
-
-
-# =============================================================================
 # MountService Smoke Tests
 # =============================================================================
 
@@ -338,19 +303,14 @@ class TestServiceIntegrationSmoke:
 
     def test_all_services_can_coexist(self, mock_metadata, mock_cas, mock_router):
         """Test that all services can be instantiated together."""
-        from unittest.mock import MagicMock
 
         from nexus.bricks.llm.llm_service import LLMService
         from nexus.bricks.mcp.mcp_service import MCPService
         from nexus.bricks.rebac.rebac_service import ReBACService
-        from nexus.bricks.skills.skill_service_adapter import SkillService
         from nexus.services.mount.mount_service import MountService
         from nexus.services.oauth.oauth_service import OAuthService
         from nexus.services.search.search_service import SearchService
         from nexus.services.versioning.version_service import VersionService
-
-        # Create mock gateway for SkillService
-        mock_gateway = MagicMock()
 
         # Create all services
         version_svc = VersionService(
@@ -362,7 +322,6 @@ class TestServiceIntegrationSmoke:
         llm_svc = LLMService(nexus_fs=None)
         oauth_svc = OAuthService(oauth_factory=None, token_manager=None)
         search_svc = SearchService(metadata_store=mock_metadata, enforce_permissions=False)
-        skill_svc = SkillService(gateway=mock_gateway)
         mount_svc = MountService(router=mock_router)
         rebac_svc = ReBACService(rebac_manager=None, enforce_permissions=False)
 
@@ -372,7 +331,6 @@ class TestServiceIntegrationSmoke:
         assert llm_svc is not None
         assert oauth_svc is not None
         assert search_svc is not None
-        assert skill_svc is not None
         assert mount_svc is not None
         assert rebac_svc is not None
 
@@ -382,6 +340,5 @@ class TestServiceIntegrationSmoke:
         assert hasattr(llm_svc, "llm_read")
         assert hasattr(oauth_svc, "oauth_list_providers")
         assert hasattr(search_svc, "semantic_search")
-        assert hasattr(skill_svc, "discover")  # SkillService uses discover() not skills_list()
         assert hasattr(mount_svc, "list_mounts")
         assert hasattr(rebac_svc, "rebac_check")

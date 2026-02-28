@@ -50,24 +50,6 @@ def get_all_rpc_exposed_methods():
     """
     exposed = get_rpc_exposed_methods(NexusFS)
 
-    # Brick services that expose RPC methods directly
-    _brick_classes: list[type] = []
-    try:
-        from nexus.skills.service import SkillService
-
-        _brick_classes.append(SkillService)
-    except ImportError:
-        pass
-    try:
-        from nexus.skills.package_service import SkillPackageService
-
-        _brick_classes.append(SkillPackageService)
-    except ImportError:
-        pass
-
-    for cls in _brick_classes:
-        exposed.update(get_rpc_exposed_methods(cls))
-
     return exposed
 
 
@@ -187,9 +169,6 @@ def test_all_public_methods_are_exposed_or_excluded():
         "migrate_consistency_mode",  # Internal - SC↔EC migration orchestrator, exposed via PATCH endpoint
         # KernelDispatch OBSERVE registration (Issue #900) - server-side observer registration
         "register_observe",  # Internal - registers VFS observers for workflow dispatch
-        # Brick service references (Issue #2035) — object instances, not methods
-        "skill_service",  # SkillService instance — RPC methods auto-discovered from brick
-        "skill_package_service",  # SkillPackageService instance — RPC methods auto-discovered from brick
         # ABC compliance stubs (Issue #2033 LEGO decomposition)
         # These delegate to extracted services which already have @rpc_expose.
         # NexusFS defines them only to satisfy NexusFilesystem ABC requirements.

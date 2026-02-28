@@ -1,5 +1,6 @@
 """Unit tests for AgentDiscovery."""
 
+import asyncio
 import json
 
 import pytest
@@ -88,23 +89,27 @@ class TestAgentDiscovery:
         names = {a.agent_id for a in agents}
         assert names == {"analyst", "reviewer"}
 
-    @pytest.mark.asyncio
-    async def test_find_by_skill(self, vfs: InMemoryVFS) -> None:
-        await _create_agent(vfs, "analyst", skills=["research", "data_analysis"])
-        await _create_agent(vfs, "reviewer", skills=["code_review", "security_audit"])
-        await _create_agent(vfs, "writer", skills=["documentation", "research"])
+    def test_find_by_skill(self, vfs: InMemoryVFS) -> None:
+        async def _run() -> None:
+            await _create_agent(vfs, "analyst", skills=["research", "data_analysis"])
+            await _create_agent(vfs, "reviewer", skills=["code_review", "security_audit"])
+            await _create_agent(vfs, "writer", skills=["documentation", "research"])
 
-        discovery = AgentDiscovery(vfs, zone_id=ZONE)
-        researchers = await discovery.find_by_skill("research")
+            discovery = AgentDiscovery(vfs, zone_id=ZONE)
+            researchers = await discovery.find_by_skill("research")
 
-        assert len(researchers) == 2
-        ids = {a.agent_id for a in researchers}
-        assert ids == {"analyst", "writer"}
+            assert len(researchers) == 2
+            ids = {a.agent_id for a in researchers}
+            assert ids == {"analyst", "writer"}
 
-    @pytest.mark.asyncio
-    async def test_find_by_skill_no_matches(self, vfs: InMemoryVFS) -> None:
-        await _create_agent(vfs, "analyst", skills=["research"])
+        asyncio.run(_run())
 
-        discovery = AgentDiscovery(vfs, zone_id=ZONE)
-        results = await discovery.find_by_skill("nonexistent_skill")
-        assert results == []
+    def test_find_by_skill_no_matches(self, vfs: InMemoryVFS) -> None:
+        async def _run() -> None:
+            await _create_agent(vfs, "analyst", skills=["research"])
+
+            discovery = AgentDiscovery(vfs, zone_id=ZONE)
+            results = await discovery.find_by_skill("nonexistent_skill")
+            assert results == []
+
+        asyncio.run(_run())

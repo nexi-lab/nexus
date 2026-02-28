@@ -80,8 +80,6 @@ class ConnectorCapability(StrEnum):
     PATH_DELETE = "path_delete"
     """Backend supports path-based delete (not just hash-based)."""
 
-    SKILL_DOC = "skill_doc"
-    """Backend provides skill document discovery."""
 
     CACHE_BULK_READ = "cache_bulk_read"
     """Backend supports read_bulk_from_cache() for bulk cache reads."""

@@ -91,9 +91,6 @@ EXCLUDED_METHODS: set[str] = {
     "ace_retrieve_trajectory",
     "ace_get_trajectory_stats",
     "ace_export_trajectories",
-    "export",  # skill_service.export — not in METHOD_PARAMS
-    "import_skill",  # skill_service.import_skill — not in METHOD_PARAMS
-    "validate_zip",  # skill_service.validate_zip — not in METHOD_PARAMS
 }
 
 # Modules to scan for @rpc_expose methods.  We inspect each class in each
@@ -120,8 +117,6 @@ MODULES_TO_SCAN: list[str] = [
     "nexus.bricks.llm.llm_service",
     "nexus.bricks.mcp.mcp_service",
     "nexus.bricks.rebac.rebac_service",
-    "nexus.bricks.skills.service",
-    "nexus.bricks.skills.package_service",
 ]
 
 # Types that signal "operation context" — parameters with these types are

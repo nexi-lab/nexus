@@ -165,7 +165,7 @@ class TestListRaceConditionE2E:
         assert "error" not in provision_result, f"Provision failed: {provision_result}"
 
         # Step 2: Immediately list agent directories (no delay)
-        agent_names = ["ImpersonatedUser", "UntrustedAgent", "SkillBuilder"]
+        agent_names = ["ImpersonatedUser", "UntrustedAgent"]
 
         for agent_name in agent_names:
             agent_dir = f"/zone/system/user/{test_user_id}/agent/{agent_name}"

@@ -11,7 +11,6 @@ Services:
 - MCPService: Model Context Protocol server management
 - LLMService: LLM-powered document reading with citations
 - OAuthService: OAuth credential management and provider integration
-- SkillService: Skill lifecycle management and governance
 - SchedulerService: Fair-share priority scheduler (Astraea) — System Service, not a Brick
 
 Subsystem ABC (Issue #1287):
@@ -36,8 +35,6 @@ from nexus.services.versioning.version_service import VersionService
 LLMService = _il.import_module("nexus.bricks.llm.llm_service").LLMService
 MCPService = _il.import_module("nexus.bricks.mcp.mcp_service").MCPService
 ReBACService = _il.import_module("nexus.bricks.rebac.rebac_service").ReBACService
-SkillService = _il.import_module("nexus.bricks.skills.skill_service_adapter").SkillService
-
 __all__ = [
     "SearchService",
     "ReBACService",
@@ -46,7 +43,6 @@ __all__ = [
     "MCPService",
     "LLMService",
     "OAuthService",
-    "SkillService",
     "SchedulerService",
     "Subsystem",
     "ContextIdentity",

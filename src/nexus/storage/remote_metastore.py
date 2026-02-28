@@ -84,6 +84,9 @@ class RemoteMetastore(MetastoreABC):
         if result is None:
             return None
         if isinstance(result, dict):
+            # Server wraps stat result in {"metadata": ...}
+            if "metadata" in result and isinstance(result["metadata"], dict):
+                result = result["metadata"]
             return _dict_to_file_metadata(result)
         return None
 

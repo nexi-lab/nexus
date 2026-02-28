@@ -3,7 +3,8 @@
 Test remote client mode: gRPC proxy from client SDK to a running server.
 
 Starts a minimal server with gRPC enabled, then connects a remote client
-and verifies write/read/list/stat/delete operations work through the proxy.
+and verifies write/read/list/stat/glob/grep/delete operations work through
+the proxy.
 
 Prerequisites:
     pip install -e .
@@ -108,7 +109,8 @@ def main() -> int:
     print("\nWRITE")
     files = {
         "/hello.txt": b"Hello from remote client!",
-        "/project/main.py": b'print("Hello, Nexus!")\n',
+        "/project/main.py": b'# TODO: implement argument parsing\nprint("Hello, Nexus!")\n',
+        "/project/utils.py": b'# TODO: add logging\ndef greet(name):\n    return f"Hello, {name}!"\n',
         "/project/config.json": b'{"version": "1.0"}\n',
     }
     for path, content in files.items():
@@ -137,7 +139,22 @@ def main() -> int:
     print("LIST")
     try:
         entries = nx.sys_readdir("/")
-        print(f"  OK   / => {sorted(entries)}")
+        names = sorted(entries) if isinstance(entries, list) else entries
+        print(f"  raw  / => {names}")
+        # Verify expected paths are present
+        expected_paths = {
+            "/hello.txt",
+            "/project/main.py",
+            "/project/utils.py",
+            "/project/config.json",
+        }
+        found = {str(e) for e in (names if isinstance(names, list) else [])}
+        missing = expected_paths - found
+        if missing:
+            print(f"  FAIL missing entries: {missing}")
+            ok = False
+        else:
+            print(f"  OK   all {len(expected_paths)} expected entries found")
     except Exception as e:
         print(f"  FAIL: {e}")
         ok = False
@@ -146,8 +163,64 @@ def main() -> int:
     print("STAT")
     try:
         info = nx.sys_stat("/hello.txt")
-        path_v = info.get("path", "?") if isinstance(info, dict) else getattr(info, "path", "?")
-        print(f"  OK   /hello.txt => path={path_v}")
+        print(f"  raw  /hello.txt => {info}")
+        # Verify size matches what we wrote (25 bytes)
+        size_v = info.get("size", None) if isinstance(info, dict) else getattr(info, "size", None)
+        if size_v is not None and int(size_v) == len(files["/hello.txt"]):
+            print(f"  OK   /hello.txt => size={size_v} (correct)")
+        elif size_v is not None:
+            print(f"  FAIL /hello.txt => size={size_v}, expected {len(files['/hello.txt'])}")
+            ok = False
+        else:
+            print("  WARN /hello.txt => size not in stat result")
+    except Exception as e:
+        print(f"  FAIL: {e}")
+        ok = False
+
+    # --- GLOB ---
+    print("GLOB")
+    try:
+        result = nx.glob("**/*.py")
+        print(f"  raw  **/*.py => {result}")
+        # Handle both list and dict return types
+        if isinstance(result, dict) and "matches" in result:
+            paths = sorted(result["matches"])
+        elif isinstance(result, list):
+            paths = sorted(result)
+        else:
+            paths = []
+        expected_py = {"/project/main.py", "/project/utils.py"}
+        found_py = set(paths)
+        if expected_py <= found_py:
+            print(f"  OK   found {len(paths)} .py file(s): {paths}")
+        else:
+            print(f"  FAIL expected {expected_py}, got {found_py}")
+            ok = False
+    except Exception as e:
+        print(f"  FAIL: {e}")
+        ok = False
+
+    # --- GREP ---
+    print("GREP")
+    try:
+        result = nx.grep("TODO")
+        print(f"  raw  'TODO' => {result}")
+        # Handle list, dict with 'matches', or dict with 'results'
+        if isinstance(result, dict) and "results" in result:
+            matches = result["results"]
+        elif isinstance(result, dict) and "matches" in result:
+            matches = result["matches"]
+        elif isinstance(result, list):
+            matches = result
+        else:
+            matches = result
+        # We expect at least 2 matches (main.py and utils.py both have TODO)
+        count = len(matches) if isinstance(matches, list) else "?"
+        if isinstance(matches, list) and len(matches) >= 2:
+            print(f"  OK   {count} match(es)")
+        else:
+            print(f"  FAIL expected >= 2 matches, got {count}")
+            ok = False
     except Exception as e:
         print(f"  FAIL: {e}")
         ok = False

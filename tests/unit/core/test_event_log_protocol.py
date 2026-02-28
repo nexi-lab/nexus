@@ -11,7 +11,7 @@ Issue #1397
 
 import pytest
 
-from nexus.services.event_subsystem.log import EventLogConfig, EventLogProtocol
+from nexus.system_services.event_subsystem.log import EventLogConfig, EventLogProtocol
 
 
 class TestEventLogProtocol:
@@ -19,7 +19,7 @@ class TestEventLogProtocol:
 
     def test_wal_event_log_satisfies_protocol(self) -> None:
         """WALEventLog must be a structural subtype of EventLogProtocol."""
-        from nexus.services.event_subsystem.log.wal import WALEventLog, is_available
+        from nexus.system_services.event_subsystem.log.wal import WALEventLog, is_available
 
         if not is_available():
             pytest.skip("_nexus_wal extension not available")

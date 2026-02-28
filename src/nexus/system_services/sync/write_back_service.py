@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext
-from nexus.services.event_subsystem.types import FileEvent, FileEventType
+from nexus.system_services.event_subsystem.types import FileEvent, FileEventType
 
 from .conflict_resolution import (
     ConflictAbortError,
@@ -37,8 +37,8 @@ from .conflict_resolution import (
 from .write_back_metrics import WriteBackMetrics
 
 if TYPE_CHECKING:
-    from nexus.services.event_subsystem.bus.base import EventBusBase
     from nexus.services.gateway import NexusFSGateway
+    from nexus.system_services.event_subsystem.bus.base import EventBusBase
 
     from .change_log_store import ChangeLogStore
     from .conflict_log_store import ConflictLogStore

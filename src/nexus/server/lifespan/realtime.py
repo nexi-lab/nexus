@@ -261,9 +261,9 @@ def _startup_exporter_registry(app: "FastAPI", _svc: "LifespanServices") -> None
     app.state.exporter_registry = None
 
     try:
-        from nexus.services.event_log.exporter_registry import ExporterRegistry
-        from nexus.services.event_log.exporters.config import EventStreamConfig
-        from nexus.services.event_log.exporters.factory import create_exporter
+        from nexus.system_services.event_subsystem.log.exporter_registry import ExporterRegistry
+        from nexus.system_services.event_subsystem.log.exporters.config import EventStreamConfig
+        from nexus.system_services.event_subsystem.log.exporters.factory import create_exporter
 
         # Read config from env vars
         enabled = os.getenv("NEXUS_EVENT_STREAM_ENABLED", "").lower() in ("true", "1", "yes")

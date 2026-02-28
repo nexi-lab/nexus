@@ -186,6 +186,11 @@ class DragonflyClient:
         return self._client
 
     @property
+    def url(self) -> str:
+        """Connection URL for creating fresh connections."""
+        return self._url
+
+    @property
     def _safe_url(self) -> str:
         """Get URL with password masked for logging."""
         if "@" in self._url:

@@ -117,7 +117,7 @@ class TestDIFlowsToConstructors:
 
     def test_tiger_cache_workers_from_profile(self) -> None:
         """TigerCache l2_max_workers matches profile cache tuning."""
-        from nexus.services.permissions.cache.tiger.bitmap_cache import TigerCache
+        from nexus.bricks.rebac.cache.tiger.bitmap_cache import TigerCache
 
         full_tuning = DeploymentProfile.FULL.tuning()
         cache = TigerCache(

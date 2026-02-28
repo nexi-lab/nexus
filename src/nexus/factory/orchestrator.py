@@ -306,7 +306,9 @@ def create_nexus_fs(
     router = PathRouter(metadata_store)
     router.add_mount("/", backend)
 
-    # KERNEL-ARCHITECTURE §2: No CacheStore → EventBus disabled.
+    # KERNEL-ARCHITECTURE §2: No CacheStore AND no Redis/Dragonfly → EventBus disabled.
+    # EventBus uses Redis/Dragonfly pub/sub independently of CacheStore, so only
+    # disable when neither a real CacheStore nor a Redis URL is available.
     _has_real_cache = cache_store is not None
     if _has_real_cache:
         from nexus.contracts.cache_store import NullCacheStore as _NullCacheStore
@@ -314,12 +316,16 @@ def create_nexus_fs(
         if isinstance(cache_store, _NullCacheStore):
             _has_real_cache = False
     if not _has_real_cache:
-        _base_dist = distributed or _DistributedConfig()
-        if _base_dist.enable_events:
-            from dataclasses import replace as _dc_replace
+        from nexus.lib.env import get_dragonfly_url, get_redis_url
 
-            distributed = _dc_replace(_base_dist, enable_events=False)
-            logger.debug("EventBus disabled: no CacheStore provided (KERNEL-ARCHITECTURE §2)")
+        _has_event_url = bool(get_redis_url() or get_dragonfly_url())
+        if not _has_event_url:
+            _base_dist = distributed or _DistributedConfig()
+            if _base_dist.enable_events:
+                from dataclasses import replace as _dc_replace
+
+                distributed = _dc_replace(_base_dist, enable_events=False)
+                logger.debug("EventBus disabled: no CacheStore or Redis/Dragonfly URL")
 
     # Create services if record_store is provided and no pre-built services.
     # KERNEL mode (Issue #2194): When record_store is None (e.g. profile=kernel),
@@ -434,7 +440,7 @@ def create_nexus_fs(
 
     # Create PermissionChecker (services layer) — Issue #899
     # Not stored on NexusFS; passed to hook registration below.
-    from nexus.services.permissions.checker import PermissionChecker as _PC
+    from nexus.bricks.rebac.checker import PermissionChecker as _PC
 
     _permission_checker = _PC(
         permission_enforcer=nx._permission_enforcer,
@@ -469,7 +475,7 @@ def _register_vfs_hooks(nx: "NexusFS", *, permission_checker: Any = None) -> Non
 
     # ── Permission pre-intercept hook (Issue #899) ────────────────
     if permission_checker is not None:
-        from nexus.services.permissions.permission_hook import PermissionCheckHook
+        from nexus.bricks.rebac.permission_hook import PermissionCheckHook
 
         _perm_hook = PermissionCheckHook(
             checker=permission_checker,
@@ -512,7 +518,7 @@ def _register_vfs_hooks(nx: "NexusFS", *, permission_checker: Any = None) -> Non
         and hasattr(nx, "apply_dynamic_viewer_filter")
     )
     if has_viewer:
-        from nexus.services.rebac.dynamic_viewer_hook import DynamicViewerReadHook
+        from nexus.bricks.rebac.dynamic_viewer_hook import DynamicViewerReadHook
 
         dispatch.register_intercept_read(
             DynamicViewerReadHook(
@@ -603,7 +609,7 @@ def _register_vfs_hooks(nx: "NexusFS", *, permission_checker: Any = None) -> Non
     # Late-binding (Issue #969): always register with bus_provider=nx so that
     # post-construction overrides of nx._event_bus (e.g. E2E test fixtures
     # injecting a shared Redis bus) are picked up automatically.
-    from nexus.services.event_subsystem.bus.observer import EventBusObserver
+    from nexus.system_services.event_subsystem.bus.observer import EventBusObserver
 
     dispatch.register_observe(EventBusObserver(bus_provider=nx))
 

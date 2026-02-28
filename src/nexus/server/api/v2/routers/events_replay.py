@@ -22,7 +22,7 @@ from fastapi.responses import StreamingResponse
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import NexusFileNotFoundError, NexusPermissionError
-from nexus.server.dependencies import get_auth_result, get_operation_context
+from nexus.server.dependencies import get_operation_context, require_auth
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +99,7 @@ async def replay_events(
     agent_id: str | None = Query(None, description="Filter by agent ID"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum results"),
     cursor: str | None = Query(None, description="Cursor from previous response"),
-    _auth_result: dict[str, Any] | None = Depends(get_auth_result),
+    auth_result: dict[str, Any] = Depends(require_auth),
 ) -> dict[str, Any]:
     """Query historical events with cursor-based pagination.
 
@@ -108,10 +108,14 @@ async def replay_events(
     """
     service = _get_replay_service(request)
 
-    # Default zone from auth
+    # Zone scoping: non-admin users are locked to their zone
+    is_admin = auth_result.get("is_admin", False)
+    auth_zone = auth_result.get("zone_id")
     effective_zone = zone_id
-    if effective_zone is None and _auth_result:
-        effective_zone = _auth_result.get("zone_id")
+    if not is_admin and auth_zone:
+        effective_zone = auth_zone  # force zone scope
+    elif effective_zone is None:
+        effective_zone = auth_zone
 
     # Parse event_types from comma-separated string
     parsed_types = None
@@ -155,7 +159,7 @@ async def stream_events(
     ),
     path_pattern: str | None = Query(None, description="Path glob pattern"),
     agent_id: str | None = Query(None, description="Filter by agent ID"),
-    _auth_result: dict[str, Any] | None = Depends(get_auth_result),
+    auth_result: dict[str, Any] = Depends(require_auth),
 ) -> StreamingResponse:
     """Server-Sent Events stream of real-time events.
 
@@ -169,10 +173,12 @@ async def stream_events(
     service = _get_replay_service(request)
     config = _get_stream_config(request)
 
-    # Default zone from auth
+    # Zone scoping: non-admin users are locked to their zone
+    is_admin = auth_result.get("is_admin", False)
+    auth_zone = auth_result.get("zone_id")
     effective_zone = zone_id
-    if effective_zone is None and _auth_result:
-        effective_zone = _auth_result.get("zone_id")
+    if (not is_admin and auth_zone) or effective_zone is None:
+        effective_zone = auth_zone
     zone_key = effective_zone or ROOT_ZONE_ID
 
     # Check Last-Event-ID header for resume
@@ -258,7 +264,7 @@ async def list_events(
     operation_type: str | None = Query(None, description="Filter by operation type"),
     limit: int = Query(50, ge=1, le=1000, description="Maximum results"),
     cursor: str | None = Query(None, description="Cursor from previous response"),
-    _auth_result: dict[str, Any] | None = Depends(get_auth_result),
+    auth_result: dict[str, Any] = Depends(require_auth),
 ) -> dict[str, Any]:
     """Query the operation log / event history (#2056, ported from v1).
 
@@ -270,10 +276,12 @@ async def list_events(
     """
     service = _get_replay_service(request)
 
-    # Default zone from auth
+    # Zone scoping: non-admin users are locked to their zone
+    is_admin = auth_result.get("is_admin", False)
+    auth_zone = auth_result.get("zone_id")
     effective_zone = zone_id
-    if effective_zone is None and _auth_result:
-        effective_zone = _auth_result.get("zone_id")
+    if (not is_admin and auth_zone) or effective_zone is None:
+        effective_zone = auth_zone
 
     try:
         result = service.list_v1(
@@ -331,7 +339,7 @@ async def watch_for_changes(
     request: Request,
     path: str = Query("/**/*", description="Path or glob pattern to watch"),
     timeout: float = Query(30.0, ge=0.1, le=300.0, description="Maximum time to wait in seconds"),
-    _auth_result: dict[str, Any] | None = Depends(get_auth_result),
+    auth_result: dict[str, Any] = Depends(require_auth),
 ) -> dict[str, Any]:
     """Long-polling endpoint to wait for file system changes.
 
@@ -339,9 +347,7 @@ async def watch_for_changes(
     or ``{"changes": [], "timeout": true}`` if no change occurs.
     """
     nexus_fs = _get_nexus_fs(request)
-    context = None
-    if _auth_result:
-        context = get_operation_context(_auth_result)
+    context = get_operation_context(auth_result)
 
     try:
         change = await nexus_fs.events_service.wait_for_changes(

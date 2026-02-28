@@ -199,40 +199,62 @@ async def stream_events(
         parsed_types = [t.strip() for t in event_types.split(",") if t.strip()]
 
     async def event_generator() -> AsyncIterator[str]:
-        """SSE event generator with keepalive pings."""
+        """SSE event generator with keepalive pings.
+
+        Uses an asyncio.Queue to decouple the event stream from keepalive
+        timing. A background task pumps events into the queue while the
+        main loop pulls with a timeout — on timeout, emit a keepalive ping.
+        """
         try:
             keepalive_interval = config["keepalive_s"]
             idle_timeout = config["idle_timeout"]
 
-            stream = service.stream(
-                zone_id=effective_zone,
-                since_revision=since_revision,
-                since_timestamp=since_timestamp,
-                event_types=parsed_types,
-                path_pattern=path_pattern,
-                agent_id=agent_id,
-                poll_interval=1.0,
-                idle_timeout=idle_timeout,
-            )
+            queue: asyncio.Queue[Any] = asyncio.Queue()
 
-            last_keepalive = asyncio.get_event_loop().time()
+            async def _pump_events() -> None:
+                """Background task: pump events from stream into queue."""
+                try:
+                    stream = service.stream(
+                        zone_id=effective_zone,
+                        since_revision=since_revision,
+                        since_timestamp=since_timestamp,
+                        event_types=parsed_types,
+                        path_pattern=path_pattern,
+                        agent_id=agent_id,
+                        poll_interval=1.0,
+                        idle_timeout=idle_timeout,
+                    )
+                    async for event in stream:
+                        await queue.put(event)
+                finally:
+                    await queue.put(None)  # sentinel
+
+            pump_task = asyncio.create_task(_pump_events())
 
             # Yield retry field for client auto-reconnect
             yield "retry: 5000\n\n"
 
-            async for event in stream:
-                if await request.is_disconnected():
-                    break
+            try:
+                while True:
+                    if await request.is_disconnected():
+                        break
 
-                event_data = json.dumps(event.to_dict())
-                seq = event.sequence_number or ""
-                yield f"id: {seq}\nevent: event\ndata: {event_data}\n\n"
-                last_keepalive = asyncio.get_event_loop().time()
+                    try:
+                        item = await asyncio.wait_for(queue.get(), timeout=keepalive_interval)
+                    except TimeoutError:
+                        yield ": keepalive\n\n"
+                        continue
 
-            # Check if we need a keepalive ping
-            now = asyncio.get_event_loop().time()
-            if now - last_keepalive >= keepalive_interval:
-                yield ": keepalive\n\n"
+                    if item is None:
+                        break  # stream ended
+
+                    event_data = json.dumps(item.to_dict())
+                    seq = item.sequence_number or ""
+                    yield f"id: {seq}\nevent: event\ndata: {event_data}\n\n"
+            finally:
+                pump_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await pump_task
 
         finally:
             await _release_sse_slot(zone_key)

@@ -15,6 +15,8 @@ from typing import Any
 from nexus.contracts.constants import DEFAULT_OAUTH_REDIRECT_URI
 from nexus.server._rpc_params_generated import (
     SysMkdirParams,
+    SysRenameParams,
+    SysRmdirParams,
     SysUnlinkParams,
     SysWriteParams,
 )
@@ -486,6 +488,8 @@ OVERRIDE_METHOD_PARAMS: dict[str, type] = {
     "write": SysWriteParams,
     "delete": SysUnlinkParams,
     "mkdir": SysMkdirParams,
+    "rmdir": SysRmdirParams,
+    "rename": SysRenameParams,
     "oauth_get_auth_url": OAuthGetAuthUrlParams,
     "oauth_exchange_code": OAuthExchangeCodeParams,
     # Admin

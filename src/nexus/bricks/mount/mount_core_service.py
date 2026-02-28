@@ -304,7 +304,7 @@ class MountCoreService:
         Returns:
             True if mount exists
         """
-        return self._gw.router.has_mount(mount_point)
+        return bool(self._gw.router.has_mount(mount_point))
 
     def list_connectors(self, category: str | None = None) -> list[dict[str, Any]]:
         """List available connector types.
@@ -440,7 +440,7 @@ class MountCoreService:
         Delegates to shared permission_utils.check_permission.
         Raises PermissionCheckError on infrastructure failures.
         """
-        return check_permission(self._gw, path, permission, context)
+        return bool(check_permission(self._gw, path, permission, context))
 
     def _check_mount_permission(
         self,

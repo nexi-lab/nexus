@@ -59,7 +59,9 @@ def glob(
     """
     try:
         nx = get_filesystem(backend_config)
-        matches = nx.glob(pattern, path)
+        result = nx.glob(pattern, path)
+        # Remote mode may return {"matches": [...]} instead of a plain list
+        matches = result["matches"] if isinstance(result, dict) and "matches" in result else result
 
         if not matches:
             console.print(f"[yellow]No files match pattern:[/yellow] {pattern}")
@@ -180,7 +182,7 @@ def grep(
         # Context lines (after_context, before_context, context) are accepted
         # by the CLI but not yet wired to core grep() — see arg suppression above
 
-        matches = nx.grep(
+        result = nx.grep(
             pattern,
             path=path,
             file_pattern=file_pattern,
@@ -189,6 +191,14 @@ def grep(
             search_mode=search_mode,
         )
         nx.close()
+
+        # Remote mode may return {"results": [...]} instead of a plain list
+        if isinstance(result, dict) and "results" in result:
+            matches = result["results"]
+        elif isinstance(result, dict) and "matches" in result:
+            matches = result["matches"]
+        else:
+            matches = result
 
         if not matches:
             console.print(f"[yellow]No matches found for:[/yellow] {pattern}")

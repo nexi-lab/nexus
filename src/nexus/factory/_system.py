@@ -212,7 +212,7 @@ def _boot_system_services(
     # --- Mount Manager ---
     mount_manager: Any = None
     try:
-        from nexus.services.mount.mount_manager import MountManager
+        from nexus.bricks.mount.mount_manager import MountManager
 
         mount_manager = MountManager(ctx.record_store)
         logger.debug("[BOOT:SYSTEM] MountManager created")

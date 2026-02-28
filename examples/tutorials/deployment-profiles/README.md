@@ -119,7 +119,51 @@ Run the full test across all profiles:
 python3 examples/tutorials/deployment-profiles/test_profiles_sdk.py
 ```
 
-## Tutorial 3: Federation Mode
+## Tutorial 3: CLI Operations via gRPC (Client-Server)
+
+The OS-style architecture: `nexus serve` runs as the kernel (persistent daemon),
+and CLI commands are thin gRPC clients that make syscalls to it.
+
+### Step 1: Start a server with gRPC enabled
+
+```bash
+NEXUS_GRPC_PORT=3051 nexus serve --profile minimal --port 3050 \
+  --data-dir /tmp/nexus-tutorial/server
+```
+
+### Step 2: Run CLI commands as a remote client
+
+```bash
+export NEXUS_URL=http://localhost:3050
+export NEXUS_GRPC_PORT=3051
+
+# Write
+nexus write /project/src/main.py '# TODO: implement
+print("Hello, Nexus!")'
+
+# Read
+nexus cat /project/src/main.py
+
+# Stat
+nexus info /project/src/main.py
+
+# List
+nexus ls /project/src
+
+# Glob
+nexus glob "**/*.py"
+
+# Grep
+nexus grep "TODO"
+```
+
+Run the automated test across all profiles:
+
+```bash
+python3 examples/tutorials/deployment-profiles/test_profiles_cli.py
+```
+
+## Tutorial 4: Federation Mode
 
 Federation mode uses Raft consensus for multi-zone metadata replication.
 It works with any profile:
@@ -136,7 +180,7 @@ Run the automated test:
 python3 examples/tutorials/deployment-profiles/test_profiles_federation.py
 ```
 
-## Tutorial 4: Remote Client Mode
+## Tutorial 5: Remote Client Mode (Python SDK)
 
 Remote mode creates a thin gRPC proxy to a running server.
 
@@ -165,17 +209,7 @@ content = nx.sys_read("/hello.txt")
 print(content)  # b'Written via gRPC!'
 ```
 
-### Step 3: Or use the CLI
-
-```bash
-export NEXUS_URL=http://localhost:3050
-export NEXUS_GRPC_PORT=3051
-
-nexus write /hello.txt "Written via CLI remote!"
-nexus cat /hello.txt
-nexus ls /
-nexus rm -f /hello.txt
-```
+### Step 3: Or use the CLI (see Tutorial 3)
 
 Run the automated test:
 

@@ -9,7 +9,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.services.mount.mount_core_service import MountCoreService
+    from nexus.bricks.mount.mount_core_service import MountCoreService
 
 logger = logging.getLogger(__name__)
 

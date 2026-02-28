@@ -8,8 +8,7 @@ Dependency-injected checker encapsulating the full pipeline:
   5. Owner fast-path (Issue #920)
   6. ReBAC graph traversal via PermissionEnforcer
 
-Lives in services/permissions/ because it depends on rebac (a brick)
-at runtime. Wired into NexusFS via factory/orchestrator.py DI.
+Wired into NexusFS via factory/orchestrator.py DI.
 """
 
 import logging
@@ -19,7 +18,6 @@ from nexus.contracts.types import OperationContext, Permission
 
 if TYPE_CHECKING:
     from nexus.contracts.metadata import FileMetadata
-    from nexus.core.metastore import MetastoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -43,13 +41,13 @@ class PermissionChecker:
 
         Args:
             permission_enforcer: PermissionEnforcer instance (ReBAC graph).
-            metadata_store: MetastoreABC used for the owner fast-path lookup.
+            metadata_store: Metastore used for the owner fast-path lookup.
             default_context: Default OperationContext when callers pass ``None``.
             enforce_permissions: Global toggle; when ``False`` all checks are
                 skipped immediately.
         """
         self._permission_enforcer = permission_enforcer
-        self._metadata_store: MetastoreABC = metadata_store
+        self._metadata_store: Any = metadata_store
         self._default_context = default_context
         self._enforce_permissions = enforce_permissions
 
@@ -144,7 +142,7 @@ class PermissionChecker:
         from nexus.lib.virtual_views import parse_virtual_path
 
         def metadata_exists(check_path: str) -> bool:
-            return self._metadata_store.exists(check_path)
+            return bool(self._metadata_store.exists(check_path))
 
         original_path, view_type = parse_virtual_path(path, metadata_exists)
         if view_type == "md":

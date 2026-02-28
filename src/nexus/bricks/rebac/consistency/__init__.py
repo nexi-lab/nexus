@@ -1,6 +1,6 @@
 """Consistency — Zanzibar-style zone isolation and revision tracking (Issue #2179).
 
-Canonical implementation (moved from services/permissions/consistency/).
+Zanzibar-style zone isolation and revision tracking.
 """
 
 from nexus.bricks.rebac.consistency.revision import (

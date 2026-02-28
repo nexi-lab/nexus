@@ -65,7 +65,7 @@ class TestPermissionFilterLogging:
 
     def test_no_silent_swallowers_in_filter_chain(self) -> None:
         """permission_filter_chain.py should not have except Exception: pass."""
-        from nexus.services.permissions import permission_filter_chain
+        from nexus.bricks.rebac import permission_filter_chain
 
         found, line = _has_silent_swallower(inspect.getsource(permission_filter_chain))
         assert not found, f"Silent swallower found at line {line}"

@@ -26,7 +26,6 @@ from nexus.contracts.deployment_profile import (
     BRICK_PERMISSIONS,
     BRICK_SANDBOX,
     BRICK_SEARCH,
-    BRICK_SKILLS,
     BRICK_STORAGE,
     BRICK_WORKFLOWS,
     DeploymentProfile,
@@ -82,7 +81,6 @@ class TestDefaultBrickSets:
         assert BRICK_SEARCH not in bricks
         assert BRICK_PAY not in bricks
         assert BRICK_LLM not in bricks
-        assert BRICK_SKILLS not in bricks
         assert BRICK_SANDBOX not in bricks
 
     def test_full_includes_all_except_federation(self) -> None:
@@ -90,7 +88,6 @@ class TestDefaultBrickSets:
         assert BRICK_SEARCH in bricks
         assert BRICK_PAY in bricks
         assert BRICK_LLM in bricks
-        assert BRICK_SKILLS in bricks
         assert BRICK_SANDBOX in bricks
         assert BRICK_WORKFLOWS in bricks
         assert BRICK_A2A in bricks

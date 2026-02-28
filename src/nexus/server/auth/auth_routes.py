@@ -490,7 +490,7 @@ async def setup_zone(
             # Make user detached so we can access it after session closes
             session.expunge(user)
 
-        # Provision full user resources (workspace, agents, skills, permissions)
+        # Provision full user resources (workspace, agents, permissions)
         # This is done outside the session to avoid conflicts
         api_key_value = None
         key_id = None
@@ -522,7 +522,7 @@ async def setup_zone(
                 api_key_name="Password Auth Auto-generated Key",
                 api_key_expires_at=datetime.now(UTC) + timedelta(days=90),
                 create_agents=True,
-                import_skills=True,
+                import_skills=False,
                 context=admin_context,
             )
             logger.info(f"Provisioned password user resources: {provision_result}")
@@ -1364,7 +1364,7 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
             # Make user detached so we can access it after session closes
             session.expunge(user)
 
-        # Provision full user resources (workspace, agents, skills, permissions)
+        # Provision full user resources (workspace, agents, permissions)
         # IMPORTANT: This only runs for NEW users - existing users return early above (line 763)
         # This is done outside the session to avoid conflicts
         api_key_value = None
@@ -1392,7 +1392,7 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
                     api_key_name="OAuth Auto-generated Key",
                     api_key_expires_at=datetime.now(UTC) + timedelta(days=90),
                     create_agents=True,
-                    import_skills=True,
+                    import_skills=False,
                     context=admin_context,
                 )
                 logger.info(f"Provisioned OAuth user resources: {provision_result}")

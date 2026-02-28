@@ -236,8 +236,6 @@ class NexusFS(  # type: ignore[misc]
         self.llm_service: Any = None
         self._llm_subsystem: Any = None
         self.oauth_service: Any = None
-        self.skill_service: Any = None
-        self.skill_package_service: Any = None
         self.search_service: Any = None
         self.share_link_service: Any = None
         self.events_service: Any = None
@@ -272,8 +270,6 @@ class NexusFS(  # type: ignore[misc]
             self.llm_service = wired.get("llm_service")
             self._llm_subsystem = wired.get("llm_subsystem")
             self.oauth_service = wired.get("oauth_service")
-            self.skill_service = wired.get("skill_service")
-            self.skill_package_service = wired.get("skill_package_service")
             self.search_service = wired.get("search_service")
             self.share_link_service = wired.get("share_link_service")
             self.events_service = wired.get("events_service")
@@ -297,8 +293,6 @@ class NexusFS(  # type: ignore[misc]
         self.llm_service = wired.llm_service
         self._llm_subsystem = wired.llm_subsystem
         self.oauth_service = wired.oauth_service
-        self.skill_service = wired.skill_service
-        self.skill_package_service = wired.skill_package_service
         self.search_service = wired.search_service
         self.share_link_service = wired.share_link_service
         self.events_service = wired.events_service
@@ -4765,13 +4759,6 @@ class NexusFS(  # type: ignore[misc]
         "get_namespace": ("rebac_service", "get_namespace_sync"),
         # ReBACService direct methods (no _sync suffix)
         "rebac_expand_with_privacy": ("rebac_service", "rebac_expand_with_privacy_sync"),
-        # SkillService (Issue #2035): NexusFS facade → skill_service RPC methods
-        "skills_share": ("skill_service", "rpc_share"),
-        "skills_discover": ("skill_service", "rpc_discover"),
-        "skills_get_prompt_context": ("skill_service", "rpc_get_prompt_context"),
-        # SkillPackageService (Issue #2035): NexusFS facade → skill_package_service
-        "skills_import": ("skill_package_service", "import_skill"),
-        "skills_validate_zip": ("skill_package_service", "validate_zip"),
     }
 
     def __getattr__(self, name: str) -> Any:

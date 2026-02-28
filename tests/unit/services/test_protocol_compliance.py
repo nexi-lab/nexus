@@ -216,7 +216,7 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
     (
         "AgentRegistryProtocol",
         "nexus.services.protocols.agent_registry",
-        "nexus.services.agents.async_agent_registry.AsyncAgentRegistry",
+        "nexus.system_services.agents.async_agent_registry.AsyncAgentRegistry",
         True,
     ),
     (

@@ -21,7 +21,7 @@ from nexus.server.api.v2.routers.delegation import (
     DelegateResponse,
     _handle_delegation_error,
 )
-from nexus.services.agents.agent_registry import AgentRegistry
+from nexus.system_services.agents.agent_registry import AgentRegistry
 from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
 # ---------------------------------------------------------------------------

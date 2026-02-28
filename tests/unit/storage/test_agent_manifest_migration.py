@@ -10,8 +10,8 @@ Covers:
 import pytest
 from sqlalchemy import select
 
-from nexus.services.agents.agent_registry import AgentRegistry, _safe_json_loads
 from nexus.storage.models.agents import AgentRecordModel
+from nexus.system_services.agents.agent_registry import AgentRegistry, _safe_json_loads
 from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
 

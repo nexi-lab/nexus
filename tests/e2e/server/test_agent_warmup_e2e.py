@@ -69,9 +69,9 @@ def test_app_with_warmup(tmp_path):
     app, api_key = _create_test_app(tmp_path, enforce_permissions=True)
 
     # Wire AgentWarmupService onto app.state for the warmup endpoint
-    from nexus.services.agents.agent_registry import AgentRegistry
-    from nexus.services.agents.agent_warmup import AgentWarmupService
-    from nexus.services.agents.warmup_steps import register_standard_steps
+    from nexus.system_services.agents.agent_registry import AgentRegistry
+    from nexus.system_services.agents.agent_warmup import AgentWarmupService
+    from nexus.system_services.agents.warmup_steps import register_standard_steps
 
     # Create a fresh AgentRegistry for this test
     from tests.helpers.in_memory_record_store import InMemoryRecordStore

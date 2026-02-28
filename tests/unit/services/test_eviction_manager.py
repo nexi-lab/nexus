@@ -21,9 +21,9 @@ import pytest
 from nexus.contracts.agent_types import AgentRecord, AgentState, EvictionReason
 from nexus.contracts.qos import AgentQoS, QoSClass
 from nexus.lib.performance_tuning import EvictionTuning
-from nexus.services.agents.eviction_manager import EvictionManager
-from nexus.services.agents.eviction_policy import LRUEvictionPolicy, QoSEvictionPolicy
-from nexus.services.agents.resource_monitor import PressureLevel
+from nexus.system_services.agents.eviction_manager import EvictionManager
+from nexus.system_services.agents.eviction_policy import LRUEvictionPolicy, QoSEvictionPolicy
+from nexus.system_services.agents.resource_monitor import PressureLevel
 
 
 def _make_agent(
@@ -165,7 +165,7 @@ class TestEvictionManager:
     @pytest.mark.asyncio
     async def test_stale_generation_skipped(self, manager, mock_registry, mock_monitor):
         """StaleAgentError is caught and agent is skipped."""
-        from nexus.services.agents.agent_registry import StaleAgentError
+        from nexus.system_services.agents.agent_registry import StaleAgentError
 
         mock_monitor.check_pressure.return_value = PressureLevel.CRITICAL
         agents = [_make_agent("agent-1"), _make_agent("agent-2")]
@@ -187,7 +187,7 @@ class TestEvictionManager:
         self, manager, mock_registry, mock_monitor
     ):
         """InvalidTransitionError caught when agent reconnected."""
-        from nexus.services.agents.agent_registry import InvalidTransitionError
+        from nexus.system_services.agents.agent_registry import InvalidTransitionError
 
         mock_monitor.check_pressure.return_value = PressureLevel.CRITICAL
         agents = [_make_agent("agent-1")]

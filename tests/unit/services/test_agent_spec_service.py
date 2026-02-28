@@ -21,7 +21,7 @@ from nexus.contracts.agent_types import (
     AgentStatus,
     QoSClass,
 )
-from nexus.services.agents.async_agent_registry import AsyncAgentRegistry
+from nexus.system_services.agents.async_agent_registry import AsyncAgentRegistry
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -180,7 +180,7 @@ class TestQoSEvictionOrdering:
 
 class TestSpecSerialization:
     def test_spec_to_dict(self) -> None:
-        from nexus.services.agents.agent_registry import AgentRegistry
+        from nexus.system_services.agents.agent_registry import AgentRegistry
 
         spec = _make_spec(
             capabilities=frozenset({"b", "a"}),
@@ -195,7 +195,7 @@ class TestSpecSerialization:
     def test_parse_spec_json_valid(self) -> None:
         import json
 
-        from nexus.services.agents.agent_registry import AgentRegistry
+        from nexus.system_services.agents.agent_registry import AgentRegistry
 
         spec = _make_spec()
         raw = json.dumps(AgentRegistry._spec_to_dict(spec))
@@ -204,11 +204,11 @@ class TestSpecSerialization:
         assert result.agent_type == "analyst"
 
     def test_parse_spec_json_none(self) -> None:
-        from nexus.services.agents.agent_registry import AgentRegistry
+        from nexus.system_services.agents.agent_registry import AgentRegistry
 
         assert AgentRegistry._parse_spec_json(None, "test") is None
 
     def test_parse_spec_json_corrupt(self) -> None:
-        from nexus.services.agents.agent_registry import AgentRegistry
+        from nexus.system_services.agents.agent_registry import AgentRegistry
 
         assert AgentRegistry._parse_spec_json("not json", "test") is None

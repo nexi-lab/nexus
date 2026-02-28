@@ -23,9 +23,9 @@ from typing import TYPE_CHECKING, Any
 from fastapi import WebSocket, WebSocketDisconnect
 
 if TYPE_CHECKING:
-    from nexus.services.event_subsystem.bus.protocol import EventBusProtocol
-    from nexus.services.event_subsystem.subscriptions import ReactiveSubscriptionManager
-    from nexus.services.event_subsystem.types import FileEvent
+    from nexus.system_services.event_subsystem.bus.protocol import EventBusProtocol
+    from nexus.system_services.event_subsystem.subscriptions import ReactiveSubscriptionManager
+    from nexus.system_services.event_subsystem.types import FileEvent
 
 logger = logging.getLogger(__name__)
 

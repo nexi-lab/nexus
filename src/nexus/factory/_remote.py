@@ -53,7 +53,6 @@ _WIRED_FIELDS: list[str] = [
     "user_provisioning_service",
     "sandbox_rpc_service",
     "metadata_export_service",
-    "ace_rpc_service",
     "descendant_checker",
     "memory_provider",
 ]

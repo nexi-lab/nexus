@@ -178,11 +178,6 @@ class TestCrossModuleWiring:
         mod = importlib.import_module("nexus.bricks.llm.llm_context_builder")
         assert hasattr(mod, "ContextBuilder")
 
-    def test_ace_imports_protocol(self) -> None:
-        """ACE services can import LLMProviderProtocol."""
-        mod = importlib.import_module("nexus.services.ace.reflection")
-        assert mod is not None
-
     def test_document_reader_uses_chunk_like(self) -> None:
         """LLMDocumentReader resolves imports from services."""
         mod = importlib.import_module("nexus.bricks.llm.llm_document_reader")

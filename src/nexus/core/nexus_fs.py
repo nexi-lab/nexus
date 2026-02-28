@@ -283,7 +283,6 @@ class NexusFS(  # type: ignore[misc]
             self._user_provisioning_service = wired.get("user_provisioning_service")
             self._sandbox_rpc_service = wired.get("sandbox_rpc_service")
             self._metadata_export_service = wired.get("metadata_export_service")
-            self._ace_rpc_service = wired.get("ace_rpc_service")
             self._descendant_checker = wired.get("descendant_checker")
             self._memory_provider = wired.get("memory_provider")
             return
@@ -309,7 +308,6 @@ class NexusFS(  # type: ignore[misc]
         self._user_provisioning_service = wired.user_provisioning_service
         self._sandbox_rpc_service = wired.sandbox_rpc_service
         self._metadata_export_service = wired.metadata_export_service
-        self._ace_rpc_service = wired.ace_rpc_service
         self._descendant_checker = wired.descendant_checker
         self._memory_provider = wired.memory_provider
 

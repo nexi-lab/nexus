@@ -1,7 +1,7 @@
 """User Provisioning Service — replaces NexusFS provision/deprovision facades.
 
 Handles user lifecycle: provision_user creates all resources (user record,
-zone, directories, workspace, agents, skills, API key, ReBAC permissions).
+zone, directories, workspace, agents, API key, ReBAC permissions).
 deprovision_user tears everything down.
 
 Issue #2033 — Phase 2.2 of LEGO microkernel decomposition.
@@ -23,7 +23,7 @@ class UserProvisioningService:
     """RPC surface for user provisioning and deprovisioning.
 
     Replaces ~950 LOC of facades in NexusFS (provision_user, deprovision_user,
-    _delete_directory_recursive, _create_user_directories, _import_user_skills).
+    _delete_directory_recursive, _create_user_directories).
     """
 
     def __init__(
@@ -41,7 +41,6 @@ class UserProvisioningService:
         rebac_delete_fn: Any | None = None,
         register_workspace_fn: Any | None = None,
         register_agent_fn: Any | None = None,
-        skills_import_fn: Any | None = None,
         # Cache references for invalidation during directory deletion
         list_cache: Any | None = None,
         exists_cache: Any | None = None,
@@ -57,7 +56,6 @@ class UserProvisioningService:
         self._rebac_delete_fn = rebac_delete_fn
         self._register_workspace_fn = register_workspace_fn
         self._register_agent_fn = register_agent_fn
-        self._skills_import_fn = skills_import_fn
         self._list_cache = list_cache
         self._exists_cache = exists_cache
 
@@ -81,7 +79,7 @@ class UserProvisioningService:
         api_key_name: str | None = None,
         api_key_expires_at: "datetime | None" = None,
         create_agents: bool = True,
-        import_skills: bool = True,
+        import_skills: bool = False,  # noqa: ARG002
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Provision a new user with all default resources (Issue #820)."""
@@ -112,7 +110,6 @@ class UserProvisioningService:
             "directories": [],
             "workspace": None,
             "agents": [],
-            "skills": [],
         }
 
         self._ensure_entity_registry()
@@ -284,18 +281,7 @@ class UserProvisioningService:
             except Exception as e:
                 logger.error("Failed to create agents: %s", e)
 
-        # 9. Import skills (async background thread)
-        skill_paths: list[str] = []
-        if import_skills:
-            self._start_skill_import_thread(
-                zone_id,
-                user_id,
-                admin_context,
-                create_agents,
-                created_resources,
-            )
-
-        # 10. Grant ReBAC permissions (zone owner)
+        # 9. Grant ReBAC permissions (zone owner)
         if self._rebac_create_fn:
             try:
                 self._rebac_create_fn(
@@ -320,7 +306,6 @@ class UserProvisioningService:
             "key_id": key_id,
             "workspace_path": workspace_path,
             "agent_paths": agent_paths,
-            "skill_paths": skill_paths,
             "created_resources": created_resources,
         }
 
@@ -397,7 +382,6 @@ class UserProvisioningService:
                 for resource_type in [
                     "workspace",
                     "memory",
-                    "skill",
                     "agent",
                     "connector",
                     "resource",
@@ -519,52 +503,6 @@ class UserProvisioningService:
     # ------------------------------------------------------------------
     # Private Helpers
     # ------------------------------------------------------------------
-
-    def _start_skill_import_thread(
-        self,
-        zone_id: str,
-        user_id: str,
-        admin_context: OperationContext,
-        create_agents: bool,
-        created_resources: dict[str, Any],
-    ) -> None:
-        """Launch background thread for skill import."""
-        import threading
-
-        def _import_skills_async() -> None:
-            try:
-                logger.info("[ASYNC] Starting background skill import for user %s", user_id)
-                imported_paths = self._import_user_skills(zone_id, user_id, admin_context)
-                logger.info(
-                    "[ASYNC] Background skill import completed for %s: %d skills imported",
-                    user_id,
-                    len(imported_paths),
-                )
-                if create_agents:
-                    try:
-                        from nexus.system_services.agents.agent_provisioning import (
-                            grant_skill_builder_permissions,
-                        )
-
-                        granted = grant_skill_builder_permissions(self._vfs, user_id, zone_id)
-                        logger.info(
-                            "[ASYNC] Granted %d permissions to SkillBuilder for user %s",
-                            granted,
-                            user_id,
-                        )
-                    except Exception as e:
-                        logger.error("[ASYNC] Failed to grant SkillBuilder permissions: %s", e)
-            except Exception as e:
-                logger.error("[ASYNC] Failed to import skills in background: %s", e)
-
-        thread = threading.Thread(
-            target=_import_skills_async,
-            name=f"skill-import-{user_id[:8]}",
-            daemon=True,
-        )
-        thread.start()
-        logger.info("Skill import started in background for user %s", user_id)
-        created_resources["skills"] = "importing"
 
     def _delete_directory_recursive(
         self,
@@ -733,7 +671,7 @@ class UserProvisioningService:
         context: OperationContext,
     ) -> list[str]:
         """Create all user directories with proper permissions."""
-        all_types = ["workspace", "memory", "skill", "agent", "connector", "resource"]
+        all_types = ["workspace", "memory", "agent", "connector", "resource"]
         created_paths: list[str] = []
 
         for resource_type in all_types:
@@ -757,61 +695,3 @@ class UserProvisioningService:
                 logger.warning("Failed to create directory %s: %s", folder_path, e)
 
         return created_paths
-
-    def _import_user_skills(
-        self,
-        _zone_id: str,
-        _user_id: str,
-        context: OperationContext,
-    ) -> list[str]:
-        """Import all default skills from data/skills/ directory."""
-        import base64
-        import os
-        from pathlib import Path
-
-        possible_dirs: list[Path] = []
-
-        if os.environ.get("NEXUS_DATA_DIR"):
-            possible_dirs.append(Path(os.environ["NEXUS_DATA_DIR"]) / "skills")
-
-        if (
-            self._backend
-            and getattr(self._backend, "has_data_dir", False)
-            and self._backend.data_dir
-        ):
-            possible_dirs.append(Path(self._backend.data_dir) / "skills")
-
-        possible_dirs.append(Path(__file__).parent.parent.parent / "data" / "skills")
-
-        skills_dir = None
-        for dir_path in possible_dirs:
-            if dir_path.exists() and dir_path.is_dir():
-                skills_dir = dir_path
-                break
-
-        if not skills_dir:
-            logger.warning(
-                "Skills directory not found in any of: %s", [str(d) for d in possible_dirs]
-            )
-            return []
-
-        skill_paths: list[str] = []
-        for skill_file in skills_dir.glob("*.skill"):
-            try:
-                with open(skill_file, "rb") as f:
-                    zip_bytes = f.read()
-                zip_base64 = base64.b64encode(zip_bytes).decode("utf-8")
-
-                if self._skills_import_fn:
-                    result = self._skills_import_fn(
-                        zip_data=zip_base64,
-                        tier="personal",
-                        allow_overwrite=False,
-                        context=context,
-                    )
-                    skill_paths.extend(result.get("skill_paths", []))
-                    logger.debug("Imported skill: %s", skill_file.name)
-            except Exception as e:
-                logger.warning("Failed to import skill %s: %s", skill_file.name, e)
-
-        return skill_paths

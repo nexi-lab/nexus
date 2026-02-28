@@ -35,7 +35,7 @@ class NexusFSUserProvisioner:
         zone_id: str | None = None,
         create_api_key: bool = True,
         create_agents: bool = True,
-        import_skills: bool = True,
+        import_skills: bool = False,
     ) -> dict[str, Any]:
         """Provision resources for a new user via NexusFS."""
         from nexus.contracts.types import OperationContext

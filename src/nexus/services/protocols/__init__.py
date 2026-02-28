@@ -69,9 +69,6 @@ from nexus.services.protocols.sandbox import SandboxProtocol
 from nexus.services.protocols.scheduler import AgentRequest, SchedulerProtocol
 from nexus.services.protocols.search import SearchBrickProtocol, SearchProtocol
 from nexus.services.protocols.share_link import ShareLinkProtocol
-from nexus.services.protocols.skill_deps import SkillFilesystemProtocol, SkillPermissionProtocol
-from nexus.services.protocols.skill_doc import SkillDocGenerator, generate_skill_md
-from nexus.services.protocols.skills import SkillsProtocol
 from nexus.services.protocols.sync import SyncContext, SyncResult, SyncServiceProtocol
 from nexus.services.protocols.sync_job import SyncJobProtocol
 from nexus.services.protocols.task_queue import TaskQueueProtocol
@@ -128,12 +125,7 @@ __all__ = [
     "SearchProtocol",
     "ShareLinkProtocol",
     "NexusFilesystem",
-    "SkillDocGenerator",
-    "SkillFilesystemProtocol",
-    "SkillPermissionProtocol",
-    "SkillsProtocol",
     "SyncContext",
-    "generate_skill_md",
     "rpc_expose",
     "SyncJobProtocol",
     "SyncResult",

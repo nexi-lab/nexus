@@ -309,7 +309,9 @@ def create_nexus_fs(
     router = PathRouter(metadata_store)
     router.add_mount("/", backend)
 
-    # KERNEL-ARCHITECTURE §2: No CacheStore → EventBus disabled.
+    # KERNEL-ARCHITECTURE §2: No CacheStore AND no Redis/Dragonfly → EventBus disabled.
+    # EventBus uses Redis/Dragonfly pub/sub independently of CacheStore, so only
+    # disable when neither a real CacheStore nor a Redis URL is available.
     _has_real_cache = cache_store is not None
     if _has_real_cache:
         from nexus.contracts.cache_store import NullCacheStore as _NullCacheStore
@@ -317,12 +319,16 @@ def create_nexus_fs(
         if isinstance(cache_store, _NullCacheStore):
             _has_real_cache = False
     if not _has_real_cache:
-        _base_dist = distributed or _DistributedConfig()
-        if _base_dist.enable_events:
-            from dataclasses import replace as _dc_replace
+        from nexus.lib.env import get_dragonfly_url, get_redis_url
 
-            distributed = _dc_replace(_base_dist, enable_events=False)
-            logger.debug("EventBus disabled: no CacheStore provided (KERNEL-ARCHITECTURE §2)")
+        _has_event_url = bool(get_redis_url() or get_dragonfly_url())
+        if not _has_event_url:
+            _base_dist = distributed or _DistributedConfig()
+            if _base_dist.enable_events:
+                from dataclasses import replace as _dc_replace
+
+                distributed = _dc_replace(_base_dist, enable_events=False)
+                logger.debug("EventBus disabled: no CacheStore or Redis/Dragonfly URL")
 
     # Create services if record_store is provided and no pre-built services.
     # KERNEL mode (Issue #2194): When record_store is None (e.g. profile=kernel),

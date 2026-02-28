@@ -155,9 +155,24 @@ class KernelDispatch:
         return False, None
 
     def resolve_delete(self, path: str, *, context: Any = None) -> tuple[bool, Any]:
-        """PRE-DISPATCH: first-match resolver for delete."""
+        """PRE-DISPATCH: first-match resolver for delete.
+
+        Returns (handled, result):
+            handled=True,  result={}       — resolver handled the delete.
+            handled=False, result=metadata — resolver passed a prefetched hint.
+            handled=False, result=None     — no resolver matched.
+
+        Resolvers implementing ``try_delete()`` merge match+delete into one
+        call (symmetric with ``try_read``).  Legacy resolvers using
+        ``matches()``+``delete()`` are still supported.
+        """
         for r in self._resolvers:
-            if r.matches(path):
+            try_delete = getattr(r, "try_delete", None)
+            if try_delete is not None:
+                handled, result = try_delete(path, context=context)
+                if handled or result is not None:
+                    return handled, result
+            elif r.matches(path):
                 r.delete(path, context=context)
                 return True, {}
         return False, None

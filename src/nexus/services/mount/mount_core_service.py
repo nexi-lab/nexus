@@ -135,8 +135,8 @@ class MountCoreService:
             io_profile=io_profile,
         )
 
-        # Setup mount point (directory, permissions, skill)
-        self._setup_mount_point(mount_point, backend_type, context)
+        # Setup mount point (directory, permissions)
+        self._setup_mount_point(mount_point, context)
 
         return mount_point
 
@@ -369,14 +369,12 @@ class MountCoreService:
     def _setup_mount_point(
         self,
         mount_point: str,
-        backend_type: str,
         context: "OperationContext | None",
     ) -> None:
-        """Setup mount point with directory, permissions, and skill.
+        """Setup mount point with directory and permissions.
 
         Args:
             mount_point: Virtual path
-            backend_type: Backend type identifier
             context: Operation context
         """
         logger.info(f"Setting up mount point: {mount_point}")
@@ -390,10 +388,6 @@ class MountCoreService:
 
         # Grant owner permission
         self._grant_owner_permission(mount_point, context)
-
-        # Generate SKILL.md for connector backends
-        if backend_type.endswith("_connector") or backend_type in ("google_drive", "gdrive"):
-            self._generate_skill(mount_point, backend_type, context)
 
     def _grant_owner_permission(
         self,
@@ -431,62 +425,6 @@ class MountCoreService:
             )
         except Exception as e:
             logger.warning(f"Failed to grant permission for {mount_point}: {e}")
-
-    def _generate_skill(
-        self,
-        mount_point: str,
-        backend_type: str,
-        context: "OperationContext | None",
-    ) -> bool:
-        """Generate SKILL.md for connector mount.
-
-        Args:
-            mount_point: Virtual path
-            backend_type: Backend type identifier
-            context: Operation context
-
-        Returns:
-            True if skill was generated
-        """
-        try:
-            from nexus.backends.service_map import ServiceMap
-            from nexus.services.protocols.skill_doc import generate_skill_md
-
-            # Get service name from backend type
-            service_name = ServiceMap.get_service_name(connector=backend_type)
-            if not service_name:
-                service_name = backend_type.replace("_connector", "").replace("_", "-")
-
-            # Determine skill path
-            if context and hasattr(context, "user_id") and context.user_id:
-                skill_base_path = f"/skills/users/{context.user_id}/"
-            elif context and hasattr(context, "zone_id") and context.zone_id:
-                skill_base_path = f"/skills/zones/{context.zone_id}/"
-            else:
-                skill_base_path = "/skills/system/"
-
-            skill_path = f"{skill_base_path}{service_name}/"
-            skill_md_path = f"{skill_path}SKILL.md"
-
-            # Generate skill content
-            skill_md = generate_skill_md(
-                service_name=service_name,
-                mount_path=mount_point,
-            )
-
-            # Create directory and write skill
-            try:
-                self._gw.sys_mkdir(skill_path, parents=True, exist_ok=True, context=context)
-            except Exception as e:
-                logger.warning(f"Failed to create skill directory: {e}")
-
-            self._gw.sys_write(skill_md_path, skill_md, context=context)
-            logger.info(f"Generated connector skill: {skill_md_path}")
-            return True
-
-        except Exception as e:
-            logger.warning(f"Failed to generate skill for {backend_type}: {e}")
-            return False
 
     def _check_permission(
         self,

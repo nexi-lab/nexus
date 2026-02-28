@@ -77,18 +77,6 @@ __all__ = [
     "InvalidPathError",
     "MetadataError",
     "ValidationError",
-    # Skills System
-    "SkillRegistry",
-    "SkillExporter",
-    "SkillManager",
-    "SkillParser",
-    "Skill",
-    "SkillMetadata",
-    "SkillNotFoundError",
-    "SkillDependencyError",
-    "SkillManagerError",
-    "SkillParseError",
-    "SkillExportError",
     # Permissions
     "OperationContext",
     "PermissionEnforcer",
@@ -116,15 +104,6 @@ from nexus.bricks.rebac.manager import (
     ConsistencyLevel,
     GraphLimitExceeded,
     ReBACManager,
-)
-from nexus.bricks.skills.exporter import SkillExporter, SkillExportError
-from nexus.bricks.skills.manager import SkillManager, SkillManagerError
-from nexus.bricks.skills.models import Skill, SkillMetadata
-from nexus.bricks.skills.parser import SkillParseError, SkillParser
-from nexus.bricks.skills.registry import (
-    SkillDependencyError,
-    SkillNotFoundError,
-    SkillRegistry,
 )
 from nexus.config import NexusConfig as Config
 from nexus.config import load_config

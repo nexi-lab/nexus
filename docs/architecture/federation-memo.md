@@ -1,6 +1,6 @@
 # Federation Architecture Memo
 
-**Date:** 2026-02-16 (Last updated)
+**Date:** 2026-03-01 (Last updated)
 **Status:** Design SSOT (Single Source of Truth)
 
 > **Contributing**: This is a living design document. When updating, prefer **in-place edits**
@@ -495,17 +495,19 @@ User:           NexusFilesystem (ABC)      — (no ABC needed, inherently asymme
 Kernel/Service: NexusFS                    NexusFederation (orchestration)
 HAL:            MetastoreABC               ZoneManager (wraps PyO3)
 Driver:         RaftMetadataStore          PyZoneManager (Rust/redb/Raft)
-Comms:          —                          RaftClient (gRPC to peers)
+Comms:          —                          gRPC inline (VFS + ZoneApi)
 ```
 
 Federation does NOT need a remote implementation (unlike NexusFS → nexus.connect())
 because zone operations are inherently asymmetric: you always operate locally on
-your ZoneManager and call peers via RaftClient. No "remote federation proxy" scenario.
+your ZoneManager and call peers via inline gRPC. No "remote federation proxy" scenario.
 
 **`NexusFederation` class** (`nexus.raft.federation`):
-- Orchestrates ZoneManager (local ops) + RaftClient (peer gRPC)
-- Dependencies injected: `ZoneManager`, client factory
+- Orchestrates ZoneManager (local ops) + inline gRPC (peer communication)
+- Dependencies injected: `ZoneManager`, optional `TofuTrustStore`
 - Exposes `share()` and `join()` as high-level async workflows
+- Only two RPCs needed: `NexusVFSService.Call("sys_stat")` for discovery,
+  `ZoneApiService.JoinZone` for Raft ConfChange
 - CLI and future REST/MCP endpoints are thin wrappers over this class
 
 **CLI `nexus mount`** (merged with FUSE mount via argument detection):
@@ -728,6 +730,114 @@ Can coexist with Raft Event Log (SC) and Dragonfly Pub/Sub (high-throughput).
 
 **Phases**: Constructor DI → DriverRegistry + zone-aware routing → state migration + fallback.
 
+### 7m. Federation Content CRUD: Implementation & Caveats
+
+Federation has two I/O planes with different routing strategies:
+
+| Plane | Pattern | Mechanism |
+|-------|---------|-----------|
+| **Metadata** | Transparent DI proxy | `FederatedMetadataProxy` wraps MetastoreABC, zone-routes all ops |
+| **Content** | PRE-DISPATCH resolver | `FederationContentResolver` intercepts read/delete before kernel |
+
+#### Content CRUD Status
+
+| Operation | Mechanism | Routing |
+|-----------|-----------|---------|
+| **Read** | `FederationContentResolver.try_read()` | Remote: gRPC Read RPC + progressive replication to local CAS |
+| **Write** | Always local (by design) | `FederatedMetadataProxy` enriches `backend_name` with node address (`local@host:port`) |
+| **Delete** | `FederationContentResolver.try_delete()` | Remote: gRPC Delete RPC delegates full `sys_unlink` to origin peer |
+| **Rename** | Metadata-only (CAS content stays at same hash) | Cross-zone rename blocked by `FederatedMetadataProxy` |
+
+#### CAS Semantics in Federation
+
+CAS (Content-Addressable Storage) stores each file as **one immutable blob keyed by SHA-256 hash**.
+"Modifying" a file (including `append()`) creates a **new blob with a new hash** — the old blob
+is never mutated. This gives federation several properties:
+
+- **No partial reads**: An etag always points to a complete, immutable blob.
+- **Safe progressive replication**: Content fetched from a peer can be verified by hash.
+- **Conflicts only at metadata level**: Raft serializes metadata writes; content blobs are immutable.
+
+#### Caveat 1: Concurrent Multi-Node Write (Last-Writer-Wins)
+
+When two nodes write to the **same path** without coordination:
+
+```
+Node A: sys_write("/shared/f.txt", "Hello")
+  → CAS: hash_A stored locally
+  → metadata.put(etag=hash_A, backend_name="local@A:50051") → Raft propose
+
+Node B: sys_write("/shared/f.txt", "World")
+  → CAS: hash_B stored locally
+  → metadata.put(etag=hash_B, backend_name="local@B:50051") → Raft propose
+```
+
+Raft totally orders the two proposals. The last committed write wins — metadata points to
+that node's CAS blob. The losing node's CAS content becomes an **orphan** (no metadata reference,
+no GC yet).
+
+**Mitigation**: `sys_write(if_match=etag)` provides optimistic concurrency control (OCC).
+Because metadata is Raft-replicated (all nodes see the same etag), `if_match` correctly
+detects conflicts in federation mode. Callers that need consistency should always use it.
+
+#### Caveat 2: Cross-Node Append = Full Read-Modify-Write
+
+`append()` is implemented as `sys_read() + concatenate + sys_write()` — it reads the
+**entire file**, appends in memory, then writes a **new complete blob**. In federation:
+
+```
+Node A creates "/shared/log.txt" with 100MB of content
+  → hash_A in Node A's CAS
+
+Node B appends 1 byte:
+  1. sys_read() → gRPC Read from Node A → transfer 100MB over network
+  2. progressive replication: 100MB cached in Node B's CAS
+  3. concatenate: 100MB + 1 byte = ~100MB
+  4. sys_write() → new hash_B (~100MB) in Node B's CAS
+  5. metadata: etag=hash_B, backend_name="local@B:50051"
+```
+
+**Cost**: One append = full file transfer + full rewrite. For large files with frequent
+cross-node appends, this is expensive. The old blob (hash_A) and the progressive
+replication copy both become CAS orphans.
+
+**This is acceptable for v1**: Most federation use cases are read-heavy. Frequent cross-node
+appends to large files are rare. If needed, the caller can use `lock=True` or
+`if_match=etag` to coordinate writes.
+
+#### Caveat 3: Content Availability on Writer Node Failure
+
+Content only exists on the writer node's CAS until another node reads it (triggering
+progressive replication). If the writer node fails before any read:
+
+- Metadata (Raft-replicated) still points to `backend_name="local@deadNode:50051"`
+- `FederationContentResolver.try_read()` attempts gRPC Read → connection refused
+- Raises `NexusFileNotFoundError` — content is lost
+
+**Mitigation options** (future work):
+- **Eager replication**: Replicate content to N peers on write (like HDFS). Trades write
+  latency for durability.
+- **CacheStoreABC L2**: Dragonfly as shared cache layer — content available even if
+  writer is down.
+- **Read-repair from WAL**: If EC mode WAL entries survive, replay to recover content.
+
+#### Caveat 4: CAS Orphan Accumulation
+
+Several operations leave unreferenced CAS blobs:
+
+| Cause | Orphan Location |
+|-------|-----------------|
+| Overwrite (last-writer-wins loser) | Losing node's CAS |
+| Progressive replication of old version | Reading node's CAS |
+| Append (old blob replaced by new) | Writer node's CAS |
+| Delete of remotely-replicated content | Reading node's CAS |
+
+No distributed reference counting or GC exists in v1. Orphans accumulate indefinitely.
+
+**Acceptable for v1**: Disk is cheap, orphans are bounded by write volume. Future GC sweep
+can reconcile CAS inventory against metadata references (single-node `gc.collect()` is
+straightforward; cross-node requires coordination).
+
 ---
 
 ## 8. Key Files Reference
@@ -744,4 +854,10 @@ Can coexist with Raft Event Log (SC) and Dragonfly Pub/Sub (high-throughput).
 | SQLAlchemyMetadataStore | `src/nexus/storage/sqlalchemy_metadata_store.py` | Current production store |
 | Docker Compose | `dockerfiles/docker-compose.cross-platform-test.yml` | 3-node cluster template |
 | gRPC stubs | `src/nexus/raft/*_pb2*.py` | Generated from proto (committed) |
+| FederatedMetadataProxy | `src/nexus/raft/federated_metadata_proxy.py` | Cross-zone metadata routing, backend_name enrichment |
+| FederationContentResolver | `src/nexus/raft/federation_content_resolver.py` | PRE-DISPATCH read/delete resolver, gRPC peer calls |
+| ZonePathResolver | `src/nexus/raft/zone_path_resolver.py` | DT_MOUNT traversal, path→zone resolution |
+| BackendAddress | `src/nexus/contracts/backend_address.py` | Parse `type@host:port` format for content targeting |
+| VFS gRPC proto | `proto/nexus/grpc/vfs/vfs.proto` | Read/Write/Delete RPC definitions |
+| VFS gRPC servicer | `src/nexus/grpc/servicer.py` | Read/Write/Delete RPC handlers |
 | Data architecture | `docs/architecture/data-storage-matrix.md` | 50+ types, storage mapping, decisions |

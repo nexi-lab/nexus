@@ -17,7 +17,6 @@ import shutil
 import tempfile
 import time
 import uuid
-from collections.abc import Sequence
 from typing import Any
 
 import pytest
@@ -29,48 +28,11 @@ from nexus.bricks.ipc.delivery import MessageProcessor, MessageSender
 from nexus.bricks.ipc.envelope import MessageEnvelope, MessageType
 from nexus.bricks.ipc.provisioning import AgentProvisioner
 from nexus.bricks.ipc.signing import MessageSigner, MessageVerifier, SigningMode
-from nexus.contracts.metadata import FileMetadata
 from nexus.core.config import ParseConfig, PermissionConfig
-from nexus.core.metastore import MetastoreABC
 from nexus.storage.models import Base
 from nexus.storage.zone_settings import ZoneSettings
+from tests.helpers.dict_metastore import DictMetastore
 from tests.unit.bricks.ipc.fakes import InMemoryStorageDriver
-
-# ---------------------------------------------------------------------------
-# In-memory metadata store (same pattern as test_identity_e2e.py)
-# ---------------------------------------------------------------------------
-
-
-class InMemoryMetadataStore(MetastoreABC):
-    def __init__(self) -> None:
-        self._store: dict[str, FileMetadata] = {}
-
-    def get(self, path: str) -> FileMetadata | None:
-        return self._store.get(path)
-
-    def put(self, metadata: FileMetadata) -> None:
-        self._store[metadata.path] = metadata
-
-    def delete(self, path: str) -> dict[str, Any] | None:
-        removed = self._store.pop(path, None)
-        return {"path": path} if removed else None
-
-    def exists(self, path: str) -> bool:
-        return path in self._store
-
-    def list(self, prefix: str = "", recursive: bool = True, **kwargs: Any) -> list[FileMetadata]:
-        return [m for p, m in self._store.items() if p.startswith(prefix)]
-
-    def get_batch(self, paths: Sequence[str]) -> dict[str, FileMetadata | None]:
-        return {p: self._store.get(p) for p in paths}
-
-    def is_implicit_directory(self, path: str) -> bool:
-        prefix = path.rstrip("/") + "/"
-        return any(p.startswith(prefix) for p in self._store)
-
-    def close(self) -> None:
-        self._store.clear()
-
 
 # ---------------------------------------------------------------------------
 # Fernet-compatible encryptor for IdentityCrypto
@@ -166,7 +128,7 @@ def app(tmp_path: Any, db_path: Any, record_store: Any) -> Any:
 
     tmpdir = tempfile.mkdtemp(prefix="nexus-signing-e2e-")
     backend = LocalBackend(root_path=tmpdir)
-    metadata_store = InMemoryMetadataStore()
+    metadata_store = DictMetastore()
 
     nx = create_nexus_fs(
         backend=backend,

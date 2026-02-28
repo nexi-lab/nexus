@@ -456,10 +456,6 @@ def _boot_independent_bricks(
         except Exception as _ael_exc:
             logger.debug("[BOOT:BRICK] AgentEventLog unavailable: %s", _ael_exc)
 
-    # --- Skills Brick (Issue #2035) ---
-    skill_service: Any = None
-    skill_package_service: Any = None
-
     # --- VersionService (Issue #2034: moved from kernel to brick tier) ---
     version_service: Any = None
     try:
@@ -564,8 +560,6 @@ def _boot_independent_bricks(
         "ipc_storage_driver": ipc_storage_driver,
         "ipc_provisioner": ipc_provisioner,
         "agent_event_log": agent_event_log,
-        "skill_service": skill_service,
-        "skill_package_service": skill_package_service,
         "delegation_service": delegation_service,
         "reputation_service": reputation_service,
         "version_service": version_service,

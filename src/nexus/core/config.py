@@ -307,10 +307,6 @@ class BrickServices:
     # --- Sandbox Brick (Issue #1307) ---
     agent_event_log: Any = None  # AgentEventLog (sandbox lifecycle audit)
 
-    # --- Skills Brick (Issue #2035) ---
-    skill_service: Any = None  # SkillService (protocol-based)
-    skill_package_service: Any = None  # SkillPackageService
-
     # --- Delegation & Reputation Bricks (Issue #2131) ---
     delegation_service: Any = None  # DELEGATION brick
     reputation_service: Any = None  # REPUTATION brick
@@ -364,8 +360,6 @@ class WiredServices:
     llm_service: Any = None
     llm_subsystem: Any = None
     oauth_service: Any = None
-    skill_service: Any = None
-    skill_package_service: Any = None
     search_service: Any = None
     share_link_service: Any = None
     events_service: Any = None

@@ -6,7 +6,6 @@ This package contains all CLI commands organized by functionality:
 - search: Search and discovery (glob, grep, find-duplicates)
 - permissions: Permission management (chmod, chown, chgrp, getfacl, setfacl)
 - rebac: Relationship-based access control
-- skills: Skills management system
 - versions: Version tracking and rollback
 - metadata: Metadata operations (info, version, export, import, size)
 - work: Work queue management
@@ -40,7 +39,6 @@ from nexus.cli.commands import (
     sandbox,
     search,
     server,
-    skills,
     tls,
     versions,
     work,
@@ -63,7 +61,6 @@ def register_all_commands(cli: click.Group) -> None:
     directory.register_commands(cli)
     search.register_commands(cli)
     rebac.register_commands(cli)
-    skills.register_commands(cli)
     versions.register_commands(cli)
     workspace.register_commands(cli)
     metadata.register_commands(cli)
@@ -106,7 +103,6 @@ __all__ = [
     "sandbox",
     "search",
     "rebac",
-    "skills",
     "versions",
     "workspace",
     "metadata",

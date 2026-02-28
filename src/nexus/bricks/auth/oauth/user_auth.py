@@ -374,7 +374,7 @@ class OAuthUserAuth:
                 zone_id=zone_id,
                 create_api_key=True,
                 create_agents=True,
-                import_skills=True,
+                import_skills=False,
             )
 
             if logger.isEnabledFor(logging.INFO):

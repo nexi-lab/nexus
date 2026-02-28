@@ -45,16 +45,19 @@ class FederatedMetadataProxy(MetastoreABC):
         root_store: "RaftMetadataStore",
         *,
         zone_manager: Any | None = None,
+        self_address: str | None = None,
     ):
         """
         Args:
             resolver: ZonePathResolver for cross-zone path resolution.
             root_store: The root zone's store (used for close() and fallback).
             zone_manager: Optional ZoneManager ref for clean shutdown.
+            self_address: This node's advertise address for backend_name enrichment.
         """
         self._resolver = resolver
         self._root_store = root_store
         self._zone_manager = zone_manager
+        self._self_address = self_address
 
     @classmethod
     def from_zone_manager(
@@ -77,7 +80,8 @@ class FederatedMetadataProxy(MetastoreABC):
         root_store = zone_manager.get_store(root_zone_id)
         if root_store is None:
             raise RuntimeError(f"Root zone '{root_zone_id}' not found in ZoneManager")
-        return cls(resolver, root_store, zone_manager=zone_manager)
+        self_addr = getattr(zone_manager, "advertise_addr", None)
+        return cls(resolver, root_store, zone_manager=zone_manager, self_address=self_addr)
 
     # =========================================================================
     # Path remapping helpers
@@ -119,6 +123,22 @@ class FederatedMetadataProxy(MetastoreABC):
             return metadata
         return replace(metadata, path=resolved.path)
 
+    def _enrich_backend_name(self, metadata: FileMetadata) -> FileMetadata:
+        """Enrich backend_name with node address for federation content targeting.
+
+        Kernel writes ``backend_name="local"``; the proxy transparently
+        enriches to ``"local@10.0.0.5:50051"`` so FederationContentResolver
+        can locate which peer owns the content.
+        """
+        if not self._self_address or not metadata.backend_name:
+            return metadata
+        if "@" in metadata.backend_name:
+            return metadata  # already enriched
+        return replace(
+            metadata,
+            backend_name=f"{metadata.backend_name}@{self._self_address}",
+        )
+
     # =========================================================================
     # MetastoreABC — abstract methods
     # =========================================================================
@@ -133,6 +153,7 @@ class FederatedMetadataProxy(MetastoreABC):
     def put(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:
         resolved = self._resolve(metadata.path)
         zone_meta = self._to_zone_metadata(metadata, resolved)
+        zone_meta = self._enrich_backend_name(zone_meta)
         return resolved.store.put(zone_meta, consistency=consistency)
 
     def is_committed(self, token: int) -> str | None:
@@ -245,6 +266,7 @@ class FederatedMetadataProxy(MetastoreABC):
         for metadata in metadata_list:
             resolved = self._resolve(metadata.path)
             zone_meta = self._to_zone_metadata(metadata, resolved)
+            zone_meta = self._enrich_backend_name(zone_meta)
             key = resolved.zone_id
             if key not in zone_groups:
                 zone_groups[key] = []

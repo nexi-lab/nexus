@@ -321,7 +321,7 @@ class TestBrickRequirement:
             False,
             True,
             {"search", "llm"},
-            {"storage", "eventlog", "skills", "pay", "sandbox", "workflows"},
+            {"storage", "eventlog", "pay", "sandbox", "workflows"},
             id="256MB-no-gpu",
         ),
         pytest.param(
@@ -329,7 +329,7 @@ class TestBrickRequirement:
             False,
             True,
             set(),
-            {"search", "llm", "skills", "sandbox", "workflows", "pay"},
+            {"search", "llm", "sandbox", "workflows", "pay"},
             id="2048MB-no-gpu-lite",
         ),
         pytest.param(
@@ -337,7 +337,7 @@ class TestBrickRequirement:
             True,
             True,
             set(),
-            {"search", "llm", "skills", "sandbox", "pay", "workflows", "federation"},
+            {"search", "llm", "sandbox", "pay", "workflows", "federation"},
             id="8192MB-gpu-full",
         ),
         pytest.param(
@@ -345,7 +345,7 @@ class TestBrickRequirement:
             True,
             True,
             set(),
-            {"search", "llm", "skills", "sandbox", "pay", "workflows", "federation"},
+            {"search", "llm", "sandbox", "pay", "workflows", "federation"},
             id="32768MB-gpu-cloud",
         ),
         pytest.param(
@@ -353,7 +353,7 @@ class TestBrickRequirement:
             False,
             True,
             {"llm"},
-            {"search", "skills", "sandbox"},
+            {"search", "sandbox"},
             id="512MB-boundary",
         ),
         pytest.param(
@@ -361,7 +361,7 @@ class TestBrickRequirement:
             False,
             False,
             {"pay", "federation"},
-            {"search", "skills", "sandbox", "llm"},
+            {"search", "sandbox", "llm"},
             id="1024MB-no-network",
         ),
     ],

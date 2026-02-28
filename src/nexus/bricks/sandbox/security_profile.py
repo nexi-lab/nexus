@@ -23,7 +23,6 @@ DEFAULT_EGRESS_ALLOWLIST = (
 # Trust tier to profile name mapping
 TRUST_TIER_PROFILE_MAP: dict[str, str] = {
     "UntrustedAgent": "strict",
-    "SkillBuilder": "standard",
     "ImpersonatedUser": "permissive",
 }
 
@@ -168,8 +167,8 @@ class SandboxSecurityProfile:
 
         Args:
             agent_name: Agent name from agent_id (e.g., "UntrustedAgent",
-                        "SkillBuilder", "ImpersonatedUser"). If None or
-                        unrecognized, defaults to standard.
+                        "ImpersonatedUser"). If None or unrecognized,
+                        defaults to standard.
 
         Returns:
             Matching security profile.

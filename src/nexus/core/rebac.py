@@ -71,7 +71,6 @@ class EntityType(StrEnum):
     ZONE = "zone"
     PLAYBOOK = "playbook"  # v0.5.0 ACE
     TRAJECTORY = "trajectory"  # v0.5.0 ACE
-    SKILL = "skill"  # v0.5.0 Skills System
 
 
 @dataclass(slots=True)

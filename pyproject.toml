@@ -749,7 +749,7 @@ module = [
     "nexus.services.mount_service",
     "nexus.services.search_service",
     "nexus.services.event_subsystem.log.exporters.factory",
-    "nexus.portability.import_service",
+    "nexus.bricks.portability.import_service",
     "nexus.server.lifespan.realtime",
 ]
 # MetastoreABC arg-type / return-value mismatches from API evolution

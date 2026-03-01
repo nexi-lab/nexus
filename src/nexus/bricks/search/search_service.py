@@ -255,8 +255,8 @@ class SearchService:
                         prefixes.add(f"{top}/")
                 if prefixes:
                     return tuple(sorted(prefixes))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Mount prefix detection failed, using defaults: %s", e)
         return ("workspace/", "shared/", "external/", "system/", "archives/")
 
     def _should_prepend_recursive_wildcard(self, pattern: str) -> bool:

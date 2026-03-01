@@ -112,6 +112,17 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
                     protocol_name="SearchBrickProtocol",
                 )
 
+        # Wire embedding provider so semantic search works with IndexingPipeline
+        with contextlib.suppress(Exception):
+            from nexus.bricks.search.embeddings import create_embedding_provider
+
+            _emb_provider = os.environ.get("NEXUS_EMBEDDING_PROVIDER", "fastembed")
+            _emb_model = os.environ.get("NEXUS_EMBEDDING_MODEL_NAME", "BAAI/bge-small-en-v1.5")
+            app.state.search_daemon._embedding_provider = create_embedding_provider(
+                provider=_emb_provider,
+                model=_emb_model,
+            )
+
         stats = app.state.search_daemon.get_stats()
         logger.info(
             "Search Daemon started: backend=%s, startup=%.1fms",

@@ -21,11 +21,8 @@ from nexus.lib.rpc_decorator import rpc_expose
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from nexus.bricks.rebac.async_permissions import AsyncPermissionEnforcer
     from nexus.contracts.protocols.rebac import ReBACBrickProtocol
     from nexus.contracts.types import OperationContext
-    from nexus.core.metastore import MetastoreABC
-    from nexus.core.router import PathRouter
     from nexus.storage.record_store import RecordStoreABC
 
 
@@ -86,10 +83,10 @@ class VersionService:
 
     def __init__(
         self,
-        metadata_store: "MetastoreABC",
+        metadata_store: Any,
         cas_store: Any,  # Backend with read_content method
-        permission_enforcer: "AsyncPermissionEnforcer | None" = None,
-        router: "PathRouter | None" = None,
+        permission_enforcer: Any = None,
+        router: Any = None,
         rebac_manager: "ReBACBrickProtocol | None" = None,
         enforce_permissions: bool = True,
         record_store: "RecordStoreABC | None" = None,
@@ -543,7 +540,7 @@ class VersionService:
         Raises:
             InvalidPathError: If path is invalid
         """
-        from nexus.core.path_utils import validate_path
+        from nexus.lib.path_utils import validate_path
 
         return validate_path(path, allow_root=True)
 

@@ -39,17 +39,6 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
 
         config = DaemonConfig(
             database_url=svc.database_url,
-            search_backend=os.environ.get("NEXUS_SEARCH_BACKEND", "txtai"),
-            embedding_model=os.environ.get(
-                "NEXUS_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
-            ),
-            hybrid_search=os.environ.get("NEXUS_HYBRID_SEARCH", "true").lower() == "true",
-            auto_index_on_write=os.environ.get("NEXUS_AUTO_INDEX", "false").lower() == "true",
-            reranker_enabled=os.environ.get("NEXUS_RERANKER_ENABLED", "true").lower() == "true",
-            reranker_model=os.environ.get(
-                "NEXUS_RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2"
-            ),
-            reranker_top_k=int(os.environ.get("NEXUS_RERANKER_TOP_K", "25")),
             query_timeout_seconds=float(os.environ.get("NEXUS_QUERY_TIMEOUT", "10.0")),
         )
 
@@ -60,8 +49,9 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
             with contextlib.suppress(Exception):
                 _async_sf = _record_store.async_session_factory
 
-        # Issue #2188: Create ZoektClient via DI
+        # Issue #2188: Create ZoektClient + embedding provider via DI
         _zoekt_client = None
+        _search_cfg = None
         with contextlib.suppress(ImportError):
             from nexus.bricks.search.config import search_config_from_env
             from nexus.bricks.search.zoekt_client import ZoektClient
@@ -83,6 +73,23 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
             zoekt_client=_zoekt_client,
             cache_brick=_cache_brick,
         )
+
+        # Wire embedding provider so semantic search works (pre-existing gap:
+        # _embedding_provider was always None, causing silent fallback failures)
+        if _search_cfg is not None:
+            with contextlib.suppress(Exception):
+                from nexus.bricks.search.embeddings import create_embedding_provider
+
+                app.state.search_daemon._embedding_provider = create_embedding_provider(
+                    provider=_search_cfg.embedding_provider,
+                    model=_search_cfg.embedding_model,
+                )
+                logger.info(
+                    "Embedding provider wired: %s/%s",
+                    _search_cfg.embedding_provider,
+                    _search_cfg.embedding_model or "default",
+                )
+
         await app.state.search_daemon.startup()
         app.state.search_daemon_enabled = True
 

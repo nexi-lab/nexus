@@ -146,31 +146,31 @@ class TestLLMServiceSmoke:
 
 
 # =============================================================================
-# OAuthService Smoke Tests
+# OAuthCredentialService Smoke Tests
 # =============================================================================
 
 
 class TestOAuthServiceSmoke:
-    """Smoke tests for OAuthService."""
+    """Smoke tests for OAuthCredentialService."""
 
     def test_oauth_service_init(self):
-        """Test OAuthService can be instantiated."""
-        from nexus.services.oauth.oauth_service import OAuthService
+        """Test OAuthCredentialService can be instantiated."""
+        from nexus.bricks.auth.oauth.credential_service import OAuthCredentialService
 
-        service = OAuthService(oauth_factory=None, token_manager=None)
+        service = OAuthCredentialService(oauth_factory=None, token_manager=None)
         # Service can be created without factory/token_manager (lazy initialization)
         assert service is not None
 
     @pytest.mark.asyncio
     async def test_oauth_list_providers_basic(self):
-        """Test oauth_list_providers can be called."""
-        from nexus.services.oauth.oauth_service import OAuthService
+        """Test list_providers can be called."""
+        from nexus.bricks.auth.oauth.credential_service import OAuthCredentialService
 
-        service = OAuthService(oauth_factory=None, token_manager=None)
+        service = OAuthCredentialService(oauth_factory=None, token_manager=None)
 
         # Should work even without config (returns empty list)
         try:
-            result = await service.oauth_list_providers()
+            result = await service.list_providers()
             assert isinstance(result, list)
         except Exception:
             # May raise if config not found, that's ok for smoke test
@@ -304,11 +304,11 @@ class TestServiceIntegrationSmoke:
     def test_all_services_can_coexist(self, mock_metadata, mock_cas, mock_router):
         """Test that all services can be instantiated together."""
 
+        from nexus.bricks.auth.oauth.credential_service import OAuthCredentialService
         from nexus.bricks.llm.llm_service import LLMService
         from nexus.bricks.mcp.mcp_service import MCPService
         from nexus.bricks.mount.mount_service import MountService
         from nexus.bricks.rebac.rebac_service import ReBACService
-        from nexus.services.oauth.oauth_service import OAuthService
         from nexus.services.search.search_service import SearchService
         from nexus.services.versioning.version_service import VersionService
 
@@ -320,7 +320,7 @@ class TestServiceIntegrationSmoke:
         )
         mcp_svc = MCPService(filesystem=None)
         llm_svc = LLMService(nexus_fs=None)
-        oauth_svc = OAuthService(oauth_factory=None, token_manager=None)
+        oauth_svc = OAuthCredentialService(oauth_factory=None, token_manager=None)
         search_svc = SearchService(metadata_store=mock_metadata, enforce_permissions=False)
         mount_svc = MountService(router=mock_router)
         rebac_svc = ReBACService(rebac_manager=None, enforce_permissions=False)
@@ -338,7 +338,7 @@ class TestServiceIntegrationSmoke:
         assert hasattr(version_svc, "list_versions")
         assert hasattr(mcp_svc, "mcp_mount")
         assert hasattr(llm_svc, "llm_read")
-        assert hasattr(oauth_svc, "oauth_list_providers")
+        assert hasattr(oauth_svc, "list_providers")
         assert hasattr(search_svc, "semantic_search")
         assert hasattr(mount_svc, "list_mounts")
         assert hasattr(rebac_svc, "rebac_check")

@@ -104,13 +104,40 @@ def _boot_wired_services(
     except Exception as exc:
         logger.warning("[BOOT:WIRED] ReBACService unavailable: %s", exc)
 
+    # --- OAuthCredentialService: OAuth credential lifecycle (brick) ---
+    # Created before MCPService because mcp_connect() needs credential_service.
+    oauth_service: Any = None
+    if _on("sandbox"):
+        try:
+            import os
+
+            from nexus.bricks.auth.oauth.credential_service import OAuthCredentialService
+
+            oauth_service = OAuthCredentialService(
+                oauth_factory=None,
+                token_manager=None,
+                database_url=os.getenv("TOKEN_MANAGER_DB"),
+                oauth_config=getattr(nx._config, "oauth", None) if nx._config else None,
+            )
+            logger.debug("[BOOT:WIRED] OAuthCredentialService created")
+        except Exception as exc:
+            logger.debug("[BOOT:WIRED] OAuthCredentialService unavailable: %s", exc)
+    else:
+        logger.debug("[BOOT:WIRED] OAuthCredentialService disabled by profile")
+
     # --- MCPService: Model Context Protocol operations ---
     mcp_service: Any = None
     if _on("mcp"):
         try:
             from nexus.bricks.mcp.mcp_service import MCPService
 
-            mcp_service = MCPService(filesystem=nx)
+            mcp_service = MCPService(
+                filesystem=nx,
+                credential_service=oauth_service,
+                mount_lister=lambda: [
+                    (m.mount_point, "mounted") for m in kernel_services.router.list_mounts()
+                ],
+            )
             logger.debug("[BOOT:WIRED] MCPService created")
         except Exception as exc:
             logger.debug("[BOOT:WIRED] MCPService unavailable: %s", exc)
@@ -134,30 +161,6 @@ def _boot_wired_services(
             logger.debug("[BOOT:WIRED] LLMService unavailable: %s", exc)
     else:
         logger.debug("[BOOT:WIRED] LLMService disabled by profile")
-
-    # --- OAuthService: OAuth authentication operations ---
-    oauth_service: Any = None
-    if _on("sandbox"):
-        try:
-            import os
-
-            from nexus.services.oauth.oauth_service import OAuthService
-
-            oauth_service = OAuthService(
-                oauth_factory=None,
-                token_manager=None,
-                filesystem=nx,
-                database_url=os.getenv("TOKEN_MANAGER_DB"),
-                oauth_config=getattr(nx._config, "oauth", None) if nx._config else None,
-                mount_lister=lambda: [
-                    (m.mount_point, "mounted") for m in kernel_services.router.list_mounts()
-                ],
-            )
-            logger.debug("[BOOT:WIRED] OAuthService created")
-        except Exception as exc:
-            logger.debug("[BOOT:WIRED] OAuthService unavailable: %s", exc)
-    else:
-        logger.debug("[BOOT:WIRED] OAuthService disabled by profile")
 
     # --- MountCoreService: Internal mount operations (gateway-dependent) ---
     mount_core_service: Any = None

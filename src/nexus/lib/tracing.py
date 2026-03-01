@@ -5,9 +5,12 @@ enabled, the tracer resolves to ``None`` and all span operations are
 no-ops.
 """
 
+import logging
 from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def lazy_tracer(name: str) -> tuple:
@@ -33,6 +36,7 @@ def lazy_tracer(name: str) -> tuple:
 
             _tracer[0] = _gt(name)
         except Exception:
+            logger.debug("OTel tracer %s unavailable, spans will be no-ops", name)
             _tracer[0] = None
         return _tracer[0]
 
@@ -63,4 +67,4 @@ def record_span_result(span: Any, *, state: str, error: str | None = None) -> No
 
             span.set_status(StatusCode.ERROR, error)
         except Exception:
-            pass
+            logger.debug("opentelemetry.trace not available for error status recording")

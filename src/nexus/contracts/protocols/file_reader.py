@@ -3,9 +3,9 @@
 Defines ``FileReaderProtocol`` — the narrow interface that search components
 use to read files without coupling to the full NexusFilesystem kernel object.
 
-Moved from ``nexus.bricks.search.protocols`` to ``nexus.services.protocols``
+Moved from ``nexus.bricks.search.protocols`` to ``nexus.contracts.protocols``
 during brick extraction (Issue #2036) so that the search brick imports only
-from the allowed ``nexus.services.protocols.*`` namespace.
+from the allowed ``nexus.contracts.protocols.*`` namespace.
 
 Implementations:
     - ``_NexusFSFileReader`` in ``nexus.factory``: Wraps NexusFS for production.

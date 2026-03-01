@@ -12,10 +12,10 @@ from typing import TYPE_CHECKING, Any, cast
 from fastapi import Depends, HTTPException, Request
 
 from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.contracts.protocols.llm_provider import LLMProviderProtocol
+from nexus.contracts.protocols.write_back import WriteBackProtocol
 from nexus.core.protocols.vfs_core import VFSCoreProtocol
 from nexus.server.dependencies import get_operation_context, require_auth
-from nexus.services.protocols.llm_provider import LLMProviderProtocol
-from nexus.services.protocols.write_back import WriteBackProtocol
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext

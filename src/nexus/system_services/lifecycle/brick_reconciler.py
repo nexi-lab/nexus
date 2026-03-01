@@ -25,8 +25,7 @@ import random
 import time
 from typing import Any
 
-from nexus.services._tracing import lazy_tracer
-from nexus.services.protocols.brick_lifecycle import (
+from nexus.contracts.protocols.brick_lifecycle import (
     BrickLifecycleProtocol,
     BrickReconcileOutcome,
     BrickSpec,
@@ -39,6 +38,7 @@ from nexus.services.protocols.brick_lifecycle import (
     ReconcileResult,
     ReconcilerProtocol,
 )
+from nexus.services._tracing import lazy_tracer
 from nexus.system_services.lifecycle.expectations import Expectations
 
 logger = logging.getLogger(__name__)

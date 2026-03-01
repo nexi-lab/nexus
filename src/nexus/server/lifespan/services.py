@@ -607,7 +607,7 @@ async def _startup_scheduler(app: "FastAPI", svc: "LifespanServices") -> None:
     app.state.scheduler_service = scheduler
 
     # InMemoryScheduler doesn't need PostgreSQL init
-    from nexus.services.protocols.scheduler import InMemoryScheduler
+    from nexus.services.scheduler.in_memory import InMemoryScheduler
 
     if isinstance(scheduler, InMemoryScheduler):
         logger.info("Scheduler service started (InMemoryScheduler fallback)")

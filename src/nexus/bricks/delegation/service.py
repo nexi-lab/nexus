@@ -50,8 +50,8 @@ from nexus.contracts.constants import ROOT_ZONE_ID
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
-    from nexus.services.protocols.entity_registry import EntityRegistryProtocol
-    from nexus.services.protocols.reputation import ReputationProtocol
+    from nexus.contracts.protocols.entity_registry import EntityRegistryProtocol
+    from nexus.contracts.protocols.reputation import ReputationProtocol
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)

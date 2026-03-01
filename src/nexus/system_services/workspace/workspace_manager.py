@@ -17,8 +17,8 @@ from .workspace_permissions import check_workspace_permission
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
+    from nexus.contracts.protocols.rebac import ReBACBrickProtocol
     from nexus.core.metastore import MetastoreABC
-    from nexus.services.protocols.rebac import ReBACBrickProtocol
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)

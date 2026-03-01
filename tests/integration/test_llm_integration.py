@@ -85,7 +85,7 @@ class TestProtocolCompliance:
     def test_litellm_provider_satisfies_protocol(self) -> None:
         """LiteLLMProvider satisfies LLMProviderProtocol at runtime."""
         from nexus.bricks.llm.provider import LiteLLMProvider
-        from nexus.services.protocols.llm_provider import LLMProviderProtocol
+        from nexus.contracts.protocols.llm_provider import LLMProviderProtocol
 
         assert issubclass(LiteLLMProvider, LLMProviderProtocol)
 
@@ -99,7 +99,7 @@ class TestProtocolCompliance:
 
     def test_protocol_exports_in_protocols_package(self) -> None:
         """Both protocols are exported from the protocols package."""
-        from nexus.services.protocols import (
+        from nexus.contracts.protocols import (
             LLMProviderProtocol,
             LLMServiceProtocol,
         )

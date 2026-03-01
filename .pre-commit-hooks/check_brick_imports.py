@@ -6,8 +6,8 @@ LEGO Architecture Principle 3: "Bricks don't know about each other"
 and bricks must never import from nexus.core (the kernel).
 
 Bricks communicate with the kernel exclusively through protocols defined
-in core/protocols/ and services/protocols/. Direct imports from nexus.core
-or nexus.services internals are architectural violations. Cross-brick
+in core/protocols/ and contracts/protocols/. Direct imports from nexus.core
+or nexus.services are architectural violations. Cross-brick
 imports (bricks/<X>/ importing from nexus.bricks.<Y>) are also forbidden.
 
 Reference: docs/design/NEXUS-LEGO-ARCHITECTURE.md §1.2, Principle 3
@@ -25,7 +25,7 @@ BRICKS_RELATIVE_PATH = Path("src") / "nexus" / "bricks"
 #   - nexus.core.protocols.*    (kernel protocol interfaces)
 #   - nexus.contracts.cache_store (CacheStoreABC — kernel storage pillar)
 #   - nexus.core.object_store   (ObjectStoreABC — kernel storage pillar)
-#   - nexus.services.protocols.*  (system service protocol interfaces)
+#   - nexus.contracts.protocols.* (service protocol interfaces)
 #   - nexus.storage.*           (storage pillar ABCs + RecordStoreABC)
 #   - Third-party packages
 #   - Same brick (nexus.bricks.<own_brick>.*)
@@ -44,9 +44,9 @@ FORBIDDEN_PATTERNS: list[tuple[re.Pattern[str], str]] = [
         re.compile(r"^\s*import\s+nexus\.core(?!\.protocols\b|\.cache_store\b|\.object_store\b)"),
         "nexus.core",
     ),
-    # Direct services imports (excluding protocols)
-    (re.compile(r"^\s*from\s+nexus\.services(?!\.protocols\b)"), "nexus.services"),
-    (re.compile(r"^\s*import\s+nexus\.services(?!\.protocols\b)"), "nexus.services"),
+    # Direct services imports (protocols moved to contracts/protocols/)
+    (re.compile(r"^\s*from\s+nexus\.services"), "nexus.services"),
+    (re.compile(r"^\s*import\s+nexus\.services"), "nexus.services"),
 ]
 
 # Regex to extract the target brick name from a brick import line
@@ -279,7 +279,7 @@ def main() -> int:
         print("     nexus.core.protocols.*      (kernel protocol interfaces)")
         print("     nexus.contracts.cache_store  (CacheStoreABC -- storage pillar)")
         print("     nexus.core.object_store     (ObjectStoreABC -- storage pillar)")
-        print("     nexus.services.protocols.*   (system service protocol interfaces)")
+        print("     nexus.contracts.protocols.*  (service protocol interfaces)")
         print("     nexus.storage.*              (RecordStoreABC + storage utilities)")
         print("     nexus.bricks.<own_brick>.*   (same-brick internal imports)")
         print()

@@ -9,7 +9,7 @@ All functions use Protocol methods exclusively — no private attribute access.
 
 Tier-neutral utility — ``lib/`` (zero kernel deps).
 ``rebac_manager: Any`` params accept any object satisfying
-``nexus.services.protocols.rebac.ReBACBrickProtocol``.
+``nexus.contracts.protocols.rebac.ReBACBrickProtocol``.
 """
 
 import contextlib

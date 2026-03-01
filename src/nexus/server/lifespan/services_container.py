@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
-    from nexus.services.protocols.scheduler import SchedulerProtocol
+    from nexus.contracts.protocols.scheduler import SchedulerProtocol
 
 
 @dataclass(slots=True)

@@ -97,13 +97,13 @@ class TestZeroCoreImports:
                 print(f"  - {v}")
 
     def test_no_direct_services_imports(self) -> None:
-        """No direct nexus.services.* imports (only nexus.services.protocols.* allowed)."""
+        """No direct nexus.services.* imports (only nexus.contracts.protocols.* allowed)."""
         violations: list[str] = []
         for py_file in self._get_brick_py_files():
             rel = py_file.relative_to(BRICK_ROOT)
             for imp in _collect_imports(py_file):
                 if imp.startswith("nexus.services.") and not imp.startswith(
-                    "nexus.services.protocols."
+                    "nexus.contracts.protocols."
                 ):
                     violations.append(f"{rel}: {imp}")
 
@@ -119,7 +119,7 @@ class TestProtocolCompliance:
 
     def test_memory_has_required_methods(self) -> None:
         """Memory class has all methods defined in MemoryProtocol."""
-        from nexus.services.protocols.memory import MemoryProtocol
+        from nexus.contracts.protocols.memory import MemoryProtocol
 
         # Get protocol methods (excluding dunder)
         protocol_methods = {

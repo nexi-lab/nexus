@@ -19,7 +19,7 @@ import asyncio
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.agent_types import AgentState
-from nexus.services.protocols.agent_registry import AgentInfo
+from nexus.contracts.protocols.agent_registry import AgentInfo
 
 if TYPE_CHECKING:
     from nexus.contracts.agent_types import AgentRecord, AgentSpec, AgentStatus

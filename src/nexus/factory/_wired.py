@@ -475,7 +475,6 @@ def _boot_wired_services(
         search_service=search_service,
         share_link_service=share_link_service,
         events_service=events_service,
-        task_queue_service=brick_services.task_queue_service,
         time_travel_service=time_travel_service,
         operations_service=operations_service,
         workspace_rpc_service=workspace_rpc_service,

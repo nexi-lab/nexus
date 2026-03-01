@@ -43,10 +43,6 @@ async def startup_services(app: "FastAPI", svc: "LifespanServices") -> list[asyn
     bg_tasks.extend(agent_tasks)
 
     await _startup_scheduler(app, svc)
-    task_runner_task = _startup_task_queue(app, svc)
-    if task_runner_task:
-        bg_tasks.append(task_runner_task)
-
     await _startup_workflow_engine(app, svc)
     await _startup_pipe_consumers(app, svc)
 
@@ -607,7 +603,7 @@ async def _startup_scheduler(app: "FastAPI", svc: "LifespanServices") -> None:
     app.state.scheduler_service = scheduler
 
     # InMemoryScheduler doesn't need PostgreSQL init
-    from nexus.services.scheduler.in_memory import InMemoryScheduler
+    from nexus.system_services.scheduler.in_memory import InMemoryScheduler
 
     if isinstance(scheduler, InMemoryScheduler):
         logger.info("Scheduler service started (InMemoryScheduler fallback)")
@@ -649,33 +645,6 @@ async def _startup_scheduler(app: "FastAPI", svc: "LifespanServices") -> None:
         logger.debug("Scheduler async init not available: %s", e)
     except Exception as e:
         logger.warning("Failed to initialize Scheduler: %s", e, exc_info=True)
-
-
-def _startup_task_queue(app: "FastAPI", svc: "LifespanServices") -> asyncio.Task | None:
-    """Start Task Queue Engine background worker (Issue #574)."""
-    if not svc.nexus_fs:
-        return None
-
-    try:
-        from nexus.tasks import is_available
-
-        if is_available():
-            service = svc.nexus_fs.task_queue_service
-            engine = service.get_engine()
-
-            from nexus.tasks.runner import AsyncTaskRunner
-
-            _task_workers = svc.profile_tuning.concurrency.task_runner_workers
-            runner = AsyncTaskRunner(engine=engine, max_workers=_task_workers)
-            service.set_runner(runner)
-            app.state.task_runner = runner
-            task = asyncio.create_task(runner.run())
-            logger.info("Task Queue runner started (%d workers)", _task_workers)
-            return task
-        else:
-            logger.debug("Task Queue: nexus_tasks Rust extension not available")
-    except Exception as e:
-        logger.warning("Task Queue runner not started: %s", e, exc_info=True)
 
     return None
 

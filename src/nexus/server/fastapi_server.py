@@ -314,7 +314,6 @@ def create_app(
     # Services with @rpc_expose override kernel stubs (later sources win).
     _brick_sources: list[Any] = []
     for _attr_name in (
-        "task_queue_service",
         "mcp_service",
         "llm_service",
         "oauth_service",

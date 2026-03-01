@@ -473,12 +473,12 @@ def _boot_system_services(
     else:
         try:
             if ctx.db_url.startswith(("postgres", "postgresql")):
-                from nexus.services.scheduler.service import SchedulerService
+                from nexus.system_services.scheduler.service import SchedulerService
 
                 scheduler_service = SchedulerService(db_pool=None)
                 logger.debug("[BOOT:SYSTEM] SchedulerService created (two-phase, pool=None)")
             else:
-                from nexus.services.scheduler.in_memory import InMemoryScheduler
+                from nexus.system_services.scheduler.in_memory import InMemoryScheduler
 
                 scheduler_service = InMemoryScheduler()
                 logger.debug("[BOOT:SYSTEM] InMemoryScheduler created (no PostgreSQL)")

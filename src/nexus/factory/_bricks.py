@@ -12,7 +12,7 @@ from typing import Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.factory._boot_context import _BootContext
-from nexus.factory._helpers import _make_gate, _resolve_tasks_db_path, _safe_create
+from nexus.factory._helpers import _make_gate, _safe_create
 
 logger = logging.getLogger(__name__)
 
@@ -402,20 +402,6 @@ def _boot_independent_bricks(
         except Exception as _del_exc:
             logger.debug("[BOOT:BRICK] DelegationService unavailable: %s", _del_exc)
 
-    # --- TaskQueueService (Issue #655) ---
-    task_queue_service: Any = None
-    if not _on("scheduler"):
-        logger.debug("[BOOT:BRICK] Scheduler/TaskQueue brick disabled by profile")
-    else:
-        try:
-            from nexus.system_services.lifecycle.task_queue_service import TaskQueueService
-
-            task_queue_service = TaskQueueService(
-                db_path=_resolve_tasks_db_path(ctx.backend),
-            )
-        except Exception as _tq_exc:
-            logger.debug("[BOOT:BRICK] TaskQueueService unavailable: %s", _tq_exc)
-
     # --- IPC Brick (Issue #1727, LEGO §8: Filesystem-as-IPC) ---
     # IPC now goes through the kernel VFS (KernelVFSAdapter → NexusFS).
     # A LocalConnector is mounted at /agents for actual file storage;
@@ -556,7 +542,6 @@ def _boot_independent_bricks(
         "workflow_engine": workflow_engine,
         "api_key_creator": api_key_creator,
         "snapshot_service": snapshot_service,
-        "task_queue_service": task_queue_service,
         "ipc_storage_driver": ipc_storage_driver,
         "ipc_provisioner": ipc_provisioner,
         "agent_event_log": agent_event_log,

@@ -295,8 +295,6 @@ class BrickServices:
     tool_namespace_middleware: Any = None  # MCP brick
     api_key_creator: Any = None  # AUTH brick (Issue #1519, 3A)
     snapshot_service: Any = None  # SNAPSHOT brick (Issue #1752)
-    task_queue_service: Any = None  # TASK_QUEUE brick (Issue #655)
-
     # --- Cache Brick (Issue #1524) ---
     cache_brick: Any = None  # CacheBrick — owns all cache domain services
 
@@ -363,8 +361,6 @@ class WiredServices:
     search_service: Any = None
     share_link_service: Any = None
     events_service: Any = None
-    task_queue_service: Any = None
-
     # Versioning services (Issue #882: session-managed facades)
     time_travel_service: Any = None
     operations_service: Any = None

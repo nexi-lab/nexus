@@ -19,15 +19,15 @@ from nexus.server.api.v2.routers.scheduler import (
     get_scheduler_service,
     router,
 )
-from nexus.services.scheduler.constants import (
+from nexus.system_services.scheduler.constants import (
     TASK_STATUS_QUEUED,
     TASK_STATUS_RUNNING,
     PriorityTier,
 )
-from nexus.services.scheduler.events import AgentStateEmitter, AgentStateEvent
-from nexus.services.scheduler.models import ScheduledTask
-from nexus.services.scheduler.policies.fair_share import FairShareCounter
-from nexus.services.scheduler.service import SchedulerService
+from nexus.system_services.scheduler.events import AgentStateEmitter, AgentStateEvent
+from nexus.system_services.scheduler.models import ScheduledTask
+from nexus.system_services.scheduler.policies.fair_share import FairShareCounter
+from nexus.system_services.scheduler.service import SchedulerService
 
 # =============================================================================
 # Fixtures

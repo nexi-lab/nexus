@@ -17,30 +17,30 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
-from nexus.services.scheduler.constants import (
+from nexus.system_services.scheduler.constants import (
     STARVATION_PROMOTION_THRESHOLD_SECS,
     TASK_STATUS_COMPLETED,
     TASK_STATUS_FAILED,
     PriorityClass,
     PriorityTier,
 )
-from nexus.services.scheduler.models import ScheduledTask, TaskSubmission
-from nexus.services.scheduler.policies.classifier import (
+from nexus.system_services.scheduler.models import ScheduledTask, TaskSubmission
+from nexus.system_services.scheduler.policies.classifier import (
     classify_agent_request,
     classify_request,
     parse_request_enums,
 )
-from nexus.services.scheduler.policies.fair_share import FairShareCounter
-from nexus.services.scheduler.priority import (
+from nexus.system_services.scheduler.policies.fair_share import FairShareCounter
+from nexus.system_services.scheduler.priority import (
     compute_boost_tiers,
     compute_effective_tier,
     validate_submission,
 )
-from nexus.services.scheduler.queue import TaskQueue
+from nexus.system_services.scheduler.queue import TaskQueue
 
 if TYPE_CHECKING:
     from nexus.contracts.protocols.scheduler import AgentRequest, CreditsReservationProtocol
-    from nexus.services.scheduler.events import AgentStateEmitter, AgentStateEvent
+    from nexus.system_services.scheduler.events import AgentStateEmitter, AgentStateEvent
 
 logger = logging.getLogger(__name__)
 
@@ -249,6 +249,38 @@ class SchedulerService:
             "error_message": task.error_message,
         }
 
+    async def get_status_scoped(
+        self,
+        task_id: str,
+        *,
+        agent_id: str,
+    ) -> dict[str, Any] | None:
+        """Get task status by ID, scoped to agent (owner check).
+
+        Returns None if task doesn't exist or doesn't belong to agent_id.
+        """
+        async with self.pool.acquire() as conn:
+            task = await self._queue.get_task_scoped(conn, task_id, agent_id)
+        if task is None:
+            return None
+        return {
+            "id": task.id,
+            "status": task.status,
+            "agent_id": task.agent_id,
+            "executor_id": task.executor_id,
+            "task_type": task.task_type,
+            "priority_tier": PriorityTier(task.priority_tier).name.lower(),
+            "effective_tier": task.effective_tier,
+            "priority_class": task.priority_class,
+            "request_state": task.request_state,
+            "enqueued_at": task.enqueued_at.isoformat() if task.enqueued_at else "",
+            "started_at": task.started_at.isoformat() if task.started_at else None,
+            "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+            "deadline": task.deadline.isoformat() if task.deadline else None,
+            "boost_amount": str(task.boost_amount),
+            "error_message": task.error_message,
+        }
+
     async def complete(self, task_id: str, *, error: str | None = None) -> None:
         """Mark a task as completed or failed, and update fair-share counter."""
         status = TASK_STATUS_FAILED if error else TASK_STATUS_COMPLETED
@@ -306,6 +338,23 @@ class SchedulerService:
             cancelled = await self._queue.cancel(conn, task_id)
 
             if cancelled and task and task.boost_reservation_id and self._credits:
+                await self._credits.release_reservation(task.boost_reservation_id)
+
+            return cancelled
+
+    async def cancel_by_id_scoped(self, task_id: str, *, agent_id: str) -> bool:
+        """Cancel a single queued task, scoped to agent (owner check).
+
+        Returns False if task doesn't exist, doesn't belong to agent, or
+        is not in 'queued' status.
+        """
+        async with self.pool.acquire() as conn:
+            task = await self._queue.get_task_scoped(conn, task_id, agent_id)
+            if task is None:
+                return False
+            cancelled = await self._queue.cancel_scoped(conn, task_id, agent_id)
+
+            if cancelled and task.boost_reservation_id and self._credits:
                 await self._credits.release_reservation(task.boost_reservation_id)
 
             return cancelled

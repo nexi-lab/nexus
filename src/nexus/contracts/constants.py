@@ -16,7 +16,7 @@ class PriorityTier(IntEnum):
     Strict ordering: CRITICAL tasks always run before HIGH,
     HIGH before NORMAL, etc.
 
-    Originally in ``nexus.services.scheduler.constants``; moved to contracts
+    Originally in ``nexus.system_services.scheduler.constants``; moved to contracts
     because both the scheduler and pay bricks depend on it.
     """
 

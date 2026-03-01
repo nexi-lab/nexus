@@ -15,14 +15,14 @@ Related: Issue #1212
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from nexus.services.scheduler.constants import (
+from nexus.system_services.scheduler.constants import (
     AGING_THRESHOLD_SECONDS,
     BOOST_COST_PER_TIER,
     MAX_BOOST_TIERS,
     MAX_WAIT_SECONDS,
     PriorityTier,
 )
-from nexus.services.scheduler.models import TaskSubmission
+from nexus.system_services.scheduler.models import TaskSubmission
 
 
 def compute_boost_tiers(boost_amount: Decimal) -> int:

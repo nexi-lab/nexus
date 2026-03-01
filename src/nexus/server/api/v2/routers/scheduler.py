@@ -17,7 +17,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
-from nexus.services.scheduler.constants import TIER_ALIASES, RequestState
+from nexus.system_services.scheduler.constants import TIER_ALIASES, RequestState
 
 logger = logging.getLogger(__name__)
 
@@ -198,11 +198,12 @@ async def submit_task(
 @router.get("/task/{task_id}", response_model=TaskStatusResponse)
 async def get_task_status(
     task_id: str,
-    auth_result: dict[str, Any] = Depends(_get_require_auth()),  # noqa: ARG001
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
     scheduler: Any = Depends(get_scheduler_service),
 ) -> TaskStatusResponse:
-    """Get task status by ID."""
-    status = await scheduler.get_status(task_id)
+    """Get task status by ID (owner-scoped)."""
+    agent_id = _extract_agent_id(auth_result)
+    status = await scheduler.get_status_scoped(task_id, agent_id=agent_id)
     if status is None:
         raise HTTPException(status_code=404, detail="Task not found")
     return TaskStatusResponse(**status)
@@ -211,15 +212,16 @@ async def get_task_status(
 @router.post("/task/{task_id}/cancel", response_model=CancelResponse)
 async def cancel_task(
     task_id: str,
-    auth_result: dict[str, Any] = Depends(_get_require_auth()),  # noqa: ARG001
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
     scheduler: Any = Depends(get_scheduler_service),
 ) -> CancelResponse:
-    """Cancel a queued task.
+    """Cancel a queued task (owner-scoped).
 
-    Only tasks with status 'queued' can be cancelled.
+    Only tasks with status 'queued' that belong to the caller can be cancelled.
     Returns cancelled=true if successful, false otherwise.
     """
-    cancelled = await scheduler.cancel_by_id(task_id)
+    agent_id = _extract_agent_id(auth_result)
+    cancelled = await scheduler.cancel_by_id_scoped(task_id, agent_id=agent_id)
     return CancelResponse(cancelled=cancelled, task_id=task_id)
 
 

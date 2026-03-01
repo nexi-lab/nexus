@@ -13,7 +13,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from nexus.contracts.protocols.scheduler import AgentRequest
-from nexus.services.scheduler.in_memory import InMemoryScheduler
+from nexus.system_services.scheduler.in_memory import InMemoryScheduler
 from tests.strategies.kernel import agent_request
 
 # ---------------------------------------------------------------------------

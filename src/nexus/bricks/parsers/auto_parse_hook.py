@@ -41,7 +41,7 @@ class AutoParseWriteHook:
         try:
             self._get_parser(ctx.path)
         except Exception:
-            return
+            return  # No parser available for this file type — skip background parse
 
         thread = threading.Thread(
             target=self._run_parse,

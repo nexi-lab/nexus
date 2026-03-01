@@ -1,7 +1,7 @@
 """OAuth service protocol (Issue #1287: Extract domain services).
 
 Defines the contract for OAuth credential management.
-Existing implementation: ``nexus.core.nexus_fs_oauth.NexusFSOAuthMixin``.
+Implementation: ``nexus.bricks.auth.oauth.credential_service.OAuthCredentialService``.
 
 References:
     - docs/design/NEXUS-LEGO-ARCHITECTURE.md
@@ -25,17 +25,16 @@ class OAuthProtocol(Protocol):
     - Code exchange for tokens
     - Provider discovery and listing
     - Credential lifecycle (list, test, revoke)
-    - MCP provider connection via Klavis
     """
 
-    async def oauth_get_auth_url(
+    async def get_auth_url(
         self,
         provider: str,
         redirect_uri: str = DEFAULT_OAUTH_REDIRECT_URI,
         scopes: list[str] | None = None,
     ) -> dict[str, Any]: ...
 
-    async def oauth_exchange_code(
+    async def exchange_code(
         self,
         provider: str,
         code: str,
@@ -46,35 +45,28 @@ class OAuthProtocol(Protocol):
         context: "OperationContext | None" = None,
     ) -> dict[str, Any]: ...
 
-    async def oauth_list_providers(
+    async def list_providers(
         self,
         context: "OperationContext | None" = None,
     ) -> list[dict[str, Any]]: ...
 
-    async def oauth_list_credentials(
+    async def list_credentials(
         self,
         provider: str | None = None,
         include_revoked: bool = False,
         context: "OperationContext | None" = None,
     ) -> list[dict[str, Any]]: ...
 
-    async def oauth_revoke_credential(
+    async def revoke_credential(
         self,
         provider: str,
         user_email: str,
         context: "OperationContext | None" = None,
     ) -> dict[str, Any]: ...
 
-    async def oauth_test_credential(
+    async def test_credential(
         self,
         provider: str,
         user_email: str,
-        context: "OperationContext | None" = None,
-    ) -> dict[str, Any]: ...
-
-    async def mcp_connect(
-        self,
-        provider: str,
-        redirect_url: str | None = None,
         context: "OperationContext | None" = None,
     ) -> dict[str, Any]: ...

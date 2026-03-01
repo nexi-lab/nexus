@@ -11,9 +11,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from nexus.bricks.share_link.share_link_service import ShareLinkService
 from nexus.contracts.types import OperationContext
 from nexus.lib.response import HandlerResponse
-from nexus.services.share_link.share_link_service import ShareLinkService
 
 # =============================================================================
 # Fixtures

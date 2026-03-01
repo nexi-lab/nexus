@@ -505,13 +505,15 @@ class NexusFS(  # type: ignore[misc]
             if hasattr(self, "_hierarchy_manager"):
                 try:
                     logger.debug(
-                        f"mkdir: Creating parent tuples for intermediate dir: {parent_dir}"
+                        "mkdir: Creating parent tuples for intermediate dir: %s", parent_dir
                     )
                     self._hierarchy_manager.ensure_parent_tuples(
                         parent_dir, zone_id=ctx.zone_id or ROOT_ZONE_ID
                     )
                 except Exception as e:
-                    logger.warning(f"mkdir: Failed to create parent tuples for {parent_dir}: {e}")
+                    logger.warning(
+                        "mkdir: Failed to create parent tuples for %s: %s", parent_dir, e
+                    )
 
     def _create_directory_metadata(
         self, path: str, context: OperationContext | None = None
@@ -622,7 +624,7 @@ class NexusFS(  # type: ignore[misc]
         # This enables granting access to /workspace to automatically grant access to subdirectories
 
         logger.debug(
-            f"mkdir: Checking for hierarchy_manager: hasattr={hasattr(self, '_hierarchy_manager')}"
+            "mkdir: Checking for hierarchy_manager: hasattr=%s", hasattr(self, "_hierarchy_manager")
         )
 
         ctx = context or self._default_context
@@ -630,19 +632,21 @@ class NexusFS(  # type: ignore[misc]
         if hasattr(self, "_hierarchy_manager"):
             try:
                 logger.debug(
-                    f"mkdir: Calling ensure_parent_tuples for {path}, zone_id={ctx.zone_id or ROOT_ZONE_ID}"
+                    "mkdir: Calling ensure_parent_tuples for %s, zone_id=%s",
+                    path,
+                    ctx.zone_id or ROOT_ZONE_ID,
                 )
                 created_count = self._hierarchy_manager.ensure_parent_tuples(
                     path, zone_id=ctx.zone_id or ROOT_ZONE_ID
                 )
-                logger.debug(f"mkdir: Created {created_count} parent tuples for {path}")
+                logger.debug("mkdir: Created %s parent tuples for %s", created_count, path)
                 if created_count > 0:
-                    logger.debug(f"Created {created_count} parent tuples for {path}")
+                    logger.debug("Created %s parent tuples for %s", created_count, path)
             except Exception as e:
                 # Log the error but don't fail the mkdir operation
                 # This helps diagnose issues with parent tuple creation
                 logger.warning(
-                    f"Failed to create parent tuples for {path}: {type(e).__name__}: {e}"
+                    "Failed to create parent tuples for %s: %s: %s", path, type(e).__name__, e
                 )
                 import traceback
 
@@ -653,16 +657,20 @@ class NexusFS(  # type: ignore[misc]
         # 'owner' is a computed union of direct_owner + parent_owner in the ReBAC schema.
         if self._rebac_manager and ctx.user_id and not ctx.is_system:
             try:
-                logger.debug(f"mkdir: Granting direct_owner permission to {ctx.user_id} for {path}")
+                logger.debug(
+                    "mkdir: Granting direct_owner permission to %s for %s", ctx.user_id, path
+                )
                 self._rebac_manager.rebac_write(
                     subject=("user", ctx.user_id),
                     relation="direct_owner",
                     object=("file", path),
                     zone_id=ctx.zone_id or ROOT_ZONE_ID,
                 )
-                logger.debug(f"mkdir: Granted direct_owner permission to {ctx.user_id} for {path}")
+                logger.debug(
+                    "mkdir: Granted direct_owner permission to %s for %s", ctx.user_id, path
+                )
             except Exception as e:
-                logger.warning(f"Failed to grant direct_owner permission for {path}: {e}")
+                logger.warning("Failed to grant direct_owner permission for %s: %s", path, e)
 
         # Issue #900: Unified two-phase dispatch for mkdir
         new_revision = self._increment_vfs_revision()
@@ -751,12 +759,16 @@ class NexusFS(  # type: ignore[misc]
         # Check write permission on directory
 
         logger.debug(
-            f"rmdir: path={path}, recursive={recursive}, user={ctx.user_id}, is_admin={ctx.is_admin}"
+            "rmdir: path=%s, recursive=%s, user=%s, is_admin=%s",
+            path,
+            recursive,
+            ctx.user_id,
+            ctx.is_admin,
         )
         from nexus.contracts.vfs_hooks import RmdirHookContext
 
         self._dispatch.intercept_pre_rmdir(RmdirHookContext(path=path, context=ctx))
-        logger.debug(f"  -> PRE-INTERCEPT passed for rmdir on {path}")
+        logger.debug("  -> PRE-INTERCEPT passed for rmdir on %s", path)
 
         # Route to backend with write access check (rmdir requires write permission)
         route = self.router.route(
@@ -1181,7 +1193,7 @@ class NexusFS(  # type: ignore[misc]
             try:
                 return self.metadata.get_revision(zone_id)
             except Exception as e:
-                logger.warning(f"Failed to get revision for zone {zone_id}: {e}")
+                logger.warning("Failed to get revision for zone %s: %s", zone_id, e)
                 return 0
 
         # Legacy fallback: FileMetadata-based lookup
@@ -1190,7 +1202,7 @@ class NexusFS(  # type: ignore[misc]
             meta = self.metadata.get(rev_path)
             return meta.version if meta else 0
         except Exception as e:
-            logger.warning(f"Failed to get revision for zone {zone_id}: {e}")
+            logger.warning("Failed to get revision for zone %s: %s", zone_id, e)
             return 0
 
     def _wait_for_revision(
@@ -1317,7 +1329,11 @@ class NexusFS(  # type: ignore[misc]
             access_type=access_type,
         )
         logger.debug(
-            f"[READ-SET] Recorded {access_type} read: {resource_type}:{resource_id}@{revision}"
+            "[READ-SET] Recorded %s read: %s:%s@%s",
+            access_type,
+            resource_type,
+            resource_id,
+            revision,
         )
 
     # =========================================================================
@@ -1417,7 +1433,7 @@ class NexusFS(  # type: ignore[misc]
         try:
             run_sync(release_lock())
         except Exception as e:
-            logger.error(f"Failed to release lock {lock_id} for {path}: {e}")
+            logger.error("Failed to release lock %s for %s: %s", lock_id, path, e)
 
     def _apply_dynamic_viewer_filter_if_needed(
         self, path: str, content: bytes, context: OperationContext | None
@@ -1434,7 +1450,7 @@ class NexusFS(  # type: ignore[misc]
         """
         # Only process CSV files
         if not path.lower().endswith(".csv"):
-            logger.debug(f"_apply_dynamic_viewer_filter: Skipping non-CSV file: {path}")
+            logger.debug("_apply_dynamic_viewer_filter: Skipping non-CSV file: %s", path)
             return content
 
         # Extract subject from context (uses NexusFSReBACMixin method)
@@ -1444,11 +1460,11 @@ class NexusFS(  # type: ignore[misc]
 
         subject = self._get_subject_from_context(context)
         if not subject:
-            logger.debug(f"_apply_dynamic_viewer_filter: No subject found in context for {path}")
+            logger.debug("_apply_dynamic_viewer_filter: No subject found in context for %s", path)
             return content
 
         logger.debug(
-            f"_apply_dynamic_viewer_filter: Checking dynamic_viewer for {subject} on {path}"
+            "_apply_dynamic_viewer_filter: Checking dynamic_viewer for %s on %s", subject, path
         )
 
         # Check if ReBAC is available
@@ -1465,12 +1481,17 @@ class NexusFS(  # type: ignore[misc]
             if not column_config:
                 # No dynamic_viewer permission, return original content
                 logger.debug(
-                    f"_apply_dynamic_viewer_filter: No dynamic_viewer config for {subject} on {path}"
+                    "_apply_dynamic_viewer_filter: No dynamic_viewer config for %s on %s",
+                    subject,
+                    path,
                 )
                 return content
 
             logger.info(
-                f"_apply_dynamic_viewer_filter: Applying filter for {subject} on {path}: {column_config}"
+                "_apply_dynamic_viewer_filter: Applying filter for %s on %s: %s",
+                subject,
+                path,
+                column_config,
             )
 
             # Apply filtering
@@ -1481,7 +1502,7 @@ class NexusFS(  # type: ignore[misc]
 
             # Return filtered content as bytes
             filtered_content = result["filtered_data"]
-            logger.info(f"_apply_dynamic_viewer_filter: Successfully filtered {path}")
+            logger.info("_apply_dynamic_viewer_filter: Successfully filtered %s", path)
             if isinstance(filtered_content, str):
                 return filtered_content.encode("utf-8")
             elif isinstance(filtered_content, bytes):
@@ -1492,7 +1513,7 @@ class NexusFS(  # type: ignore[misc]
 
         except Exception as e:
             # Log error but don't fail the read operation
-            logger.warning(f"Failed to apply dynamic_viewer filter for {path}: {e}")
+            logger.warning("Failed to apply dynamic_viewer filter for %s: %s", path, e)
             import traceback
 
             logger.warning(traceback.format_exc())
@@ -1523,19 +1544,19 @@ class NexusFS(  # type: ignore[misc]
                 parse_info["parsed"] = True
                 parse_info["cached"] = True
                 parse_info["provider"] = self.metadata.get_file_metadata(path, "parser_name")
-                logger.debug(f"Using cached parsed_text for {path}")
+                logger.debug("Using cached parsed_text for %s", path)
                 return cached_text.encode("utf-8") if isinstance(
                     cached_text, str
                 ) else cached_text, parse_info
 
             # No cache - parse on demand using provider registry
             if not hasattr(self, "provider_registry") or self.provider_registry is None:
-                logger.debug(f"No provider registry available for parsing {path}")
+                logger.debug("No provider registry available for parsing %s", path)
                 return content, parse_info
 
             provider = self.provider_registry.get_provider(path)
             if not provider:
-                logger.debug(f"No parse provider available for {path}")
+                logger.debug("No parse provider available for %s", path)
                 return content, parse_info
 
             # Parse the content (async)
@@ -1557,16 +1578,16 @@ class NexusFS(  # type: ignore[misc]
                         )
                         self.metadata.set_file_metadata(path, "parser_name", provider.name)
                     except Exception as cache_err:
-                        logger.warning(f"Failed to cache parsed content for {path}: {cache_err}")
+                        logger.warning("Failed to cache parsed content for %s: %s", path, cache_err)
 
                     return parsed_content, parse_info
 
             except Exception as parse_err:
-                logger.warning(f"Failed to parse {path} with {provider.name}: {parse_err}")
+                logger.warning("Failed to parse %s with %s: %s", path, provider.name, parse_err)
                 return content, parse_info
 
         except Exception as e:
-            logger.warning(f"Error getting parsed content for {path}: {e}")
+            logger.warning("Error getting parsed content for %s: %s", path, e)
 
         return content, parse_info
 
@@ -1689,7 +1710,7 @@ class NexusFS(  # type: ignore[misc]
         # Log slow pre-intercept
         if perm_check_elapsed > 0.010:  # >10ms
             logger.warning(
-                f"[READ-PERF] SLOW pre-intercept for {path}: {perm_check_elapsed * 1000:.1f}ms"
+                "[READ-PERF] SLOW pre-intercept for %s: %.1fms", path, perm_check_elapsed * 1000
             )
 
         # Normal file path - proceed with regular read
@@ -1884,7 +1905,7 @@ class NexusFS(  # type: ignore[misc]
                 allowed_paths = self._permission_enforcer.filter_list(validated_paths, ctx)
                 allowed_set = set(allowed_paths)
             except Exception as e:
-                logger.error(f"[READ-BULK] Permission check failed: {e}")
+                logger.error("[READ-BULK] Permission check failed: %s", e)
                 if not skip_errors:
                     raise
                 # If skip_errors, assume no files are allowed
@@ -1892,7 +1913,10 @@ class NexusFS(  # type: ignore[misc]
 
         perm_elapsed = time.time() - perm_start
         logger.info(
-            f"[READ-BULK] Permission check: {len(allowed_set)}/{len(validated_paths)} allowed in {perm_elapsed * 1000:.1f}ms"
+            "[READ-BULK] Permission check: %s/%s allowed in %.1fms",
+            len(allowed_set),
+            len(validated_paths),
+            perm_elapsed * 1000,
         )
 
         # Mark denied files
@@ -1914,7 +1938,7 @@ class NexusFS(  # type: ignore[misc]
         batch_meta = self.metadata.get_batch(list(allowed_set))
         meta_elapsed = (time.time() - meta_start) * 1000
         logger.info(
-            f"[READ-BULK] Batch metadata lookup: {len(batch_meta)} paths in {meta_elapsed:.1f}ms"
+            "[READ-BULK] Batch metadata lookup: %s paths in %.1fms", len(batch_meta), meta_elapsed
         )
 
         # Process metadata and group by backend
@@ -1941,21 +1965,23 @@ class NexusFS(  # type: ignore[misc]
                     backend_paths[backend] = []
                 backend_paths[backend].append(path)
             except Exception as e:
-                logger.warning(f"[READ-BULK] Failed to route {path}: {type(e).__name__}: {e}")
+                logger.warning("[READ-BULK] Failed to route %s: %s: %s", path, type(e).__name__, e)
                 if skip_errors:
                     results[path] = None
                 else:
                     raise
 
         route_elapsed = (time.time() - route_start) * 1000
-        logger.info(f"[READ-BULK] Routing: {len(path_info)} paths in {route_elapsed:.1f}ms")
+        logger.info("[READ-BULK] Routing: %s paths in %.1fms", len(path_info), route_elapsed)
 
         # Try bulk read for backends that support it (CacheConnectorMixin)
         for backend, paths_for_backend in backend_paths.items():
             if hasattr(backend, "read_bulk_from_cache") and len(paths_for_backend) > 1:
                 # Use bulk cache lookup
                 logger.info(
-                    f"[READ-BULK] Using bulk cache for {len(paths_for_backend)} files on {type(backend).__name__}"
+                    "[READ-BULK] Using bulk cache for %s files on %s",
+                    len(paths_for_backend),
+                    type(backend).__name__,
                 )
                 try:
                     cache_entries = backend.read_bulk_from_cache(paths_for_backend, original=True)
@@ -2010,7 +2036,7 @@ class NexusFS(  # type: ignore[misc]
                                 results[path] = content
                         except Exception as e:
                             logger.warning(
-                                f"[READ-BULK] Failed to read {path}: {type(e).__name__}: {e}"
+                                "[READ-BULK] Failed to read %s: %s: %s", path, type(e).__name__, e
                             )
                             if skip_errors:
                                 results[path] = None
@@ -2018,7 +2044,7 @@ class NexusFS(  # type: ignore[misc]
                                 raise
                 except Exception as e:
                     logger.warning(
-                        f"[READ-BULK] Bulk cache failed, falling back to individual reads: {e}"
+                        "[READ-BULK] Bulk cache failed, falling back to individual reads: %s", e
                     )
                     # Fall back to individual reads
                     for path in paths_for_backend:
@@ -2046,7 +2072,7 @@ class NexusFS(  # type: ignore[misc]
                                 results[path] = content
                         except Exception as e:
                             logger.warning(
-                                f"[READ-BULK] Failed to read {path}: {type(e).__name__}: {e}"
+                                "[READ-BULK] Failed to read %s: %s: %s", path, type(e).__name__, e
                             )
                             if skip_errors:
                                 results[path] = None
@@ -2071,7 +2097,8 @@ class NexusFS(  # type: ignore[misc]
 
                         # Parallel mmap read
                         logger.info(
-                            f"[READ-BULK] Using parallel mmap for {len(disk_paths)} LocalBackend files"
+                            "[READ-BULK] Using parallel mmap for %s LocalBackend files",
+                            len(disk_paths),
                         )
                         disk_contents = read_files_bulk(disk_paths)
 
@@ -2161,7 +2188,7 @@ class NexusFS(  # type: ignore[misc]
                                 results[path] = content
                         except Exception as e:
                             logger.warning(
-                                f"[READ-BULK] Failed to read {path}: {type(e).__name__}: {e}"
+                                "[READ-BULK] Failed to read %s: %s: %s", path, type(e).__name__, e
                             )
                             if skip_errors:
                                 results[path] = None
@@ -2172,8 +2199,11 @@ class NexusFS(  # type: ignore[misc]
         bulk_elapsed = time.time() - bulk_start
 
         logger.info(
-            f"[READ-BULK] Completed: {len(results)} files in {bulk_elapsed * 1000:.1f}ms "
-            f"(perm={perm_elapsed * 1000:.0f}ms, read={read_elapsed * 1000:.0f}ms)"
+            "[READ-BULK] Completed: %s files in %.1fms (perm=%.0fms, read=%.0fms)",
+            len(results),
+            bulk_elapsed * 1000,
+            perm_elapsed * 1000,
+            read_elapsed * 1000,
         )
 
         return results
@@ -2758,21 +2788,26 @@ class NexusFS(  # type: ignore[misc]
                 if meta is None and ctx.user_id and not ctx.is_system:
                     deferred_buffer.queue_owner_grant(ctx.user_id, path, ctx.zone_id or "root")
             except Exception as e:
-                logger.warning(f"write: Failed to queue deferred permissions for {path}: {e}")
+                logger.warning("write: Failed to queue deferred permissions for %s: %s", path, e)
         else:
             # SYNC PATH: Execute permission operations immediately (original behavior)
             if hasattr(self, "_hierarchy_manager"):
                 try:
                     logger.info(
-                        f"write: Calling ensure_parent_tuples for {path}, zone_id={ctx.zone_id or ROOT_ZONE_ID}"
+                        "write: Calling ensure_parent_tuples for %s, zone_id=%s",
+                        path,
+                        ctx.zone_id or ROOT_ZONE_ID,
                     )
                     created_count = self._hierarchy_manager.ensure_parent_tuples(
                         path, zone_id=ctx.zone_id or "root"
                     )
-                    logger.info(f"write: Created {created_count} parent tuples for {path}")
+                    logger.info("write: Created %s parent tuples for %s", created_count, path)
                 except Exception as e:
                     logger.warning(
-                        f"write: Failed to create parent tuples for {path}: {type(e).__name__}: {e}"
+                        "write: Failed to create parent tuples for %s: %s: %s",
+                        path,
+                        type(e).__name__,
+                        e,
                     )
 
             # Issue #548: Grant direct_owner permission to the user who created the file
@@ -2780,7 +2815,9 @@ class NexusFS(  # type: ignore[misc]
                 try:
                     if ctx.user_id and not ctx.is_system:
                         logger.debug(
-                            f"write: Granting direct_owner permission to {ctx.user_id} for {path}"
+                            "write: Granting direct_owner permission to %s for %s",
+                            ctx.user_id,
+                            path,
                         )
                         self._rebac_manager.rebac_write(
                             subject=("user", ctx.user_id),
@@ -2789,11 +2826,11 @@ class NexusFS(  # type: ignore[misc]
                             zone_id=ctx.zone_id or "root",
                         )
                         logger.debug(
-                            f"write: Granted direct_owner permission to {ctx.user_id} for {path}"
+                            "write: Granted direct_owner permission to %s for %s", ctx.user_id, path
                         )
                 except Exception as e:
                     logger.warning(
-                        f"write: Failed to grant direct_owner permission for {path}: {e}"
+                        "write: Failed to grant direct_owner permission for %s: %s", path, e
                     )
 
         # Auto-parse file if enabled and format is supported
@@ -3417,11 +3454,13 @@ class NexusFS(  # type: ignore[misc]
                     all_paths, zone_id=zone_id_for_perms
                 )
                 logger.info(
-                    f"write_batch: Batch created {created_count} parent tuples for {len(all_paths)} files"
+                    "write_batch: Batch created %s parent tuples for %s files",
+                    created_count,
+                    len(all_paths),
                 )
             except Exception as e:
                 logger.warning(
-                    f"write_batch: Batch parent tuples failed, falling back to individual: {e}"
+                    "write_batch: Batch parent tuples failed, falling back to individual: %s", e
                 )
                 # Fallback to individual calls if batch fails
                 for path in all_paths:
@@ -3431,7 +3470,7 @@ class NexusFS(  # type: ignore[misc]
                         )
                     except Exception as e2:
                         logger.warning(
-                            f"write_batch: Failed to create parent tuples for {path}: {e2}"
+                            "write_batch: Failed to create parent tuples for %s: %s", path, e2
                         )
         elif hasattr(self, "_hierarchy_manager"):
             # No batch method available, use individual calls
@@ -3439,7 +3478,9 @@ class NexusFS(  # type: ignore[misc]
                 try:
                     self._hierarchy_manager.ensure_parent_tuples(path, zone_id=zone_id_for_perms)
                 except Exception as e:
-                    logger.warning(f"write_batch: Failed to create parent tuples for {path}: {e}")
+                    logger.warning(
+                        "write_batch: Failed to create parent tuples for %s: %s", path, e
+                    )
         _hierarchy_elapsed = (time.perf_counter() - _hierarchy_start) * 1000
 
         # PERF: Batch direct_owner grants (single transaction instead of N)
@@ -3467,10 +3508,10 @@ class NexusFS(  # type: ignore[misc]
             if owner_grants and hasattr(self._rebac_manager, "rebac_write_batch"):
                 try:
                     grant_count = self._rebac_manager.rebac_write_batch(owner_grants)
-                    logger.info(f"write_batch: Batch granted direct_owner to {grant_count} files")
+                    logger.info("write_batch: Batch granted direct_owner to %s files", grant_count)
                 except Exception as e:
                     logger.warning(
-                        f"write_batch: Batch rebac_write failed, falling back to individual: {e}"
+                        "write_batch: Batch rebac_write failed, falling back to individual: %s", e
                     )
                     # Fallback to individual calls
                     for grant in owner_grants:
@@ -3482,7 +3523,7 @@ class NexusFS(  # type: ignore[misc]
                                 zone_id=grant["zone_id"],
                             )
                         except Exception as e2:
-                            logger.warning(f"write_batch: Failed to grant direct_owner: {e2}")
+                            logger.warning("write_batch: Failed to grant direct_owner: %s", e2)
             elif owner_grants:
                 # No batch method available, use individual calls
                 for grant in owner_grants:
@@ -3494,14 +3535,16 @@ class NexusFS(  # type: ignore[misc]
                             zone_id=grant["zone_id"],
                         )
                     except Exception as e:
-                        logger.warning(f"write_batch: Failed to grant direct_owner: {e}")
+                        logger.warning("write_batch: Failed to grant direct_owner: %s", e)
         _rebac_elapsed = (time.perf_counter() - _rebac_start) * 1000
 
         # Log detailed timing breakdown for performance analysis
         logger.warning(
-            f"[WRITE-BATCH-PERF] files={len(validated_files)}, "
-            f"hierarchy={_hierarchy_elapsed:.1f}ms, rebac={_rebac_elapsed:.1f}ms, "
-            f"per_file_avg={(_hierarchy_elapsed + _rebac_elapsed) / len(validated_files):.1f}ms"
+            "[WRITE-BATCH-PERF] files=%s, hierarchy=%.1fms, rebac=%.1fms, per_file_avg=%.1fms",
+            len(validated_files),
+            _hierarchy_elapsed,
+            _rebac_elapsed,
+            (_hierarchy_elapsed + _rebac_elapsed) / len(validated_files),
         )
 
         # Auto-parse files if enabled
@@ -3538,7 +3581,7 @@ class NexusFS(  # type: ignore[misc]
             thread.start()
         except Exception as e:
             # Log if no parser available (expected) but don't fail the write operation
-            logger.debug(f"Auto-parse skipped for {path}: {type(e).__name__}: {e}")
+            logger.debug("Auto-parse skipped for %s: %s: %s", path, type(e).__name__, e)
 
     def _parse_in_thread(self, path: str) -> None:
         """Parse file in a background thread.
@@ -3562,19 +3605,22 @@ class NexusFS(  # type: ignore[misc]
             # Categorize errors for better logging
             if "disk" in error_msg.lower() or "space" in error_msg.lower():
                 logger.error(
-                    f"Auto-parse FAILED for {path}: Disk error - {error_type}: {error_msg}"
+                    "Auto-parse FAILED for %s: Disk error - %s: %s", path, error_type, error_msg
                 )
             elif "database" in error_msg.lower() or "connection" in error_msg.lower():
                 logger.error(
-                    f"Auto-parse FAILED for {path}: Database error - {error_type}: {error_msg}"
+                    "Auto-parse FAILED for %s: Database error - %s: %s", path, error_type, error_msg
                 )
             elif "memory" in error_msg.lower() or isinstance(e, MemoryError):
                 logger.error(
-                    f"Auto-parse FAILED for {path}: Memory error - {error_type}: {error_msg}"
+                    "Auto-parse FAILED for %s: Memory error - %s: %s", path, error_type, error_msg
                 )
             elif "permission" in error_msg.lower() or isinstance(e, PermissionError | OSError):
                 logger.warning(
-                    f"Auto-parse FAILED for {path}: Permission/OS error - {error_type}: {error_msg}"
+                    "Auto-parse FAILED for %s: Permission/OS error - %s: %s",
+                    path,
+                    error_type,
+                    error_msg,
                 )
             elif (
                 "unsupported" in error_msg.lower()
@@ -3582,12 +3628,15 @@ class NexusFS(  # type: ignore[misc]
                 or error_type == "UnsupportedFormatException"
             ):
                 # Expected for files that don't need parsing - log at debug level
-                logger.debug(f"Auto-parse skipped for {path}: Unsupported format - {error_msg}")
+                logger.debug("Auto-parse skipped for %s: Unsupported format - %s", path, error_msg)
             else:
                 # Unknown error - log with stack trace for debugging
                 logger.warning(
-                    f"Auto-parse FAILED for {path}: {error_type}: {error_msg}\n"
-                    f"Stack trace:\n{traceback.format_exc()}"
+                    "Auto-parse FAILED for %s: %s: %s\nStack trace:\n%s",
+                    path,
+                    error_type,
+                    error_msg,
+                    traceback.format_exc(),
                 )
 
     @rpc_expose(description="Delete file")
@@ -3879,15 +3928,20 @@ class NexusFS(  # type: ignore[misc]
 
         # Update ReBAC permissions to follow the renamed file/directory
         # This ensures permissions are preserved when files are moved
-        logger.warning(f"[RENAME-REBAC] Starting ReBAC update: {old_path} -> {new_path}")
+        logger.warning("[RENAME-REBAC] Starting ReBAC update: %s -> %s", old_path, new_path)
         logger.warning(
-            f"[RENAME-REBAC] has _rebac_manager: {hasattr(self, '_rebac_manager')}, is truthy: {bool(getattr(self, '_rebac_manager', None))}"
+            "[RENAME-REBAC] has _rebac_manager: %s, is truthy: %s",
+            hasattr(self, "_rebac_manager"),
+            bool(getattr(self, "_rebac_manager", None)),
         )
 
         if hasattr(self, "_rebac_manager") and self._rebac_manager:
             try:
                 logger.warning(
-                    f"[RENAME-REBAC] Calling update_object_path: old={old_path}, new={new_path}, is_dir={is_directory}"
+                    "[RENAME-REBAC] Calling update_object_path: old=%s, new=%s, is_dir=%s",
+                    old_path,
+                    new_path,
+                    is_directory,
                 )
 
                 # Update all ReBAC tuples that reference this path
@@ -3900,13 +3954,13 @@ class NexusFS(  # type: ignore[misc]
 
                 # Log if any permissions were updated
                 logger.warning(
-                    f"[RENAME-REBAC] update_object_path returned: {updated_count} tuples updated"
+                    "[RENAME-REBAC] update_object_path returned: %s tuples updated", updated_count
                 )
             except Exception as e:
                 # Don't fail the rename operation if ReBAC update fails
                 # The file is already renamed in metadata, we just couldn't update permissions
                 logger.error(
-                    f"[RENAME-REBAC] FAILED to update ReBAC permissions: {e}", exc_info=True
+                    "[RENAME-REBAC] FAILED to update ReBAC permissions: %s", e, exc_info=True
                 )
         else:
             logger.warning("[RENAME-REBAC] SKIPPED - no _rebac_manager available")
@@ -4090,14 +4144,17 @@ class NexusFS(  # type: ignore[misc]
                 allowed_paths = self._permission_enforcer.filter_list(validated_paths, ctx)
                 allowed_set = set(allowed_paths)
             except Exception as e:
-                logger.error(f"[STAT-BULK] Permission check failed: {e}")
+                logger.error("[STAT-BULK] Permission check failed: %s", e)
                 if not skip_errors:
                     raise
                 allowed_set = set()
 
         perm_elapsed = time.time() - perm_start
         logger.info(
-            f"[STAT-BULK] Permission check: {len(allowed_set)}/{len(validated_paths)} allowed in {perm_elapsed * 1000:.1f}ms"
+            "[STAT-BULK] Permission check: %s/%s allowed in %.1fms",
+            len(allowed_set),
+            len(validated_paths),
+            perm_elapsed * 1000,
         )
 
         # Mark denied files
@@ -4141,7 +4198,7 @@ class NexusFS(  # type: ignore[misc]
         except NexusFileNotFoundError:
             raise
         except Exception as e:
-            logger.warning(f"[STAT-BULK] Batch metadata failed: {type(e).__name__}: {e}")
+            logger.warning("[STAT-BULK] Batch metadata failed: %s: %s", type(e).__name__, e)
             if not skip_errors:
                 raise
 
@@ -4149,8 +4206,11 @@ class NexusFS(  # type: ignore[misc]
         bulk_elapsed = time.time() - bulk_start
 
         logger.info(
-            f"[STAT-BULK] Completed: {len(results)} files in {bulk_elapsed * 1000:.1f}ms "
-            f"(perm={perm_elapsed * 1000:.0f}ms, meta={meta_elapsed * 1000:.0f}ms)"
+            "[STAT-BULK] Completed: %s files in %.1fms (perm=%.0fms, meta=%.0fms)",
+            len(results),
+            bulk_elapsed * 1000,
+            perm_elapsed * 1000,
+            meta_elapsed * 1000,
         )
 
         return results
@@ -4367,7 +4427,7 @@ class NexusFS(  # type: ignore[misc]
             >>> # ... use filesystem ...
             >>> stats = nx.shutdown_parser_threads(timeout=5.0)
             >>> if stats['timed_out'] > 0:
-            ...     logger.warning(f"{stats['timed_out']} parser threads timed out")
+            ...     logger.warning("%s parser threads timed out", stats['timed_out'])
             >>> nx.close()
         """
         with self._parser_threads_lock:
@@ -4377,14 +4437,14 @@ class NexusFS(  # type: ignore[misc]
         if total == 0:
             return {"total_threads": 0, "completed": 0, "timed_out": 0, "timeout_threads": []}
 
-        logger.info(f"Waiting for {total} parser threads to complete (timeout: {timeout}s)...")
+        logger.info("Waiting for %s parser threads to complete (timeout: %ss)...", total, timeout)
 
         completed = 0
         timed_out = 0
         timeout_threads = []
 
         for thread in threads_to_wait:
-            logger.debug(f"Waiting for parser thread: {thread.name}")
+            logger.debug("Waiting for parser thread: %s", thread.name)
             thread.join(timeout=timeout)
 
             if thread.is_alive():
@@ -4392,20 +4452,22 @@ class NexusFS(  # type: ignore[misc]
                 timed_out += 1
                 timeout_threads.append(thread.name)
                 logger.warning(
-                    f"Parser thread '{thread.name}' did not complete within {timeout}s. "
-                    f"Thread may still be writing to database - potential data loss risk!"
+                    "Parser thread '%s' did not complete within %ss. "
+                    "Thread may still be writing to database - potential data loss risk!",
+                    thread.name,
+                    timeout,
                 )
             else:
                 # Thread completed successfully
                 completed += 1
-                logger.debug(f"Parser thread '{thread.name}' completed")
+                logger.debug("Parser thread '%s' completed", thread.name)
 
         # Clear the thread list
         with self._parser_threads_lock:
             self._parser_threads.clear()
 
         logger.info(
-            f"Parser thread shutdown complete: {completed} completed, {timed_out} timed out"
+            "Parser thread shutdown complete: %s completed, %s timed out", completed, timed_out
         )
 
         return {

@@ -371,7 +371,7 @@ class FileAccessTracker:
                 removed += 1
 
         if removed > 0:
-            logger.debug(f"[WARMUP] Cleaned up {removed} stale file access entries")
+            logger.debug("[WARMUP] Cleaned up %s stale file access entries", removed)
 
         return removed
 
@@ -491,8 +491,12 @@ class CacheWarmer:
 
         try:
             logger.info(
-                f"[WARMUP] Starting directory warmup: path={path}, depth={depth}, "
-                f"include_content={include_content}, max_files={max_files}"
+                "[WARMUP] Starting directory warmup: path=%s, depth=%s, "
+                "include_content=%s, max_files=%s",
+                path,
+                depth,
+                include_content,
+                max_files,
             )
 
             # Get files using glob
@@ -500,7 +504,7 @@ class CacheWarmer:
             files = self._nexus.glob(pattern, path="/", context=context)
             files = files[:max_files]
 
-            logger.info(f"[WARMUP] Found {len(files)} files to warm")
+            logger.info("[WARMUP] Found %s files to warm", len(files))
 
             # Parallel metadata warmup
             metadata_tasks = [self._warmup_metadata(f, zone_id, context) for f in files]
@@ -518,12 +522,12 @@ class CacheWarmer:
             self._current_stats.duration_seconds = time.time() - start_time
             self._current_stats.files_warmed = len(files)
 
-            logger.info(f"[WARMUP] Directory warmup complete: {self._current_stats.to_dict()}")
+            logger.info("[WARMUP] Directory warmup complete: %s", self._current_stats.to_dict())
 
             return self._current_stats
 
         except Exception as e:
-            logger.error(f"[WARMUP] Directory warmup failed: {e}", exc_info=True)
+            logger.error("[WARMUP] Directory warmup failed: %s", e, exc_info=True)
             self._current_stats.errors += 1
             raise
 
@@ -566,8 +570,10 @@ class CacheWarmer:
 
         try:
             logger.info(
-                f"[WARMUP] Starting history warmup: user={user}, hours={hours}, "
-                f"max_files={max_files}"
+                "[WARMUP] Starting history warmup: user=%s, hours=%s, max_files=%s",
+                user,
+                hours,
+                max_files,
             )
 
             # Get recent files from tracker
@@ -580,7 +586,7 @@ class CacheWarmer:
 
             # Identify hot files (accessed multiple times)
             hot_files = [f for f in recent_files if f.access_count >= 2]
-            logger.info(f"[WARMUP] Found {len(hot_files)} hot files from history")
+            logger.info("[WARMUP] Found %s hot files from history", len(hot_files))
 
             # Warm content for hot files
             content_tasks = [self._warmup_content(f.path, zone_id, context) for f in hot_files]
@@ -589,12 +595,12 @@ class CacheWarmer:
             self._current_stats.duration_seconds = time.time() - start_time
             self._current_stats.files_warmed = len(hot_files)
 
-            logger.info(f"[WARMUP] History warmup complete: {self._current_stats.to_dict()}")
+            logger.info("[WARMUP] History warmup complete: %s", self._current_stats.to_dict())
 
             return self._current_stats
 
         except Exception as e:
-            logger.error(f"[WARMUP] History warmup failed: {e}", exc_info=True)
+            logger.error("[WARMUP] History warmup failed: %s", e, exc_info=True)
             self._current_stats.errors += 1
             raise
 
@@ -626,7 +632,7 @@ class CacheWarmer:
         start_time = time.time()
 
         try:
-            logger.info(f"[WARMUP] Starting permission warmup: user={user}")
+            logger.info("[WARMUP] Starting permission warmup: user=%s", user)
 
             # Get rebac manager
             rebac_manager = getattr(self._nexus, "rebac_manager", None)
@@ -645,17 +651,17 @@ class CacheWarmer:
                     await self._warmup_permission_check(rebac_manager, user, path, zone_id)
                     self._current_stats.permissions_warmed += 1
                 except Exception as e:
-                    logger.debug(f"[WARMUP] Permission check failed for {path}: {e}")
+                    logger.debug("[WARMUP] Permission check failed for %s: %s", path, e)
                     self._current_stats.errors += 1
 
             self._current_stats.duration_seconds = time.time() - start_time
 
-            logger.info(f"[WARMUP] Permission warmup complete: {self._current_stats.to_dict()}")
+            logger.info("[WARMUP] Permission warmup complete: %s", self._current_stats.to_dict())
 
             return self._current_stats
 
         except Exception as e:
-            logger.error(f"[WARMUP] Permission warmup failed: {e}", exc_info=True)
+            logger.error("[WARMUP] Permission warmup failed: %s", e, exc_info=True)
             self._current_stats.errors += 1
             raise
 
@@ -688,7 +694,7 @@ class CacheWarmer:
         start_time = time.time()
 
         try:
-            logger.info(f"[WARMUP] Warming {len(paths)} specific paths")
+            logger.info("[WARMUP] Warming %s specific paths", len(paths))
 
             # Warm metadata
             metadata_tasks = [self._warmup_metadata(p, zone_id, context) for p in paths]
@@ -747,7 +753,7 @@ class CacheWarmer:
                     self._current_stats.metadata_warmed += 1
 
             except Exception as e:
-                logger.debug(f"[WARMUP] Metadata warmup failed for {path}: {e}")
+                logger.debug("[WARMUP] Metadata warmup failed for %s: %s", path, e)
                 self._current_stats.errors += 1
 
     async def _warmup_content(
@@ -782,7 +788,7 @@ class CacheWarmer:
                             )
 
             except Exception as e:
-                logger.debug(f"[WARMUP] Content warmup failed for {path}: {e}")
+                logger.debug("[WARMUP] Content warmup failed for %s: %s", path, e)
                 self._current_stats.errors += 1
 
     async def _filter_small_files(
@@ -825,7 +831,7 @@ class CacheWarmer:
                     zone_id=zone_id,
                 )
         except Exception as e:
-            logger.debug(f"[WARMUP] Permission check warming failed: {e}")
+            logger.debug("[WARMUP] Permission check warming failed: %s", e)
 
     async def _get_common_paths(self, _zone_id: str) -> list[str]:
         """Get common paths for permission warming."""
@@ -914,7 +920,8 @@ class BackgroundCacheWarmer:
 
         self._running = True
         logger.info(
-            f"[WARMUP] Starting background warmer (interval: {self._config.interval_seconds}s)"
+            "[WARMUP] Starting background warmer (interval: %ss)",
+            self._config.interval_seconds,
         )
 
         cleanup_counter = 0
@@ -933,7 +940,7 @@ class BackgroundCacheWarmer:
                     cleanup_counter = 0
 
             except Exception as e:
-                logger.error(f"[WARMUP] Background cycle failed: {e}", exc_info=True)
+                logger.error("[WARMUP] Background cycle failed: %s", e, exc_info=True)
 
             await asyncio.sleep(self._config.interval_seconds)
 
@@ -954,7 +961,7 @@ class BackgroundCacheWarmer:
         paths = [f.path for f in hot_files]
         await self._warmer.warmup_paths(paths, include_content=True)
 
-        logger.debug(f"[WARMUP] Background cycle warmed {len(paths)} files")
+        logger.debug("[WARMUP] Background cycle warmed %s files", len(paths))
 
     def get_stats(self) -> dict[str, Any]:
         """Get background warmer statistics."""

@@ -151,11 +151,11 @@ class E2BSandboxProvider(SandboxProvider):
             sandbox_id = str(sandbox.sandbox_id)
 
             template_info = f"template={template}" if template else "default template"
-            logger.info(f"Created E2B sandbox: {sandbox_id} ({template_info})")
+            logger.info("Created E2B sandbox: %s (%s)", sandbox_id, template_info)
             return sandbox_id
 
         except Exception as e:
-            logger.error(f"Failed to create E2B sandbox: {e}")
+            logger.error("Failed to create E2B sandbox: %s", e)
             raise SandboxCreationError(f"E2B sandbox creation failed: {e}") from e
 
     async def run_code(
@@ -258,8 +258,10 @@ class E2BSandboxProvider(SandboxProvider):
             stderr = "\n".join(stderr_parts)
 
             logger.debug(
-                f"Executed Python code in sandbox {sandbox_id} (Jupyter kernel): "
-                f"exit_code={exit_code}, time={execution_time:.2f}s"
+                "Executed Python code in sandbox %s (Jupyter kernel): exit_code=%s, time=%.2fs",
+                sandbox_id,
+                exit_code,
+                execution_time,
             )
 
             return CodeExecutionResult(
@@ -270,12 +272,12 @@ class E2BSandboxProvider(SandboxProvider):
             )
 
         except TimeoutError as timeout_err:
-            logger.warning(f"Python execution timeout in sandbox {sandbox_id}")
+            logger.warning("Python execution timeout in sandbox %s", sandbox_id)
             raise ExecutionTimeoutError(
                 f"Code execution exceeded {timeout} second timeout"
             ) from timeout_err
         except Exception as e:
-            logger.error(f"Python execution failed in sandbox {sandbox_id}: {e}")
+            logger.error("Python execution failed in sandbox %s: %s", sandbox_id, e)
             raise
 
     async def _run_shell_code(
@@ -313,8 +315,11 @@ class E2BSandboxProvider(SandboxProvider):
             execution_time = time.time() - start_time
 
             logger.debug(
-                f"Executed {language} code in sandbox {sandbox_id}: "
-                f"exit_code={result.exit_code}, time={execution_time:.2f}s"
+                "Executed %s code in sandbox %s: exit_code=%s, time=%.2fs",
+                language,
+                sandbox_id,
+                result.exit_code,
+                execution_time,
             )
 
             return CodeExecutionResult(
@@ -325,7 +330,7 @@ class E2BSandboxProvider(SandboxProvider):
             )
 
         except TimeoutError as timeout_err:
-            logger.warning(f"Code execution timeout in sandbox {sandbox_id}")
+            logger.warning("Code execution timeout in sandbox %s", sandbox_id)
             raise ExecutionTimeoutError(
                 f"Code execution exceeded {timeout} second timeout"
             ) from timeout_err
@@ -334,8 +339,10 @@ class E2BSandboxProvider(SandboxProvider):
             # This is normal behavior - return the result with the exit code
             execution_time = time.time() - start_time
             logger.debug(
-                f"Command exited with non-zero code in sandbox {sandbox_id}: "
-                f"exit_code={cmd_err.exit_code}, stderr={cmd_err.stderr}"
+                "Command exited with non-zero code in sandbox %s: exit_code=%s, stderr=%s",
+                sandbox_id,
+                cmd_err.exit_code,
+                cmd_err.stderr,
             )
             return CodeExecutionResult(
                 stdout=cmd_err.stdout or "",
@@ -344,7 +351,7 @@ class E2BSandboxProvider(SandboxProvider):
                 execution_time=execution_time,
             )
         except Exception as e:
-            logger.error(f"Code execution failed in sandbox {sandbox_id}: {e}")
+            logger.error("Code execution failed in sandbox %s: %s", sandbox_id, e)
             raise
 
     async def pause(self, _sandbox_id: str) -> None:
@@ -392,14 +399,14 @@ class E2BSandboxProvider(SandboxProvider):
                 sandbox_id, api_key=self.api_key, request_timeout=E2B_RECONNECT_TIMEOUT
             )
         except Exception as e:
-            logger.error(f"Failed to connect to sandbox {sandbox_id} for destruction: {e}")
+            logger.error("Failed to connect to sandbox %s for destruction: %s", sandbox_id, e)
             raise SandboxNotFoundError(f"Sandbox {sandbox_id} not found") from e
 
         try:
             await sandbox.kill()
-            logger.info(f"Destroyed E2B sandbox: {sandbox_id}")
+            logger.info("Destroyed E2B sandbox: %s", sandbox_id)
         except Exception as e:
-            logger.error(f"Failed to destroy sandbox {sandbox_id}: {e}")
+            logger.error("Failed to destroy sandbox %s: %s", sandbox_id, e)
             raise
 
     async def get_info(self, sandbox_id: str) -> SandboxInfo:
@@ -454,10 +461,10 @@ class E2BSandboxProvider(SandboxProvider):
                 "from nexus.fuse.mount import NexusFUSE' > /dev/null 2>&1 &"
             )
             await sandbox.commands.run(prewarm_cmd)
-            logger.info(f"Started pre-warm for sandbox {sandbox_id}")
+            logger.info("Started pre-warm for sandbox %s", sandbox_id)
         except Exception as e:
             # Non-fatal - mount will still work, just slower
-            logger.debug(f"Pre-warm failed for {sandbox_id}: {e}")
+            logger.debug("Pre-warm failed for %s: %s", sandbox_id, e)
 
     async def mount_nexus(
         self,
@@ -496,7 +503,7 @@ class E2BSandboxProvider(SandboxProvider):
 
         sandbox = await self._get_sandbox(sandbox_id)
 
-        logger.info(f"Mounting Nexus at {mount_path} in sandbox {sandbox_id}")
+        logger.info("Mounting Nexus at %s in sandbox %s", mount_path, sandbox_id)
 
         # Create mount directory
         mkdir_result = await sandbox.commands.run(
@@ -567,7 +574,7 @@ class E2BSandboxProvider(SandboxProvider):
                     )
                     logger.info("Successfully installed libfuse")
                 except CommandExitException as e:
-                    logger.warning(f"Failed to install libfuse via apt: {e.stderr}")
+                    logger.warning("Failed to install libfuse via apt: %s", e.stderr)
 
             if not python_nexus_installed:
                 # Python nexus not found, try to install
@@ -621,14 +628,23 @@ class E2BSandboxProvider(SandboxProvider):
                         )
                         logger.info("Successfully installed fusepy")
                     except CommandExitException as e:
-                        logger.warning(f"Failed to install fusepy: {e.stderr}")
+                        logger.warning("Failed to install fusepy: %s", e.stderr)
 
         # Mount the filesystem
         # Note: api_key is logged freely here — RedactingFormatter handles redaction (Issue #86)
-        logger.info(
-            f"Mounting with nexus_url={nexus_url}, api_key={api_key}"
-            + (f", agent_id={agent_id}" if agent_id else "")
-        )
+        if agent_id:
+            logger.info(
+                "Mounting with nexus_url=%s, api_key=%s, agent_id=%s",
+                nexus_url,
+                api_key,
+                agent_id,
+            )
+        else:
+            logger.info(
+                "Mounting with nexus_url=%s, api_key=%s",
+                nexus_url,
+                api_key,
+            )
 
         # Write API key to temp file (never pass inline in commands — CWE-214)
         api_key_file = "/tmp/.nexus_api_key"
@@ -651,7 +667,7 @@ class E2BSandboxProvider(SandboxProvider):
                 f"--allow-other "
                 f"{mount_path} > /tmp/nexus-mount.log 2>&1 &"
             )
-            logger.debug(f"Mount command: nexus-fuse mount --url ... --allow-other {mount_path}")
+            logger.debug("Mount command: nexus-fuse mount --url ... --allow-other %s", mount_path)
             max_wait = 5  # Rust mount is fast (~600ms)
         else:
             # Fall back to Python FUSE mount
@@ -692,7 +708,7 @@ except Exception as e:
             mount_cmd = (
                 f"nohup {api_key_source}sudo -E python3 {script_path} > /tmp/nexus-mount.log 2>&1 &"
             )
-            logger.debug(f"Mount command: {mount_cmd}")
+            logger.debug("Mount command: %s", mount_cmd)
             max_wait = 10  # Python mount is slower due to imports
 
         # Run mount in background
@@ -720,7 +736,7 @@ except Exception as e:
                 if mount_result.exit_code == 0:
                     mount_verified = True
                     elapsed = (attempt + 1) * poll_interval
-                    logger.info(f"FUSE mount verified after {elapsed:.1f}s")
+                    logger.info("FUSE mount verified after %.1fs", elapsed)
                     break
             except CommandExitException:
                 pass
@@ -767,7 +783,7 @@ except Exception as e:
             ls_result = await sandbox.commands.run(
                 f"ls {mount_path}/ 2>&1", timeout=E2B_LS_VERIFY_TIMEOUT
             )
-            logger.info(f"Successfully mounted Nexus at {mount_path} (verified with mount + ls)")
+            logger.info("Successfully mounted Nexus at %s (verified with mount + ls)", mount_path)
             return {
                 "success": True,
                 "mount_path": mount_path,
@@ -778,7 +794,8 @@ except Exception as e:
             }
         except CommandExitException as e:
             logger.warning(
-                f"FUSE mount present but ls failed: {e.stderr}. Mount may still be initializing."
+                "FUSE mount present but ls failed: %s. Mount may still be initializing.",
+                e.stderr,
             )
             return {
                 "success": True,
@@ -811,7 +828,7 @@ except Exception as e:
             )
             return sandbox
         except Exception as e:
-            logger.error(f"Failed to connect to sandbox {sandbox_id}: {e}")
+            logger.error("Failed to connect to sandbox %s: %s", sandbox_id, e)
             raise SandboxNotFoundError(f"Sandbox {sandbox_id} not found") from e
 
 

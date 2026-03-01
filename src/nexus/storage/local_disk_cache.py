@@ -159,9 +159,11 @@ class LocalDiskCache:
         self._load_metadata()
 
         logger.info(
-            f"LocalDiskCache initialized: dir={self.cache_dir}, "
-            f"max_size={max_size_gb}GB, entries={len(self._entries)}, "
-            f"current_size={self._current_size_bytes / (1024 * 1024):.1f}MB"
+            "LocalDiskCache initialized: dir=%s, max_size=%sGB, entries=%s, current_size=%.1fMB",
+            self.cache_dir,
+            max_size_gb,
+            len(self._entries),
+            self._current_size_bytes / (1024 * 1024),
         )
 
     def _ensure_dirs(self) -> None:
@@ -176,8 +178,9 @@ class LocalDiskCache:
 
             self._bloom = BloomFilter(self._bloom_capacity, self._bloom_fp_rate)
             logger.debug(
-                f"Bloom filter initialized: capacity={self._bloom_capacity}, "
-                f"fp_rate={self._bloom_fp_rate}"
+                "Bloom filter initialized: capacity=%s, fp_rate=%s",
+                self._bloom_capacity,
+                self._bloom_fp_rate,
             )
         except ImportError:
             logger.warning("nexus_fast not available, Bloom filter disabled")
@@ -255,7 +258,7 @@ class LocalDiskCache:
                 self._stats.misses += 1
                 return None
             except Exception as e:
-                logger.warning(f"Failed to read cached content {cache_key}: {e}")
+                logger.warning("Failed to read cached content %s: %s", cache_key, e)
                 self._stats.misses += 1
                 return None
 
@@ -300,7 +303,7 @@ class LocalDiskCache:
                 self._stats.misses += 1
                 return None
             except Exception as e:
-                logger.warning(f"Failed to read cached block {cache_key}:{block_idx}: {e}")
+                logger.warning("Failed to read cached block %s:%s: %s", cache_key, block_idx, e)
                 self._stats.misses += 1
                 return None
 
@@ -332,7 +335,7 @@ class LocalDiskCache:
 
         # Don't cache content larger than entire cache
         if content_size > self.max_size_bytes:
-            logger.debug(f"Content too large to cache: {content_size} > {self.max_size_bytes}")
+            logger.debug("Content too large to cache: %s > %s", content_size, self.max_size_bytes)
             return False
 
         with self._lock:
@@ -348,8 +351,10 @@ class LocalDiskCache:
                 evicted = self._evict_clock(bytes_needed)
                 if self._current_size_bytes + bytes_needed > self.max_size_bytes:
                     logger.warning(
-                        f"Could not free enough space: needed={bytes_needed}, "
-                        f"evicted={evicted}, current={self._current_size_bytes}"
+                        "Could not free enough space: needed=%s, evicted=%s, current=%s",
+                        bytes_needed,
+                        evicted,
+                        self._current_size_bytes,
                     )
                     return False
 
@@ -359,7 +364,7 @@ class LocalDiskCache:
                 content_path.parent.mkdir(parents=True, exist_ok=True)
                 content_path.write_bytes(content)
             except Exception as e:
-                logger.error(f"Failed to write cached content {cache_key}: {e}")
+                logger.error("Failed to write cached content %s: %s", cache_key, e)
                 return False
 
             # Store blocks if requested (for large files)
@@ -384,7 +389,7 @@ class LocalDiskCache:
             if self._bloom is not None:
                 self._bloom.add(cache_key)
 
-            logger.debug(f"Cached {content_size} bytes: {cache_key[:16]}...")
+            logger.debug("Cached %s bytes: %s...", content_size, cache_key[:16])
             return True
 
     def _store_blocks(self, cache_key: str, content: bytes) -> None:
@@ -396,7 +401,7 @@ class LocalDiskCache:
                 block_path.parent.mkdir(parents=True, exist_ok=True)
                 block_path.write_bytes(block)
             except Exception as e:
-                logger.warning(f"Failed to write block {cache_key}:{block_idx}: {e}")
+                logger.warning("Failed to write block %s:%s: %s", cache_key, block_idx, e)
 
     def remove(self, content_hash: str, zone_id: str | None = None) -> bool:
         """Remove content from cache.
@@ -427,7 +432,7 @@ class LocalDiskCache:
         try:
             content_path.unlink(missing_ok=True)
         except Exception as e:
-            logger.warning(f"Failed to delete cached content {content_hash}: {e}")
+            logger.warning("Failed to delete cached content %s: %s", content_hash, e)
 
         # Delete blocks if they exist
         for block_idx in range(0, 1000):  # Max 1000 blocks
@@ -496,11 +501,13 @@ class LocalDiskCache:
                 size = entry.size_bytes
                 self._remove_entry(content_hash)
                 bytes_freed += size
-                logger.debug(f"Evicted {content_hash[:16]}... ({size} bytes)")
+                logger.debug("Evicted %s... (%s bytes)", content_hash[:16], size)
 
         if bytes_freed > 0:
             logger.info(
-                f"CLOCK eviction freed {bytes_freed} bytes ({entries_scanned} entries scanned)"
+                "CLOCK eviction freed %s bytes (%s entries scanned)",
+                bytes_freed,
+                entries_scanned,
             )
 
         return bytes_freed
@@ -519,7 +526,7 @@ class LocalDiskCache:
                 shutil.rmtree(self.content_dir, ignore_errors=True)
                 shutil.rmtree(self.blocks_dir, ignore_errors=True)
             except Exception as e:
-                logger.warning(f"Failed to clear cache directories: {e}")
+                logger.warning("Failed to clear cache directories: %s", e)
 
             # Reset state
             self._entries.clear()
@@ -533,7 +540,7 @@ class LocalDiskCache:
             # Recreate directories
             self._ensure_dirs()
 
-            logger.info(f"LocalDiskCache cleared: {count} entries removed")
+            logger.info("LocalDiskCache cleared: %s entries removed", count)
             return count
 
     def exists(self, content_hash: str, zone_id: str | None = None) -> bool:
@@ -604,9 +611,9 @@ class LocalDiskCache:
                 if content and self.put(content_hash, content):
                     warmed += 1
             except Exception as e:
-                logger.debug(f"Failed to warm {content_hash}: {e}")
+                logger.debug("Failed to warm %s: %s", content_hash, e)
 
-        logger.info(f"Cache warm complete: {warmed}/{len(content_hashes)} entries")
+        logger.info("Cache warm complete: %s/%s entries", warmed, len(content_hashes))
         return warmed
 
     # =========================================================================
@@ -625,7 +632,7 @@ class LocalDiskCache:
                 # Read version
                 version = struct.unpack("!I", f.read(4))[0]
                 if version != METADATA_VERSION:
-                    logger.warning(f"Metadata version mismatch: {version} != {METADATA_VERSION}")
+                    logger.warning("Metadata version mismatch: %s != %s", version, METADATA_VERSION)
                     self._scan_content_dir()
                     return
 
@@ -662,10 +669,10 @@ class LocalDiskCache:
                         if self._bloom is not None:
                             self._bloom.add(content_hash)
 
-            logger.info(f"Loaded {len(self._entries)} cache entries from metadata")
+            logger.info("Loaded %s cache entries from metadata", len(self._entries))
 
         except Exception as e:
-            logger.warning(f"Failed to load cache metadata: {e}")
+            logger.warning("Failed to load cache metadata: %s", e)
             self._scan_content_dir()
 
     def _scan_content_dir(self) -> None:
@@ -697,9 +704,9 @@ class LocalDiskCache:
                     self._bloom.add(content_hash)
 
             except Exception as e:
-                logger.debug(f"Failed to scan {cache_file}: {e}")
+                logger.debug("Failed to scan %s: %s", cache_file, e)
 
-        logger.info(f"Scanned {len(self._entries)} cache entries")
+        logger.info("Scanned %s cache entries", len(self._entries))
 
     def save_metadata(self) -> None:
         """Save cache metadata to disk for persistence across restarts."""
@@ -726,10 +733,10 @@ class LocalDiskCache:
                             )
                         )
 
-                logger.debug(f"Saved {len(self._entries)} cache entries to metadata")
+                logger.debug("Saved %s cache entries to metadata", len(self._entries))
 
             except Exception as e:
-                logger.error(f"Failed to save cache metadata: {e}")
+                logger.error("Failed to save cache metadata: %s", e)
 
     def close(self) -> None:
         """Close cache and save metadata."""

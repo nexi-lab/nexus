@@ -143,7 +143,7 @@ class EventsService:
                 await self._event_bus.start()  # type: ignore[union-attr]
                 logger.debug("Event bus auto-started")
             except Exception as e:
-                logger.warning(f"Failed to auto-start event bus: {e}")
+                logger.warning("Failed to auto-start event bus: %s", e)
 
     # =========================================================================
     # Public API: File Watching
@@ -179,7 +179,7 @@ class EventsService:
 
         # Layer 2: Distributed event bus (preferred)
         if self._has_distributed_events():
-            logger.debug(f"Using distributed event bus for {path}")
+            logger.debug("Using distributed event bus for %s", path)
             event = await self._event_bus.wait_for_event(  # type: ignore[union-attr]
                 zone_id=zone_id,
                 path_pattern=path,
@@ -192,7 +192,7 @@ class EventsService:
 
         # Layer 1: Same-box local watching (fallback)
         if self._is_same_box():
-            logger.debug(f"Using same-box file watcher for {path}")
+            logger.debug("Using same-box file watcher for %s", path)
             from nexus.system_services.event_subsystem.types import FileEvent
 
             assert isinstance(self._backend, PassthroughProtocol), (
@@ -237,7 +237,9 @@ class EventsService:
                     if event.matches_path_pattern(path):
                         result: dict[str, Any] = event.to_dict()
                         return result
-                    logger.debug(f"Event {event.path} didn't match pattern {path}, continuing...")
+                    logger.debug(
+                        "Event %s didn't match pattern %s, continuing...", event.path, path
+                    )
                     continue
 
                 result_dict: dict[str, Any] = event.to_dict()
@@ -283,7 +285,7 @@ class EventsService:
         # Layer 2: Distributed lock manager (preferred)
         if self._has_distributed_locks():
             mode = "mutex" if max_holders == 1 else f"semaphore({max_holders})"
-            logger.debug(f"Using distributed lock manager for {path} ({mode})")
+            logger.debug("Using distributed lock manager for %s (%s)", path, mode)
             lock_id = await self._lock_manager.acquire(  # type: ignore[union-attr]
                 zone_id=zone_id,
                 path=path,
@@ -292,15 +294,15 @@ class EventsService:
                 max_holders=max_holders,
             )
             if lock_id:
-                logger.debug(f"Distributed lock acquired on {path}: {lock_id}")
+                logger.debug("Distributed lock acquired on %s: %s", path, lock_id)
             else:
-                logger.warning(f"Distributed lock timeout on {path} after {timeout}s")
+                logger.warning("Distributed lock timeout on %s after %ss", path, timeout)
             return lock_id
 
         # Layer 1: Same-box in-memory locking (fallback)
         if self._is_same_box():
             mode = "mutex" if max_holders == 1 else f"semaphore({max_holders})"
-            logger.debug(f"Using same-box lock for {path} ({mode})")
+            logger.debug("Using same-box lock for %s (%s)", path, mode)
             assert isinstance(self._backend, PassthroughProtocol), (
                 "Backend must implement PassthroughProtocol for this operation"
             )
@@ -308,9 +310,9 @@ class EventsService:
             lock_id = pt_backend.lock(path, timeout=timeout, max_holders=max_holders)
 
             if lock_id:
-                logger.debug(f"Same-box lock acquired on {path}: {lock_id}")
+                logger.debug("Same-box lock acquired on %s: %s", path, lock_id)
             else:
-                logger.warning(f"Same-box lock timeout on {path} after {timeout}s")
+                logger.warning("Same-box lock timeout on %s after %ss", path, timeout)
             return lock_id
 
         raise NotImplementedError(
@@ -349,14 +351,14 @@ class EventsService:
                 ttl=ttl,
             )
             if extended.success:
-                logger.debug(f"Lock extended: {lock_id} (TTL: {ttl}s)")
+                logger.debug("Lock extended: %s (TTL: %ss)", lock_id, ttl)
             else:
-                logger.warning(f"Lock extend failed (not owned or expired): {lock_id}")
+                logger.warning("Lock extend failed (not owned or expired): %s", lock_id)
             return extended.success
 
         # Layer 1: Same-box locks don't need extension (no TTL)
         if self._is_same_box():
-            logger.debug(f"Same-box lock extend (no-op): {lock_id}")
+            logger.debug("Same-box lock extend (no-op): %s", lock_id)
             return True
 
         raise NotImplementedError(
@@ -394,9 +396,9 @@ class EventsService:
                 path=path,
             )
             if released:
-                logger.debug(f"Distributed lock released: {lock_id}")
+                logger.debug("Distributed lock released: %s", lock_id)
             else:
-                logger.warning(f"Distributed lock not found: {lock_id}")
+                logger.warning("Distributed lock not found: %s", lock_id)
             return released
 
         # Layer 1: Same-box in-memory locking
@@ -407,9 +409,9 @@ class EventsService:
             pt_backend = self._backend
             released = pt_backend.unlock(lock_id)
             if released:
-                logger.debug(f"Same-box lock released: {lock_id}")
+                logger.debug("Same-box lock released: %s", lock_id)
             else:
-                logger.warning(f"Same-box lock not found: {lock_id}")
+                logger.warning("Same-box lock not found: %s", lock_id)
             return released
 
         raise NotImplementedError(

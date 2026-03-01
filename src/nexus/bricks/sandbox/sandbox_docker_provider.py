@@ -143,7 +143,8 @@ class DockerSandboxProvider(SandboxProvider):
                 os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             )
             logger.info(
-                f"[DEV-MODE] Enabled - will install from local source: {self._nexus_src_path}"
+                "[DEV-MODE] Enabled - will install from local source: %s",
+                self._nexus_src_path,
             )
         # Note: network_name is optional - if not set, containers will use default bridge network
 
@@ -233,12 +234,16 @@ class DockerSandboxProvider(SandboxProvider):
 
             name_info = f", name={container_name}" if container_name else ""
             logger.info(
-                f"Created Docker sandbox: {sandbox_id} (image={image}, ttl={timeout_minutes}m{name_info})"
+                "Created Docker sandbox: %s (image=%s, ttl=%sm%s)",
+                sandbox_id,
+                image,
+                timeout_minutes,
+                name_info,
             )
             return sandbox_id
 
         except Exception as e:
-            logger.error(f"Failed to create Docker sandbox: {e}")
+            logger.error("Failed to create Docker sandbox: %s", e)
             raise SandboxCreationError(f"Docker sandbox creation failed: {e}") from e
 
     def _resolve_image(self, template_id: str | None) -> str:
@@ -262,17 +267,18 @@ class DockerSandboxProvider(SandboxProvider):
             template = self.docker_config.templates[template_id]
             # Use the configured image name for this template
             if template.image:
-                logger.info(f"Resolved template '{template_id}' to image: {template.image}")
+                logger.info("Resolved template '%s' to image: %s", template_id, template.image)
                 image_name: str = template.image
                 return image_name
             else:
                 logger.warning(
-                    f"Template '{template_id}' has no image configured, using as literal image name"
+                    "Template '%s' has no image configured, using as literal image name",
+                    template_id,
                 )
                 return template_id
 
         # Treat as direct image name
-        logger.debug(f"Using '{template_id}' as direct image name")
+        logger.debug("Using '%s' as direct image name", template_id)
         return template_id
 
     async def run_code(
@@ -317,9 +323,11 @@ class DockerSandboxProvider(SandboxProvider):
         try:
             start_time = time.time()
             logger.info(
-                f"[DOCKER-EXEC] Starting execution in sandbox {sandbox_id}, timeout={timeout}s"
+                "[DOCKER-EXEC] Starting execution in sandbox %s, timeout=%ss",
+                sandbox_id,
+                timeout,
             )
-            logger.info(f"[DOCKER-EXEC] Command: {cmd}")
+            logger.info("[DOCKER-EXEC] Command: %s", cmd)
 
             # Run command in container with timeout
             result = await asyncio.wait_for(
@@ -332,7 +340,7 @@ class DockerSandboxProvider(SandboxProvider):
             )
 
             execution_time = time.time() - start_time
-            logger.info(f"[DOCKER-EXEC] Execution completed in {execution_time:.2f}s")
+            logger.info("[DOCKER-EXEC] Execution completed in %.2fs", execution_time)
 
             # Extract stdout and stderr (demux returns tuple)
             stdout_bytes, stderr_bytes = result.output
@@ -340,8 +348,11 @@ class DockerSandboxProvider(SandboxProvider):
             stderr = stderr_bytes.decode("utf-8") if stderr_bytes else ""
 
             logger.debug(
-                f"Executed {language} code in sandbox {sandbox_id}: "
-                f"exit_code={result.exit_code}, time={execution_time:.2f}s"
+                "Executed %s code in sandbox %s: exit_code=%s, time=%.2fs",
+                language,
+                sandbox_id,
+                result.exit_code,
+                execution_time,
             )
 
             return CodeExecutionResult(
@@ -352,12 +363,12 @@ class DockerSandboxProvider(SandboxProvider):
             )
 
         except TimeoutError as timeout_err:
-            logger.warning(f"Code execution timeout in sandbox {sandbox_id}")
+            logger.warning("Code execution timeout in sandbox %s", sandbox_id)
             raise ExecutionTimeoutError(
                 f"Code execution exceeded {timeout} second timeout"
             ) from timeout_err
         except Exception as e:
-            logger.error(f"Code execution failed in sandbox {sandbox_id}: {e}")
+            logger.error("Code execution failed in sandbox %s: %s", sandbox_id, e)
             raise
 
     async def pause(self, sandbox_id: str) -> None:
@@ -375,9 +386,9 @@ class DockerSandboxProvider(SandboxProvider):
         try:
             await asyncio.to_thread(container.pause)
             container_info.status = "paused"
-            logger.info(f"Paused Docker sandbox: {sandbox_id}")
+            logger.info("Paused Docker sandbox: %s", sandbox_id)
         except Exception as e:
-            logger.error(f"Failed to pause sandbox {sandbox_id}: {e}")
+            logger.error("Failed to pause sandbox %s: %s", sandbox_id, e)
             raise
 
     async def resume(self, sandbox_id: str) -> None:
@@ -395,9 +406,9 @@ class DockerSandboxProvider(SandboxProvider):
         try:
             await asyncio.to_thread(container.unpause)
             container_info.status = "active"
-            logger.info(f"Resumed Docker sandbox: {sandbox_id}")
+            logger.info("Resumed Docker sandbox: %s", sandbox_id)
         except Exception as e:
-            logger.error(f"Failed to resume sandbox {sandbox_id}: {e}")
+            logger.error("Failed to resume sandbox %s: %s", sandbox_id, e)
             raise
 
     async def destroy(self, sandbox_id: str) -> None:
@@ -411,7 +422,7 @@ class DockerSandboxProvider(SandboxProvider):
         """
         container_info = self._containers.pop(sandbox_id, None)
         if not container_info:
-            logger.warning(f"Sandbox {sandbox_id} not in cache, cannot destroy")
+            logger.warning("Sandbox %s not in cache, cannot destroy", sandbox_id)
             raise SandboxNotFoundError(f"Sandbox {sandbox_id} not found")
 
         container = container_info.container
@@ -420,9 +431,9 @@ class DockerSandboxProvider(SandboxProvider):
             # Stop and remove container
             await asyncio.to_thread(container.stop, timeout=5)
             await asyncio.to_thread(container.remove)
-            logger.info(f"Destroyed Docker sandbox: {sandbox_id}")
+            logger.info("Destroyed Docker sandbox: %s", sandbox_id)
         except Exception as e:
-            logger.error(f"Failed to destroy sandbox {sandbox_id}: {e}")
+            logger.error("Failed to destroy sandbox %s: %s", sandbox_id, e)
             raise
 
     async def get_info(self, sandbox_id: str) -> SandboxInfo:
@@ -458,11 +469,14 @@ class DockerSandboxProvider(SandboxProvider):
             # Update cache if status changed
             if actual_status != container_info.status:
                 logger.info(
-                    f"Container {sandbox_id} status changed: {container_info.status} -> {actual_status}"
+                    "Container %s status changed: %s -> %s",
+                    sandbox_id,
+                    container_info.status,
+                    actual_status,
                 )
                 container_info.status = actual_status
         except Exception as e:
-            logger.warning(f"Failed to get actual container status for {sandbox_id}: {e}")
+            logger.warning("Failed to get actual container status for %s: %s", sandbox_id, e)
             # If we can't check, assume stopped
             actual_status = "stopped"
             container_info.status = actual_status
@@ -490,7 +504,7 @@ class DockerSandboxProvider(SandboxProvider):
             await asyncio.to_thread(self.docker_client.ping)
             return True
         except Exception as e:
-            logger.warning(f"Docker not available: {e}")
+            logger.warning("Docker not available: %s", e)
             return False
 
     async def mount_nexus(
@@ -596,19 +610,20 @@ class DockerSandboxProvider(SandboxProvider):
         try:
             existing_container = self.docker_client.containers.get(container_name)
             logger.info(
-                f"Found existing container with name '{container_name}', stopping and removing..."
+                "Found existing container with name '%s', stopping and removing...",
+                container_name,
             )
             try:
                 existing_container.stop(timeout=5)
             except Exception as stop_err:
-                logger.debug(f"Error stopping container (may already be stopped): {stop_err}")
+                logger.debug("Error stopping container (may already be stopped): %s", stop_err)
             existing_container.remove(force=True)
-            logger.info(f"Removed existing container '{container_name}'")
+            logger.info("Removed existing container '%s'", container_name)
         except NotFound:
             # Container doesn't exist, this is the normal case
             pass
         except Exception as e:
-            logger.warning(f"Error checking/removing existing container '{container_name}': {e}")
+            logger.warning("Error checking/removing existing container '%s': %s", container_name, e)
             # Continue anyway - the run() call will handle the conflict
 
     def _create_container(
@@ -643,7 +658,7 @@ class DockerSandboxProvider(SandboxProvider):
         if self._dev_mode:
             # Mount local nexus source for development (read-only to protect host)
             volumes[self._nexus_src_path] = {"bind": "/nexus-src", "mode": "ro"}
-            logger.info(f"[DEV-MODE] Mounting {self._nexus_src_path} -> /nexus-src")
+            logger.info("[DEV-MODE] Mounting %s -> /nexus-src", self._nexus_src_path)
 
         # Get security settings from profile
         docker_kwargs = profile.to_docker_kwargs()
@@ -720,7 +735,7 @@ class DockerSandboxProvider(SandboxProvider):
         """
         try:
             self.docker_client.images.get(image_name)
-            logger.debug(f"Image {image_name} already exists")
+            logger.debug("Image %s already exists", image_name)
         except NotFound as e:
             # auto_pull is disabled in local workflow; instruct caller to build the image
             raise RuntimeError(
@@ -769,16 +784,16 @@ class DockerSandboxProvider(SandboxProvider):
                 # Destroy expired containers
                 for sandbox_id in expired_ids:
                     try:
-                        logger.info(f"Cleaning up expired sandbox: {sandbox_id}")
+                        logger.info("Cleaning up expired sandbox: %s", sandbox_id)
                         await self.destroy(sandbox_id)
                     except Exception as e:
-                        logger.error(f"Failed to cleanup sandbox {sandbox_id}: {e}")
+                        logger.error("Failed to cleanup sandbox %s: %s", sandbox_id, e)
 
             except asyncio.CancelledError:
                 logger.info("Cleanup loop cancelled")
                 break
             except Exception as e:
-                logger.error(f"Error in cleanup loop: {e}")
+                logger.error("Error in cleanup loop: %s", e)
 
     async def close(self) -> None:
         """Close provider and cleanup all resources."""
@@ -796,13 +811,13 @@ class DockerSandboxProvider(SandboxProvider):
             try:
                 await self.destroy(sandbox_id)
             except Exception as e:
-                logger.error(f"Failed to destroy sandbox {sandbox_id}: {e}")
+                logger.error("Failed to destroy sandbox %s: %s", sandbox_id, e)
 
         # Cleanup egress proxy
         if self._egress_proxy is not None:
             try:
                 self._egress_proxy.cleanup()
             except Exception as e:
-                logger.warning(f"Error cleaning up egress proxy: {e}")
+                logger.warning("Error cleaning up egress proxy: %s", e)
 
         logger.info("Docker sandbox provider closed")

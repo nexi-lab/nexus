@@ -40,7 +40,6 @@ _WIRED_FIELDS: list[str] = [
     "mount_persist_service",
     "mcp_service",
     "llm_service",
-    "llm_subsystem",
     "oauth_service",
     "search_service",
     "share_link_service",

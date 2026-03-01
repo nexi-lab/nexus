@@ -7,7 +7,7 @@ Provides:
 - ``QueryObserver``: Attaches SQLAlchemy event listeners for slow query detection,
   structured logging, and connection pool metrics. Includes a circuit breaker
   that auto-disables after repeated errors to protect the hot path.
-- ``ObservabilitySubsystem(Subsystem)``: Lifecycle wrapper with health_check/cleanup.
+- ``ObservabilitySubsystem``: Lifecycle wrapper with health_check/cleanup.
 
 Constructor takes explicit deps — no ``self`` god-reference to NexusFS.
 """
@@ -22,7 +22,6 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import event
 
 from nexus.core.config import ObservabilityConfig
-from nexus.services.subsystem import Subsystem
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -280,7 +279,7 @@ class QueryObserver:
                 )
 
 
-class ObservabilitySubsystem(Subsystem):
+class ObservabilitySubsystem:
     """Lifecycle wrapper for QueryObserver.
 
     Instruments SQLAlchemy engines with event listeners for slow query

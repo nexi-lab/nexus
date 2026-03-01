@@ -337,7 +337,7 @@ def _boot_system_services(
     else:
         try:
             from nexus.core.config import ObservabilityConfig
-            from nexus.services.subsystems.observability_subsystem import ObservabilitySubsystem
+            from nexus.server.observability.observability_subsystem import ObservabilitySubsystem
 
             # Instrument both primary and replica pools (Issue #725)
             obs_engines = [ctx.engine]

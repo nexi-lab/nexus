@@ -3,8 +3,8 @@
 Tests tier-to-class mapping, cost demotion, IO promotion, and starvation.
 """
 
-from nexus.services.scheduler.constants import PriorityClass, PriorityTier, RequestState
-from nexus.services.scheduler.policies.classifier import (
+from nexus.system_services.scheduler.constants import PriorityClass, PriorityTier, RequestState
+from nexus.system_services.scheduler.policies.classifier import (
     classify_request,
     should_promote_for_starvation,
 )

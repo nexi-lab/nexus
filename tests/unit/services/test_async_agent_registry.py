@@ -213,7 +213,7 @@ class TestStateEmitterDI:
     @pytest.mark.asyncio()
     async def test_transition_emits_state_event(self, mock_inner: MagicMock) -> None:
         """When state_emitter is injected, transition() emits AgentStateEvent."""
-        from nexus.services.scheduler.events import AgentStateEmitter, AgentStateEvent
+        from nexus.system_services.scheduler.events import AgentStateEmitter, AgentStateEvent
 
         emitter = AgentStateEmitter()
         received_events: list[AgentStateEvent] = []
@@ -253,7 +253,7 @@ class TestStateEmitterDI:
     @pytest.mark.asyncio()
     async def test_emitter_handler_failure_isolated(self, mock_inner: MagicMock) -> None:
         """A failing handler does not prevent transition from completing."""
-        from nexus.services.scheduler.events import AgentStateEmitter, AgentStateEvent
+        from nexus.system_services.scheduler.events import AgentStateEmitter, AgentStateEvent
 
         emitter = AgentStateEmitter()
 

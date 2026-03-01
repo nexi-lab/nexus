@@ -59,7 +59,6 @@ from nexus.contracts.protocols.search import SearchBrickProtocol, SearchProtocol
 from nexus.contracts.protocols.share_link import ShareLinkProtocol
 from nexus.contracts.protocols.sync import SyncContext, SyncResult, SyncServiceProtocol
 from nexus.contracts.protocols.sync_job import SyncJobProtocol
-from nexus.contracts.protocols.task_queue import TaskQueueProtocol
 from nexus.contracts.protocols.time_travel import TimeTravelProtocol
 from nexus.contracts.protocols.version import VersionProtocol
 from nexus.contracts.protocols.watch import WatchProtocol
@@ -109,7 +108,6 @@ __all__ = [
     "SyncJobProtocol",
     "SyncResult",
     "SyncServiceProtocol",
-    "TaskQueueProtocol",
     "TimeTravelProtocol",
     "VersionProtocol",
     "WatchProtocol",

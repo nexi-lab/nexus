@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nexus.services.scheduler.queue import TaskQueue
+from nexus.system_services.scheduler.queue import TaskQueue
 
 
 @pytest.fixture()

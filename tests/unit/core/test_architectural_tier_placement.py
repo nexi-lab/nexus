@@ -27,7 +27,7 @@ class TestPipeTierPlacement:
 
 
 class TestSchedulerTierPlacement:
-    """Scheduler is a system service — MUST be in services/ and wired via factory (Issue #2360)."""
+    """Scheduler is a system service — MUST be in system_services/ and wired via factory (Issue #2360)."""
 
     def test_scheduler_protocol_in_contracts(self) -> None:
         mod = importlib.import_module("nexus.contracts.protocols.scheduler")
@@ -43,6 +43,6 @@ class TestSchedulerTierPlacement:
         mod = importlib.import_module("nexus.services.scheduler.policies.classifier")
         assert hasattr(mod, "classify_agent_request")
 
-    def test_scheduler_service_in_services(self) -> None:
-        mod = importlib.import_module("nexus.services.scheduler.service")
+    def test_scheduler_service_in_system_services(self) -> None:
+        mod = importlib.import_module("nexus.system_services.scheduler.service")
         assert hasattr(mod, "SchedulerService")

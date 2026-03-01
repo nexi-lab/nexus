@@ -12,7 +12,7 @@ from decimal import Decimal
 from typing import Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.services.scheduler.constants import (
+from nexus.system_services.scheduler.constants import (
     DEFAULT_EST_SERVICE_TIME_SECS,
     TASK_STATUS_QUEUED,
     PriorityClass,

@@ -1,4 +1,4 @@
-"""Factory helpers — _safe_create, _make_gate, _resolve_tasks_db_path, brick registration."""
+"""Factory helpers — _safe_create, _make_gate, brick registration."""
 
 import logging
 from collections.abc import Callable
@@ -36,7 +36,6 @@ _FACTORY_BRICKS: list[tuple[str, str]] = [
     ("manifest_resolver", "ManifestProtocol"),
     ("chunked_upload_service", "ChunkedUploadProtocol"),
     ("snapshot_service", "SnapshotProtocol"),
-    ("task_queue_service", "TaskQueueProtocol"),
     ("ipc_vfs_driver", "IPCProtocol"),
     ("wallet_provisioner", "WalletProtocol"),
     ("delegation_service", "DelegationProtocol"),
@@ -126,29 +125,3 @@ def _safe_create(
             raise BootError(f"{name}: {exc}", tier=tier) from exc
         getattr(logger, severity)("[BOOT:%s] %s unavailable: %s", tier, name, exc)
         return None
-
-
-def _resolve_tasks_db_path(backend: Any) -> str:
-    """Resolve the fjall database path for TaskQueueService.
-
-    Priority:
-    1. NEXUS_TASKS_DB_PATH environment variable
-    2. NEXUS_DATA_DIR/tasks-db
-    3. backend.root_path/../tasks-db (alongside backend storage)
-    4. .nexus-data/tasks-db (fallback)
-    """
-    import os
-
-    env_path = os.environ.get("NEXUS_TASKS_DB_PATH")
-    if env_path:
-        return env_path
-
-    data_dir = os.environ.get("NEXUS_DATA_DIR")
-    if data_dir:
-        return os.path.join(data_dir, "tasks-db")
-
-    root_path = getattr(backend, "root_path", None)
-    if root_path is not None:
-        return os.path.join(str(root_path), "tasks-db")
-
-    return os.path.join(".nexus-data", "tasks-db")

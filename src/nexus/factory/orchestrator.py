@@ -216,7 +216,6 @@ def create_nexus_services(
         tool_namespace_middleware=brick_dict["tool_namespace_middleware"],
         api_key_creator=brick_dict["api_key_creator"],
         snapshot_service=brick_dict["snapshot_service"],
-        task_queue_service=brick_dict["task_queue_service"],
         # IPC Brick (Issue #1727, LEGO §8)
         ipc_storage_driver=brick_dict["ipc_storage_driver"],
         ipc_provisioner=brick_dict["ipc_provisioner"],

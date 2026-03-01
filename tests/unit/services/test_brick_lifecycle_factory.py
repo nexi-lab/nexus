@@ -154,7 +154,6 @@ class TestRegisterFactoryBricks:
             "manifest_resolver": MagicMock(),
             "chunked_upload_service": MagicMock(),
             "snapshot_service": MagicMock(),
-            "task_queue_service": MagicMock(),
             "ipc_vfs_driver": MagicMock(),
             "wallet_provisioner": MagicMock(),
             "workflow_engine": MagicMock(),
@@ -165,9 +164,9 @@ class TestRegisterFactoryBricks:
 
         _register_factory_bricks(manager, brick_dict)
 
-        # 6 standard bricks + 1 workflow engine = 7
+        # 5 standard bricks + 1 workflow engine = 6
         report = manager.health()
-        assert report.total == 7
+        assert report.total == 6
 
         # Verify workflow engine is wrapped in adapter
         status = manager.get_status("workflow_engine")
@@ -185,7 +184,6 @@ class TestRegisterFactoryBricks:
             "manifest_resolver": MagicMock(),
             "chunked_upload_service": None,
             "snapshot_service": None,
-            "task_queue_service": None,
             "ipc_vfs_driver": None,
             "wallet_provisioner": None,
             "workflow_engine": None,

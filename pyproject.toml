@@ -616,6 +616,7 @@ module = [
     "nexus.bricks.rebac.namespace_manager",
     "nexus.bricks.rebac.manager",
     "nexus.system_services.event_subsystem.bus.redis",
+    "nexus.system_services.scheduler.policies.fair_share",
 ]
 # cachetools returns Any from generic cache
 disable_error_code = ["import-untyped", "no-any-return"]

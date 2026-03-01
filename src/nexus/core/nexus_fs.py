@@ -239,8 +239,6 @@ class NexusFS(  # type: ignore[misc]
         self.search_service: Any = None
         self.share_link_service: Any = None
         self.events_service: Any = None
-        self.task_queue_service: Any = None
-
         # Kernel notification dispatch (INTERCEPT + OBSERVE).
         # Kernel owns dispatch infrastructure — creates empty callback lists.
         # Factory registers hooks at boot (KERNEL-ARCHITECTURE §3).
@@ -273,7 +271,6 @@ class NexusFS(  # type: ignore[misc]
             self.search_service = wired.get("search_service")
             self.share_link_service = wired.get("share_link_service")
             self.events_service = wired.get("events_service")
-            self.task_queue_service = wired.get("task_queue_service")
             self._workspace_rpc_service = wired.get("workspace_rpc_service")
             self._agent_rpc_service = wired.get("agent_rpc_service")
             self._user_provisioning_service = wired.get("user_provisioning_service")
@@ -296,7 +293,6 @@ class NexusFS(  # type: ignore[misc]
         self.search_service = wired.search_service
         self.share_link_service = wired.share_link_service
         self.events_service = wired.events_service
-        self.task_queue_service = wired.task_queue_service
         self._workspace_rpc_service = wired.workspace_rpc_service
         self._agent_rpc_service = wired.agent_rpc_service
         self._user_provisioning_service = wired.user_provisioning_service
@@ -4686,9 +4682,6 @@ class NexusFS(  # type: ignore[misc]
         # SearchService (list/glob/grep are thin forwarders, not __getattr__)
         # asemantic_search* are in _SERVICE_ALIASES (name transformation: a-prefix removed)
         "glob_batch": "search_service",
-        # TaskQueueService
-        "get_task": "task_queue_service",
-        "cancel_task": "task_queue_service",
         # MCPService
         "mcp_list_mounts": "mcp_service",
         # OAuthCredentialService — routed via _SERVICE_ALIASES (name differs)

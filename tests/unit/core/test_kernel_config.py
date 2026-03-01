@@ -368,7 +368,6 @@ class TestBrickServices:
         assert bs.tool_namespace_middleware is None
         assert bs.api_key_creator is None
         assert bs.snapshot_service is None
-        assert bs.task_queue_service is None
         # DT_PIPE consumer (Issue #810)
         assert bs.zoekt_pipe_consumer is None
 
@@ -407,7 +406,6 @@ class TestBrickServices:
             "tool_namespace_middleware",
             "api_key_creator",
             "snapshot_service",
-            "task_queue_service",
             "cache_brick",
             "ipc_storage_driver",
             "ipc_provisioner",

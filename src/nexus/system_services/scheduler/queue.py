@@ -16,14 +16,14 @@ from decimal import Decimal
 from typing import Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.services.scheduler.constants import (
+from nexus.system_services.scheduler.constants import (
     AGING_THRESHOLD_SECONDS,
     DEFAULT_EST_SERVICE_TIME_SECS,
     MAX_WAIT_SECONDS,
     TASK_STATUS_COMPLETED,
     PriorityTier,
 )
-from nexus.services.scheduler.models import ScheduledTask
+from nexus.system_services.scheduler.models import ScheduledTask
 
 # =============================================================================
 # SQL Statements

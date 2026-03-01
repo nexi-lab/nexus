@@ -45,7 +45,6 @@ _WIRED_FIELDS: list[str] = [
     "search_service",
     "share_link_service",
     "events_service",
-    "task_queue_service",
     "workspace_rpc_service",
     "agent_rpc_service",
     "user_provisioning_service",

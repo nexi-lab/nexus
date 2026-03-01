@@ -46,7 +46,7 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         _record_store = svc.record_store
         _async_sf = None
         if _record_store is not None:
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(AttributeError):
                 _async_sf = _record_store.async_session_factory
 
         # Issue #2188: Create ZoektClient + embedding provider via DI
@@ -77,7 +77,7 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         # Wire embedding provider so semantic search works (pre-existing gap:
         # _embedding_provider was always None, causing silent fallback failures)
         if _search_cfg is not None:
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(ImportError, ValueError):
                 from nexus.bricks.search.embeddings import create_embedding_provider
 
                 app.state.search_daemon._embedding_provider = create_embedding_provider(
@@ -94,13 +94,13 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         app.state.search_daemon_enabled = True
 
         # Issue #1520: Set FileReaderProtocol for index refresh
-        with contextlib.suppress(Exception):
+        with contextlib.suppress(ImportError, AttributeError):
             from nexus.factory import _NexusFSFileReader
 
             app.state.search_daemon._file_reader = _NexusFSFileReader(svc.nexus_fs)
 
         # Issue #2036: Inject AdaptiveKProtocol (LEGO compliance)
-        with contextlib.suppress(Exception):
+        with contextlib.suppress(ImportError):
             from nexus.bricks.llm.llm_context_builder import ContextBuilder
 
             app.state.search_daemon._adaptive_k_provider = ContextBuilder()
@@ -108,7 +108,7 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         # Issue #2036: Register with BrickLifecycleManager
         _blm = svc.brick_lifecycle_manager
         if _blm is not None:
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(ImportError, AttributeError):
                 from nexus.bricks.search.lifecycle_adapter import (
                     SearchBrickLifecycleAdapter,
                 )

@@ -51,7 +51,10 @@ from nexus.contracts.protocols.operation_log import OperationLogProtocol
 from nexus.contracts.protocols.parse import ParseProtocol
 from nexus.contracts.protocols.payment import PaymentProtocol
 from nexus.contracts.protocols.permission import PermissionProtocol
-from nexus.contracts.protocols.permission_enforcer import PermissionEnforcerProtocol
+from nexus.contracts.protocols.permission_enforcer import (
+    AsyncPermissionEnforcerProtocol,
+    PermissionEnforcerProtocol,
+)
 from nexus.contracts.protocols.rebac import ReBACBrickProtocol
 from nexus.contracts.protocols.sandbox import SandboxProtocol
 from nexus.contracts.protocols.scheduler import AgentRequest, SchedulerProtocol
@@ -93,6 +96,7 @@ __all__ = [
     "OperationLogProtocol",
     "ParseProtocol",
     "PaymentProtocol",
+    "AsyncPermissionEnforcerProtocol",
     "PermissionEnforcerProtocol",
     "PermissionProtocol",
     "ProgressCallback",

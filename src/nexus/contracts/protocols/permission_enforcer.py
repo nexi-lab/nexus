@@ -1,7 +1,9 @@
-"""Permission enforcer service protocol (Issue #2133).
+"""Permission enforcer service protocols (Issue #2133).
 
-Service contract for path-level permission enforcement.
-Existing implementation: ``nexus.bricks.rebac.enforcer.PermissionEnforcer`` (sync).
+Service contracts for path-level permission enforcement.
+
+Sync implementation: ``nexus.bricks.rebac.enforcer.PermissionEnforcer``.
+Async implementation: ``nexus.bricks.rebac.async_permissions.AsyncPermissionEnforcer``.
 
 References:
     - docs/architecture/KERNEL-ARCHITECTURE.md §3
@@ -17,7 +19,7 @@ if TYPE_CHECKING:
 
 @runtime_checkable
 class PermissionEnforcerProtocol(Protocol):
-    """Service contract for path-level permission enforcement.
+    """Service contract for path-level permission enforcement (sync).
 
     Do NOT use ``isinstance()`` checks in hot paths — use structural
     typing via Protocol matching instead.
@@ -54,3 +56,19 @@ class PermissionEnforcerProtocol(Protocol):
         subject_id: str | None = None,
         zone_id: str | None = None,
     ) -> None: ...
+
+
+@runtime_checkable
+class AsyncPermissionEnforcerProtocol(Protocol):
+    """Service contract for async path-level permission enforcement.
+
+    Used by bricks that need permission checks without importing the
+    concrete ``AsyncPermissionEnforcer`` from the rebac brick.
+    """
+
+    async def check_permission(
+        self,
+        path: str,
+        permission: "Permission",
+        context: "OperationContext",
+    ) -> bool: ...

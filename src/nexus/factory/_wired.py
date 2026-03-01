@@ -421,7 +421,7 @@ def _boot_wired_services(
     time_travel_service: Any = None
     if _nx_session_factory is not None:
         try:
-            from nexus.services.versioning.time_travel_service import TimeTravelService
+            from nexus.bricks.versioning.time_travel_service import TimeTravelService
 
             time_travel_service = TimeTravelService(
                 session_factory=_nx_session_factory,
@@ -436,8 +436,8 @@ def _boot_wired_services(
     operations_service: Any = None
     if _nx_session_factory is not None:
         try:
-            from nexus.services.versioning.operation_undo_service import OperationUndoService
-            from nexus.services.versioning.operations_service import OperationsService
+            from nexus.bricks.versioning.operation_undo_service import OperationUndoService
+            from nexus.bricks.versioning.operations_service import OperationsService
 
             _undo_service = OperationUndoService(
                 router=kernel_services.router,

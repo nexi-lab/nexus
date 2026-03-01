@@ -19,9 +19,9 @@ Phase 2: Core Refactoring (Issue #988)
 
 import importlib as _il
 
+from nexus.bricks.versioning.version_service import VersionService
 from nexus.contracts.types import ContextIdentity, extract_context_identity
 from nexus.services.search.search_service import SearchService
-from nexus.services.versioning.version_service import VersionService
 
 # Brick re-exports via importlib to avoid services→bricks tier violation (import-linter)
 LLMService = _il.import_module("nexus.bricks.llm.llm_service").LLMService

@@ -694,7 +694,7 @@ module = [
     "nexus.cli.commands.search",
     "nexus.core.nexus_fs",
     "nexus.core.nexus_fs_search",
-    "nexus.services.versioning.version_service",
+    "nexus.bricks.versioning.version_service",
     "nexus.services.search.search_service",
     "nexus.services.gateway",
     "nexus.server.fastapi_server",
@@ -958,7 +958,7 @@ ignore_imports = [
     # --- services importing bricks (rebac, Issue #2179, not yet converted) ---
     "nexus.services.search.search_service -> nexus.bricks.rebac.enforcer",
     "nexus.services.search.search_service -> nexus.bricks.rebac.manager",
-    "nexus.services.versioning.version_service -> nexus.bricks.rebac.async_permissions",
+
     "nexus.services.delegation.service -> nexus.bricks.rebac.manager",
     "nexus.services.memory.memory_api -> nexus.bricks.rebac.manager",
     "nexus.services.memory.memory_router -> nexus.bricks.rebac.manager",

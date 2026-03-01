@@ -84,7 +84,7 @@ class RPCProxyBase:
                         cls._param_name_cache[method_name] = names
                         return names
                 except (ImportError, AttributeError):
-                    pass
+                    logger.debug("Generated RPC params not available for %s", method_name)
 
             if method and callable(method):
                 try:

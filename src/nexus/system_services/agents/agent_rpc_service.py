@@ -834,7 +834,7 @@ class AgentRPCService:
                 data = yaml.safe_load(content.decode("utf-8"))
                 return data.get(field)
         except Exception:
-            pass
+            logger.debug("Failed to read config field %s for agent", field)
         return None
 
     def _enrich_from_config(
@@ -896,4 +896,4 @@ class AgentRPCService:
                     bool(inherit_perms) if inherit_perms is not None else True
                 )
         except Exception:
-            pass
+            logger.debug("Failed to enrich agent info from config.yaml")

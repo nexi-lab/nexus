@@ -446,7 +446,7 @@ def stat_size_fallback(ctx: FUSESharedContext, path: str) -> int:
                 if stat_size and stat_size > 0:
                     return int(stat_size)
         except Exception:
-            pass
+            logger.debug("[FUSE] stat size resolution failed for %s", path)
 
     # Issue 15A: Return 0 instead of reading full content
     logger.debug(f"[FUSE-PERF] stat fallback: returning 0 for {path}")
@@ -577,7 +577,7 @@ def resolve_io_profile(ctx: FUSESharedContext, path: str) -> str:
                 reverse=True,
             )
         except Exception:
-            pass
+            logger.debug("[FUSE] IO profile mount listing failed, using defaults")
 
     cached = ctx._io_profile_cache.get(path)  # type: ignore[attr-defined]
     if cached is not None:

@@ -88,7 +88,7 @@ class IOHandler:
 
                     io_profile_arg = IOProfile(io_profile_str)
                 except (ImportError, ValueError):
-                    pass
+                    logger.debug("[FUSE-OPEN] IOProfile unavailable or invalid: %s", io_profile_str)
 
                 ctx.readahead.on_open(fd, original_path, file_size, io_profile=io_profile_arg)
             except Exception as e:
@@ -134,7 +134,7 @@ class IOHandler:
 
             cache_priority = IOProfile(io_profile_str).config().cache_priority
         except (ImportError, ValueError):
-            pass
+            logger.debug("[FUSE-READ] IOProfile unavailable or invalid: %s", io_profile_str)
 
         content = get_file_content(
             ctx, original_path, view_type, skip_auth=skip_auth, cache_priority=cache_priority

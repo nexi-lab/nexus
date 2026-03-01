@@ -80,7 +80,7 @@ class MountService:
             sync_job_service: SyncJobService for async sync job management
             mount_core_service: MountCoreService for internal mount operations
             mount_persist_service: MountPersistService for config persistence
-            oauth_service: OAuthService for credential revocation
+            oauth_service: OAuthCredentialService for credential revocation
         """
         self.router = router
         self.mount_manager = mount_manager
@@ -397,7 +397,7 @@ class MountService:
                 )
             elif self._oauth_service is not None:
                 try:
-                    revoke_result = await self._oauth_service.oauth_revoke_credential(
+                    revoke_result = await self._oauth_service.revoke_credential(
                         provider=provider,
                         user_email=user_email,
                         context=context,

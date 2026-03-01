@@ -53,10 +53,10 @@ class TestOAuthCleanupLogging:
     """Verify OAuth cleanup errors are logged with specific types."""
 
     def test_oauth_service_uses_specific_exceptions(self) -> None:
-        """oauth_service.py should not have except Exception: pass."""
-        from nexus.services.oauth import oauth_service
+        """credential_service.py should not have except Exception: pass."""
+        from nexus.bricks.auth.oauth import credential_service
 
-        found, line = _has_silent_swallower(inspect.getsource(oauth_service))
+        found, line = _has_silent_swallower(inspect.getsource(credential_service))
         assert not found, f"Silent swallower found at line {line}"
 
 

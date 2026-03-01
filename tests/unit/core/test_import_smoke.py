@@ -16,10 +16,10 @@ _CORE_MODULES = [
     "nexus.core.protocols.vfs_router",
     "nexus.core.protocols.vfs_core",
     # Moved to services/protocols/ per #2359:
-    "nexus.services.protocols.rebac",
-    "nexus.services.protocols.permission_enforcer",
-    "nexus.services.protocols.entity_registry",
-    "nexus.services.protocols.workspace_manager",
+    "nexus.contracts.protocols.rebac",
+    "nexus.contracts.protocols.permission_enforcer",
+    "nexus.contracts.protocols.entity_registry",
+    "nexus.contracts.protocols.workspace_manager",
     # Moved to contracts/ per #2359:
     "nexus.contracts.describable",
     "nexus.contracts.wirable_fs",

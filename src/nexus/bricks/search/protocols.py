@@ -2,7 +2,7 @@
 
 Defines SearchableProtocol and re-exports SearchBackendProtocol.
 
-FileReaderProtocol has been moved to ``nexus.services.protocols.file_reader``
+FileReaderProtocol has been moved to ``nexus.contracts.protocols.file_reader``
 (Issue #2036) for LEGO compliance.  It is re-exported here for backward
 compatibility within the brick.
 """
@@ -10,7 +10,7 @@ compatibility within the brick.
 from typing import Any, Protocol, runtime_checkable
 
 from nexus.bricks.search.results import BaseSearchResult
-from nexus.services.protocols.file_reader import FileReaderProtocol
+from nexus.contracts.protocols.file_reader import FileReaderProtocol
 
 # Re-export for backward compat within the brick
 __all__ = ["FileReaderProtocol", "SearchableProtocol"]

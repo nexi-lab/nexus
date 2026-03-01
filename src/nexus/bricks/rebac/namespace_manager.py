@@ -54,7 +54,7 @@ from sqlalchemy.exc import OperationalError
 
 if TYPE_CHECKING:
     from nexus.bricks.rebac.manager import ReBACManager
-    from nexus.services.protocols.persistent_view import PersistentViewStore
+    from nexus.contracts.protocols.persistent_view import PersistentViewStore
 
 logger = logging.getLogger(__name__)
 

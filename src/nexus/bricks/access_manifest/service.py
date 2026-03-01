@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.orm import Session
 
-    from nexus.services.protocols.rebac import ReBACBrickProtocol
+    from nexus.contracts.protocols.rebac import ReBACBrickProtocol
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)

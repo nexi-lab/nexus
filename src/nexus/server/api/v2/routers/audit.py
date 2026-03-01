@@ -23,6 +23,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
+from nexus.contracts.protocols.exchange_audit_log import ExchangeAuditLogProtocol
 from nexus.server.api.v2.dependencies import get_exchange_audit_logger
 from nexus.server.api.v2.models import (
     AuditAggregationResponse,
@@ -30,7 +31,6 @@ from nexus.server.api.v2.models import (
     AuditTransactionListResponse,
     AuditTransactionResponse,
 )
-from nexus.services.protocols.exchange_audit_log import ExchangeAuditLogProtocol
 
 logger = logging.getLogger(__name__)
 

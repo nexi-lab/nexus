@@ -170,7 +170,7 @@ async def submit_task(
     The task is enqueued with the specified priority and boost.
     Returns the task details with computed effective priority.
     """
-    from nexus.services.protocols.scheduler import AgentRequest
+    from nexus.contracts.protocols.scheduler import AgentRequest
 
     agent_id = _extract_agent_id(auth_result)
     tier = TIER_ALIASES[request.priority]
@@ -240,7 +240,7 @@ async def classify_request_endpoint(
     scheduler: Any = Depends(get_scheduler_service),
 ) -> ClassifyResponse:
     """Classify a request into a priority class."""
-    from nexus.services.protocols.scheduler import AgentRequest
+    from nexus.contracts.protocols.scheduler import AgentRequest
 
     agent_request = AgentRequest(
         agent_id="",

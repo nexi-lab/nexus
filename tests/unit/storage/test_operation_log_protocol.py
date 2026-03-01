@@ -5,7 +5,7 @@ Verifies that OperationLogger structurally conforms to OperationLogProtocol.
 
 from unittest.mock import MagicMock
 
-from nexus.services.protocols.operation_log import OperationLogProtocol
+from nexus.contracts.protocols.operation_log import OperationLogProtocol
 from nexus.storage.operation_logger import OperationLogger
 
 

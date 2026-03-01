@@ -8,7 +8,7 @@ from enum import Enum
 
 import pytest
 
-from nexus.services.protocols.brick_lifecycle import (
+from nexus.contracts.protocols.brick_lifecycle import (
     BRICK_STARTED,
     BRICK_STOPPED,
     POST_MOUNT,

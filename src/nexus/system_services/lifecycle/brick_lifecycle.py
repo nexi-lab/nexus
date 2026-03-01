@@ -27,8 +27,7 @@ from dataclasses import replace
 from graphlib import CycleError, TopologicalSorter
 from typing import Any
 
-from nexus.services._tracing import lazy_tracer, record_span_result
-from nexus.services.protocols.brick_lifecycle import (
+from nexus.contracts.protocols.brick_lifecycle import (
     EVENT_FAILED,
     EVENT_MOUNT,
     EVENT_RESET,
@@ -44,6 +43,7 @@ from nexus.services.protocols.brick_lifecycle import (
     ZoneDeprovisionReport,
     ZoneState,
 )
+from nexus.services._tracing import lazy_tracer, record_span_result
 
 logger = logging.getLogger(__name__)
 

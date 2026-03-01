@@ -7,13 +7,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from nexus.contracts.protocols.brick_lifecycle import BrickState
 from nexus.factory import (
     _FACTORY_BRICKS,
     _FACTORY_SKIP,
     _register_factory_bricks,
     _WorkflowLifecycleAdapter,
 )
-from nexus.services.protocols.brick_lifecycle import BrickState
 from nexus.system_services.lifecycle.brick_lifecycle import BrickLifecycleManager
 
 # ---------------------------------------------------------------------------

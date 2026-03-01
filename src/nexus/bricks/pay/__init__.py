@@ -96,7 +96,7 @@ from nexus.bricks.pay.x402 import (
     validate_network,
     validate_wallet_address,
 )
-from nexus.services.protocols.payment import PaymentProtocol
+from nexus.contracts.protocols.payment import PaymentProtocol
 
 __all__ = [
     # Service

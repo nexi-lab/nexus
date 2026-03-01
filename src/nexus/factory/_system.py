@@ -222,7 +222,7 @@ def _boot_system_services(
     # --- Workspace Manager ---
     workspace_manager: Any = None
     try:
-        from nexus.services.protocols.rebac import ReBACBrickProtocol
+        from nexus.contracts.protocols.rebac import ReBACBrickProtocol
         from nexus.system_services.workspace.workspace_manager import WorkspaceManager
 
         workspace_manager = WorkspaceManager(
@@ -371,7 +371,7 @@ def _boot_system_services(
     # --- Context Branch Service (Issue #1315) ---
     context_branch_service: Any = None
     try:
-        from nexus.services.protocols.rebac import ReBACBrickProtocol
+        from nexus.contracts.protocols.rebac import ReBACBrickProtocol
         from nexus.system_services.workspace.context_branch import ContextBranchService
 
         context_branch_service = ContextBranchService(
@@ -478,7 +478,7 @@ def _boot_system_services(
                 scheduler_service = SchedulerService(db_pool=None)
                 logger.debug("[BOOT:SYSTEM] SchedulerService created (two-phase, pool=None)")
             else:
-                from nexus.services.protocols.scheduler import InMemoryScheduler
+                from nexus.services.scheduler.in_memory import InMemoryScheduler
 
                 scheduler_service = InMemoryScheduler()
                 logger.debug("[BOOT:SYSTEM] InMemoryScheduler created (no PostgreSQL)")

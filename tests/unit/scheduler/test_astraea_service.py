@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.services.protocols.scheduler import AgentRequest
+from nexus.contracts.protocols.scheduler import AgentRequest
 from nexus.services.scheduler.constants import (
     TASK_STATUS_RUNNING,
     PriorityClass,

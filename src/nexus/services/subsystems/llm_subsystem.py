@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 from nexus.services.subsystem import Subsystem
 
 if TYPE_CHECKING:
-    from nexus.services.protocols.llm import LLMServiceProtocol
+    from nexus.contracts.protocols.llm import LLMServiceProtocol
 
 logger = logging.getLogger(__name__)
 

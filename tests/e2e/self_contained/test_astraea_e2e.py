@@ -529,7 +529,7 @@ class TestProtocolSubmitE2E:
     @pytest.mark.asyncio
     async def test_submit_via_protocol(self, scheduler_service, mock_queue):
         """Protocol submit(AgentRequest) should return task_id string."""
-        from nexus.services.protocols.scheduler import AgentRequest
+        from nexus.contracts.protocols.scheduler import AgentRequest
 
         req = AgentRequest(
             agent_id="agent-a",
@@ -554,7 +554,7 @@ class TestProtocolSubmitE2E:
     @pytest.mark.asyncio
     async def test_submit_critical_classifies_interactive(self, scheduler_service, mock_queue):
         """Protocol submit with critical priority → interactive class."""
-        from nexus.services.protocols.scheduler import AgentRequest
+        from nexus.contracts.protocols.scheduler import AgentRequest
 
         req = AgentRequest(
             agent_id="agent-a",

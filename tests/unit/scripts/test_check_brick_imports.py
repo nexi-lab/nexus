@@ -41,7 +41,7 @@ class TestCheckFile:
     def test_clean_file_no_violations(self, brick_file):
         path = brick_file("""\
             from nexus.core.protocols.vfs_router import VFSRouterProtocol
-            from nexus.services.protocols.llm import LLMServiceProtocol
+            from nexus.contracts.protocols.llm import LLMServiceProtocol
             from nexus.storage.record_store import RecordStoreABC
             import os
         """)
@@ -86,12 +86,21 @@ class TestCheckFile:
         """)
         assert check_file(path) == []
 
-    def test_allows_nexus_services_protocols(self, brick_file):
+    def test_allows_nexus_contracts_protocols(self, brick_file):
         path = brick_file("""\
-            from nexus.services.protocols import LLMServiceProtocol
-            from nexus.services.protocols.llm import LLMServiceProtocol
+            from nexus.contracts.protocols import LLMServiceProtocol
+            from nexus.contracts.protocols.llm import LLMServiceProtocol
         """)
         assert check_file(path) == []
+
+    def test_forbids_nexus_services_protocols(self, brick_file):
+        """After protocols moved to contracts/, services.protocols is forbidden."""
+        path = brick_file("""\
+            from nexus.services.protocols import LLMServiceProtocol
+        """)
+        violations = check_file(path)
+        assert len(violations) == 1
+        assert "nexus.services" in violations[0][2]
 
     def test_allows_nexus_storage(self, brick_file):
         path = brick_file("""\

@@ -10,7 +10,7 @@ import time
 
 import pytest
 
-from nexus.services.protocols.brick_lifecycle import BrickState
+from nexus.contracts.protocols.brick_lifecycle import BrickState
 from nexus.system_services.lifecycle.brick_lifecycle import BrickLifecycleManager
 from nexus.system_services.lifecycle.brick_reconciler import BrickReconciler
 from nexus.system_services.lifecycle.expectations import (

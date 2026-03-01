@@ -31,7 +31,7 @@ from nexus.bricks.mcp.mount import MCPMountManager
 from nexus.bricks.mcp.provider_registry import MCPProviderRegistry, ProviderConfig, ProviderType
 
 if TYPE_CHECKING:
-    from nexus.services.protocols.filesystem import NexusFilesystem
+    from nexus.contracts.protocols.filesystem import NexusFilesystem
 
 logger = logging.getLogger(__name__)
 

@@ -233,7 +233,7 @@ async def _startup_writeback(app: "FastAPI", svc: "LifespanServices") -> None:
 
         # Fallback: provide InMemoryWriteBack so sync endpoints return
         # zero-change responses instead of 503 in standalone mode.
-        from nexus.services.protocols.write_back import InMemoryWriteBack
+        from nexus.contracts.protocols.write_back import InMemoryWriteBack
 
         app.state.write_back_service = InMemoryWriteBack()
         await app.state.write_back_service.start()

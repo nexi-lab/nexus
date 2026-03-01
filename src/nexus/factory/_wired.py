@@ -257,7 +257,7 @@ def _boot_wired_services(
     share_link_service: Any = None
     if _on("discovery"):
         try:
-            from nexus.services.share_link.share_link_service import ShareLinkService
+            from nexus.bricks.share_link.share_link_service import ShareLinkService
 
             share_link_service = ShareLinkService(
                 gateway=gateway,

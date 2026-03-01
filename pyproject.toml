@@ -693,7 +693,6 @@ module = [
     "nexus.cli.commands.work",
     "nexus.cli.commands.search",
     "nexus.core.nexus_fs",
-    "nexus.core.nexus_fs_share_links",
     "nexus.core.nexus_fs_search",
     "nexus.services.versioning.version_service",
     "nexus.services.search.search_service",

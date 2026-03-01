@@ -177,7 +177,7 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
     (
         "ShareLinkProtocol",
         "nexus.contracts.protocols.share_link",
-        "nexus.services.share_link.share_link_service.ShareLinkService",
+        "nexus.bricks.share_link.share_link_service.ShareLinkService",
         True,  # Method names match (async/sync checked separately)
     ),
     (

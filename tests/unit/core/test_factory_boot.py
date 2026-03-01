@@ -254,7 +254,7 @@ class TestBootSystemServices:
                 side_effect=RuntimeError("ns fail"),
             ),
             patch(
-                "nexus.services.routing.async_router.AsyncVFSRouter.__init__",
+                "nexus.core.async_router.AsyncVFSRouter.__init__",
                 side_effect=RuntimeError("router fail"),
             ),
         ]

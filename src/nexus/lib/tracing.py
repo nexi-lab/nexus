@@ -63,4 +63,4 @@ def record_span_result(span: Any, *, state: str, error: str | None = None) -> No
 
             span.set_status(StatusCode.ERROR, error)
         except Exception:
-            pass
+            pass  # Tracing must never disrupt application flow

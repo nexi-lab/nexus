@@ -11,7 +11,7 @@ import pytest
 from hypothesis import settings
 from hypothesis.stateful import Bundle, RuleBasedStateMachine, initialize, rule
 
-from nexus.services.protocols.brick_lifecycle import (
+from nexus.contracts.protocols.brick_lifecycle import (
     EVENT_FAILED,
     EVENT_MOUNT,
     EVENT_RESET,

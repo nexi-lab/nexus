@@ -3,7 +3,7 @@
 Tier-neutral contracts for the narrow service surfaces that workflow
 actions need.  Bricks, services, and the factory all import from here.
 
-Moved from ``nexus.services.protocols.workflow`` to ``nexus.contracts``
+Moved from ``nexus.contracts.protocols.workflow`` to ``nexus.contracts``
 so that the workflows brick does not need a backwards import from the
 services tier.
 

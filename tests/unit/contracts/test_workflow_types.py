@@ -77,10 +77,10 @@ class TestReExportPaths:
 
     def test_import_from_services_protocols(self) -> None:
         """services/protocols/workflow re-exports from contracts."""
-        from nexus.services.protocols.workflow import (
+        from nexus.contracts.protocols.workflow import (
             MetadataStoreProtocol as P1,
         )
-        from nexus.services.protocols.workflow import (
+        from nexus.contracts.protocols.workflow import (
             NexusOperationsProtocol as P2,
         )
 

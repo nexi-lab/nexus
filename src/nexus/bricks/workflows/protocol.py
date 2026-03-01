@@ -34,7 +34,7 @@ class WorkflowLLMProtocol(Protocol):
 
     This is intentionally minimal — only the ``generate`` helper that
     workflow actions need.  For the full brick-level LLM provider
-    contract see ``nexus.services.protocols.llm_provider.LLMProviderProtocol``.
+    contract see ``nexus.contracts.protocols.llm_provider.LLMProviderProtocol``.
     """
 
     async def generate(self, *, model: str, prompt: str, system: str) -> str: ...

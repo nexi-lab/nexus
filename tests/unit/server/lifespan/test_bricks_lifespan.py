@@ -4,9 +4,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from nexus.contracts.protocols.brick_lifecycle import BrickHealthReport
 from nexus.server.lifespan.bricks import shutdown_bricks, startup_bricks
 from nexus.server.lifespan.services_container import LifespanServices
-from nexus.services.protocols.brick_lifecycle import BrickHealthReport
 
 
 def _make_svc(

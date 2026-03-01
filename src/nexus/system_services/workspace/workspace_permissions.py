@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from nexus.contracts.exceptions import NexusPermissionError
 
 if TYPE_CHECKING:
-    from nexus.services.protocols.rebac import ReBACBrickProtocol
+    from nexus.contracts.protocols.rebac import ReBACBrickProtocol
 
 logger = logging.getLogger(__name__)
 

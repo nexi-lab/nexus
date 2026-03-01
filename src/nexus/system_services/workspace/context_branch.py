@@ -43,7 +43,7 @@ from .workspace_permissions import check_workspace_permission
 _VALID_STRATEGIES = frozenset({"fail", "source-wins"})
 
 if TYPE_CHECKING:
-    from nexus.services.protocols.rebac import ReBACBrickProtocol
+    from nexus.contracts.protocols.rebac import ReBACBrickProtocol
     from nexus.storage.record_store import RecordStoreABC
 
     from .workspace_manager import WorkspaceManager

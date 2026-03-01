@@ -14,8 +14,8 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from nexus.contracts.protocols.filesystem import NexusFilesystem
 from nexus.lib.rpc_decorator import rpc_expose
-from nexus.services.protocols.filesystem import NexusFilesystem
 
 logger = logging.getLogger(__name__)
 
@@ -518,7 +518,6 @@ class MCPService:
         import httpx
 
         from nexus.backends.service_map import ServiceMap
-        from nexus.services.protocols.skill_doc import generate_skill_md
 
         _mcp_models = _il.import_module("nexus.bricks.mcp.models")
         MCPMount = _mcp_models.MCPMount
@@ -741,10 +740,12 @@ class MCPService:
                     if data_mount_path != skill_path:
                         break
 
-            skill_md = generate_skill_md(
-                service_name=service_name,
-                mount_path=data_mount_path,
-                mcp_tools=tools,
+            # Build simple SKILL.md content inline (skill_doc module was removed)
+            tool_lines = "\n".join(
+                f"- **{t.get('name', '?')}**: {t.get('description', '')}" for t in tools
+            )
+            skill_md = (
+                f"# {service_name}\n\nMount path: `{data_mount_path}`\n\n## Tools\n\n{tool_lines}\n"
             )
 
             try:

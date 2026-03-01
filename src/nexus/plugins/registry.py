@@ -8,9 +8,9 @@ from typing import Any, cast
 
 import yaml
 
+from nexus.contracts.protocols.filesystem import NexusFilesystem
 from nexus.lib.registry import BaseRegistry
 from nexus.plugins.base import NexusPlugin, PluginMetadata
-from nexus.services.protocols.filesystem import NexusFilesystem
 
 logger = logging.getLogger(__name__)
 

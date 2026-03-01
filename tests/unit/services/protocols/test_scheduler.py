@@ -6,15 +6,15 @@ from decimal import Decimal
 
 import pytest
 
-from nexus.services.protocols.scheduler import (
+from nexus.contracts.protocols.scheduler import (
     _MAX_COMPLETED,
     AgentRequest,
     CreditsReservationProtocol,
-    InMemoryScheduler,
     NullCreditsReservation,
     SchedulerProtocol,
-    classify_agent_request,
 )
+from nexus.services.scheduler.in_memory import InMemoryScheduler
+from nexus.services.scheduler.policies.classifier import classify_agent_request
 
 # ---------------------------------------------------------------------------
 # AgentRequest frozen dataclass tests

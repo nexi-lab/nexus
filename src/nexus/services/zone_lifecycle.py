@@ -18,7 +18,7 @@ import logging
 from collections.abc import Callable
 from typing import Any, Literal
 
-from nexus.services.protocols.zone_lifecycle import (
+from nexus.contracts.protocols.zone_lifecycle import (
     ZoneDeprovisionResult,
     ZoneFinalizerProtocol,
     ZonePhase,

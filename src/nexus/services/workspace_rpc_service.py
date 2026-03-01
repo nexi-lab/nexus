@@ -229,7 +229,7 @@ class WorkspaceRPCService:
             raise RuntimeError("Transactional snapshot service not available")
         import asyncio
 
-        from nexus.services.protocols.transactional_snapshot import SnapshotId
+        from nexus.contracts.protocols.transactional_snapshot import SnapshotId
 
         asyncio.get_event_loop().run_until_complete(
             self._snapshot_service.commit(SnapshotId(id=snapshot_id), context=context)
@@ -247,7 +247,7 @@ class WorkspaceRPCService:
             raise RuntimeError("Transactional snapshot service not available")
         import asyncio
 
-        from nexus.services.protocols.transactional_snapshot import SnapshotId
+        from nexus.contracts.protocols.transactional_snapshot import SnapshotId
 
         result = asyncio.get_event_loop().run_until_complete(
             self._snapshot_service.rollback(SnapshotId(id=snapshot_id), context=context)

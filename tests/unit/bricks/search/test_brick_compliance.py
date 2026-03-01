@@ -9,9 +9,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from nexus.bricks.search.lifecycle_adapter import SearchBrickLifecycleAdapter
-from nexus.services.protocols.brick_lifecycle import BrickLifecycleProtocol
-from nexus.services.protocols.file_reader import FileReaderProtocol
-from nexus.services.protocols.search import SearchBrickProtocol
+from nexus.contracts.protocols.brick_lifecycle import BrickLifecycleProtocol
+from nexus.contracts.protocols.file_reader import FileReaderProtocol
+from nexus.contracts.protocols.search import SearchBrickProtocol
 
 
 class TestSearchDaemonSatisfiesBrickProtocol:

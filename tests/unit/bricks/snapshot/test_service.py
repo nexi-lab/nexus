@@ -204,7 +204,7 @@ class TestCommit:
 
         txn = FakeTransactionModel(transaction_id="txn-c1", status="active", entry_count=1)
 
-        from nexus.services.protocols.snapshot import SnapshotEntry
+        from nexus.contracts.protocols.snapshot import SnapshotEntry
 
         fake_entry = SnapshotEntry(
             entry_id="e1",
@@ -243,7 +243,7 @@ class TestCommit:
         metadata_store.data["/f.txt"] = FakeMetadata(etag="someone-elses-hash")
 
         txn = FakeTransactionModel(transaction_id="txn-c2", status="active")
-        from nexus.services.protocols.snapshot import SnapshotEntry
+        from nexus.contracts.protocols.snapshot import SnapshotEntry
 
         fake_entry = SnapshotEntry(
             entry_id="e2",
@@ -302,7 +302,7 @@ class TestRollback:
         cas_store: FakeCASStore,
     ) -> None:
         """Rollback of a write restores original metadata."""
-        from nexus.services.protocols.snapshot import SnapshotEntry
+        from nexus.contracts.protocols.snapshot import SnapshotEntry
 
         now = datetime.now(UTC)
         original_meta = json.dumps(
@@ -350,7 +350,7 @@ class TestRollback:
         metadata_store: FakeMetadataStore,
     ) -> None:
         """Rollback of a delete restores the deleted file's metadata."""
-        from nexus.services.protocols.snapshot import SnapshotEntry
+        from nexus.contracts.protocols.snapshot import SnapshotEntry
 
         now = datetime.now(UTC)
         original_meta = json.dumps(
@@ -397,7 +397,7 @@ class TestRollback:
         cas_store: FakeCASStore,
     ) -> None:
         """Rollback of a new file (no original) deletes it from metadata."""
-        from nexus.services.protocols.snapshot import SnapshotEntry
+        from nexus.contracts.protocols.snapshot import SnapshotEntry
 
         metadata_store.data["/new-file.txt"] = FakeMetadata(etag="new-hash")
 

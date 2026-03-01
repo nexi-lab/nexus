@@ -307,7 +307,7 @@ class TestServiceInstantiation:
 
     def test_share_link_service_construction(self, benchmark):
         """Benchmark ShareLinkService construction."""
-        from nexus.services.share_link.share_link_service import ShareLinkService
+        from nexus.bricks.share_link.share_link_service import ShareLinkService
 
         mock_gw = MagicMock()
         benchmark(ShareLinkService, gateway=mock_gw, enforce_permissions=True)
@@ -344,13 +344,13 @@ class TestContextExtractionOverhead:
 
     def test_extract_context_info(self, benchmark, context):
         """Benchmark ShareLinkService._extract_context_info."""
-        from nexus.services.share_link.share_link_service import ShareLinkService
+        from nexus.bricks.share_link.share_link_service import ShareLinkService
 
         benchmark(ShareLinkService._extract_context_info, context)
 
     def test_extract_context_info_none(self, benchmark):
         """Benchmark _extract_context_info with None context."""
-        from nexus.services.share_link.share_link_service import ShareLinkService
+        from nexus.bricks.share_link.share_link_service import ShareLinkService
 
         benchmark(ShareLinkService._extract_context_info, None)
 

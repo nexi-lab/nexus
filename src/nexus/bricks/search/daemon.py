@@ -439,7 +439,8 @@ class SearchDaemon:
 
             if self.stats.zoekt_available:
                 logger.info("Zoekt trigram search available")
-        except Exception:
+        except Exception as e:
+            logger.debug("Zoekt availability check failed: %s", e)
             self.stats.zoekt_available = False
 
     async def _check_embedding_cache(self) -> None:
@@ -448,8 +449,8 @@ class SearchDaemon:
             try:
                 self.stats.embedding_cache_connected = await self._cache_brick.health_check()
                 return
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Embedding cache health check failed: %s", e)
         self.stats.embedding_cache_connected = False
 
     # =========================================================================
@@ -1014,7 +1015,8 @@ class SearchDaemon:
 
                     try:
                         content = self._file_reader.read_text(path)
-                    except Exception:
+                    except Exception as e:
+                        logger.debug("File read failed for %s: %s, trying virtual path", path, e)
                         # Also try without zone prefix
                         with contextlib.suppress(Exception):
                             content = self._file_reader.read_text(virtual_path)
@@ -1064,8 +1066,8 @@ class SearchDaemon:
                             ).first()
                             if row:
                                 path_id = row[0]
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug("path_id lookup failed for %s: %s", virtual_path, e)
 
                 # Index to BM25S if available
                 if self._bm25s_index:

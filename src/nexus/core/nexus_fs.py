@@ -234,7 +234,6 @@ class NexusFS(  # type: ignore[misc]
         self._mount_persist_service: Any = None
         self.mcp_service: Any = None
         self.llm_service: Any = None
-        self._llm_subsystem: Any = None
         self.oauth_service: Any = None
         self.search_service: Any = None
         self.share_link_service: Any = None
@@ -266,7 +265,6 @@ class NexusFS(  # type: ignore[misc]
             self._mount_persist_service = wired.get("mount_persist_service")
             self.mcp_service = wired.get("mcp_service")
             self.llm_service = wired.get("llm_service")
-            self._llm_subsystem = wired.get("llm_subsystem")
             self.oauth_service = wired.get("oauth_service")
             self.search_service = wired.get("search_service")
             self.share_link_service = wired.get("share_link_service")
@@ -288,7 +286,6 @@ class NexusFS(  # type: ignore[misc]
         self._mount_persist_service = wired.mount_persist_service
         self.mcp_service = wired.mcp_service
         self.llm_service = wired.llm_service
-        self._llm_subsystem = wired.llm_subsystem
         self.oauth_service = wired.oauth_service
         self.search_service = wired.search_service
         self.share_link_service = wired.share_link_service

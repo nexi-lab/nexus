@@ -356,7 +356,6 @@ class WiredServices:
     mount_persist_service: Any = None
     mcp_service: Any = None
     llm_service: Any = None
-    llm_subsystem: Any = None
     oauth_service: Any = None
     search_service: Any = None
     share_link_service: Any = None

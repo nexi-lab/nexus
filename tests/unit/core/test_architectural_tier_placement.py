@@ -35,12 +35,12 @@ class TestSchedulerTierPlacement:
         assert hasattr(mod, "CreditsReservationProtocol")
         assert hasattr(mod, "NullCreditsReservation")
 
-    def test_in_memory_scheduler_in_services(self) -> None:
-        mod = importlib.import_module("nexus.services.scheduler.in_memory")
+    def test_in_memory_scheduler_in_system_services(self) -> None:
+        mod = importlib.import_module("nexus.system_services.scheduler.in_memory")
         assert hasattr(mod, "InMemoryScheduler")
 
-    def test_classify_agent_request_in_services(self) -> None:
-        mod = importlib.import_module("nexus.services.scheduler.policies.classifier")
+    def test_classify_agent_request_in_system_services(self) -> None:
+        mod = importlib.import_module("nexus.system_services.scheduler.policies.classifier")
         assert hasattr(mod, "classify_agent_request")
 
     def test_scheduler_service_in_system_services(self) -> None:

@@ -913,9 +913,9 @@ layers = [
 ignore_imports = [
     # --- tier-neutral (contracts) importing core ---
     "nexus.contracts.metadata -> nexus.core._compact_generated",
-    # --- tier-neutral (contracts/protocols) importing services ---
+    # --- tier-neutral (contracts/protocols) importing bricks ---
     # chunked_upload protocol TYPE_CHECKING import for UploadSession return type
-    "nexus.contracts.protocols.chunked_upload -> nexus.services.upload.upload_session",
+    "nexus.contracts.protocols.chunked_upload -> nexus.bricks.upload.upload_session",
     # --- tier-neutral (contracts/lib) cross-imports ---
     "nexus.lib.path_utils -> nexus.contracts.exceptions",
     "nexus.contracts -> nexus.lib.validators",

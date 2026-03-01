@@ -288,7 +288,7 @@ def _boot_independent_bricks(
         try:
             import os as _os
 
-            from nexus.services.upload.chunked_upload_service import (
+            from nexus.bricks.upload.chunked_upload_service import (
                 ChunkedUploadConfig,
                 ChunkedUploadService,
             )

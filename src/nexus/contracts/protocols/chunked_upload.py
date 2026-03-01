@@ -2,7 +2,7 @@
 
 Defines the contract for tus.io resumable chunked uploads.
 
-Existing implementation: ``nexus.services.chunked_upload_service.ChunkedUploadService``
+Existing implementation: ``nexus.bricks.upload.chunked_upload_service.ChunkedUploadService``
 
 References:
     - docs/design/KERNEL-ARCHITECTURE.md §1 (service DI)
@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from nexus.contracts.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
-    from nexus.services.upload.upload_session import UploadSession
+    from nexus.bricks.upload.upload_session import UploadSession
 
 
 @runtime_checkable

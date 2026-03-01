@@ -1,12 +1,11 @@
-"""OAuth credential lifecycle service — pure business logic.
+"""OAuth credential lifecycle service — business logic + RPC surface.
 
-Canonical location: ``nexus.bricks.auth.oauth.credential_service`` (Issue #2281).
+Canonical location: ``nexus.bricks.auth.oauth.credential_service``.
 Extracted from ``nexus.services.oauth_service`` (Issue #8B split).
 
-This module contains the core OAuth credential management logic with
-zero dependencies on ``nexus.server``, ``nexus.core.rpc_decorator``,
-or any MCP/Klavis integration.  The services layer wraps these methods
-with ``@rpc_expose`` and adds the ``mcp_connect`` orchestration.
+This module is the single authoritative OAuth credential service.
+``@rpc_expose`` decorators live directly on the brick methods (same
+pattern as ReBACService, LLMService, MCPService).
 """
 
 import builtins
@@ -15,6 +14,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import DEFAULT_OAUTH_REDIRECT_URI
+from nexus.lib.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
 
@@ -67,15 +67,14 @@ class PKCEStateStore:
 
 
 class OAuthCredentialService:
-    """Pure OAuth credential lifecycle service.
+    """OAuth credential lifecycle service with RPC surface.
 
     Handles provider discovery, authorization URLs, code exchange,
     credential listing/revocation/testing, and PKCE support.
 
-    This class contains **no** ``@rpc_expose`` decorators and **no**
-    imports from ``nexus.server`` or MCP modules.  The services layer
-    (``nexus.services.oauth_service.OAuthService``) composes this and
-    adds the RPC surface + ``mcp_connect``.
+    ``@rpc_expose`` decorators live directly on the brick (same pattern
+    as ReBACService, LLMService, MCPService).  ``mcp_connect`` lives on
+    MCPService where it belongs.
     """
 
     def __init__(
@@ -97,6 +96,7 @@ class OAuthCredentialService:
     # Public API: Provider Discovery
     # =========================================================================
 
+    @rpc_expose(name="oauth_list_providers", description="List all available OAuth providers")
     async def list_providers(
         self,
         context: "OperationContext | None" = None,  # noqa: ARG002
@@ -124,6 +124,9 @@ class OAuthCredentialService:
     # Public API: OAuth Flow
     # =========================================================================
 
+    @rpc_expose(
+        name="oauth_get_auth_url", description="Get OAuth authorization URL for any provider"
+    )
     async def get_auth_url(
         self,
         provider: str,
@@ -143,6 +146,9 @@ class OAuthCredentialService:
             provider_instance, provider, state
         )
 
+    @rpc_expose(
+        name="oauth_exchange_code", description="Exchange OAuth authorization code for tokens"
+    )
     async def exchange_code(
         self,
         provider: str,
@@ -231,6 +237,7 @@ class OAuthCredentialService:
     # Public API: Credential Management
     # =========================================================================
 
+    @rpc_expose(name="oauth_list_credentials", description="List all OAuth credentials")
     async def list_credentials(
         self,
         provider: str | None = None,
@@ -275,6 +282,7 @@ class OAuthCredentialService:
         )
         return result
 
+    @rpc_expose(name="oauth_revoke_credential", description="Revoke OAuth credential")
     async def revoke_credential(
         self,
         provider: str,
@@ -308,6 +316,7 @@ class OAuthCredentialService:
             logger.error(f"Failed to revoke credential: {e}")
             raise ValueError(f"Failed to revoke credential: {e}") from e
 
+    @rpc_expose(name="oauth_test_credential", description="Test OAuth credential validity")
     async def test_credential(
         self,
         provider: str,

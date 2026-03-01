@@ -4691,8 +4691,7 @@ class NexusFS(  # type: ignore[misc]
         "cancel_task": "task_queue_service",
         # MCPService
         "mcp_list_mounts": "mcp_service",
-        # OAuthService
-        "oauth_list_providers": "oauth_service",
+        # OAuthCredentialService — routed via _SERVICE_ALIASES (name differs)
         # LLMService
         "create_llm_reader": "llm_service",
         # ReBACService direct methods (no _sync suffix)
@@ -4708,6 +4707,13 @@ class NexusFS(  # type: ignore[misc]
 
     # Special aliases where service method name differs
     _SERVICE_ALIASES: dict[str, tuple[str, str]] = {
+        # OAuthCredentialService: RPC name → brick method name
+        "oauth_list_providers": ("oauth_service", "list_providers"),
+        "oauth_get_auth_url": ("oauth_service", "get_auth_url"),
+        "oauth_exchange_code": ("oauth_service", "exchange_code"),
+        "oauth_list_credentials": ("oauth_service", "list_credentials"),
+        "oauth_revoke_credential": ("oauth_service", "revoke_credential"),
+        "oauth_test_credential": ("oauth_service", "test_credential"),
         "list_memories": ("_workspace_rpc_service", "list_registered_memories"),
         "sandbox_available": ("_sandbox_rpc_service", "sandbox_available"),
         "get_sync_job": ("_sync_job_service", "get_job"),

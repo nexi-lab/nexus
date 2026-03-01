@@ -10,7 +10,7 @@ Services:
 - VersionService: File version management, rollback, and diff operations
 - MCPService: Model Context Protocol server management
 - LLMService: LLM-powered document reading with citations
-- OAuthService: OAuth credential management and provider integration
+- OAuthCredentialService: OAuth credential management (brick)
 - SchedulerService: Fair-share priority scheduler (Astraea) — System Service, not a Brick
 
 Subsystem ABC (Issue #1287):
@@ -24,7 +24,6 @@ Phase 2: Core Refactoring (Issue #988)
 import importlib as _il
 
 from nexus.contracts.types import ContextIdentity, extract_context_identity
-from nexus.services.oauth.oauth_service import OAuthService
 from nexus.services.scheduler import SchedulerService
 from nexus.services.search.search_service import SearchService
 from nexus.services.subsystem import Subsystem
@@ -34,6 +33,9 @@ from nexus.services.versioning.version_service import VersionService
 LLMService = _il.import_module("nexus.bricks.llm.llm_service").LLMService
 MCPService = _il.import_module("nexus.bricks.mcp.mcp_service").MCPService
 MountService = _il.import_module("nexus.bricks.mount.mount_service").MountService
+OAuthCredentialService = _il.import_module(
+    "nexus.bricks.auth.oauth.credential_service"
+).OAuthCredentialService
 ReBACService = _il.import_module("nexus.bricks.rebac.rebac_service").ReBACService
 __all__ = [
     "SearchService",
@@ -42,7 +44,7 @@ __all__ = [
     "VersionService",
     "MCPService",
     "LLMService",
-    "OAuthService",
+    "OAuthCredentialService",
     "SchedulerService",
     "Subsystem",
     "ContextIdentity",

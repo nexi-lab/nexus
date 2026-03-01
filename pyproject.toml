@@ -748,6 +748,10 @@ disable_error_code = ["arg-type", "return-value"]
 module = "nexus.bricks.rlm.tools"
 disable_error_code = ["import-untyped"]
 
+[[tool.mypy.overrides]]
+module = "nexus.system_services.agents.agent_rpc_service"
+disable_error_code = ["import-untyped"]
+
 [tool.ruff]
 target-version = "py311"
 line-length = 100

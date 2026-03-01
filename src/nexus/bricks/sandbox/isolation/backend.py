@@ -21,7 +21,7 @@ from nexus.bricks.sandbox.isolation.errors import (
     IsolationTimeoutError,
 )
 from nexus.contracts.exceptions import BackendError
-from nexus.core.object_store import WriteResult
+from nexus.contracts.types import WriteResult
 
 logger = logging.getLogger(__name__)
 

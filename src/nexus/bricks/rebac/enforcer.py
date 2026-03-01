@@ -518,7 +518,7 @@ class PermissionEnforcer:
         object_type = "file"  # Default
         # Unscope zone-prefixed paths so object_id matches how ReBAC tuples
         # are created (non-prefixed path + zone_id field for isolation).
-        from nexus.server.path_utils import unscope_internal_path
+        from nexus.lib.path_utils import unscope_internal_path
 
         object_id = unscope_internal_path(path)  # Strip /zone/{id}/ prefix
 

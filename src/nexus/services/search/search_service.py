@@ -243,7 +243,7 @@ class SearchService(SemanticSearchMixin):
                 if prefixes:
                     return tuple(sorted(prefixes))
             except Exception:
-                pass
+                logger.debug("Failed to resolve root prefixes from mount points")
         return ("workspace/", "shared/", "external/", "system/", "archives/")
 
     def _should_prepend_recursive_wildcard(self, pattern: str) -> bool:

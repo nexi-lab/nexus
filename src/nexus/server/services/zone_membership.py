@@ -8,7 +8,10 @@ part of the server composition layer (not a standalone brick).
 """
 
 import contextlib
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # ==============================================================================
 # ReBAC Group Naming Helpers
@@ -217,7 +220,7 @@ def get_user_zones(rebac_manager: Any, user_id: str) -> list[str]:
                 if zid and zid not in zone_ids:
                     zone_ids.append(zid)
     except Exception:
-        pass
+        logger.debug("Failed to query zone memberships for user %s", user_id)
     return zone_ids
 
 

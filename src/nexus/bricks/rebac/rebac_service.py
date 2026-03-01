@@ -1124,7 +1124,7 @@ class ReBACService(ReBACShareMixin):
                 await self._run_in_thread(self._rebac_manager.rebac_delete, obj_id)
                 deleted += 1
             except Exception:
-                pass
+                logger.debug("Best-effort rebac_delete failed for %s", obj_id)
         return deleted
 
     # =========================================================================

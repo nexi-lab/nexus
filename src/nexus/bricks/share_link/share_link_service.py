@@ -17,10 +17,10 @@ import hashlib
 import logging
 import secrets
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.core.path_utils import validate_path
+from nexus.lib.path_utils import validate_path
 from nexus.lib.response import HandlerResponse
 from nexus.lib.rpc_decorator import rpc_expose
 
@@ -28,7 +28,6 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
-    from nexus.services.gateway import NexusFSGateway
     from nexus.storage.record_store import RecordStoreABC
 
 
@@ -49,7 +48,7 @@ class ShareLinkService:
 
     def __init__(
         self,
-        gateway: "NexusFSGateway",
+        gateway: Any,
         record_store: "RecordStoreABC | None" = None,
         enforce_permissions: bool = True,
     ):

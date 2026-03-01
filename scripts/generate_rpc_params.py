@@ -101,7 +101,7 @@ MODULES_TO_SCAN: list[str] = [
     "nexus.services.search.search_service",
     "nexus.services.search.search_semantic",
     # Services (reorganized into sub-packages)
-    "nexus.services.share_link.share_link_service",
+    "nexus.bricks.share_link.share_link_service",
     "nexus.services.versioning.version_service",
     "nexus.bricks.mount.mount_service",
     "nexus.services.oauth.oauth_service",

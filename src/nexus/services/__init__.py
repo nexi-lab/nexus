@@ -11,8 +11,6 @@ Services:
 - MCPService: Model Context Protocol server management
 - LLMService: LLM-powered document reading with citations
 - OAuthCredentialService: OAuth credential management (brick)
-Subsystem ABC (Issue #1287):
-- Subsystem: ABC for service lifecycle wrappers (health_check, cleanup)
 - ContextIdentity: Frozen identity extracted from OperationContext
 - extract_context_identity(): DRY helper for OperationContext → ContextIdentity
 
@@ -23,7 +21,6 @@ import importlib as _il
 
 from nexus.contracts.types import ContextIdentity, extract_context_identity
 from nexus.services.search.search_service import SearchService
-from nexus.services.subsystem import Subsystem
 from nexus.services.versioning.version_service import VersionService
 
 # Brick re-exports via importlib to avoid services→bricks tier violation (import-linter)
@@ -42,7 +39,6 @@ __all__ = [
     "MCPService",
     "LLMService",
     "OAuthCredentialService",
-    "Subsystem",
     "ContextIdentity",
     "extract_context_identity",
 ]

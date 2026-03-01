@@ -239,6 +239,25 @@ Documented in `document-ai/notes/` discussions; brief summary for reference:
 
 ### 7f. Federation Content CRUD: Implementation & Caveats
 
+#### Architecture Alignment: HDFS/GFS, Not UNIX ext4
+
+Nexus's metadata/content separation (Metastore + ObjectStore) aligns with distributed filesystem
+best practices, not traditional single-machine OS design:
+
+| System | Metadata Plane | Content Plane | Separation |
+|--------|---------------|---------------|------------|
+| **HDFS** | NameNode (ClientProtocol) | DataNode (DataTransferProtocol) | Two independent RPC protocols |
+| **GFS** | Master | ChunkServer | Two independent services |
+| **Nexus** | Metastore (redb/Raft) | ObjectStore (CAS/S3/GCS) | Two independent pillar ABCs |
+| Linux ext4 | inode | data blocks | Same driver (single machine) |
+
+HDFS exposes metadata-only and content-only interfaces as **separate first-class protocols** at
+the kernel primitive level — not just a convenience layer. Our Metastore + ObjectStore split
+follows this same pattern. Consequences:
+- `sys_write` orchestrates both planes (like HDFS DFSClient), but the planes are independent
+- Cross-plane coordination (orphan cleanup) is async, not synchronous (see Caveat 4)
+- Content never flows through the metadata plane (like HDFS: "user data never flows through NameNode")
+
 Federation has two I/O planes with different routing strategies:
 
 | Plane | Pattern | Mechanism |
@@ -275,40 +294,42 @@ Acceptable for v1: most federation is read-heavy; frequent cross-node appends ar
 
 Content exists only on writer's CAS until another node reads it (progressive replication). Writer failure before any read → `NexusFileNotFoundError`. Future: eager replication, CacheStore L2, WAL read-repair.
 
-#### Caveat 4: CAS Orphan Accumulation (Design Flaw)
+#### Caveat 4: CAS Orphan Accumulation (Standard Pattern — Needs GC)
 
-**Root cause**: `sys_write` does NOT call `release()` on the old blob when overwriting a file (`nexus_fs.py:2695-2698`). This violates standard ref_count semantics and causes orphans **even in single-node mode**.
+`sys_write` does NOT release old blobs on overwrite. This is **not a bug** — it follows the
+HDFS/GFS standard pattern where metadata changes are synchronous and content cleanup is
+asynchronous via background GC.
 
-Current behavior:
+**HDFS/GFS precedent**:
+- GFS (paper §4.4): delete renames file to hidden name; background scan removes metadata after 3 days;
+  ChunkServer heartbeat reports chunks; Master identifies orphans and instructs deletion.
+- HDFS: NameNode adds blocks to `invalidateBlocks` queue; DataNode heartbeat picks up delete commands;
+  BlockManager periodically reconciles blocks against namespace references.
+
+Both systems explicitly accept temporary orphans as a design choice. Synchronous cross-plane
+cleanup (releasing content during metadata write) is NOT how distributed filesystems work.
+
+**Nexus behavior**:
 ```
-write("Hello")  → store(hash_A), ref_count=1
-write("World")  → store(hash_B), ref_count=1.  hash_A stays ref_count=1 ← leak!
-unlink(file)    → release(hash_B), ref_count=0, deleted.  hash_A: ref_count=1 forever ← orphan!
-```
-
-Correct behavior (UNIX inode semantics):
-```
-write("Hello")  → store(hash_A), ref_count=1
-write("World")  → store(hash_B), ref_count=1; release(hash_A), ref_count=0 → deleted
-unlink(file)    → release(hash_B), ref_count=0 → deleted
-```
-
-If version history (or any higher layer) wants to preserve old content, it should call `store(old_hash)` itself to hold an additional reference — not rely on the base layer leaking.
-
-**Federation amplifies this**: even if `sys_write` correctly called `release(old_hash)`, it would only affect the **local node's CAS**. In the cross-node scenario:
-
-```
-Node A: write("Hello") → hash_A in Node A's CAS (ref_count=1)
-Node B: write("World") → hash_B in Node B's CAS (ref_count=1)
-  Raft metadata: etag=hash_B, backend_name=nodeB  (hash_A has no metadata reference)
-  But Node B's release(hash_A) is a no-op — hash_A is on Node A, not Node B
-  Raft metadata replication to Node A is pure data — no CAS side effects triggered
-  → hash_A on Node A: ref_count=1 forever, true orphan
+write("Hello")  → store(hash_A) on ObjectStore, metadata.put(etag=hash_A) on Metastore
+write("World")  → store(hash_B) on ObjectStore, metadata.put(etag=hash_B) on Metastore
+                   hash_A: no metadata reference, still in ObjectStore → orphan (temporary)
 ```
 
-**Resolution path (two fixes needed)**:
-1. **Single-node**: `sys_write` should `release(old_hash)` on overwrite. Higher layers hold their own references.
-2. **Federation**: Need a metadata-change observer — when Raft follower sees its locally-stored blob replaced in metadata, trigger local `release()`. Or periodic GC reconciliation.
+**Federation amplifies**: cross-node writes leave orphans on the original writer's ObjectStore.
+The writing node's Raft follower receives metadata updates but does not trigger ObjectStore cleanup.
+
+**Resolution: ContentGarbageCollector** (like HDFS BlockManager):
+```
+referenced_hashes = metastore.all_etags()          # metadata plane
+existing_hashes   = objectstore.all_content_hashes() # content plane
+orphans           = existing - referenced
+for hash in orphans: objectstore.delete_content(hash) # async cleanup
+```
+
+Single-node GC is straightforward (scan local ObjectStore vs local Metastore).
+Federation GC requires node-level reconciliation: each node scans its local ObjectStore
+against the Raft-replicated Metastore to find locally-held orphans.
 
 ---
 

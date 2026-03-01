@@ -2689,10 +2689,12 @@ class NexusFS(  # type: ignore[misc]
             )
         content_hash = route.backend.write_content(content, context=context).content_hash
 
-        # NOTE: Do NOT delete old content when updating a file!
-        # Version history preserves references to old content hashes.
-        # Old content should only be deleted when ALL versions are deleted.
-        # CAS reference counting handles cleanup automatically.
+        # NOTE: sys_write does NOT release old content on overwrite.
+        # This follows the HDFS/GFS pattern: metadata changes are synchronous,
+        # content cleanup is asynchronous via background GC.
+        # Old blobs are cleaned up by ContentGarbageCollector, which reconciles
+        # ObjectStore inventory against Metastore references (like HDFS BlockManager).
+        # See: docs/architecture/federation-memo.md §7f Caveat 4.
 
         # UNIX permissions removed - all access control via ReBAC
 

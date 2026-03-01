@@ -144,19 +144,14 @@ def _boot_wired_services(
     else:
         logger.debug("[BOOT:WIRED] MCPService disabled by profile")
 
-    # --- LLMService + LLMSubsystem: LLM integration ---
+    # --- LLMService: LLM integration ---
     llm_service: Any = None
-    llm_subsystem: Any = None
     if _on("llm"):
         try:
             from nexus.bricks.llm.llm_service import LLMService
 
             llm_service = LLMService(nexus_fs=nx)
-
-            from nexus.services.subsystems.llm_subsystem import LLMSubsystem
-
-            llm_subsystem = LLMSubsystem(llm_service=llm_service)
-            logger.debug("[BOOT:WIRED] LLMService + LLMSubsystem created")
+            logger.debug("[BOOT:WIRED] LLMService created")
         except Exception as exc:
             logger.debug("[BOOT:WIRED] LLMService unavailable: %s", exc)
     else:
@@ -470,7 +465,6 @@ def _boot_wired_services(
         mount_persist_service=mount_persist_service,
         mcp_service=mcp_service,
         llm_service=llm_service,
-        llm_subsystem=llm_subsystem,
         oauth_service=oauth_service,
         search_service=search_service,
         share_link_service=share_link_service,

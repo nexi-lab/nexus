@@ -60,7 +60,7 @@ class TestVersionServiceSmoke:
 
     def test_version_service_init(self, mock_metadata, mock_cas, mock_router):
         """Test VersionService can be instantiated."""
-        from nexus.services.versioning.version_service import VersionService
+        from nexus.bricks.versioning.version_service import VersionService
 
         service = VersionService(
             metadata_store=mock_metadata,
@@ -76,7 +76,7 @@ class TestVersionServiceSmoke:
     @pytest.mark.asyncio
     async def test_list_versions_basic(self, mock_metadata, mock_cas, mock_router):
         """Test list_versions can be called."""
-        from nexus.services.versioning.version_service import VersionService
+        from nexus.bricks.versioning.version_service import VersionService
 
         service = VersionService(
             metadata_store=mock_metadata,
@@ -187,7 +187,7 @@ class TestSearchServiceSmoke:
 
     def test_search_service_init(self, mock_metadata):
         """Test SearchService can be instantiated."""
-        from nexus.services.search.search_service import SearchService
+        from nexus.bricks.search.search_service import SearchService
 
         service = SearchService(
             metadata_store=mock_metadata,
@@ -201,7 +201,7 @@ class TestSearchServiceSmoke:
     @pytest.mark.asyncio
     async def test_semantic_search_not_initialized(self, mock_metadata):
         """Test semantic_search raises if not initialized."""
-        from nexus.services.search.search_service import SearchService
+        from nexus.bricks.search.search_service import SearchService
 
         service = SearchService(
             metadata_store=mock_metadata,
@@ -214,7 +214,7 @@ class TestSearchServiceSmoke:
     @pytest.mark.asyncio
     async def test_initialize_semantic_search_basic(self, mock_metadata):
         """Test initialize_semantic_search can be called."""
-        from nexus.services.search.search_service import SearchService
+        from nexus.bricks.search.search_service import SearchService
 
         service = SearchService(
             metadata_store=mock_metadata,
@@ -309,8 +309,8 @@ class TestServiceIntegrationSmoke:
         from nexus.bricks.mcp.mcp_service import MCPService
         from nexus.bricks.mount.mount_service import MountService
         from nexus.bricks.rebac.rebac_service import ReBACService
-        from nexus.services.search.search_service import SearchService
-        from nexus.services.versioning.version_service import VersionService
+        from nexus.bricks.search.search_service import SearchService
+        from nexus.bricks.versioning.version_service import VersionService
 
         # Create all services
         version_svc = VersionService(

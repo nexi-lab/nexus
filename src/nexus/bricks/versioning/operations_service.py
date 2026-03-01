@@ -17,7 +17,7 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
-from nexus.services.versioning.operation_undo_service import OperationUndoService
+from nexus.bricks.versioning.operation_undo_service import OperationUndoService
 
 
 class OperationsService:

@@ -97,12 +97,11 @@ EXCLUDED_METHODS: set[str] = {
 # module and collect all methods that have ``_rpc_exposed = True``.
 MODULES_TO_SCAN: list[str] = [
     "nexus.core.nexus_fs",
-    # Search (reorganized from flat nexus.services.search_*)
-    "nexus.services.search.search_service",
-    "nexus.services.search.search_semantic",
+    # Search (moved to bricks tier, Issue #1287)
+    "nexus.bricks.search.search_service",
     # Services (reorganized into sub-packages)
     "nexus.bricks.share_link.share_link_service",
-    "nexus.services.versioning.version_service",
+    "nexus.bricks.versioning.version_service",
     "nexus.bricks.mount.mount_service",
     "nexus.services.oauth.oauth_service",
     "nexus.services.memory_service",

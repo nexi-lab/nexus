@@ -694,8 +694,8 @@ module = [
     "nexus.cli.commands.search",
     "nexus.core.nexus_fs",
     "nexus.core.nexus_fs_search",
-    "nexus.services.versioning.version_service",
-    "nexus.services.search.search_service",
+    "nexus.bricks.versioning.version_service",
+    "nexus.bricks.search.search_service",
     "nexus.services.gateway",
     "nexus.server.fastapi_server",
     "nexus.storage.database",
@@ -710,15 +710,6 @@ module = "nexus.bricks.search.semantic"
 # Inherits same suppressions as raft-callers group + misc for "None" not callable
 disable_error_code = ["attr-defined", "union-attr", "no-any-return", "misc"]
 warn_unused_ignores = false
-
-# --- Mixin classes: access `self.*` from host class (NexusFS/SearchService) ---
-[[tool.mypy.overrides]]
-module = [
-    "nexus.services.search_listing_mixin",
-    "nexus.services.search_grep_mixin",
-]
-# Mixin attr-defined + no-any-return: mypy can't resolve host-class attrs
-disable_error_code = ["attr-defined", "no-any-return", "import-untyped"]
 
 # --- Backend / driver return-type mismatches (HandlerResponse covariance) ---
 [[tool.mypy.overrides]]
@@ -738,15 +729,12 @@ disable_error_code = ["no-any-return"]
 [[tool.mypy.overrides]]
 module = [
     "nexus.services.overlay_resolver",
-    "nexus.services.search_service",
     "nexus.services.sync_service",
     "nexus.services.workspace_manager",
     "nexus.services.change_log_store",  # unused-ignore from suppressed no-any-return
     "nexus.services.sync_backlog_store",
-    "nexus.services.version_service",
     "nexus.bricks.mount.mount_manager",
     "nexus.bricks.mount.mount_service",
-    "nexus.services.search_service",
     "nexus.system_services.event_subsystem.log.exporters.factory",
     "nexus.bricks.portability.import_service",
     "nexus.server.lifespan.realtime",
@@ -767,6 +755,10 @@ disable_error_code = ["arg-type", "assignment"]
 [[tool.mypy.overrides]]
 module = "nexus.search.embeddings"
 disable_error_code = ["override", "attr-defined"]
+
+[[tool.mypy.overrides]]
+module = "nexus.bricks.rlm.tools"
+disable_error_code = ["import-untyped"]
 
 [tool.ruff]
 target-version = "py311"
@@ -884,6 +876,11 @@ ignore_imports = [
     # mcp -> rebac: TYPE_CHECKING imports for middleware/profiles (Issue #2429)
     "nexus.bricks.mcp.middleware -> nexus.bricks.rebac.manager",
     "nexus.bricks.mcp.profiles -> nexus.bricks.rebac.manager",
+    # search -> rebac: permission enforcement in search_service (moved from services/)
+    "nexus.bricks.search.search_service -> nexus.bricks.rebac.enforcer",
+    "nexus.bricks.search.search_service -> nexus.bricks.rebac.manager",
+    # versioning -> rebac: async permission checks (moved from services/)
+    "nexus.bricks.versioning.version_service -> nexus.bricks.rebac.async_permissions",
     # parsers -> sandbox: TYPE_CHECKING imports for sandbox provider (Issue #2429)
     "nexus.bricks.parsers.validation.runner -> nexus.bricks.sandbox.sandbox_provider",
     "nexus.bricks.parsers.validation.detector -> nexus.bricks.sandbox.sandbox_provider",
@@ -944,11 +941,6 @@ ignore_imports = [
     "nexus.core.nexus_fs -> nexus.bricks.parsers.providers.registry",
     # --- services importing bricks ---
     "nexus.services.workspace_rpc_service -> nexus.bricks.workspace.workspace_registry",
-    # graph_search_service imports BaseSearchResult from bricks.search.results (Issue #2663)
-    "nexus.services.search.graph_search_service -> nexus.bricks.search.results",
-    # search_semantic direct TYPE_CHECKING imports (services → bricks)
-    "nexus.services.search.search_semantic -> nexus.bricks.search.indexing_service",
-    "nexus.services.search.search_semantic -> nexus.bricks.search.pipeline_indexer",
     # search_semantic → factory._semantic_search → bricks (transitive chain)
     "nexus.factory._semantic_search -> nexus.bricks.llm.llm_context_builder",
     "nexus.factory._semantic_search -> nexus.bricks.search.chunking",
@@ -956,15 +948,11 @@ ignore_imports = [
     "nexus.factory._semantic_search -> nexus.bricks.search.indexing_service",
     "nexus.factory._semantic_search -> nexus.bricks.search.pipeline_indexer",
     # --- services importing bricks (rebac, Issue #2179, not yet converted) ---
-    "nexus.services.search.search_service -> nexus.bricks.rebac.enforcer",
-    "nexus.services.search.search_service -> nexus.bricks.rebac.manager",
-    "nexus.services.versioning.version_service -> nexus.bricks.rebac.async_permissions",
     "nexus.services.delegation.service -> nexus.bricks.rebac.manager",
     "nexus.services.memory.memory_api -> nexus.bricks.rebac.manager",
     "nexus.services.memory.memory_router -> nexus.bricks.rebac.manager",
     "nexus.services.governance.governance_wrapper -> nexus.bricks.pay.protocol",
     "nexus.services.governance.governance_wrapper -> nexus.bricks.pay.audit_types",
-    "nexus.services.search_semantic -> nexus.factory",
     # --- rebac brick internal dependencies (consolidated from services.permissions) ---
     "nexus.services.memory.enrichment -> nexus.bricks.rebac.entity_extractor",
     "nexus.services.memory.versioning -> nexus.bricks.rebac.memory_permission_enforcer",

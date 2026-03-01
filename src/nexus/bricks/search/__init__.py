@@ -63,6 +63,7 @@ from nexus.bricks.search.query_router import (
 )
 from nexus.bricks.search.result_builders import build_result_from_row, build_semantic_result
 from nexus.bricks.search.results import BaseSearchResult, detect_matched_field
+from nexus.bricks.search.search_service import SearchService
 from nexus.bricks.search.txtai_backend import (
     SEARCH_BACKENDS,
     SearchBackendProtocol,
@@ -168,4 +169,6 @@ __all__ = [
     "SEARCH_BACKENDS",
     "create_backend",
     "detect_matched_field",
+    # Search Service (moved from services/search/, Issue #1287)
+    "SearchService",
 ]

@@ -27,7 +27,7 @@ EXCEPTIONS = [
     "src/nexus/rebac/manager.py",  # 5,288 lines - flattened from rebac_manager + enhanced (#1385)
     "src/nexus/bricks/rebac/manager.py",  # 4,856 lines - actively decomposing (#2179 Steps 2.4-2.6)
     "src/nexus/services/search_service.py",  # 2,290 lines - Issue #954 trigram index additions
-    "src/nexus/services/search/search_service.py",  # 2,001 lines - Issue #2188 DI param added
+    "src/nexus/bricks/search/search_service.py",  # 2,215 lines - moved from services/search/ + semantic mixin inlined
     "src/nexus/remote/client.py",  # 5,000 lines - Phase 4 splitting
     "src/nexus/remote/async_client.py",  # 2,500 lines - Phase 4 splitting
     "src/nexus/storage/models/__init__.py",  # 3,400 lines - Phase 4 splitting (partially done)

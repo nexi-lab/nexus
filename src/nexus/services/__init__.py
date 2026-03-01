@@ -20,8 +20,6 @@ Phase 2: Core Refactoring (Issue #988)
 import importlib as _il
 
 from nexus.contracts.types import ContextIdentity, extract_context_identity
-from nexus.services.search.search_service import SearchService
-from nexus.services.versioning.version_service import VersionService
 
 # Brick re-exports via importlib to avoid services→bricks tier violation (import-linter)
 LLMService = _il.import_module("nexus.bricks.llm.llm_service").LLMService
@@ -31,6 +29,8 @@ OAuthCredentialService = _il.import_module(
     "nexus.bricks.auth.oauth.credential_service"
 ).OAuthCredentialService
 ReBACService = _il.import_module("nexus.bricks.rebac.rebac_service").ReBACService
+SearchService = _il.import_module("nexus.bricks.search.search_service").SearchService
+VersionService = _il.import_module("nexus.bricks.versioning.version_service").VersionService
 __all__ = [
     "SearchService",
     "ReBACService",

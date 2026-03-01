@@ -262,7 +262,7 @@ def _boot_wired_services(
     # not core filesystem enumeration.
     search_service: Any = None
     try:
-        from nexus.services.search.search_service import SearchService
+        from nexus.bricks.search.search_service import SearchService
 
         search_service = SearchService(
             metadata_store=nx.metadata,

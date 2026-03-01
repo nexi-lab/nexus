@@ -1,7 +1,7 @@
-"""Unit tests for SemanticSearchMixin.
+"""Unit tests for SearchService semantic search methods.
 
-Tests the semantic search mixin methods: engine detection, search delegation,
-indexing, and statistics retrieval.
+Tests the semantic search methods (formerly SemanticSearchMixin, now inlined):
+engine detection, search delegation, indexing, and statistics retrieval.
 
 Issue #2132: Previously 0% test coverage.
 Issue #2075: Updated for decomposed architecture.
@@ -13,40 +13,38 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.services.search.search_semantic import SemanticSearchMixin
+from nexus.bricks.search.search_service import SearchService
 
 # =============================================================================
-# Test harness: concrete class that uses the mixin
+# Test harness: lightweight SearchService with only semantic attrs
 # =============================================================================
 
 
-class _StubSearchService(SemanticSearchMixin):
-    """Minimal host class providing the attributes SemanticSearchMixin expects.
-
-    Configurable via constructor kwargs to simulate various engine states.
-    """
-
-    def __init__(
-        self,
-        *,
-        query_service: Any = None,
-        indexing_service: Any = None,
-        indexing_pipeline: Any = None,
-        pipeline_indexer: Any = None,
-        record_store: Any = None,
-        gw_session_factory: Any = None,
-        gw_backend: Any = None,
-    ):
-        self._query_service = query_service
-        self._indexing_service = indexing_service
-        self._indexing_pipeline = indexing_pipeline
-        self._pipeline_indexer = pipeline_indexer
-        self._record_store = record_store
-        self._gw_session_factory = gw_session_factory
-        self._gw_backend = gw_backend
-        self.metadata = MagicMock()
-        self._read = MagicMock()
-        self.list = MagicMock()
+def _make_svc(
+    *,
+    query_service: Any = None,
+    indexing_service: Any = None,
+    indexing_pipeline: Any = None,
+    pipeline_indexer: Any = None,
+    record_store: Any = None,
+    gw_session_factory: Any = None,
+) -> SearchService:
+    """Create a SearchService instance with mocked metadata, setting semantic attrs."""
+    svc = SearchService(
+        metadata_store=MagicMock(),
+        enforce_permissions=False,
+        record_store=record_store,
+    )
+    svc._query_service = query_service
+    svc._indexing_service = indexing_service
+    svc._indexing_pipeline = indexing_pipeline
+    svc._pipeline_indexer = pipeline_indexer
+    # Override gateway session factory property via _gw mock
+    if gw_session_factory is not None:
+        gw = MagicMock()
+        gw.session_factory = gw_session_factory
+        svc._gw = gw
+    return svc
 
 
 # =============================================================================
@@ -99,8 +97,8 @@ def mock_pipeline_indexer():
 
 @pytest.fixture
 def svc_with_engine(mock_query_service, mock_indexing_service):
-    """Create a _StubSearchService with query and indexing services."""
-    return _StubSearchService(
+    """Create a SearchService with query and indexing services."""
+    return _make_svc(
         query_service=mock_query_service,
         indexing_service=mock_indexing_service,
     )
@@ -108,8 +106,8 @@ def svc_with_engine(mock_query_service, mock_indexing_service):
 
 @pytest.fixture
 def svc_no_engine():
-    """Create a _StubSearchService with no search engine."""
-    return _StubSearchService()
+    """Create a SearchService with no search engine."""
+    return _make_svc()
 
 
 # =============================================================================
@@ -118,7 +116,7 @@ def svc_no_engine():
 
 
 class TestHasSearchEngine:
-    """Tests for SemanticSearchMixin._has_search_engine property."""
+    """Tests for SearchService._has_search_engine property."""
 
     def test_true_with_query_service(self, svc_with_engine):
         """Should return True when _query_service is set."""
@@ -130,7 +128,7 @@ class TestHasSearchEngine:
 
     def test_false_when_query_service_is_none(self):
         """Should return False when _query_service is explicitly None."""
-        svc = _StubSearchService(query_service=None)
+        svc = _make_svc(query_service=None)
         assert svc._has_search_engine is False
 
 
@@ -140,7 +138,7 @@ class TestHasSearchEngine:
 
 
 class TestRequireSearchEngine:
-    """Tests for SemanticSearchMixin._require_search_engine()."""
+    """Tests for SearchService._require_search_engine()."""
 
     def test_raises_when_no_engine(self, svc_no_engine):
         """Should raise ValueError when no engine is initialized."""
@@ -158,7 +156,7 @@ class TestRequireSearchEngine:
 
 
 class TestSemanticSearch:
-    """Tests for SemanticSearchMixin.semantic_search()."""
+    """Tests for SearchService.semantic_search()."""
 
     @pytest.mark.asyncio
     async def test_delegates_to_query_service(self, svc_with_engine, mock_query_service):
@@ -208,13 +206,8 @@ class TestSemanticSearch:
 
     @pytest.mark.asyncio
     async def test_raises_when_query_service_none(self):
-        """Should raise when _has_search_engine is True but _query_service is None.
-
-        This can happen if the attribute exists but is None — _has_search_engine
-        checks hasattr AND is not None, so this scenario requires a subclass
-        that sets _query_service to a truthy value then resets it.
-        """
-        svc = _StubSearchService(query_service=MagicMock())
+        """Should raise when _query_service is set then cleared."""
+        svc = _make_svc(query_service=MagicMock())
         svc._query_service = None
         with pytest.raises(ValueError, match="not initialized"):
             await svc.semantic_search(query="test")
@@ -243,7 +236,7 @@ class TestSemanticSearch:
 
 
 class TestSemanticSearchIndex:
-    """Tests for SemanticSearchMixin.semantic_search_index()."""
+    """Tests for SearchService.semantic_search_index()."""
 
     @pytest.mark.asyncio
     async def test_indexes_single_document(self, svc_with_engine, mock_indexing_service):
@@ -286,7 +279,7 @@ class TestSemanticSearchIndex:
     @pytest.mark.asyncio
     async def test_falls_back_to_pipeline_indexer(self, mock_pipeline_indexer):
         """When no IndexingService, should fall back to PipelineIndexer."""
-        svc = _StubSearchService(
+        svc = _make_svc(
             query_service=MagicMock(),
             pipeline_indexer=mock_pipeline_indexer,
         )
@@ -298,7 +291,7 @@ class TestSemanticSearchIndex:
     @pytest.mark.asyncio
     async def test_returns_empty_when_no_indexer_and_no_pipeline(self):
         """Should return empty dict when neither IndexingService nor PipelineIndexer."""
-        svc = _StubSearchService(query_service=MagicMock())
+        svc = _make_svc(query_service=MagicMock())
         result = await svc.semantic_search_index(path="/orphan.txt")
         assert result == {}
 
@@ -309,7 +302,7 @@ class TestSemanticSearchIndex:
 
 
 class TestSemanticSearchStats:
-    """Tests for SemanticSearchMixin.semantic_search_stats()."""
+    """Tests for SearchService.semantic_search_stats()."""
 
     @pytest.mark.asyncio
     async def test_delegates_to_indexing_service(self, svc_with_engine, mock_indexing_service):
@@ -328,7 +321,7 @@ class TestSemanticSearchStats:
     @pytest.mark.asyncio
     async def test_raises_when_no_indexing_service(self):
         """Should raise when IndexingService is None."""
-        svc = _StubSearchService(query_service=MagicMock())
+        svc = _make_svc(query_service=MagicMock())
         with pytest.raises(ValueError, match="not properly initialized"):
             await svc.semantic_search_stats()
 
@@ -339,12 +332,12 @@ class TestSemanticSearchStats:
 
 
 class TestAinitializeSemanticSearch:
-    """Tests for SemanticSearchMixin.ainitialize_semantic_search()."""
+    """Tests for SearchService.ainitialize_semantic_search()."""
 
     @pytest.mark.asyncio
     async def test_raises_without_record_store(self):
         """Should raise RuntimeError when record_store is None."""
-        svc = _StubSearchService()
+        svc = _make_svc()
         with pytest.raises(RuntimeError, match="RecordStore"):
             await svc.ainitialize_semantic_search(nx=MagicMock(), record_store_engine=None)
 
@@ -358,18 +351,13 @@ class TestAinitializeSemanticSearch:
             pipeline_indexer=None,
         )
         mock_create = AsyncMock(return_value=components)
-        monkeypatch.setattr(
-            "nexus.services.search.search_semantic.create_semantic_search_components",
-            mock_create,
-            raising=False,
-        )
 
         # Import and patch at module level
         import nexus.factory._semantic_search as factory_mod
 
         monkeypatch.setattr(factory_mod, "create_semantic_search_components", mock_create)
 
-        svc = _StubSearchService(record_store=MagicMock())
+        svc = _make_svc(record_store=MagicMock())
         await svc.ainitialize_semantic_search(nx=MagicMock(), record_store_engine=None)
 
         assert svc._query_service is components.query_service
@@ -383,12 +371,12 @@ class TestAinitializeSemanticSearch:
 
 
 class TestInitializeSemanticSearch:
-    """Tests for SemanticSearchMixin.initialize_semantic_search() (RPC path)."""
+    """Tests for SearchService.initialize_semantic_search() (RPC path)."""
 
     @pytest.mark.asyncio
     async def test_raises_without_record_store(self):
         """Should raise RuntimeError when record_store is None."""
-        svc = _StubSearchService()
+        svc = _make_svc()
         with pytest.raises(RuntimeError, match="RecordStore"):
             await svc.initialize_semantic_search()
 
@@ -408,7 +396,7 @@ class TestInitializeSemanticSearch:
         monkeypatch.setattr(factory_mod, "create_semantic_search_components", mock_create)
 
         mock_rs = MagicMock()
-        svc = _StubSearchService(
+        svc = _make_svc(
             record_store=mock_rs,
             gw_session_factory=MagicMock(),
         )

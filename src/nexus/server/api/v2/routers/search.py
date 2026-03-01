@@ -160,7 +160,7 @@ async def search_query(
 
     try:
         if effective_graph_mode != "none":
-            from nexus.services.search.graph_search_service import graph_enhanced_search
+            from nexus.bricks.search.graph_search_service import graph_enhanced_search
 
             results = await graph_enhanced_search(
                 query=q,

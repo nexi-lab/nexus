@@ -28,7 +28,6 @@ from nexus.contracts.types import ContextIdentity, extract_context_identity
 from nexus.services.mount.mount_service import MountService
 from nexus.services.oauth.oauth_service import OAuthService
 from nexus.services.scheduler import SchedulerService
-from nexus.services.search.search_service import SearchService
 from nexus.services.subsystem import Subsystem
 from nexus.services.versioning.version_service import VersionService
 
@@ -39,7 +38,6 @@ ReBACService = _il.import_module("nexus.bricks.rebac.rebac_service").ReBACServic
 SkillService = _il.import_module("nexus.bricks.skills.skill_service_adapter").SkillService
 
 __all__ = [
-    "SearchService",
     "ReBACService",
     "MountService",
     "VersionService",

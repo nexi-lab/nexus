@@ -187,7 +187,7 @@ class TestSearchServiceSmoke:
 
     def test_search_service_init(self, mock_metadata):
         """Test SearchService can be instantiated."""
-        from nexus.services.search.search_service import SearchService
+        from nexus.bricks.search.search_service import SearchService
 
         service = SearchService(
             metadata_store=mock_metadata,
@@ -201,7 +201,7 @@ class TestSearchServiceSmoke:
     @pytest.mark.asyncio
     async def test_semantic_search_not_initialized(self, mock_metadata):
         """Test semantic_search raises if not initialized."""
-        from nexus.services.search.search_service import SearchService
+        from nexus.bricks.search.search_service import SearchService
 
         service = SearchService(
             metadata_store=mock_metadata,
@@ -214,7 +214,7 @@ class TestSearchServiceSmoke:
     @pytest.mark.asyncio
     async def test_initialize_semantic_search_basic(self, mock_metadata):
         """Test initialize_semantic_search can be called."""
-        from nexus.services.search.search_service import SearchService
+        from nexus.bricks.search.search_service import SearchService
 
         service = SearchService(
             metadata_store=mock_metadata,
@@ -343,10 +343,10 @@ class TestServiceIntegrationSmoke:
         from nexus.bricks.llm.llm_service import LLMService
         from nexus.bricks.mcp.mcp_service import MCPService
         from nexus.bricks.rebac.rebac_service import ReBACService
+        from nexus.bricks.search.search_service import SearchService
         from nexus.bricks.skills.skill_service_adapter import SkillService
         from nexus.services.mount.mount_service import MountService
         from nexus.services.oauth.oauth_service import OAuthService
-        from nexus.services.search.search_service import SearchService
         from nexus.services.versioning.version_service import VersionService
 
         # Create mock gateway for SkillService

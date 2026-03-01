@@ -177,7 +177,7 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
     (
         "SearchProtocol",
         "nexus.services.protocols.search",
-        "nexus.services.search.search_service.SearchService",
+        "nexus.bricks.search.search_service.SearchService",
         True,
     ),
     (

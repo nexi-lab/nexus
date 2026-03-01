@@ -104,7 +104,7 @@ class TestDIFlowsToConstructors:
 
     def test_search_service_workers_from_profile(self) -> None:
         """SearchService parallel workers match profile tuning."""
-        from nexus.services.search.search_service import SearchService
+        from nexus.bricks.search.search_service import SearchService
 
         full_tuning = DeploymentProfile.FULL.tuning()
         svc = SearchService(

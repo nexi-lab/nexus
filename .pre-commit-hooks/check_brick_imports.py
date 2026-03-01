@@ -66,6 +66,14 @@ KNOWN_CROSS_BRICK_EXCEPTIONS: dict[tuple[str, str], list[str]] = {
     ("search", "cache"): [
         "nexus.bricks.search.embeddings",
     ],
+    # search -> rebac: TYPE_CHECKING + lazy imports for permissions (moved from services/)
+    ("search", "rebac"): [
+        "nexus.bricks.search.search_service",
+    ],
+    # search -> memory: lazy imports for MemoryViewRouter (memory path listing)
+    ("search", "memory"): [
+        "nexus.bricks.search.search_service",
+    ],
     # TODO(#2429): Fix a2a->ipc via DI refactoring.
     ("a2a", "ipc"): [
         "nexus.bricks.a2a.messaging_adapters",
@@ -96,6 +104,9 @@ KNOWN_CROSS_BRICK_EXCEPTIONS: dict[tuple[str, str], list[str]] = {
 # TODO(#2429): Fix mcp.server -> nexus.core.filesystem via protocol/DI.
 KNOWN_CORE_EXCEPTIONS: dict[str, list[str]] = {
     "nexus.bricks.mcp.server": ["nexus.core"],
+    # search_service moved from services/ — needs core.metastore, core.router, core.path_utils,
+    # and services.gateway (TYPE_CHECKING + lazy imports)
+    "nexus.bricks.search.search_service": ["nexus.core", "nexus.services"],
 }
 
 # Lines matching these patterns are not actual imports (comments, strings, etc.)

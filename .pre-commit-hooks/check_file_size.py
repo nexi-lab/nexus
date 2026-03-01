@@ -32,7 +32,7 @@ EXCEPTIONS = [
     "src/nexus/services/permissions/nexus_fs_rebac.py",  # 2,192 lines - NexusFS mixin
     "src/nexus/services/rebac_service.py",  # 2,400 lines - sync + async methods for ReBAC delegation
     "src/nexus/services/search_service.py",  # 2,290 lines - Issue #954 trigram index additions
-    "src/nexus/services/search/search_service.py",  # 2,001 lines - Issue #2188 DI param added
+    "src/nexus/bricks/search/search_service.py",  # 2,215 lines - moved from services/search/ + semantic mixin inlined
     "src/nexus/remote/client.py",  # 5,000 lines - Phase 4 splitting
     "src/nexus/remote/async_client.py",  # 2,500 lines - Phase 4 splitting
     "src/nexus/storage/models/__init__.py",  # 3,400 lines - Phase 4 splitting (partially done)

@@ -52,7 +52,7 @@ def _compute_features_info(app: "FastAPI", svc: LifespanServices) -> None:
 
         version = _get_version("nexus-ai-fs")
     except Exception:
-        pass
+        version = "unknown"
 
     disabled = sorted(ALL_BRICK_NAMES - enabled)
 

@@ -728,11 +728,6 @@ disable_error_code = ["no-any-return"]
 # --- Service modules with arg-type / return-value / misc issues ---
 [[tool.mypy.overrides]]
 module = [
-    "nexus.services.overlay_resolver",
-    "nexus.services.sync_service",
-    "nexus.services.workspace_manager",
-    "nexus.services.change_log_store",  # unused-ignore from suppressed no-any-return
-    "nexus.services.sync_backlog_store",
     "nexus.bricks.mount.mount_manager",
     "nexus.bricks.mount.mount_service",
     "nexus.system_services.event_subsystem.log.exporters.factory",
@@ -748,13 +743,6 @@ warn_unused_ignores = false
 module = "nexus.core.metadata"
 disable_error_code = ["arg-type", "return-value"]
 
-[[tool.mypy.overrides]]
-module = "nexus.mcp.server"
-disable_error_code = ["arg-type", "assignment"]
-
-[[tool.mypy.overrides]]
-module = "nexus.search.embeddings"
-disable_error_code = ["override", "attr-defined"]
 
 [[tool.mypy.overrides]]
 module = "nexus.bricks.rlm.tools"
@@ -928,8 +916,7 @@ ignore_imports = [
     "nexus.lib.performance_tuning -> nexus.contracts.deployment_profile",
     "nexus.lib.performance_tuning -> nexus.contracts.qos",
     "nexus.lib.response -> nexus.contracts.exceptions",
-    # --- kernel (core) importing services ---
-    "nexus.core.nexus_fs -> nexus.services.memory.memory_api",
+    # --- kernel (core) importing bricks ---
     "nexus.core.nexus_fs -> nexus.bricks.rebac.checker",
     # --- kernel (core) importing bricks ---
     "nexus.core.config -> nexus.bricks.workflows.protocol",
@@ -947,21 +934,7 @@ ignore_imports = [
     "nexus.factory._semantic_search -> nexus.bricks.search.indexing",
     "nexus.factory._semantic_search -> nexus.bricks.search.indexing_service",
     "nexus.factory._semantic_search -> nexus.bricks.search.pipeline_indexer",
-    # --- services importing bricks (rebac, Issue #2179, not yet converted) ---
-    "nexus.services.delegation.service -> nexus.bricks.rebac.manager",
-    "nexus.services.memory.memory_api -> nexus.bricks.rebac.manager",
-    "nexus.services.memory.memory_router -> nexus.bricks.rebac.manager",
-    "nexus.services.governance.governance_wrapper -> nexus.bricks.pay.protocol",
-    "nexus.services.governance.governance_wrapper -> nexus.bricks.pay.audit_types",
-    # --- rebac brick internal dependencies (consolidated from services.permissions) ---
-    "nexus.services.memory.enrichment -> nexus.bricks.rebac.entity_extractor",
-    "nexus.services.memory.versioning -> nexus.bricks.rebac.memory_permission_enforcer",
-    "nexus.services.memory.memory_api -> nexus.bricks.rebac.entity_registry",
-    "nexus.services.memory.memory_api -> nexus.bricks.rebac.memory_permission_enforcer",
-    "nexus.services.memory.state -> nexus.bricks.rebac.memory_permission_enforcer",
-    "nexus.services.memory.memory_router -> nexus.bricks.rebac.entity_registry",
-    "nexus.services.delegation.service -> nexus.bricks.rebac.entity_registry",
-    "nexus.services.delegation.service -> nexus.bricks.rebac.namespace_manager",
+    # (removed: services.delegation/memory/governance → bricks entries; modules relocated to bricks/)
     "nexus.server.telemetry -> nexus.bricks.rebac.rebac_tracing",
     # --- bricks importing non-layer modules ---
     "nexus.bricks.mount.mount_persist_service -> nexus.system_services.sync.sync_service",

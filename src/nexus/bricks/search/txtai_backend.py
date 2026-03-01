@@ -73,8 +73,16 @@ class SearchBackendProtocol(Protocol):
 
 
 def _escape_sql_string(value: str) -> str:
-    """Escape single-quotes for txtai SQL syntax."""
-    return value.replace("'", "''")
+    """Escape single-quotes for txtai SQL syntax.
+
+    Applies strict sanitisation: strips control characters and limits
+    length to prevent abuse via oversized payloads.
+    """
+    # Strip ASCII control characters (0x00–0x1F, 0x7F)
+    sanitised = "".join(ch for ch in value if ch.isprintable())
+    # Truncate to reasonable maximum (search queries / filters)
+    sanitised = sanitised[:4096]
+    return sanitised.replace("'", "''")
 
 
 class TxtaiBackend:
@@ -238,13 +246,7 @@ class TxtaiBackend:
         if not self._embeddings:
             return []
 
-        escaped_query = _escape_sql_string(query)
-        sql = f"SELECT id, text, score, path, zone_id FROM txtai WHERE similar('{escaped_query}')"
-        sql += f" AND zone_id = '{_escape_sql_string(zone_id)}'"
-        if path_filter:
-            sql += f" AND path LIKE '{_escape_sql_string(path_filter)}%'"
-        sql += f" LIMIT {int(limit)}"
-
+        sql = _build_search_sql(query, zone_id=zone_id, path_filter=path_filter, limit=limit)
         raw: list[dict[str, Any]] = await asyncio.to_thread(self._embeddings.search, sql)
 
         results: list[BaseSearchResult] = []
@@ -356,6 +358,30 @@ class TxtaiBackend:
 # =============================================================================
 # Helpers
 # =============================================================================
+
+
+def _build_search_sql(
+    query: str,
+    *,
+    zone_id: str,
+    path_filter: str | None = None,
+    limit: int = 10,
+) -> str:
+    """Build a txtai SQL search query with proper escaping.
+
+    Centralises query construction to avoid scattered f-string concatenation
+    and ensure consistent sanitisation of user-supplied values.
+    """
+    clauses = [
+        f"similar('{_escape_sql_string(query)}')",
+        f"zone_id = '{_escape_sql_string(zone_id)}'",
+    ]
+    if path_filter:
+        clauses.append(f"path LIKE '{_escape_sql_string(path_filter)}%'")
+
+    where = " AND ".join(clauses)
+    safe_limit = max(1, min(int(limit), 1000))
+    return f"SELECT id, text, score, path, zone_id FROM txtai WHERE {where} LIMIT {safe_limit}"
 
 
 def _stamp_zone_id(documents: list[dict[str, Any]], zone_id: str) -> list[dict[str, Any]]:

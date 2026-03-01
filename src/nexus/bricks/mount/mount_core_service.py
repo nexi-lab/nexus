@@ -24,15 +24,11 @@ Example:
     ```
 """
 
-import importlib
 import logging
 from typing import TYPE_CHECKING, Any
 
 from nexus.lib.context_utils import get_user_identity, get_zone_id
-
-# Lazy-load to avoid brick→services tier violation (LEGO Principle 3)
-_perm_mod = importlib.import_module("nexus.services.permission_utils")
-check_permission = _perm_mod.check_permission
+from nexus.lib.permission_utils import check_permission
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext

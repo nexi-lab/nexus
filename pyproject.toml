@@ -918,7 +918,6 @@ ignore_imports = [
     "nexus.lib.response -> nexus.contracts.exceptions",
     # --- kernel (core) importing bricks ---
     "nexus.core.nexus_fs -> nexus.bricks.rebac.checker",
-    # --- kernel (core) importing bricks ---
     "nexus.core.config -> nexus.bricks.workflows.protocol",
     "nexus.core.nexus_fs -> nexus.bricks.rebac.entity_registry",
     "nexus.core.nexus_fs -> nexus.bricks.rebac.tiger_cache_manager",
@@ -935,7 +934,6 @@ ignore_imports = [
     "nexus.factory._semantic_search -> nexus.bricks.search.indexing_service",
     "nexus.factory._semantic_search -> nexus.bricks.search.pipeline_indexer",
     # (removed: services.delegation/memory/governance → bricks entries; modules relocated to bricks/)
-    "nexus.server.telemetry -> nexus.bricks.rebac.rebac_tracing",
     # --- bricks importing non-layer modules ---
     "nexus.bricks.mount.mount_persist_service -> nexus.system_services.sync.sync_service",
     "nexus.bricks.mount.mount_core_service -> nexus.backends.service_map",

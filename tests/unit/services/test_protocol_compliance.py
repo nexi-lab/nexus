@@ -158,7 +158,7 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
     (
         "OAuthProtocol",
         "nexus.services.protocols.oauth",
-        "nexus.services.oauth.oauth_service.OAuthService",
+        "nexus.bricks.auth.oauth.credential_service.OAuthCredentialService",
         True,
     ),
     (

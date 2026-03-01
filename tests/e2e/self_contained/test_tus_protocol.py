@@ -13,12 +13,12 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from nexus.backends.local import LocalBackend
-from nexus.server.api.v2.routers.tus_uploads import create_tus_uploads_router
-from nexus.server.dependencies import require_auth
-from nexus.services.upload.chunked_upload_service import (
+from nexus.bricks.upload.chunked_upload_service import (
     ChunkedUploadConfig,
     ChunkedUploadService,
 )
+from nexus.server.api.v2.routers.tus_uploads import create_tus_uploads_router
+from nexus.server.dependencies import require_auth
 
 # --- Test fixtures ---
 

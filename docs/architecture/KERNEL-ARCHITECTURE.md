@@ -162,13 +162,25 @@ Distinct from service-layer advisory locking (LockProtocol / `ops-scenario-matri
 
 `NexusFS` is the kernel entry point, analogous to Linux's syscall layer (`sys_open`,
 `sys_read`). It wires VFSRouter + MetastoreABC + ObjectStoreABC into
-user-facing operations (read, write, list, mkdir, mount). NexusFS contains
-**no service business logic** — services are accessed through `ServiceRegistry`
-(Phase 2) or thin delegation stubs (Phase 1).
+user-facing operations. NexusFS contains **no service business logic** — services are
+accessed through `ServiceRegistry` (Phase 2) or thin delegation stubs (Phase 1).
 
-The published user-facing contract is `NexusFilesystemABC` (in `contracts/filesystem/`) —
-a composed ABC of 7 sub-ABCs (FileOps, Discovery, DirectoryOps, Workspace, Memory, Sandbox,
-Lifecycle). `connect()` returns this type. Relationship: POSIX spec (contract) vs Linux kernel
+**11 kernel syscalls**, all POSIX-aligned, all path-addressed:
+- Metadata plane (9): `sys_stat`, `sys_setattr`, `sys_mkdir`, `sys_rmdir`, `sys_readdir`,
+  `sys_access`, `sys_rename`, `sys_unlink`, `sys_is_directory`
+- Content plane (2): `sys_read` (pread), `sys_write` (pwrite)
+
+Hash-addressed content operations (`read_content`, `write_content`) stay on ObjectStoreABC
+(driver level) — CAS is a driver detail, not a kernel concern. Like HDFS separates
+ClientProtocol (NameNode, path-based) from DataTransferProtocol (DataNode, block-based).
+See `syscall-design.md` for full syscall table and design rationale.
+
+The published user-facing contract is `NexusFilesystemABC` (in `contracts/filesystem/`):
+- **Tier 1 (abstract)**: 11 `sys_*` kernel syscalls — implementors MUST override
+- **Tier 2 (concrete)**: Convenience methods composing Tier 1 — VFS half (POSIX-aligned)
+  + HDFS half (driver-level content access)
+
+`connect()` returns this type. Relationship: POSIX spec (contract) vs Linux kernel
 (implementation) — clients program against the contract, kernel implements it.
 
 `NexusFS` contains the VFS operation implementations directly (like `vfs_read`,

@@ -242,10 +242,16 @@ class SearchDaemon:
         from nexus.bricks.search.chunking import DocumentChunker
         from nexus.bricks.search.indexing import IndexingPipeline as _IP
 
+        _db_type = (
+            "postgresql"
+            if self.config.database_url and "postgresql" in self.config.database_url
+            else "sqlite"
+        )
         self._indexing_pipeline = _IP(
             chunker=DocumentChunker(),
             embedding_provider=self._embedding_provider,
             entropy_chunker=self._entropy_chunker,
+            db_type=_db_type,
             async_session_factory=self._async_session,
             max_concurrency=self.config.max_indexing_concurrency,
             cross_doc_batching=True,
@@ -568,8 +574,26 @@ class SearchDaemon:
 
             from sqlalchemy import text
 
+            # Convert embedding list to pgvector string format for asyncpg
+            embedding_str = "[" + ",".join(str(v) for v in embedding) + "]"
+
             async with self._async_session() as session:
-                sql = text("""
+                # Build WHERE clause dynamically to avoid asyncpg
+                # AmbiguousParameterError with IS NULL patterns
+                where_parts = ["c.embedding IS NOT NULL"]
+                params: dict[str, Any] = {
+                    "embedding": embedding_str,
+                    "limit": limit,
+                }
+                if path_filter:
+                    where_parts.append("fp.virtual_path LIKE :path_pattern")
+                    params["path_pattern"] = f"{path_filter}%"
+                if zone_id:
+                    where_parts.append("fp.zone_id = :zone_id")
+                    params["zone_id"] = zone_id
+
+                where_clause = " AND ".join(where_parts)
+                sql = text(f"""
                     SELECT
                         c.chunk_index, c.chunk_text,
                         c.start_offset, c.end_offset, c.line_start, c.line_end,
@@ -577,23 +601,12 @@ class SearchDaemon:
                         1 - (c.embedding <=> CAST(:embedding AS halfvec)) as score
                     FROM document_chunks c
                     JOIN file_paths fp ON c.path_id = fp.path_id
-                    WHERE c.embedding IS NOT NULL
-                      AND (:path_filter IS NULL OR fp.virtual_path LIKE :path_pattern)
-                      AND (:zone_id IS NULL OR fp.zone_id = :zone_id)
+                    WHERE {where_clause}
                     ORDER BY c.embedding <=> CAST(:embedding AS halfvec)
                     LIMIT :limit
                 """)
 
-                result = await session.execute(
-                    sql,
-                    {
-                        "embedding": embedding,
-                        "limit": limit,
-                        "path_filter": path_filter,
-                        "path_pattern": f"{path_filter}%" if path_filter else None,
-                        "zone_id": zone_id,
-                    },
-                )
+                result = await session.execute(sql, params)
 
                 return [
                     SearchResult(
@@ -969,8 +982,26 @@ class SearchDaemon:
                 if not content:
                     continue
 
-                # Get path_id for indexing
-                path_id = path  # Use path as ID for now
+                # Resolve path_id from file_paths table
+                path_id = path  # fallback
+                if self._async_session:
+                    try:
+                        from sqlalchemy import text as sa_text
+
+                        async with self._async_session() as sess:
+                            row = (
+                                await sess.execute(
+                                    sa_text(
+                                        "SELECT path_id FROM file_paths "
+                                        "WHERE virtual_path = :vp LIMIT 1"
+                                    ),
+                                    {"vp": path},
+                                )
+                            ).first()
+                            if row:
+                                path_id = row[0]
+                    except Exception:
+                        pass
 
                 # Apply entropy filtering if enabled (Issue #1024)
                 if self._entropy_chunker:
@@ -990,6 +1021,13 @@ class SearchDaemon:
                     # Index full content without filtering
                     await self._bm25s_index.index_document(path_id, path, content)
                     indexed_count += 1
+
+                # Also run indexing pipeline for chunk + embedding storage
+                if self._indexing_pipeline and self._embedding_provider:
+                    try:
+                        await self._indexing_pipeline.index_document(path, content, path_id)
+                    except Exception as ie:
+                        logger.debug("Indexing pipeline error for %s: %s", path, ie)
 
             except Exception as e:
                 logger.warning(f"Failed to refresh index for {path}: {e}")

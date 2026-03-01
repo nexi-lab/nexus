@@ -65,8 +65,9 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
             with contextlib.suppress(Exception):
                 _async_sf = _record_store.async_session_factory
 
-        # Issue #2188: Create ZoektClient via DI (no module-level globals)
+        # Issue #2188: Create ZoektClient + embedding provider via DI
         _zoekt_client = None
+        _search_cfg = None
         with contextlib.suppress(ImportError):
             from nexus.bricks.search.config import search_config_from_env
             from nexus.bricks.search.zoekt_client import ZoektClient
@@ -88,6 +89,23 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
             zoekt_client=_zoekt_client,
             cache_brick=_cache_brick,
         )
+
+        # Wire embedding provider so semantic search works (pre-existing gap:
+        # _embedding_provider was always None, causing silent fallback failures)
+        if _search_cfg is not None:
+            with contextlib.suppress(Exception):
+                from nexus.bricks.search.embeddings import create_embedding_provider
+
+                app.state.search_daemon._embedding_provider = create_embedding_provider(
+                    provider=_search_cfg.embedding_provider,
+                    model=_search_cfg.embedding_model,
+                )
+                logger.info(
+                    "Embedding provider wired: %s/%s",
+                    _search_cfg.embedding_provider,
+                    _search_cfg.embedding_model or "default",
+                )
+
         await app.state.search_daemon.startup()
         app.state.search_daemon_enabled = True
 

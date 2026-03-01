@@ -70,7 +70,7 @@ def init_postgresql(conn: Any, hnsw_config: Any) -> tuple[bool, bool]:
     # Add embedding column if pgvector available
     if vec_available:
         try:
-            conn.execute(text("ALTER TABLE document_chunks ADD COLUMN embedding halfvec(1536)"))
+            conn.execute(text("ALTER TABLE document_chunks ADD COLUMN embedding halfvec(384)"))
             conn.commit()
         except (OperationalError, ProgrammingError):
             conn.rollback()

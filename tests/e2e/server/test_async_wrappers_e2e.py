@@ -22,10 +22,10 @@ from pathlib import Path
 import pytest
 
 from nexus.bricks.rebac.async_namespace_manager import AsyncNamespaceManager
+from nexus.core.async_router import AsyncVFSRouter
 from nexus.core.router import PathNotMountedError, PathRouter
 from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
 from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
-from nexus.services.routing.async_router import AsyncVFSRouter
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.system_services.agents.agent_registry import AgentRegistry, InvalidTransitionError
 from nexus.system_services.agents.async_agent_registry import AsyncAgentRegistry
@@ -253,7 +253,7 @@ class TestServerWiring:
         assert AsyncNamespaceManager is not None
 
     def test_async_router_import(self) -> None:
-        from nexus.services.routing.async_router import AsyncVFSRouter
+        from nexus.core.async_router import AsyncVFSRouter
 
         assert AsyncVFSRouter is not None
 
@@ -334,10 +334,10 @@ class TestServerLifespanWiring:
 
         from nexus.backends.local import LocalBackend
         from nexus.bricks.rebac.async_namespace_manager import AsyncNamespaceManager
+        from nexus.core.async_router import AsyncVFSRouter
         from nexus.core.protocols.vfs_router import VFSRouterProtocol
         from nexus.core.router import PathRouter
         from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
-        from nexus.services.routing.async_router import AsyncVFSRouter
         from nexus.system_services.agents.agent_registry import AgentRegistry
         from nexus.system_services.agents.async_agent_registry import AsyncAgentRegistry
 

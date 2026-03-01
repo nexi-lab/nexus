@@ -560,7 +560,7 @@ class UserProvisioningService:
                         self._vfs.sys_readdir(child_path, recursive=False, context=context)
                         is_dir = True
                     except Exception:
-                        pass
+                        is_dir = False  # readdir failed → treat as file
                 elif isinstance(item, dict):
                     child_path = item.get("path")
                     if not child_path:
@@ -583,14 +583,14 @@ class UserProvisioningService:
                 try:
                     self._rmdir_fn(dir_path, context=context)
                     directory_removed = True
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("rmdir failed for %s (will try unlink): %s", dir_path, e)
             if not directory_removed:
                 try:
                     self._vfs.sys_unlink(dir_path, context=context)
                     directory_removed = True
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("unlink fallback also failed for %s: %s", dir_path, e)
 
         except Exception as e:
             logger.error("Virtual filesystem deletion failed for %s: %s", dir_path, e)
@@ -661,8 +661,8 @@ class UserProvisioningService:
                 tiger_cache = self._rebac_manager._tiger_cache
                 if hasattr(tiger_cache, "invalidate_all"):
                     tiger_cache.invalidate_all()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Tiger cache invalidation failed for %s: %s", dir_path, e)
 
     def _create_user_directories(
         self,

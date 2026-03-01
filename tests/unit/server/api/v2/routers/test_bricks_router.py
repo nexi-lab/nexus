@@ -10,17 +10,17 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from nexus.contracts.protocols.brick_lifecycle import (
+    BrickHealthReport,
+    BrickState,
+    BrickStatus,
+)
 from nexus.server.api.v2.routers.bricks import (
     _get_lifecycle_manager,
     health_router,
     router,
 )
 from nexus.server.dependencies import require_admin
-from nexus.services.protocols.brick_lifecycle import (
-    BrickHealthReport,
-    BrickState,
-    BrickStatus,
-)
 
 # ---------------------------------------------------------------------------
 # App setup — isolated test app with dependency overrides

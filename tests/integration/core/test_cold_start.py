@@ -33,12 +33,12 @@ class TestColdStartImports:
     def test_all_protocols_importable_from_new_locations(self) -> None:
         """Protocols should be importable from their new canonical locations."""
         from nexus.contracts.describable import Describable
+        from nexus.contracts.protocols.entity_registry import EntityRegistryProtocol
+        from nexus.contracts.protocols.permission_enforcer import PermissionEnforcerProtocol
+        from nexus.contracts.protocols.rebac import ReBACBrickProtocol
+        from nexus.contracts.protocols.workspace_manager import WorkspaceManagerProtocol
         from nexus.contracts.wirable_fs import WirableFS
         from nexus.core.protocols import VFSCoreProtocol, VFSRouterProtocol
-        from nexus.services.protocols.entity_registry import EntityRegistryProtocol
-        from nexus.services.protocols.permission_enforcer import PermissionEnforcerProtocol
-        from nexus.services.protocols.rebac import ReBACBrickProtocol
-        from nexus.services.protocols.workspace_manager import WorkspaceManagerProtocol
 
         # runtime_checkable means isinstance() works
         for proto in (

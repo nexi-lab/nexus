@@ -913,6 +913,9 @@ layers = [
 ignore_imports = [
     # --- tier-neutral (contracts) importing core ---
     "nexus.contracts.metadata -> nexus.core._compact_generated",
+    # --- tier-neutral (contracts/protocols) importing services ---
+    # chunked_upload protocol TYPE_CHECKING import for UploadSession return type
+    "nexus.contracts.protocols.chunked_upload -> nexus.services.upload.upload_session",
     # --- tier-neutral (contracts/lib) cross-imports ---
     "nexus.lib.path_utils -> nexus.contracts.exceptions",
     "nexus.contracts -> nexus.lib.validators",
@@ -929,7 +932,6 @@ ignore_imports = [
     "nexus.lib.performance_tuning -> nexus.contracts.qos",
     "nexus.lib.response -> nexus.contracts.exceptions",
     # --- kernel (core) importing services ---
-    "nexus.core.config -> nexus.services.protocols.namespace_manager",
     "nexus.core.nexus_fs -> nexus.services.memory.memory_api",
     "nexus.core.nexus_fs -> nexus.bricks.rebac.checker",
     # --- kernel (core) importing bricks ---

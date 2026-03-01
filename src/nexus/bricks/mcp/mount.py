@@ -15,8 +15,8 @@ from typing import TYPE_CHECKING, Any
 from nexus.bricks.mcp.models import MCPMount, MCPToolConfig, MCPToolDefinition
 
 if TYPE_CHECKING:
+    from nexus.contracts.protocols.filesystem import NexusFilesystem
     from nexus.contracts.types import OperationContext
-    from nexus.services.protocols.filesystem import NexusFilesystem
 
 logger = logging.getLogger(__name__)
 

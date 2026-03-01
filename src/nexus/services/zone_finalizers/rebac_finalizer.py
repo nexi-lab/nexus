@@ -10,7 +10,7 @@ from typing import Any
 
 from sqlalchemy import text
 
-from nexus.services.protocols.zone_lifecycle import REBAC_FINALIZER_KEY
+from nexus.contracts.protocols.zone_lifecycle import REBAC_FINALIZER_KEY
 
 logger = logging.getLogger(__name__)
 

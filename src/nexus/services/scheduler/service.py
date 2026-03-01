@@ -39,7 +39,7 @@ from nexus.services.scheduler.priority import (
 from nexus.services.scheduler.queue import TaskQueue
 
 if TYPE_CHECKING:
-    from nexus.services.protocols.scheduler import AgentRequest, CreditsReservationProtocol
+    from nexus.contracts.protocols.scheduler import AgentRequest, CreditsReservationProtocol
     from nexus.services.scheduler.events import AgentStateEmitter, AgentStateEvent
 
 logger = logging.getLogger(__name__)
@@ -210,7 +210,7 @@ class SchedulerService:
         if task is None:
             return None
 
-        from nexus.services.protocols.scheduler import AgentRequest
+        from nexus.contracts.protocols.scheduler import AgentRequest
 
         return AgentRequest(
             agent_id=task.agent_id,

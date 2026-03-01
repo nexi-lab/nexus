@@ -323,9 +323,46 @@ class VersionService:
         if route.readonly:
             raise PermissionError(f"Cannot rollback read-only path: {path}")
 
-        # Perform rollback in metadata store
+        # Perform rollback via VersionManager + session_factory
+        # (RaftMetadataStore lacks rollback(); use SQL version history instead)
         created_by = context.user_id if context else None
-        await asyncio.to_thread(self.metadata.rollback, path, version, created_by=created_by)
+
+        if not self._session_factory:
+            raise RuntimeError("session_factory required for rollback operation")
+
+        from nexus.storage.version_manager import VersionManager
+
+        factory = self._session_factory
+
+        def _do_rollback() -> tuple[str, int] | None:
+            with factory() as session:
+                VersionManager.rollback(session, path, version, created_by=created_by)
+                session.commit()
+
+                # Return the target version's content_hash so we can
+                # update the in-memory metadata store for consistent reads.
+                from sqlalchemy import select
+
+                from nexus.storage.models import FilePathModel
+
+                stmt = select(FilePathModel.content_hash, FilePathModel.size_bytes).where(
+                    FilePathModel.virtual_path == path,
+                    FilePathModel.deleted_at.is_(None),
+                )
+                row = session.execute(stmt).one_or_none()
+                return (row[0], row[1]) if row else None
+
+        result = await asyncio.to_thread(_do_rollback)
+
+        # Update in-memory metadata store so subsequent reads return rolled-back content
+        if result is not None:
+            new_hash, new_size = result
+            meta = self.metadata.get(path)
+            if meta is not None:
+                from dataclasses import replace as dc_replace
+
+                updated_meta = dc_replace(meta, etag=new_hash, size=new_size)
+                self.metadata.put(updated_meta)
 
         # Invalidate cache if enabled
         if (
@@ -335,7 +372,7 @@ class VersionService:
             and self.metadata._cache
         ):
             self.metadata._cache.invalidate_path(path)
-            logger.debug(f"Cache invalidated for path={path}")
+            logger.debug("Cache invalidated for path=%s", path)
 
         logger.info(f"[ROLLBACK] Completed for path={path}")
 

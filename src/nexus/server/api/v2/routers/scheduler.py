@@ -17,7 +17,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
-from nexus.services.scheduler.constants import TIER_ALIASES, RequestState
+from nexus.system_services.scheduler.constants import TIER_ALIASES, RequestState
 
 logger = logging.getLogger(__name__)
 

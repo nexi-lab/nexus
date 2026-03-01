@@ -17,30 +17,30 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
-from nexus.services.scheduler.constants import (
+from nexus.system_services.scheduler.constants import (
     STARVATION_PROMOTION_THRESHOLD_SECS,
     TASK_STATUS_COMPLETED,
     TASK_STATUS_FAILED,
     PriorityClass,
     PriorityTier,
 )
-from nexus.services.scheduler.models import ScheduledTask, TaskSubmission
-from nexus.services.scheduler.policies.classifier import (
+from nexus.system_services.scheduler.models import ScheduledTask, TaskSubmission
+from nexus.system_services.scheduler.policies.classifier import (
     classify_agent_request,
     classify_request,
     parse_request_enums,
 )
-from nexus.services.scheduler.policies.fair_share import FairShareCounter
-from nexus.services.scheduler.priority import (
+from nexus.system_services.scheduler.policies.fair_share import FairShareCounter
+from nexus.system_services.scheduler.priority import (
     compute_boost_tiers,
     compute_effective_tier,
     validate_submission,
 )
-from nexus.services.scheduler.queue import TaskQueue
+from nexus.system_services.scheduler.queue import TaskQueue
 
 if TYPE_CHECKING:
     from nexus.contracts.protocols.scheduler import AgentRequest, CreditsReservationProtocol
-    from nexus.services.scheduler.events import AgentStateEmitter, AgentStateEvent
+    from nexus.system_services.scheduler.events import AgentStateEmitter, AgentStateEvent
 
 logger = logging.getLogger(__name__)
 

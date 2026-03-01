@@ -309,7 +309,6 @@ class TestBootBrickServices:
             "workflow_engine",
             "api_key_creator",
             "snapshot_service",
-            "task_queue_service",
         }
         for key in expected_keys:
             assert key in result, f"Missing brick key: {key}"

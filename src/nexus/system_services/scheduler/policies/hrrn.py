@@ -9,7 +9,7 @@ as their response ratio grows with wait time.
 No I/O, no side effects — suitable for Hypothesis property-based testing.
 """
 
-from nexus.services.scheduler.constants import DEFAULT_EST_SERVICE_TIME_SECS
+from nexus.system_services.scheduler.constants import DEFAULT_EST_SERVICE_TIME_SECS
 
 
 def compute_hrrn_score(

@@ -271,7 +271,6 @@ class TestBootBrickServices:
             "workflow_engine",
             "api_key_creator",
             "snapshot_service",
-            "task_queue_service",
             "ipc_storage_driver",
             "ipc_provisioner",
             "delegation_service",

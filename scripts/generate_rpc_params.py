@@ -112,7 +112,6 @@ MODULES_TO_SCAN: list[str] = [
     "nexus.system_services.agents.agent_service",
     # System services
     "nexus.system_services.lifecycle.events_service",
-    "nexus.system_services.lifecycle.task_queue_service",
     # Brick services with @rpc_expose
     "nexus.bricks.llm.llm_service",
     "nexus.bricks.mcp.mcp_service",

@@ -19,7 +19,7 @@ parsing of AgentRequest.priority and AgentRequest.request_state.
 
 from typing import TYPE_CHECKING
 
-from nexus.services.scheduler.constants import (
+from nexus.system_services.scheduler.constants import (
     STARVATION_PROMOTION_THRESHOLD_SECS,
     TIER_TO_CLASS,
     PriorityClass,

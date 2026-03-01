@@ -146,7 +146,7 @@ class InMemoryScheduler:
             del self._completed[oldest]
 
     async def classify(self, request: AgentRequest) -> str:
-        from nexus.services.scheduler.policies.classifier import classify_agent_request
+        from nexus.system_services.scheduler.policies.classifier import classify_agent_request
 
         return classify_agent_request(request)
 

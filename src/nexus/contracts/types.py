@@ -335,7 +335,7 @@ class SyncResult:
 
 
 # ---------------------------------------------------------------------------
-# Snapshot types (moved from nexus.services.protocols.transactional_snapshot, Issue #194)
+# Snapshot types (moved from nexus.contracts.protocols.transactional_snapshot, Issue #194)
 # ---------------------------------------------------------------------------
 
 

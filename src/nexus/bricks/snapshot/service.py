@@ -29,7 +29,7 @@ from nexus.bricks.snapshot.errors import (
     TransactionNotFoundError,
 )
 from nexus.bricks.snapshot.registry import TransactionRegistry
-from nexus.services.protocols.snapshot import (
+from nexus.contracts.protocols.snapshot import (
     ConflictInfo,
     SnapshotEntry,
     TransactionInfo,

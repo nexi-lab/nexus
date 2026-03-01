@@ -341,7 +341,7 @@ class TestContextBuilderSatisfiesAdaptiveKProtocol:
     """AdaptiveKProtocol conformance for ContextBuilder (moved from bricks test)."""
 
     def test_context_builder_satisfies_protocol(self) -> None:
-        from nexus.services.protocols.adaptive_k import AdaptiveKProtocol
+        from nexus.contracts.protocols.adaptive_k import AdaptiveKProtocol
 
         builder = ContextBuilder()
         assert isinstance(builder, AdaptiveKProtocol)

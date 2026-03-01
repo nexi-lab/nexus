@@ -22,12 +22,12 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
+from nexus.contracts.protocols.secrets_audit_log import SecretsAuditLogProtocol
 from nexus.server.api.v2.models.secrets_audit import (
     SecretsAuditEventListResponse,
     SecretsAuditEventResponse,
     SecretsAuditIntegrityResponse,
 )
-from nexus.services.protocols.secrets_audit_log import SecretsAuditLogProtocol
 
 logger = logging.getLogger(__name__)
 

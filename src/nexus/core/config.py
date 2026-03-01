@@ -28,12 +28,12 @@ from nexus.contracts.constants import DEFAULT_NATS_URL
 
 if TYPE_CHECKING:
     from nexus.bricks.workflows.protocol import WorkflowProtocol
+    from nexus.contracts.protocols.namespace_manager import NamespaceManagerProtocol
     from nexus.contracts.write_observer import WriteObserverProtocol
     from nexus.core.protocols.entity_registry import EntityRegistryProtocol
     from nexus.core.protocols.permission_enforcer import PermissionEnforcerProtocol
     from nexus.core.protocols.rebac_manager import ReBACManagerProtocol
     from nexus.core.protocols.workspace_manager import WorkspaceManagerProtocol
-    from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
 
 # ---------------------------------------------------------------------------
 # Config dataclasses (frozen — immutable, use dataclasses.replace() to copy)

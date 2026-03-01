@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nexus.services.protocols.zone_lifecycle import ZonePhase
+from nexus.contracts.protocols.zone_lifecycle import ZonePhase
 from nexus.services.zone_lifecycle import ZoneLifecycleService
 
 # ---------------------------------------------------------------------------

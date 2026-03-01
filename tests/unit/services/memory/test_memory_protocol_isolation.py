@@ -45,13 +45,13 @@ class TestFakesSatisfyProtocols:
     """Verify our fakes structurally satisfy the Protocols."""
 
     def test_fake_permission_checker_satisfies_protocol(self) -> None:
-        from nexus.services.protocols.memory import MemoryPermissionCheckerProtocol
+        from nexus.contracts.protocols.memory import MemoryPermissionCheckerProtocol
 
         fake = FakePermissionChecker()
         assert isinstance(fake, MemoryPermissionCheckerProtocol)
 
     def test_fake_entity_resolver_satisfies_protocol(self) -> None:
-        from nexus.services.protocols.memory import EntityResolverProtocol
+        from nexus.contracts.protocols.memory import EntityResolverProtocol
 
         fake = FakeEntityResolver()
         assert isinstance(fake, EntityResolverProtocol)

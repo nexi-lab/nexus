@@ -17,8 +17,8 @@ from typing import Any
 
 from nexus.bricks.memory._temporal import parse_datetime
 from nexus.bricks.memory.router import MemoryViewRouter
+from nexus.contracts.protocols.memory_deps import MemoryPermissionProtocol
 from nexus.contracts.types import OperationContext, Permission
-from nexus.services.protocols.memory_deps import MemoryPermissionProtocol
 
 logger = logging.getLogger(__name__)
 

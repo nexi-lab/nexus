@@ -318,14 +318,17 @@ class ChunkedUploadService:
             Current UploadSession state.
 
         Raises:
-            UploadNotFoundError: If session doesn't exist.
+            UploadNotFoundError: If session doesn't exist or was terminated.
             UploadExpiredError: If session has expired.
         """
         session = await self._load_session(upload_id)
 
+        # Terminated uploads are no longer accessible (tus termination extension)
+        if session.status == UploadStatus.TERMINATED:
+            raise UploadNotFoundError(upload_id)
+
         if session.is_expired and session.status not in (
             UploadStatus.COMPLETED,
-            UploadStatus.TERMINATED,
             UploadStatus.EXPIRED,
         ):
             await self._expire_session(session)

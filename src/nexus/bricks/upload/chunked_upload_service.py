@@ -31,7 +31,6 @@ from .upload_session import UploadSession, UploadStatus
 
 if TYPE_CHECKING:
     from nexus.backends.multipart_upload_mixin import MultipartUploadMixin
-    from nexus.core.metastore import MetastoreABC
     from nexus.core.protocols.connector import ConnectorProtocol
     from nexus.storage.record_store import RecordStoreABC
 
@@ -92,7 +91,7 @@ class ChunkedUploadService:
         self,
         record_store: "RecordStoreABC",
         backend: "ConnectorProtocol",
-        metadata_store: "MetastoreABC | None" = None,
+        metadata_store: Any = None,
         config: ChunkedUploadConfig | None = None,
     ):
         self._session_factory = record_store.session_factory
@@ -319,14 +318,17 @@ class ChunkedUploadService:
             Current UploadSession state.
 
         Raises:
-            UploadNotFoundError: If session doesn't exist.
+            UploadNotFoundError: If session doesn't exist or was terminated.
             UploadExpiredError: If session has expired.
         """
         session = await self._load_session(upload_id)
 
+        # Terminated uploads are no longer accessible (tus termination extension)
+        if session.status == UploadStatus.TERMINATED:
+            raise UploadNotFoundError(upload_id)
+
         if session.is_expired and session.status not in (
             UploadStatus.COMPLETED,
-            UploadStatus.TERMINATED,
             UploadStatus.EXPIRED,
         ):
             await self._expire_session(session)
@@ -581,9 +583,7 @@ class ChunkedUploadService:
             )
 
         # Fallback: write chunk directly to CAS and track
-        from nexus.core.hash_fast import hash_content
-
-        chunk_hash = hash_content(data)
+        chunk_hash = hashlib.sha256(data).hexdigest()
         result = await asyncio.to_thread(self._backend.write_content, data)
         return {
             "etag": chunk_hash,

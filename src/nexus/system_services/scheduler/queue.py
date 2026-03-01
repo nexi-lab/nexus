@@ -144,6 +144,13 @@ WHERE id = $1 AND status = 'queued'
 RETURNING status
 """
 
+_SQL_CANCEL_SCOPED = """
+UPDATE scheduled_tasks
+SET status = 'cancelled'
+WHERE id = $1 AND agent_id = $2 AND status = 'queued'
+RETURNING status
+"""
+
 _SQL_GET_TASK = """
 SELECT
     id::text, agent_id, executor_id, task_type,
@@ -155,6 +162,19 @@ SELECT
     request_state, priority_class, executor_state, estimated_service_time
 FROM scheduled_tasks
 WHERE id = $1
+"""
+
+_SQL_GET_TASK_SCOPED = """
+SELECT
+    id::text, agent_id, executor_id, task_type,
+    payload::text, priority_tier, effective_tier,
+    enqueued_at, status, deadline,
+    boost_amount, boost_tiers, boost_reservation_id,
+    started_at, completed_at, error_message,
+    zone_id, idempotency_key,
+    request_state, priority_class, executor_state, estimated_service_time
+FROM scheduled_tasks
+WHERE id = $1 AND agent_id = $2
 """
 
 _SQL_AGING_SWEEP = """
@@ -413,9 +433,26 @@ class TaskQueue:
         result = await conn.fetchval(_SQL_CANCEL, task_id)
         return result is not None
 
+    async def cancel_scoped(self, conn: Any, task_id: str, agent_id: str) -> bool:
+        """Cancel a queued task, scoped to a specific agent (owner)."""
+        result = await conn.fetchval(_SQL_CANCEL_SCOPED, task_id, agent_id)
+        return result is not None
+
     async def get_task(self, conn: Any, task_id: str) -> ScheduledTask | None:
         """Look up a task by ID."""
         row = await conn.fetchrow(_SQL_GET_TASK, task_id)
+        if row is None:
+            return None
+        return _row_to_task(row)
+
+    async def get_task_scoped(
+        self,
+        conn: Any,
+        task_id: str,
+        agent_id: str,
+    ) -> ScheduledTask | None:
+        """Look up a task by ID, scoped to a specific agent (owner)."""
+        row = await conn.fetchrow(_SQL_GET_TASK_SCOPED, task_id, agent_id)
         if row is None:
             return None
         return _row_to_task(row)

@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy import event
 
 from nexus.core.config import ObservabilityConfig
-from nexus.services.subsystems.observability_subsystem import (
+from nexus.server.observability.observability_subsystem import (
     ObservabilitySubsystem,
     QueryObserver,
 )

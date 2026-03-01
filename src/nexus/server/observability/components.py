@@ -12,7 +12,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.services.subsystems.observability_subsystem import ObservabilitySubsystem
+    from nexus.server.observability.observability_subsystem import ObservabilitySubsystem
 
 logger = logging.getLogger(__name__)
 

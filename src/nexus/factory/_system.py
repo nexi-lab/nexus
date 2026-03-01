@@ -307,7 +307,7 @@ def _boot_system_services(
     # --- Async VFS Router (Issue #1502) ---
     async_vfs_router: Any = None
     try:
-        from nexus.services.routing.async_router import AsyncVFSRouter
+        from nexus.core.async_router import AsyncVFSRouter
 
         async_vfs_router = AsyncVFSRouter(ctx.router)
         logger.debug("[BOOT:SYSTEM] AsyncVFSRouter created")

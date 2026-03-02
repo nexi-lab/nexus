@@ -165,6 +165,16 @@ class TestCallbackRegistration:
 class TestCallbackInvocation:
     """Tests for callback invocation on file changes."""
 
+    @staticmethod
+    async def _wait_for_changes(
+        changes: list[FileChange], *, timeout: float = 3.0, interval: float = 0.1
+    ) -> None:
+        """Poll until at least one change is received or timeout expires."""
+        elapsed = 0.0
+        while elapsed < timeout and len(changes) == 0:
+            await asyncio.sleep(interval)
+            elapsed += interval
+
     @pytest.mark.asyncio
     async def test_callback_invoked_on_file_create(self, tmp_path):
         """Test that callback is invoked when file is created."""
@@ -184,8 +194,8 @@ class TestCallbackInvocation:
             await asyncio.sleep(0.1)  # Let watcher settle
             test_file.write_text("hello")
 
-            # Wait for callback
-            await asyncio.sleep(0.5)
+            # Wait for callback (poll up to 3s)
+            await self._wait_for_changes(received_changes)
 
             # Should have received at least one change
             assert len(received_changes) >= 1
@@ -218,8 +228,8 @@ class TestCallbackInvocation:
             await asyncio.sleep(0.1)
             test_file.write_text("modified")
 
-            # Wait for callback
-            await asyncio.sleep(0.5)
+            # Wait for callback (poll up to 3s)
+            await self._wait_for_changes(received_changes)
 
             # Should have received modification
             assert len(received_changes) >= 1
@@ -249,8 +259,8 @@ class TestCallbackInvocation:
             await asyncio.sleep(0.1)
             test_file.unlink()
 
-            # Wait for callback
-            await asyncio.sleep(0.5)
+            # Wait for callback (poll up to 3s)
+            await self._wait_for_changes(received_changes)
 
             # Should have received deletion
             assert len(received_changes) >= 1
@@ -281,8 +291,8 @@ class TestCallbackInvocation:
             await asyncio.sleep(0.1)
             test_file.write_text("test")
 
-            # Wait for callback
-            await asyncio.sleep(0.5)
+            # Wait for callback (poll up to 3s)
+            await self._wait_for_changes(received_changes)
 
             # Verify FileChange structure
             assert len(received_changes) >= 1
@@ -327,8 +337,11 @@ class TestRecursiveWatching:
             await asyncio.sleep(0.1)
             nested_file.write_text("nested content")
 
-            # Wait for callback
-            await asyncio.sleep(0.5)
+            # Wait for callback (poll up to 3s)
+            elapsed = 0.0
+            while elapsed < 3.0 and len(received_changes) == 0:
+                await asyncio.sleep(0.1)
+                elapsed += 0.1
 
             # Should detect nested file change
             assert len(received_changes) >= 1

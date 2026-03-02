@@ -8,7 +8,7 @@ import contextlib
 import contextvars
 import json
 import logging
-from typing import Any
+from typing import Any, cast
 
 from cachetools import LRUCache
 from fastmcp import Context, FastMCP
@@ -371,7 +371,7 @@ def create_mcp_server(
             )
         """
         nx_instance = _get_nexus_instance(ctx)
-        result = nx_instance.edit(
+        result = cast(Any, nx_instance).edit(
             path,
             edits,
             fuzzy_threshold=fuzzy_threshold,

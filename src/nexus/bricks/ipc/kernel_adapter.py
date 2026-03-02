@@ -82,16 +82,10 @@ class KernelVFSAdapter:
         ctx = self._ctx(zone_id)
         return await asyncio.to_thread(self._nx.sys_read, path, context=ctx)
 
-    # Alias for backward compatibility
-    read = sys_read
-
     async def sys_write(self, path: str, data: bytes, zone_id: str) -> None:
         self._require_bound()
         ctx = self._ctx(zone_id)
         await asyncio.to_thread(self._nx.sys_write, path, data, context=ctx)
-
-    # Alias for backward compatibility
-    write = sys_write
 
     async def list_dir(self, path: str, zone_id: str) -> list[str]:
         self._require_bound()

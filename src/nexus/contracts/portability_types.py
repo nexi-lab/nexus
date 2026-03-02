@@ -63,10 +63,11 @@ class PortabilityFSProtocol(Protocol):
     def sys_write(
         self,
         path: str,
-        content: bytes,
-        context: Any = None,
+        buf: bytes | str,
         *,
-        force: bool = False,
-    ) -> Any:
-        """Write content to a file (POSIX write(2))."""
+        count: int | None = None,
+        offset: int = 0,
+        context: Any = None,
+    ) -> int:
+        """Write content to a file (POSIX pwrite(2))."""
         ...

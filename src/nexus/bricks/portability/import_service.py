@@ -332,9 +332,9 @@ class ZoneImportService:
             try:
                 # Use system context for import (privileged operation)
                 import_context = _create_import_context()
-                write_result = self.nexus_fs.sys_write(
+                write_result = self.nexus_fs.write(
                     path=remapped_path,
-                    content=content,
+                    buf=content,
                     context=import_context,
                     force=True,  # Skip version check since we're restoring
                 )

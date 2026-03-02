@@ -26,41 +26,46 @@ class NexusFilesystem(Protocol):
     """
 
     def sys_read(
-        self, path: str, context: Any = None, return_metadata: bool = False
-    ) -> bytes | dict[str, Any]:
-        """Read file content (POSIX read).
+        self,
+        path: str,
+        *,
+        count: int | None = None,
+        offset: int = 0,
+        context: Any = None,
+    ) -> bytes:
+        """Read file content (POSIX pread(2)).
 
         Args:
             path: Virtual path to read
+            count: Max bytes to read (None = entire file).
+            offset: Byte offset to start reading from.
             context: Optional operation context for permission checks
-            return_metadata: If True, return dict with content and metadata
 
         Returns:
-            File content as bytes (default) or dict with metadata
+            File content as bytes.
         """
         ...
 
     def sys_write(
         self,
         path: str,
-        content: bytes,
+        buf: bytes | str,
+        *,
+        count: int | None = None,
+        offset: int = 0,
         context: Any = None,
-        if_match: str | None = None,
-        if_none_match: bool = False,
-        force: bool = False,
-    ) -> dict[str, Any]:
-        """Write content to a file (POSIX write).
+    ) -> int:
+        """Write content to a file (POSIX pwrite(2)).
 
         Args:
             path: Virtual path to write
-            content: File content as bytes
+            buf: File content as bytes or str
+            count: Max bytes to write (None = len(buf)).
+            offset: Byte offset to start writing at.
             context: Optional operation context for permission checks
-            if_match: Etag for optimistic concurrency
-            if_none_match: Fail if file already exists
-            force: Skip version check
 
         Returns:
-            Dict with metadata (etag, version, modified_at, size)
+            Number of bytes written.
         """
         ...
 

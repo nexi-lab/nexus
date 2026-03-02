@@ -131,57 +131,55 @@ class TestCoreFileOperations:
     """Test core file operation path scoping."""
 
     def test_read(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
-        """Test read with path scoping."""
+        """Test sys_read with path scoping (POSIX pread returns bytes)."""
         mock_fs.sys_read.return_value = b"content"
         result = scoped_fs.sys_read("/workspace/file.txt")
         mock_fs.sys_read.assert_called_once_with(
-            "/zones/team_12/users/user_1/workspace/file.txt", None, False
+            "/zones/team_12/users/user_1/workspace/file.txt",
+            count=None,
+            offset=0,
+            context=None,
         )
         assert result == b"content"
 
     def test_read_with_metadata(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
-        """Test read with metadata unscopes path."""
-        mock_fs.sys_read.return_value = {
+        """Test read() with metadata unscopes path (Tier 2 convenience)."""
+        mock_fs.read.return_value = {
             "content": b"data",
             "path": "/zones/team_12/users/user_1/workspace/file.txt",
             "etag": "abc",
         }
-        result = scoped_fs.sys_read("/workspace/file.txt", return_metadata=True)
+        result = scoped_fs.read("/workspace/file.txt", return_metadata=True)
         assert result["path"] == "/workspace/file.txt"
 
     def test_write(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
-        """Test write with path scoping."""
-        mock_fs.sys_write.return_value = {
-            "path": "/zones/team_12/users/user_1/workspace/file.txt",
-            "etag": "abc",
-        }
+        """Test sys_write with path scoping (POSIX pwrite returns int)."""
+        mock_fs.sys_write.return_value = 7
         result = scoped_fs.sys_write("/workspace/file.txt", b"content")
         mock_fs.sys_write.assert_called_once_with(
             "/zones/team_12/users/user_1/workspace/file.txt",
             b"content",
-            None,
-            None,
-            False,
-            False,
+            count=None,
+            offset=0,
+            context=None,
         )
-        assert result["path"] == "/workspace/file.txt"
+        assert result == 7
 
     def test_write_forwards_lock_param(
         self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock
     ) -> None:
-        """Test write forwards lock=True to inner filesystem."""
-        mock_fs.sys_write.return_value = {
+        """Test write() forwards lock=True to inner filesystem (Tier 2 convenience)."""
+        mock_fs.write.return_value = {
             "path": "/zones/team_12/users/user_1/workspace/file.txt",
             "etag": "abc",
         }
-        result = scoped_fs.sys_write("/workspace/file.txt", b"content", lock=True)
-        mock_fs.sys_write.assert_called_once_with(
+        result = scoped_fs.write("/workspace/file.txt", b"content", lock=True)
+        mock_fs.write.assert_called_once_with(
             "/zones/team_12/users/user_1/workspace/file.txt",
             b"content",
-            None,
-            None,
-            False,
-            False,
+            count=None,
+            offset=0,
+            context=None,
             lock=True,
         )
         assert result["path"] == "/workspace/file.txt"
@@ -189,19 +187,18 @@ class TestCoreFileOperations:
     def test_write_forwards_lock_timeout(
         self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock
     ) -> None:
-        """Test write forwards lock_timeout to inner filesystem."""
-        mock_fs.sys_write.return_value = {
+        """Test write() forwards lock_timeout to inner filesystem (Tier 2 convenience)."""
+        mock_fs.write.return_value = {
             "path": "/zones/team_12/users/user_1/workspace/file.txt",
             "etag": "abc",
         }
-        result = scoped_fs.sys_write("/workspace/file.txt", b"content", lock=True, lock_timeout=5.0)
-        mock_fs.sys_write.assert_called_once_with(
+        result = scoped_fs.write("/workspace/file.txt", b"content", lock=True, lock_timeout=5.0)
+        mock_fs.write.assert_called_once_with(
             "/zones/team_12/users/user_1/workspace/file.txt",
             b"content",
-            None,
-            None,
-            False,
-            False,
+            count=None,
+            offset=0,
+            context=None,
             lock=True,
             lock_timeout=5.0,
         )
@@ -227,9 +224,7 @@ class TestCoreFileOperations:
         mock_fs.append.assert_called_once_with(
             "/zones/team_12/users/user_1/workspace/log.txt",
             b"log entry",
-            None,
-            None,
-            False,
+            context=None,
         )
 
     def test_delete(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:

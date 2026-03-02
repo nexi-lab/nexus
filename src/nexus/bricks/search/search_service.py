@@ -121,7 +121,7 @@ if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
     from nexus.core.metastore import MetastoreABC
     from nexus.core.router import PathRouter
-    from nexus.services.gateway import NexusFSGateway
+    from nexus.system_services.gateway import NexusFSGateway
 
 
 def _result_to_dict(r: Any) -> dict[str, Any]:

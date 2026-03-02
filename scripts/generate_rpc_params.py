@@ -104,10 +104,10 @@ MODULES_TO_SCAN: list[str] = [
     "nexus.bricks.versioning.version_service",
     "nexus.bricks.mount.mount_service",
     "nexus.services.oauth.oauth_service",
-    "nexus.services.memory_service",
+    "nexus.bricks.memory.memory_service",
     "nexus.services.ace_rpc_service",
-    "nexus.services.workspace_rpc_service",
-    "nexus.services.user_provisioning",
+    "nexus.system_services.workspace.workspace_rpc_service",
+    "nexus.system_services.lifecycle.user_provisioning",
     "nexus.system_services.agents.agent_service",
     # System services
     "nexus.system_services.lifecycle.events_service",

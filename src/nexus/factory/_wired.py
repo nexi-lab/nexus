@@ -59,7 +59,7 @@ def _boot_wired_services(
     # --- NexusFSGateway: adapter breaking circular dep (Issue #1287) ---
     gateway: Any = None
     try:
-        from nexus.services.gateway import NexusFSGateway
+        from nexus.system_services.gateway import NexusFSGateway
 
         gateway = NexusFSGateway(nx)
         logger.debug("[BOOT:WIRED] NexusFSGateway created")
@@ -298,7 +298,7 @@ def _boot_wired_services(
 
     workspace_rpc_service: Any = None
     try:
-        from nexus.services.workspace_rpc_service import WorkspaceRPCService
+        from nexus.system_services.workspace.workspace_rpc_service import WorkspaceRPCService
 
         workspace_rpc_service = WorkspaceRPCService(
             workspace_manager=system_services.workspace_manager,
@@ -337,7 +337,7 @@ def _boot_wired_services(
 
     user_provisioning_service: Any = None
     try:
-        from nexus.services.user_provisioning import UserProvisioningService
+        from nexus.system_services.lifecycle.user_provisioning import UserProvisioningService
 
         user_provisioning_service = UserProvisioningService(
             vfs=nx,
@@ -387,7 +387,7 @@ def _boot_wired_services(
 
     descendant_checker: Any = None
     try:
-        from nexus.services.descendant_access import DescendantAccessChecker
+        from nexus.system_services.namespace.descendant_access import DescendantAccessChecker
 
         descendant_checker = DescendantAccessChecker(
             rebac_manager=system_services.rebac_manager,

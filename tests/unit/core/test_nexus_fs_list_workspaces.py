@@ -34,7 +34,7 @@ def nexus_fs():
     list_workspaces was extracted from NexusFS to WorkspaceRPCService (Issue #2033).
     NexusFS.__getattr__ forwards to _workspace_rpc_service.list_workspaces().
     """
-    from nexus.services.workspace_rpc_service import WorkspaceRPCService
+    from nexus.system_services.workspace.workspace_rpc_service import WorkspaceRPCService
 
     mock_registry = MagicMock()
     mock_registry.list_workspaces.return_value = []

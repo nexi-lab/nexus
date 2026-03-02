@@ -117,7 +117,7 @@ def nexus_fs(
     # Ensure workspace_registry exists (factory may fail to create it if
     # ReBACManager is unavailable — rebac_manager is optional for the registry)
     if nx._workspace_registry is None:
-        from nexus.services.workspace.workspace_registry import WorkspaceRegistry
+        from nexus.bricks.workspace.workspace_registry import WorkspaceRegistry
 
         nx._workspace_registry = WorkspaceRegistry(
             metadata=metadata_store,

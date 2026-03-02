@@ -11,7 +11,7 @@ from nexus.lib.context_utils import get_user_identity, get_zone_id
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
-    from nexus.services.gateway import NexusFSGateway
+    from nexus.system_services.gateway import NexusFSGateway
 
 logger = logging.getLogger(__name__)
 

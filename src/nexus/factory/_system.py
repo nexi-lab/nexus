@@ -426,7 +426,7 @@ def _boot_system_services(
     session_factory = getattr(ctx.record_store, "session_factory", None)
     if session_factory is not None:
         try:
-            from nexus.services.zone_lifecycle import ZoneLifecycleService
+            from nexus.system_services.lifecycle.zone_lifecycle import ZoneLifecycleService
 
             zone_lifecycle = ZoneLifecycleService(session_factory=session_factory)
 
@@ -434,7 +434,7 @@ def _boot_system_services(
             # Cache + Mount finalizers are registered later in service_wiring
             # when their dependencies (file_cache, mount_service) exist.
             try:
-                from nexus.services.zone_finalizers import (
+                from nexus.system_services.lifecycle.zone_finalizers import (
                     ReBACZoneFinalizer,
                     SearchZoneFinalizer,
                 )

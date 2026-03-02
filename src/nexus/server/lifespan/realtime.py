@@ -185,7 +185,7 @@ async def _startup_writeback(app: "FastAPI", svc: "LifespanServices") -> None:
 
     try:
         if write_back_enabled:
-            from nexus.services.gateway import NexusFSGateway
+            from nexus.system_services.gateway import NexusFSGateway
             from nexus.system_services.sync.change_log_store import ChangeLogStore
             from nexus.system_services.sync.conflict_log_store import ConflictLogStore
             from nexus.system_services.sync.conflict_resolution import ConflictStrategy

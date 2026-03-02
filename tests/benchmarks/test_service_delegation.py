@@ -17,7 +17,7 @@ import pytest
 
 from nexus.contracts.types import OperationContext
 from nexus.core.nexus_fs import NexusFS
-from nexus.services.gateway import NexusFSGateway
+from nexus.system_services.gateway import NexusFSGateway
 
 # =============================================================================
 # Fixtures

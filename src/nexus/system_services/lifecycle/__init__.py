@@ -7,10 +7,12 @@ from nexus.system_services.lifecycle.brick_lifecycle import BrickLifecycleManage
 from nexus.system_services.lifecycle.brick_reconciler import BrickReconciler
 from nexus.system_services.lifecycle.events_service import EventsService
 from nexus.system_services.lifecycle.expectations import Expectations
+from nexus.system_services.lifecycle.zone_lifecycle import ZoneLifecycleService
 
 __all__ = [
     "BrickLifecycleManager",
     "BrickReconciler",
     "EventsService",
     "Expectations",
+    "ZoneLifecycleService",
 ]

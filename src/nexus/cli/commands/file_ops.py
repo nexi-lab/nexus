@@ -2,7 +2,7 @@
 
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import click
 from rich.syntax import Syntax
@@ -142,7 +142,7 @@ def cat(
             content = state["content"]
         elif metadata:
             # Read with metadata for OCC
-            data = nx.sys_read(path, context=operation_context, return_metadata=True)
+            data = nx.read(path, context=cast(Any, operation_context), return_metadata=True)
             nx.close()
 
             # Type narrowing: when return_metadata=True, result is always dict
@@ -191,7 +191,7 @@ def cat(
                     raise e
             else:
                 # Read normally for small files
-                content = nx.sys_read(path, context=operation_context)
+                content = nx.sys_read(path, context=cast(Any, operation_context))
                 nx.close()
 
         # Try to detect file type for syntax highlighting
@@ -290,8 +290,10 @@ def write(
             console.print("[red]Error:[/red] Must provide content or use --input")
             sys.exit(1)
 
-        # Write with OCC parameters and context
-        result = nx.sys_write(
+        # Write with OCC parameters and context.
+        # CAS params (if_match, force) are NexusFS-specific (transitional, see #1323).
+        # cast(Any) bypasses ABC type check since runtime type supports CAS.
+        result = cast(Any, nx).write(
             path,
             file_content,
             context=operation_context,
@@ -382,8 +384,9 @@ def append(
             console.print("[red]Error:[/red] Must provide content or use --input")
             sys.exit(1)
 
-        # Append with OCC parameters and context
-        result = nx.append(
+        # Append with OCC parameters and context.
+        # CAS params (if_match, force) are NexusFS-specific (transitional, see #1323).
+        result = cast(Any, nx).append(
             path,
             file_content,
             context=operation_context,

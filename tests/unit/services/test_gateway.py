@@ -21,7 +21,7 @@ def mock_fs():
     """Create a mock NexusFS instance."""
     fs = MagicMock()
     fs.sys_mkdir = MagicMock()
-    fs.sys_write = MagicMock()
+    fs.sys_write = MagicMock(return_value=7)
     fs.sys_read = MagicMock(return_value=b"file content")
     fs.sys_readdir = MagicMock(return_value=["file1.txt", "file2.txt"])
     fs.sys_access = MagicMock(return_value=True)
@@ -109,16 +109,15 @@ class TestFileOperations:
         )
 
     def test_write_delegates_bytes(self, gateway, mock_fs, context):
-        """sys_write delegates bytes to NexusFS.sys_write."""
-        gateway.sys_write("/test/file.txt", b"content", context=context)
+        """sys_write delegates bytes to NexusFS.sys_write and returns byte count."""
+        result = gateway.sys_write("/test/file.txt", b"content", context=context)
         mock_fs.sys_write.assert_called_once_with("/test/file.txt", b"content", context=context)
+        assert result == 7  # mock returns 7
 
-    def test_write_converts_str_to_bytes(self, gateway, mock_fs, context):
-        """sys_write converts string content to bytes."""
+    def test_write_delegates_str(self, gateway, mock_fs, context):
+        """sys_write passes str through to NexusFS (kernel handles encoding)."""
         gateway.sys_write("/test/file.txt", "text content", context=context)
-        mock_fs.sys_write.assert_called_once_with(
-            "/test/file.txt", b"text content", context=context
-        )
+        mock_fs.sys_write.assert_called_once_with("/test/file.txt", "text content", context=context)
 
     def test_read_delegates(self, gateway, mock_fs, context):
         """sys_read delegates to NexusFS.sys_read."""
@@ -126,11 +125,11 @@ class TestFileOperations:
         assert result == b"file content"
         mock_fs.sys_read.assert_called_once()
 
-    def test_read_handles_dict_result(self, gateway, mock_fs, context):
-        """sys_read returns empty bytes for dict results (parsed content)."""
-        mock_fs.sys_read.return_value = {"parsed": True}
+    def test_read_returns_bytes(self, gateway, mock_fs, context):
+        """sys_read always returns bytes (POSIX pread semantics)."""
+        mock_fs.sys_read.return_value = b"raw bytes"
         result = gateway.sys_read("/test/file.txt", context=context)
-        assert result == b""
+        assert result == b"raw bytes"
 
     def test_list_delegates(self, gateway, mock_fs, context):
         """sys_readdir delegates to NexusFS.sys_readdir."""

@@ -35,13 +35,10 @@ def handle_delta_read(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[st
 
     from nexus.core.hash_fast import hash_content
 
-    # Read current file content
+    # Read current file content — sys_read (Tier 1) always returns bytes
     content = nexus_fs.sys_read(params.path, context=context)
-    if isinstance(content, dict):
-        content = content.get("content", b"")
     if isinstance(content, str):
         content = content.encode("utf-8")
-    assert isinstance(content, bytes)
 
     server_hash = hash_content(content)
 
@@ -139,12 +136,10 @@ def handle_delta_write(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[s
         raise ValueError("base_hash is required for delta_write")
 
     try:
+        # sys_read (Tier 1) always returns bytes
         current_content = nexus_fs.sys_read(params.path, context=context)
-        if isinstance(current_content, dict):
-            current_content = current_content.get("content", b"")
         if isinstance(current_content, str):
             current_content = current_content.encode("utf-8")
-        assert isinstance(current_content, bytes)
     except Exception as e:
         raise ValueError("Cannot apply delta to non-existent file. Use write() instead.") from e
 
@@ -163,11 +158,15 @@ def handle_delta_write(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[s
     if hasattr(params, "if_match") and params.if_match:
         kwargs["if_match"] = params.if_match
 
-    bytes_written = nexus_fs.sys_write(params.path, new_content, **kwargs)
+    # Use write() (Tier 2 convenience) for OCC support (if_match)
+    write_result = nexus_fs.write(params.path, new_content, **kwargs)
     new_hash = hash_content(new_content)
 
-    return {
-        "bytes_written": bytes_written,
+    result: dict[str, Any] = {
+        "bytes_written": len(new_content),
         "new_hash": new_hash,
         "patch_applied": True,
     }
+    if isinstance(write_result, dict):
+        result.update(write_result)
+    return result

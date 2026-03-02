@@ -48,17 +48,23 @@ class NexusFilesystemABC(ABC):
 
     @abstractmethod
     def sys_read(
-        self, path: str, context: Any = None, return_metadata: bool = False
-    ) -> bytes | dict[str, Any]:
-        """Read file content (POSIX read(2)).
+        self,
+        path: str,
+        *,
+        count: int | None = None,
+        offset: int = 0,
+        context: OperationContext | None = None,
+    ) -> bytes:
+        """Read file content (POSIX pread(2)).
 
         Args:
             path: Virtual file path.
+            count: Max bytes to read (None = entire file).
+            offset: Byte offset to start reading from.
             context: Operation context (auth, zone, etc.).
-            return_metadata: If True, return dict with content + metadata.
 
         Returns:
-            Raw bytes, or dict with content + metadata if return_metadata=True.
+            File content as bytes.
         """
         ...
 
@@ -66,31 +72,27 @@ class NexusFilesystemABC(ABC):
     def sys_write(
         self,
         path: str,
-        content: bytes,
-        context: Any = None,
-        if_match: str | None = None,
-        if_none_match: bool = False,
-        force: bool = False,
-        lock: bool = False,
-        lock_timeout: float = 30.0,
-    ) -> dict[str, Any]:
-        """Write content to a file (POSIX write(2)).
+        buf: bytes | str,
+        *,
+        count: int | None = None,
+        offset: int = 0,
+        context: OperationContext | None = None,
+    ) -> int:
+        """Write content to a file (POSIX pwrite(2)).
 
-        Metadata (mtime, size, etag) updated as kernel side effect —
-        like Linux, where write() updates the inode's mtime/ctime/size.
+        Content-only primitive. CAS and locking are driver/application
+        concerns — not kernel. Metadata update is a kernel side effect
+        (Phase A); Phase B will separate into sys_write + sys_setattr.
 
         Args:
             path: Virtual file path.
-            content: File content as bytes.
+            buf: File content as bytes or str.
+            count: Max bytes to write (None = len(buf)).
+            offset: Byte offset to start writing at.
             context: Operation context.
-            if_match: CAS etag for optimistic concurrency.
-            if_none_match: If True, fail if file already exists.
-            force: Bypass CAS checks.
-            lock: Acquire distributed lock before writing.
-            lock_timeout: Max time to wait for lock (seconds).
 
         Returns:
-            Dict with write result (path, etag, size, version, etc.).
+            Number of bytes written.
         """
         ...
 
@@ -215,43 +217,114 @@ class NexusFilesystemABC(ABC):
     #
     # NOT abstract. Compose from syscalls. Overridable for optimization.
     # Like libc/coreutils built on top of syscalls.
+    #
+    # Two halves (see syscall-design.md §3):
+    #   VFS half  — POSIX-aligned: read, write, stat, mkdir, unlink, append, edit
+    #   HDFS half — driver-level content access: read_content, write_content
+
+    # ── VFS Half ──────────────────────────────────────────────────
+
+    def read(
+        self,
+        path: str,
+        *,
+        count: int | None = None,
+        offset: int = 0,
+        context: OperationContext | None = None,
+        return_metadata: bool = False,
+    ) -> bytes | dict[str, Any]:
+        """Read with optional metadata (VFS convenience).
+
+        Composes sys_stat + sys_read. POSIX pread semantics.
+        Override in NexusFS for parsed-content support.
+
+        Args:
+            path: Virtual file path.
+            count: Max bytes to read (None = entire file).
+            offset: Byte offset to start reading from.
+            context: Operation context.
+            return_metadata: If True, return dict with content + metadata.
+
+        Returns:
+            bytes if return_metadata=False, else dict with content + metadata.
+        """
+        content = self.sys_read(path, count=count, offset=offset, context=context)
+        if not return_metadata:
+            return content
+        meta = self.sys_stat(path, context=context)
+        result: dict[str, Any] = {"content": content}
+        if meta:
+            result.update(
+                {
+                    "etag": meta.get("etag"),
+                    "version": meta.get("version"),
+                    "modified_at": meta.get("modified_at"),
+                    "size": meta.get("size"),
+                }
+            )
+        return result
+
+    def write(
+        self,
+        path: str,
+        buf: bytes | str,
+        *,
+        count: int | None = None,
+        offset: int = 0,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Write with metadata update (VFS convenience).
+
+        Composes sys_write + sys_setattr. POSIX pwrite + metadata update.
+        Override in NexusFS for driver-specific params (CAS/lock).
+
+        Args:
+            path: Virtual file path.
+            buf: File content as bytes or str.
+            count: Max bytes to write (None = len(buf)).
+            offset: Byte offset to start writing at.
+            context: Operation context.
+
+        Returns:
+            Dict with metadata (etag, version, modified_at, size).
+        """
+        self.sys_write(path, buf, count=count, offset=offset, context=context)
+        meta = self.sys_stat(path, context=context)
+        return meta or {}
 
     def append(
         self,
         path: str,
         content: bytes | str,
-        context: Any = None,
-        if_match: str | None = None,
-        force: bool = False,
+        *,
+        context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Append content to a file (like shell >>).
 
-        User-space: sys_read + sys_write.
+        User-space: read + write.
         """
         try:
-            existing = self.sys_read(path, context)
+            existing = self.sys_read(path, context=context)
         except FileNotFoundError:
             existing = b""
-        if isinstance(existing, dict):
-            existing = existing.get("content", b"")
         if isinstance(content, str):
             content = content.encode("utf-8")
         if isinstance(existing, str):
             existing = existing.encode("utf-8")
-        return self.sys_write(path, existing + content, context, if_match=if_match, force=force)
+        return self.write(path, existing + content, context=context)
 
     def edit(
         self,
         path: str,
         edits: builtins.list[tuple[str, str]] | builtins.list[dict[str, Any]] | builtins.list[Any],
-        context: Any = None,
-        if_match: str | None = None,
+        *,
+        context: OperationContext | None = None,
         fuzzy_threshold: float = 0.85,
         preview: bool = False,
     ) -> dict[str, Any]:
         """Apply surgical search/replace edits to a file.
 
-        User-space: sys_read + modify + sys_write.
+        User-space: read + modify + write.
         Override in NexusFS (requires EditEngine).
         """
         raise NotImplementedError("Override in NexusFS (requires EditEngine)")
@@ -259,10 +332,13 @@ class NexusFilesystemABC(ABC):
     def write_batch(
         self,
         files: builtins.list[tuple[str, bytes]],
-        context: Any = None,
+        *,
+        context: OperationContext | None = None,
     ) -> builtins.list[dict[str, Any]]:
-        """Write multiple files. Default: N × sys_write."""
-        return [self.sys_write(p, c, context) for p, c in files]
+        """Write multiple files. Default: N × write()."""
+        return [self.write(p, c, context=context) for p, c in files]
+
+    # ── Search (requires service override) ────────────────────────
 
     def glob(self, pattern: str, path: str = "/", context: Any = None) -> builtins.list[str]:
         """Find files matching a glob pattern (like glob(3)).

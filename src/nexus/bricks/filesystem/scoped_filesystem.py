@@ -80,44 +80,68 @@ class ScopedFilesystem(ScopedPathMixin):
     # ============================================================
 
     def sys_read(
-        self, path: str, context: Any = None, return_metadata: bool = False
-    ) -> bytes | dict[str, Any]:
-        """Read file content as bytes."""
-        result = self._fs.sys_read(self._scope_path(path), context, return_metadata)
-        if return_metadata and isinstance(result, dict):
-            return self._unscope_dict(result, ["path"])
-        return result
+        self,
+        path: str,
+        *,
+        count: int | None = None,
+        offset: int = 0,
+        context: OperationContext | None = None,
+    ) -> bytes:
+        """Read file content as bytes (POSIX pread)."""
+        return self._fs.sys_read(
+            self._scope_path(path), count=count, offset=offset, context=context
+        )
 
     def sys_write(
         self,
         path: str,
-        content: bytes,
-        context: Any = None,
-        if_match: str | None = None,
-        if_none_match: bool = False,
-        force: bool = False,
-        lock: bool = False,
-        lock_timeout: float = 30.0,
-    ) -> dict[str, Any]:
-        """Write content to a file.
+        buf: bytes | str,
+        *,
+        count: int | None = None,
+        offset: int = 0,
+        context: OperationContext | None = None,
+    ) -> int:
+        """Write content to a file (POSIX pwrite)."""
+        return self._fs.sys_write(
+            self._scope_path(path), buf, count=count, offset=offset, context=context
+        )
 
-        Args:
-            lock: If True, acquire distributed lock before writing.
-            lock_timeout: Max time to wait for lock in seconds (only used if lock=True).
-        """
-        kwargs: dict[str, Any] = {}
-        if lock:
-            kwargs["lock"] = lock
-        if lock_timeout != 30.0:
-            kwargs["lock_timeout"] = lock_timeout
-        result = self._fs.sys_write(
+    def read(
+        self,
+        path: str,
+        *,
+        count: int | None = None,
+        offset: int = 0,
+        context: OperationContext | None = None,
+        return_metadata: bool = False,
+        **kwargs: Any,
+    ) -> bytes | dict[str, Any]:
+        """Read with optional metadata (VFS convenience)."""
+        result = self._fs.read(
             self._scope_path(path),
-            content,
-            context,
-            if_match,
-            if_none_match,
-            force,
+            count=count,
+            offset=offset,
+            context=context,
+            return_metadata=return_metadata,
             **kwargs,
+        )
+        if return_metadata and isinstance(result, dict):
+            return self._unscope_dict(result, ["path"])
+        return result
+
+    def write(
+        self,
+        path: str,
+        buf: bytes | str,
+        *,
+        count: int | None = None,
+        offset: int = 0,
+        context: OperationContext | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Write with metadata update (VFS convenience)."""
+        result = self._fs.write(
+            self._scope_path(path), buf, count=count, offset=offset, context=context, **kwargs
         )
         return self._unscope_dict(result, ["path"])
 
@@ -233,35 +257,43 @@ class ScopedFilesystem(ScopedPathMixin):
         self,
         path: str,
         content: bytes | str,
-        context: Any = None,
-        if_match: str | None = None,
-        force: bool = False,
+        *,
+        context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Append content to an existing file."""
-        result = self._fs.append(self._scope_path(path), content, context, if_match, force)
+        result = self._fs.append(self._scope_path(path), content, context=context)
         return self._unscope_dict(result, ["path"])
 
     def edit(
         self,
         path: str,
         edits: builtins.list[tuple[str, str]] | builtins.list[dict[str, Any]] | builtins.list[Any],
-        context: Any = None,
-        if_match: str | None = None,
+        *,
+        context: OperationContext | None = None,
         fuzzy_threshold: float = 0.85,
         preview: bool = False,
+        **kwargs: Any,
     ) -> dict[str, Any]:
         """Apply surgical search/replace edits to a file."""
         result = self._fs.edit(
-            self._scope_path(path), edits, context, if_match, fuzzy_threshold, preview
+            self._scope_path(path),
+            edits,
+            context=context,
+            fuzzy_threshold=fuzzy_threshold,
+            preview=preview,
+            **kwargs,
         )
         return self._unscope_dict(result, ["path"])
 
     def write_batch(
-        self, files: builtins.list[tuple[str, bytes]], context: Any = None
+        self,
+        files: builtins.list[tuple[str, bytes]],
+        *,
+        context: OperationContext | None = None,
     ) -> builtins.list[dict[str, Any]]:
         """Write multiple files in a single transaction."""
         scoped_files = [(self._scope_path(path), content) for path, content in files]
-        results = self._fs.write_batch(scoped_files, context)
+        results = self._fs.write_batch(scoped_files, context=context)
         return [self._unscope_dict(r, ["path"]) for r in results]
 
     # ============================================================

@@ -1609,34 +1609,24 @@ class NexusFS(  # type: ignore[misc]
     def sys_read(
         self,
         path: str,
+        *,
+        count: int | None = None,
+        offset: int = 0,
         context: OperationContext | None = None,
-        return_metadata: bool = False,
-        parsed: bool = False,
-    ) -> bytes | dict[str, Any]:
-        """
-        Read file content as bytes, optionally parsed to text.
+    ) -> bytes:
+        """Read file content as bytes (POSIX pread(2)).
+
+        Kernel primitive — always returns raw bytes. For metadata or parsed
+        content, use the convenience ``read()`` method.
 
         Args:
-            path: Virtual path to read (supports memory virtual paths)
-            context: Optional operation context for permission checks (uses default if not provided)
-            return_metadata: If True, return dict with content and metadata (etag, version, modified_at).
-                           If False, return only content bytes (default: False)
-            parsed: If True, return parsed text content instead of raw bytes (default: False).
-                   Uses the best available parse provider (Unstructured, LlamaParse, MarkItDown).
-                   First checks for cached parsed_text in metadata, then parses on-demand if needed.
-                   If parsing fails, returns raw content.
+            path: Virtual path to read (supports memory virtual paths).
+            count: Max bytes to read (None = entire file).
+            offset: Byte offset to start reading from.
+            context: Optional operation context for permission checks.
 
         Returns:
-            If return_metadata=False and parsed=False: File content as bytes
-            If return_metadata=False and parsed=True: Parsed text content as bytes (UTF-8 markdown)
-            If return_metadata=True: Dict with keys:
-                - content: File content as bytes (or parsed text if parsed=True)
-                - etag: Content hash (SHA-256) for optimistic concurrency
-                - version: Current version number
-                - modified_at: Last modification timestamp
-                - size: File size in bytes
-                - parsed: True if content was parsed (only when parsed=True)
-                - provider: Name of parse provider used (only when parsed=True)
+            File content as bytes.
 
         Raises:
             NexusFileNotFoundError: If file doesn't exist
@@ -1644,29 +1634,6 @@ class NexusFS(  # type: ignore[misc]
             BackendError: If read operation fails
             AccessDeniedError: If access is denied based on zone isolation
             PermissionError: If user doesn't have read permission
-
-        Examples:
-            >>> # Read raw content
-            >>> content = nx.sys_read("/workspace/report.pdf")
-            >>> print(type(content))
-            <class 'bytes'>
-
-            >>> # Read parsed content (markdown)
-            >>> content = nx.sys_read("/workspace/report.pdf", parsed=True)
-            >>> print(content.decode())
-            # Report Title
-            ...
-
-            >>> # Read with metadata for optimistic concurrency
-            >>> result = nx.sys_read("/workspace/data.json", return_metadata=True)
-            >>> content = result['content']
-            >>> etag = result['etag']
-            >>> # Later, write with version check
-            >>> nx.sys_write("/workspace/data.json", new_content, if_match=etag)
-
-            >>> # Read memory via virtual path
-            >>> content = nx.sys_read("/workspace/alice/agent1/memory/facts")
-            >>> content = nx.sys_read("/memory/by-user/alice/facts")  # Same memory!
         """
         path = self._validate_path(path)
         # Normalize context dict to OperationContext dataclass (CLI passes dicts)
@@ -1674,10 +1641,20 @@ class NexusFS(  # type: ignore[misc]
 
         # PRE-DISPATCH: virtual path resolvers (Issue #889)
         _handled, _resolve_hint = self._dispatch.resolve_read(
-            path, return_metadata=return_metadata, context=context
+            path, return_metadata=False, context=context
         )
         if _handled:
-            return _resolve_hint
+            # Normalize resolver results to bytes
+            if isinstance(_resolve_hint, dict):
+                _resolve_hint = _resolve_hint.get("content", b"")
+            if isinstance(_resolve_hint, str):
+                _resolve_hint = _resolve_hint.encode("utf-8")
+            content = _resolve_hint
+            if offset or count is not None:
+                content = (
+                    content[offset : offset + count] if count is not None else content[offset:]
+                )
+            return content
 
         # PRE-INTERCEPT: pre-read hooks (Issue #899)
         perm_check_start = time.time()
@@ -1728,18 +1705,10 @@ class NexusFS(  # type: ignore[misc]
             # Issue #1166: Record read for dependency tracking
             self._record_read_if_tracking(context, "file", path, "content")
 
-            if return_metadata:
-                # Generate synthetic metadata for dynamic content
-                from datetime import datetime
-
-                content_hash = hash_content(content)
-                return {
-                    "content": content,
-                    "etag": content_hash,
-                    "version": 1,
-                    "modified_at": datetime.now().isoformat(),
-                    "size": len(content),
-                }
+            if offset or count is not None:
+                content = (
+                    content[offset : offset + count] if count is not None else content[offset:]
+                )
             return content
 
         # Check if file exists in metadata (for regular backends)
@@ -1780,26 +1749,12 @@ class NexusFS(  # type: ignore[misc]
             self._dispatch.intercept_post_read(_read_ctx)
             content = _read_ctx.content or content  # hooks may have filtered content
 
-        # Handle parsed=True flag - return parsed content instead of raw bytes
-        if parsed:
-            content, parse_info = self._get_parsed_content(path, content)
-
         # Issue #1166: Record read for dependency tracking
         self._record_read_if_tracking(context, "file", path, "content")
 
-        # Return content with metadata if requested
-        if return_metadata:
-            result = {
-                "content": content,
-                "etag": meta.etag,
-                "version": meta.version,
-                "modified_at": meta.modified_at,
-                "size": len(content),  # Update size after filtering
-            }
-            if parsed:
-                result["parsed"] = parse_info.get("parsed", False)
-                result["provider"] = parse_info.get("provider")
-            return result
+        # Apply count/offset slicing (POSIX pread semantics)
+        if offset or count is not None:
+            content = content[offset : offset + count] if count is not None else content[offset:]
 
         return content
 
@@ -2483,88 +2438,171 @@ class NexusFS(  # type: ignore[misc]
     def sys_write(
         self,
         path: str,
-        content: bytes | str,
+        buf: bytes | str,
+        *,
+        count: int | None = None,
+        offset: int = 0,
         context: OperationContext | None = None,
-        if_match: str | None = None,
-        if_none_match: bool = False,
-        force: bool = False,
-        lock: bool = False,
-        lock_timeout: float = 30.0,
-    ) -> dict[str, Any]:
-        """
-        Write content to a file with optional optimistic concurrency control.
+    ) -> int:
+        """Write content to a file (POSIX pwrite(2)).
 
-        Creates parent directories if needed. Overwrites existing files.
-        Updates metadata store.
+        Kernel primitive — content-only. CAS, locking, and OCC are
+        driver/application concerns. For metadata return or locking,
+        use the convenience ``write()`` method.
 
-        Automatically deduplicates content using CAS.
+        Phase A: Still updates metadata as side effect (will be separated
+        into sys_write + sys_setattr in Phase B).
 
         Args:
-            path: Virtual path to write
-            content: File content as bytes or str (str will be UTF-8 encoded)
-            context: Optional operation context for permission checks (uses default if not provided)
-            if_match: Optional etag for optimistic concurrency control (v0.3.9).
-                     If provided, write only succeeds if current file etag matches this value.
-                     Prevents concurrent modification conflicts.
-            if_none_match: If True, write only if file doesn't exist (create-only mode)
-            force: If True, skip version check and overwrite unconditionally (dangerous!)
-            lock: If True, acquire distributed lock before writing (default: False for backward compatibility).
-                  Use this for single-write operations that need mutual exclusion.
-                  For read-modify-write patterns, use locked() context manager or atomic_update() instead.
-            lock_timeout: Maximum time to wait for lock in seconds (only used if lock=True)
+            path: Virtual path to write.
+            buf: File content as bytes or str (str will be UTF-8 encoded).
+            count: Max bytes to write (None = len(buf)).
+            offset: Byte offset to start writing at (currently ignored — whole-file).
+            context: Optional operation context for permission checks.
 
         Returns:
-            Dict with metadata about the written file:
-                - etag: Content hash (SHA-256) of the written content
-                - version: New version number
-                - modified_at: Modification timestamp
-                - size: File size in bytes
+            Number of bytes written.
 
         Raises:
             InvalidPathError: If path is invalid
             BackendError: If write operation fails
             AccessDeniedError: If access is denied (zone isolation or read-only namespace)
             PermissionError: If path is read-only or user doesn't have write permission
-            ConflictError: If if_match is provided and doesn't match current etag
-            FileExistsError: If if_none_match=True and file already exists
-            LockTimeout: If lock=True and lock cannot be acquired within lock_timeout
-
-        Examples:
-            >>> # Simple write (no version checking)
-            >>> result = nx.sys_write("/workspace/data.json", b'{"key": "value"}')
-            >>> print(result['etag'], result['version'])
-
-            >>> # Optimistic concurrency control
-            >>> result = nx.sys_read("/workspace/data.json", return_metadata=True)
-            >>> new_content = modify(result['content'])
-            >>> try:
-            ...     nx.sys_write("/workspace/data.json", new_content, if_match=result['etag'])
-            ... except ConflictError:
-            ...     print("File was modified by another agent!")
-
-            >>> # Create-only mode
-            >>> nx.sys_write("/workspace/new.txt", b'content', if_none_match=True)
-
-            >>> # Write with distributed lock (mutual exclusion)
-            >>> nx.sys_write("/shared/config.json", b'{"v": 1}', lock=True)
-
-            >>> # Write memory via virtual path
-            >>> nx.sys_write("/workspace/alice/agent1/memory/facts", b'Python is great')
-            >>> nx.sys_write("/memory/by-user/alice/facts", b'Update')  # Same memory!
         """
         # Auto-convert str to bytes for convenience
-        if isinstance(content, str):
-            content = content.encode("utf-8")
+        if isinstance(buf, str):
+            buf = buf.encode("utf-8")
+
+        # Apply count slicing if specified
+        if count is not None:
+            buf = buf[:count]
 
         path = self._validate_path(path)
         self._check_zone_writable(context)  # Issue #2061: write-gating
 
         # PRE-DISPATCH: virtual path resolvers (Issue #889)
-        _handled, _result = self._dispatch.resolve_write(path, content)
+        _handled, _result = self._dispatch.resolve_write(path, buf)
+        if _handled:
+            return len(buf)
+
+        self._write_internal(
+            path=path,
+            content=buf,
+            context=context,
+            if_match=None,
+            if_none_match=False,
+            force=True,
+        )
+        return len(buf)
+
+    # ── Tier 2 overrides (NexusFS-specific) ───────────────────────
+
+    def read(
+        self,
+        path: str,
+        *,
+        count: int | None = None,
+        offset: int = 0,
+        context: OperationContext | None = None,
+        return_metadata: bool = False,
+        parsed: bool = False,
+    ) -> bytes | dict[str, Any]:
+        """Read with optional metadata / parsed content (VFS convenience).
+
+        Overrides ABC default to add NexusFS-specific parsed-content support
+        via document parsers (Unstructured, LlamaParse, MarkItDown).
+
+        Args:
+            path: Virtual file path.
+            count: Max bytes to read (None = entire file).
+            offset: Byte offset to start reading from.
+            context: Operation context.
+            return_metadata: If True, return dict with content + metadata.
+            parsed: If True, return parsed text content instead of raw bytes.
+
+        Returns:
+            bytes if return_metadata=False and parsed=False,
+            else dict with content + metadata.
+        """
+        content = self.sys_read(path, count=count, offset=offset, context=context)
+
+        # Handle parsed=True flag — NexusFS-specific document parsing
+        parse_info: dict[str, Any] = {}
+        if parsed:
+            content, parse_info = self._get_parsed_content(path, content)
+
+        if not return_metadata:
+            return content
+
+        # Compose with sys_stat for metadata
+        meta_dict = self.sys_stat(path, context=context)
+        result: dict[str, Any] = {"content": content}
+        if meta_dict:
+            result.update(
+                {
+                    "etag": meta_dict.get("etag"),
+                    "version": meta_dict.get("version"),
+                    "modified_at": meta_dict.get("modified_at"),
+                    "size": len(content),
+                }
+            )
+        if parsed:
+            result["parsed"] = parse_info.get("parsed", False)
+            result["provider"] = parse_info.get("provider")
+        return result
+
+    def write(
+        self,
+        path: str,
+        buf: bytes | str,
+        *,
+        count: int | None = None,
+        offset: int = 0,
+        context: OperationContext | None = None,
+        lock: bool = False,
+        lock_timeout: float = 30.0,
+        if_match: str | None = None,
+        if_none_match: bool = False,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        """Write with metadata update + optional lock/OCC (VFS convenience).
+
+        Overrides ABC default. Composes _write_internal (which handles
+        content + metadata atomically in Phase A) with optional distributed
+        lock acquisition.
+
+        OCC params (if_match, if_none_match, force) are exposed here as
+        transitional — they will be removed when CAS moves fully to driver.
+
+        Args:
+            path: Virtual file path.
+            buf: File content as bytes or str.
+            count: Max bytes to write (None = len(buf)).
+            offset: Byte offset (currently ignored — whole-file).
+            context: Operation context.
+            lock: If True, acquire distributed lock before writing.
+            lock_timeout: Max time to wait for lock (seconds).
+            if_match: CAS etag for optimistic concurrency (transitional).
+            if_none_match: Create-only mode (transitional).
+            force: Bypass CAS checks (transitional).
+
+        Returns:
+            Dict with metadata (etag, version, modified_at, size).
+        """
+        if isinstance(buf, str):
+            buf = buf.encode("utf-8")
+        if count is not None:
+            buf = buf[:count]
+
+        path = self._validate_path(path)
+        self._check_zone_writable(context)
+
+        # PRE-DISPATCH: virtual path resolvers
+        _handled, _result = self._dispatch.resolve_write(path, buf)
         if _handled:
             return _result
 
-        # Issue #1106 Block 3: Acquire distributed lock if requested
+        # Acquire distributed lock if requested
         lock_id = None
         if lock:
             lock_id = self._acquire_lock_sync(path, lock_timeout, context)
@@ -2572,7 +2610,7 @@ class NexusFS(  # type: ignore[misc]
         try:
             return self._write_internal(
                 path=path,
-                content=content,
+                content=buf,
                 context=context,
                 if_match=if_match,
                 if_none_match=if_none_match,
@@ -2904,21 +2942,21 @@ class NexusFS(  # type: ignore[misc]
             )
 
         async with self.events_service.locked(path, timeout=timeout, ttl=ttl, _context=context):
-            # Read current content (return_metadata=False ensures bytes return)
-            content = self.sys_read(path, context=context, return_metadata=False)
-            assert isinstance(content, bytes), "Expected bytes from read()"
+            # Read current content — sys_read (Tier 1) always returns bytes
+            content = self.sys_read(path, context=context)
 
             # Apply update function
             new_content = update_fn(content)
 
-            # Write back (no lock needed since we hold the lock)
-            return self.sys_write(path, new_content, context=context, lock=False)
+            # Write back via Tier 2 write() (no lock since we already hold it)
+            return self.write(path, new_content, context=context)
 
     @rpc_expose(description="Append content to an existing file or create if it doesn't exist")
     def append(
         self,
         path: str,
         content: bytes | str,
+        *,
         context: OperationContext | None = None,
         if_match: str | None = None,
         force: bool = False,
@@ -2968,7 +3006,7 @@ class NexusFS(  # type: ignore[misc]
             ...     nx.append("/workspace/data.jsonl", line)
 
             >>> # Append with optimistic concurrency control
-            >>> result = nx.sys_read("/workspace/log.txt", return_metadata=True)
+            >>> result = nx.read("/workspace/log.txt", return_metadata=True)
             >>> try:
             ...     nx.append("/workspace/log.txt", "New entry\\n", if_match=result['etag'])
             ... except ConflictError:
@@ -2987,8 +3025,8 @@ class NexusFS(  # type: ignore[misc]
         # For non-existent files, we'll create them (existing_content stays empty)
         existing_content = b""
         try:
-            result = self.sys_read(path, context=context, return_metadata=True)
-            # Type narrowing: when return_metadata=True, result is always dict
+            result = self.read(path, context=context, return_metadata=True)
+            # Tier 2 read(return_metadata=True) always returns dict
             assert isinstance(result, dict), "Expected dict when return_metadata=True"
 
             existing_content = result["content"]
@@ -3025,13 +3063,14 @@ class NexusFS(  # type: ignore[misc]
         # - Audit logging
         # - Workflow triggers
         # - Parent tuple creation
-        # Note: We pass if_match to write() for additional safety
-        return self.sys_write(
+        # Delegate to Tier 2 write() which handles CAS transitionally.
+        # CAS params (if_match, force) are transitional on write() —
+        # will be extracted to driver layer by #1323.
+        return self.write(
             path,
             final_content,
             context=context,
             if_match=if_match,
-            if_none_match=False,  # Allow both create and update
             force=force,
         )
 
@@ -3040,6 +3079,7 @@ class NexusFS(  # type: ignore[misc]
         self,
         path: str,
         edits: list[tuple[str, str]] | list[dict[str, Any]] | list[Any],
+        *,
         context: OperationContext | None = None,
         if_match: str | None = None,
         fuzzy_threshold: float = 0.85,
@@ -3098,7 +3138,7 @@ class NexusFS(  # type: ignore[misc]
             >>> print(result['diff'])
 
             >>> # With optimistic concurrency
-            >>> content = nx.sys_read("/code/main.py", return_metadata=True)
+            >>> content = nx.read("/code/main.py", return_metadata=True)
             >>> result = nx.edit(
             ...     "/code/main.py",
             ...     [("old_text", "new_text")],
@@ -3120,8 +3160,8 @@ class NexusFS(  # type: ignore[misc]
 
         path = self._validate_path(path)
 
-        # Read current content with metadata
-        result = self.sys_read(path, context=context, return_metadata=True)
+        # Read current content with metadata (via Tier 2 convenience)
+        result = self.read(path, context=context, return_metadata=True)
         assert isinstance(result, dict), "Expected dict when return_metadata=True"
 
         content_bytes: bytes = result["content"]
@@ -3218,13 +3258,14 @@ class NexusFS(  # type: ignore[misc]
                 "new_content": edit_result.content,
             }
 
-        # Write the edited content
+        # Write the edited content via Tier 2 write().
+        # CAS (if_match) is transitional — will be extracted by #1323.
         new_content_bytes = edit_result.content.encode("utf-8")
-        write_result = self.sys_write(
+        write_result = self.write(
             path,
             new_content_bytes,
             context=context,
-            if_match=current_etag,  # Use current etag for safety
+            if_match=current_etag,  # Prevent lost updates
         )
 
         return {

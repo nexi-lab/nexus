@@ -141,53 +141,26 @@ async def handle_read_async(
         if result:
             return result
 
-    # If not parsed, use sync read in thread with timeout
-    if not parsed:
-        read_result: bytes | dict[str, Any] = await to_thread_with_timeout(
+    # If not parsed and no metadata, use plain sys_read (Tier 1)
+    if not parsed and not return_metadata:
+        read_result: bytes = await to_thread_with_timeout(
             nexus_fs.sys_read,
             params.path,
-            context,
-            return_metadata,
-            False,
+            context=context,
         )
-        if isinstance(read_result, dict):
-            read_result = unscope_internal_dict(read_result, ["path", "virtual_path"])
         return read_result
 
-    # For parsed reads, read raw content with timeout first
-    raw_result = await to_thread_with_timeout(
-        nexus_fs.sys_read,
+    # For metadata and/or parsed reads, use read() (Tier 2 convenience)
+    read_result_rich: bytes | dict[str, Any] = await to_thread_with_timeout(
+        nexus_fs.read,
         params.path,
-        context,
-        True,
-        False,
+        context=context,
+        return_metadata=return_metadata,
+        parsed=parsed,
     )
-
-    content = raw_result.get("content", b"") if isinstance(raw_result, dict) else raw_result
-
-    # Parse the content asynchronously
-    if hasattr(nexus_fs, "_get_parsed_content_async"):
-        parsed_content, parse_info = await nexus_fs._get_parsed_content_async(params.path, content)
-    else:
-        parsed_content, parse_info = await to_thread_with_timeout(
-            nexus_fs._get_parsed_content, params.path, content
-        )
-
-    if return_metadata:
-        result = {
-            "content": parsed_content,
-            "parsed": parse_info.get("parsed", False),
-            "provider": parse_info.get("provider"),
-            "cached": parse_info.get("cached", False),
-        }
-        if isinstance(raw_result, dict):
-            result["etag"] = raw_result.get("etag")
-            result["version"] = raw_result.get("version")
-            result["modified_at"] = raw_result.get("modified_at")
-            result["size"] = len(parsed_content)
-        return result
-
-    return parsed_content
+    if isinstance(read_result_rich, dict):
+        read_result_rich = unscope_internal_dict(read_result_rich, ["path", "virtual_path"])
+    return read_result_rich
 
 
 # ---------------------------------------------------------------------------
@@ -196,7 +169,12 @@ async def handle_read_async(
 
 
 def handle_write(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
-    """Handle write method."""
+    """Handle write method.
+
+    Uses write() (Tier 2 convenience) which supports OCC params
+    (if_match, if_none_match, force) and distributed locking.
+    Returns dict with bytes_written plus metadata from write().
+    """
     content = params.content
     if isinstance(content, str):
         content = content.encode("utf-8")
@@ -215,8 +193,13 @@ def handle_write(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, An
     if lock_timeout_val is not None and lock_timeout_val != 30.0:
         kwargs["lock_timeout"] = lock_timeout_val
 
-    bytes_written = nexus_fs.sys_write(params.path, content, **kwargs)
-    return {"bytes_written": bytes_written}
+    write_result = nexus_fs.write(params.path, content, **kwargs)
+    # write() returns dict with metadata (etag, version, modified_at, size).
+    # Merge bytes_written into the response for backward compatibility.
+    result: dict[str, Any] = {"bytes_written": len(content)}
+    if isinstance(write_result, dict):
+        result.update(write_result)
+    return result
 
 
 def handle_exists(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:

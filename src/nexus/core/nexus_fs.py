@@ -2497,6 +2497,7 @@ class NexusFS(  # type: ignore[misc]
 
     # ── Tier 2 overrides (NexusFS-specific) ───────────────────────
 
+    @rpc_expose(description="Read file with optional metadata/parsed content")
     def read(
         self,
         path: str,
@@ -2551,6 +2552,7 @@ class NexusFS(  # type: ignore[misc]
             result["provider"] = parse_info.get("provider")
         return result
 
+    @rpc_expose(description="Write file with optional lock/OCC")
     def write(
         self,
         path: str,

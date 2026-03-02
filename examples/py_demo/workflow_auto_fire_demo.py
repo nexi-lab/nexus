@@ -212,7 +212,7 @@ actions:
     unique_id = random.randint(1000, 9999)
     invoice_filename = f"invoice-{unique_id}.pdf"
     invoice_path = f"/uploads/invoices/{invoice_filename}"
-    result = nx.sys_write(invoice_path, invoice_data)
+    result = nx.write(invoice_path, invoice_data)
     print(f"   ✅ Written: {result['etag'][:16]}... ({result['size']} bytes)")
     print("   🔄 Workflow 'invoice-auto-tagger' should have fired!")
 
@@ -222,7 +222,7 @@ actions:
     # Test 2: Upload receipt (pattern won't match, no workflow)
     print("\n2️⃣  Uploading receipt (no matching workflow)...")
     receipt_data = b"Receipt content"
-    result = nx.sys_write("/uploads/receipts/receipt-001.txt", receipt_data)
+    result = nx.write("/uploads/receipts/receipt-001.txt", receipt_data)
     print(f"   ✅ Written: {result['etag'][:16]}... ({result['size']} bytes)")
     print("   ℹ️  No workflow pattern matches this file")
 

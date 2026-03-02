@@ -199,11 +199,12 @@ def _boot_system_services(
     # --- Workspace Registry ---
     workspace_registry: Any = None
     try:
-        from nexus.services.workspace.workspace_registry import WorkspaceRegistry
+        from nexus.bricks.workspace.workspace_registry import WorkspaceRegistry
 
         workspace_registry = WorkspaceRegistry(
             metadata=ctx.metadata_store,
             rebac_manager=rebac_manager,
+            record_store=ctx.record_store,
         )
         logger.debug("[BOOT:SYSTEM] WorkspaceRegistry created")
     except Exception as exc:

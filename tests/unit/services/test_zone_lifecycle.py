@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from nexus.contracts.protocols.zone_lifecycle import ZonePhase
-from nexus.services.zone_lifecycle import ZoneLifecycleService
+from nexus.system_services.lifecycle.zone_lifecycle import ZoneLifecycleService
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -208,7 +208,7 @@ class TestPartialFailure:
         session = _make_session(zone)
 
         # Patch the timeout to be short for test
-        with patch("nexus.services.zone_lifecycle._FINALIZER_TIMEOUT_S", 0.01):
+        with patch("nexus.system_services.lifecycle.zone_lifecycle._FINALIZER_TIMEOUT_S", 0.01):
             result = await svc.deprovision_zone("test-zone", session)
 
         assert result.phase == ZonePhase.TERMINATING

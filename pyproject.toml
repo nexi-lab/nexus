@@ -895,14 +895,14 @@ ignore_imports = [
 unmatched_ignore_imports_alerting = "warn"
 
 # Contract 2: Four-tier layered architecture
-# tier-neutral (lib, contracts) < kernel (core) < services < bricks
+# tier-neutral (lib, contracts) < kernel (core) < system_services < bricks
 [[tool.importlinter.contracts]]
 id = "four-tier-layers"
-name = "Four-tier architecture: tier-neutral < kernel < services < bricks"
+name = "Four-tier architecture: tier-neutral < kernel < system_services < bricks"
 type = "layers"
 layers = [
     "nexus.bricks",
-    "nexus.services",
+    "nexus.system_services",
     "nexus.core",
     "nexus.contracts | nexus.lib",
 ]

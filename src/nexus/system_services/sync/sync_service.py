@@ -36,7 +36,7 @@ from .change_log_store import ChangeLogEntry, ChangeLogStore
 if TYPE_CHECKING:
     from nexus.backends.backend import FileInfo
     from nexus.contracts.types import OperationContext
-    from nexus.services.gateway import NexusFSGateway
+    from nexus.system_services.gateway import NexusFSGateway
 
 logger = logging.getLogger(__name__)
 

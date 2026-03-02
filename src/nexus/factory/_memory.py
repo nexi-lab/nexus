@@ -93,7 +93,7 @@ def create_memory_service(nx: Any) -> Any:
                     graph_store_class=_graph_store_class,
                 )
 
-        from nexus.services.memory_service import MemoryService
+        from nexus.bricks.memory.memory_service import MemoryService
 
         default_ctx = getattr(nx, "_default_context", None)
         if default_ctx is None:

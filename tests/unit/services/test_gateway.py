@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from nexus.contracts.types import OperationContext
-from nexus.services.gateway import NexusFSGateway
+from nexus.system_services.gateway import NexusFSGateway
 
 # =============================================================================
 # Fixtures

@@ -4,7 +4,7 @@ Defines the contract for adaptive-k computation — dynamically adjusting the
 number of search results based on query complexity.
 
 The canonical implementation is ``ContextBuilder.calculate_k_dynamic()``
-in ``nexus.services.llm_context_builder``.  The search brick depends on
+in ``nexus.bricks.llm.llm_context_builder``.  The search brick depends on
 this protocol (not the concrete service) to satisfy LEGO Principle 3.
 
 References:

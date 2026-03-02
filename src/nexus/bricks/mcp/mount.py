@@ -148,7 +148,7 @@ class MCPMountManager:
         try:
             self._load_mounts_from_folders()
         except Exception as e:
-            logger.warning(f"Failed to load mount configurations: {e}")
+            logger.warning("Failed to load mount configurations: %s", e)
 
     def _load_mounts_from_folders(self) -> bool:
         """Load mounts from per-folder mount.json files.
@@ -184,9 +184,9 @@ class MCPMountManager:
                             mount.mounted = False
                             self._mounts[mount.name] = mount
                             loaded_any = True
-                            logger.debug(f"Loaded mount config from {mount_json_path}")
+                            logger.debug("Loaded mount config from %s", mount_json_path)
                     except Exception as e:
-                        logger.warning(f"Failed to load mount from {mount_json_path}: {e}")
+                        logger.warning("Failed to load mount from %s: %s", mount_json_path, e)
             else:
                 # Local filesystem
                 base_path = Path(self.MCP_TOOLS_PATH.lstrip("/"))
@@ -203,12 +203,14 @@ class MCPMountManager:
                                 mount.mounted = False
                                 self._mounts[mount.name] = mount
                                 loaded_any = True
-                                logger.debug(f"Loaded mount config from {mount_json_file}")
+                                logger.debug("Loaded mount config from %s", mount_json_file)
                             except Exception as e:
-                                logger.warning(f"Failed to load mount from {mount_json_file}: {e}")
+                                logger.warning(
+                                    "Failed to load mount from %s: %s", mount_json_file, e
+                                )
 
         except Exception as e:
-            logger.warning(f"Error scanning for mount configs: {e}")
+            logger.warning("Error scanning for mount configs: %s", e)
 
         return loaded_any
 
@@ -247,9 +249,9 @@ class MCPMountManager:
                 mount_path.parent.mkdir(parents=True, exist_ok=True)
                 mount_path.write_text(content)
 
-            logger.debug(f"Saved mount config: {mount.name}")
+            logger.debug("Saved mount config: %s", mount.name)
         except Exception as e:
-            logger.error(f"Failed to save mount config for {mount.name}: {e}")
+            logger.error("Failed to save mount config for %s: %s", mount.name, e)
 
     async def mount(self, mount_config: MCPMount) -> bool:
         """Mount an external MCP server.
@@ -298,7 +300,7 @@ class MCPMountManager:
             # Sync tools from the server
             await self.sync_tools(mount_config.name)
 
-            logger.info(f"Mounted MCP server: {mount_config.name}")
+            logger.info("Mounted MCP server: %s", mount_config.name)
             return True
 
         except Exception as e:
@@ -412,7 +414,7 @@ class MCPMountManager:
                 if hasattr(client, "close"):
                     await client.close()
             except Exception as e:
-                logger.warning(f"Error closing client for {name}: {e}")
+                logger.warning("Error closing client for %s: %s", name, e)
             finally:
                 del self._clients[name]
 
@@ -422,7 +424,7 @@ class MCPMountManager:
 
         self._save_mounts_config()
 
-        logger.info(f"Unmounted MCP server: {name}")
+        logger.info("Unmounted MCP server: %s", name)
         return True
 
     async def sync_tools(self, name: str) -> int:
@@ -464,7 +466,7 @@ class MCPMountManager:
                 tool_names.append(tool_def.name)
                 tool_defs.append(tool_def)
             except Exception as e:
-                logger.warning(f"Failed to store tool {tool.get('name')}: {e}")
+                logger.warning("Failed to store tool %s: %s", tool.get("name"), e)
 
         # Store single SKILL.md for the mount
         if tool_defs:
@@ -476,7 +478,7 @@ class MCPMountManager:
         mount.tools = tool_names
         self._save_mounts_config()
 
-        logger.info(f"Synced {tool_count} tools from {name}")
+        logger.info("Synced %d tools from %s", tool_count, name)
         return tool_count
 
     async def _list_tools_from_server(self, mount: MCPMount) -> list[dict[str, Any]]:
@@ -553,7 +555,7 @@ class MCPMountManager:
                     for tool in result.tools
                 ]
         except Exception as e:
-            logger.error(f"Failed to list tools via stdio: {e}")
+            logger.error("Failed to list tools via stdio: %s", e)
             raise
 
         return tools
@@ -606,7 +608,7 @@ class MCPMountManager:
                     for tool in result.tools
                 ]
         except Exception as e:
-            logger.error(f"Failed to list tools via SSE: {e}")
+            logger.error("Failed to list tools via SSE: %s", e)
             raise
 
         return tools
@@ -673,10 +675,10 @@ class MCPMountManager:
                 ]
 
         except httpx.HTTPStatusError as e:
-            logger.error(f"Klavis API HTTP error: {e}")
+            logger.error("Klavis API HTTP error: %s", e)
             raise MCPMountError(f"Klavis API error: {e}") from e
         except Exception as e:
-            logger.error(f"Failed to list tools via Klavis: {e}")
+            logger.error("Failed to list tools via Klavis: %s", e)
             raise
 
         return tools
@@ -746,10 +748,10 @@ class MCPMountManager:
                 return call_result
 
         except httpx.HTTPStatusError as e:
-            logger.error(f"Klavis API HTTP error: {e}")
+            logger.error("Klavis API HTTP error: %s", e)
             raise MCPMountError(f"Klavis API error: {e}") from e
         except Exception as e:
-            logger.error(f"Failed to call tool via Klavis: {e}")
+            logger.error("Failed to call tool via Klavis: %s", e)
             raise MCPMountError(f"Klavis tool call failed: {e}") from e
 
     def _create_tool_definition(
@@ -826,7 +828,7 @@ class MCPMountManager:
                 tools_dir.mkdir(parents=True, exist_ok=True)
                 (tools_dir / f"{tool_def.name}.json").write_text(tool_json)
 
-        logger.debug(f"Stored tool definition: {tool_def.name}")
+        logger.debug("Stored tool definition: %s", tool_def.name)
         return tool_json_path
 
     async def _store_mount_skill_md(
@@ -859,7 +861,7 @@ class MCPMountManager:
                 tools_dir.mkdir(parents=True, exist_ok=True)
                 (tools_dir / "SKILL.md").write_text(skill_md)
 
-        logger.debug(f"Stored mount SKILL.md: {mount.name}")
+        logger.debug("Stored mount SKILL.md: %s", mount.name)
         return skill_md_path
 
     def _generate_mount_skill_md(self, mount: MCPMount, tool_defs: list[MCPToolDefinition]) -> str:
@@ -1004,7 +1006,7 @@ class MCPMountManager:
             count = self._discover_mounts_from_tier(tier, tier_path, seen_names)
             discovered_count += count
 
-        logger.info(f"Discovered {discovered_count} mounts from {len(tier_paths)} tiers")
+        logger.info("Discovered %d mounts from %d tiers", discovered_count, len(tier_paths))
         return discovered_count
 
     def _discover_mounts_from_tier(
@@ -1030,7 +1032,7 @@ class MCPMountManager:
             if self._filesystem:
                 # Check if path exists
                 if not self._filesystem.sys_access(tier_path):
-                    logger.debug(f"MCP tier path does not exist: {tier_path}")
+                    logger.debug("MCP tier path does not exist: %s", tier_path)
                     return 0
 
                 # List directories in tier_path
@@ -1056,8 +1058,10 @@ class MCPMountManager:
                                 existing_priority = seen_names[mount.name]
                                 if tier_priority <= existing_priority:
                                     logger.debug(
-                                        f"Skipping mount '{mount.name}' from {tier} "
-                                        f"(already loaded from higher priority tier)"
+                                        "Skipping mount '%s' from %s "
+                                        "(already loaded from higher priority tier)",
+                                        mount.name,
+                                        tier,
                                     )
                                     continue
 
@@ -1068,17 +1072,20 @@ class MCPMountManager:
                             seen_names[mount.name] = tier_priority
                             count += 1
                             logger.debug(
-                                f"Discovered mount '{mount.name}' from {tier}: {mount_json_path}"
+                                "Discovered mount '%s' from %s: %s",
+                                mount.name,
+                                tier,
+                                mount_json_path,
                             )
 
                     except Exception as e:
-                        logger.warning(f"Failed to load mount from {mount_json_path}: {e}")
+                        logger.warning("Failed to load mount from %s: %s", mount_json_path, e)
 
             else:
                 # Local filesystem
                 base_path = Path(tier_path.lstrip("/"))
                 if not base_path.exists():
-                    logger.debug(f"MCP tier path does not exist: {tier_path}")
+                    logger.debug("MCP tier path does not exist: %s", tier_path)
                     return 0
 
                 for mount_dir in base_path.iterdir():
@@ -1095,8 +1102,10 @@ class MCPMountManager:
                                     existing_priority = seen_names[mount.name]
                                     if tier_priority <= existing_priority:
                                         logger.debug(
-                                            f"Skipping mount '{mount.name}' from {tier} "
-                                            f"(already loaded from higher priority tier)"
+                                            "Skipping mount '%s' from %s "
+                                            "(already loaded from higher priority tier)",
+                                            mount.name,
+                                            tier,
                                         )
                                         continue
 
@@ -1106,14 +1115,19 @@ class MCPMountManager:
                                 seen_names[mount.name] = tier_priority
                                 count += 1
                                 logger.debug(
-                                    f"Discovered mount '{mount.name}' from {tier}: {mount_json_file}"
+                                    "Discovered mount '%s' from %s: %s",
+                                    mount.name,
+                                    tier,
+                                    mount_json_file,
                                 )
 
                             except Exception as e:
-                                logger.warning(f"Failed to load mount from {mount_json_file}: {e}")
+                                logger.warning(
+                                    "Failed to load mount from %s: %s", mount_json_file, e
+                                )
 
         except Exception as e:
-            logger.warning(f"Error scanning MCP tier {tier} at {tier_path}: {e}")
+            logger.warning("Error scanning MCP tier %s at %s: %s", tier, tier_path, e)
 
         return count
 
@@ -1212,4 +1226,4 @@ class MCPMountManager:
         self._mounts[mount_config.name] = mount_config
         self._save_mounts_config()
 
-        logger.info(f"Added mount configuration: {mount_config.name}")
+        logger.info("Added mount configuration: %s", mount_config.name)

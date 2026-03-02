@@ -11,13 +11,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nexus.contracts.types import OperationContext
-from nexus.services.search.search_service import (
+from nexus.bricks.search.search_service import (
     DEFAULT_IGNORE_PATTERNS,
     SearchService,
     _filter_ignored_paths,
     _should_ignore_path,
 )
+from nexus.contracts.types import OperationContext
 
 # =============================================================================
 # Fixtures

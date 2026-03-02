@@ -212,7 +212,7 @@ class TestBackwardCompatibility:
         assert GREP_PARALLEL_WORKERS == 4  # FULL profile default
 
     def test_list_parallel_workers_constant(self) -> None:
-        from nexus.services.search.search_service import LIST_PARALLEL_WORKERS
+        from nexus.bricks.search.search_service import LIST_PARALLEL_WORKERS
 
         assert LIST_PARALLEL_WORKERS == 10  # FULL profile default
 
@@ -243,7 +243,7 @@ class TestDIWiring:
         """SearchService constructor accepts custom parallel worker counts."""
         from unittest.mock import MagicMock
 
-        from nexus.services.search.search_service import SearchService
+        from nexus.bricks.search.search_service import SearchService
 
         svc = SearchService(
             metadata_store=MagicMock(),

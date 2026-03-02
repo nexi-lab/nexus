@@ -322,7 +322,7 @@ class TestServiceInstantiation:
 
     def test_version_service_construction(self, benchmark):
         """Benchmark VersionService construction."""
-        from nexus.services.versioning.version_service import VersionService
+        from nexus.bricks.versioning.version_service import VersionService
 
         mock_metadata = MagicMock()
         mock_cas = MagicMock()

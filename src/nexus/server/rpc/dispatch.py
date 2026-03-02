@@ -108,11 +108,12 @@ def build_dispatch_table() -> dict[str, DispatchEntry]:
         "sys_stat": DispatchEntry(handle_get_metadata),
         "sys_setattr": DispatchEntry(handle_set_metadata),
         "sys_is_directory": DispatchEntry(handle_is_directory),
-        # Short aliases (backward-compat with nexus-test and CLI clients)
+        # Short aliases for nexus-test / remote clients
         "read": DispatchEntry(handle_read_async, is_async=True),
         "write": DispatchEntry(
             handle_write, event_type="file_write", event_size_key="bytes_written"
         ),
+        "exists": DispatchEntry(handle_exists),
         "list": DispatchEntry(handle_list),
         "delete": DispatchEntry(handle_delete, event_type="file_delete"),
         "mkdir": DispatchEntry(handle_mkdir, event_type="dir_create"),
@@ -123,6 +124,7 @@ def build_dispatch_table() -> dict[str, DispatchEntry]:
             event_path_attr="new_path",
             event_old_path_attr="old_path",
         ),
+        "is_directory": DispatchEntry(handle_is_directory),
         # User-space utilities (not syscalls, but dispatched via RPC)
         "glob": DispatchEntry(handle_glob),
         "grep": DispatchEntry(handle_grep),

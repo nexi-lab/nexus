@@ -17,7 +17,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
-from nexus.server.path_utils import unscope_internal_path
+from nexus.lib.path_utils import unscope_internal_path
 
 if TYPE_CHECKING:
     from nexus.bricks.rebac.manager import ReBACManager

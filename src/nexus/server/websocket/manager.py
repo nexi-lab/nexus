@@ -156,7 +156,7 @@ class WebSocketManager:
         async with self._lock:
             for zone_connections in self._connections.values():
                 for conn_info in zone_connections.values():
-                    with suppress(Exception):
+                    with suppress(Exception):  # Best-effort close during shutdown
                         await conn_info.websocket.close(code=1001, reason="Server shutting down")
             self._connections.clear()
             self._connection_to_zone.clear()
@@ -499,7 +499,7 @@ class WebSocketManager:
 
                 # Disconnect stale connections
                 for conn_id in stale_connections:
-                    with suppress(Exception):
+                    with suppress(Exception):  # Best-effort close of stale connection
                         stale_zone_id = self._connection_to_zone.get(conn_id)
                         if stale_zone_id:
                             stale_conn = self._connections.get(stale_zone_id, {}).get(conn_id)

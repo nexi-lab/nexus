@@ -43,7 +43,7 @@ from nexus.contracts.protocols.brick_lifecycle import (
     ZoneDeprovisionReport,
     ZoneState,
 )
-from nexus.services._tracing import lazy_tracer, record_span_result
+from nexus.lib.tracing import lazy_tracer, record_span_result
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ DEFAULT_START_TIMEOUT: float = 5.0
 
 # ---------------------------------------------------------------------------
 # OTel tracing — zero-overhead when telemetry is not enabled
-# Shared implementation in nexus.services._tracing
+# Shared implementation in nexus.lib.tracing
 # ---------------------------------------------------------------------------
 
 _get_tracer, _lifecycle_span = lazy_tracer("nexus.brick_lifecycle")

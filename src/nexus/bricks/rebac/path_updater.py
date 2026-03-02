@@ -62,7 +62,7 @@ class PathUpdater:
         # (e.g., /workspace/...) while rename operations may pass
         # zone-scoped paths (e.g., /zone/default/workspace/...).
         try:
-            from nexus.server.path_utils import unscope_internal_path
+            from nexus.lib.path_utils import unscope_internal_path
 
             old_path = unscope_internal_path(old_path)
             new_path = unscope_internal_path(new_path)

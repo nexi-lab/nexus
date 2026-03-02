@@ -372,3 +372,16 @@ class AuditConfig:
     """
 
     strict_mode: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class WriteResult:
+    """Result of a content write operation.
+
+    Attributes:
+        content_hash: SHA-256 hex digest of the written content.
+        size: Content size in bytes (0 = unknown / not tracked).
+    """
+
+    content_hash: str
+    size: int = 0

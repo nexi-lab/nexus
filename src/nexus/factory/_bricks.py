@@ -445,7 +445,7 @@ def _boot_independent_bricks(
     # --- VersionService (Issue #2034: moved from kernel to brick tier) ---
     version_service: Any = None
     try:
-        from nexus.services.versioning.version_service import VersionService
+        from nexus.bricks.versioning.version_service import VersionService
 
         version_service = VersionService(
             metadata_store=ctx.metadata_store,

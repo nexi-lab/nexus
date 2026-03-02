@@ -41,9 +41,10 @@ from nexus.contracts.exceptions import (
     NexusPermissionError,
     ValidationError,
 )
+from nexus.contracts.rpc_types import RPCErrorCode
 from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
 from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
-from nexus.server.protocol import RPCErrorCode, parse_method_params
+from nexus.server.protocol import parse_method_params
 
 logger = logging.getLogger(__name__)
 

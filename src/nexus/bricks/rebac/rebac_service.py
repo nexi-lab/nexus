@@ -1123,8 +1123,8 @@ class ReBACService(ReBACShareMixin):
             try:
                 await self._run_in_thread(self._rebac_manager.rebac_delete, obj_id)
                 deleted += 1
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Best-effort cleanup failed for object '%s': %s", obj_id, exc)
         return deleted
 
     # =========================================================================

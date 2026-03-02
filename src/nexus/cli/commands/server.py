@@ -1189,10 +1189,9 @@ def serve(
                                 console.print(f"  [dim]Deleted {count} rows from {name}[/dim]")
                         except Exception:
                             trans.rollback()
-                            # Ignore table doesn't exist errors
-                            pass
-                except Exception:
-                    pass
+                            # Table might not exist — non-fatal
+                except Exception as e:
+                    console.print(f"  [dim]DB cleanup error: {e}[/dim]")
 
             total = sum(deleted_counts.values())
             if total > 0:

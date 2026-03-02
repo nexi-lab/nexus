@@ -16,13 +16,17 @@ from __future__ import annotations
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+from nexus.contracts.types import WriteResult
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
 
 _HASH_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+
+# Re-export WriteResult for backward compatibility — canonical home is contracts.types
+__all__ = ["ObjectStoreABC", "WriteResult", "_validate_hash"]
 
 
 def _validate_hash(content_hash: str) -> None:
@@ -39,19 +43,6 @@ def _validate_hash(content_hash: str) -> None:
             f"Invalid SHA-256 content hash: {content_hash!r} "
             f"(expected 64-character lowercase hex string)"
         )
-
-
-@dataclass(frozen=True, slots=True)
-class WriteResult:
-    """Result of a content write operation.
-
-    Attributes:
-        content_hash: SHA-256 hex digest of the written content.
-        size: Content size in bytes (0 = unknown / not tracked).
-    """
-
-    content_hash: str
-    size: int = 0
 
 
 class ObjectStoreABC(ABC):

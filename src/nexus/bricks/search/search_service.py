@@ -12,7 +12,6 @@ Extracted from: nexus_fs_search.py (2,817 lines)
 import asyncio
 import builtins
 import fnmatch
-import importlib as _il
 import logging
 import os
 import re
@@ -23,6 +22,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from cachetools import TTLCache
 
+from nexus.bricks.search.primitives import glob_fast, grep_fast, trigram_fast
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import PermissionDeniedError
 from nexus.contracts.search_types import (
@@ -38,15 +38,6 @@ from nexus.contracts.search_types import (
 )
 from nexus.contracts.types import Permission
 from nexus.lib.rpc_decorator import rpc_expose
-from nexus.services.gateway import NexusFSGateway
-
-from .search_semantic import SemanticSearchMixin
-
-# Brick import via importlib to avoid services→bricks tier violation
-_search_primitives = _il.import_module("nexus.bricks.search.primitives")
-glob_fast = _search_primitives.glob_fast
-grep_fast = _search_primitives.grep_fast
-trigram_fast = _search_primitives.trigram_fast
 
 # List directory traversal thresholds (Issue #901)
 # Issue #2071: LIST_PARALLEL_WORKERS now sourced from ProfileTuning.search.list_parallel_workers
@@ -124,16 +115,34 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from nexus.bricks.rebac.enforcer import PermissionEnforcer
     from nexus.bricks.rebac.manager import ReBACManager
+    from nexus.bricks.search.indexing_service import IndexingService
+    from nexus.bricks.search.pipeline_indexer import PipelineIndexer
+    from nexus.bricks.search.query_service import QueryService
     from nexus.contracts.types import OperationContext
     from nexus.core.metastore import MetastoreABC
     from nexus.core.router import PathRouter
+    from nexus.services.gateway import NexusFSGateway
 
 
-class SearchService(SemanticSearchMixin):
+def _result_to_dict(r: Any) -> dict[str, Any]:
+    """Convert a BaseSearchResult to a canonical dict."""
+    return {
+        "path": r.path,
+        "chunk_index": r.chunk_index,
+        "chunk_text": r.chunk_text,
+        "score": r.score,
+        "start_offset": r.start_offset,
+        "end_offset": r.end_offset,
+        "line_start": r.line_start,
+        "line_end": r.line_end,
+    }
+
+
+class SearchService:
     """Independent search service extracted from NexusFS.
 
     Handles file listing, glob matching, grep, and semantic search.
-    Semantic search methods are provided by SemanticSearchMixin.
+    Semantic search methods (formerly in SemanticSearchMixin) are inlined.
 
     Uses adaptive algorithm selection (Issue #929) to choose optimal
     strategies based on data characteristics. No direct filesystem
@@ -150,7 +159,7 @@ class SearchService(SemanticSearchMixin):
         default_context: "OperationContext | None" = None,
         record_store: Any | None = None,
         # Gateway for NexusFS operations (Issue #1287, replaces 8 Callable params)
-        gateway: NexusFSGateway | None = None,
+        gateway: "NexusFSGateway | None" = None,
         list_parallel_workers: int = LIST_PARALLEL_WORKERS,
         grep_parallel_workers: int = GREP_PARALLEL_WORKERS,
         file_cache: Any | None = None,
@@ -183,7 +192,11 @@ class SearchService(SemanticSearchMixin):
         # Gateway for NexusFS operations (Issue #1287)
         self._gw = gateway
 
-        # Semantic search (initialized later, types declared in SemanticSearchMixin)
+        # Semantic search (initialized later via ainitialize_semantic_search)
+        self._query_service: QueryService | None = None
+        self._indexing_service: IndexingService | None = None
+        self._indexing_pipeline: Any = None
+        self._pipeline_indexer: PipelineIndexer | None = None
 
         # Shared thread pool for parallel grep (Issue #929, fix #14)
         self._thread_pool: ThreadPoolExecutor | None = None
@@ -242,8 +255,8 @@ class SearchService(SemanticSearchMixin):
                         prefixes.add(f"{top}/")
                 if prefixes:
                     return tuple(sorted(prefixes))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Mount prefix detection failed, using defaults: %s", e)
         return ("workspace/", "shared/", "external/", "system/", "archives/")
 
     def _should_prepend_recursive_wildcard(self, pattern: str) -> bool:
@@ -382,7 +395,7 @@ class SearchService(SemanticSearchMixin):
                 context=context,
             )
         # Phase 2 Integration (v0.4.0): Intercept memory paths
-        MemoryViewRouter = _il.import_module("nexus.bricks.memory.router").MemoryViewRouter
+        from nexus.bricks.memory.router import MemoryViewRouter
 
         if path and MemoryViewRouter.is_memory_path(path):
             return self._list_memory_path(path, details)
@@ -1381,8 +1394,8 @@ class SearchService(SemanticSearchMixin):
             logger.warning("session_factory not provided, cannot list memory paths")
             return []
 
-        MemoryViewRouter = _il.import_module("nexus.bricks.memory.router").MemoryViewRouter
-        EntityRegistry = _il.import_module("nexus.bricks.rebac.entity_registry").EntityRegistry
+        from nexus.bricks.memory.router import MemoryViewRouter
+        from nexus.bricks.rebac.entity_registry import EntityRegistry
 
         parts = [p for p in path.split("/") if p]
         session = self._gw_session_factory()
@@ -2318,6 +2331,195 @@ class SearchService(SemanticSearchMixin):
         Raises:
             InvalidPathError: If path is invalid
         """
-        from nexus.core.path_utils import validate_path
+        from nexus.lib.path_utils import validate_path
 
         return validate_path(path, allow_root=True)
+
+    # =========================================================================
+    # Semantic Search (inlined from SemanticSearchMixin, Issue #1287, #2075)
+    # =========================================================================
+
+    @property
+    def _has_search_engine(self) -> bool:
+        """Check if a search engine is available."""
+        return self._query_service is not None
+
+    def _require_search_engine(self) -> None:
+        """Raise ValueError if no search engine is initialized."""
+        if not self._has_search_engine:
+            raise ValueError(
+                "Semantic search is not initialized. "
+                "Initialize with: await search.initialize_semantic_search()"
+            )
+
+    async def ainitialize_semantic_search(
+        self,
+        *,
+        nx: Any,
+        record_store_engine: Any,  # noqa: ARG002
+        embedding_provider: str | None = None,
+        embedding_model: str | None = None,
+        api_key: str | None = None,
+        chunk_size: int = 1024,
+        chunk_strategy: str = "semantic",
+        async_mode: bool = True,  # noqa: ARG002
+        cache_url: str | None = None,
+        embedding_cache_ttl: int = 86400 * 3,
+    ) -> None:
+        """Initialize semantic search engine (NexusFS path).
+
+        Delegates to factory helper for component creation (Issue #2075, DRY).
+        """
+        from nexus.factory._semantic_search import create_semantic_search_components
+
+        if self._record_store is None:
+            raise RuntimeError("Semantic search requires RecordStore (SQL engine)")
+
+        components = await create_semantic_search_components(
+            record_store=self._record_store,
+            embedding_provider=embedding_provider,
+            embedding_model=embedding_model,
+            api_key=api_key,
+            chunk_size=chunk_size,
+            chunk_strategy=chunk_strategy,
+            cache_url=cache_url,
+            embedding_cache_ttl=embedding_cache_ttl,
+            nx=nx,
+        )
+        self._query_service = components.query_service
+        self._indexing_service = components.indexing_service
+        self._indexing_pipeline = components.indexing_pipeline
+        self._pipeline_indexer = components.pipeline_indexer
+
+    @rpc_expose(description="Search documents using natural language queries")
+    async def semantic_search(
+        self,
+        query: str,
+        path: str = "/",
+        limit: int = 10,
+        filters: dict[str, Any] | None = None,  # noqa: ARG002
+        search_mode: str = "semantic",
+        adaptive_k: bool = False,
+    ) -> builtins.list[dict[str, Any]]:
+        """Search documents using natural language queries.
+
+        Args:
+            query: Natural language query
+            path: Root path to search
+            limit: Maximum number of results
+            filters: Optional filters (currently unused)
+            search_mode: "keyword", "semantic", or "hybrid"
+            adaptive_k: If True, dynamically adjust limit (Issue #1021)
+
+        Raises:
+            ValueError: If semantic search is not initialized
+        """
+        self._require_search_engine()
+
+        if self._query_service is None:
+            raise ValueError("Semantic search not properly initialized")
+
+        results = await self._query_service.search(
+            query=query,
+            path=path,
+            limit=limit,
+            search_mode=search_mode,
+            adaptive_k=adaptive_k,
+        )
+        return [_result_to_dict(r) for r in results]
+
+    @rpc_expose(description="Index documents for semantic search")
+    async def semantic_search_index(
+        self,
+        path: str = "/",
+        recursive: bool = True,
+    ) -> dict[str, int]:
+        """Index documents for semantic search.
+
+        Args:
+            path: Path to index (file or directory)
+            recursive: If True, index directory recursively
+
+        Returns:
+            Dictionary mapping file paths to number of chunks indexed
+
+        Raises:
+            ValueError: If semantic search is not initialized
+        """
+        self._require_search_engine()
+
+        # Prefer IndexingService (Issue #2075)
+        if self._indexing_service is not None:
+            try:
+                num_chunks = await self._indexing_service.index_document(path)
+                return {path: num_chunks}
+            except ValueError:
+                # path is a directory or doesn't exist as single file
+                pass
+
+            if recursive:
+                idx_results = await self._indexing_service.index_directory(path)
+                return {p: r.chunks_indexed for p, r in idx_results.items()}
+            return {}
+
+        # Fallback: pipeline-based bulk indexing (RPC path without nx)
+        if self._pipeline_indexer is not None:
+            return await self._pipeline_indexer.index_path(path, recursive)
+        return {}
+
+    @rpc_expose(description="Get semantic search indexing statistics")
+    async def semantic_search_stats(self) -> dict[str, Any]:
+        """Get semantic search indexing statistics.
+
+        Raises:
+            ValueError: If semantic search is not initialized
+        """
+        self._require_search_engine()
+
+        if self._indexing_service is not None:
+            return await self._indexing_service.get_index_stats()
+
+        raise ValueError("Semantic search not properly initialized")
+
+    @rpc_expose(description="Initialize semantic search engine")
+    async def initialize_semantic_search(
+        self,
+        embedding_provider: str | None = None,
+        embedding_model: str | None = None,
+        api_key: str | None = None,
+        chunk_size: int = 1024,
+        chunk_strategy: str = "semantic",
+        async_mode: bool = True,  # noqa: ARG002
+        contextual_chunking: bool = False,  # noqa: ARG002
+        context_generator: Any | None = None,  # noqa: ARG002
+        cache_url: str | None = None,
+        embedding_cache_ttl: int = 86400 * 3,
+    ) -> None:
+        """Initialize semantic search engine with embedding provider (RPC path).
+
+        Delegates to factory helper for component creation (Issue #2075, DRY).
+        """
+        from nexus.factory._semantic_search import create_semantic_search_components
+
+        if self._record_store is None:
+            raise RuntimeError("Semantic search requires RecordStore (SQL engine)")
+
+        components = await create_semantic_search_components(
+            record_store=self._record_store,
+            embedding_provider=embedding_provider,
+            embedding_model=embedding_model,
+            api_key=api_key,
+            chunk_size=chunk_size,
+            chunk_strategy=chunk_strategy,
+            cache_url=cache_url,
+            embedding_cache_ttl=embedding_cache_ttl,
+            # RPC-path extras for PipelineIndexer
+            session_factory=self._gw_session_factory,
+            metadata=self.metadata,
+            file_reader=self._read,
+            file_lister=self.list,
+        )
+        self._query_service = components.query_service
+        self._indexing_service = components.indexing_service
+        self._indexing_pipeline = components.indexing_pipeline
+        self._pipeline_indexer = components.pipeline_indexer

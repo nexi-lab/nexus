@@ -1,7 +1,7 @@
 """Search service protocol (Issue #1287: Extract domain services).
 
 Defines the contract for file listing, glob, grep, and semantic search.
-Existing implementation: ``nexus.services.search_service.SearchService``.
+Existing implementation: ``nexus.bricks.search.search_service.SearchService``.
 
 Adaptive algorithm selection (Issue #929):
 - Grep: sequential → parallel → Zoekt based on file count

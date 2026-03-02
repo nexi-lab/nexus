@@ -169,7 +169,7 @@ async def search_query(
     alpha: float = Query(0.5, description="Semantic vs keyword weight (0.0-1.0)", ge=0.0, le=1.0),
     fusion: str = Query("rrf", description="Fusion method: rrf, weighted, or rrf_weighted"),
     adaptive_k: bool = Query(False, description="Adaptive retrieval"),
-    rerank: bool | None = Query(
+    rerank: bool | None = Query(  # noqa: ARG001
         None, description="Override reranker (true/false, default: use config)"
     ),
     graph_mode: str = Query(
@@ -237,7 +237,7 @@ async def search_query(
         filter_ms = 0.0
 
         if effective_graph_mode != "none":
-            from nexus.services.search.graph_search_service import graph_enhanced_search
+            from nexus.bricks.search.graph_search_service import graph_enhanced_search
 
             results = await graph_enhanced_search(
                 query=q,
@@ -297,7 +297,6 @@ async def search_query(
             fusion_method=fusion,
             adaptive_k=adaptive_k,
             zone_id=zone_id,
-            rerank=rerank,
         )
 
         # Read sub-timings from daemon
@@ -378,14 +377,11 @@ async def search_index_documents(
 async def search_refresh_notify(
     path: str = Query(..., description="Path of the changed file"),
     change_type: str = Query("update", description="Type of change: create, update, delete"),
-    auth_result: dict[str, Any] = Depends(require_auth),
+    _auth_result: dict[str, Any] = Depends(require_auth),
     search_daemon: Any = Depends(_get_search_daemon),
 ) -> dict[str, Any]:
     """Notify the search daemon of a file change for index refresh."""
-    from nexus.contracts.constants import ROOT_ZONE_ID
-
-    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
-    await search_daemon.notify_file_change(path, change_type, zone_id=zone_id)
+    await search_daemon.notify_file_change(path, change_type)
     return {"status": "accepted", "path": path, "change_type": change_type}
 
 

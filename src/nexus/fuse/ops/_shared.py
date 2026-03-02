@@ -349,7 +349,7 @@ def get_content_hash(ctx: FUSESharedContext, path: str) -> str | None:
             return metadata.get("content_hash") or metadata.get("hash")
         return getattr(metadata, "content_hash", None) or getattr(metadata, "hash", None)
     except Exception:
-        return None
+        return None  # FUSE hot path — no logging to avoid perf impact
 
 
 def get_zone_id(ctx: FUSESharedContext) -> str | None:
@@ -357,7 +357,7 @@ def get_zone_id(ctx: FUSESharedContext) -> str | None:
     try:
         return getattr(ctx.nexus_fs, "zone_id", None)
     except Exception:
-        return None
+        return None  # FUSE hot path — no logging to avoid perf impact
 
 
 def read_range_from_backend(ctx: FUSESharedContext, path: str, offset: int, size: int) -> bytes:
@@ -446,7 +446,7 @@ def stat_size_fallback(ctx: FUSESharedContext, path: str) -> int:
                 if stat_size and stat_size > 0:
                     return int(stat_size)
         except Exception:
-            pass
+            pass  # stat fallback — handled below with default return 0
 
     # Issue 15A: Return 0 instead of reading full content
     logger.debug(f"[FUSE-PERF] stat fallback: returning 0 for {path}")
@@ -577,7 +577,7 @@ def resolve_io_profile(ctx: FUSESharedContext, path: str) -> str:
                 reverse=True,
             )
         except Exception:
-            pass
+            pass  # mount list unavailable — IO profile resolution will use defaults
 
     cached = ctx._io_profile_cache.get(path)  # type: ignore[attr-defined]
     if cached is not None:

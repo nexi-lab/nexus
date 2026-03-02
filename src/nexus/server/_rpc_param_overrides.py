@@ -20,7 +20,6 @@ from nexus.server._rpc_params_generated import (
     SysRenameParams,
     SysRmdirParams,
     SysUnlinkParams,
-    SysWriteParams,
 )
 
 # ============================================================
@@ -37,10 +36,31 @@ class ReadParams:
     """
 
     path: str
+    count: int | None = None
+    offset: int = 0
     return_metadata: bool = False
     parsed: bool = False
     return_url: bool = False
     expires_in: int = 3600
+
+
+@dataclass
+class WriteParams:
+    """Parameters for write() method (Tier 2 convenience).
+
+    Includes POSIX count/offset plus OCC/lock params that
+    NexusFS.write() supports transitionally.
+    """
+
+    path: str
+    buf: bytes | str
+    count: int | None = None
+    offset: int = 0
+    lock: bool = False
+    lock_timeout: float = 30.0
+    if_match: str | None = None
+    if_none_match: bool = False
+    force: bool = False
 
 
 # ============================================================
@@ -359,7 +379,7 @@ OVERRIDE_METHOD_PARAMS: dict[str, type] = {
     "sys_read": ReadParams,
     # Short aliases for nexus-test / remote clients
     "read": ReadParams,
-    "write": SysWriteParams,
+    "write": WriteParams,
     "delete": SysUnlinkParams,
     "exists": SysAccessParams,
     "mkdir": SysMkdirParams,

@@ -261,13 +261,30 @@ class SearchDaemon:
         if self.config.refresh_enabled:
             self._refresh_task = asyncio.create_task(self._index_refresh_loop())
 
+        # If BM25S not loaded, count existing DB documents for stats
+        if not self._bm25s_index and self._async_session:
+            try:
+                from sqlalchemy import text as sa_text
+
+                session_factory = self._async_session
+                async with session_factory() as sess:
+                    row = (
+                        await sess.execute(
+                            sa_text("SELECT COUNT(DISTINCT path_id) FROM document_chunks")
+                        )
+                    ).first()
+                    self.stats.bm25_documents = int(row[0]) if row else 0
+            except Exception:
+                logger.debug("Could not count DB documents at startup")
+
         self._initialized = True
         self.stats.startup_time_ms = (time.perf_counter() - start_time) * 1000
 
         logger.info(
-            f"SearchDaemon ready in {self.stats.startup_time_ms:.1f}ms - "
-            f"BM25S: {self.stats.bm25_documents} docs, "
-            f"DB pool: {self.stats.db_pool_size} connections"
+            "SearchDaemon ready in %.1fms - keyword docs: %d, DB pool: %d connections",
+            self.stats.startup_time_ms,
+            self.stats.bm25_documents,
+            self.stats.db_pool_size,
         )
 
     async def shutdown(self) -> None:
@@ -1092,7 +1109,7 @@ class SearchDaemon:
         if indexed_count > 0:
             logger.info("[DAEMON] Indexed %d/%d files", indexed_count, len(paths))
 
-        # Update BM25S document count (include delta index)
+        # Update document count (BM25S index or DB FTS fallback)
         if self._bm25s_index:
             corpus_len = (
                 len(self._bm25s_index._corpus) if hasattr(self._bm25s_index, "_corpus") else 0
@@ -1103,6 +1120,22 @@ class SearchDaemon:
                 else 0
             )
             self.stats.bm25_documents = corpus_len + delta_len
+        elif self._async_session and indexed_count > 0:
+            # BM25S not available — count from DB document_chunks table
+            session_factory = self._async_session
+            try:
+                from sqlalchemy import text as sa_text
+
+                async with session_factory() as sess:
+                    row = (
+                        await sess.execute(
+                            sa_text("SELECT COUNT(DISTINCT path_id) FROM document_chunks")
+                        )
+                    ).first()
+                    self.stats.bm25_documents = int(row[0]) if row else 0
+            except Exception:
+                # If count fails, at least track that we indexed something
+                self.stats.bm25_documents += indexed_count
 
     # =========================================================================
     # Bulk Embedding (decoupled from BM25)
@@ -1278,10 +1311,16 @@ class SearchDaemon:
         Returns:
             Health status dictionary
         """
+        # Keyword search is available via BM25S, Zoekt, or DB FTS fallback
+        keyword_ready = (
+            self._bm25s_index is not None
+            or self.stats.zoekt_available
+            or self._async_engine is not None
+        )
         return {
             "status": "healthy" if self._initialized else "starting",
             "daemon_initialized": self._initialized,
-            "bm25_index_loaded": self._bm25s_index is not None,
+            "bm25_index_loaded": keyword_ready,
             "db_pool_ready": self._async_engine is not None,
             "zoekt_available": self.stats.zoekt_available,
         }

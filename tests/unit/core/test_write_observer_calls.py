@@ -117,7 +117,7 @@ class TestDeleteCallsDispatch:
         assert event.path == "/test.txt"
 
     def test_delete_passes_etag(self, nx: NexusFS, mock_notify: MagicMock) -> None:
-        result = nx.sys_write("/test.txt", b"content")
+        result = nx.write("/test.txt", b"content")
         etag = result["etag"]
         mock_notify.reset_mock()
 

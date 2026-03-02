@@ -346,9 +346,10 @@ class TestSearchOperations:
     """Tests for search-related delegation."""
 
     def test_read_file(self, gateway, mock_fs, context):
-        """read_file delegates to NexusFS sys_read."""
+        """read_file delegates to NexusFS read() (Tier 2 convenience)."""
+        mock_fs.read.return_value = {"content": b"data", "path": "/test/file.txt"}
         gateway.read_file("/test/file.txt", context=context, return_metadata=True)
-        mock_fs.sys_read.assert_called_once_with(
+        mock_fs.read.assert_called_once_with(
             "/test/file.txt", context=context, return_metadata=True
         )
 

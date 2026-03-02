@@ -875,11 +875,11 @@ ignore_imports = [
     # search -> memory: memory path routing (Phase 2 Integration v0.4.0)
     "nexus.bricks.search.search_service -> nexus.bricks.memory.router",
     # search -> gateway (TYPE_CHECKING): NexusFSGateway type hint — transitive to workflows/parsers
-    "nexus.bricks.search.search_service -> nexus.services.gateway",
+    "nexus.bricks.search.search_service -> nexus.system_services.gateway",
     # search -> factory -> llm: semantic search init delegates to factory helper (Issue #2075)
     "nexus.factory._semantic_search -> nexus.bricks.llm.llm_context_builder",
     # mount -> permission_utils -> gateway: transitive chain to workflows/parsers
-    "nexus.lib.permission_utils -> nexus.services.gateway",
+    "nexus.lib.permission_utils -> nexus.system_services.gateway",
     # versioning -> rebac: async permission checks (moved from services/)
     "nexus.bricks.versioning.version_service -> nexus.bricks.rebac.async_permissions",
     # parsers -> sandbox: TYPE_CHECKING imports for sandbox provider (Issue #2429)
@@ -930,7 +930,7 @@ ignore_imports = [
     "nexus.lib.performance_tuning -> nexus.contracts.qos",
     "nexus.lib.response -> nexus.contracts.exceptions",
     "nexus.lib.permission_utils -> nexus.contracts.types",
-    "nexus.lib.permission_utils -> nexus.services.gateway",
+    "nexus.lib.permission_utils -> nexus.system_services.gateway",
     # --- kernel (core) importing bricks ---
     "nexus.core.nexus_fs -> nexus.bricks.rebac.checker",
     "nexus.core.config -> nexus.bricks.workflows.protocol",

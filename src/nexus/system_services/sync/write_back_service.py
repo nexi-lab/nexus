@@ -37,8 +37,8 @@ from .conflict_resolution import (
 from .write_back_metrics import WriteBackMetrics
 
 if TYPE_CHECKING:
-    from nexus.services.gateway import NexusFSGateway
     from nexus.system_services.event_subsystem.bus.base import EventBusBase
+    from nexus.system_services.gateway import NexusFSGateway
 
     from .change_log_store import ChangeLogStore
     from .conflict_log_store import ConflictLogStore

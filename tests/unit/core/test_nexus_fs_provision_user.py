@@ -46,7 +46,7 @@ def nx_with_db(tmp_path):
     nx._rebac_manager = MagicMock()
 
     # Issue #2133: service_wiring.py deleted — explicitly create UserProvisioningService
-    from nexus.services.user_provisioning import UserProvisioningService
+    from nexus.system_services.lifecycle.user_provisioning import UserProvisioningService
 
     nx._user_provisioning_service = UserProvisioningService(
         vfs=nx,
@@ -252,7 +252,7 @@ class TestProvisionUserPartialFailure:
 
     def test_no_session_local_raises(self, tmp_path):
         """Missing SessionLocal should raise TypeError (None is not callable)."""
-        from nexus.services.user_provisioning import UserProvisioningService
+        from nexus.system_services.lifecycle.user_provisioning import UserProvisioningService
 
         nx = make_test_nexus(tmp_path)
         mock_registry = MagicMock()

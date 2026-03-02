@@ -1,8 +1,9 @@
-"""Backward compatibility — moved to nexus.services.llm_context_builder (Issue #1521).
+"""LLM context builder (Issue #1521).
 
-Moved from nexus.bricks.llm.context_builder (Issue #1521).
-Service-layer concern: context building orchestrates search results
-for LLM prompts, not a brick primitive.
+Context building orchestrates search results for LLM prompts.
+
+Includes adaptive retrieval depth based on query complexity (Issue #1021),
+inspired by SimpleMem (arXiv:2601.02553).
 
 Includes adaptive retrieval depth based on query complexity (Issue #1021),
 inspired by SimpleMem (arXiv:2601.02553).

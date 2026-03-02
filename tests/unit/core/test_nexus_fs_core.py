@@ -22,14 +22,14 @@ from nexus.core.nexus_fs import NexusFS
 # These are the extraction-critical methods that MUST exist after refactoring.
 
 CORE_READ_METHODS = {
-    "sys_read": {"params": ["path", "context", "return_metadata", "parsed"], "async": False},
+    "sys_read": {"params": ["path", "count", "offset", "context"], "async": False},
     "read_range": {"params": ["path", "start", "end", "context"], "async": False},
     "stream": {"params": ["path", "chunk_size", "context"], "async": False},
 }
 
 CORE_WRITE_METHODS = {
     "sys_write": {
-        "params": ["path", "content", "context", "if_match", "if_none_match", "force"],
+        "params": ["path", "buf", "count", "offset", "context"],
         "async": False,
     },
     "write_stream": {"params": ["path", "chunks", "context"], "async": False},

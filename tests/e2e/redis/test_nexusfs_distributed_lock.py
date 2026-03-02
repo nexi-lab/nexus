@@ -297,7 +297,7 @@ class TestWriteWithLock:
 
     def test_write_with_lock_basic(self, nx_sync_with_lock: "NexusFS"):
         """Test basic write with lock=True."""
-        result = nx_sync_with_lock.sys_write("/test.txt", b"content", lock=True)
+        result = nx_sync_with_lock.write("/test.txt", b"content", lock=True)
 
         assert result["etag"] is not None
         assert result["version"] == 1
@@ -306,7 +306,7 @@ class TestWriteWithLock:
     def test_write_with_lock_false_default(self, nx_sync_with_lock: "NexusFS"):
         """Test that lock=False is the default (backward compatible)."""
         # This should work without any lock
-        result = nx_sync_with_lock.sys_write("/test.txt", b"content")
+        result = nx_sync_with_lock.write("/test.txt", b"content")
 
         assert result["etag"] is not None
         assert nx_sync_with_lock.sys_read("/test.txt") == b"content"
@@ -316,7 +316,7 @@ class TestWriteWithLock:
 
         async def try_write_with_lock():
             with pytest.raises(RuntimeError, match="cannot be used from async context"):
-                nx_with_lock.sys_write("/test.txt", b"content", lock=True)
+                nx_with_lock.write("/test.txt", b"content", lock=True)
 
         asyncio.run(try_write_with_lock())
 
@@ -327,7 +327,7 @@ class TestWriteWithLock:
         from nexus.contracts.exceptions import LockTimeout
 
         # First, acquire a lock on the file manually so write(lock=True) will contend
-        nx_sync_with_lock.sys_write("/contended.txt", b"initial")
+        nx_sync_with_lock.write("/contended.txt", b"initial")
 
         barrier = threading.Barrier(2, timeout=10)
 
@@ -351,7 +351,7 @@ class TestWriteWithLock:
             barrier.wait()  # Wait for lock to be held
             # Now try to write with a very short timeout — should fail
             with pytest.raises(LockTimeout):
-                nx_sync_with_lock.sys_write(
+                nx_sync_with_lock.write(
                     "/contended.txt", b"should fail", lock=True, lock_timeout=0.1
                 )
         finally:
@@ -359,11 +359,11 @@ class TestWriteWithLock:
 
     def test_write_with_lock_and_etag(self, nx_sync_with_lock: "NexusFS"):
         """Test write(lock=True, if_match=etag) — lock + OCC combination."""
-        result = nx_sync_with_lock.sys_write("/occ.txt", b"v1", lock=True)
+        result = nx_sync_with_lock.write("/occ.txt", b"v1", lock=True)
         etag = result["etag"]
 
         # Write with matching etag + lock should succeed
-        result2 = nx_sync_with_lock.sys_write("/occ.txt", b"v2", lock=True, if_match=etag)
+        result2 = nx_sync_with_lock.write("/occ.txt", b"v2", lock=True, if_match=etag)
         assert result2["version"] == 2
         assert nx_sync_with_lock.sys_read("/occ.txt") == b"v2"
 
@@ -371,7 +371,7 @@ class TestWriteWithLock:
         from nexus.contracts.exceptions import ConflictError
 
         with pytest.raises(ConflictError):
-            nx_sync_with_lock.sys_write("/occ.txt", b"v3", lock=True, if_match=etag)
+            nx_sync_with_lock.write("/occ.txt", b"v3", lock=True, if_match=etag)
 
     def test_write_lock_mutual_exclusion(self, temp_dir, isolated_db, tmp_path):
         """Test that write(lock=True) provides TRUE mutual exclusion.
@@ -677,7 +677,7 @@ class TestEdgeCases:
         )
 
         # No lock manager configured - should warn but succeed (LWW)
-        result = nx.sys_write("/test.txt", b"content", lock=True)
+        result = nx.write("/test.txt", b"content", lock=True)
 
         assert result["etag"] is not None
         assert nx.sys_read("/test.txt") == b"content"

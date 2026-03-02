@@ -169,9 +169,9 @@ class TestParseMethodParams:
 
     def test_parse_write_params(self):
         """Test parsing write method parameters."""
-        params = parse_method_params("sys_write", {"path": "/file.txt", "content": b"data"})
+        params = parse_method_params("sys_write", {"path": "/file.txt", "buf": b"data"})
         assert params.path == "/file.txt"
-        assert params.content == b"data"
+        assert params.buf == b"data"
 
     def test_parse_list_params(self):
         """Test parsing list method parameters."""

@@ -95,7 +95,7 @@ class TestWriteConsistency:
     def test_new_file_exists_in_both_stores(
         self, nx: NexusFS, record_store: SQLAlchemyRecordStore
     ) -> None:
-        result = nx.sys_write("/test.txt", b"hello world")
+        result = nx.write("/test.txt", b"hello world")
 
         # Metastore has the file
         meta = nx.metadata.get("/test.txt")

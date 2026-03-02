@@ -21,7 +21,6 @@ __all__ = [
     "AppendParams",
     "BackfillDirectoryIndexParams",
     "CancelSyncJobParams",
-    "CancelTaskParams",
     "CreateShareLinkParams",
     "DeleteAgentParams",
     "DeleteBulkParams",
@@ -38,8 +37,6 @@ __all__ = [
     "GetShareLinkAccessLogsParams",
     "GetShareLinkParams",
     "GetSyncJobParams",
-    "GetTaskParams",
-    "GetTaskStatsParams",
     "GetTopLevelMountsParams",
     "GetVersionParams",
     "GetWorkspaceInfoParams",
@@ -53,7 +50,6 @@ __all__ = [
     "ListMountsParams",
     "ListOutgoingSharesParams",
     "ListParams",
-    "ListQueueTasksParams",
     "ListRegisteredMemoriesParams",
     "ListSavedMountsParams",
     "ListShareLinksParams",
@@ -72,10 +68,6 @@ __all__ = [
     "MetadataBatchParams",
     "NamespaceDeleteParams",
     "NamespaceListParams",
-    "OAuthListCredentialsParams",
-    "OAuthListProvidersParams",
-    "OAuthRevokeCredentialParams",
-    "OAuthTestCredentialParams",
     "ProvisionUserParams",
     "ReadBulkParams",
     "RebacCheckParams",
@@ -102,7 +94,6 @@ __all__ = [
     "SnapshotRollbackParams",
     "StatBulkParams",
     "StatParams",
-    "SubmitTaskParams",
     "SyncMountAsyncParams",
     "SyncMountParams",
     "SysAccessParams",
@@ -194,13 +185,6 @@ class CancelSyncJobParams:
     """Parameters for cancel_sync_job(): Cancel a running sync job."""
 
     job_id: str
-
-
-@dataclass
-class CancelTaskParams:
-    """Parameters for cancel_task(): Cancel a pending or running task."""
-
-    task_id: int
 
 
 @dataclass
@@ -340,20 +324,6 @@ class GetSyncJobParams:
 
 
 @dataclass
-class GetTaskParams:
-    """Parameters for get_task(): Get task status and details."""
-
-    task_id: int
-
-
-@dataclass
-class GetTaskStatsParams:
-    """Parameters for get_task_stats(): Get queue statistics."""
-
-    pass
-
-
-@dataclass
 class GetTopLevelMountsParams:
     """Parameters for get_top_level_mounts(): Return top-level mount names visible to the current user."""
 
@@ -472,16 +442,6 @@ class ListOutgoingSharesParams:
         """Convert lists to tuples (JSON deserializes tuples as lists)."""
         if isinstance(self.resource, list):
             object.__setattr__(self, "resource", tuple(self.resource))
-
-
-@dataclass
-class ListQueueTasksParams:
-    """Parameters for list_queue_tasks(): List tasks with optional filters."""
-
-    task_type: str | None = None
-    status: int | None = None
-    limit: int = 50
-    offset: int = 0
 
 
 @dataclass
@@ -636,37 +596,6 @@ class NamespaceListParams:
     """Parameters for namespace_list(): List all registered namespace configurations."""
 
     pass
-
-
-@dataclass
-class OAuthListCredentialsParams:
-    """Parameters for oauth_list_credentials(): List all OAuth credentials for the current user."""
-
-    provider: str | None = None
-    include_revoked: bool = False
-
-
-@dataclass
-class OAuthListProvidersParams:
-    """Parameters for oauth_list_providers(): List all available OAuth providers from configuration."""
-
-    pass
-
-
-@dataclass
-class OAuthRevokeCredentialParams:
-    """Parameters for oauth_revoke_credential(): Revoke an OAuth credential."""
-
-    provider: str
-    user_email: str
-
-
-@dataclass
-class OAuthTestCredentialParams:
-    """Parameters for oauth_test_credential(): Test if an OAuth credential is valid and can be refreshed."""
-
-    provider: str
-    user_email: str
 
 
 @dataclass
@@ -985,16 +914,6 @@ class StatBulkParams:
 
 
 @dataclass
-class SubmitTaskParams:
-    """Parameters for submit_task(): Submit a task to the durable queue."""
-
-    task_type: str
-    params_json: str = "{}"
-    priority: int = 2
-    max_retries: int = 3
-
-
-@dataclass
 class SyncMountParams:
     """Parameters for sync_mount(): Sync metadata and content from connector backend(s) to Nexus database."""
 
@@ -1100,15 +1019,12 @@ class SysUnlinkParams:
 
 @dataclass
 class SysWriteParams:
-    """Parameters for sys_write(): Write content to a file with optional optimistic concurrency control."""
+    """Parameters for sys_write(): Write content to a file (POSIX pwrite(2))."""
 
     path: str
-    content: bytes | str
-    if_match: str | None = None
-    if_none_match: bool = False
-    force: bool = False
-    lock: bool = False
-    lock_timeout: float = 30.0
+    buf: bytes | str
+    count: int | None = None
+    offset: int = 0
 
 
 @dataclass
@@ -1203,7 +1119,6 @@ METHOD_PARAMS: dict[str, type] = {
     "append": AppendParams,
     "backfill_directory_index": BackfillDirectoryIndexParams,
     "cancel_sync_job": CancelSyncJobParams,
-    "cancel_task": CancelTaskParams,
     "create_share_link": CreateShareLinkParams,
     "delete_agent": DeleteAgentParams,
     "delete_bulk": DeleteBulkParams,
@@ -1220,8 +1135,6 @@ METHOD_PARAMS: dict[str, type] = {
     "get_share_link": GetShareLinkParams,
     "get_share_link_access_logs": GetShareLinkAccessLogsParams,
     "get_sync_job": GetSyncJobParams,
-    "get_task": GetTaskParams,
-    "get_task_stats": GetTaskStatsParams,
     "get_top_level_mounts": GetTopLevelMountsParams,
     "get_version": GetVersionParams,
     "get_workspace_info": GetWorkspaceInfoParams,
@@ -1235,7 +1148,6 @@ METHOD_PARAMS: dict[str, type] = {
     "list_incoming_shares": ListIncomingSharesParams,
     "list_mounts": ListMountsParams,
     "list_outgoing_shares": ListOutgoingSharesParams,
-    "list_queue_tasks": ListQueueTasksParams,
     "list_registered_memories": ListRegisteredMemoriesParams,
     "list_saved_mounts": ListSavedMountsParams,
     "list_share_links": ListShareLinksParams,
@@ -1254,10 +1166,6 @@ METHOD_PARAMS: dict[str, type] = {
     "metadata_batch": MetadataBatchParams,
     "namespace_delete": NamespaceDeleteParams,
     "namespace_list": NamespaceListParams,
-    "oauth_list_credentials": OAuthListCredentialsParams,
-    "oauth_list_providers": OAuthListProvidersParams,
-    "oauth_revoke_credential": OAuthRevokeCredentialParams,
-    "oauth_test_credential": OAuthTestCredentialParams,
     "provision_user": ProvisionUserParams,
     "read_bulk": ReadBulkParams,
     "rebac_check": RebacCheckParams,
@@ -1284,7 +1192,6 @@ METHOD_PARAMS: dict[str, type] = {
     "snapshot_rollback": SnapshotRollbackParams,
     "stat": StatParams,
     "stat_bulk": StatBulkParams,
-    "submit_task": SubmitTaskParams,
     "sync_mount": SyncMountParams,
     "sync_mount_async": SyncMountAsyncParams,
     "sys_access": SysAccessParams,

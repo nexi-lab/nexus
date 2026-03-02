@@ -85,42 +85,38 @@ class NexusFSGateway:
     def sys_write(
         self,
         path: str,
-        content: bytes | str,
+        buf: bytes | str,
         *,
         context: "OperationContext | None" = None,
-    ) -> None:
-        """Write content to file (POSIX write).
+    ) -> int:
+        """Write content to file (POSIX pwrite(2)).
 
         Args:
             path: Virtual path for file
-            content: File content (bytes or str)
+            buf: File content (bytes or str, str auto-encoded to UTF-8)
             context: Operation context for permissions
+
+        Returns:
+            Number of bytes written.
         """
-        if isinstance(content, str):
-            content = content.encode("utf-8")
-        self._fs.sys_write(path, content, context=context)
+        return self._fs.sys_write(path, buf, context=context)
 
     def sys_read(
         self,
         path: str,
         *,
         context: "OperationContext | None" = None,
-    ) -> bytes | str:
-        """Read content from file (POSIX read).
+    ) -> bytes:
+        """Read file content as bytes (POSIX pread(2)).
 
         Args:
             path: Virtual path for file
             context: Operation context for permissions
 
         Returns:
-            File content as bytes or str
+            File content as bytes.
         """
-        result = self._fs.sys_read(path, context=context)
-        # Normalize to bytes or str
-        if isinstance(result, bytes | str):
-            return result
-        # Handle dict results (parsed content) by returning empty bytes
-        return b""
+        return self._fs.sys_read(path, context=context)
 
     def sys_readdir(
         self,
@@ -557,7 +553,7 @@ class NexusFSGateway:
         Returns:
             File content as bytes/str, or metadata dict if return_metadata=True
         """
-        return self._fs.sys_read(path, context=context, return_metadata=return_metadata)
+        return self._fs.read(path, context=context, return_metadata=return_metadata)
 
     def read_bulk(
         self,

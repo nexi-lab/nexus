@@ -86,7 +86,7 @@ def glob(
         if long:
             for match in matches:
                 try:
-                    metadata = nx.sys_read(match, return_metadata=True)
+                    metadata = nx.read(match, return_metadata=True)
                     if isinstance(metadata, dict):
                         match_data.append(
                             {

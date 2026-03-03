@@ -11,10 +11,11 @@ Design doc: docs/design/AGENT-PROCESS-ARCHITECTURE.md §7.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.agent_process import (
     Completed,
@@ -40,6 +41,9 @@ if TYPE_CHECKING:
     from nexus.system_services.agent_runtime.tool_dispatcher import ToolDispatcher
 
 logger = logging.getLogger(__name__)
+
+# Tools that are safe to run concurrently (no filesystem mutations)
+_READ_ONLY_TOOLS = frozenset({"read_file", "grep", "glob", "list_dir"})
 
 
 async def agent_loop(
@@ -74,9 +78,8 @@ async def agent_loop(
     turn = 0
 
     while turn < config.max_turns:
-        # Pass Message objects to the LLM provider — provider handles
-        # serialisation (vision/cache/tool-call flags) internally.
-        llm_messages = [system_msg, *messages]
+        # Trim context window if over budget
+        llm_messages = _trim_to_budget(llm, system_msg, messages, config.max_context_tokens)
 
         # Call LLM with tools
         try:
@@ -104,23 +107,22 @@ async def agent_loop(
             )
             messages.append(assistant_msg)
 
-            # Execute each tool call
-            for tc in tool_calls:
+            # Dispatch tools (parallel for read-only batches, sequential otherwise)
+            results = await _dispatch_tools(
+                dispatcher,
+                ctx,
+                tool_calls,
+                cwd=cwd,
+                sandbox_id=sandbox_id,
+                sandbox_timeout=config.sandbox_timeout,
+            )
+
+            # Emit events and build tool result messages in original order
+            for tc, result in zip(tool_calls, results, strict=True):
                 if on_event:
                     await on_event(ToolCallStart(tool_call=tc))
-
-                result = await dispatcher.dispatch(
-                    ctx,
-                    tc,
-                    cwd=cwd,
-                    sandbox_id=sandbox_id,
-                    sandbox_timeout=config.sandbox_timeout,
-                )
-
-                if on_event:
                     await on_event(ToolCallResult(tool_call=tc, result=result))
 
-                # Add tool result message
                 messages.append(
                     Message(
                         role=MessageRole.TOOL,
@@ -148,6 +150,39 @@ async def agent_loop(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _trim_to_budget(
+    llm: LLMProviderProtocol,
+    system_msg: Message,
+    messages: list[Message],
+    max_tokens: int,
+) -> list[Message]:
+    """Drop oldest messages if the conversation exceeds the token budget.
+
+    Keeps system message + as many recent messages as fit within *max_tokens*.
+    Returns the trimmed list ready to send to the LLM.
+    """
+    full = [system_msg, *messages]
+    try:
+        total = llm.count_tokens(full)
+    except Exception:
+        return full  # can't count → send everything
+
+    if total <= max_tokens:
+        return full
+
+    # Drop oldest user/assistant messages (index 0 = oldest) until within budget
+    trimmed = list(messages)
+    while len(trimmed) > 1:
+        trimmed.pop(0)
+        candidate = [system_msg, *trimmed]
+        try:
+            if llm.count_tokens(candidate) <= max_tokens:
+                return candidate
+        except Exception:
+            return candidate
+    return [system_msg, *trimmed]
 
 
 def _extract_tool_calls(response: object) -> list[ToolCall]:
@@ -209,6 +244,31 @@ def _parse_tool_call(tc: object) -> ToolCall:
             id="unknown",
             function=ToolFunction(name="unknown", arguments="{}"),
         )
+
+
+async def _dispatch_tools(
+    dispatcher: ToolDispatcher,
+    ctx: OperationContext,
+    tool_calls: list[ToolCall],
+    **kwargs: Any,
+) -> list[str]:
+    """Dispatch tool calls — parallel for read-only batches, sequential otherwise."""
+    all_readonly = all(tc.function.name in _READ_ONLY_TOOLS for tc in tool_calls)
+    results: list[str] = [""] * len(tool_calls)
+
+    if all_readonly and len(tool_calls) > 1:
+        async with asyncio.TaskGroup() as tg:
+            for i, tc in enumerate(tool_calls):
+
+                async def _run(idx: int = i, tool: ToolCall = tc) -> None:
+                    results[idx] = await dispatcher.dispatch(ctx, tool, **kwargs)
+
+                tg.create_task(_run())
+    else:
+        for i, tc in enumerate(tool_calls):
+            results[i] = await dispatcher.dispatch(ctx, tc, **kwargs)
+
+    return results
 
 
 def _extract_content(response: object) -> str | None:

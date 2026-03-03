@@ -55,9 +55,9 @@ from nexus.backends.connectors.calendar.schemas import (
 )
 from nexus.backends.oauth_mixin import OAuthConnectorMixin
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
+from nexus.contracts.capabilities import OAUTH_CONNECTOR_CAPABILITIES, ConnectorCapability
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.object_store import WriteResult
-from nexus.core.protocols.capabilities import OAUTH_CONNECTOR_CAPABILITIES, ConnectorCapability
 
 # Suppress annoying googleapiclient discovery cache warnings
 logging.getLogger("googleapiclient.discovery_cache").setLevel(logging.ERROR)

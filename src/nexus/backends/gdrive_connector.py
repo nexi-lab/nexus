@@ -38,10 +38,10 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.backends.backend import Backend, HandlerStatusResponse
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
+from nexus.contracts.capabilities import OAUTH_CONNECTOR_CAPABILITIES, ConnectorCapability
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 from nexus.core.object_store import WriteResult
-from nexus.core.protocols.capabilities import OAUTH_CONNECTOR_CAPABILITIES, ConnectorCapability
 
 if TYPE_CHECKING:
     from googleapiclient.discovery import Resource

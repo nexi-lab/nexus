@@ -5,15 +5,16 @@ import logging
 import threading
 
 from nexus.backends.backend import Backend, HandlerStatusResponse
-from nexus.backends.base_blob_connector import BaseBlobStorageConnector
 from nexus.backends.cache_mixin import CacheConnectorMixin, CacheEntry, SyncResult
 from nexus.backends.cache_models import IMMUTABLE_VERSION, CachedReadResult
 from nexus.backends.cache_service import CacheService
+from nexus.backends.cas_backend import CASBackend
 from nexus.backends.factory import BackendFactory
 
 # Core backends (always available)
 from nexus.backends.local import LocalBackend
 from nexus.backends.passthrough import PassthroughBackend
+from nexus.backends.path_backend import PathBackend
 from nexus.backends.registry import (
     ArgType,
     ConnectionArg,
@@ -94,7 +95,8 @@ __all__ = [
     "HandlerStatusResponse",
     "ObjectStoreABC",
     "WriteResult",
-    "BaseBlobStorageConnector",
+    "CASBackend",
+    "PathBackend",
     "CacheConnectorMixin",
     "CacheEntry",
     "CacheService",

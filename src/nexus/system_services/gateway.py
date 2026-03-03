@@ -646,12 +646,7 @@ class NexusFSGateway:
             resource_id: Identifier for the resource
             access_type: Type of access (default: "content")
         """
-        self._fs._record_read_if_tracking(
-            context,
-            resource_type,
-            resource_id,
-            access_type,
-        )
+        pass  # read-tracking removed; will be redesigned as a service-layer concern
 
     @property
     def backend(self) -> Any:

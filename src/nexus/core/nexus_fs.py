@@ -7,10 +7,10 @@ import threading
 import time
 from collections.abc import Callable, Generator, Iterator
 from datetime import UTC, datetime
-from typing import Any, ClassVar, cast
+from typing import Any, cast
 
 from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
-from nexus.contracts.constants import ROOT_ZONE_ID, SYSTEM_PATH_PREFIX
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import (
     BackendError,
     ConflictError,
@@ -663,8 +663,6 @@ class NexusFS(  # type: ignore[misc]
                 logger.warning(f"Failed to grant direct_owner permission for {path}: {e}")
 
         # Issue #900: Unified two-phase dispatch for mkdir
-        new_revision = self._increment_vfs_revision()
-
         from nexus.contracts.vfs_hooks import MkdirHookContext
 
         self._dispatch.intercept_post_mkdir(
@@ -680,7 +678,6 @@ class NexusFS(  # type: ignore[misc]
                 type=FileEventType.DIR_CREATE,
                 path=path,
                 zone_id=ctx.zone_id or ROOT_ZONE_ID,
-                revision=new_revision,
                 agent_id=ctx.agent_id,
                 user_id=ctx.user_id,
             )
@@ -821,9 +818,6 @@ class NexusFS(  # type: ignore[misc]
             except Exception as e:
                 logger.debug("Failed to clean up directory index for %s: %s", path, e)
 
-        # Issue #900: Unified two-phase dispatch for rmdir
-        new_revision = self._increment_vfs_revision()
-
         from nexus.contracts.vfs_hooks import RmdirHookContext
 
         self._dispatch.intercept_post_rmdir(
@@ -840,7 +834,6 @@ class NexusFS(  # type: ignore[misc]
                 type=FileEventType.DIR_DELETE,
                 path=path,
                 zone_id=ctx.zone_id or ROOT_ZONE_ID,
-                revision=new_revision,
                 agent_id=ctx.agent_id,
                 user_id=ctx.user_id,
             )
@@ -1083,11 +1076,6 @@ class NexusFS(  # type: ignore[misc]
     # Core VFS File Operations (Issue #899)
     # =================================================================
 
-    _revision_notifier: ClassVar[Any] = None
-    _vfs_revision: int = 0
-    _vfs_revision_lock: Any = None
-    _read_tracking_enabled: bool = False
-
     def _get_overlay_config(self, path: str) -> Any:
         """Get overlay config for a path, if overlay is active.
 
@@ -1120,202 +1108,6 @@ class NexusFS(  # type: ignore[misc]
             base_manifest_hash=overlay_data.get("base_manifest_hash"),
             workspace_path=ws_config.path,
             agent_id=overlay_data.get("agent_id"),
-        )
-
-    # =========================================================================
-    # Zookie Consistency Token Support - Issue #1187
-    # =========================================================================
-
-    def _get_revision_notifier(self) -> Any:
-        """Get or create the RevisionNotifier instance (Issue #1180 Phase B).
-
-        Lazily initialized to avoid import overhead for callers that don't
-        use the consistency subsystem.  Falls back to NullRevisionNotifier on
-        construction errors so callers never receive None.
-        """
-        if self._revision_notifier is None:
-            try:
-                from nexus.lib.revision_notifier import RevisionNotifier
-
-                NexusFS._revision_notifier = RevisionNotifier()
-            except Exception:
-                from nexus.lib.revision_notifier import NullRevisionNotifier
-
-                logger.warning("Failed to create RevisionNotifier; using NullRevisionNotifier")
-                NexusFS._revision_notifier = NullRevisionNotifier()
-        return self._revision_notifier
-
-    def _get_revision_lock(self, zone_id: str) -> threading.Lock:
-        """Get or create a per-zone lock for revision increments (Issue #1180).
-
-        Always acquires the guard lock for correctness. The overhead is
-        negligible (~50ns uncontended) since this runs once per zone.
-
-        Args:
-            zone_id: The zone to get the lock for
-
-        Returns:
-            Lock instance for this zone
-        """
-        with self._revision_locks_guard:
-            if zone_id not in self._revision_locks:
-                self._revision_locks[zone_id] = threading.Lock()
-            return self._revision_locks[zone_id]
-
-    def _get_current_revision(self, zone_id: str) -> int:
-        """Get the current revision for a zone.
-
-        Issue #1330 Phase 4.2: Uses native redb get_revision() when available.
-        Falls back to FileMetadata-based lookup.
-
-        Args:
-            zone_id: The zone to get revision for
-
-        Returns:
-            The current revision number (0 if not found)
-        """
-        # Fast path: native redb counter
-        if hasattr(self.metadata, "get_revision"):
-            try:
-                return self.metadata.get_revision(zone_id)
-            except Exception as e:
-                logger.warning(f"Failed to get revision for zone {zone_id}: {e}")
-                return 0
-
-        # Legacy fallback: FileMetadata-based lookup
-        rev_path = f"{SYSTEM_PATH_PREFIX}zone_rev/{zone_id}"
-        try:
-            meta = self.metadata.get(rev_path)
-            return meta.version if meta else 0
-        except Exception as e:
-            logger.warning(f"Failed to get revision for zone {zone_id}: {e}")
-            return 0
-
-    def _wait_for_revision(
-        self,
-        zone_id: str,
-        min_revision: int,
-        timeout_ms: float = 5000,
-    ) -> bool:
-        """Wait until zone revision >= min_revision.
-
-        Issue #1180 Phase B: Uses Condition-based notification for instant wakeup.
-        Falls back to a single DB check if the notifier doesn't have the revision
-        cached (e.g., after restart when writes happened before this instance existed).
-
-        Args:
-            zone_id: The zone to check revision for
-            min_revision: The minimum acceptable revision
-            timeout_ms: Maximum time to wait in milliseconds (default: 5000)
-
-        Returns:
-            True if revision reached, False if timeout
-        """
-        notifier = self._get_revision_notifier()
-
-        # Fast path: notifier already knows the revision is met
-        if notifier.get_latest_revision(zone_id) >= min_revision:
-            return True
-
-        # Check DB directly (handles case where notifier cache is behind)
-        current = self._get_current_revision(zone_id)
-        if current >= min_revision:
-            # Update notifier cache so future waits are faster
-            notifier.notify_revision(zone_id, current)
-            return True
-
-        # Block on Condition-based notification
-        return notifier.wait_for_revision(zone_id, min_revision, timeout_ms)
-
-    # =========================================================================
-    # VFS Revision Counter - Issue #1169
-    # =========================================================================
-
-    def _init_vfs_revision(self) -> None:
-        """Initialize per-instance VFS revision state.
-
-        Must be called during NexusFS.__init__ to ensure each instance
-        has its own lock and counter (not shared via class-level defaults).
-        """
-        self._vfs_revision = 0
-        self._vfs_revision_lock = threading.Lock()
-
-    def _increment_vfs_revision(self) -> int:
-        """Atomically increment and return the new VFS revision.
-
-        Called after every write/delete to advance the monotonic counter.
-        Thread-safe via per-instance lock.
-
-        Returns:
-            The new revision number (always > previous).
-        """
-        lock = self._vfs_revision_lock
-        if lock is None:
-            # Fallback: not yet initialized (shouldn't happen in production)
-            self._vfs_revision += 1
-            return self._vfs_revision
-        with lock:
-            self._vfs_revision += 1
-            return self._vfs_revision
-
-    def _get_vfs_revision(self) -> int:
-        """Return the current VFS revision (read-only, thread-safe).
-
-        Returns:
-            Current monotonic revision counter value.
-        """
-        lock = self._vfs_revision_lock
-        if lock is None:
-            return self._vfs_revision
-        with lock:
-            return self._vfs_revision
-
-    # =========================================================================
-    # Read Set Tracking - Issue #1166 / #1169
-    # =========================================================================
-
-    def _record_read_if_tracking(
-        self,
-        context: OperationContext | None,
-        resource_type: str,
-        resource_id: str,
-        access_type: str = "content",
-    ) -> None:
-        """Record a read operation for dependency tracking (Issue #1166).
-
-        This is called automatically by read(), stat(), and list() operations
-        when the context has read tracking enabled.
-
-        Issue #1169: Uses per-VFS monotonic counter instead of hardcoded 0.
-                     Gated by instance-level _read_tracking_enabled flag.
-
-        Args:
-            context: Operation context (may have track_reads=True)
-            resource_type: Type of resource (file, directory, metadata)
-            resource_id: Path or identifier of the resource
-            access_type: Type of access (content, metadata, list, exists)
-        """
-        if not self._read_tracking_enabled:
-            return
-
-        if context is None or not getattr(context, "track_reads", False):
-            return
-
-        if context.read_set is None:
-            return
-
-        # Issue #1169: Use per-VFS monotonic counter for meaningful revisions
-        revision = self._get_vfs_revision()
-
-        # Record the read
-        context.record_read(
-            resource_type=resource_type,
-            resource_id=resource_id,
-            revision=revision,
-            access_type=access_type,
-        )
-        logger.debug(
-            f"[READ-SET] Recorded {access_type} read: {resource_type}:{resource_id}@{revision}"
         )
 
     # =========================================================================
@@ -1648,9 +1440,6 @@ class NexusFS(  # type: ignore[misc]
             # The backend handles authentication and API calls (no VFS lock needed)
             content = route.backend.read_content("", context=read_context)
 
-            # Issue #1166: Record read for dependency tracking
-            self._record_read_if_tracking(context, "file", path, "content")
-
             if offset or count is not None:
                 content = (
                     content[offset : offset + count] if count is not None else content[offset:]
@@ -1702,9 +1491,6 @@ class NexusFS(  # type: ignore[misc]
             )
             self._dispatch.intercept_post_read(_read_ctx)
             content = _read_ctx.content or content  # hooks may have filtered content
-
-        # Issue #1166: Record read for dependency tracking
-        self._record_read_if_tracking(context, "file", path, "content")
 
         # Apply count/offset slicing (POSIX pread semantics)
         if offset or count is not None:
@@ -2651,9 +2437,6 @@ class NexusFS(  # type: ignore[misc]
 
             self.metadata.put(metadata)
 
-            # Issue #1169: Advance VFS revision counter after mutation
-            new_revision = self._increment_vfs_revision()
-
         # --- Lock released — event dispatch + side effects (like Linux inotify after i_rwsem) ---
 
         # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
@@ -2662,7 +2445,6 @@ class NexusFS(  # type: ignore[misc]
                 type=FileEventType.FILE_WRITE,
                 path=path,
                 zone_id=zone_id or ROOT_ZONE_ID,
-                revision=new_revision,
                 agent_id=agent_id,
                 etag=content_hash,
                 size=len(content),
@@ -3319,7 +3101,6 @@ class NexusFS(  # type: ignore[misc]
         )
 
         # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
-        new_revision = self._increment_vfs_revision()
         for metadata in metadata_list:
             is_new = existing_metadata.get(metadata.path) is None
             self._dispatch.notify(
@@ -3327,7 +3108,6 @@ class NexusFS(  # type: ignore[misc]
                     type=FileEventType.FILE_WRITE,
                     path=metadata.path,
                     zone_id=zone_id or ROOT_ZONE_ID,
-                    revision=new_revision,
                     agent_id=agent_id,
                     etag=metadata.etag,
                     size=metadata.size,
@@ -3634,9 +3414,6 @@ class NexusFS(  # type: ignore[misc]
             # Remove from metadata
             self.metadata.delete(path)
 
-            # Issue #1169: Advance VFS revision counter after delete
-            new_revision = self._increment_vfs_revision()
-
         # --- Lock released — event dispatch (like Linux inotify after i_rwsem) ---
 
         # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
@@ -3645,7 +3422,6 @@ class NexusFS(  # type: ignore[misc]
                 type=FileEventType.FILE_DELETE,
                 path=path,
                 zone_id=zone_id or ROOT_ZONE_ID,
-                revision=new_revision,
                 agent_id=agent_id,
                 etag=meta.etag,
                 size=meta.size,
@@ -3803,8 +3579,6 @@ class NexusFS(  # type: ignore[misc]
 
                 # Perform metadata rename
                 self.metadata.rename_path(old_path, new_path)
-
-                new_revision = self._increment_vfs_revision()
             finally:
                 if _h2:
                     self._vfs_lock_manager.release(_h2)
@@ -3819,7 +3593,6 @@ class NexusFS(  # type: ignore[misc]
                 type=FileEventType.FILE_RENAME,
                 path=old_path,
                 zone_id=zone_id or ROOT_ZONE_ID,
-                revision=new_revision,
                 agent_id=agent_id,
                 new_path=new_path,
             )
@@ -3922,8 +3695,6 @@ class NexusFS(  # type: ignore[misc]
 
         # Return directory info for implicit directories
         if is_implicit_dir:
-            # Issue #1166: Record metadata read for dependency tracking
-            self._record_read_if_tracking(context, "directory", path, "metadata")
             return {
                 "size": 0,
                 "etag": None,
@@ -3962,9 +3733,6 @@ class NexusFS(  # type: ignore[misc]
         # Convert datetime to ISO string for wire compatibility with Rust FUSE client
         # The client expects a plain string, not the wrapped {"__type__": "datetime", ...} format
         modified_at_str = meta.modified_at.isoformat() if meta.modified_at else None
-
-        # Issue #1166: Record metadata read for dependency tracking
-        self._record_read_if_tracking(context, "file", path, "metadata")
 
         return {
             "size": size,
@@ -4685,6 +4453,11 @@ class NexusFS(  # type: ignore[misc]
         "arebac_list_tuples": ("rebac_service", "rebac_list_tuples"),
         "aget_namespace": ("rebac_service", "get_namespace"),
         # ReBACService sync methods with _sync suffix (Issue #2033)
+        "rebac_create": ("rebac_service", "rebac_create_sync"),
+        "rebac_check": ("rebac_service", "rebac_check_sync"),
+        "rebac_check_batch": ("rebac_service", "rebac_check_batch_sync"),
+        "rebac_delete": ("rebac_service", "rebac_delete_sync"),
+        "rebac_list_tuples": ("rebac_service", "rebac_list_tuples_sync"),
         "rebac_expand": ("rebac_service", "rebac_expand_sync"),
         "rebac_explain": ("rebac_service", "rebac_explain_sync"),
         "share_with_user": ("rebac_service", "share_with_user_sync"),
@@ -4727,276 +4500,6 @@ class NexusFS(  # type: ignore[misc]
                 return getattr(svc, name)
 
         raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
-
-    # ------------------------------------------------------------------
-    # Abstract method forwarders (ABCMeta requires real definitions)
-    # These satisfy the NexusFilesystemABC while delegating to services.
-    # ------------------------------------------------------------------
-
-    # --- Workspace Versioning (→ _workspace_rpc_service) ---
-
-    def workspace_snapshot(
-        self,
-        workspace_path: str | None = None,
-        description: str | None = None,
-        tags: builtins.list[str] | None = None,
-    ) -> dict[str, Any]:
-        return self._workspace_rpc_service.workspace_snapshot(
-            workspace_path=workspace_path,
-            description=description,
-            tags=tags,
-        )
-
-    def workspace_restore(
-        self,
-        snapshot_number: int,
-        workspace_path: str | None = None,
-    ) -> dict[str, Any]:
-        return self._workspace_rpc_service.workspace_restore(
-            snapshot_number=snapshot_number,
-            workspace_path=workspace_path,
-        )
-
-    def workspace_log(
-        self,
-        workspace_path: str | None = None,
-        limit: int = 100,
-    ) -> builtins.list[dict[str, Any]]:
-        return self._workspace_rpc_service.workspace_log(
-            workspace_path=workspace_path,
-            limit=limit,
-        )
-
-    def workspace_diff(
-        self,
-        snapshot_1: int,
-        snapshot_2: int,
-        workspace_path: str | None = None,
-    ) -> dict[str, Any]:
-        return self._workspace_rpc_service.workspace_diff(
-            snapshot_1=snapshot_1,
-            snapshot_2=snapshot_2,
-            workspace_path=workspace_path,
-        )
-
-    # --- Workspace Registry (→ _workspace_rpc_service) ---
-
-    def register_workspace(
-        self,
-        path: str,
-        name: str | None = None,
-        description: str | None = None,
-        created_by: str | None = None,
-        tags: builtins.list[str] | None = None,
-        metadata: dict[str, Any] | None = None,
-        session_id: str | None = None,
-        ttl: Any | None = None,
-    ) -> dict[str, Any]:
-        return self._workspace_rpc_service.register_workspace(
-            path=path,
-            name=name,
-            description=description,
-            created_by=created_by,
-            tags=tags,
-            metadata=metadata,
-            session_id=session_id,
-            ttl=ttl,
-        )
-
-    def unregister_workspace(self, path: str) -> bool:
-        return self._workspace_rpc_service.unregister_workspace(path=path)
-
-    def list_workspaces(self, context: Any | None = None) -> builtins.list[dict]:
-        return self._workspace_rpc_service.list_workspaces(context=context)
-
-    def get_workspace_info(self, path: str) -> dict | None:
-        return self._workspace_rpc_service.get_workspace_info(path=path)
-
-    # --- Memory Registry (→ _workspace_rpc_service) ---
-
-    def register_memory(
-        self,
-        path: str,
-        name: str | None = None,
-        description: str | None = None,
-        created_by: str | None = None,
-        tags: builtins.list[str] | None = None,
-        metadata: dict[str, Any] | None = None,
-        session_id: str | None = None,
-        ttl: Any | None = None,
-    ) -> dict[str, Any]:
-        return self._workspace_rpc_service.register_memory(
-            path=path,
-            name=name,
-            description=description,
-            created_by=created_by,
-            tags=tags,
-            metadata=metadata,
-            session_id=session_id,
-            ttl=ttl,
-        )
-
-    def unregister_memory(self, path: str) -> bool:
-        return self._workspace_rpc_service.unregister_memory(path=path)
-
-    def list_memories(self) -> builtins.list[dict]:
-        return self._workspace_rpc_service.list_registered_memories()
-
-    def get_memory_info(self, path: str) -> dict | None:
-        return self._workspace_rpc_service.get_memory_info(path=path)
-
-    # --- Sandbox Operations (→ _sandbox_rpc_service) ---
-
-    def sandbox_create(
-        self,
-        name: str,
-        ttl_minutes: int = 10,
-        provider: str | None = "e2b",
-        template_id: str | None = None,
-        context: dict | None = None,
-    ) -> dict[Any, Any]:
-        return self._sandbox_rpc_service.sandbox_create(
-            name=name,
-            ttl_minutes=ttl_minutes,
-            provider=provider,
-            template_id=template_id,
-            context=context,
-        )
-
-    def sandbox_get_or_create(
-        self,
-        name: str,
-        ttl_minutes: int = 10,
-        provider: str | None = None,
-        template_id: str | None = None,
-        verify_status: bool = True,
-        context: dict | None = None,
-    ) -> dict[Any, Any]:
-        return self._sandbox_rpc_service.sandbox_get_or_create(
-            name=name,
-            ttl_minutes=ttl_minutes,
-            provider=provider,
-            template_id=template_id,
-            verify_status=verify_status,
-            context=context,
-        )
-
-    def sandbox_run(
-        self,
-        sandbox_id: str,
-        language: str,
-        code: str,
-        timeout: int = 300,
-        nexus_url: str | None = None,
-        nexus_api_key: str | None = None,
-        context: dict | None = None,
-        as_script: bool = False,
-    ) -> dict[Any, Any]:
-        return self._sandbox_rpc_service.sandbox_run(
-            sandbox_id=sandbox_id,
-            language=language,
-            code=code,
-            timeout=timeout,
-            nexus_url=nexus_url,
-            nexus_api_key=nexus_api_key,
-            context=context,
-            as_script=as_script,
-        )
-
-    def sandbox_pause(self, sandbox_id: str, context: dict | None = None) -> dict[Any, Any]:
-        return self._sandbox_rpc_service.sandbox_pause(sandbox_id=sandbox_id, context=context)
-
-    def sandbox_resume(self, sandbox_id: str, context: dict | None = None) -> dict[Any, Any]:
-        return self._sandbox_rpc_service.sandbox_resume(sandbox_id=sandbox_id, context=context)
-
-    def sandbox_stop(self, sandbox_id: str, context: dict | None = None) -> dict[Any, Any]:
-        return self._sandbox_rpc_service.sandbox_stop(sandbox_id=sandbox_id, context=context)
-
-    def sandbox_list(
-        self,
-        context: dict | None = None,
-        verify_status: bool = False,
-        user_id: str | None = None,
-        zone_id: str | None = None,
-        agent_id: str | None = None,
-        status: str | None = None,
-    ) -> dict[Any, Any]:
-        return self._sandbox_rpc_service.sandbox_list(
-            context=context,
-            verify_status=verify_status,
-            user_id=user_id,
-            zone_id=zone_id,
-            agent_id=agent_id,
-            status=status,
-        )
-
-    def sandbox_status(self, sandbox_id: str, context: dict | None = None) -> dict[Any, Any]:
-        return self._sandbox_rpc_service.sandbox_status(sandbox_id=sandbox_id, context=context)
-
-    def sandbox_connect(
-        self,
-        sandbox_id: str,
-        provider: str = "e2b",
-        sandbox_api_key: str | None = None,
-        mount_path: str = "/mnt/nexus",
-        nexus_url: str | None = None,
-        nexus_api_key: str | None = None,
-        agent_id: str | None = None,
-        context: dict | None = None,
-    ) -> dict[Any, Any]:
-        return self._sandbox_rpc_service.sandbox_connect(
-            sandbox_id=sandbox_id,
-            provider=provider,
-            sandbox_api_key=sandbox_api_key,
-            mount_path=mount_path,
-            nexus_url=nexus_url,
-            nexus_api_key=nexus_api_key,
-            agent_id=agent_id,
-            context=context,
-        )
-
-    def sandbox_disconnect(
-        self,
-        sandbox_id: str,
-        provider: str = "e2b",
-        sandbox_api_key: str | None = None,
-        context: dict | None = None,
-    ) -> dict[Any, Any]:
-        return self._sandbox_rpc_service.sandbox_disconnect(
-            sandbox_id=sandbox_id,
-            provider=provider,
-            sandbox_api_key=sandbox_api_key,
-            context=context,
-        )
-
-    # --- Mount Operations (→ _mount_core_service) ---
-
-    def add_mount(
-        self,
-        mount_point: str,
-        backend_type: str,
-        backend_config: dict[str, Any],
-        readonly: bool = False,
-        io_profile: str = "balanced",
-        context: Any = None,
-    ) -> str:
-        return self._mount_core_service.add_mount(
-            mount_point=mount_point,
-            backend_type=backend_type,
-            backend_config=backend_config,
-            readonly=readonly,
-            io_profile=io_profile,
-            context=context,
-        )
-
-    def remove_mount(self, mount_point: str, context: Any = None) -> dict[str, Any]:
-        return self._mount_core_service.remove_mount(mount_point=mount_point, context=context)
-
-    def list_mounts(self, context: Any = None) -> builtins.list[dict[str, Any]]:
-        return self._mount_core_service.list_mounts(context=context)
-
-    def get_mount(self, mount_point: str, context: Any = None) -> dict[str, Any] | None:
-        return self._mount_core_service.get_mount(mount_point=mount_point, context=context)
 
     def _grant_mount_owner_permission(self, mount_point: str, context: Any | None) -> None:
         """Grant direct_owner permission to the user who created the mount."""
@@ -5273,74 +4776,3 @@ class NexusFS(  # type: ignore[misc]
                         route.backend.token_manager.close()
                 except Exception as e:
                     logger.debug("Failed to close backend token manager: %s", e)
-
-    # ------------------------------------------------------------------
-    # ReBAC delegation stubs (Issue #2033)
-    # These delegate to rebac_service which now owns the business logic.
-    # Kept on NexusFS for backward-compatibility with tests and CLI.
-    # ------------------------------------------------------------------
-
-    def rebac_create(
-        self,
-        subject: tuple[str, str],
-        relation: str,
-        object: tuple[str, str],
-        expires_at: Any = None,
-        zone_id: str | None = None,
-        context: Any = None,
-        column_config: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Create a relationship tuple — delegates to rebac_service."""
-        return self.rebac_service.rebac_create_sync(
-            subject=subject,
-            relation=relation,
-            object=object,
-            expires_at=expires_at,
-            zone_id=zone_id,
-            context=context,
-            column_config=column_config,
-        )
-
-    def rebac_check(
-        self,
-        subject: tuple[str, str],
-        permission: str,
-        object: tuple[str, str],
-        zone_id: str | None = None,
-        context: Any = None,
-    ) -> bool:
-        """Check a permission — delegates to rebac_service."""
-        return self.rebac_service.rebac_check_sync(
-            subject=subject,
-            permission=permission,
-            object=object,
-            zone_id=zone_id,
-            context=context,
-        )
-
-    def rebac_check_batch(
-        self,
-        checks: builtins.list[tuple[tuple[str, str], str, tuple[str, str]]],
-    ) -> builtins.list[bool]:
-        """Batch check permissions — delegates to rebac_service."""
-        return self.rebac_service.rebac_check_batch_sync(checks=checks)
-
-    def rebac_delete(self, tuple_id: str) -> bool:
-        """Delete a relationship tuple — delegates to rebac_service."""
-        return self.rebac_service.rebac_delete_sync(tuple_id)
-
-    def rebac_list_tuples(
-        self,
-        subject: tuple[str, str] | None = None,
-        relation: str | None = None,
-        object: tuple[str, str] | None = None,
-        relation_in: builtins.list[str] | None = None,
-        **_kw: Any,
-    ) -> builtins.list[dict[str, Any]]:
-        """List relationship tuples — delegates to rebac_service."""
-        return self.rebac_service.rebac_list_tuples_sync(
-            subject=subject,
-            relation=relation,
-            object=object,
-            relation_in=relation_in,
-        )

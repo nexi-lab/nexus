@@ -113,7 +113,6 @@ class EventBusProtocol(Protocol):
         zone_id: str,
         path_pattern: str,
         timeout: float = 30.0,
-        since_revision: int | None = None,
     ) -> FileEvent | None:
         """Wait for an event matching the path pattern.
 
@@ -121,7 +120,6 @@ class EventBusProtocol(Protocol):
             zone_id: Zone ID to subscribe to
             path_pattern: Path pattern to match
             timeout: Maximum time to wait in seconds
-            since_revision: Only return events with revision > this value.
 
         Returns:
             FileEvent if matched, None on timeout

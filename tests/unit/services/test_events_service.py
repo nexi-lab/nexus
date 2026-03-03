@@ -254,35 +254,6 @@ class TestDistributedLocking:
 
 
 # =============================================================================
-# Advisory Locking — Same-Box
-# =============================================================================
-
-
-class TestSameBoxLocking:
-    """Tests for locking via PassthroughBackend."""
-
-    def test_lock_uses_backend(self, mock_backend_passthrough):
-        """Lock delegates to backend.lock() for same-box."""
-        svc = EventsService(backend=mock_backend_passthrough)
-        lock_id = asyncio.run(svc.lock("/data/file.txt", timeout=5.0))
-        assert lock_id == "lock-123"
-        mock_backend_passthrough.lock.assert_called_once()
-
-    def test_unlock_uses_backend(self, mock_backend_passthrough):
-        """Unlock delegates to backend.unlock() for same-box."""
-        svc = EventsService(backend=mock_backend_passthrough)
-        result = asyncio.run(svc.unlock("lock-123"))
-        assert result is True
-        mock_backend_passthrough.unlock.assert_called_once_with("lock-123")
-
-    def test_extend_lock_noop_same_box(self, mock_backend_passthrough):
-        """Extend lock is a no-op for same-box (no TTL)."""
-        svc = EventsService(backend=mock_backend_passthrough)
-        result = asyncio.run(svc.extend_lock("lock-123", path="/data/file.txt"))
-        assert result is True
-
-
-# =============================================================================
 # Locking — No Infrastructure
 # =============================================================================
 

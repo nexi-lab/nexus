@@ -56,6 +56,8 @@ def _create_distributed_infra(
     metadata_store: "MetastoreABC",
     record_store: Any,
     coordination_url: str | None,
+    *,
+    zone_id: str = "root",
 ) -> tuple[Any, Any]:
     """Create event bus, event log, and lock manager.
 
@@ -75,8 +77,8 @@ def _create_distributed_infra(
             from nexus.raft.lock_manager import RaftLockManager
 
             if isinstance(metadata_store, LockStoreProtocol):
-                lock_manager = RaftLockManager(metadata_store)
-                logger.info("Distributed lock manager initialized (Raft consensus)")
+                lock_manager = RaftLockManager(metadata_store, zone_id=zone_id)
+                logger.info("Distributed lock manager initialized (Raft, zone=%s)", zone_id)
             else:
                 logger.warning(
                     "Distributed locks require LockStoreProtocol-compatible store, got %s. "

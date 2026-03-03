@@ -186,12 +186,8 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
         "nexus.system_services.lifecycle.events_service.EventsService",
         True,  # wait_for_changes method match
     ),
-    (
-        "LockProtocol",
-        "nexus.contracts.protocols.lock",
-        "nexus.system_services.lifecycle.events_service.EventsService",
-        True,  # lock/extend_lock/unlock methods match
-    ),
+    # LockProtocol removed — consolidated into LockManagerBase (lib/distributed_lock.py).
+    # EventsService.lock/unlock/extend_lock methods call LockManagerBase directly.
     # ── TransactionalSnapshotService (Issue #1752) ──────────────────────
     (
         "SnapshotServiceProtocol",

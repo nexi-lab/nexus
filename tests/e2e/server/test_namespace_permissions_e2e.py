@@ -593,10 +593,10 @@ def test_vfs_lock_manager_active(server: dict) -> None:
         assert resp.status_code == 200
 
     # Verify the lock manager classes are importable and functional.
-    from nexus.core.lock_fast import VFSLockManagerProtocol, create_vfs_lock_manager
+    from nexus.core.lock_fast import create_vfs_lock_manager
 
     mgr = create_vfs_lock_manager()
-    assert isinstance(mgr, VFSLockManagerProtocol)
+    assert hasattr(mgr, "acquire") and hasattr(mgr, "release")
 
     # Quick smoke test: acquire + release.
     h = mgr.acquire("/e2e/test", "write")

@@ -32,9 +32,9 @@ from nexus.system_services.agent_runtime.session_store import SessionStore
 from nexus.system_services.agent_runtime.tool_dispatcher import ToolDispatcher
 
 if TYPE_CHECKING:
+    from nexus.contracts.protocols.llm_provider import LLMProviderProtocol
     from nexus.contracts.types import OperationContext
     from nexus.core.nexus_fs import NexusFS
-    from nexus.contracts.protocols.llm_provider import LLMProviderProtocol
 
 logger = logging.getLogger(__name__)
 

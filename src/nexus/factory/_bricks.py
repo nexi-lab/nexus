@@ -324,15 +324,29 @@ def _boot_independent_bricks(
     lock_manager: Any = None
     if not _on("ipc"):
         logger.debug("[BOOT:BRICK] IPC/EventBus brick disabled by profile")
-    elif ctx.dist.enable_locks or ctx.dist.enable_events:
-        from nexus.factory._distributed import _create_distributed_infra
+    else:
+        # Event bus requires explicit dist config
+        if ctx.dist.enable_locks or ctx.dist.enable_events:
+            from nexus.factory._distributed import _create_distributed_infra
 
-        event_bus, lock_manager = _create_distributed_infra(
-            ctx.dist,
-            ctx.metadata_store,
-            ctx.record_store,
-            ctx.dist.coordination_url,
-        )
+            event_bus, lock_manager = _create_distributed_infra(
+                ctx.dist,
+                ctx.metadata_store,
+                ctx.record_store,
+                ctx.dist.coordination_url,
+            )
+
+        # Always create lock manager if metastore satisfies LockStoreProtocol
+        # (standalone → LocalLockManager, Raft → RaftLockManager already created above)
+        if lock_manager is None:
+            try:
+                from nexus.lib.distributed_lock import LocalLockManager, LockStoreProtocol
+
+                if isinstance(ctx.metadata_store, LockStoreProtocol):
+                    lock_manager = LocalLockManager(ctx.metadata_store)
+                    logger.info("Local lock manager initialized (standalone, LockStoreProtocol)")
+            except Exception as _lm_exc:
+                logger.debug("[BOOT:BRICK] LocalLockManager unavailable: %s", _lm_exc)
 
     # --- Workflow engine ---
     workflow_engine: Any = None

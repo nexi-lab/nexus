@@ -166,90 +166,66 @@ under single mutex. Lazy TTL expiry on acquire.
 
 ---
 
-## 4. Routing: Kernel Primitive + Conditional Driver
+## 4. Two-Lock Architecture (revised)
 
-### 4.1 Linux VFS Lock Analogy
+Through architecture review, the original LockRouter plan was rejected.
+Key insight: advisory locks and I/O locks are **fundamentally different concerns**.
+
+### 4.1 Why No Router
+
+1. **Writes converge**: In all deployment modes (standalone, REMOTE, federation),
+   writes to the same path converge to a single process. VFSLockManager
+   (in-memory, ~200ns) is sufficient for I/O serialization.
+2. **Advisory locks ARE metadata**: Like HDFS leases in the NameNode's
+   FSImage+EditLog, advisory locks should live in the metastore — visible,
+   queryable, Raft-replicated in federation, persistent with TTL cleanup.
+3. **Factory DI suffices**: `factory.py` injects `LocalLockManager` (standalone)
+   or `RaftLockManager` (federation). Both implement `LockManagerProtocol`.
+   No runtime routing needed.
+
+### 4.2 Two Locks
 
 ```
-Linux:   flock(fd, LOCK_EX)  →  VFS (fs/locks.c)  →  ext4: local    / NFS: → lockd/NLM
-Nexus:   lib.lock.lock(path) →  _LockRouter        →  VFSLock: local / Raft: → consensus
-                                  (always present)     (always)         (conditional)
+┌──────────────────────────────────────┬──────────────────────────────────────┐
+│  I/O Lock (core/)                    │  Advisory Lock (metastore)           │
+├──────────────────────────────────────┼──────────────────────────────────────┤
+│  VFSLockManager — in-memory HashMap  │  MetastoreABC.acquire_lock() — redb │
+│  ~200ns, sync, handle-based          │  ~5μs standalone / ~ms Raft         │
+│  Process-scoped (crash → released)   │  TTL-based (expire → released)      │
+│  Kernel-internal (sys_read/write)    │  User/service-facing (coordination) │
+│  Metadata-invisible                  │  Metadata-visible, queryable        │
+└──────────────────────────────────────┴──────────────────────────────────────┘
 ```
 
-Key properties borrowed from Linux:
-- **User code is the same** regardless of backend — `lock("/path")` everywhere
-- **Distributed driver is conditionally loaded** — only when Raft service is installed
-  AND node has joined a zone (like lockd only when NFS is mounted)
-- **Never silent downgrade** — if caller expects distributed and it's unavailable,
-  error (like Linux `ENOLCK`), don't silently give local lock
+**Fingerprint**: Advisory locks require `ttl > 0` (mandatory, prevents orphans).
+I/O locks have no TTL (kernel manages lifecycle in try/finally).
 
-### 4.2 Routing Rules
-
-| Scenario | Behavior |
-|----------|----------|
-| `lock("/path")`, no Raft | Local. Caller made no distributed claim. |
-| `lock("/path")`, Raft available | Distributed. Best available consistency. |
-| `force_local=True` | Always local. Caller explicitly chose local scope. |
-| `force_distributed=True`, Raft available | Distributed. |
-| `force_distributed=True`, **no Raft** | **`ServiceUnavailableError`** (like `ENOLCK`). |
-
-**Never silent downgrade**: two nodes each holding "local exclusive lock" = no actual
-mutual exclusion. Worse than failing. Same code transparently upgrades when Raft is
-added later — user code unchanged.
+**Restart behavior**: Advisory locks survive in redb. Dead holders stop renewing →
+TTL expires → auto-released. No orphans.
 
 ### 4.3 DI Model
 
-Distributed path is **DI'd at boot by factory.py**, not user-managed:
-
 ```python
 # factory.py (pseudo-code)
-vfs_lock = create_vfs_lock_manager()         # always
-vfs_sem = VFSSemaphore()                      # always
-distributed = RaftLockManager(raft_store) if raft_store else None  # conditional
-configure_locks(local_lock=vfs_lock, local_sem=vfs_sem, distributed=distributed)
+if metastore.supports_locks:
+    if dist.enable_locks:
+        lock_manager = RaftLockManager(metadata_store)   # federation
+    else:
+        lock_manager = LocalLockManager(metadata_store)  # standalone
 ```
 
-Pattern: kernel primitives always present, distributed driver conditionally loaded via DI.
-Same pattern as all other Nexus subsystems (metastore, event bus, etc.).
+| Profile | Metastore | lock_manager → |
+|---------|-----------|----------------|
+| minimal / embedded | redb (supports_locks=True) | LocalLockManager |
+| lite / full | redb (supports_locks=True) | LocalLockManager |
+| cloud / federation | redb + Raft (supports_locks=True) | RaftLockManager |
+| remote | RemoteMetastore (supports_locks=False) | None (server-side) |
 
-### 4.4 Mode Matrix
-
-| Profile | Raft | lock() → | sem_acquire() → |
-|---------|------|----------|----------------|
-| kernel / embedded / lite | No | VFSLockManager | VFSSemaphore |
-| full | Optional | Auto-detect | Auto-detect |
-| cloud / federation | Yes | RaftLockManager | RaftLockManager |
-
-### 4.5 Unlock Routing Registry
-
-`_registry[lock_id] = "local" | "distributed"` — set on acquire, looked up on release,
-cleaned up on release. Prevents cross-backend confusion. Leaked entries: distributed
-expire via TTL; local are process-scoped (lost on crash anyway).
-
-### 4.6 Semaphore → Raft Mapping
-
-Semaphore names map to reserved VFS namespace for Raft:
-`sem_acquire("upload_slots", max_holders=5)` →
-`RaftLockManager.acquire(zone_id, "/__sem__/upload_slots", max_holders=5)`.
-Reuses existing Raft lock infra, zero new wire protocol.
+Callers see only `LockManagerProtocol`. Same async API regardless of backend.
 
 ---
 
-## 5. Migration Path
-
-| Phase | What | Test |
-|-------|------|------|
-| 1 | `core/semaphore.py` — VFSSemaphore (Rust + Python fallback) | SSOT, TTL, concurrent holders |
-| 2 | `lib/lock.py` — _LockRouter + unified API | Mock backends, routing logic |
-| 3 | Wire VFSLockManager into sys_read/sys_write | Concurrent R/W race tests |
-| 4 | EventsService delegates to lib/lock.py, deprecate PassthroughBackend.lock() | Existing E2E passes |
-| 5 | SemaphoreProtocol in contracts/ | Protocol conformance |
-| 6 | REST API routes through lib/lock.py | Existing REST E2E passes |
-| 7 | factory.py wires configure_locks() | Per-profile integration tests |
-
----
-
-## 6. Summary
+## 5. Summary
 
 | Primitive | Location | Latency | Visibility | TTL | Scope |
 |-----------|----------|---------|------------|-----|-------|
@@ -261,26 +237,23 @@ Reuses existing Raft lock infra, zero new wire protocol.
 
 ---
 
-## 7. Design Decisions
+## 6. Design Decisions
 
-**D1: VFSSemaphore mirrors Raft semaphore exactly** — same SSOT, TTL, ownership.
-Users write code once, routing is transparent across deployment profiles.
+**D1: Two locks, not one** — I/O lock (VFSLockManager, kernel-internal, ~200ns) and
+advisory lock (MetastoreABC, user-facing, TTL-based) are fundamentally different.
+Like Linux `i_rwsem` vs `flock(2)`.
 
-**D2: Separate RW lock and semaphore** — different invariants (hierarchical path RW
-vs named counting). Linux keeps `i_rwsem` / `struct semaphore` separate for same reason.
+**D2: Advisory locks are metadata** — stored in MetastoreABC (redb), queryable,
+Raft-replicated in federation. Like HDFS leases in NameNode FSImage+EditLog.
 
-**D3: lib/lock.py routes, doesn't implement** — thin router. Logic in kernel primitives
-(core/) or distributed driver (raft/). Follows lib = libc, core = kernel pattern.
+**D3: Factory DI, not runtime routing** — `LocalLockManager` or `RaftLockManager`
+injected at boot. No `_LockRouter`, no runtime auto-detect. Simpler, testable.
 
 **D4: PassthroughBackend.lock() deprecated** — duplicates kernel lock logic.
-EventsService migrates to `lib.lock.lock()`.
+EventsService should migrate to `LockManagerProtocol`.
 
-**D5: asyncio.Semaphore stays as-is** — internal concurrency limiters (not VFS
-semaphores). No names, TTL, or cross-node semantics needed. Lighter weight for
-purely local ephemeral use.
+**D5: asyncio.Semaphore stays as-is** — internal concurrency limiters (not advisory
+locks). No names, TTL, or cross-node semantics needed.
 
-**D6: Kernel lock mandatory, user lock advisory** — sys_read/sys_write always
-acquire VFSLockManager. lib/lock.py is cooperative like `flock(2)`.
-
-**D7: Never silent downgrade distributed → local** — `force_distributed=True` without
-Raft raises `ServiceUnavailableError`. Default (no force) auto-detects best available.
+**D6: Kernel lock mandatory, advisory lock cooperative** — sys_read/sys_write always
+acquire VFSLockManager. Advisory locks are cooperative like `flock(2)`.

@@ -154,7 +154,6 @@ class EventsService:
         self,
         path: str,
         timeout: float = 30.0,
-        since_revision: int | None = None,
         _context: "OperationContext | None" = None,
     ) -> dict[str, Any] | None:
         """Wait for file system changes on a path.
@@ -166,7 +165,6 @@ class EventsService:
         Args:
             path: Virtual path to watch
             timeout: Maximum time to wait in seconds (default: 30.0)
-            since_revision: Only return events with revision > this value
             _context: Operation context (optional)
 
         Returns:
@@ -184,7 +182,6 @@ class EventsService:
                 zone_id=zone_id,
                 path_pattern=path,
                 timeout=timeout,
-                since_revision=since_revision,
             )
             if event is None:
                 return None

@@ -30,6 +30,5 @@ class WatchProtocol(Protocol):
         self,
         path: str,
         timeout: float = 30.0,
-        since_revision: int | None = None,
         _context: "OperationContext | None" = None,
     ) -> dict[str, Any] | None: ...

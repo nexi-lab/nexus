@@ -88,7 +88,6 @@ def mock_gateway():
     mock_fs._get_routing_params = MagicMock(return_value=("z1", "a1", False))
     mock_fs._has_descendant_access = MagicMock(return_value=True)
     mock_fs._get_backend_directory_entries = MagicMock(return_value=set())
-    mock_fs._record_read_if_tracking = MagicMock()
     mock_fs.read_bulk = MagicMock(return_value={})
     return NexusFSGateway(mock_fs)
 

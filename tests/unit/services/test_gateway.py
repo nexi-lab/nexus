@@ -56,7 +56,6 @@ def mock_fs():
     fs._descendant_checker = MagicMock()
     fs._descendant_checker.has_access = MagicMock(return_value=True)
     fs._get_backend_directory_entries = MagicMock(return_value={"file.txt"})
-    fs._record_read_if_tracking = MagicMock()
     fs.backend = MagicMock()
     return fs
 
@@ -376,11 +375,6 @@ class TestSearchOperations:
         """get_backend_directory_entries delegates to NexusFS."""
         result = gateway.get_backend_directory_entries("/test")
         assert result == {"file.txt"}
-
-    def test_record_read_if_tracking(self, gateway, mock_fs, context):
-        """record_read_if_tracking delegates to NexusFS."""
-        gateway.record_read_if_tracking(context, "file", "/test/a.txt")
-        mock_fs._record_read_if_tracking.assert_called_once()
 
 
 # =============================================================================

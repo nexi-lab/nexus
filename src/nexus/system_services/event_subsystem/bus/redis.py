@@ -207,7 +207,6 @@ class RedisEventBus(EventBusBase):
         zone_id: str,
         path_pattern: str,
         timeout: float = 30.0,
-        since_revision: int | None = None,
     ) -> FileEvent | None:
         """Wait for an event matching the path pattern.
 
@@ -215,8 +214,6 @@ class RedisEventBus(EventBusBase):
             zone_id: Zone ID to subscribe to
             path_pattern: Path pattern to match
             timeout: Maximum time to wait in seconds
-            since_revision: Only return events with revision > this value (Issue #1187).
-                           Events with revision <= since_revision are skipped.
 
         Returns:
             FileEvent if matched, None on timeout
@@ -226,7 +223,6 @@ class RedisEventBus(EventBusBase):
                 zone_id,
                 path_pattern,
                 timeout,
-                since_revision,
                 use_fresh_connection=False,
             )
         except RuntimeError as exc:
@@ -236,7 +232,6 @@ class RedisEventBus(EventBusBase):
                     zone_id,
                     path_pattern,
                     timeout,
-                    since_revision,
                     use_fresh_connection=True,
                 )
             raise
@@ -246,7 +241,6 @@ class RedisEventBus(EventBusBase):
         zone_id: str,
         path_pattern: str,
         timeout: float,
-        since_revision: int | None,
         *,
         use_fresh_connection: bool = False,
     ) -> FileEvent | None:
@@ -299,18 +293,6 @@ class RedisEventBus(EventBusBase):
                         continue
 
                     if event.matches_path_pattern(path_pattern):
-                        # Issue #1187: Filter by revision if specified
-                        if since_revision is not None and (
-                            event.revision is None or event.revision <= since_revision
-                        ):
-                            logger.debug(
-                                "Skipping event %s on %s: revision %s <= since_revision %s",
-                                event.type,
-                                event.path,
-                                event.revision,
-                                since_revision,
-                            )
-                            continue
                         logger.debug("Matched event: %s on %s", event.type, event.path)
                         return event
 

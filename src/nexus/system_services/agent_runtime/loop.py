@@ -36,8 +36,8 @@ if TYPE_CHECKING:
         AgentEvent,
         AgentProcessConfig,
     )
-    from nexus.contracts.types import OperationContext
     from nexus.contracts.protocols.llm_provider import LLMProviderProtocol
+    from nexus.contracts.types import OperationContext
     from nexus.system_services.agent_runtime.tool_dispatcher import ToolDispatcher
 
 logger = logging.getLogger(__name__)

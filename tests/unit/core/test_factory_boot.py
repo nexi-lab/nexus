@@ -76,6 +76,7 @@ EXPECTED_SYSTEM_KEYS = frozenset(
         "pipe_manager",
         "event_log",
         "scheduler_service",
+        "agent_runtime",
     }
 )
 

@@ -164,7 +164,7 @@ class WriteBackService:
         # Skip external-content backends (e.g. LocalConnector, HN, IPC) — content is
         # managed externally, write-back would double-write or be meaningless.
         # Also skip RemoteBackend — server handles its own persistence.
-        from nexus.core.protocols.capabilities import ConnectorCapability
+        from nexus.contracts.capabilities import ConnectorCapability
 
         backend = mount_info["backend"]
         _caps: frozenset[str] = getattr(backend, "capabilities", frozenset())

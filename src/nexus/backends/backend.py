@@ -16,8 +16,8 @@ from typing import TYPE_CHECKING, Any, ClassVar, Protocol, runtime_checkable
 from nexus.core.object_store import ObjectStoreABC, WriteResult
 
 if TYPE_CHECKING:
+    from nexus.contracts.capabilities import ConnectorCapability
     from nexus.contracts.types import OperationContext
-    from nexus.core.protocols.capabilities import ConnectorCapability
 
 
 @dataclass

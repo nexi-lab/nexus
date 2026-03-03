@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from nexus.backends.backend import FileInfo, HandlerStatusResponse
     from nexus.contracts.types import OperationContext
     from nexus.core.object_store import WriteResult
-    from nexus.core.protocols.capabilities import ConnectorCapability
+    from nexus.contracts.capabilities import ConnectorCapability
 
 # ---------------------------------------------------------------------------
 # SearchableConnector (Issue #2367)

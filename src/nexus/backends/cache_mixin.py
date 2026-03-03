@@ -53,7 +53,7 @@ class CacheConnectorMixin:
     - L2: Disk-based content + metadata sidecar (FileContentCache)
 
     Usage:
-        class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
+        class GCSConnectorBackend(PathBackend, CacheConnectorMixin):
             pass
     """
 

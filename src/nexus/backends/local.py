@@ -14,10 +14,10 @@ from nexus.backends.cas_blob_store import CASBlobStore
 from nexus.backends.chunked_storage import ChunkedStorageMixin
 from nexus.backends.multipart_upload_mixin import MultipartUploadMixin
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
+from nexus.contracts.capabilities import ConnectorCapability
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 from nexus.core.object_store import WriteResult
-from nexus.core.protocols.capabilities import ConnectorCapability
 from nexus.storage.content_cache import ContentCache
 
 if TYPE_CHECKING:

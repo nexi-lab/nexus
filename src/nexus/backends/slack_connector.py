@@ -51,9 +51,9 @@ from nexus.backends.slack_connector_utils import (
     list_channels,
     list_messages_from_channel,
 )
+from nexus.contracts.capabilities import OAUTH_CONNECTOR_CAPABILITIES, ConnectorCapability
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.object_store import WriteResult
-from nexus.core.protocols.capabilities import OAUTH_CONNECTOR_CAPABILITIES, ConnectorCapability
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext

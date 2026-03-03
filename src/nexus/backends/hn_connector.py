@@ -47,9 +47,9 @@ from nexus.backends.backend import Backend
 from nexus.backends.cache_mixin import CacheConnectorMixin, SyncResult
 from nexus.backends.connectors.base import SkillDocMixin
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
+from nexus.contracts.capabilities import ConnectorCapability
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.object_store import WriteResult
-from nexus.core.protocols.capabilities import ConnectorCapability
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext

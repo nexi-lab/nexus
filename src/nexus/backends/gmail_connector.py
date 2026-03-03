@@ -55,9 +55,9 @@ from nexus.backends.connectors.gmail.errors import ERROR_REGISTRY
 from nexus.backends.gmail_connector_utils import fetch_emails_batch, list_emails_by_folder
 from nexus.backends.oauth_mixin import OAuthConnectorMixin
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
+from nexus.contracts.capabilities import OAUTH_CONNECTOR_CAPABILITIES, ConnectorCapability
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.object_store import WriteResult
-from nexus.core.protocols.capabilities import OAUTH_CONNECTOR_CAPABILITIES, ConnectorCapability
 
 try:
     import yaml

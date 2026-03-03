@@ -3,7 +3,6 @@
 import builtins
 import contextlib
 import logging
-import threading
 import time
 from collections.abc import Callable, Generator, Iterator
 from datetime import UTC, datetime
@@ -108,7 +107,6 @@ class NexusFS(  # type: ignore[misc]
         self._enforce_permissions = permissions.enforce
         self._enforce_zone_isolation = permissions.enforce_zone_isolation
         self.allow_admin_bypass = permissions.allow_admin_bypass
-        self.auto_parse = parsing.auto_parse
         self.is_admin = is_admin
 
         # Three pillars: metadata (required), record store, cache store
@@ -152,8 +150,6 @@ class NexusFS(  # type: ignore[misc]
             self.provider_registry.auto_discover()
 
         self._virtual_view_parse_fn = brk_svc.parse_fn
-        self._parser_threads: list[threading.Thread] = []
-        self._parser_threads_lock = threading.Lock()
 
         # Default context for embedded mode
         self._default_context = OperationContext(
@@ -1236,113 +1232,6 @@ class NexusFS(  # type: ignore[misc]
             logger.warning(traceback.format_exc())
             return content
 
-    async def _get_parsed_content_async(
-        self, path: str, content: bytes
-    ) -> tuple[bytes, dict[str, Any]]:
-        """Get parsed content for a file (async version).
-
-        First checks for cached parsed_text in metadata, then parses on-demand if needed.
-        Falls back to raw content if parsing fails.
-
-        Args:
-            path: Virtual path to the file
-            content: Raw file content as bytes
-
-        Returns:
-            Tuple of (parsed_content_bytes, parse_info_dict)
-            parse_info contains: parsed (bool), provider (str or None), cached (bool)
-        """
-        parse_info: dict[str, Any] = {"parsed": False, "provider": None, "cached": False}
-
-        try:
-            # First, check for cached parsed_text in metadata
-            cached_text = self.metadata.get_file_metadata(path, "parsed_text")
-            if cached_text:
-                parse_info["parsed"] = True
-                parse_info["cached"] = True
-                parse_info["provider"] = self.metadata.get_file_metadata(path, "parser_name")
-                logger.debug(f"Using cached parsed_text for {path}")
-                return cached_text.encode("utf-8") if isinstance(
-                    cached_text, str
-                ) else cached_text, parse_info
-
-            # No cache - parse on demand using provider registry
-            if not hasattr(self, "provider_registry") or self.provider_registry is None:
-                logger.debug(f"No provider registry available for parsing {path}")
-                return content, parse_info
-
-            provider = self.provider_registry.get_provider(path)
-            if not provider:
-                logger.debug(f"No parse provider available for {path}")
-                return content, parse_info
-
-            # Parse the content (async)
-            try:
-                result = await provider.parse(content, path)
-
-                if result and result.text:
-                    parse_info["parsed"] = True
-                    parse_info["provider"] = provider.name
-                    parsed_content = result.text.encode("utf-8")
-
-                    # Cache the result for future reads
-                    try:
-                        from datetime import UTC, datetime
-
-                        self.metadata.set_file_metadata(path, "parsed_text", result.text)
-                        self.metadata.set_file_metadata(
-                            path, "parsed_at", datetime.now(UTC).isoformat()
-                        )
-                        self.metadata.set_file_metadata(path, "parser_name", provider.name)
-                    except Exception as cache_err:
-                        logger.warning(f"Failed to cache parsed content for {path}: {cache_err}")
-
-                    return parsed_content, parse_info
-
-            except Exception as parse_err:
-                logger.warning(f"Failed to parse {path} with {provider.name}: {parse_err}")
-                return content, parse_info
-
-        except Exception as e:
-            logger.warning(f"Error getting parsed content for {path}: {e}")
-
-        return content, parse_info
-
-    def _get_parsed_content(self, path: str, content: bytes) -> tuple[bytes, dict[str, Any]]:
-        """Get parsed content for a file (sync version).
-
-        First checks for cached parsed_text in metadata, then parses on-demand if needed.
-        Falls back to raw content if parsing fails.
-
-        This is a sync wrapper for _get_parsed_content_async. For async contexts,
-        use _get_parsed_content_async directly.
-
-        Args:
-            path: Virtual path to the file
-            content: Raw file content as bytes
-
-        Returns:
-            Tuple of (parsed_content_bytes, parse_info_dict)
-            parse_info contains: parsed (bool), provider (str or None), cached (bool)
-        """
-        import asyncio
-
-        # Check if we're already in an async context
-        try:
-            asyncio.get_running_loop()
-            # We're in an async context - can't use asyncio.run
-            # Use nest_asyncio or run in thread
-            import concurrent.futures
-
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(asyncio.run, self._get_parsed_content_async(path, content))
-                return future.result()
-        except RuntimeError:
-            # No running loop - use sync bridge
-            from nexus.lib.sync_bridge import run_sync
-
-            return run_sync(self._get_parsed_content_async(path, content))
-
     @rpc_expose(description="Read file content")
     def sys_read(
         self,
@@ -2230,7 +2119,7 @@ class NexusFS(  # type: ignore[misc]
 
     # ── Tier 2 overrides (NexusFS-specific) ───────────────────────
 
-    @rpc_expose(description="Read file with optional metadata/parsed content")
+    @rpc_expose(description="Read file with optional metadata")
     def read(
         self,
         path: str,
@@ -2239,12 +2128,10 @@ class NexusFS(  # type: ignore[misc]
         offset: int = 0,
         context: OperationContext | None = None,
         return_metadata: bool = False,
-        parsed: bool = False,
     ) -> bytes | dict[str, Any]:
-        """Read with optional metadata / parsed content (VFS convenience).
+        """Read with optional metadata (VFS convenience).
 
-        Overrides ABC default to add NexusFS-specific parsed-content support
-        via document parsers (Unstructured, LlamaParse, MarkItDown).
+        Composes sys_stat + sys_read.  POSIX pread semantics.
 
         Args:
             path: Virtual file path.
@@ -2252,18 +2139,11 @@ class NexusFS(  # type: ignore[misc]
             offset: Byte offset to start reading from.
             context: Operation context.
             return_metadata: If True, return dict with content + metadata.
-            parsed: If True, return parsed text content instead of raw bytes.
 
         Returns:
-            bytes if return_metadata=False and parsed=False,
-            else dict with content + metadata.
+            bytes if return_metadata=False, else dict with content + metadata.
         """
         content = self.sys_read(path, count=count, offset=offset, context=context)
-
-        # Handle parsed=True flag — NexusFS-specific document parsing
-        parse_info: dict[str, Any] = {}
-        if parsed:
-            content, parse_info = self._get_parsed_content(path, content)
 
         if not return_metadata:
             return content
@@ -2280,9 +2160,6 @@ class NexusFS(  # type: ignore[misc]
                     "size": len(content),
                 }
             )
-        if parsed:
-            result["parsed"] = parse_info.get("parsed", False)
-            result["provider"] = parse_info.get("provider")
         return result
 
     @rpc_expose(description="Write file with metadata return")
@@ -2453,16 +2330,6 @@ class NexusFS(  # type: ignore[misc]
             )
         )
 
-        # Invalidate cached parsed_text when file is updated
-        # This ensures read(parsed=True) re-parses the new content
-        if meta is not None:  # File existed before (update, not create)
-            try:
-                self.metadata.set_file_metadata(path, "parsed_text", None)
-                self.metadata.set_file_metadata(path, "parsed_at", None)
-                self.metadata.set_file_metadata(path, "parser_name", None)
-            except Exception as e:
-                logger.debug("Failed to invalidate parsed_text cache for %s: %s", path, e)
-
         # P0-3: Create parent relationship tuples for file inheritance
         # This enables permission inheritance from parent directories
         # Issue #1071: Use deferred buffer for async permission operations if available
@@ -2517,10 +2384,6 @@ class NexusFS(  # type: ignore[misc]
                     logger.warning(
                         f"write: Failed to grant direct_owner permission for {path}: {e}"
                     )
-
-        # Auto-parse file if enabled and format is supported
-        if self.auto_parse:
-            self._auto_parse_file(path)
 
         # Issue #1752: Auto-track write in active transaction (snapshot for rollback)
         # Issue #2131 (14A): Direct attribute access (set in __init__ via BrickServices)
@@ -3220,91 +3083,7 @@ class NexusFS(  # type: ignore[misc]
             f"per_file_avg={(_hierarchy_elapsed + _rebac_elapsed) / len(validated_files):.1f}ms"
         )
 
-        # Auto-parse files if enabled
-        if self.auto_parse:
-            for path, _ in validated_files:
-                self._auto_parse_file(path)
-
         return results
-
-    def _auto_parse_file(self, path: str) -> None:
-        """Auto-parse a file in the background (fire-and-forget).
-
-        Args:
-            path: Virtual path to the file
-        """
-        try:
-            # Check if parser is available for this file type
-            self.parser_registry.get_parser(path)
-
-            # Run parsing in a background thread
-            # CRITICAL: Use daemon=False to prevent abrupt termination during DB writes
-            # Threads are tracked for graceful shutdown in close()
-            thread = threading.Thread(
-                target=self._parse_in_thread,
-                args=(path,),
-                daemon=False,  # Changed from True to prevent DB corruption on shutdown
-                name=f"parser-{path}",  # Named for debugging
-            )
-            # Track thread for graceful shutdown
-            with self._parser_threads_lock:
-                # Clean up finished threads before adding new one
-                self._parser_threads = [t for t in self._parser_threads if t.is_alive()]
-                self._parser_threads.append(thread)
-            thread.start()
-        except Exception as e:
-            # Log if no parser available (expected) but don't fail the write operation
-            logger.debug(f"Auto-parse skipped for {path}: {type(e).__name__}: {e}")
-
-    def _parse_in_thread(self, path: str) -> None:
-        """Parse file in a background thread.
-
-        Args:
-            path: Virtual path to the file
-        """
-        try:
-            # Run async parse via sync bridge (thread-safe)
-            from nexus.lib.sync_bridge import run_sync
-
-            run_sync(self.parse(path, store_result=True))
-        except Exception as e:
-            # Log parsing errors for visibility but don't crash
-            # IMPORTANT: Log with enough detail to debug issues
-            import traceback
-
-            error_type = type(e).__name__
-            error_msg = str(e)
-
-            # Categorize errors for better logging
-            if "disk" in error_msg.lower() or "space" in error_msg.lower():
-                logger.error(
-                    f"Auto-parse FAILED for {path}: Disk error - {error_type}: {error_msg}"
-                )
-            elif "database" in error_msg.lower() or "connection" in error_msg.lower():
-                logger.error(
-                    f"Auto-parse FAILED for {path}: Database error - {error_type}: {error_msg}"
-                )
-            elif "memory" in error_msg.lower() or isinstance(e, MemoryError):
-                logger.error(
-                    f"Auto-parse FAILED for {path}: Memory error - {error_type}: {error_msg}"
-                )
-            elif "permission" in error_msg.lower() or isinstance(e, PermissionError | OSError):
-                logger.warning(
-                    f"Auto-parse FAILED for {path}: Permission/OS error - {error_type}: {error_msg}"
-                )
-            elif (
-                "unsupported" in error_msg.lower()
-                or "not supported" in error_msg.lower()
-                or error_type == "UnsupportedFormatException"
-            ):
-                # Expected for files that don't need parsing - log at debug level
-                logger.debug(f"Auto-parse skipped for {path}: Unsupported format - {error_msg}")
-            else:
-                # Unknown error - log with stack trace for debugging
-                logger.warning(
-                    f"Auto-parse FAILED for {path}: {error_type}: {error_msg}\n"
-                    f"Stack trace:\n{traceback.format_exc()}"
-                )
 
     @rpc_expose(description="Delete file")
     def sys_unlink(self, path: str, context: OperationContext | None = None) -> dict[str, Any]:
@@ -4058,79 +3837,6 @@ class NexusFS(  # type: ignore[misc]
 
         return results
 
-    @rpc_expose(description="Shutdown background parser threads")
-    def shutdown_parser_threads(self, timeout: float = 10.0) -> dict[str, Any]:
-        """Gracefully shutdown background parser threads.
-
-        CRITICAL: Must be called before closing NexusFS to prevent database corruption!
-        Non-daemon parser threads can have in-progress database writes that must complete.
-
-        This method waits for all parser threads to finish or times out after the specified
-        duration. This prevents abrupt termination that could corrupt the database.
-
-        Args:
-            timeout: Maximum seconds to wait for each thread to finish (default: 10s)
-
-        Returns:
-            Dict with shutdown statistics:
-                - total_threads: Number of parser threads that were running
-                - completed: Number of threads that finished gracefully
-                - timed_out: Number of threads that exceeded timeout
-                - timeout_threads: List of thread names that timed out
-
-        Example:
-            >>> nx = NexusFS(...)
-            >>> # ... use filesystem ...
-            >>> stats = nx.shutdown_parser_threads(timeout=5.0)
-            >>> if stats['timed_out'] > 0:
-            ...     logger.warning(f"{stats['timed_out']} parser threads timed out")
-            >>> nx.close()
-        """
-        with self._parser_threads_lock:
-            threads_to_wait = [t for t in self._parser_threads if t.is_alive()]
-            total = len(threads_to_wait)
-
-        if total == 0:
-            return {"total_threads": 0, "completed": 0, "timed_out": 0, "timeout_threads": []}
-
-        logger.info(f"Waiting for {total} parser threads to complete (timeout: {timeout}s)...")
-
-        completed = 0
-        timed_out = 0
-        timeout_threads = []
-
-        for thread in threads_to_wait:
-            logger.debug(f"Waiting for parser thread: {thread.name}")
-            thread.join(timeout=timeout)
-
-            if thread.is_alive():
-                # Thread exceeded timeout
-                timed_out += 1
-                timeout_threads.append(thread.name)
-                logger.warning(
-                    f"Parser thread '{thread.name}' did not complete within {timeout}s. "
-                    f"Thread may still be writing to database - potential data loss risk!"
-                )
-            else:
-                # Thread completed successfully
-                completed += 1
-                logger.debug(f"Parser thread '{thread.name}' completed")
-
-        # Clear the thread list
-        with self._parser_threads_lock:
-            self._parser_threads.clear()
-
-        logger.info(
-            f"Parser thread shutdown complete: {completed} completed, {timed_out} timed out"
-        )
-
-        return {
-            "total_threads": total,
-            "completed": completed,
-            "timed_out": timed_out,
-            "timeout_threads": timeout_threads,
-        }
-
     @rpc_expose(description="Delete multiple files/directories")
     def delete_bulk(
         self,
@@ -4736,17 +4442,7 @@ class NexusFS(  # type: ignore[misc]
         if hasattr(self, "_deferred_permission_buffer") and self._deferred_permission_buffer:
             self._deferred_permission_buffer.stop()
 
-        # Wait for all parser threads to complete before closing metadata store
-        # This prevents database corruption from threads writing during shutdown
-        with self._parser_threads_lock:
-            threads_to_join = list(self._parser_threads)
-
-        for thread in threads_to_join:
-            # Wait up to 5 seconds for each thread
-            # Parser threads should complete quickly, but we don't want to hang forever
-            thread.join(timeout=5.0)
-
-        # Close metadata store after all parsers have finished
+        # Close metadata store
         self.metadata.close()
 
         # Close record store (Services layer SQL connections)

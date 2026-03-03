@@ -25,6 +25,10 @@ from nexus.contracts.agent_process import (
 )
 from nexus.contracts.llm_types import Message, MessageRole, ToolCall, ToolFunction
 
+# Message passed to the LLM; the provider's _format_messages() handles
+# serialisation (vision flags, tool-call flags, etc.), so we must hand
+# it real Message objects — NOT pre-serialised dicts.
+
 if TYPE_CHECKING:
     from nexus.contracts.agent_process import (
         AgentContext,
@@ -66,11 +70,13 @@ async def agent_loop(
     """
     messages = list(context.messages)
     tools = list(context.tools)
+    system_msg = Message(role=MessageRole.SYSTEM, content=context.system_prompt)
     turn = 0
 
     while turn < config.max_turns:
-        # Prepare messages for LLM (convert to dicts)
-        llm_messages = _serialize_messages(context.system_prompt, messages)
+        # Pass Message objects to the LLM provider — provider handles
+        # serialisation (vision/cache/tool-call flags) internally.
+        llm_messages = [system_msg, *messages]
 
         # Call LLM with tools
         try:
@@ -142,30 +148,6 @@ async def agent_loop(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _serialize_messages(system_prompt: str, messages: list[Message]) -> list[dict]:
-    """Convert system prompt + messages to LLM-compatible dicts."""
-    result: list[dict] = [{"role": "system", "content": system_prompt}]
-
-    for msg in messages:
-        d = msg.model_dump()
-        # Ensure tool_calls are serialized for function-calling
-        if msg.tool_calls:
-            d["tool_calls"] = [
-                {
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {
-                        "name": tc.function.name,
-                        "arguments": tc.function.arguments,
-                    },
-                }
-                for tc in msg.tool_calls
-            ]
-        result.append(d)
-
-    return result
 
 
 def _extract_tool_calls(response: object) -> list[ToolCall]:

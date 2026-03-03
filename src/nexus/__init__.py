@@ -323,8 +323,18 @@ def connect(
         peers_str = os.environ.get("NEXUS_PEERS", "")
         peers = [p.strip() for p in peers_str.split(",") if p.strip()] if peers_str else []
 
-        # Bootstrap root zone (with peers for multi-node, without for single-node)
-        zone_mgr.bootstrap(peers=peers if peers else None)
+        # Detect joiner vs first-node (#2694):
+        # A joiner was provisioned via `nexus join` — has ca.pem but no join-token
+        tls_dir = Path(zones_dir) / "tls"
+        is_joiner = (tls_dir / "ca.pem").exists() and not (tls_dir / "join-token").exists()
+
+        if is_joiner:
+            # This node was provisioned via `nexus join` — join existing cluster
+            zone_mgr.join_zone("root", peers=peers if peers else None)
+            logger.info("Joiner node: joined root zone (provisioned via `nexus join`)")
+        else:
+            # First node — bootstrap
+            zone_mgr.bootstrap(peers=peers if peers else None)
 
         # Static Day-1 topology from env vars (idempotent)
         zones_str = os.environ.get("NEXUS_FEDERATION_ZONES", "")

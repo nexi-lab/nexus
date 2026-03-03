@@ -79,6 +79,8 @@ class ZoneManager:
 
         # Auto-generate TLS certs if none provided and none on disk (#1250)
         self._tls_config: ZoneTlsConfig | None = None
+        ca_key_path: str | None = None
+        join_token_hash: str | None = None
         if tls_cert_path is None and tls_key_path is None and tls_ca_path is None:
             auto = self._auto_generate_tls(base_path, node_id)
             if auto is not None:
@@ -86,6 +88,11 @@ class ZoneManager:
                 tls_key_path = str(auto.node_key_path)
                 tls_ca_path = str(auto.ca_cert_path)
                 self._tls_config = auto
+                # Read join token hash if this is the first node (has join-token-hash file)
+                hash_path = Path(base_path) / "tls" / "join-token-hash"
+                if hash_path.exists():
+                    join_token_hash = hash_path.read_text().strip()
+                    ca_key_path = str(Path(base_path) / "tls" / "ca-key.pem")
 
         self._py_mgr = PyZoneManager(
             node_id,
@@ -94,6 +101,8 @@ class ZoneManager:
             tls_cert_path=tls_cert_path,
             tls_key_path=tls_key_path,
             tls_ca_path=tls_ca_path,
+            ca_key_path=ca_key_path,
+            join_token_hash=join_token_hash,
         )
         self._stores: dict[str, RaftMetadataStore] = {}
         self._node_id = node_id
@@ -138,7 +147,7 @@ class ZoneManager:
             logger.debug("Auto-detected existing TLS certs in %s/tls/", base_path)
             return existing
 
-        # Generate new CA + node cert
+        # Generate new CA + node cert + join token
         try:
             from nexus.security.tls.certgen import (
                 cert_fingerprint,
@@ -146,20 +155,25 @@ class ZoneManager:
                 generate_zone_ca,
                 save_pem,
             )
+            from nexus.security.tls.join_token import generate_join_token
 
             tls_dir = Path(base_path) / "tls"
-            ca_cert, ca_key = generate_zone_ca("auto")
+            ca_cert, ca_key = generate_zone_ca("cluster")
             save_pem(tls_dir / "ca.pem", ca_cert)
             save_pem(tls_dir / "ca-key.pem", ca_key, is_private=True)
 
-            node_cert, node_key = generate_node_cert(node_id, "auto", ca_cert, ca_key)
+            node_cert, node_key = generate_node_cert(node_id, "cluster", ca_cert, ca_key)
             save_pem(tls_dir / "node.pem", node_cert)
             save_pem(tls_dir / "node-key.pem", node_key, is_private=True)
 
-            logger.info(
-                "Auto-generated TLS certs (CA fingerprint: %s)",
-                cert_fingerprint(ca_cert),
-            )
+            # Generate join token for K3s-style cluster bootstrap (#2694)
+            token, pw_hash = generate_join_token(ca_cert)
+            (tls_dir / "join-token").write_text(token)
+            (tls_dir / "join-token-hash").write_text(pw_hash)
+
+            fp = cert_fingerprint(ca_cert)
+            logger.info("Auto-generated TLS certs (CA fingerprint: %s)", fp)
+            logger.info("Join token: %s", token)
             return ZoneTlsConfig.from_data_dir(base_path)
         except Exception:
             logger.debug(

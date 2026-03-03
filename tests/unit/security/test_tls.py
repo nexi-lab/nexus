@@ -1,4 +1,5 @@
-"""Tests for SSH-style TOFU mTLS certificate generation and trust store (#1250)."""
+"""Tests for SSH-style TOFU mTLS certificate generation, trust store (#1250),
+and K3s-style join token (#2694)."""
 
 from __future__ import annotations
 
@@ -15,6 +16,11 @@ from nexus.security.tls.certgen import (
     save_pem,
 )
 from nexus.security.tls.config import ZoneTlsConfig
+from nexus.security.tls.join_token import (
+    generate_join_token,
+    parse_join_token,
+    verify_password,
+)
 from nexus.security.tls.trust_store import (
     TofuResult,
     TofuTrustStore,
@@ -246,3 +252,56 @@ class TestFullLifecycle:
         assert pem is not None
         reloaded = load_pem_cert(cfg.ca_cert_path)
         assert cert_fingerprint(reloaded) == cert_fingerprint(ca_a)
+
+
+# ---------------------------------------------------------------------------
+# Join Token (#2694)
+# ---------------------------------------------------------------------------
+
+
+class TestJoinToken:
+    def test_generate_and_parse_roundtrip(self) -> None:
+        ca_cert, _ = generate_zone_ca("cluster")
+        token, pw_hash = generate_join_token(ca_cert)
+        password, fingerprint = parse_join_token(token)
+
+        assert fingerprint == cert_fingerprint(ca_cert)
+        assert verify_password(password, pw_hash)
+
+    def test_token_format(self) -> None:
+        ca_cert, _ = generate_zone_ca("cluster")
+        token, _ = generate_join_token(ca_cert)
+        assert token.startswith("K10")
+        assert "::server:SHA256:" in token
+
+    def test_verify_password_rejects_wrong(self) -> None:
+        ca_cert, _ = generate_zone_ca("cluster")
+        _, pw_hash = generate_join_token(ca_cert)
+        assert not verify_password("wrong-password", pw_hash)
+
+    def test_parse_invalid_prefix(self) -> None:
+        with pytest.raises(ValueError, match="must start with"):
+            parse_join_token("BADPREFIX::server:SHA256:abc")
+
+    def test_parse_missing_separator(self) -> None:
+        with pytest.raises(ValueError, match="separator"):
+            parse_join_token("K10password_only")
+
+    def test_parse_empty_password(self) -> None:
+        with pytest.raises(ValueError, match="empty"):
+            parse_join_token("K10::server:SHA256:abc")
+
+    def test_two_tokens_different_passwords(self) -> None:
+        ca_cert, _ = generate_zone_ca("cluster")
+        token1, hash1 = generate_join_token(ca_cert)
+        token2, hash2 = generate_join_token(ca_cert)
+        pw1, _ = parse_join_token(token1)
+        pw2, _ = parse_join_token(token2)
+        assert pw1 != pw2
+        assert hash1 != hash2
+        # Each password matches its own hash
+        assert verify_password(pw1, hash1)
+        assert verify_password(pw2, hash2)
+        # Cross-verify fails
+        assert not verify_password(pw1, hash2)
+        assert not verify_password(pw2, hash1)

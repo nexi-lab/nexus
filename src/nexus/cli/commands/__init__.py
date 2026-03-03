@@ -21,6 +21,7 @@ from nexus.cli.commands import (
     admin,
     agent,
     cache,
+    cluster,  # Issue #2694: K3s-style join token for cluster mTLS
     connectors,
     context,  # Issue #1315: Context versioning — workspace branching
     directory,
@@ -84,6 +85,7 @@ def register_all_commands(cli: click.Group) -> None:
     context.register_commands(cli)  # Issue #1315: Context versioning
     network.register_commands(cli)  # WireGuard mesh network for federation
     tls.register_commands(cli)  # Issue #1250: TLS cert management for federation
+    cluster.register_commands(cli)  # Issue #2694: K3s-style cluster join
 
 
 __all__ = [
@@ -114,5 +116,6 @@ __all__ = [
     "context",  # Issue #1315: Context versioning
     "network",  # WireGuard mesh network for federation
     "tls",  # Issue #1250: TLS cert management
+    "cluster",  # Issue #2694: K3s-style cluster join
     "zone_mod",  # zone.py (federation + portability CLI)
 ]

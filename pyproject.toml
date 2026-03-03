@@ -893,17 +893,20 @@ ignore_imports = [
 ]
 unmatched_ignore_imports_alerting = "warn"
 
-# Contract 2: Four-tier layered architecture
-# tier-neutral (lib, contracts) < kernel (core) < system_services < bricks
+# Contract 2: Five-tier layered architecture
+# contracts (include/linux) < lib (lib/) < kernel (core) < system_services < bricks
+# contracts is the type-definition base — everyone can depend on it.
+# lib provides utilities that may use contract types, like Linux lib/ includes include/linux/.
 [[tool.importlinter.contracts]]
 id = "four-tier-layers"
-name = "Four-tier architecture: tier-neutral < kernel < system_services < bricks"
+name = "Five-tier architecture: contracts < lib < kernel < system_services < bricks"
 type = "layers"
 layers = [
     "nexus.bricks",
     "nexus.system_services",
     "nexus.core",
-    "nexus.contracts | nexus.lib",
+    "nexus.lib",
+    "nexus.contracts",
 ]
 # Ratchet baseline — known violations. Remove entries as fixes land.
 # Run: lint-imports --contract four-tier-layers to check.
@@ -913,21 +916,13 @@ ignore_imports = [
     # --- tier-neutral (contracts/protocols) importing bricks ---
     # chunked_upload protocol TYPE_CHECKING import for UploadSession return type
     "nexus.contracts.protocols.chunked_upload -> nexus.bricks.upload.upload_session",
-    # --- tier-neutral (contracts/lib) cross-imports ---
-    "nexus.lib.path_utils -> nexus.contracts.exceptions",
+    # --- contracts importing lib (upward — legacy, to be fixed) ---
     "nexus.contracts -> nexus.lib.validators",
     "nexus.contracts.deployment_profile -> nexus.lib.performance_tuning",
     "nexus.contracts.types -> nexus.storage.read_set",
     # WirableFS TYPE_CHECKING imports (cross-tier wiring contract, #2359)
     "nexus.contracts.wirable_fs -> nexus.storage.record_store",
-    "nexus.lib.context_utils -> nexus.contracts.types",
-    "nexus.lib.context_utils -> nexus.contracts.constants",
-    "nexus.lib.db_base -> nexus.contracts.constants",
-    "nexus.lib.zone -> nexus.contracts.constants",
-    "nexus.lib.performance_tuning -> nexus.contracts.deployment_profile",
-    "nexus.lib.performance_tuning -> nexus.contracts.qos",
-    "nexus.lib.response -> nexus.contracts.exceptions",
-    "nexus.lib.permission_utils -> nexus.contracts.types",
+    # --- lib importing system_services (upward — legacy, to be fixed) ---
     "nexus.lib.permission_utils -> nexus.system_services.gateway",
     # --- kernel (core) importing bricks ---
     "nexus.core.config -> nexus.bricks.workflows.protocol",

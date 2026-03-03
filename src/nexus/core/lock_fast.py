@@ -14,32 +14,8 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Protocol
-# ---------------------------------------------------------------------------
-
-
-@runtime_checkable
-class VFSLockManagerProtocol(Protocol):
-    """Structural interface shared by Rust and Python implementations."""
-
-    def acquire(self, path: str, mode: str, timeout_ms: int = 0) -> int: ...
-
-    def release(self, handle: int) -> bool: ...
-
-    def is_locked(self, path: str) -> bool: ...
-
-    def holders(self, path: str) -> dict | None: ...
-
-    def stats(self) -> dict: ...
-
-    @property
-    def active_locks(self) -> int: ...
-
 
 # ---------------------------------------------------------------------------
 # Python fallback
@@ -300,7 +276,7 @@ class RustVFSLockManager:
 # ---------------------------------------------------------------------------
 
 
-def create_vfs_lock_manager() -> VFSLockManagerProtocol:
+def create_vfs_lock_manager() -> RustVFSLockManager | PythonVFSLockManager:
     """Return the best available VFS lock manager.
 
     Prefers the Rust implementation; falls back to pure Python.

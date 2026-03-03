@@ -35,7 +35,6 @@ from nexus.contracts.protocols.file_reader import FileReaderProtocol
 from nexus.contracts.protocols.filesystem import NexusFilesystem
 from nexus.contracts.protocols.llm import LLMServiceProtocol
 from nexus.contracts.protocols.llm_provider import LLMProviderProtocol
-from nexus.contracts.protocols.lock import LockProtocol
 from nexus.contracts.protocols.mcp import MCPProtocol
 from nexus.contracts.protocols.memory import MemoryProtocol
 from nexus.contracts.protocols.memory_deps import (
@@ -79,7 +78,6 @@ __all__ = [
     "LLMProviderProtocol",
     "LLMServiceProtocol",
     "LifecycleManagerProtocol",
-    "LockProtocol",
     "MCPProtocol",
     "MemoryEntityRegistryProtocol",
     "MemoryPermissionProtocol",

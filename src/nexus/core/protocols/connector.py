@@ -189,20 +189,19 @@ class ConnectorProtocol(
 
 @runtime_checkable
 class PassthroughProtocol(Protocol):
-    """Same-box operations — locking, physical path access.
+    """Same-box operations — physical path access, file watching.
 
-    Only PassthroughBackend implements this. Used by events/locking code
+    Only PassthroughBackend implements this. Used by events/watch code
     to safely narrow the backend type instead of using ``cast()``.
+
+    Advisory locking removed — use LockManagerBase (LocalLockManager
+    or RaftLockManager) via factory DI instead.
     """
 
     @property
     def base_path(self) -> Path: ...
 
     def get_physical_path(self, virtual_path: str) -> Path: ...
-
-    def lock(self, path: str, timeout: float = 30.0, max_holders: int = 1) -> str | None: ...
-
-    def unlock(self, lock_id: str) -> bool: ...
 
 @runtime_checkable
 class OAuthCapableProtocol(Protocol):

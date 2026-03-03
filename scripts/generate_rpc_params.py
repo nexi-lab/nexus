@@ -60,7 +60,6 @@ EXCLUDED_METHODS: set[str] = {
     "stream",
     "stream_range",
     "write_stream",
-    "shutdown_parser_threads",
     "export_metadata",
     "import_metadata",
     "batch_get_content_ids",

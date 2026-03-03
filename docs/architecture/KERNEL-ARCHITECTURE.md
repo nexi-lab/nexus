@@ -143,7 +143,8 @@ See `ops-scenario-matrix.md` for full Ops-Scenario affinity proof.
 | `VFSRouterProtocol` | VFS `lookup_slow()` | Path resolution only — mount CRUD lives in Service `MountProtocol` |
 | `ObjectStoreABC` (= `Backend`) | `struct file_operations` | Blob I/O interface (read/write/delete/list) |
 | `CacheStoreABC` | (no direct analogue) | Ephemeral KV + Pub/Sub primitives |
-| `VFSLockManagerProtocol` | per-inode `i_rwsem` | Path-level RW locking with hierarchy awareness |
+| `VFSLockManagerProtocol` | per-inode `i_rwsem` | Path-level RW lock — mandatory in sys_read/sys_write (see `lock-architecture.md`) |
+| `VFSSemaphoreProtocol` | `struct semaphore` | Holder-tracked counting semaphore — local counterpart to Raft semaphore |
 | `PipeManagerProtocol` | `pipe(2)` + `fs/pipe.c` | Named pipe lifecycle + MPMC data path (see §6 Kernel Tier) |
 | VFS dispatch | `file->f_op` + `security_hook_heads` + `fsnotify` | Three-phase dispatch at VFS operation points (see §3 VFS Dispatch) |
 
@@ -152,11 +153,13 @@ between VFS and storage. Without it, the kernel cannot describe files.
 
 `VFSLockManager` (`core/lock_fast.py`) provides rwsem semantics with hierarchical
 ancestor/descendant conflict detection. Rust-accelerated (PyO3), Python fallback.
+Wired into sys_read (shared) / sys_write (exclusive) for mandatory I/O serialization.
 Distinct from service-layer advisory locking (LockProtocol / `ops-scenario-matrix.md` S9).
 
-> **Gap:** VFSLockManager is created in `NexusFS.__init__` but not yet wired into the
-> write path. Intent: local coroutine concurrency lock, complementing the distributed
-> RaftLockManager — like Linux `i_rwsem` (local) coexisting with `flock(2)` (distributed).
+`VFSSemaphore` (`core/semaphore.py`, satisfies `VFSSemaphoreProtocol`) provides
+holder-tracked counting semaphore with TTL expiry — local kernel counterpart to
+RaftLockManager's `max_holders > 1` mode. Both primitives are routed transparently
+via `lib/lock.py` (local or distributed). See `lock-architecture.md`.
 
 ### NexusFS — Syscall Dispatch Layer
 

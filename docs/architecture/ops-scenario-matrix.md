@@ -918,7 +918,7 @@ Tier assignment per KERNEL-ARCHITECTURE.md (three swap tiers):
 | Proto Service | Proto File | Scope | Purpose |
 |---------------|-----------|-------|---------|
 | `ZoneTransportService` | `proto/nexus/raft/transport.proto` | Internal | Node-to-node Raft messages (StepMessage, ReplicateEntries) |
-| `ZoneApiService` | `proto/nexus/raft/transport.proto` | Internal | Client-facing zone ops (Propose, Query, GetClusterInfo, JoinZone, InviteZone) |
+| `ZoneApiService` | `proto/nexus/raft/transport.proto` | Internal | Client-facing zone ops (Propose, Query, GetClusterInfo, JoinZone, JoinCluster) |
 | `ExchangeService` | `proto/nexus/exchange/v1/exchange.proto` | External | Agent Exchange API — identity (4 RPCs), payment (8 RPCs), audit (5 RPCs). REST-only Phase 1; Connect-RPC Phase 2/3. |
 
 Named `Zone*` to match `ZoneConsensus` (Rust). IPC Agent Messaging (`src/nexus/ipc/`) uses VFS as transport — see S29.

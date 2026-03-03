@@ -54,6 +54,7 @@ prost = { version = "0.13", optional = true }
 bytes = { version = "1", optional = true }
 dashmap = { version = "6", optional = true }
 time = { version = "0.3", features = ["parsing"], optional = true }
+sha2 = { version = "0.10", optional = true }  # SHA-256 for JoinCluster token verification
 
 # Python bindings (PyO3 FFI)
 pyo3 = { version = "0.27.2", features = ["extension-module"], optional = true }
@@ -82,7 +83,7 @@ consensus = ["raft", "protobuf", "slog", "async"]
 # Enable gRPC transport (tonic + protobuf) — EXPERIMENTAL, default OFF.
 # Requires `consensus` feature. Not used in production.
 # See: docs/rfcs/adr-raft-sled-strategy.md (Decision 4)
-grpc = ["tonic", "prost", "bytes", "tonic-build", "async", "tracing-subscriber", "consensus", "dashmap", "time"]
+grpc = ["tonic", "prost", "bytes", "tonic-build", "async", "tracing-subscriber", "consensus", "dashmap", "time", "sha2"]
 
 # Enable everything (including experimental features)
 full = ["grpc", "consensus", "python"]

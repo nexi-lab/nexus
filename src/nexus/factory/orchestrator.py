@@ -387,10 +387,8 @@ def create_nexus_fs(
 
         _content_cache = ContentCache(max_size_mb=_cache_for_cc.content_cache_size_mb)
 
-    # Create VFS lock manager (Issue #657)
-    from nexus.lib.lock_fast import create_vfs_lock_manager
-
-    _vfs_lock_manager = create_vfs_lock_manager()
+    # NOTE: VFSLockManager is now kernel-internal (NexusFS.__init__ creates it).
+    # No longer injected via BrickServices. See write-path-extraction-design.md.
 
     # Pack factory-created bricks into BrickServices container (Issue #2134)
     _brick_updates: dict[str, Any] = {
@@ -399,7 +397,6 @@ def create_nexus_fs(
         "content_cache": _content_cache,
         "parser_registry": parsers_brick.parser_registry,
         "provider_registry": parsers_brick.provider_registry,
-        "vfs_lock_manager": _vfs_lock_manager,
     }
     if workflow_engine is not None:
         _brick_updates["workflow_engine"] = workflow_engine

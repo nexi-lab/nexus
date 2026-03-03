@@ -419,7 +419,8 @@ class TestBrickServices:
             "content_cache",
             "parser_registry",
             "provider_registry",
-            "vfs_lock_manager",
+            # NOTE: vfs_lock_manager removed — now kernel-internal (NexusFS.__init__).
+            # See write-path-extraction-design.md.
             # Governance Brick (Issue #2129)
             "governance_anomaly_service",
             "governance_collusion_service",

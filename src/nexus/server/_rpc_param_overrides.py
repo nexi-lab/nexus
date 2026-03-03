@@ -48,16 +48,14 @@ class ReadParams:
 class WriteParams:
     """Parameters for write() method (Tier 2 convenience).
 
-    Includes POSIX count/offset plus OCC/lock params that
-    NexusFS.write() supports transitionally.
+    Includes POSIX count/offset plus OCC params handled at the RPC layer.
+    Lock params removed — use lock()/unlock() explicitly.
     """
 
     path: str
     buf: bytes | str
     count: int | None = None
     offset: int = 0
-    lock: bool = False
-    lock_timeout: float = 30.0
     if_match: str | None = None
     if_none_match: bool = False
     force: bool = False

@@ -171,29 +171,36 @@ async def handle_read_async(
 def handle_write(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle write method.
 
-    Uses write() (Tier 2 convenience) which supports OCC params
-    (if_match, if_none_match, force) and distributed locking.
-    Returns dict with bytes_written plus metadata from write().
+    OCC checks (if_match, if_none_match) are done here at the RPC layer
+    via ``occ_write()`` helper — not in the kernel. Distributed locking
+    is also NOT in write() — callers should use lock()/unlock() or
+    ``async with locked(path)`` explicitly.
+
+    Issue #1323: OCC + lock extracted from kernel.
     """
     content = params.content
     if isinstance(content, str):
         content = content.encode("utf-8")
 
-    kwargs: dict[str, Any] = {"context": context}
-    if hasattr(params, "if_match") and params.if_match:
-        kwargs["if_match"] = params.if_match
-    if hasattr(params, "if_none_match") and params.if_none_match:
-        kwargs["if_none_match"] = params.if_none_match
-    if hasattr(params, "force") and params.force:
-        kwargs["force"] = params.force
-    lock_val = getattr(params, "lock", None)
-    if lock_val:
-        kwargs["lock"] = lock_val
-    lock_timeout_val = getattr(params, "lock_timeout", None)
-    if lock_timeout_val is not None and lock_timeout_val != 30.0:
-        kwargs["lock_timeout"] = lock_timeout_val
+    # OCC: use lib/occ helper if CAS params present
+    if_match = getattr(params, "if_match", None) or None
+    if_none_match = getattr(params, "if_none_match", False)
+    force = getattr(params, "force", False)
 
-    write_result = nexus_fs.write(params.path, content, **kwargs)
+    if (if_match or if_none_match) and not force:
+        from nexus.lib.occ import occ_write
+
+        write_result = occ_write(
+            nexus_fs,
+            params.path,
+            content,
+            context=context,
+            if_match=if_match,
+            if_none_match=if_none_match,
+        )
+    else:
+        write_result = nexus_fs.write(params.path, content, context=context)
+
     # write() returns dict with metadata (etag, version, modified_at, size).
     # Merge bytes_written into the response for backward compatibility.
     result: dict[str, Any] = {"bytes_written": len(content)}

@@ -332,11 +332,12 @@ class ZoneImportService:
             try:
                 # Use system context for import (privileged operation)
                 import_context = _create_import_context()
+                # force=True (skip OCC) → just call write() directly.
+                # Issue #1323: OCC extracted to lib/occ.py, write() is now OCC-free.
                 write_result = self.nexus_fs.write(
                     path=remapped_path,
                     buf=content,
                     context=import_context,
-                    force=True,  # Skip version check since we're restoring
                 )
 
                 # Update metadata if preserving timestamps

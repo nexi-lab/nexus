@@ -2,7 +2,7 @@
 
 These tests verify the high-level NexusFS locking APIs:
 - locked() context manager
-- write(lock=True)
+- locked() context manager (async)
 - atomic_update()
 - LockTimeout exception
 
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 # Skip: RedisLockManager was removed from nexus.lib.distributed_lock
 pytestmark = pytest.mark.skip(
-    reason="TODO: https://github.com/nexi-lab/nexus/issues/1702 — RedisLockManager removed from source; tests need rewrite for RaftLockManager",
+    reason="TODO: https://github.com/nexi-lab/nexus/issues/1702 — RedisLockManager removed; write(lock=True) removed (#1323). Rewrite for RaftLockManager + explicit lock()/unlock() API.",
 )
 
 # =============================================================================
@@ -358,20 +358,25 @@ class TestWriteWithLock:
             t.join(timeout=10)
 
     def test_write_with_lock_and_etag(self, nx_sync_with_lock: "NexusFS"):
-        """Test write(lock=True, if_match=etag) — lock + OCC combination."""
+        """Test occ_write + lock — OCC check at caller level, lock via write().
+
+        Issue #1323: OCC extracted from kernel to lib/occ.py.
+        """
+        from nexus.lib.occ import occ_write
+
         result = nx_sync_with_lock.write("/occ.txt", b"v1", lock=True)
         etag = result["etag"]
 
-        # Write with matching etag + lock should succeed
-        result2 = nx_sync_with_lock.write("/occ.txt", b"v2", lock=True, if_match=etag)
+        # Write with matching etag should succeed (OCC via helper)
+        result2 = occ_write(nx_sync_with_lock, "/occ.txt", b"v2", if_match=etag)
         assert result2["version"] == 2
         assert nx_sync_with_lock.sys_read("/occ.txt") == b"v2"
 
-        # Write with stale etag + lock should fail with ConflictError
+        # Write with stale etag should fail with ConflictError
         from nexus.contracts.exceptions import ConflictError
 
         with pytest.raises(ConflictError):
-            nx_sync_with_lock.write("/occ.txt", b"v3", lock=True, if_match=etag)
+            occ_write(nx_sync_with_lock, "/occ.txt", b"v3", if_match=etag)
 
     def test_write_lock_mutual_exclusion(self, temp_dir, isolated_db, tmp_path):
         """Test that write(lock=True) provides TRUE mutual exclusion.

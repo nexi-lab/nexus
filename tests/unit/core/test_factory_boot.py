@@ -493,7 +493,8 @@ class TestBrickServicesFieldCompleteness:
         assert brk.parse_fn is not None, "parse_fn should be packed into BrickServices"
         assert brk.parser_registry is not None, "parser_registry should be in BrickServices"
         assert brk.provider_registry is not None, "provider_registry should be in BrickServices"
-        assert brk.vfs_lock_manager is not None, "vfs_lock_manager should be in BrickServices"
+        # NOTE: vfs_lock_manager removed from BrickServices — now kernel-internal
+        # (created in NexusFS.__init__). See write-path-extraction-design.md.
         # backend.has_root_path=True + CacheConfig.enable_content_cache=True (default)
         assert brk.content_cache is not None, (
             "content_cache should be non-None when backend.has_root_path=True "

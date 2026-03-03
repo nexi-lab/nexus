@@ -213,13 +213,12 @@ class NexusFS(  # type: ignore[misc]
         self._coordination_client: Any = None
         self._event_client: Any = None
 
-        # VFS lock manager (Issue #2134: from BrickServices)
-        if brk_svc.vfs_lock_manager is not None:
-            self._vfs_lock_manager = brk_svc.vfs_lock_manager
-        else:
-            from nexus.core.lock_fast import create_vfs_lock_manager
+        # VFS lock manager — kernel-internal, NOT injected via DI.
+        # Analogous to Linux i_rwsem: always present, created by kernel at init.
+        # Protects same-process coroutine concurrency on sys_write/sys_read.
+        from nexus.core.lock_fast import create_vfs_lock_manager
 
-            self._vfs_lock_manager = create_vfs_lock_manager()
+        self._vfs_lock_manager = create_vfs_lock_manager()
         logger.info("VFS lock manager initialized (%s)", type(self._vfs_lock_manager).__name__)
 
         # Service attributes — set to None by default.
@@ -1321,7 +1320,7 @@ class NexusFS(  # type: ignore[misc]
         )
 
     # =========================================================================
-    # Sync Lock Helpers for write(lock=True) - Issue #1106 Block 3
+    # Sync Lock Helpers for atomic_update() - Issue #1106 Block 3
     # =========================================================================
 
     def _acquire_lock_sync(
@@ -1349,7 +1348,7 @@ class NexusFS(  # type: ignore[misc]
         # Check if lock manager is available
         if not hasattr(self, "_lock_manager") or self._lock_manager is None:
             raise RuntimeError(
-                "write(lock=True) called but distributed lock manager not configured. "
+                "Distributed lock requested but lock manager not configured. "
                 "Ensure NexusFS is initialized with enable_distributed_locks=True."
             )
 
@@ -1359,10 +1358,10 @@ class NexusFS(  # type: ignore[misc]
         # Check if we're in an async context - if so, user should use locked() instead
         try:
             asyncio.get_running_loop()
-            # There's a running event loop - write(lock=True) won't work properly
+            # There's a running event loop - sync lock won't work properly
             raise RuntimeError(
-                "write(lock=True) cannot be used from async context (event loop detected). "
-                "Use `async with nx.events_service.locked(path):` and `write(lock=False)` instead."
+                "Sync lock cannot be used from async context (event loop detected). "
+                "Use `async with nx.events_service.locked(path):` instead."
             )
         except RuntimeError as e:
             if "event loop detected" in str(e):
@@ -2485,14 +2484,7 @@ class NexusFS(  # type: ignore[misc]
         if _handled:
             return len(buf)
 
-        self._write_internal(
-            path=path,
-            content=buf,
-            context=context,
-            if_match=None,
-            if_none_match=False,
-            force=True,
-        )
+        self._write_internal(path=path, content=buf, context=context)
         return len(buf)
 
     # ── Tier 2 overrides (NexusFS-specific) ───────────────────────
@@ -2552,7 +2544,7 @@ class NexusFS(  # type: ignore[misc]
             result["provider"] = parse_info.get("provider")
         return result
 
-    @rpc_expose(description="Write file with optional lock/OCC")
+    @rpc_expose(description="Write file with metadata return")
     def write(
         self,
         path: str,
@@ -2561,20 +2553,18 @@ class NexusFS(  # type: ignore[misc]
         count: int | None = None,
         offset: int = 0,
         context: OperationContext | None = None,
-        lock: bool = False,
-        lock_timeout: float = 30.0,
-        if_match: str | None = None,
-        if_none_match: bool = False,
-        force: bool = False,
     ) -> dict[str, Any]:
-        """Write with metadata update + optional lock/OCC (VFS convenience).
+        """Write with metadata return (Tier 2 convenience).
 
-        Overrides ABC default. Composes _write_internal (which handles
-        content + metadata atomically in Phase A) with optional distributed
-        lock acquisition.
+        Overrides ABC default. Returns dict with metadata
+        (etag, version, modified_at, size).
 
-        OCC params (if_match, if_none_match, force) are exposed here as
-        transitional — they will be removed when CAS moves fully to driver.
+        OCC (if_match, if_none_match) is NOT here — use ``lib.occ.occ_write()``
+        to compose OCC + write at the caller level (RPC handler, CLI, SDK).
+
+        Distributed locking is NOT here — use ``lock()``/``unlock()`` or
+        ``async with locked(path)`` to compose locking at the caller level.
+        See Issue #1323.
 
         Args:
             path: Virtual file path.
@@ -2582,11 +2572,6 @@ class NexusFS(  # type: ignore[misc]
             count: Max bytes to write (None = len(buf)).
             offset: Byte offset (currently ignored — whole-file).
             context: Operation context.
-            lock: If True, acquire distributed lock before writing.
-            lock_timeout: Max time to wait for lock (seconds).
-            if_match: CAS etag for optimistic concurrency (transitional).
-            if_none_match: Create-only mode (transitional).
-            force: Bypass CAS checks (transitional).
 
         Returns:
             Dict with metadata (etag, version, modified_at, size).
@@ -2604,37 +2589,23 @@ class NexusFS(  # type: ignore[misc]
         if _handled:
             return _result
 
-        # Acquire distributed lock if requested
-        lock_id = None
-        if lock:
-            lock_id = self._acquire_lock_sync(path, lock_timeout, context)
-
-        try:
-            return self._write_internal(
-                path=path,
-                content=buf,
-                context=context,
-                if_match=if_match,
-                if_none_match=if_none_match,
-                force=force,
-            )
-        finally:
-            if lock_id:
-                self._release_lock_sync(lock_id, path, context)
+        return self._write_internal(path=path, content=buf, context=context)
 
     def _write_internal(
         self,
         path: str,
         content: bytes,
         context: OperationContext | None,
-        if_match: str | None,
-        if_none_match: bool,
-        force: bool,
     ) -> dict[str, Any]:
-        """Internal write implementation (extracted for lock support).
+        """Kernel write implementation — OCC-free.
 
-        This method contains the actual write logic, extracted to support
-        both locked and non-locked write paths without code duplication.
+        Performs content write + metadata update + event dispatch.
+        OCC checks (if_match, if_none_match) are done by callers
+        (write() convenience method or RPC handlers) BEFORE calling this.
+
+        Used by both sys_write (returns int) and write() (returns dict).
+
+        Issue #1323: OCC params removed from kernel write path.
         """
         # Normalize context dict to OperationContext dataclass (CLI passes dicts)
         context = self._parse_context(context)
@@ -2679,29 +2650,6 @@ class NexusFS(  # type: ignore[misc]
                 old_metadata=meta,
             )
         )
-
-        # Optimistic concurrency control
-        if not force:
-            # Check if_none_match (create-only mode)
-            if if_none_match and meta is not None:
-                raise FileExistsError(f"File already exists: {path}")
-
-            # Check if_match (version check)
-            if if_match is not None:
-                if meta is None:
-                    # File doesn't exist, can't match etag
-                    raise ConflictError(
-                        path=path,
-                        expected_etag=if_match,
-                        current_etag="(file does not exist)",
-                    )
-                elif meta.etag != if_match:
-                    # Version mismatch - conflict detected!
-                    raise ConflictError(
-                        path=path,
-                        expected_etag=if_match,
-                        current_etag=meta.etag or "(no etag)",
-                    )
 
         # Write to routed backend - returns content hash
         # Add backend_path to context for path-based connectors
@@ -2894,7 +2842,6 @@ class NexusFS(  # type: ignore[misc]
         4. Writes modified content
         5. Releases lock (even on failure)
 
-        For simple writes without reading, use `write(lock=True)` instead.
         For multiple operations within one lock, use `async with locked()` instead.
 
         Args:
@@ -3067,15 +3014,11 @@ class NexusFS(  # type: ignore[misc]
         # - Audit logging
         # - Workflow triggers
         # - Parent tuple creation
-        # Delegate to Tier 2 write() which handles CAS transitionally.
-        # CAS params (if_match, force) are transitional on write() —
-        # will be extracted to driver layer by #1323.
+        # OCC check already done above (line 2985-2996), so just write.
         return self.write(
             path,
             final_content,
             context=context,
-            if_match=if_match,
-            force=force,
         )
 
     @rpc_expose(description="Apply surgical search/replace edits to a file")
@@ -3262,14 +3205,12 @@ class NexusFS(  # type: ignore[misc]
                 "new_content": edit_result.content,
             }
 
-        # Write the edited content via Tier 2 write().
-        # CAS (if_match) is transitional — will be extracted by #1323.
+        # Write the edited content. OCC check already done above (line 3117-3123).
         new_content_bytes = edit_result.content.encode("utf-8")
         write_result = self.write(
             path,
             new_content_bytes,
             context=context,
-            if_match=current_etag,  # Prevent lost updates
         )
 
         return {

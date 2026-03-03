@@ -290,17 +290,21 @@ def write(
             console.print("[red]Error:[/red] Must provide content or use --input")
             sys.exit(1)
 
-        # Write with OCC parameters and context.
-        # CAS params (if_match, force) are NexusFS-specific (transitional, see #1323).
-        # cast(Any) bypasses ABC type check since runtime type supports CAS.
-        result = cast(Any, nx).write(
-            path,
-            file_content,
-            context=operation_context,
-            if_match=if_match,
-            if_none_match=if_none_match,
-            force=force,
-        )
+        # OCC: use lib/occ helper if CAS params present (Issue #1323).
+        ctx = cast(Any, operation_context)
+        if (if_match or if_none_match) and not force:
+            from nexus.lib.occ import occ_write
+
+            result = occ_write(
+                nx,
+                path,
+                file_content,
+                context=ctx,
+                if_match=if_match,
+                if_none_match=if_none_match,
+            )
+        else:
+            result = nx.write(path, file_content, context=ctx)
         nx.close()
 
         console.print(f"[green]✓[/green] Wrote {len(file_content)} bytes to [cyan]{path}[/cyan]")

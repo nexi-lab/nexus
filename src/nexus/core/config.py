@@ -323,7 +323,8 @@ class BrickServices:
     content_cache: Any = None  # ContentCache instance
     parser_registry: Any = None  # ParserRegistry (file format detection)
     provider_registry: Any = None  # ProviderRegistry (parsing providers)
-    vfs_lock_manager: Any = None  # VFS lock manager (fine-grained file locks)
+    # NOTE: VFSLockManager is kernel-internal (created in NexusFS.__init__),
+    # not injected via BrickServices. See write-path-extraction-design.md.
 
     # --- Governance Brick (Issue #2129) ---
     governance_anomaly_service: Any = None

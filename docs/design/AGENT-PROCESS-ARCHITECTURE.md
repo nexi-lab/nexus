@@ -1,6 +1,6 @@
-# Agent Process Architecture: pi-mono on Nexus Kernel
+# Agent Process Architecture: Native Agent Loop on Nexus Kernel
 
-**Status:** Draft
+**Status:** Implemented (Phase 1)
 **Authors:** Design Doc
 **Goal:** Single agent process running on Nexus, deeply integrated via kernel syscalls
 
@@ -8,12 +8,16 @@
 
 ## 1. Executive Summary
 
-This document defines how a **pi-mono agent loop** becomes a **first-class process** in Nexus,
+This document defines how Nexus's **native Python agent loop** runs as a **first-class process**,
 modeled after Linux's process abstraction. Every agent I/O operation — file read/write,
 memory access, tool execution, IPC — routes through Nexus kernel syscalls. The agent
 doesn't touch the outside world directly; Nexus IS its operating system.
 
-**First milestone:** One agent process that can receive a prompt, run a tool loop,
+**Implementation note:** Rather than bridging to an external agent runtime (like pi-mono),
+Nexus implements its own agent loop natively in Python (~300 LOC). This eliminates
+subprocess/RPC overhead and enables direct async integration with the Nexus event loop.
+
+**First milestone (complete):** One agent process that can receive a prompt, run a tool loop,
 read/write files via NexusFS, persist conversation state to CAS, and be managed
 (start/stop/suspend/resume) via the existing AgentRegistry.
 
@@ -91,7 +95,7 @@ CPU fetch-decode-execute cycle:     Agent loop cycle:
 │  AGENT USERSPACE                                                        │
 │                                                                         │
 │  ┌─────────────────────────────────────────────────────────────────┐    │
-│  │  pi-mono Agent Loop (adapted)                                    │    │
+│  │  Nexus Native Agent Loop (Python)                                 │    │
 │  │  ┌─────────┐  ┌──────────┐  ┌──────────┐  ┌─────────────────┐  │    │
 │  │  │ System   │  │ Context  │  │ Tool     │  │ Event Stream    │  │    │
 │  │  │ Prompt   │  │ Manager  │  │ Executor │  │ (AgentEvent)    │  │    │
@@ -151,8 +155,8 @@ class AgentProcess:
 
     This is the minimal kernel-visible representation. The full agent
     state (conversation history, tools, etc.) lives in userspace
-    (pi-mono's AgentSession). The kernel only tracks what it needs
-    for scheduling, resource accounting, and lifecycle.
+    (the AgentContext managed by the agent loop). The kernel only tracks
+    what it needs for scheduling, resource accounting, and lifecycle.
     """
     # Identity (like pid, tgid, comm)
     pid: str                          # = agent_id from AgentRecord
@@ -219,14 +223,14 @@ class FileDescriptor:
 
 ## 5. Nexus Syscall Table: Agent Tool → Kernel Call Mapping
 
-Every pi-mono tool call becomes a Nexus kernel syscall. The agent NEVER touches
+Every agent tool call becomes a Nexus kernel syscall. The agent NEVER touches
 the host filesystem or network directly — everything goes through Nexus.
 
 ### 5.1 Tool → Syscall Mapping
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│  pi-mono Tool        →   Nexus Syscall          →   Kernel Path        │
+│  Agent Tool            →   Nexus Syscall          →   Kernel Path        │
 ├─────────────────────────────────────────────────────────────────────────┤
 │  read(path)          →   sys_read(path)          →   VFS → ObjectStore │
 │  write(path, content)→   sys_write(path, bytes)  →   VFS → ObjectStore │
@@ -346,7 +350,7 @@ class ProcessManagerProtocol(Protocol):
 ### 5.3 New Kernel Contract: `AgentSyscallTable`
 
 This is the boundary between agent userspace and Nexus kernel — analogous to
-Linux's `sys_call_table`. Each pi-mono tool invocation is dispatched through this table.
+Linux's `sys_call_table`. Each agent tool invocation is dispatched through this table.
 
 ```
 Location: contracts/protocols/agent_syscall.py (NEW)
@@ -455,15 +459,15 @@ Every agent process gets a namespace-isolated view of NexusFS:
 /<zone_id>/
 ├── agents/
 │   └── <agent_id>/                    # Agent home directory (cwd)
-│       ├── SYSTEM.md                  # System prompt (= pi-mono SYSTEM.md)
-│       ├── MEMORY.md                  # Working memory (= pi-mono MEMORY.md)
+│       ├── SYSTEM.md                  # System prompt
+│       ├── MEMORY.md                  # Working memory
 │       ├── sessions/                  # Session history (JSONL → CAS blobs)
 │       │   ├── 2026-03-03_abc123.jsonl
 │       │   └── 2026-03-03_def456.jsonl
 │       ├── workspace/                 # Agent working files
 │       │   ├── src/
 │       │   └── output/
-│       ├── settings.json              # Agent config (= pi-mono settings.json)
+│       ├── settings.json              # Agent config
 │       └── extensions/                # Agent extensions
 │
 ├── shared/                            # Cross-agent shared namespace
@@ -492,26 +496,28 @@ ProcessManager and AgentRegistry.
 
 ## 7. Agent Loop Integration
 
-### 7.1 Adapted pi-mono Loop
+### 7.1 Native Python Agent Loop (Implemented)
 
-The pi-mono agent loop runs largely unchanged, but its I/O is rewired:
+The agent loop is implemented as a native Python async function (~100 LOC) in
+`system_services/agent_runtime/loop.py`. It runs directly in the Nexus process
+with no subprocess or RPC overhead:
 
 ```
-                    pi-mono (TypeScript/Node)          Nexus (Python)
-                    ========================          ==============
+                    Nexus Agent Loop (Python, async)
+                    ================================
 
                     ┌─────────────────┐
-                    │  Agent Loop     │
-                    │  (runLoop)      │
+                    │  agent_loop()   │
+                    │  (loop.py)      │
                     │                 │
-                    │  1. Get context │
-                    │  2. Call LLM ───┼──────────────→ LLMBrick.llm_read()
-                    │  3. Parse resp  │                   │
+                    │  1. Trim ctx    │
+                    │  2. Call LLM ───┼──────────────→ LLMProviderProtocol
+                    │  3. Parse resp  │                .complete_async()
                     │  4. Tool call? ─┼──yes──→ ┌─────────▼──────────┐
-                    │       │         │         │ AgentSyscallTable   │
-                    │       │ no      │         │ (permission check)  │
-                    │       ▼         │         │ (resource account)  │
-                    │  5. Done/follow │         │ (route to subsystem)│
+                    │       │         │         │ ToolDispatcher       │
+                    │       │ no      │         │ (VFS syscalls)       │
+                    │       ▼         │         │ (sandbox execution)  │
+                    │  5. Done/follow │         │ (parallel read-only) │
                     │       up        │         └─────────┬──────────┘
                     │                 │                    │
                     │  6. Tool result◄┼────────────────────┘
@@ -521,69 +527,64 @@ The pi-mono agent loop runs largely unchanged, but its I/O is rewired:
                     └─────────────────┘
 ```
 
-### 7.2 Bridging: TypeScript ↔ Python
+### 7.2 Implementation Details
 
-Two viable approaches for the first milestone:
+The native Python loop was chosen over an RPC bridge for simplicity,
+performance, and direct async integration with the Nexus event loop.
 
-**Option A: RPC Bridge (recommended for v1)**
+**Key features of the implemented loop:**
 
-pi-mono already has an RPC mode (JSON-lines over stdin/stdout). Nexus spawns
-pi-mono as a subprocess, communicates via RPC, and intercepts all tool calls:
-
-```
-Nexus ProcessManager
-    │
-    ├── spawn() → subprocess: `pi --mode rpc --model <model>`
-    │
-    ├── RPC stdin  → {"type": "prompt", "message": "..."}
-    │
-    ├── RPC stdout ← {"type": "tool_execution_start", "tool": "read", ...}
-    │                 ↓
-    │            Nexus intercepts tool call
-    │            → AgentSyscallTable.sys_read(ctx, path)
-    │            → VFS → ObjectStore
-    │            → return content
-    │                 ↓
-    ├── RPC stdin  → {"type": "tool_result", "content": "..."}
-    │
-    └── RPC stdout ← {"type": "agent_end"}
-```
-
-**Option B: Pure Python Re-implementation (future)**
-
-Port pi-mono's minimal agent loop (~500 lines) to Python, running natively
-in the Nexus process. Eliminates subprocess overhead and serialization cost.
+- **Parallel tool dispatch**: Read-only tools (`read_file`, `grep`, `glob`,
+  `list_dir`) are dispatched concurrently via `asyncio.TaskGroup`. Write tools
+  run sequentially to avoid conflicts.
+- **Context window management**: O(log n) binary-search trimming drops oldest
+  messages when token count exceeds `config.max_context_tokens`.
+- **Queue-based streaming**: Events are emitted via `asyncio.Queue` so callers
+  receive `TextDelta`, `ToolCallStart`, `ToolCallResult` events incrementally
+  while the loop is still running.
+- **Incremental checkpointing**: Session JSONL is checkpointed after each loop
+  run, serializing only new messages (cached lines avoid re-serialization).
 
 ```python
-# Sketch of a Python-native agent loop
-async def agent_loop(process: AgentProcess, syscall: AgentSyscallProtocol):
-    ctx = process.to_operation_context()
-    messages = await load_session(process.checkpoint_path, syscall, ctx)
-    tools = build_nexus_tools(syscall, ctx)  # read/write/edit/bash → syscalls
+# Actual implementation in system_services/agent_runtime/loop.py
+async def agent_loop(
+    llm: LLMProviderProtocol,
+    dispatcher: ToolDispatcher,
+    context: AgentContext,
+    config: AgentProcessConfig,
+    ctx: OperationContext,
+    *,
+    on_event: Callable[[AgentEvent], Awaitable[None]] | None = None,
+    cwd: str | None = None,
+    sandbox_id: str | None = None,
+) -> list[Message]:
+    """Run the agent loop until LLM produces a final response or limits hit."""
+    messages = list(context.messages)
+    tools = list(context.tools)
+    system_msg = Message(role=MessageRole.SYSTEM, content=context.system_prompt)
+    turn = 0
 
-    while True:
-        # 1. Check steering messages (signals)
-        steering = await check_signals(process.pid)
-        if steering:
-            messages.extend(steering)
+    while turn < config.max_turns:
+        # Trim context window if over budget
+        llm_messages = _trim_to_budget(llm, system_msg, messages, config.max_context_tokens)
+        response = await llm.complete_async(llm_messages, tools=tools if tools else None)
+        tool_calls = _extract_tool_calls(response)
+        content = _extract_content(response)
 
-        # 2. Call LLM (= CPU execution)
-        response = await syscall.sys_llm_call(ctx, messages, tools)
-        messages.append(response)
+        if tool_calls:
+            # Dispatch tools (parallel for read-only, sequential otherwise)
+            results = await _dispatch_tools(dispatcher, ctx, tool_calls, ...)
+            # Emit events and build tool result messages
+            ...
+            turn += 1
+            continue
 
-        # 3. Process tool calls (= syscall traps)
-        if response.tool_calls:
-            for tc in response.tool_calls:
-                result = await syscall.dispatch(ctx, tc.name, tc.arguments)
-                messages.append(ToolResult(tc.id, result))
-            continue  # back to LLM
+        # No tool calls → final response
+        if content:
+            messages.append(Message(role=MessageRole.ASSISTANT, content=content))
+        break
 
-        # 4. No tool calls → turn complete
-        if not await get_follow_ups(process.pid):
-            break
-
-    # Checkpoint on exit
-    await syscall.sys_write(ctx, process.checkpoint_path, serialize(messages))
+    return messages
 ```
 
 ---
@@ -670,17 +671,13 @@ Location: bricks/agent_runtime/ (NEW)
 This brick implements the agent execution engine — the "CPU" that runs agent processes.
 
 ```
-bricks/agent_runtime/
+system_services/agent_runtime/
 ├── __init__.py
-├── runtime.py              # AgentRuntime: main execution engine
-├── syscall_dispatcher.py   # AgentSyscallTable implementation
-├── process_manager.py      # ProcessManager implementation
-├── tool_adapter.py         # pi-mono tool → Nexus syscall adapter
-├── session_store.py        # JSONL session ↔ CAS persistence
-├── procfs.py               # __proc__ virtual filesystem resolver
-└── bridge/
-    ├── rpc_bridge.py       # pi-mono RPC mode bridge (Option A)
-    └── native_loop.py      # Python-native loop (Option B, future)
+├── loop.py                 # agent_loop(): core execution cycle (~100 LOC)
+├── process_manager.py      # ProcessManager: spawn/resume/terminate
+├── tool_dispatcher.py      # ToolDispatcher: route tool calls to VFS/sandbox
+├── session_store.py        # JSONL session ↔ CAS persistence (incremental)
+└── prompt_builder.py       # System prompt assembly from SYSTEM.md + MEMORY.md
 ```
 
 ---
@@ -707,7 +704,7 @@ User prompt: "Fix the bug in auth.py and run tests"
    │                                                               │
 4. AgentRuntime.execute(process, prompt) ─────────────────────────│
    │                                                               │
-   │  ┌─ AGENT LOOP (pi-mono) ──────────────────────────────┐    │
+   │  ┌─ AGENT LOOP (native Python) ────────────────────────┐    │
    │  │                                                       │    │
    │  │  Turn 1: LLM → tool_call("read", {path: "auth.py"}) │    │
    │  │          │                                            │    │
@@ -755,21 +752,15 @@ User prompt: "Fix the bug in auth.py and run tests"
 
 ## 11. Sub-Agent Spawning (fork + exec)
 
-pi-mono spawns sub-agents by invoking `pi` via bash. In Nexus, this becomes
-a proper `fork()`:
+Sub-agents are spawned via ProcessManager, analogous to `fork()` in UNIX:
 
 ```
 Parent Agent (PID: parent-001)
     │
-    │  tool_call("bash", {cmd: "pi --mode print 'analyze auth.py'"})
+    │  tool_call("spawn_agent", {prompt: "analyze auth.py"})
     │
     ▼
-AgentSyscallTable.sys_exec(ctx, cmd)
-    │
-    │  Detects "pi" command → intercepts as fork request
-    │
-    ▼
-ProcessManager.spawn(
+ToolDispatcher → ProcessManager.spawn(
     owner_id = parent.owner_id,
     zone_id = parent.zone_id,
     config = AgentProcessConfig(
@@ -945,21 +936,21 @@ The agent_runtime brick fits into the existing LEGO distro model:
 
 ## 16. Implementation Phases
 
-### Phase 1: Single Agent Process (First Milestone)
+### Phase 1: Single Agent Process (COMPLETED)
 
 **Goal:** One agent process that reads/writes files via NexusFS
 
-| Step | What | Depends On |
+| Step | What | Status |
 |---|---|---|
-| 1.1 | Define `AgentProcess`, `FileDescriptor`, `AgentProcessConfig` contracts | — |
-| 1.2 | Define `ProcessManagerProtocol` | 1.1 |
-| 1.3 | Define `AgentSyscallProtocol` | 1.1 |
-| 1.4 | Implement `ProcessManager` (in-memory, single-node) | 1.2, existing AgentRegistry |
-| 1.5 | Implement `AgentSyscallTable` (route to existing VFS) | 1.3, existing NexusFS |
-| 1.6 | Implement RPC bridge to pi-mono | 1.4, 1.5 |
-| 1.7 | Implement session JSONL ↔ CAS persistence | 1.5 |
-| 1.8 | Add `__proc__` resolver to KernelDispatch | 1.4 |
-| 1.9 | Integration test: spawn agent → read file → edit → checkpoint | All above |
+| 1.1 | Define `AgentProcess`, `AgentProcessConfig`, event types | Done |
+| 1.2 | Define `ProcessManagerProtocol` | Done |
+| 1.3 | Implement `ProcessManager` (in-memory, single-node) | Done |
+| 1.4 | Implement `ToolDispatcher` (route to existing VFS + sandbox) | Done |
+| 1.5 | Implement native Python `agent_loop()` (~100 LOC) | Done |
+| 1.6 | Implement session JSONL ↔ CAS persistence | Done |
+| 1.7 | Queue-based streaming + parallel tool dispatch | Done |
+| 1.8 | O(log n) context window trimming | Done |
+| 1.9 | E2E tests: spawn agent → read file → edit → checkpoint | Done (4 tests) |
 
 ### Phase 2: Multi-Agent + IPC
 
@@ -979,13 +970,14 @@ The agent_runtime brick fits into the existing LEGO distro model:
 | 3.3 | Cross-zone agent migration (checkpoint → restore on remote node) |
 | 3.4 | Distributed process table via Raft |
 
-### Phase 4: Native Python Loop (Option B)
+### Phase 4: Performance Optimization (COMPLETED)
 
 | Step | What |
 |---|---|
-| 4.1 | Port pi-mono core loop (~500 LOC) to Python |
-| 4.2 | Eliminate subprocess/RPC overhead |
-| 4.3 | Direct async integration with Nexus event loop |
+| 4.1 | Queue-based streaming via `asyncio.Queue` |
+| 4.2 | Parallel read-only tool dispatch via `asyncio.TaskGroup` |
+| 4.3 | O(log n) binary-search context window trimming |
+| 4.4 | Incremental JSONL checkpoint (only serialize new messages) |
 
 ---
 
@@ -995,7 +987,7 @@ The agent_runtime brick fits into the existing LEGO distro model:
 |---|---|---|
 | D1 | Agent = Process (not thread) | Full isolation, own fd_table, own cwd, own resource limits |
 | D2 | All I/O through syscalls | Uniform permission checking, resource accounting, audit logging |
-| D3 | RPC bridge first, native loop later | Ship fast with pi-mono as-is; optimize later |
+| D3 | Native Python loop from the start | Direct async integration, no subprocess/RPC overhead, ~100 LOC |
 | D4 | Session JSONL in CAS | Content-addressed, immutable, federable, checkpointable |
 | D5 | `__proc__` as VFS resolver | Reuses existing KernelDispatch PRE-DISPATCH infrastructure |
 | D6 | No new storage pillar | Agent state maps cleanly to existing 4 pillars |
@@ -1008,10 +1000,10 @@ The agent_runtime brick fits into the existing LEGO distro model:
 
 ## 18. Open Questions
 
-1. **LLM provider management**: Should the kernel manage LLM API keys, or delegate to the agent? (Recommendation: kernel manages via existing LLMBrick, agent specifies model preference in AgentProcessConfig)
+1. **LLM provider management**: Should the kernel manage LLM API keys, or delegate to the agent? Current: LLM provider is injected at spawn time via `ProcessManager(vfs, llm_provider)`. Future: kernel could manage via LLMBrick with model routing.
 
-2. **Context window compaction**: pi-mono handles this internally. Should Nexus offer a kernel-level compaction service, or let the agent handle it? (Recommendation: agent handles, kernel just stores the JSONL)
+2. **Context window compaction**: The agent loop handles this via `_trim_to_budget()` with O(log n) binary search. Future: kernel could offer a smarter compaction service (summarization, importance scoring).
 
-3. **Extension loading**: pi-mono extensions are TypeScript modules. For the RPC bridge, do we proxy extension discovery through Nexus? (Recommendation: Phase 1 = no extensions, Phase 2 = NexusFS-backed extension directory)
+3. **Extension loading**: Phase 1 has no extensions. Future: NexusFS-backed extension directory with tool schema discovery.
 
 4. **Cost attribution**: When an agent calls `sys_llm_call`, who pays? The agent's owner? The zone? (Recommendation: PayBrick integration — agent has a credit balance, LLM calls deduct from it)

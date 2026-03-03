@@ -318,6 +318,7 @@ class TestSystemServices:
             "workspace_manager",
             # Original system services
             "agent_registry",
+            "agent_runtime",
             "async_agent_registry",
             "eviction_manager",
             "namespace_manager",

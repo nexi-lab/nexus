@@ -154,12 +154,16 @@ def handle_delta_write(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[s
 
     new_content = bsdiff4.patch(current_content, delta)
 
-    kwargs: dict[str, Any] = {"context": context}
-    if hasattr(params, "if_match") and params.if_match:
-        kwargs["if_match"] = params.if_match
+    # OCC: use lib/occ helper if CAS params present (Issue #1323)
+    if_match = getattr(params, "if_match", None) or None
+    if if_match:
+        from nexus.lib.occ import occ_write
 
-    # Use write() (Tier 2 convenience) for OCC support (if_match)
-    write_result = nexus_fs.write(params.path, new_content, **kwargs)
+        write_result = occ_write(
+            nexus_fs, params.path, new_content, context=context, if_match=if_match
+        )
+    else:
+        write_result = nexus_fs.write(params.path, new_content, context=context)
     new_hash = hash_content(new_content)
 
     result: dict[str, Any] = {

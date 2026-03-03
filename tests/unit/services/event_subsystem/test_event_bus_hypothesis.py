@@ -178,35 +178,6 @@ class TestRevisionOrderingProperties:
             if a < b and b < c:
                 assert a < c, f"Transitivity violated: {a} < {b} < {c}"
 
-    @given(
-        events=st.lists(
-            st.builds(
-                FileEvent,
-                type=st.just(FileEventType.FILE_WRITE),
-                path=st.just("/test.txt"),
-                zone_id=st.just("root"),
-                revision=st.integers(min_value=0, max_value=1000),
-            ),
-            min_size=1,
-            max_size=100,
-        )
-    )
-    @settings(max_examples=50)
-    def test_revision_filtering_is_consistent(self, events):
-        """Property: Filtering by revision is monotonic."""
-        assume(len(events) > 0)
-
-        # Choose a threshold revision
-        threshold = events[len(events) // 2].revision if events[len(events) // 2].revision else 0
-
-        # Filter events with revision > threshold
-        filtered = [e for e in events if e.revision and e.revision > threshold]
-
-        # All filtered events should have revision > threshold
-        for event in filtered:
-            assert event.revision is not None
-            assert event.revision > threshold
-
 
 class TestPathMatchingProperties:
     """Advanced property-based tests for path pattern matching."""

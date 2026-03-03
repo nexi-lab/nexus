@@ -595,7 +595,7 @@ def _register_vfs_hooks(nx: "NexusFS", *, permission_checker: Any = None) -> Non
             permission_checker=permission_checker,
             parse_fn=getattr(nx, "_virtual_view_parse_fn", None),
             viewer_filter_fn=getattr(nx, "_apply_dynamic_viewer_filter_if_needed", None),
-            read_tracker_fn=getattr(nx, "_record_read_if_tracking", None),
+            read_tracker_fn=None,
         )
     )
 

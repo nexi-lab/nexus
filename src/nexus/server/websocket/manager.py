@@ -383,7 +383,7 @@ class WebSocketManager:
             message: dict[str, Any] = {
                 "type": "batch_update",
                 "event": event_data,
-                "commit_id": event.revision,
+                "commit_id": None,
                 "timestamp": event.timestamp,
                 "updates": [
                     {

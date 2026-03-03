@@ -14,7 +14,7 @@ Design doc: docs/design/AGENT-PROCESS-ARCHITECTURE.md §4, §13.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
@@ -181,7 +181,7 @@ class AgentProcess:
     checkpoint_path: str | None = None
 
     # Timestamps
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     last_scheduled: datetime | None = None
 
     # Sub-process tracking

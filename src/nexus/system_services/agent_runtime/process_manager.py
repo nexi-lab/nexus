@@ -8,11 +8,13 @@ Design doc: docs/design/AGENT-PROCESS-ARCHITECTURE.md §5.2, §10.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import replace
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.agent_process import (
@@ -66,6 +68,7 @@ class ProcessManager:
         self._scheduler = scheduler
         self._session_store = SessionStore(vfs)
         self._processes: dict[str, AgentProcess] = {}
+        self._dispatchers: dict[str, ToolDispatcher] = {}  # cached per process
 
     # ------------------------------------------------------------------
     # spawn
@@ -93,7 +96,7 @@ class ProcessManager:
 
         ctx = _make_system_context(owner_id, zone_id)
 
-        # Create home directory structure
+        # Create home directory structure (sync: one-time setup, not hot path)
         system_prompt_path = f"{cwd}/SYSTEM.md"
         prompt_text = config.system_prompt or _DEFAULT_SYSTEM_PROMPT
         self._vfs.sys_write(
@@ -103,6 +106,8 @@ class ProcessManager:
         )
 
         # Write settings.json
+        import json
+
         settings = {
             "model": config.model,
             "tools": list(config.tools),
@@ -110,8 +115,6 @@ class ProcessManager:
             "agent_type": config.agent_type,
             "mode": config.mode,
         }
-        import json
-
         self._vfs.sys_write(
             f"{cwd}/settings.json",
             json.dumps(settings, indent=2).encode("utf-8"),
@@ -144,7 +147,7 @@ class ProcessManager:
             root=root,
             model=config.model,
             system_prompt_path=system_prompt_path,
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(UTC),
             config=config,
         )
 
@@ -196,7 +199,7 @@ class ProcessManager:
         process = replace(
             process,
             state=AgentProcessState.RUNNING,
-            last_scheduled=datetime.utcnow(),
+            last_scheduled=datetime.now(UTC),
         )
         self._processes[pid] = process
 
@@ -235,12 +238,15 @@ class ProcessManager:
         messages = list(prev_messages)
         messages.append(message)
 
-        # Build tool definitions
-        dispatcher = ToolDispatcher(
-            self._vfs,
-            self._sandbox,
-            default_cwd=process.cwd,
-        )
+        # Get or create cached ToolDispatcher for this process
+        dispatcher = self._dispatchers.get(pid)
+        if dispatcher is None:
+            dispatcher = ToolDispatcher(
+                self._vfs,
+                self._sandbox,
+                default_cwd=process.cwd,
+            )
+            self._dispatchers[pid] = dispatcher
         tools = dispatcher.get_tool_definitions(config.tools)
 
         # Build context
@@ -250,39 +256,47 @@ class ProcessManager:
             tools=tuple(tools),
         )
 
-        # Collect events
-        events: list[AgentEvent] = []
+        # Queue-based streaming: events arrive as they happen
+        queue: asyncio.Queue[AgentEvent | None] = asyncio.Queue(maxsize=256)
+        agent_cwd = process.cwd  # capture before closure
 
-        async def _collect_event(event: AgentEvent) -> None:
-            events.append(event)
+        async def _on_event(event: AgentEvent) -> None:
+            await queue.put(event)
 
-        # Run agent loop
+        async def _run_loop() -> None:
+            try:
+                result_messages = await agent_loop(
+                    llm=self._llm,
+                    dispatcher=dispatcher,
+                    context=agent_context,
+                    config=config,
+                    ctx=ctx,
+                    on_event=_on_event,
+                    cwd=agent_cwd,
+                )
+                await self._session_store.save(pid, result_messages, ctx, cwd=agent_cwd)
+            except Exception as exc:
+                error_msg = f"Agent loop failed for {pid}: {exc}"
+                logger.error(error_msg)
+                await queue.put(Error(error=error_msg))
+            finally:
+                await queue.put(None)  # sentinel
+
+        task = asyncio.create_task(_run_loop())
         try:
-            result_messages = await agent_loop(
-                llm=self._llm,
-                dispatcher=dispatcher,
-                context=agent_context,
-                config=config,
-                ctx=ctx,
-                on_event=_collect_event,
-                cwd=process.cwd,
-            )
-
-            # Save checkpoint
-            await self._session_store.save(pid, result_messages, ctx, cwd=process.cwd)
-
-        except Exception as exc:
-            error_msg = f"Agent loop failed for {pid}: {exc}"
-            logger.error(error_msg)
-            events.append(Error(error=error_msg))
-
-        # Transition to SLEEPING
-        process = replace(process, state=AgentProcessState.SLEEPING)
-        self._processes[pid] = process
-
-        # Yield all collected events
-        for event in events:
-            yield event
+            while True:
+                event = await queue.get()
+                if event is None:
+                    break
+                yield event
+        finally:
+            if not task.done():
+                task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+            # Transition to SLEEPING
+            process = replace(process, state=AgentProcessState.SLEEPING)
+            self._processes[pid] = process
 
     # ------------------------------------------------------------------
     # get_process
@@ -324,8 +338,10 @@ class ProcessManager:
             except Exception as exc:
                 logger.warning("AgentRegistry.unregister failed for %s: %s", pid, exc)
 
-        # Remove from process table
+        # Remove from process table + caches
         self._processes.pop(pid, None)
+        self._dispatchers.pop(pid, None)
+        self._session_store.clear_cache(pid)
 
         logger.info(
             "Process terminated: pid=%s, exit_code=%d",

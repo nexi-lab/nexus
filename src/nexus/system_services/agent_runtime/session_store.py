@@ -34,6 +34,7 @@ class SessionStore:
 
     def __init__(self, vfs: NexusFS) -> None:
         self._vfs = vfs
+        self._line_cache: dict[str, list[str]] = {}  # pid → already-serialized lines
 
     async def save(
         self,
@@ -44,6 +45,10 @@ class SessionStore:
         cwd: str = "/",
     ) -> str:
         """Serialize messages to JSONL and write to agent's session directory.
+
+        Uses incremental serialization: only new messages (beyond what was
+        already cached) are serialized, reducing CPU and allocation overhead
+        on long conversations.
 
         Args:
             pid: Agent process ID (for logging).
@@ -56,35 +61,45 @@ class SessionStore:
         """
         session_path = _resolve_session_path(cwd)
 
-        # Serialize messages to JSONL
-        lines = []
-        for msg in messages:
-            d = msg.model_dump()
-            # Ensure tool_calls are properly serialized
-            if msg.tool_calls:
-                d["tool_calls"] = [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments,
-                        },
-                    }
-                    for tc in msg.tool_calls
-                ]
-            lines.append(json.dumps(d, separators=(",", ":")))
+        # Incremental serialization: only serialize new messages
+        cached = self._line_cache.get(pid, [])
+        new_lines = [self._serialize_one(m) for m in messages[len(cached) :]]
+        all_lines = [*cached, *new_lines]
+        self._line_cache[pid] = all_lines
 
-        content = "\n".join(lines)
+        content = "\n".join(all_lines)
         self._vfs.sys_write(session_path, content.encode("utf-8"), context=ctx)
 
         logger.debug(
-            "Checkpoint saved: pid=%s, messages=%d, path=%s",
+            "Checkpoint saved: pid=%s, messages=%d (new=%d), path=%s",
             pid,
             len(messages),
+            len(new_lines),
             session_path,
         )
         return session_path
+
+    def clear_cache(self, pid: str) -> None:
+        """Drop cached serialization for a process (e.g. on terminate)."""
+        self._line_cache.pop(pid, None)
+
+    @staticmethod
+    def _serialize_one(msg: Message) -> str:
+        """Serialize a single Message to a compact JSON line."""
+        d = msg.model_dump()
+        if msg.tool_calls:
+            d["tool_calls"] = [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    },
+                }
+                for tc in msg.tool_calls
+            ]
+        return json.dumps(d, separators=(",", ":"))
 
     async def load(
         self,

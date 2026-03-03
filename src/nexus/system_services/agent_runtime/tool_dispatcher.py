@@ -279,11 +279,11 @@ class ToolDispatcher:
                 case "edit_file":
                     return await self._edit(ctx, args, cwd)
                 case "grep":
-                    return self._grep(ctx, args, cwd)
+                    return await self._grep(ctx, args, cwd)
                 case "glob":
-                    return self._glob(ctx, args, cwd)
+                    return await self._glob(ctx, args, cwd)
                 case "list_dir":
-                    return self._list_dir(ctx, args, cwd)
+                    return await self._list_dir(ctx, args, cwd)
                 case "bash":
                     return await self._bash(args, sandbox_id, sandbox_timeout)
                 case "python":
@@ -359,7 +359,7 @@ class ToolDispatcher:
         self._vfs.sys_write(path, new_text.encode("utf-8"), context=ctx)
         return f"Successfully edited {path}"
 
-    def _grep(
+    async def _grep(
         self,
         ctx: OperationContext,  # noqa: ARG002
         args: dict[str, Any],
@@ -393,7 +393,7 @@ class ToolDispatcher:
             lines.append(f"{fp}:{ln}:{ct}")
         return "\n".join(lines)
 
-    def _glob(
+    async def _glob(
         self,
         ctx: OperationContext,  # noqa: ARG002
         args: dict[str, Any],
@@ -423,7 +423,7 @@ class ToolDispatcher:
             output.append(f"  ... and {len(files) - 100} more")
         return "\n".join(output)
 
-    def _list_dir(
+    async def _list_dir(
         self,
         ctx: OperationContext,
         args: dict[str, Any],

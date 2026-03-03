@@ -479,6 +479,28 @@ def _boot_system_services(
     except Exception as exc:
         logger.warning("[BOOT:SYSTEM] PipeManager unavailable: %s", exc)
 
+    # --- Agent Runtime (Agent Process Engine, AGENT-PROCESS-ARCHITECTURE) ---
+    agent_runtime: Any = None
+    if _on("agent_runtime") and agent_registry is not None:
+        try:
+            from nexus.system_services.agent_runtime.process_manager import (
+                ProcessManager as _AgentProcessManager,
+            )
+
+            # LLM provider is wired later (in _boot_wired_services) since
+            # it needs NexusFS.  For now, agent_runtime is constructed lazily
+            # at first use via the two-phase pattern.  Store the class + deps
+            # so orchestrator.py can finish wiring after NexusFS is created.
+            agent_runtime = {
+                "_class": _AgentProcessManager,
+                "agent_registry": async_agent_registry,
+                "sandbox": None,  # wired later
+                "scheduler": scheduler_service,
+            }
+            logger.debug("[BOOT:SYSTEM] AgentRuntime placeholder created (two-phase)")
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] AgentRuntime unavailable: %s", exc)
+
     # =====================================================================
     # Assemble result
     # =====================================================================
@@ -513,6 +535,7 @@ def _boot_system_services(
         "eviction_manager": eviction_manager,
         "zone_lifecycle": zone_lifecycle,
         "scheduler_service": scheduler_service,
+        "agent_runtime": agent_runtime,
     }
 
     elapsed = time.perf_counter() - t0

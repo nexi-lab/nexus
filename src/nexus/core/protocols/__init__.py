@@ -22,7 +22,7 @@ References:
 
 from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
 from nexus.core.protocols.caching import CacheConfigContract, CachingConnectorContract
-from nexus.core.protocols.capabilities import ConnectorCapability
+from nexus.contracts.capabilities import ConnectorCapability
 from nexus.core.protocols.connector import (
     BatchContentProtocol,
     CapabilityAwareProtocol,

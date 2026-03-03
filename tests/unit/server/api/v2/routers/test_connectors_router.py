@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from nexus.backends.registry import ConnectorInfo
-from nexus.core.protocols.capabilities import ConnectorCapability
+from nexus.contracts.capabilities import ConnectorCapability
 from nexus.server.api.v2.routers.connectors import router
 
 # ---------------------------------------------------------------------------

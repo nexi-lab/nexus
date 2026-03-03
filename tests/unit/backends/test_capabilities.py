@@ -18,7 +18,7 @@ import pytest
 from nexus.backends.backend import Backend
 from nexus.backends.delegating import DelegatingBackend
 from nexus.backends.registry import ConnectorRegistry
-from nexus.core.protocols.capabilities import (
+from nexus.contracts.capabilities import (
     BLOB_CONNECTOR_CAPABILITIES,
     CORE_CAPABILITIES,
     OAUTH_CONNECTOR_CAPABILITIES,
@@ -45,8 +45,8 @@ class TestConnectorCapabilityEnum:
         assert len(values) == len(set(values))
 
     def test_expected_member_count(self) -> None:
-        """We have exactly 18 capabilities defined."""
-        assert len(ConnectorCapability) == 18
+        """We have exactly 19 capabilities defined."""
+        assert len(ConnectorCapability) == 19
 
     def test_str_enum_identity(self) -> None:
         """StrEnum values can be compared with plain strings."""
@@ -296,27 +296,27 @@ class TestCapabilityProtocolMapping:
     """get_capability_protocols() returns valid mapping."""
 
     def test_mapping_is_dict(self) -> None:
-        from nexus.core.protocols.capabilities import get_capability_protocols
+        from nexus.backends.registry import get_capability_protocols
 
         mapping = get_capability_protocols()
         assert isinstance(mapping, dict)
 
     def test_mapping_keys_are_capabilities(self) -> None:
-        from nexus.core.protocols.capabilities import get_capability_protocols
+        from nexus.backends.registry import get_capability_protocols
 
         mapping = get_capability_protocols()
         for key in mapping:
             assert isinstance(key, ConnectorCapability)
 
     def test_mapping_values_are_types(self) -> None:
-        from nexus.core.protocols.capabilities import get_capability_protocols
+        from nexus.backends.registry import get_capability_protocols
 
         mapping = get_capability_protocols()
         for value in mapping.values():
             assert isinstance(value, type)
 
     def test_expected_protocol_mappings(self) -> None:
-        from nexus.core.protocols.capabilities import get_capability_protocols
+        from nexus.backends.registry import get_capability_protocols
 
         mapping = get_capability_protocols()
         assert ConnectorCapability.STREAMING in mapping

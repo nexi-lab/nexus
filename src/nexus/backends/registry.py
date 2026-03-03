@@ -38,11 +38,41 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.protocols.capabilities import ConnectorCapability
+from nexus.contracts.capabilities import ConnectorCapability
 from nexus.lib.registry import BaseRegistry
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
+
+
+# --- Capability-to-Protocol mapping ---
+# Used for registration-time validation: if a backend claims a capability
+# that maps to a Protocol, we verify the class has the required methods.
+
+
+def get_capability_protocols() -> dict[ConnectorCapability, type]:
+    """Get capability-to-Protocol mapping for registration-time validation.
+
+    Returns:
+        Dictionary mapping capabilities to their Protocol classes.
+        Only capabilities that have a corresponding Protocol are included.
+    """
+    from nexus.core.protocols.connector import (
+        BatchContentProtocol,
+        DirectoryListingProtocol,
+        OAuthCapableProtocol,
+        PassthroughProtocol,
+        StreamingProtocol,
+    )
+
+    return {
+        ConnectorCapability.STREAMING: StreamingProtocol,
+        ConnectorCapability.BATCH_CONTENT: BatchContentProtocol,
+        ConnectorCapability.DIRECTORY_LISTING: DirectoryListingProtocol,
+        ConnectorCapability.OAUTH: OAuthCapableProtocol,
+        ConnectorCapability.PASSTHROUGH: PassthroughProtocol,
+    }
+
 
 logger = logging.getLogger(__name__)
 
@@ -283,7 +313,7 @@ class ConnectorRegistry:
 
     Example:
         >>> @register_connector("azure_blob", description="Azure Blob Storage")
-        ... class AzureBlobConnector(BaseBlobStorageConnector):
+        ... class AzureBlobConnector(PathBackend):
         ...     pass
         ...
         >>> ConnectorRegistry.get("azure_blob")
@@ -539,7 +569,7 @@ def register_connector(
         ...     description="Azure Blob Storage connector",
         ...     requires=["azure-storage-blob"]
         ... )
-        ... class AzureBlobConnector(BaseBlobStorageConnector):
+        ... class AzureBlobConnector(PathBackend):
         ...     pass
     """
 

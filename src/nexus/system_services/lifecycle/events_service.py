@@ -278,14 +278,12 @@ class EventsService:
         await self._ensure_distributed_system_ready()
 
         path = validate_path(path, allow_root=True)
-        zone_id = self._get_zone_id(_context)
 
         # Layer 2: Distributed lock manager (preferred)
         if self._has_distributed_locks():
             mode = "mutex" if max_holders == 1 else f"semaphore({max_holders})"
             logger.debug(f"Using distributed lock manager for {path} ({mode})")
             lock_id = await self._lock_manager.acquire(  # type: ignore[union-attr]
-                zone_id=zone_id,
                 path=path,
                 timeout=timeout,
                 ttl=ttl,
@@ -297,25 +295,9 @@ class EventsService:
                 logger.warning(f"Distributed lock timeout on {path} after {timeout}s")
             return lock_id
 
-        # Layer 1: Same-box in-memory locking (fallback)
-        if self._is_same_box():
-            mode = "mutex" if max_holders == 1 else f"semaphore({max_holders})"
-            logger.debug(f"Using same-box lock for {path} ({mode})")
-            assert isinstance(self._backend, PassthroughProtocol), (
-                "Backend must implement PassthroughProtocol for this operation"
-            )
-            pt_backend = self._backend
-            lock_id = pt_backend.lock(path, timeout=timeout, max_holders=max_holders)
-
-            if lock_id:
-                logger.debug(f"Same-box lock acquired on {path}: {lock_id}")
-            else:
-                logger.warning(f"Same-box lock timeout on {path} after {timeout}s")
-            return lock_id
-
         raise NotImplementedError(
-            "No lock manager available. Either configure Redis for distributed locks "
-            "or use PassthroughBackend for same-box locking."
+            "No lock manager available. Configure a metastore that implements "
+            "LockStoreProtocol (factory creates LocalLockManager or RaftLockManager)."
         )
 
     @rpc_expose(description="Extend lock TTL (heartbeat)")
@@ -337,14 +319,11 @@ class EventsService:
         Returns:
             True if lock was extended, False if not found/owned
         """
-        zone_id = self._get_zone_id(_context)
-
         # Layer 2: Distributed lock manager
         if self._has_distributed_locks():
             path = validate_path(path, allow_root=True)
             extended = await self._lock_manager.extend(  # type: ignore[union-attr]
                 lock_id=lock_id,
-                zone_id=zone_id,
                 path=path,
                 ttl=ttl,
             )
@@ -354,14 +333,9 @@ class EventsService:
                 logger.warning(f"Lock extend failed (not owned or expired): {lock_id}")
             return extended.success
 
-        # Layer 1: Same-box locks don't need extension (no TTL)
-        if self._is_same_box():
-            logger.debug(f"Same-box lock extend (no-op): {lock_id}")
-            return True
-
         raise NotImplementedError(
-            "No lock manager available. Either configure Redis for distributed locks "
-            "or use PassthroughBackend for same-box locking."
+            "No lock manager available. Configure a metastore that implements "
+            "LockStoreProtocol (factory creates LocalLockManager or RaftLockManager)."
         )
 
     @rpc_expose(description="Release advisory lock")
@@ -381,8 +355,6 @@ class EventsService:
         Returns:
             True if lock was released, False if not found
         """
-        zone_id = self._get_zone_id(_context)
-
         # Layer 2: Distributed lock manager
         if self._has_distributed_locks():
             if path is None:
@@ -390,7 +362,6 @@ class EventsService:
             path = validate_path(path, allow_root=True)
             released = await self._lock_manager.release(  # type: ignore[union-attr]
                 lock_id=lock_id,
-                zone_id=zone_id,
                 path=path,
             )
             if released:
@@ -399,22 +370,9 @@ class EventsService:
                 logger.warning(f"Distributed lock not found: {lock_id}")
             return released
 
-        # Layer 1: Same-box in-memory locking
-        if self._is_same_box():
-            assert isinstance(self._backend, PassthroughProtocol), (
-                "Backend must implement PassthroughProtocol for this operation"
-            )
-            pt_backend = self._backend
-            released = pt_backend.unlock(lock_id)
-            if released:
-                logger.debug(f"Same-box lock released: {lock_id}")
-            else:
-                logger.warning(f"Same-box lock not found: {lock_id}")
-            return released
-
         raise NotImplementedError(
-            "No lock manager available. Either configure Redis for distributed locks "
-            "or use PassthroughBackend for same-box locking."
+            "No lock manager available. Configure a metastore that implements "
+            "LockStoreProtocol (factory creates LocalLockManager or RaftLockManager)."
         )
 
     # =========================================================================

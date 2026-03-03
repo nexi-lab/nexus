@@ -36,7 +36,7 @@ def store():
 
 @pytest.fixture
 def mgr(store):
-    return LocalLockManager(store)
+    return LocalLockManager(store, zone_id="z1")
 
 
 # ---------------------------------------------------------------------------
@@ -47,7 +47,7 @@ def mgr(store):
 @pytest.mark.asyncio
 async def test_acquire_release(mgr, store):
     """acquire returns holder_id, release returns True."""
-    holder_id = await mgr.acquire("z1", "/file.txt")
+    holder_id = await mgr.acquire("/file.txt")
     assert holder_id is not None
     assert isinstance(holder_id, str)
     assert len(holder_id) == 36  # UUID format
@@ -57,7 +57,7 @@ async def test_acquire_release(mgr, store):
     assert call_args[0][0] == "z1:/file.txt"  # lock_key
     assert call_args[0][1] == holder_id  # holder_id
 
-    released = await mgr.release(holder_id, "z1", "/file.txt")
+    released = await mgr.release(holder_id, "/file.txt")
     assert released is True
     store.release_lock.assert_called_once_with("z1:/file.txt", holder_id)
 
@@ -67,7 +67,7 @@ async def test_acquire_timeout_zero(mgr, store):
     """acquire with timeout=0 returns None on contention."""
     store.acquire_lock.return_value = False
 
-    result = await mgr.acquire("z1", "/busy", timeout=0)
+    result = await mgr.acquire("/busy", timeout=0)
     assert result is None
     store.acquire_lock.assert_called_once()
 
@@ -78,7 +78,7 @@ async def test_acquire_retry_succeeds(mgr, store):
     # Fail twice, succeed on third attempt
     store.acquire_lock.side_effect = [False, False, True]
 
-    holder_id = await mgr.acquire("z1", "/contested", timeout=1.0)
+    holder_id = await mgr.acquire("/contested", timeout=1.0)
     assert holder_id is not None
     assert store.acquire_lock.call_count == 3
 
@@ -89,7 +89,7 @@ async def test_acquire_retry_timeout(mgr, store):
     store.acquire_lock.return_value = False
 
     t0 = time.monotonic()
-    result = await mgr.acquire("z1", "/held", timeout=0.15)
+    result = await mgr.acquire("/held", timeout=0.15)
     elapsed = time.monotonic() - t0
 
     assert result is None
@@ -114,7 +114,7 @@ async def test_extend(mgr, store):
         ],
     }
 
-    result = await mgr.extend("abc", "z1", "/file.txt", ttl=60.0)
+    result = await mgr.extend("abc", "/file.txt", ttl=60.0)
     assert isinstance(result, ExtendResult)
     assert result.success is True
     assert result.lock_info is not None
@@ -128,7 +128,7 @@ async def test_extend_failure(mgr, store):
     """extend returns success=False when store rejects."""
     store.extend_lock.return_value = False
 
-    result = await mgr.extend("bad-id", "z1", "/file.txt")
+    result = await mgr.extend("bad-id", "/file.txt")
     assert result.success is False
     assert result.lock_info is None
 
@@ -137,14 +137,14 @@ async def test_extend_failure(mgr, store):
 async def test_release_unknown(mgr, store):
     """release unknown lock_id returns False."""
     store.release_lock.return_value = False
-    released = await mgr.release("nonexistent", "z1", "/file.txt")
+    released = await mgr.release("nonexistent", "/file.txt")
     assert released is False
 
 
 @pytest.mark.asyncio
 async def test_semaphore_mode(mgr, store):
     """acquire with max_holders>1 passes through to store."""
-    holder_id = await mgr.acquire("z1", "/slots", max_holders=5)
+    holder_id = await mgr.acquire("/slots", max_holders=5)
     assert holder_id is not None
 
     call_kwargs = store.acquire_lock.call_args[1]
@@ -152,9 +152,10 @@ async def test_semaphore_mode(mgr, store):
 
 
 @pytest.mark.asyncio
-async def test_lock_key_format(mgr, store):
+async def test_lock_key_format(store):
     """lock key is {zone_id}:{path}."""
-    await mgr.acquire("zone-abc", "/deep/path/file.txt")
+    mgr = LocalLockManager(store, zone_id="zone-abc")
+    await mgr.acquire("/deep/path/file.txt")
     lock_key = store.acquire_lock.call_args[0][0]
     assert lock_key == "zone-abc:/deep/path/file.txt"
 
@@ -169,7 +170,7 @@ async def test_health_check(mgr):
 async def test_force_release(mgr, store):
     """force_release delegates to store."""
     store.force_release_lock.return_value = True
-    result = await mgr.force_release("z1", "/locked")
+    result = await mgr.force_release("/locked")
     assert result is True
     store.force_release_lock.assert_called_once_with("z1:/locked")
 
@@ -178,14 +179,14 @@ async def test_force_release(mgr, store):
 async def test_force_release_no_lock(mgr, store):
     """force_release returns False when no lock exists."""
     store.force_release_lock.return_value = False
-    result = await mgr.force_release("z1", "/not-locked")
+    result = await mgr.force_release("/not-locked")
     assert result is False
 
 
 @pytest.mark.asyncio
 async def test_ttl_enforced_minimum(mgr, store):
     """ttl is always >= 1 second (prevents zero/negative TTL)."""
-    await mgr.acquire("z1", "/file.txt", ttl=0.1)
+    await mgr.acquire("/file.txt", ttl=0.1)
     call_kwargs = store.acquire_lock.call_args[1]
     assert call_kwargs["ttl_secs"] >= 1
 
@@ -194,7 +195,7 @@ async def test_ttl_enforced_minimum(mgr, store):
 async def test_get_lock_info_none(mgr, store):
     """get_lock_info returns None when not locked."""
     store.get_lock_info.return_value = None
-    info = await mgr.get_lock_info("z1", "/file.txt")
+    info = await mgr.get_lock_info("/file.txt")
     assert info is None
 
 
@@ -213,7 +214,7 @@ async def test_get_lock_info_with_data(mgr, store):
             }
         ],
     }
-    info = await mgr.get_lock_info("z1", "/file.txt")
+    info = await mgr.get_lock_info("/file.txt")
     assert info is not None
     assert info.path == "/file.txt"
     assert info.mode == "mutex"
@@ -229,7 +230,7 @@ async def test_get_lock_info_semaphore(mgr, store):
         "max_holders": 3,
         "holders": [],
     }
-    info = await mgr.get_lock_info("z1", "/slots")
+    info = await mgr.get_lock_info("/slots")
     assert info is not None
     assert info.mode == "semaphore"
 
@@ -238,7 +239,7 @@ async def test_get_lock_info_semaphore(mgr, store):
 async def test_list_locks_empty(mgr, store):
     """list_locks returns empty list when no locks."""
     store.list_locks.return_value = []
-    locks = await mgr.list_locks("z1")
+    locks = await mgr.list_locks()
     assert locks == []
     store.list_locks.assert_called_once_with(prefix="z1:", limit=100)
 
@@ -250,7 +251,7 @@ async def test_list_locks_with_pattern(mgr, store):
         {"path": "z1:/a/file.txt", "max_holders": 1, "holders": []},
         {"path": "z1:/b/other.txt", "max_holders": 1, "holders": []},
     ]
-    locks = await mgr.list_locks("z1", pattern="/a/")
+    locks = await mgr.list_locks(pattern="/a/")
     assert len(locks) == 1
     assert locks[0].path == "/a/file.txt"
 
@@ -259,18 +260,18 @@ async def test_list_locks_with_pattern(mgr, store):
 async def test_is_locked(mgr, store):
     """is_locked delegates to get_lock_info (inherited from LockManagerBase)."""
     store.get_lock_info.return_value = None
-    assert await mgr.is_locked("z1", "/file.txt") is False
+    assert await mgr.is_locked("/file.txt") is False
 
     store.get_lock_info.return_value = {
         "path": "z1:/file.txt",
         "max_holders": 1,
         "holders": [{"lock_id": "h1", "acquired_at": 0, "expires_at": 0}],
     }
-    assert await mgr.is_locked("z1", "/file.txt") is True
+    assert await mgr.is_locked("/file.txt") is True
 
 
 @pytest.mark.asyncio
 async def test_max_holders_validation(mgr):
     """max_holders < 1 raises ValueError."""
     with pytest.raises(ValueError, match="max_holders must be >= 1"):
-        await mgr.acquire("z1", "/file.txt", max_holders=0)
+        await mgr.acquire("/file.txt", max_holders=0)

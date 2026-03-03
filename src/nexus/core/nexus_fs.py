@@ -1,12 +1,11 @@
 """Unified filesystem implementation for Nexus."""
 
-import asyncio
 import builtins
 import contextlib
 import logging
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator, Iterator
 from datetime import UTC, datetime
 from typing import Any, ClassVar, cast
 
@@ -1320,103 +1319,51 @@ class NexusFS(  # type: ignore[misc]
         )
 
     # =========================================================================
-    # Sync Lock Helpers for atomic_update() - Issue #1106 Block 3
+    # VFS I/O Lock — kernel-internal path-level read/write protection
     # =========================================================================
 
-    def _acquire_lock_sync(
-        self,
-        path: str,
-        timeout: float,
-        context: OperationContext | None,
-    ) -> str | None:
-        """Acquire distributed lock synchronously (for use in sync write()).
+    _VFS_LOCK_TIMEOUT_MS = 5000  # 5s — generous for kernel I/O serialization
 
-        This method bridges sync write() with async lock operations.
-        For async contexts, use `async with locked()` instead.
+    def _vfs_acquire(self, path: str, mode: str) -> int:
+        """Acquire VFS I/O lock, raising LockTimeout on failure.
 
         Args:
-            path: Path to lock
-            timeout: Lock acquisition timeout
-            context: Operation context
+            path: Virtual path to lock.
+            mode: "read" (shared) or "write" (exclusive).
 
         Returns:
-            lock_id if acquired, None if lock manager not available
+            Lock handle (positive int) for release.
 
         Raises:
-            LockTimeout: If lock cannot be acquired within timeout
+            LockTimeout: If lock cannot be acquired within timeout.
         """
-        # Check if lock manager is available
-        if not hasattr(self, "_lock_manager") or self._lock_manager is None:
-            raise RuntimeError(
-                "Distributed lock requested but lock manager not configured. "
-                "Ensure NexusFS is initialized with enable_distributed_locks=True."
-            )
+        handle = self._vfs_lock_manager.acquire(path, mode, timeout_ms=self._VFS_LOCK_TIMEOUT_MS)
+        if handle == 0:
+            from nexus.contracts.exceptions import LockTimeout
 
-        from nexus.contracts.exceptions import LockTimeout
-
-        # Run async lock in sync context
-        # Check if we're in an async context - if so, user should use locked() instead
-        try:
-            asyncio.get_running_loop()
-            # There's a running event loop - sync lock won't work properly
-            raise RuntimeError(
-                "Sync lock cannot be used from async context (event loop detected). "
-                "Use `async with nx.events_service.locked(path):` instead."
-            )
-        except RuntimeError as e:
-            if "event loop detected" in str(e):
-                raise  # Re-raise our custom error
-            # No running loop - safe to proceed
-
-        zone_id = self._get_zone_id(context)  # type: ignore[attr-defined]  # allowed  # allowed
-
-        # Use the existing Raft-based lock manager
-        async def acquire_lock() -> str | None:
-            return await self._lock_manager.acquire(
-                zone_id=zone_id,
+            raise LockTimeout(
                 path=path,
-                timeout=timeout,
+                timeout=self._VFS_LOCK_TIMEOUT_MS / 1000,
+                message=f"VFS {mode} lock timeout on {path}",
             )
+        return handle
 
-        from nexus.lib.sync_bridge import run_sync
+    @contextlib.contextmanager
+    def _vfs_locked(self, path: str, mode: str) -> Generator[int, None, None]:
+        """Context manager for VFS I/O lock — symmetric acquire/release.
 
-        lock_id = run_sync(acquire_lock())
+        Usage::
 
-        if lock_id is None:
-            raise LockTimeout(path=path, timeout=timeout)
-
-        return lock_id
-
-    def _release_lock_sync(
-        self,
-        lock_id: str,
-        path: str,
-        context: OperationContext | None,
-    ) -> None:
-        """Release distributed lock synchronously.
-
-        Args:
-            lock_id: Lock ID from _acquire_lock_sync()
-            path: Path that was locked
-            context: Operation context
+            with self._vfs_locked(path, "write"):
+                backend.write_content(...)
+                metadata.put(...)
+            # Event emission AFTER lock release (like Linux inotify after i_rwsem)
         """
-        if not lock_id:
-            return
-
-        if not hasattr(self, "_lock_manager") or self._lock_manager is None:
-            return
-
-        zone_id = self._get_zone_id(context)  # type: ignore[attr-defined]  # allowed  # allowed
-
-        async def release_lock() -> None:
-            await self._lock_manager.release(lock_id, zone_id, path)
-
-        from nexus.lib.sync_bridge import run_sync
-
+        handle = self._vfs_acquire(path, mode)
         try:
-            run_sync(release_lock())
-        except Exception as e:
-            logger.error(f"Failed to release lock {lock_id} for {path}: {e}")
+            yield handle
+        finally:
+            self._vfs_lock_manager.release(handle)
 
     def _apply_dynamic_viewer_filter_if_needed(
         self, path: str, content: bytes, context: OperationContext | None
@@ -1698,7 +1645,7 @@ class NexusFS(  # type: ignore[misc]
 
         if is_dynamic_connector:
             # Dynamic connector - read directly from backend without metadata check
-            # The backend handles authentication and API calls
+            # The backend handles authentication and API calls (no VFS lock needed)
             content = route.backend.read_content("", context=read_context)
 
             # Issue #1166: Record read for dependency tracking
@@ -1710,24 +1657,32 @@ class NexusFS(  # type: ignore[misc]
                 )
             return content
 
-        # Check if file exists in metadata (for regular backends)
-        # _resolve_hint may carry prefetched metadata from a resolver
-        meta = _resolve_hint if _resolve_hint is not None else self.metadata.get(path)
+        # VFS I/O Lock: shared read lock around metadata check + backend read.
+        # Prevents reading while a concurrent writer mutates the same path.
+        # Like Linux i_rwsem: held for I/O duration only, released before observers.
+        with self._vfs_locked(path, "read"):
+            # Check if file exists in metadata (for regular backends)
+            # _resolve_hint may carry prefetched metadata from a resolver
+            meta = _resolve_hint if _resolve_hint is not None else self.metadata.get(path)
 
-        # Issue #1264: Overlay resolution — check base layer if upper layer has no entry
-        if (meta is None or meta.etag is None) and getattr(self, "_overlay_resolver", None):
-            overlay_config = self._get_overlay_config(path)
-            if overlay_config:
-                meta = self._overlay_resolver.resolve_read(path, overlay_config)
+            # Issue #1264: Overlay resolution — check base layer if upper layer has no entry
+            if (meta is None or meta.etag is None) and getattr(self, "_overlay_resolver", None):
+                overlay_config = self._get_overlay_config(path)
+                if overlay_config:
+                    meta = self._overlay_resolver.resolve_read(path, overlay_config)
 
-        if meta is None or meta.etag is None:
-            raise NexusFileNotFoundError(path)
+            if meta is None or meta.etag is None:
+                raise NexusFileNotFoundError(path)
 
-        # Issue #1264: Reject whiteout markers (file was deleted in overlay)
-        if getattr(self, "_overlay_resolver", None) and self._overlay_resolver.is_whiteout(meta):
-            raise NexusFileNotFoundError(path)
+            # Issue #1264: Reject whiteout markers (file was deleted in overlay)
+            if getattr(self, "_overlay_resolver", None) and self._overlay_resolver.is_whiteout(
+                meta
+            ):
+                raise NexusFileNotFoundError(path)
 
-        content = route.backend.read_content(meta.etag, context=read_context)
+            content = route.backend.read_content(meta.etag, context=read_context)
+
+        # --- Lock released — post-read processing (like Linux inotify after i_rwsem) ---
 
         # Apply dynamic_viewer filtering for CSV files
         content = self._apply_dynamic_viewer_filter_if_needed(path, content, context)
@@ -2651,58 +2606,55 @@ class NexusFS(  # type: ignore[misc]
             )
         )
 
-        # Write to routed backend - returns content hash
         # Add backend_path to context for path-based connectors
         from dataclasses import replace
 
         if context:
-            # Create new context with backend_path and virtual_path populated
             context = replace(context, backend_path=route.backend_path, virtual_path=path)
         else:
-            # Create minimal context with just backend_path for connectors
             from nexus.contracts.types import OperationContext
 
             context = OperationContext(
                 user_id="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
             )
-        content_hash = route.backend.write_content(content, context=context).content_hash
 
-        # NOTE: sys_write does NOT release old content on overwrite.
-        # This follows the HDFS/GFS pattern: metadata changes are synchronous,
-        # content cleanup is asynchronous via background GC.
-        # Old blobs are cleaned up by ContentGarbageCollector, which reconciles
-        # ObjectStore inventory against Metastore references (like HDFS BlockManager).
-        # See: docs/architecture/federation-memo.md §7f Caveat 4.
+        # VFS I/O Lock: exclusive write lock around backend write + metadata put.
+        # Like Linux i_rwsem: held for I/O duration only, released before observers.
+        with self._vfs_locked(path, "write"):
+            content_hash = route.backend.write_content(content, context=context).content_hash
 
-        # UNIX permissions removed - all access control via ReBAC
+            # NOTE: sys_write does NOT release old content on overwrite.
+            # HDFS/GFS pattern: content cleanup is async via background GC.
+            # See: docs/architecture/federation-memo.md §7f Caveat 4.
 
-        # Calculate new version number (increment if updating)
-        new_version = (meta.version + 1) if meta else 1
+            # Calculate new version number (increment if updating)
+            new_version = (meta.version + 1) if meta else 1
 
-        # Store metadata with content hash as both etag and physical_path
-        # Note: UNIX permissions (owner/group/mode) removed - use ReBAC instead
-        # Issue #920: Set owner_id for O(1) permission checks (only on new files)
-        ctx = context if context is not None else self._default_context
-        owner_id = meta.owner_id if meta else (ctx.subject_id or ctx.user_id)
+            # Store metadata with content hash as both etag and physical_path
+            # Issue #920: Set owner_id for O(1) permission checks (only on new files)
+            ctx = context if context is not None else self._default_context
+            owner_id = meta.owner_id if meta else (ctx.subject_id or ctx.user_id)
 
-        metadata = FileMetadata(
-            path=path,
-            backend_name=route.backend.name,  # FIX: Use routed backend name, not default backend
-            physical_path=content_hash,  # CAS: hash is the "physical" location
-            size=len(content),
-            etag=content_hash,  # SHA-256 hash for integrity
-            created_at=meta.created_at if meta else now,
-            modified_at=now,
-            version=new_version,
-            created_by=self._get_created_by(context),  # Track who created/modified this version
-            zone_id=zone_id or "root",  # Issue #904, #773: Store zone_id for PREWHERE filtering
-            owner_id=owner_id,  # Issue #920: O(1) owner permission checks
-        )
+            metadata = FileMetadata(
+                path=path,
+                backend_name=route.backend.name,
+                physical_path=content_hash,
+                size=len(content),
+                etag=content_hash,
+                created_at=meta.created_at if meta else now,
+                modified_at=now,
+                version=new_version,
+                created_by=self._get_created_by(context),
+                zone_id=zone_id or "root",  # Issue #904, #773: pre-existing default
+                owner_id=owner_id,
+            )
 
-        self.metadata.put(metadata)
+            self.metadata.put(metadata)
 
-        # Issue #1169: Advance VFS revision counter after mutation
-        new_revision = self._increment_vfs_revision()
+            # Issue #1169: Advance VFS revision counter after mutation
+            new_revision = self._increment_vfs_revision()
+
+        # --- Lock released — event dispatch + side effects (like Linux inotify after i_rwsem) ---
 
         # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
         self._dispatch.notify(
@@ -3670,19 +3622,22 @@ class NexusFS(  # type: ignore[misc]
         )
         self._dispatch.intercept_post_delete(_delete_ctx)
 
-        # Delete from routed backend CAS (decrements ref count)
-        # Content is only physically deleted when ref_count reaches 0
-        # If other files reference the same content, it remains in CAS
-        # Skip content deletion for directories - they have no actual CAS content
-        # (directories are stored with empty hash but no actual CAS entry)
-        if meta.etag and meta.mime_type != "inode/directory":
-            route.backend.delete_content(meta.etag, context=context)
+        # VFS I/O Lock: exclusive write lock around CAS delete + metadata delete.
+        # Like Linux i_rwsem: held for I/O duration only, released before observers.
+        with self._vfs_locked(path, "write"):
+            # Delete from routed backend CAS (decrements ref count)
+            # Content is only physically deleted when ref_count reaches 0
+            # Skip content deletion for directories (no CAS entry)
+            if meta.etag and meta.mime_type != "inode/directory":
+                route.backend.delete_content(meta.etag, context=context)
 
-        # Remove from metadata
-        self.metadata.delete(path)
+            # Remove from metadata
+            self.metadata.delete(path)
 
-        # Issue #1169: Advance VFS revision counter after delete
-        new_revision = self._increment_vfs_revision()
+            # Issue #1169: Advance VFS revision counter after delete
+            new_revision = self._increment_vfs_revision()
+
+        # --- Lock released — event dispatch (like Linux inotify after i_rwsem) ---
 
         # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
         self._dispatch.notify(
@@ -3825,29 +3780,38 @@ class NexusFS(  # type: ignore[misc]
         )
         self._dispatch.intercept_pre_rename(_rename_ctx)
 
-        # For path-based connector backends, we need to move the actual file
-        # in the backend storage (not just metadata)
-        if old_route.backend.supports_rename is True:
-            # Connector backend - move the file in backend storage
+        # VFS I/O Lock: exclusive write lock on BOTH paths (sorted order = deadlock-free).
+        # Like Linux i_rwsem on both source and destination inodes.
+        _first, _second = sorted([old_path, new_path])
+        _h1 = self._vfs_acquire(_first, "write")
+        try:
+            _h2 = self._vfs_acquire(_second, "write") if _first != _second else 0
             try:
-                old_route.backend.rename_file(old_route.backend_path, new_route.backend_path)
-            except FileExistsError:
-                # Backend says destination exists, but metadata check passed
-                # This means metadata is stale - re-raise the error
-                raise
-            except Exception as e:
-                # Failed to rename in backend - don't update metadata
-                raise BackendError(
-                    f"Failed to rename file in backend: {e}",
-                    backend=old_route.backend.name,
-                ) from e
+                # For path-based connector backends, move actual file in storage
+                if old_route.backend.supports_rename is True:
+                    try:
+                        old_route.backend.rename_file(
+                            old_route.backend_path, new_route.backend_path
+                        )
+                    except FileExistsError:
+                        raise
+                    except Exception as e:
+                        raise BackendError(
+                            f"Failed to rename file in backend: {e}",
+                            backend=old_route.backend.name,
+                        ) from e
 
-        # Perform metadata rename
-        # For CAS backends: metadata-only (content stays at same hash location)
-        # For connector backends: metadata follows the file we just moved
-        self.metadata.rename_path(old_path, new_path)
+                # Perform metadata rename
+                self.metadata.rename_path(old_path, new_path)
 
-        new_revision = self._increment_vfs_revision()
+                new_revision = self._increment_vfs_revision()
+            finally:
+                if _h2:
+                    self._vfs_lock_manager.release(_h2)
+        finally:
+            self._vfs_lock_manager.release(_h1)
+
+        # --- Lock released — event dispatch + side effects (like Linux inotify after i_rwsem) ---
 
         # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
         self._dispatch.notify(

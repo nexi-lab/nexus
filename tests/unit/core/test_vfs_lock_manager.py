@@ -11,7 +11,6 @@ import pytest
 
 from nexus.core.lock_fast import (
     PythonVFSLockManager,
-    VFSLockManagerProtocol,
     create_vfs_lock_manager,
 )
 
@@ -30,7 +29,7 @@ except (ImportError, Exception):
 
 
 @pytest.fixture(params=_IMPLEMENTATIONS, ids=lambda cls: cls.__name__)
-def mgr(request: pytest.FixtureRequest) -> VFSLockManagerProtocol:
+def mgr(request: pytest.FixtureRequest):  # -> RustVFSLockManager | PythonVFSLockManager
     return request.param()
 
 
@@ -40,21 +39,21 @@ def mgr(request: pytest.FixtureRequest) -> VFSLockManagerProtocol:
 
 
 class TestBasicAcquireRelease:
-    def test_read_acquire_release(self, mgr: VFSLockManagerProtocol) -> None:
+    def test_read_acquire_release(self, mgr) -> None:
         h = mgr.acquire("/foo", "read")
         assert h > 0
         assert mgr.is_locked("/foo")
         assert mgr.release(h)
         assert not mgr.is_locked("/foo")
 
-    def test_write_acquire_release(self, mgr: VFSLockManagerProtocol) -> None:
+    def test_write_acquire_release(self, mgr) -> None:
         h = mgr.acquire("/foo", "write")
         assert h > 0
         assert mgr.is_locked("/foo")
         assert mgr.release(h)
         assert not mgr.is_locked("/foo")
 
-    def test_invalid_mode_raises(self, mgr: VFSLockManagerProtocol) -> None:
+    def test_invalid_mode_raises(self, mgr) -> None:
         with pytest.raises((ValueError, Exception)):
             mgr.acquire("/foo", "exclusive")
 
@@ -65,7 +64,7 @@ class TestBasicAcquireRelease:
 
 
 class TestReadReadCoexistence:
-    def test_two_readers_same_path(self, mgr: VFSLockManagerProtocol) -> None:
+    def test_two_readers_same_path(self, mgr) -> None:
         h1 = mgr.acquire("/foo", "read")
         h2 = mgr.acquire("/foo", "read")
         assert h1 > 0
@@ -84,21 +83,21 @@ class TestReadReadCoexistence:
 
 
 class TestReadWriteConflict:
-    def test_write_blocks_read(self, mgr: VFSLockManagerProtocol) -> None:
+    def test_write_blocks_read(self, mgr) -> None:
         w = mgr.acquire("/foo", "write")
         assert w > 0
         r = mgr.acquire("/foo", "read")  # non-blocking → should fail
         assert r == 0
         mgr.release(w)
 
-    def test_read_blocks_write(self, mgr: VFSLockManagerProtocol) -> None:
+    def test_read_blocks_write(self, mgr) -> None:
         r = mgr.acquire("/foo", "read")
         assert r > 0
         w = mgr.acquire("/foo", "write")
         assert w == 0
         mgr.release(r)
 
-    def test_write_write_conflict(self, mgr: VFSLockManagerProtocol) -> None:
+    def test_write_write_conflict(self, mgr) -> None:
         w1 = mgr.acquire("/foo", "write")
         assert w1 > 0
         w2 = mgr.acquire("/foo", "write")
@@ -112,36 +111,36 @@ class TestReadWriteConflict:
 
 
 class TestAncestorConflict:
-    def test_ancestor_write_blocks_child_read(self, mgr: VFSLockManagerProtocol) -> None:
+    def test_ancestor_write_blocks_child_read(self, mgr) -> None:
         w = mgr.acquire("/a", "write")
         assert mgr.acquire("/a/b", "read") == 0
         mgr.release(w)
 
-    def test_ancestor_write_blocks_child_write(self, mgr: VFSLockManagerProtocol) -> None:
+    def test_ancestor_write_blocks_child_write(self, mgr) -> None:
         w = mgr.acquire("/a", "write")
         assert mgr.acquire("/a/b/c", "write") == 0
         mgr.release(w)
 
-    def test_ancestor_read_allows_child_read(self, mgr: VFSLockManagerProtocol) -> None:
+    def test_ancestor_read_allows_child_read(self, mgr) -> None:
         r = mgr.acquire("/a", "read")
         child = mgr.acquire("/a/b", "read")
         assert child > 0
         mgr.release(r)
         mgr.release(child)
 
-    def test_ancestor_read_blocks_child_write(self, mgr: VFSLockManagerProtocol) -> None:
+    def test_ancestor_read_blocks_child_write(self, mgr) -> None:
         r = mgr.acquire("/a", "read")
         assert mgr.acquire("/a/b", "write") == 0
         mgr.release(r)
 
-    def test_root_write_blocks_all_descendants(self, mgr: VFSLockManagerProtocol) -> None:
+    def test_root_write_blocks_all_descendants(self, mgr) -> None:
         w = mgr.acquire("/", "write")
         assert w > 0
         assert mgr.acquire("/a", "read") == 0
         assert mgr.acquire("/a/b/c", "write") == 0
         mgr.release(w)
 
-    def test_descendant_blocks_root_write(self, mgr: VFSLockManagerProtocol) -> None:
+    def test_descendant_blocks_root_write(self, mgr) -> None:
         r = mgr.acquire("/a", "read")
         assert mgr.acquire("/", "write") == 0
         mgr.release(r)
@@ -153,17 +152,17 @@ class TestAncestorConflict:
 
 
 class TestDescendantConflict:
-    def test_descendant_write_blocks_parent_write(self, mgr: VFSLockManagerProtocol) -> None:
+    def test_descendant_write_blocks_parent_write(self, mgr) -> None:
         w = mgr.acquire("/a/b/c", "write")
         assert mgr.acquire("/a", "write") == 0
         mgr.release(w)
 
-    def test_descendant_read_blocks_parent_write(self, mgr: VFSLockManagerProtocol) -> None:
+    def test_descendant_read_blocks_parent_write(self, mgr) -> None:
         r = mgr.acquire("/a/b", "read")
         assert mgr.acquire("/a", "write") == 0
         mgr.release(r)
 
-    def test_descendant_write_blocks_parent_read(self, mgr: VFSLockManagerProtocol) -> None:
+    def test_descendant_write_blocks_parent_read(self, mgr) -> None:
         w = mgr.acquire("/a/b", "write")
         assert mgr.acquire("/a", "read") == 0
         mgr.release(w)
@@ -175,10 +174,10 @@ class TestDescendantConflict:
 
 
 class TestReleaseEdgeCases:
-    def test_release_invalid_handle(self, mgr: VFSLockManagerProtocol) -> None:
+    def test_release_invalid_handle(self, mgr) -> None:
         assert not mgr.release(999)
 
-    def test_double_release(self, mgr: VFSLockManagerProtocol) -> None:
+    def test_double_release(self, mgr) -> None:
         h = mgr.acquire("/foo", "write")
         assert mgr.release(h)
         assert not mgr.release(h)
@@ -190,13 +189,13 @@ class TestReleaseEdgeCases:
 
 
 class TestTimeout:
-    def test_nonblocking_returns_zero(self, mgr: VFSLockManagerProtocol) -> None:
+    def test_nonblocking_returns_zero(self, mgr) -> None:
         w = mgr.acquire("/foo", "write")
         result = mgr.acquire("/foo", "read", timeout_ms=0)
         assert result == 0
         mgr.release(w)
 
-    def test_blocking_timeout_returns_zero(self, mgr: VFSLockManagerProtocol) -> None:
+    def test_blocking_timeout_returns_zero(self, mgr) -> None:
         w = mgr.acquire("/foo", "write")
         start = time.monotonic()
         result = mgr.acquire("/foo", "read", timeout_ms=50)
@@ -205,7 +204,7 @@ class TestTimeout:
         assert elapsed_ms >= 40  # allow some slack
         mgr.release(w)
 
-    def test_blocking_succeeds_when_released(self, mgr: VFSLockManagerProtocol) -> None:
+    def test_blocking_succeeds_when_released(self, mgr) -> None:
         w = mgr.acquire("/foo", "write")
         result_holder: list[int] = []
 
@@ -231,17 +230,17 @@ class TestTimeout:
 
 
 class TestHolders:
-    def test_holders_none_when_unlocked(self, mgr: VFSLockManagerProtocol) -> None:
+    def test_holders_none_when_unlocked(self, mgr) -> None:
         assert mgr.holders("/foo") is None
 
-    def test_holders_shows_readers(self, mgr: VFSLockManagerProtocol) -> None:
+    def test_holders_shows_readers(self, mgr) -> None:
         h = mgr.acquire("/foo", "read")
         info = mgr.holders("/foo")
         assert info is not None
         assert info["readers"] == 1
         mgr.release(h)
 
-    def test_holders_shows_writer(self, mgr: VFSLockManagerProtocol) -> None:
+    def test_holders_shows_writer(self, mgr) -> None:
         h = mgr.acquire("/foo", "write")
         info = mgr.holders("/foo")
         assert info is not None
@@ -255,7 +254,7 @@ class TestHolders:
 
 
 class TestStats:
-    def test_stats_keys(self, mgr: VFSLockManagerProtocol) -> None:
+    def test_stats_keys(self, mgr) -> None:
         s = mgr.stats()
         expected_keys = {
             "acquire_count",
@@ -269,7 +268,7 @@ class TestStats:
         }
         assert expected_keys.issubset(set(s.keys()))
 
-    def test_stats_after_operations(self, mgr: VFSLockManagerProtocol) -> None:
+    def test_stats_after_operations(self, mgr) -> None:
         h = mgr.acquire("/x", "read")
         mgr.release(h)
         s = mgr.stats()
@@ -283,13 +282,13 @@ class TestStats:
 
 
 class TestUnicodePaths:
-    def test_unicode_path(self, mgr: VFSLockManagerProtocol) -> None:
+    def test_unicode_path(self, mgr) -> None:
         h = mgr.acquire("/datos/archivo", "write")
         assert h > 0
         assert mgr.is_locked("/datos/archivo")
         mgr.release(h)
 
-    def test_cjk_path(self, mgr: VFSLockManagerProtocol) -> None:
+    def test_cjk_path(self, mgr) -> None:
         h = mgr.acquire("/data/file", "read")
         assert h > 0
         mgr.release(h)
@@ -301,7 +300,7 @@ class TestUnicodePaths:
 
 
 class TestConcurrency:
-    def test_concurrent_readers(self, mgr: VFSLockManagerProtocol) -> None:
+    def test_concurrent_readers(self, mgr) -> None:
         """10 threads each acquire a read lock — all should succeed."""
         handles: list[int] = []
         errors: list[Exception] = []
@@ -326,7 +325,7 @@ class TestConcurrency:
         for h in handles:
             mgr.release(h)
 
-    def test_concurrent_writers_exclusive(self, mgr: VFSLockManagerProtocol) -> None:
+    def test_concurrent_writers_exclusive(self, mgr) -> None:
         """10 threads try to acquire a write lock — exactly one succeeds (non-blocking)."""
         successes: list[int] = []
 
@@ -351,9 +350,9 @@ class TestConcurrency:
 
 
 class TestFactory:
-    def test_create_returns_protocol(self) -> None:
+    def test_create_returns_concrete_impl(self) -> None:
         mgr = create_vfs_lock_manager()
-        assert isinstance(mgr, VFSLockManagerProtocol)
+        assert hasattr(mgr, "acquire") and hasattr(mgr, "release")
 
     def test_factory_functional(self) -> None:
         mgr = create_vfs_lock_manager()

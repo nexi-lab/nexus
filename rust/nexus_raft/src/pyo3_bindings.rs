@@ -638,21 +638,23 @@ impl PyZoneManager {
     ///     node_id: This node's ID (shared across all zones).
     ///     base_path: Base directory for zone sled databases.
     ///     bind_addr: gRPC bind address (e.g., "0.0.0.0:2126").
-    ///     advertise_addr: Address other nodes use to reach this node (e.g., "http://10.0.0.2:2126").
-    ///         Defaults to "http://{bind_addr}" if not provided.
     ///     tls_cert_path: Path to PEM certificate file (mTLS). All three TLS paths must be set, or none.
     ///     tls_key_path: Path to PEM private key file (mTLS).
     ///     tls_ca_path: Path to PEM CA certificate file (mTLS).
+    ///     ca_key_path: Path to CA private key file (for JoinCluster RPC to send to joiners).
+    ///     join_token_hash: SHA-256 hash of join token password (for JoinCluster verification).
     #[new]
-    #[pyo3(signature = (node_id, base_path, bind_addr="0.0.0.0:2126", advertise_addr=None, tls_cert_path=None, tls_key_path=None, tls_ca_path=None))]
+    #[pyo3(signature = (node_id, base_path, bind_addr="0.0.0.0:2126", tls_cert_path=None, tls_key_path=None, tls_ca_path=None, ca_key_path=None, join_token_hash=None))]
+    #[allow(clippy::too_many_arguments)] // PyO3 constructor — Python API needs flat keyword args
     pub fn new(
         node_id: u64,
         base_path: &str,
         bind_addr: &str,
-        advertise_addr: Option<&str>,
         tls_cert_path: Option<&str>,
         tls_key_path: Option<&str>,
         tls_ca_path: Option<&str>,
+        ca_key_path: Option<&str>,
+        join_token_hash: Option<&str>,
     ) -> PyResult<Self> {
         use crate::raft::ZoneRaftRegistry;
         use crate::transport::{RaftGrpcServer, ServerConfig, TlsConfig};
@@ -709,11 +711,15 @@ impl PyZoneManager {
             ..Default::default()
         };
         let use_tls = tls_config.is_some();
-        let self_addr = advertise_addr.map(|s| s.to_string()).unwrap_or_else(|| {
-            let scheme = if use_tls { "https" } else { "http" };
-            format!("{}://{}", scheme, bind_addr)
-        });
-        let server = RaftGrpcServer::new(registry.clone(), config, self_addr);
+        let mut server = RaftGrpcServer::new(registry.clone(), config);
+        // Configure JoinCluster RPC support if join token is available
+        if let (Some(ca_key), Some(token_hash)) = (ca_key_path, join_token_hash) {
+            server = server.with_join_config(
+                std::path::PathBuf::from(ca_key),
+                token_hash.to_string(),
+                std::path::PathBuf::from(base_path),
+            );
+        }
         let shutdown_rx_server = shutdown_rx.clone();
         runtime.spawn(async move {
             let shutdown = async move {

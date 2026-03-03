@@ -172,17 +172,22 @@ def _trim_to_budget(
     if total <= max_tokens:
         return full
 
-    # Drop oldest user/assistant messages (index 0 = oldest) until within budget
-    trimmed = list(messages)
-    while len(trimmed) > 1:
-        trimmed.pop(0)
-        candidate = [system_msg, *trimmed]
+    # Binary search for the earliest start index that fits within budget.
+    # Avoids O(n²) list.pop(0) and minimises count_tokens() calls to O(log n).
+    lo, hi = 0, len(messages) - 1  # keep at least the last message
+    best = hi  # worst case: only last message
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        candidate = [system_msg, *messages[mid:]]
         try:
             if llm.count_tokens(candidate) <= max_tokens:
-                return candidate
+                best = mid
+                hi = mid - 1  # try keeping more messages
+            else:
+                lo = mid + 1  # need to drop more
         except Exception:
             return candidate
-    return [system_msg, *trimmed]
+    return [system_msg, *messages[best:]]
 
 
 def _extract_tool_calls(response: object) -> list[ToolCall]:

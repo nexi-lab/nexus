@@ -10,8 +10,8 @@ layer — they MUST NOT call async code directly.
 import logging
 from typing import TYPE_CHECKING, Any, cast
 
+from nexus.contracts.capabilities import ConnectorCapability
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.core.protocols.capabilities import ConnectorCapability
 from nexus.server.path_utils import (
     unscope_internal_dict,
     unscope_internal_path,

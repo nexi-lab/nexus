@@ -4,6 +4,9 @@ Provides a unified ``ConnectorCapability`` enum for declaring and querying
 backend capabilities.  Backends declare ``_CAPABILITIES`` as a ClassVar;
 consumers query via ``has_capability()`` or ``cap in backend.capabilities``.
 
+Canonical home: contracts/ (base tier — available to all layers).
+Moved from core/protocols/capabilities.py in #1323.
+
 Design decisions:
     - Hybrid approach: StrEnum for O(1) gating + Protocol classes for type-safe
       method access (A1)
@@ -80,7 +83,6 @@ class ConnectorCapability(StrEnum):
     PATH_DELETE = "path_delete"
     """Backend supports path-based delete (not just hash-based)."""
 
-
     CACHE_BULK_READ = "cache_bulk_read"
     """Backend supports read_bulk_from_cache() for bulk cache reads."""
 
@@ -90,36 +92,9 @@ class ConnectorCapability(StrEnum):
     MULTIPART_UPLOAD = "multipart_upload"
     """Backend supports multipart/chunked uploads."""
 
-# --- Capability-to-Protocol mapping ---
-# Used for registration-time validation: if a backend claims a capability
-# that maps to a Protocol, we verify the class has the required methods.
+    CAS = "cas"
+    """Backend uses content-addressable storage (CAS) addressing."""
 
-def _build_capability_protocols() -> dict[ConnectorCapability, type]:
-    """Build mapping lazily to avoid circular imports."""
-    from nexus.core.protocols.connector import (
-        BatchContentProtocol,
-        DirectoryListingProtocol,
-        OAuthCapableProtocol,
-        PassthroughProtocol,
-        StreamingProtocol,
-    )
-
-    return {
-        ConnectorCapability.STREAMING: StreamingProtocol,
-        ConnectorCapability.BATCH_CONTENT: BatchContentProtocol,
-        ConnectorCapability.DIRECTORY_LISTING: DirectoryListingProtocol,
-        ConnectorCapability.OAUTH: OAuthCapableProtocol,
-        ConnectorCapability.PASSTHROUGH: PassthroughProtocol,
-    }
-
-def get_capability_protocols() -> dict[ConnectorCapability, type]:
-    """Get the capability-to-Protocol mapping.
-
-    Returns:
-        Dictionary mapping capabilities to their Protocol classes.
-        Only capabilities that have a corresponding Protocol are included.
-    """
-    return _build_capability_protocols()
 
 # --- Convenience frozensets ---
 

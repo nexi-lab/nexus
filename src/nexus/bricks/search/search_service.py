@@ -409,7 +409,7 @@ class SearchService:
                     is_admin=is_admin,
                     check_write=False,
                 )
-                from nexus.core.protocols.capabilities import ConnectorCapability
+                from nexus.contracts.capabilities import ConnectorCapability
 
                 _caps: frozenset[str] = getattr(route.backend, "capabilities", frozenset())
                 is_dynamic_connector = (

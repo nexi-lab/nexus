@@ -433,6 +433,21 @@ module = "nexus.backends.gcs_connector"
 disable_error_code = ["attr-defined", "return-value"]
 
 [[tool.mypy.overrides]]
+module = "nexus.backends.transports.gcs_transport"
+# google-cloud-storage stubs return Any; attr-defined from google.cloud.storage
+disable_error_code = ["attr-defined", "no-any-return"]
+
+[[tool.mypy.overrides]]
+module = "nexus.backends.transports.s3_transport"
+# boto3 stubs return Any for all S3 client methods
+disable_error_code = ["no-any-return"]
+
+[[tool.mypy.overrides]]
+module = "nexus.backends.cas_backend"
+# json.loads returns Any
+disable_error_code = ["no-any-return"]
+
+[[tool.mypy.overrides]]
 module = [
     "nexus.bricks.tools.langgraph.nexus_tools",
     "nexus.tools.langgraph.nexus_tools",
@@ -475,11 +490,6 @@ disable_error_code = ["return-value"]
 
 [[tool.mypy.overrides]]
 module = "nexus.backends.gdrive_connector"
-# HandlerResponse.error() returns HandlerResponse[None] but functions return HandlerResponse[T]
-disable_error_code = ["return-value"]
-
-[[tool.mypy.overrides]]
-module = "nexus.backends.base_blob_connector"
 # HandlerResponse.error() returns HandlerResponse[None] but functions return HandlerResponse[T]
 disable_error_code = ["return-value"]
 

@@ -8,9 +8,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from nexus.backends.backend import Backend
-from nexus.backends.base_blob_connector import BaseBlobStorageConnector
 from nexus.backends.cas_blob_store import WriteResult
 from nexus.backends.local import LocalBackend
+from nexus.backends.path_backend import PathBackend
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.core.hash_fast import create_hasher, hash_content
 from nexus.core.object_store import WriteResult as ObjectStoreWriteResult
@@ -383,48 +383,57 @@ class TestStreamingMemoryEfficiency:
         assert result.size == total_bytes
 
 
-class TestBaseBlobConnectorStreamContent:
-    """Test stream_content in BaseBlobStorageConnector (Issue #480)."""
+class TestPathBackendStreamContent:
+    """Test stream_content in PathBackend (Issue #480)."""
 
     def test_stream_content_default_yields_chunks(self) -> None:
-        """Test default stream_content yields chunks from _stream_blob."""
+        """Test default stream_content yields chunks from transport.stream_blob."""
+        from collections.abc import Iterator
 
-        class TestConnector(BaseBlobStorageConnector):
-            """Minimal test connector."""
+        class TestTransport:
+            """Minimal in-memory transport."""
+
+            transport_name = "memory"
 
             def __init__(self) -> None:
-                super().__init__(bucket_name="test-bucket", prefix="")
+                self.files: dict[str, bytes] = {}
 
-            @property
-            def name(self) -> str:
-                return "test_connector"
+            def put_blob(self, key, data, content_type=""):
+                self.files[key] = data
+                return None
 
-            def _upload_blob(self, blob_path, content, content_type):
-                return "test-version"
+            def get_blob(self, key, version_id=None):
+                if key not in self.files:
+                    raise FileNotFoundError(key)
+                return self.files[key], version_id
 
-            def _download_blob(self, blob_path, version_id=None):
-                # Return test content
-                return b"Hello World!", "v1"
+            def delete_blob(self, key):
+                self.files.pop(key, None)
 
-            def _delete_blob(self, blob_path):
-                pass
+            def blob_exists(self, key):
+                return key in self.files
 
-            def _blob_exists(self, blob_path):
-                return True
+            def get_blob_size(self, key):
+                return len(self.files.get(key, b""))
 
-            def _get_blob_size(self, blob_path):
-                return 12
+            def list_blobs(self, prefix="", delimiter="/"):
+                return [k for k in self.files if k.startswith(prefix)], []
 
-            def _list_blobs(self, prefix, delimiter="/"):
-                return [], []
+            def copy_blob(self, src_key, dst_key):
+                if src_key in self.files:
+                    self.files[dst_key] = self.files[src_key]
 
-            def _create_directory_marker(self, blob_path):
-                pass
+            def create_directory_marker(self, key):
+                self.files[key] = b""
 
-            def _copy_blob(self, source_path, dest_path):
-                pass
+            def stream_blob(self, key, chunk_size=8192, version_id=None) -> Iterator[bytes]:
+                data, _ = self.get_blob(key, version_id)
+                for i in range(0, len(data), chunk_size):
+                    yield data[i : i + chunk_size]
 
-        connector = TestConnector()
+        transport = TestTransport()
+        transport.files["test/file.txt"] = b"Hello World!"
+        connector = PathBackend(transport, backend_name="test_connector", bucket_name="test-bucket")
 
         # Create mock context with backend_path
         context = MagicMock()
@@ -438,96 +447,99 @@ class TestBaseBlobConnectorStreamContent:
 
     def test_stream_content_requires_backend_path(self) -> None:
         """Test stream_content raises ValueError without backend_path."""
+        from collections.abc import Iterator
 
-        class TestConnector(BaseBlobStorageConnector):
-            @property
-            def name(self) -> str:
-                return "test"
+        class TestTransport:
+            transport_name = "memory"
 
             def __init__(self) -> None:
-                super().__init__(bucket_name="test", prefix="")
+                self.files: dict[str, bytes] = {}
 
-            def _upload_blob(self, blob_path, content, content_type):
-                return ""
+            def put_blob(self, key, data, content_type=""):
+                return None
 
-            def _download_blob(self, blob_path, version_id=None):
+            def get_blob(self, key, version_id=None):
                 return b"", None
 
-            def _delete_blob(self, blob_path):
+            def delete_blob(self, key):
                 pass
 
-            def _blob_exists(self, blob_path):
+            def blob_exists(self, key):
                 return False
 
-            def _get_blob_size(self, blob_path):
+            def get_blob_size(self, key):
                 return 0
 
-            def _list_blobs(self, prefix, delimiter="/"):
+            def list_blobs(self, prefix="", delimiter="/"):
                 return [], []
 
-            def _create_directory_marker(self, blob_path):
+            def copy_blob(self, src_key, dst_key):
                 pass
 
-            def _copy_blob(self, source_path, dest_path):
+            def create_directory_marker(self, key):
                 pass
 
-        connector = TestConnector()
+            def stream_blob(self, key, chunk_size=8192, version_id=None) -> Iterator[bytes]:
+                return iter([])
+
+        transport = TestTransport()
+        connector = PathBackend(transport, backend_name="test", bucket_name="test")
 
         with pytest.raises(ValueError, match="requires backend_path"):
             list(connector.stream_content("hash", context=None))
 
     def test_stream_content_custom_stream_blob(self) -> None:
-        """Test that subclass can override _stream_blob for true streaming."""
+        """Test that transport can provide custom stream_blob for true streaming."""
+        from collections.abc import Iterator
 
-        class StreamingConnector(BaseBlobStorageConnector):
-            """Connector with custom _stream_blob implementation."""
+        class StreamingTransport:
+            """Transport with custom stream_blob implementation."""
+
+            transport_name = "memory"
 
             def __init__(self) -> None:
-                super().__init__(bucket_name="test", prefix="")
+                self.files: dict[str, bytes] = {}
                 self.stream_blob_called = False
 
-            @property
-            def name(self) -> str:
-                return "streaming_test"
+            def put_blob(self, key, data, content_type=""):
+                return None
 
-            def _upload_blob(self, blob_path, content, content_type):
-                return ""
-
-            def _download_blob(self, blob_path, version_id=None):
+            def get_blob(self, key, version_id=None):
                 return b"should not be called", None
 
-            def _stream_blob(self, blob_path, chunk_size=65536, version_id=None):
+            def delete_blob(self, key):
+                pass
+
+            def blob_exists(self, key):
+                return True
+
+            def get_blob_size(self, key):
+                return 18
+
+            def list_blobs(self, prefix="", delimiter="/"):
+                return [], []
+
+            def copy_blob(self, src_key, dst_key):
+                pass
+
+            def create_directory_marker(self, key):
+                pass
+
+            def stream_blob(self, key, chunk_size=8192, version_id=None) -> Iterator[bytes]:
                 """Custom streaming implementation."""
                 self.stream_blob_called = True
                 yield b"chunk1"
                 yield b"chunk2"
                 yield b"chunk3"
 
-            def _delete_blob(self, blob_path):
-                pass
-
-            def _blob_exists(self, blob_path):
-                return True
-
-            def _get_blob_size(self, blob_path):
-                return 18
-
-            def _list_blobs(self, prefix, delimiter="/"):
-                return [], []
-
-            def _create_directory_marker(self, blob_path):
-                pass
-
-            def _copy_blob(self, source_path, dest_path):
-                pass
-
-        connector = StreamingConnector()
+        transport = StreamingTransport()
+        connector = PathBackend(transport, backend_name="streaming_test", bucket_name="test")
         context = MagicMock()
         context.backend_path = "test/file.txt"
 
         chunks = list(connector.stream_content("hash", context=context))
 
-        assert connector.stream_blob_called
+        assert transport.stream_blob_called
         assert chunks == [b"chunk1", b"chunk2", b"chunk3"]
 
 

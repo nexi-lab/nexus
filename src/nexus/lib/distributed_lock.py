@@ -1,4 +1,4 @@
-"""Advisory lock manager — ABCs, Protocols, and LocalLockManager.
+"""Advisory lock manager — ABCs and LocalLockManager.
 
 Advisory locks are *metadata* — visible, queryable, TTL-based.
 Used for user/service coordination (task queues, turn-taking, resource
@@ -7,12 +7,12 @@ in-memory, process-scoped).
 
 Architecture:
 - LockStoreProtocol: Low-level store interface (MetastoreABC lock methods)
-- LockManagerProtocol / LockManagerBase: Async user-facing lock API
+- LockManagerBase: Async advisory lock API (zone_id bound at construction)
 - LocalLockManager: Standalone mode — wraps MetastoreABC (this file)
 - RaftLockManager: Federation mode — wraps RaftMetadataStore (raft/)
 
 Factory.py injects LocalLockManager (standalone) or RaftLockManager
-(federation).  Callers see only LockManagerProtocol.
+(federation).  Callers see only LockManagerBase.
 
 References:
     - docs/architecture/lock-architecture.md
@@ -38,8 +38,8 @@ logger = logging.getLogger(__name__)
 class LockStoreProtocol(Protocol):
     """Protocol for lock-capable metadata stores (e.g., RaftMetadataStore).
 
-    Captures the interface that RaftLockManager needs, decoupling
-    the kernel lock manager from the concrete storage driver
+    Captures the interface that lock managers need, decoupling
+    the lock manager from the concrete storage driver
     (KERNEL-ARCHITECTURE.md §1).
     """
 
@@ -117,162 +117,46 @@ class ExtendResult:
 
 
 # =============================================================================
-# Abstract Interface (Protocol)
+# Abstract Base Class
 # =============================================================================
 
 
-@runtime_checkable
-class LockManagerProtocol(Protocol):
-    """Protocol defining the lock manager interface.
-
-    This protocol allows different backend implementations:
-    - Raft consensus locks (default, implemented as RaftLockManager)
-
-    All implementations must provide these async methods.
-    """
-
-    async def acquire(
-        self,
-        zone_id: str,
-        path: str,
-        timeout: float = 30.0,
-        ttl: float = 30.0,
-        max_holders: int = 1,
-    ) -> str | None:
-        """Acquire a distributed lock or semaphore slot.
-
-        Args:
-            zone_id: Zone ID for the lock
-            path: Path to lock
-            timeout: Maximum time to wait for lock
-            ttl: Lock TTL (auto-expires after this)
-            max_holders: Maximum concurrent holders (1=mutex, >1=semaphore)
-
-        Returns:
-            Lock ID if acquired, None on timeout
-        """
-        ...
-
-    async def release(
-        self,
-        lock_id: str,
-        zone_id: str,
-        path: str,
-    ) -> bool:
-        """Release a distributed lock.
-
-        Args:
-            lock_id: Lock ID from acquire()
-            zone_id: Zone ID
-            path: Path that was locked
-
-        Returns:
-            True if released, False if not owned or expired
-        """
-        ...
-
-    async def extend(
-        self,
-        lock_id: str,
-        zone_id: str,
-        path: str,
-        ttl: float = 30.0,
-    ) -> ExtendResult:
-        """Extend lock TTL (heartbeat).
-
-        Args:
-            lock_id: Lock ID from acquire()
-            zone_id: Zone ID
-            path: Path that was locked
-            ttl: New TTL in seconds
-
-        Returns:
-            ExtendResult with success flag and updated lock info
-        """
-        ...
-
-    async def get_lock_info(
-        self,
-        zone_id: str,
-        path: str,
-    ) -> LockInfo | None:
-        """Get information about a lock.
-
-        Args:
-            zone_id: Zone ID
-            path: Resource path
-
-        Returns:
-            LockInfo if locked, None if not locked
-        """
-        ...
-
-    async def is_locked(self, zone_id: str, path: str) -> bool:
-        """Check if a path is currently locked."""
-        ...
-
-    async def list_locks(
-        self,
-        zone_id: str,
-        pattern: str = "",
-        limit: int = 100,
-    ) -> list[LockInfo]:
-        """List active locks for a zone.
-
-        Args:
-            zone_id: Zone ID to list locks for
-            pattern: Optional path filter
-            limit: Maximum number of results
-
-        Returns:
-            List of LockInfo for active locks
-        """
-        ...
-
-    async def force_release(
-        self,
-        zone_id: str,
-        path: str,
-    ) -> bool:
-        """Force-release all holders of a lock (admin operation).
-
-        Args:
-            zone_id: Zone ID
-            path: Resource path to force-release
-
-        Returns:
-            True if a lock was found and released, False if no lock exists
-        """
-        ...
-
-    async def health_check(self) -> bool:
-        """Check if the lock manager is healthy."""
-        ...
-
-
 class LockManagerBase(ABC):
-    """Abstract base class for lock manager implementations.
+    """Abstract base class for advisory lock manager implementations.
 
-    Provides common functionality and enforces the interface contract.
+    zone_id is bound at construction time — callers never pass it per-method.
+    This prevents federation concepts (zone) from leaking into the lock API.
+    Internally, zone_id is used as a key prefix for store-level scoping.
+
     Subclasses must implement all abstract methods.
     """
 
     DEFAULT_TTL = 30.0  # Default lock TTL in seconds
     DEFAULT_TIMEOUT = 30.0  # Default acquisition timeout
 
+    def __init__(self, *, zone_id: str = "root") -> None:
+        self._zone_id = zone_id
+
+    def _lock_key(self, path: str) -> str:
+        """Compose store-level lock key from zone_id + path."""
+        return f"{self._zone_id}:{path}"
+
+    def _parse_lock_key(self, lock_key: str) -> tuple[str, str]:
+        """Parse a lock key into (zone_id, path)."""
+        zone_id, _, path = lock_key.partition(":")
+        return zone_id, path
+
     @abstractmethod
     async def acquire(
         self,
-        zone_id: str,
         path: str,
         timeout: float = DEFAULT_TIMEOUT,
         ttl: float = DEFAULT_TTL,
         max_holders: int = 1,
     ) -> str | None:
-        """Acquire a distributed lock or semaphore slot.
+        """Acquire an advisory lock or semaphore slot.
 
         Args:
-            zone_id: Zone ID for the lock
             path: Path to lock
             timeout: Maximum time to wait
             ttl: Lock TTL (auto-expires)
@@ -281,66 +165,54 @@ class LockManagerBase(ABC):
         Returns:
             Lock ID if acquired, None on timeout
         """
-        pass
 
     @abstractmethod
     async def release(
         self,
         lock_id: str,
-        zone_id: str,
         path: str,
     ) -> bool:
-        """Release a distributed lock."""
-        pass
+        """Release an advisory lock."""
 
     @abstractmethod
     async def extend(
         self,
         lock_id: str,
-        zone_id: str,
         path: str,
         ttl: float = DEFAULT_TTL,
     ) -> ExtendResult:
         """Extend lock TTL (heartbeat)."""
-        pass
 
     @abstractmethod
     async def get_lock_info(
         self,
-        zone_id: str,
         path: str,
     ) -> LockInfo | None:
         """Get information about a lock."""
-        pass
 
-    async def is_locked(self, zone_id: str, path: str) -> bool:
+    async def is_locked(self, path: str) -> bool:
         """Check if a path is currently locked. Override for efficiency."""
-        info = await self.get_lock_info(zone_id, path)
+        info = await self.get_lock_info(path)
         return info is not None
 
     @abstractmethod
     async def list_locks(
         self,
-        zone_id: str,
         pattern: str = "",
         limit: int = 100,
     ) -> list[LockInfo]:
-        """List active locks for a zone."""
-        pass
+        """List active locks."""
 
     @abstractmethod
     async def force_release(
         self,
-        zone_id: str,
         path: str,
     ) -> bool:
         """Force-release all holders of a lock (admin operation)."""
-        pass
 
     @abstractmethod
     async def health_check(self) -> bool:
         """Check if the lock manager is healthy."""
-        pass
 
 
 # =============================================================================
@@ -352,7 +224,7 @@ class LocalLockManager(LockManagerBase):
     """Advisory lock manager for standalone mode (no Raft).
 
     Wraps MetastoreABC's lock methods with async interface + retry.
-    Same LockManagerProtocol as RaftLockManager — callers don't know
+    Same LockManagerBase API as RaftLockManager — callers don't know
     the difference.  Factory.py injects this when Raft is not enabled.
 
     Differences from RaftLockManager:
@@ -364,15 +236,9 @@ class LocalLockManager(LockManagerBase):
 
     RETRY_INTERVAL = 0.05  # 50ms between retries (local store is fast)
 
-    def __init__(self, store: LockStoreProtocol) -> None:
+    def __init__(self, store: LockStoreProtocol, *, zone_id: str = "root") -> None:
+        super().__init__(zone_id=zone_id)
         self._store = store
-
-    def _lock_key(self, zone_id: str, path: str) -> str:
-        return f"{zone_id}:{path}"
-
-    def _parse_lock_key(self, lock_key: str) -> tuple[str, str]:
-        zone_id, _, path = lock_key.partition(":")
-        return zone_id, path
 
     def _store_info_to_lock_info(self, store_info: dict[str, Any]) -> LockInfo:
         """Convert store-level lock info dict to a LockInfo dataclass."""
@@ -398,7 +264,6 @@ class LocalLockManager(LockManagerBase):
 
     async def acquire(
         self,
-        zone_id: str,
         path: str,
         timeout: float = LockManagerBase.DEFAULT_TIMEOUT,
         ttl: float = LockManagerBase.DEFAULT_TTL,
@@ -407,7 +272,7 @@ class LocalLockManager(LockManagerBase):
         if max_holders < 1:
             raise ValueError(f"max_holders must be >= 1, got {max_holders}")
 
-        lock_key = self._lock_key(zone_id, path)
+        lock_key = self._lock_key(path)
         holder_id = str(uuid.uuid4())
         ttl_secs = max(1, int(ttl))
 
@@ -434,8 +299,8 @@ class LocalLockManager(LockManagerBase):
         logger.debug("Local lock acquisition timeout: %s", lock_key)
         return None
 
-    async def release(self, lock_id: str, zone_id: str, path: str) -> bool:
-        lock_key = self._lock_key(zone_id, path)
+    async def release(self, lock_id: str, path: str) -> bool:
+        lock_key = self._lock_key(path)
         released = self._store.release_lock(lock_key, lock_id)
         if released:
             logger.debug("Local lock released: %s", lock_key)
@@ -444,35 +309,34 @@ class LocalLockManager(LockManagerBase):
     async def extend(
         self,
         lock_id: str,
-        zone_id: str,
         path: str,
         ttl: float = LockManagerBase.DEFAULT_TTL,
     ) -> ExtendResult:
-        lock_key = self._lock_key(zone_id, path)
+        lock_key = self._lock_key(path)
         ttl_secs = max(1, int(ttl))
         success = self._store.extend_lock(lock_key, lock_id, ttl_secs)
         if not success:
             return ExtendResult(success=False)
-        lock_info = await self.get_lock_info(zone_id, path)
+        lock_info = await self.get_lock_info(path)
         return ExtendResult(success=True, lock_info=lock_info)
 
-    async def get_lock_info(self, zone_id: str, path: str) -> LockInfo | None:
-        lock_key = self._lock_key(zone_id, path)
+    async def get_lock_info(self, path: str) -> LockInfo | None:
+        lock_key = self._lock_key(path)
         store_info = self._store.get_lock_info(lock_key)
         if store_info is None:
             return None
         return self._store_info_to_lock_info(store_info)
 
-    async def list_locks(self, zone_id: str, pattern: str = "", limit: int = 100) -> list[LockInfo]:
-        prefix = f"{zone_id}:"
+    async def list_locks(self, pattern: str = "", limit: int = 100) -> list[LockInfo]:
+        prefix = f"{self._zone_id}:"
         store_locks = self._store.list_locks(prefix=prefix, limit=limit)
         results = [self._store_info_to_lock_info(info) for info in store_locks]
         if pattern:
             results = [r for r in results if pattern in r.path]
         return results
 
-    async def force_release(self, zone_id: str, path: str) -> bool:
-        lock_key = self._lock_key(zone_id, path)
+    async def force_release(self, path: str) -> bool:
+        lock_key = self._lock_key(path)
         released = self._store.force_release_lock(lock_key)
         if released:
             logger.debug("Local lock force-released: %s", lock_key)

@@ -334,6 +334,7 @@ def _boot_independent_bricks(
                 ctx.metadata_store,
                 ctx.record_store,
                 ctx.dist.coordination_url,
+                zone_id=ctx.zone_id or ROOT_ZONE_ID,
             )
 
         # Always create lock manager if metastore satisfies LockStoreProtocol
@@ -343,8 +344,9 @@ def _boot_independent_bricks(
                 from nexus.lib.distributed_lock import LocalLockManager, LockStoreProtocol
 
                 if isinstance(ctx.metadata_store, LockStoreProtocol):
-                    lock_manager = LocalLockManager(ctx.metadata_store)
-                    logger.info("Local lock manager initialized (standalone, LockStoreProtocol)")
+                    _zone = ctx.zone_id or ROOT_ZONE_ID
+                    lock_manager = LocalLockManager(ctx.metadata_store, zone_id=_zone)
+                    logger.info("Local lock manager initialized (standalone, zone=%s)", _zone)
             except Exception as _lm_exc:
                 logger.debug("[BOOT:BRICK] LocalLockManager unavailable: %s", _lm_exc)
 

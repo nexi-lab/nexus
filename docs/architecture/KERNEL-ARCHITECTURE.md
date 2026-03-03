@@ -143,9 +143,10 @@ See `ops-scenario-matrix.md` for full Ops-Scenario affinity proof.
 | `VFSRouterProtocol` | VFS `lookup_slow()` | Path resolution only — mount CRUD lives in Service `MountProtocol` |
 | `ObjectStoreABC` (= `Backend`) | `struct file_operations` | Blob I/O interface (read/write/delete/list) |
 | `CacheStoreABC` | (no direct analogue) | Ephemeral KV + Pub/Sub primitives |
-| `VFSLockManagerProtocol` | per-inode `i_rwsem` | Path-level RW lock — mandatory I/O serialization in sys_read/sys_write |
-| `PipeManagerProtocol` | `pipe(2)` + `fs/pipe.c` | Named pipe lifecycle + MPMC data path (see §6 Kernel Tier) |
-| VFS dispatch | `file->f_op` + `security_hook_heads` + `fsnotify` | Three-phase dispatch at VFS operation points (see §3 VFS Dispatch) |
+| `VFSLockManager` | per-inode `i_rwsem` | Path-level RW lock — mandatory I/O serialization in sys_read/sys_write |
+| `FileEvent` / `VFSObserver` | `fsnotify_event` / `fsnotify_group` | Kernel mutation record + observer protocol (see §3 VFS Dispatch OBSERVE) |
+| `PipeManager` | `pipe(2)` + `fs/pipe.c` | Named pipe lifecycle + MPMC data path (see §6 Kernel Tier) |
+| VFS dispatch (`KernelDispatch`) | `file->f_op` + `security_hook_heads` + `fsnotify` | Three-phase dispatch at VFS operation points (see §3 VFS Dispatch) |
 
 `MetastoreABC` is kernel because it IS the inode layer — the typed contract
 between VFS and storage. Without it, the kernel cannot describe files.
@@ -154,11 +155,11 @@ between VFS and storage. Without it, the kernel cannot describe files.
 ancestor/descendant conflict detection. Rust-accelerated (PyO3), Python fallback.
 Wired into sys_read (shared) / sys_write (exclusive) for mandatory I/O serialization.
 ~200ns, in-memory, process-scoped (crash → released). Metadata-invisible.
+**Advisory locks** are a separate concern — see `lock-architecture.md` §4.
 
-**Advisory locks** are a separate concern — user/service coordination (task queues,
-turn-taking). Advisory locks are *metadata* stored in MetastoreABC (redb), with TTL
-expiry, queryable via `LockManagerProtocol`. Factory injects `LocalLockManager`
-(standalone) or `RaftLockManager` (federation). See `lock-architecture.md` §4.
+`FileEvent` (`core/file_events.py`) is the kernel mutation record (like Linux
+`fsnotify_event`). Emitted after every mutating syscall; consumed by service-layer
+observers via `VFSObserver` protocol. See §3 VFS Dispatch OBSERVE phase below.
 
 ### NexusFS — Syscall Dispatch Layer
 
@@ -449,8 +450,8 @@ Two-layer pipe architecture (matches Linux `kfifo` + `fs/pipe.c`):
 - **SPSC → MPMC**: RingBuffer is lock-free SPSC (GIL-atomic). PipeManager wraps with
   per-pipe `asyncio.Lock` for MPMC safety using lock→try→unlock→wait→retry (deadlock-free).
 
-Services depend on `PipeManagerProtocol` (defined in `core/pipe_manager.py`,
-matching `VFSLockManagerProtocol` pattern). Kernel creates the concrete `PipeManager`.
+Kernel creates the concrete `PipeManager` (`system_services/lifecycle/pipe_manager.py`).
+Services use it via DI — no Protocol needed (kernel-internal, single concrete class).
 
 See `federation-memo.md` §7j for Pipe design rationale.
 

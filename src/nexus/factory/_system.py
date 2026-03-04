@@ -17,11 +17,27 @@ Two severity classes:
 import logging
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, cast
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.factory._boot_context import _BootContext
 from nexus.factory._helpers import _make_gate
+
+
+@dataclass(frozen=True, slots=True)
+class AgentRuntimePlaceholder:
+    """Two-phase wiring placeholder for agent runtime.
+
+    Created during system-service boot (Phase 1) with partial dependencies.
+    Fully wired by orchestrator.py (Phase 2) once NexusFS + LLM are available.
+    """
+
+    factory_class: type
+    agent_registry: Any
+    sandbox: Any
+    scheduler: Any
+
 
 logger = logging.getLogger(__name__)
 
@@ -491,12 +507,12 @@ def _boot_system_services(
             # it needs NexusFS.  For now, agent_runtime is constructed lazily
             # at first use via the two-phase pattern.  Store the class + deps
             # so orchestrator.py can finish wiring after NexusFS is created.
-            agent_runtime = {
-                "_class": _AgentProcessManager,
-                "agent_registry": async_agent_registry,
-                "sandbox": None,  # wired later
-                "scheduler": scheduler_service,
-            }
+            agent_runtime = AgentRuntimePlaceholder(
+                factory_class=_AgentProcessManager,
+                agent_registry=async_agent_registry,
+                sandbox=None,  # wired later
+                scheduler=scheduler_service,
+            )
             logger.debug("[BOOT:SYSTEM] AgentRuntime placeholder created (two-phase)")
         except Exception as exc:
             logger.warning("[BOOT:SYSTEM] AgentRuntime unavailable: %s", exc)

@@ -217,7 +217,7 @@ def create_app(
 
     _profile_str = os.environ.get("NEXUS_PROFILE", "full")
     if _profile_str == "auto":
-        from nexus.core.device_capabilities import detect_capabilities, suggest_profile
+        from nexus.lib.device_capabilities import detect_capabilities, suggest_profile
 
         _caps = detect_capabilities()
         _profile = suggest_profile(_caps)
@@ -235,10 +235,10 @@ def create_app(
             logger.warning("Unknown NEXUS_PROFILE '%s', defaulting to 'full'", _profile_str)
             _profile = DeploymentProfile.FULL
         # Warn if explicit profile may exceed device capabilities
-        from nexus.core.device_capabilities import (
+        from nexus.lib.device_capabilities import (
             detect_capabilities as _detect_caps,
         )
-        from nexus.core.device_capabilities import (
+        from nexus.lib.device_capabilities import (
             warn_if_profile_exceeds_device,
         )
 

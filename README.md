@@ -77,7 +77,7 @@ from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.bricks.llm.config import LLMConfig
 from nexus.bricks.llm.provider import LiteLLMProvider
 from nexus.system_services.agent_runtime.process_manager import ProcessManager
-from nexus.contracts.agent_process import AgentProcessConfig, TextDelta
+from nexus.system_services.agent_runtime.types import AgentProcessConfig, TextDelta
 from nexus.contracts.llm_types import Message, MessageRole
 
 

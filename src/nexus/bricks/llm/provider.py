@@ -453,8 +453,9 @@ class LiteLLMProvider(LLMProvider):
         elif self.config.native_tool_calling is False:
             self._function_calling_active = False
         else:
-            # True = force on — caller explicitly opts in (e.g. custom
-            # OpenAI-compatible endpoints not in litellm's registry)
+            # True = force on — caller explicitly opts in.  Currently only
+            # used by the agent engine (system_services/agent_runtime) for
+            # models not in litellm's registry but known to support tools.
             self._function_calling_active = True
 
         # Configure vision

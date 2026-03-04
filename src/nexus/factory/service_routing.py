@@ -70,10 +70,6 @@ SERVICE_METHODS: dict[str, str] = {
     "list_saved_mounts": "_mount_persist_service",
     "load_mount": "_mount_persist_service",
     "delete_saved_mount": "_mount_persist_service",
-    # SearchService (glob/grep are userspace tools, not syscalls — Issue #1381)
-    "glob": "search_service",
-    "grep": "search_service",
-    "glob_batch": "search_service",
     # MCPService
     "mcp_list_mounts": "mcp_service",
     # LLMService

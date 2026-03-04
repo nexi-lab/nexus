@@ -53,8 +53,11 @@ def mock_nx_basic():
     nx.sys_write = Mock()
     nx.sys_unlink = Mock()
     nx.sys_readdir = Mock(return_value=["/file1.txt", "/file2.txt"])
-    nx.glob = Mock(return_value=["test.py", "main.py"])
-    nx.grep = Mock(return_value=[{"file": "test.py", "line": 10, "content": "match"}])
+    nx.search_service = Mock()
+    nx.search_service.glob = Mock(return_value=["test.py", "main.py"])
+    nx.search_service.grep = Mock(
+        return_value=[{"file": "test.py", "line": 10, "content": "match"}]
+    )
     nx.sys_access = Mock(return_value=True)
     nx.sys_is_directory = Mock(return_value=False)
     nx.sys_mkdir = Mock()
@@ -615,7 +618,7 @@ class TestSearchTools:
         assert "total" in response
         assert isinstance(response["items"], list)
         assert "test.py" in response["items"]
-        mock_nx_basic.glob.assert_called_once_with("*.py", "/src")
+        mock_nx_basic.search_service.glob.assert_called_once_with("*.py", "/src")
 
     def test_glob_default_path(self, mock_nx_basic):
         """Test glob with default path."""
@@ -624,11 +627,11 @@ class TestSearchTools:
         glob_tool = get_tool(server, "nexus_glob")
         glob_tool.fn(pattern="*.txt")
 
-        mock_nx_basic.glob.assert_called_once_with("*.txt", "/")
+        mock_nx_basic.search_service.glob.assert_called_once_with("*.txt", "/")
 
     def test_glob_error(self, mock_nx_basic):
         """Test glob error handling."""
-        mock_nx_basic.glob.side_effect = ValueError("Invalid pattern")
+        mock_nx_basic.search_service.glob.side_effect = ValueError("Invalid pattern")
         server = create_mcp_server(nx=mock_nx_basic)
 
         glob_tool = get_tool(server, "nexus_glob")
@@ -649,7 +652,7 @@ class TestSearchTools:
         assert "items" in response
         assert "total" in response
         assert isinstance(response["items"], list)
-        mock_nx_basic.grep.assert_called_once_with("TODO", "/src", ignore_case=False)
+        mock_nx_basic.search_service.grep.assert_called_once_with("TODO", "/src", ignore_case=False)
 
     def test_grep_ignore_case(self, mock_nx_basic):
         """Test grep with case-insensitive search."""
@@ -658,13 +661,15 @@ class TestSearchTools:
         grep_tool = get_tool(server, "nexus_grep")
         grep_tool.fn(pattern="error", path="/logs", ignore_case=True)
 
-        mock_nx_basic.grep.assert_called_once_with("error", "/logs", ignore_case=True)
+        mock_nx_basic.search_service.grep.assert_called_once_with(
+            "error", "/logs", ignore_case=True
+        )
 
     def test_grep_result_limiting(self, mock_nx_basic):
         """Test grep pagination with default limit of 100 matches."""
         # Create 150 fake results
         large_results = [{"file": f"file{i}.py", "line": i, "content": "match"} for i in range(150)]
-        mock_nx_basic.grep.return_value = large_results
+        mock_nx_basic.search_service.grep.return_value = large_results
         server = create_mcp_server(nx=mock_nx_basic)
 
         grep_tool = get_tool(server, "nexus_grep")
@@ -680,7 +685,7 @@ class TestSearchTools:
 
     def test_grep_error(self, mock_nx_basic):
         """Test grep error handling."""
-        mock_nx_basic.grep.side_effect = ValueError("Invalid regex")
+        mock_nx_basic.search_service.grep.side_effect = ValueError("Invalid regex")
         server = create_mcp_server(nx=mock_nx_basic)
 
         grep_tool = get_tool(server, "nexus_grep")

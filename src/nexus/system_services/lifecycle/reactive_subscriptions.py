@@ -31,6 +31,7 @@ Example:
 
 import asyncio
 import logging
+import sys
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -241,7 +242,10 @@ class ReactiveSubscriptionManager:
 
         # Read-set lookup via registry (O(1+d))
         if zone_id is not None:
-            version = event.version or 0
+            # Use file version as write revision for read-set invalidation.
+            # When version is unknown (None), use maxsize to conservatively
+            # invalidate all matching read-set entries (safe default).
+            version = event.version if event.version is not None else sys.maxsize
             affected_query_ids = self._registry.get_affected_queries(
                 write_path=event.path,
                 write_revision=version,

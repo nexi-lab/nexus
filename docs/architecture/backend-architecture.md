@@ -16,16 +16,20 @@ delete all legacy code.
 
 ### 1.1 New Architecture (#1323) — Active
 
-| File | Lines | Class | Role |
-|---|---|---|---|
-| `cas_backend.py` | 427 | `CASBackend(Backend)` | CAS addressing engine |
-| `path_backend.py` | 499 | `PathBackend(Backend)` | Path addressing engine |
-| `blob_transport.py` | 140 | `BlobTransport` (Protocol) | Transport abstraction (9 methods) |
-| `gcs.py` | 153 | `GCSBackend(CASBackend)` | Thin: CAS + GCS transport |
-| `gcs_connector.py` | 368 | `GCSConnectorBackend(PathBackend)` | Thin: Path + GCS transport |
-| `s3_connector.py` | 321 | `S3ConnectorBackend(PathBackend)` | Thin: Path + S3 transport |
-| `transports/gcs_transport.py` | 326 | `GCSBlobTransport` | GCS blob I/O |
-| `transports/s3_transport.py` | 413 | `S3BlobTransport` | S3 blob I/O |
+| File | Lines | Class | Reg Name | Role |
+|---|---|---|---|---|
+| `cas_backend.py` | 427 | `CASBackend(Backend)` | — | CAS addressing engine |
+| `path_backend.py` | 499 | `PathBackend(Backend)` | — | Path addressing engine |
+| `blob_transport.py` | 140 | `BlobTransport` (Protocol) | — | Transport abstraction (9 methods) |
+| `gcs.py` | 153 | `GCSBackend(CASBackend)` | `"gcs"` | Thin: CAS + GCS transport |
+| `gcs_connector.py` | 368 | `GCSConnectorBackend(PathBackend)` | `"gcs_connector"` | Thin: Path + GCS transport |
+| `s3_connector.py` | 321 | `S3ConnectorBackend(PathBackend)` | `"s3_connector"` | Thin: Path + S3 transport |
+| `transports/gcs_transport.py` | 326 | `GCSBlobTransport` | — | GCS blob I/O |
+| `transports/s3_transport.py` | 413 | `S3BlobTransport` | — | S3 blob I/O |
+
+**Naming problem:** The thin connector naming is inconsistent. `gcs.py` / `GCSBackend` doesn't
+indicate CAS addressing. `gcs_connector.py` / `GCSConnectorBackend` uses "connector" to mean
+Path addressing, which is ambiguous. See **Section 5.2** for the rename plan.
 
 ### 1.2 Legacy — To Be Migrated and Deleted
 
@@ -81,14 +85,16 @@ Addressing  CAS   | CASBackend    | CASBackend    | CASBackend    |
 
 **Current state of each cell:**
 
-| Cell | Connector Name | Status |
+| Cell | Current Reg Name | Status |
 |---|---|---|
 | CAS + Local | `"local"` | **To migrate** — currently `LocalBackend` monolith |
-| CAS + GCS | `"gcs"` | **Done** — `GCSBackend(CASBackend)` + `GCSBlobTransport` |
-| CAS + S3 | `"s3"` (planned) | **Future** — `S3BlobTransport` exists but no CAS wiring yet |
+| CAS + GCS | `"gcs"` | **Done** — thin class exists |
+| CAS + S3 | — | **Future** — `S3BlobTransport` exists but no CAS wiring yet |
 | Path + Local | `"passthrough"`, `"local_connector"` | **To migrate** — currently separate monoliths |
-| Path + GCS | `"gcs_connector"` | **Done** — `GCSConnectorBackend(PathBackend)` + `GCSBlobTransport` |
-| Path + S3 | `"s3_connector"` | **Done** — `S3ConnectorBackend(PathBackend)` + `S3BlobTransport` |
+| Path + GCS | `"gcs_connector"` | **Done** — thin class exists |
+| Path + S3 | `"s3_connector"` | **Done** — thin class exists |
+
+Connector names and file names will be standardized per Section 5.2.
 
 ### 2.2 Addressing Semantics
 
@@ -293,14 +299,14 @@ ObjectStoreABC (kernel contract)
   Backend (service-level base, 748L)
   |
   |-- CASBackend(transport, bloom?, cdc?, cache?, stripe_lock?)     <- addressing
-  |     |-- LocalBlobTransport    -> "local" connector               <- transport
-  |     |-- GCSBlobTransport      -> "gcs" connector
-  |     |-- S3BlobTransport       -> "s3" connector (future)
+  |     |-- LocalBlobTransport    -> "cas_local"  (factory-built)    <- transport
+  |     |-- GCSBlobTransport      -> "cas_gcs"    (thin class)
+  |     |-- S3BlobTransport       -> "cas_s3"     (future thin class)
   |
   |-- PathBackend(transport)                                         <- addressing
-  |     |-- LocalBlobTransport    -> "passthrough", "local_connector" <- transport
-  |     |-- GCSBlobTransport      -> "gcs_connector"
-  |     |-- S3BlobTransport       -> "s3_connector"
+  |     |-- LocalBlobTransport    -> "path_local" (factory-built)    <- transport
+  |     |-- GCSBlobTransport      -> "path_gcs"   (thin class)
+  |     |-- S3BlobTransport       -> "path_s3"    (thin class)
   |
   BlobTransport (Protocol, 9 methods)
   |-- LocalBlobTransport  (new, ~150L)
@@ -349,6 +355,53 @@ class LocalBlobTransport:
 
 ~150 lines. Reuses the atomic temp-write + `os.replace()` pattern from `CASBlobStore`.
 Also supports `MultipartUploadMixin` methods for TUS resumable uploads.
+
+### 5.2 Thin Connector Naming Convention
+
+The current thin connector names are inconsistent — the naming doesn't encode the
+addressing axis, making it unclear which combination a class represents.
+
+**Convention: `{addressing}_{transport}`** — file names, class names, and connector
+registration strings all follow this pattern.
+
+#### Rename Table
+
+| Current File | Current Class | Current Reg | Proposed File | Proposed Class | Proposed Reg |
+|---|---|---|---|---|---|
+| `gcs.py` | `GCSBackend` | `"gcs"` | `cas_gcs.py` | `CASGCSBackend` | `"cas_gcs"` |
+| `gcs_connector.py` | `GCSConnectorBackend` | `"gcs_connector"` | `path_gcs.py` | `PathGCSBackend` | `"path_gcs"` |
+| `s3_connector.py` | `S3ConnectorBackend` | `"s3_connector"` | `path_s3.py` | `PathS3Backend` | `"path_s3"` |
+| — | — | — | `cas_s3.py` (future) | `CASS3Backend` | `"cas_s3"` |
+
+**Local transport has no thin class files.** `CASBackend(LocalBlobTransport)` and
+`PathBackend(LocalBlobTransport)` are instantiated directly by the factory (no
+cloud-specific constructor params to wrap). They register as `"cas_local"` and
+`"path_local"`.
+
+#### Backward Compatibility
+
+Old registration names (`"gcs"`, `"gcs_connector"`, `"s3_connector"`) must be kept as
+aliases in `ConnectorRegistry` during migration. User configs reference these strings.
+Deprecation timeline: remove aliases after one minor version.
+
+```python
+# In registry.py — alias old names to new
+_CONNECTOR_ALIASES = {
+    "gcs": "cas_gcs",
+    "gcs_connector": "path_gcs",
+    "s3_connector": "path_s3",
+    "local": "cas_local",
+    "passthrough": "path_local",
+    "local_connector": "path_local",
+}
+```
+
+#### Why This Convention
+
+1. **Self-documenting.** `cas_gcs.py` immediately tells you: CAS addressing + GCS transport.
+2. **Sortable.** `ls cas_*.py` lists all CAS connectors; `ls *_gcs.py` lists all GCS variants.
+3. **Extensible.** Adding Azure: `cas_azure.py` / `path_azure.py` — no guesswork.
+4. **Matches the matrix.** File names mirror the WHERE x HOW grid in Section 2.1.
 
 ---
 
@@ -503,12 +556,11 @@ Replace `AsyncLocalBackend` (755L) with async wrapper around
 `CASBackend(LocalBlobTransport)`. Currently not in `ConnectorRegistry` — evaluate
 whether to register or keep as internal.
 
-### Phase 5: Factory rewire + legacy deletion
+### Phase 5: Factory rewire + naming cleanup + legacy deletion
 
-Update `ConnectorRegistry` and `BackendFactory`:
-- `"local"` -> `CASBackend(LocalBlobTransport, bloom=..., cdc=..., cache=..., stripe_lock=True)`
-- `"passthrough"` -> `PathBackend(LocalBlobTransport)`
-- `"local_connector"` -> `PathBackend(LocalBlobTransport)` + `CacheConnectorMixin`
+- Rename thin connector files/classes/reg names per Section 5.2
+- Wire factory: `"cas_local"` -> `CASBackend(LocalBlobTransport, ...)`, `"path_local"` -> `PathBackend(LocalBlobTransport)`
+- Add backward-compat aliases for old connector names (Section 5.2)
 - Delete: `local.py`, `passthrough.py`, `cas_blob_store.py`, `chunked_storage.py`,
   `async_local.py`, `local_connector.py`
 
@@ -533,13 +585,17 @@ contract concern.
 | `backends/transports/local_transport.py` | ~150 | `LocalBlobTransport` — local filesystem `BlobTransport` |
 | `backends/cdc_engine.py` | ~300 | `CDCEngine` — extracted from `ChunkedStorageMixin` |
 
+### Renamed Files
+
+See Section 5.2 for the full rename table (thin connector files + classes + registration names).
+
 ### Refactored Files
 
 | File | Change |
 |---|---|
 | `backends/cas_backend.py` (427L) | Add optional `bloom_filter`, `cdc_engine`, `content_cache`, `use_stripe_lock` DI params |
 | `backends/factory.py` (177L) | Rewire `"local"`, `"passthrough"`, `"local_connector"` connector creation |
-| `backends/registry.py` (650L) | Update connector registration for new wiring |
+| `backends/registry.py` (650L) | Update connector registration + add old-name aliases (Section 5.2) |
 | `backends/__init__.py` (130L) | Update exports: remove old, add `LocalBlobTransport`, `CDCEngine` |
 
 ### Deleted Files
@@ -574,7 +630,7 @@ contract concern.
 - `PathBackend` core logic (`path_backend.py`, 499L) — addressing engine
 - `GCSBlobTransport` (`gcs_transport.py`, 326L) — cloud transport
 - `S3BlobTransport` (`s3_transport.py`, 413L) — cloud transport
-- All cloud connector thin classes (`GCSBackend`, `GCSConnectorBackend`, `S3ConnectorBackend`)
+- All cloud connector thin classes (renamed per Section 5.2)
 - All API connectors (gdrive, gmail, gcalendar, slack, hn, x)
 - All wrappers (`DelegatingBackend`, `CachingBackendWrapper`, `CompressedStorage`, etc.)
 - `nexus_fast.BloomFilter` (Rust) — reused via DI injection

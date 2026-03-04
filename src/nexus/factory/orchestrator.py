@@ -200,8 +200,7 @@ def create_nexus_services(
         zone_lifecycle=system_dict.get("zone_lifecycle"),
         # DT_PIPE manager (Issue #809)
         pipe_manager=system_dict.get("pipe_manager"),
-        # EventLog + Scheduler (Issue #2195)
-        event_log=system_dict.get("event_log"),
+        # Scheduler (Issue #2195)
         scheduler_service=system_dict.get("scheduler_service"),
     )
 

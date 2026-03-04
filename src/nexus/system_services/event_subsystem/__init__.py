@@ -1,9 +1,9 @@
-"""Unified event subsystem — EventBus (pub/sub) + EventLog (persistence).
+"""Unified event subsystem — EventBus (pub/sub) + EventLog (delivery/replay).
 
 Public API:
 - FileEvent, FileEventType (types)
 - EventBusProtocol, RedisEventBus, NatsEventBus (bus)
-- EventLogProtocol, WALEventLog (log)
+- EventReplayService (log)
 - ReactiveSubscriptionManager (subscriptions)
 """
 
@@ -15,9 +15,7 @@ from nexus.system_services.event_subsystem.bus import (
     RedisEventBus,
 )
 from nexus.system_services.event_subsystem.log import (
-    EventLogProtocol,
     EventReplayService,
-    WALEventLog,
 )
 from nexus.system_services.event_subsystem.subscriptions import ReactiveSubscriptionManager
 
@@ -28,8 +26,6 @@ __all__ = [
     "EventBusBase",
     "RedisEventBus",
     "NatsEventBus",
-    "EventLogProtocol",
-    "WALEventLog",
     "EventReplayService",
     "ReactiveSubscriptionManager",
 ]

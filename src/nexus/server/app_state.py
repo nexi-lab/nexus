@@ -97,7 +97,6 @@ class NexusAppState:
     websocket_manager: Any = None
     reactive_subscription_manager: Any = None
     write_back_service: Any = None
-    event_log: Any = None
     exporter_registry: Any = None
 
     # === Permissions ===

@@ -410,7 +410,7 @@ def handle_glob(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any
     if hasattr(params, "path") and params.path:
         kwargs["path"] = params.path
 
-    matches = nexus_fs.glob(params.pattern, **kwargs)
+    matches = nexus_fs.search_service.glob(params.pattern, **kwargs)
     matches = [unscope_internal_path(m) if isinstance(m, str) else m for m in matches]
     return {"matches": matches}
 
@@ -429,7 +429,7 @@ def handle_grep(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any
     if hasattr(params, "search_mode") and params.search_mode is not None:
         kwargs["search_mode"] = params.search_mode
 
-    results = nexus_fs.grep(params.pattern, **kwargs)
+    results = nexus_fs.search_service.grep(params.pattern, **kwargs)
     results = [unscope_result(r) for r in results]
     return {"results": results}
 
@@ -462,7 +462,7 @@ async def handle_semantic_search_index(
             f"Semantic search is not initialized and could not be auto-initialized: {e}"
         ) from e
 
-    results = await nexus_fs.asemantic_search_index(path=path, recursive=recursive)
+    results = await nexus_fs.search_service.semantic_search_index(path=path, recursive=recursive)
 
     total_chunks = 0
     for v in results.values():

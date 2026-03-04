@@ -548,18 +548,18 @@ def test_glob_simple_pattern(embedded: NexusFS) -> None:
     embedded.sys_write("/data.csv", b"Content")
 
     # Glob for .txt files
-    files = embedded.glob("*.txt")
+    files = embedded.search_service.glob("*.txt")
     assert len(files) == 2
     assert "/test1.txt" in files
     assert "/test2.txt" in files
 
     # Glob for .py files
-    files = embedded.glob("*.py")
+    files = embedded.search_service.glob("*.py")
     assert len(files) == 1
     assert "/file.py" in files
 
     # Glob for test* files
-    files = embedded.glob("test*")
+    files = embedded.search_service.glob("test*")
     assert len(files) == 2
     assert "/test1.txt" in files
     assert "/test2.txt" in files
@@ -574,14 +574,14 @@ def test_glob_recursive_pattern(embedded: NexusFS) -> None:
     embedded.sys_write("/README.md", b"Content")
 
     # Find all Python files recursively
-    files = embedded.glob("**/*.py")
+    files = embedded.search_service.glob("**/*.py")
     assert len(files) == 3
     assert "/src/main.py" in files
     assert "/src/utils/helper.py" in files
     assert "/tests/test_main.py" in files
 
     # Find all files recursively (filter out system entries)
-    files = [f for f in embedded.glob("**/*") if f not in _SYSTEM_PATHS]
+    files = [f for f in embedded.search_service.glob("**/*") if f not in _SYSTEM_PATHS]
     assert len(files) == 4
 
 
@@ -593,7 +593,7 @@ def test_glob_with_base_path(embedded: NexusFS) -> None:
     embedded.sys_write("/other/file3.csv", b"Content")
 
     # Glob in data directory
-    files = embedded.glob("*.csv", path="/data")
+    files = embedded.search_service.glob("*.csv", path="/data")
     assert len(files) == 2
     assert "/data/file1.csv" in files
     assert "/data/file2.csv" in files
@@ -607,7 +607,7 @@ def test_glob_question_mark_pattern(embedded: NexusFS) -> None:
     embedded.sys_write("/file10.txt", b"Content")
 
     # Match single character
-    files = embedded.glob("file?.txt")
+    files = embedded.search_service.glob("file?.txt")
     assert len(files) == 2
     assert "/file1.txt" in files
     assert "/file2.txt" in files
@@ -621,7 +621,7 @@ def test_grep_simple_search(embedded: NexusFS) -> None:
     embedded.sys_write("/file2.txt", b"Goodbye\nWorld Peace")
 
     # Search for "Hello"
-    results = embedded.grep("Hello")
+    results = embedded.search_service.grep("Hello")
 
     assert len(results) == 2
     assert results[0]["file"] == "/file1.txt"
@@ -640,7 +640,7 @@ def test_grep_regex_pattern(embedded: NexusFS) -> None:
     embedded.sys_write("/code.py", b"def foo():\n    pass\ndef bar():\n    return 42")
 
     # Search for function definitions
-    results = embedded.grep(r"def \w+")
+    results = embedded.search_service.grep(r"def \w+")
 
     assert len(results) == 2
     assert results[0]["match"] == "def foo"
@@ -655,7 +655,7 @@ def test_grep_with_file_pattern(embedded: NexusFS) -> None:
     embedded.sys_write("/file.txt", b"import nothing")
 
     # Search only in .py files
-    results = embedded.grep("import", file_pattern="*.py")
+    results = embedded.search_service.grep("import", file_pattern="*.py")
 
     assert len(results) == 3
     # Should not include file.txt
@@ -670,11 +670,11 @@ def test_grep_case_insensitive(embedded: NexusFS) -> None:
     )
 
     # Case-sensitive (default)
-    results = embedded.grep("ERROR")
+    results = embedded.search_service.grep("ERROR")
     assert len(results) == 1
 
     # Case-insensitive
-    results = embedded.grep("ERROR", ignore_case=True)
+    results = embedded.search_service.grep("ERROR", ignore_case=True)
     assert len(results) == 3
 
 
@@ -685,7 +685,7 @@ def test_grep_max_results(embedded: NexusFS) -> None:
     embedded.sys_write("/file.txt", content.encode())
 
     # Limit results
-    results = embedded.grep("MATCH", max_results=10)
+    results = embedded.search_service.grep("MATCH", max_results=10)
     assert len(results) == 10
 
 
@@ -698,7 +698,7 @@ def test_grep_skips_binary_files(embedded: NexusFS) -> None:
     embedded.sys_write("/text.txt", b"findme")
 
     # Search should only find text file
-    results = embedded.grep("findme")
+    results = embedded.search_service.grep("findme")
     assert len(results) == 1
     assert results[0]["file"] == "/text.txt"
 
@@ -707,7 +707,7 @@ def test_grep_empty_results(embedded: NexusFS) -> None:
     """Test grep with no matches."""
     embedded.sys_write("/file.txt", b"Hello World")
 
-    results = embedded.grep("nonexistent")
+    results = embedded.search_service.grep("nonexistent")
     assert len(results) == 0
 
 

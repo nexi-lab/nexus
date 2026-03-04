@@ -128,37 +128,37 @@ class TestSearchServiceDelegation:
             cursor=None,
         )
 
-    def test_glob_delegates(self, mock_fs, context):
-        """glob forwards pattern, path, context via __getattr__ pass-through."""
+    def test_glob_not_routed_via_getattr(self, mock_fs):
+        """glob is no longer in SERVICE_METHODS — callers use search_service directly."""
+        with pytest.raises(AttributeError):
+            mock_fs.glob("*.py")
+
+    def test_glob_batch_not_routed_via_getattr(self, mock_fs):
+        """glob_batch is no longer in SERVICE_METHODS — callers use search_service directly."""
+        with pytest.raises(AttributeError):
+            mock_fs.glob_batch(["*.py"])
+
+    def test_grep_not_routed_via_getattr(self, mock_fs):
+        """grep is no longer in SERVICE_METHODS — callers use search_service directly."""
+        with pytest.raises(AttributeError):
+            mock_fs.grep("pattern")
+
+    def test_search_service_glob_direct(self, mock_fs, context):
+        """Callers should use search_service.glob() directly."""
         matches = ["/data/test.py"]
         mock_fs.search_service.glob = MagicMock(return_value=matches)
-        result = mock_fs.glob("*.py", path="/data", context=context)
+        result = mock_fs.search_service.glob("*.py", path="/data", context=context)
         assert result == matches
         mock_fs.search_service.glob.assert_called_once_with("*.py", path="/data", context=context)
 
-    def test_glob_batch_delegates(self, mock_fs, context):
-        """glob_batch forwards patterns, path, context."""
-        batch = {"*.py": ["/a.py"], "*.txt": ["/b.txt"]}
-        mock_fs.search_service.glob_batch = MagicMock(return_value=batch)
-        result = mock_fs.glob_batch(["*.py", "*.txt"], context=context)
-        assert result == batch
-
-    def test_grep_delegates(self, mock_fs, context):
-        """grep forwards all args via __getattr__ pass-through."""
+    def test_search_service_grep_direct(self, mock_fs, context):
+        """Callers should use search_service.grep() directly."""
         results = [{"path": "/a.py", "line": 1, "match": "import os"}]
         mock_fs.search_service.grep = MagicMock(return_value=results)
-        result = mock_fs.grep(
-            "import os",
-            path="/src",
-            ignore_case=True,
-            context=context,
-        )
+        result = mock_fs.search_service.grep("import os", path="/src", context=context)
         assert result == results
         mock_fs.search_service.grep.assert_called_once_with(
-            "import os",
-            path="/src",
-            ignore_case=True,
-            context=context,
+            "import os", path="/src", context=context
         )
 
     def test_asemantic_search_delegates(self, mock_fs):

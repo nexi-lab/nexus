@@ -624,6 +624,15 @@ def _register_vfs_hooks(
 
     dispatch.register_observe(EventBusObserver(bus_provider=nx))
 
+    # RevisionTrackingObserver: feeds RevisionNotifier on versioned mutations.
+    # Replaces the old kernel-internal _increment_vfs_revision() (Issue #1382).
+    from nexus.lib.revision_notifier import RevisionNotifier
+    from nexus.system_services.lifecycle.revision_tracking_observer import RevisionTrackingObserver
+
+    _rev_notifier = RevisionNotifier()
+    dispatch.register_observe(RevisionTrackingObserver(revision_notifier=_rev_notifier))
+    nx._revision_notifier = _rev_notifier
+
     # ── Test hooks (Issue #2) ────────────────────────────────────────
     # Only registered when NEXUS_TEST_HOOKS=true for E2E hook testing.
     import os

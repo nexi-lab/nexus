@@ -59,6 +59,68 @@ context = nx.memory.query("What does the user prefer?")
 nx.close()
 ```
 
+### Agent Engine (Embedded)
+
+Run an AI agent directly against a local NexusFS — no server required:
+
+```python
+import asyncio
+from pathlib import Path
+from pydantic import SecretStr
+
+from nexus.backends.local import LocalBackend
+from nexus.core.config import PermissionConfig
+from nexus.factory import create_nexus_fs
+from nexus.storage.raft_metadata_store import RaftMetadataStore
+from nexus.storage.record_store import SQLAlchemyRecordStore
+
+from nexus.bricks.llm.config import LLMConfig
+from nexus.bricks.llm.provider import LiteLLMProvider
+from nexus.system_services.agent_runtime.process_manager import ProcessManager
+from nexus.system_services.agent_runtime.types import AgentProcessConfig, TextDelta
+from nexus.contracts.llm_types import Message, MessageRole
+
+
+async def main():
+    # 1. Bootstrap NexusFS (local storage, no server)
+    data = Path("/tmp/nexus-agent")
+    data.mkdir(exist_ok=True)
+    nx = create_nexus_fs(
+        backend=LocalBackend(root_path=str(data / "files")),
+        metadata_store=RaftMetadataStore.embedded(str(data / "raft")),
+        record_store=SQLAlchemyRecordStore(),
+        permissions=PermissionConfig(enforce=False),
+    )
+
+    # 2. Create LLM provider
+    llm = LiteLLMProvider(LLMConfig(
+        model="claude-haiku-4-5-20251001",
+        api_key=SecretStr("sk-ant-..."),  # your API key
+    ))
+
+    # 3. Spawn agent and chat
+    pm = ProcessManager(vfs=nx, llm_provider=llm)
+    proc = await pm.spawn("user1", "default", config=AgentProcessConfig(
+        name="my-agent",
+        tools=("read_file", "write_file", "grep", "glob"),
+    ))
+
+    async for event in pm.resume(
+        proc.pid,
+        Message(role=MessageRole.USER, content="List the files in /default"),
+    ):
+        if isinstance(event, TextDelta):
+            print(event.text, end="", flush=True)
+    print()
+
+    # Cleanup
+    await pm.terminate(proc.pid)
+    await llm.cleanup()
+    nx.close()
+
+asyncio.run(main())
+```
+
 ### CLI
 
 ```bash

@@ -926,6 +926,8 @@ ignore_imports = [
     # --- tier-neutral (contracts/protocols) importing bricks ---
     # chunked_upload protocol TYPE_CHECKING import for UploadSession return type
     "nexus.contracts.protocols.chunked_upload -> nexus.bricks.upload.upload_session",
+    # process_manager protocol TYPE_CHECKING import for agent process types
+    "nexus.contracts.protocols.process_manager -> nexus.system_services.agent_runtime.types",
     # --- contracts importing lib (upward — legacy, to be fixed) ---
     "nexus.contracts -> nexus.lib.validators",
     "nexus.contracts.deployment_profile -> nexus.lib.performance_tuning",

@@ -289,18 +289,18 @@ class TestMinimalDeviceCapabilities:
     """Kernel appears in device capability profile index."""
 
     def test_minimal_in_profile_index(self) -> None:
-        from nexus.core.device_capabilities import _PROFILE_INDEX
+        from nexus.lib.device_capabilities import _PROFILE_INDEX
 
         assert "minimal" in _PROFILE_INDEX
 
     def test_minimal_index_below_embedded(self) -> None:
-        from nexus.core.device_capabilities import _PROFILE_INDEX
+        from nexus.lib.device_capabilities import _PROFILE_INDEX
 
         assert _PROFILE_INDEX["minimal"] < _PROFILE_INDEX["embedded"]
 
     def test_minimal_never_auto_suggested(self) -> None:
         """suggest_profile() never returns MINIMAL — it must be explicit."""
-        from nexus.core.device_capabilities import DeviceCapabilities, suggest_profile
+        from nexus.lib.device_capabilities import DeviceCapabilities, suggest_profile
 
         # Even with very low memory, suggest_profile returns EMBEDDED, not MINIMAL
         tiny = DeviceCapabilities(memory_mb=16, cpu_cores=1)

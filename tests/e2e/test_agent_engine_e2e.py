@@ -1,7 +1,8 @@
 """E2E test for Agent Engine Phase 1 — real LLM + real NexusFS.
 
 Tests the full agent lifecycle: spawn → resume → tool calls → checkpoint.
-Requires ANTHROPIC_API_KEY or OPENAI_API_KEY in the environment or ~/koi/.env.
+Requires ANTHROPIC_API_KEY, OPENAI_API_KEY, or OPENROUTER_API_KEY in the
+environment or ~/koi/.env or ~/nexus/.env.
 """
 
 from __future__ import annotations
@@ -14,18 +15,22 @@ from pathlib import Path
 import pytest
 
 # ---------------------------------------------------------------------------
-# Load API keys from ~/koi/.env if not already in env
+# Load API keys from .env files if not already in env
 # ---------------------------------------------------------------------------
-_KOI_ENV = Path.home() / "koi" / ".env"
-if _KOI_ENV.exists():
-    for line in _KOI_ENV.read_text().splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            key, _, value = line.partition("=")
-            key = key.strip()
-            value = value.strip().strip("\"'")
-            if key and key not in os.environ:
-                os.environ[key] = value
+_ENV_FILES = [
+    Path.home() / "koi" / ".env",
+    Path.home() / "nexus" / ".env",
+]
+for _env_file in _ENV_FILES:
+    if _env_file.exists():
+        for line in _env_file.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, _, value = line.partition("=")
+                key = key.strip()
+                value = value.strip().strip("\"'")
+                if key and key not in os.environ:
+                    os.environ[key] = value
 
 
 def _pick_model_and_key() -> tuple[str, str]:
@@ -34,7 +39,9 @@ def _pick_model_and_key() -> tuple[str, str]:
         return "claude-haiku-4-5-20251001", os.environ["ANTHROPIC_API_KEY"]
     if os.environ.get("OPENAI_API_KEY"):
         return "gpt-4o-mini", os.environ["OPENAI_API_KEY"]
-    pytest.skip("No ANTHROPIC_API_KEY or OPENAI_API_KEY found")
+    if os.environ.get("OPENROUTER_API_KEY"):
+        return "openrouter/google/gemini-2.0-flash-001", os.environ["OPENROUTER_API_KEY"]
+    pytest.skip("No ANTHROPIC_API_KEY, OPENAI_API_KEY, or OPENROUTER_API_KEY found")
     return ("", "")  # unreachable
 
 
@@ -78,7 +85,7 @@ def nexus_fs_direct(tmp_path):
 
 @pytest.fixture
 def llm_provider(model_and_key):
-    """Real LiteLLMProvider backed by Anthropic or OpenAI."""
+    """Real LiteLLMProvider backed by Anthropic, OpenAI, or OpenRouter."""
     model, api_key = model_and_key
 
     from pydantic import SecretStr
@@ -114,6 +121,10 @@ def llm_provider(model_and_key):
             timeout=60.0,
             drop_params=True,
         )
+
+    # OpenRouter: pass key via OPENROUTER_API_KEY env var (litellm convention)
+    if model.startswith("openrouter/"):
+        os.environ["OPENROUTER_API_KEY"] = api_key
 
     yield provider
     # Cleanup

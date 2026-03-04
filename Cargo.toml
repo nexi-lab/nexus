@@ -4,7 +4,6 @@ members = [
     "rust/nexus_core",
     "rust/nexus_pyo3",
     "rust/nexus_raft",
-    "rust/nexus_wal",
     "rust/nexus_tasks",
 ]
 # nexus-fuse excluded: standalone FUSE daemon with different dependency versions

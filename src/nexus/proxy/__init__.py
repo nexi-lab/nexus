@@ -4,7 +4,6 @@ Public API
 ----------
 - ``ProxyBrick``           — base proxy (subclass for custom protocols)
 - ``ProxyVFSBrick``        — proxy for VFSOperations protocol
-- ``ProxyEventLogBrick``   — proxy for EventLogProtocol
 - ``ProxySchedulerBrick``  — proxy for SchedulerProtocol
 - ``ProxyAgentRegistryBrick`` — proxy for AgentRegistryProtocol
 - ``ProxyBrickConfig``     — immutable configuration dataclass
@@ -22,7 +21,6 @@ Errors
 from nexus.proxy.brick import (
     ProxyAgentRegistryBrick,
     ProxyBrick,
-    ProxyEventLogBrick,
     ProxySchedulerBrick,
     ProxyVFSBrick,
 )
@@ -41,7 +39,6 @@ from nexus.proxy.replay_engine import ReplayEngine
 __all__ = [
     "ProxyBrick",
     "ProxyVFSBrick",
-    "ProxyEventLogBrick",
     "ProxySchedulerBrick",
     "ProxyAgentRegistryBrick",
     "ProxyBrickConfig",
@@ -60,7 +57,6 @@ __all__ = [
 
 _PROTOCOL_MAP: dict[str, type[ProxyBrick]] = {
     "vfs": ProxyVFSBrick,
-    "event_log": ProxyEventLogBrick,
     "scheduler": ProxySchedulerBrick,
     "agent_registry": ProxyAgentRegistryBrick,
 }
@@ -75,8 +71,7 @@ def create_proxy_brick(
     Parameters
     ----------
     protocol:
-        One of ``"vfs"``, ``"event_log"``, ``"scheduler"``,
-        ``"agent_registry"``.
+        One of ``"vfs"``, ``"scheduler"``, ``"agent_registry"``.
     config:
         Proxy configuration.
 

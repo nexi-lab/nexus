@@ -57,7 +57,6 @@ class RedisEventBus(EventBusBase):
         redis_client: PubSubClientProtocol,
         record_store: "RecordStoreABC | None" = None,
         node_id: str | None = None,
-        event_log: Any | None = None,
     ):
         """Initialize RedisEventBus.
 
@@ -65,23 +64,13 @@ class RedisEventBus(EventBusBase):
             redis_client: PubSubClientProtocol provider (e.g., DragonflyClient)
             record_store: RecordStoreABC for PG SSOT (optional)
             node_id: Unique node identifier for checkpoint tracking (auto-generated if None)
-            event_log: Optional EventLogProtocol for durable WAL persistence (Issue #1397)
         """
         super().__init__(record_store=record_store, node_id=node_id)
         self._redis = redis_client
-        self._event_log = event_log
         self._pubsub: Any = None
 
         # Event deduplication cache (5s TTL) - prevents retry storms
         self._dedup_cache: TTLCache[str, bool] = TTLCache(maxsize=10000, ttl=5.0)
-
-    def set_event_log(self, event_log: Any) -> None:
-        """Wire an event log for WAL-first durability (Issue #1397).
-
-        Called during server startup after the event log is initialized,
-        since the event bus may be constructed before the event log is available.
-        """
-        self._event_log = event_log
 
     def _channel_name(self, zone_id: str) -> str:
         """Get Redis channel name for a zone."""
@@ -108,13 +97,6 @@ class RedisEventBus(EventBusBase):
         if event.event_id in self._dedup_cache:
             logger.debug(f"Duplicate event {event.event_id}, skipping")
             return 0  # Already published
-
-        # WAL-first: persist before fan-out (Issue #1397)
-        if self._event_log is not None:
-            try:
-                await self._event_log.append(event)
-            except Exception as e:
-                logger.error(f"Event log append failed (event still published): {e}")
 
         zone_id = event.zone_id or ROOT_ZONE_ID
         channel = self._channel_name(zone_id)
@@ -165,13 +147,6 @@ class RedisEventBus(EventBusBase):
 
         if len(unique_events) < len(events):
             logger.debug(f"Filtered {len(events) - len(unique_events)} duplicate events")
-
-        # WAL-first: persist all events before fan-out
-        if self._event_log is not None:
-            try:
-                await self._event_log.append_batch(unique_events)
-            except Exception as e:
-                logger.error(f"Event log batch append failed (events still published): {e}")
 
         # Use Redis pipeline for single RTT
         pipeline = self._redis.client.pipeline()

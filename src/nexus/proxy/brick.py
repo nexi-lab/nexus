@@ -256,27 +256,6 @@ class ProxyVFSBrick(ProxyBrick):
         return cast(int, await self._forward("count_dir", path=path, zone_id=zone_id))
 
 
-class ProxyEventLogBrick(ProxyBrick):
-    """Proxy for ``EventLogProtocol`` — forwards audit events to cloud."""
-
-    async def append(self, event: Any) -> Any:
-        return await self._forward("event_log.append", event=asdict(event))
-
-    async def read(
-        self,
-        *,
-        since_sequence: int = 0,
-        limit: int = 100,
-        zone_id: str | None = None,
-    ) -> list[Any]:
-        return await self._forward(  # type: ignore[no-any-return]
-            "event_log.read",
-            since_sequence=since_sequence,
-            limit=limit,
-            zone_id=zone_id,
-        )
-
-
 class ProxySchedulerBrick(ProxyBrick):
     """Proxy for ``SchedulerProtocol`` — forwards scheduling to cloud.
 

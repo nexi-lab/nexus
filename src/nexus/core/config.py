@@ -261,9 +261,6 @@ class SystemServices:
     # Scheduler — task scheduling service (Issue #2195, #2360)
     scheduler_service: Any = None
 
-    # Agent Runtime — agent process engine (AGENT-PROCESS-ARCHITECTURE)
-    agent_runtime: Any = None
-
 
 # ---------------------------------------------------------------------------
 # BrickServices — Tier 2: optional, silent on failure

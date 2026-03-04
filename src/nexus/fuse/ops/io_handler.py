@@ -50,11 +50,13 @@ class IOHandler:
 
         if file_exists:
             logger.debug(
-                f"[FUSE-OPEN] Cache HIT for {original_path} "
-                f"(content={content_cached}, attr={attr_cached})"
+                "[FUSE-OPEN] Cache HIT for %s (content=%s, attr=%s)",
+                original_path,
+                content_cached,
+                attr_cached,
             )
         else:
-            logger.debug(f"[FUSE-OPEN] Cache MISS for {original_path}, checking remote")
+            logger.debug("[FUSE-OPEN] Cache MISS for %s, checking remote", original_path)
             if not ctx.nexus_fs.sys_access(original_path):
                 raise FuseOSError(errno.ENOENT)
 
@@ -92,9 +94,9 @@ class IOHandler:
 
                 ctx.readahead.on_open(fd, original_path, file_size, io_profile=io_profile_arg)
             except Exception as e:
-                logger.debug(f"[FUSE-OPEN] Readahead on_open failed (non-critical): {e}")
+                logger.debug("[FUSE-OPEN] Readahead on_open failed (non-critical): %s", e)
         elif content_cached:
-            logger.debug(f"[FUSE-OPEN] Skipping readahead (L1 cached): {original_path}")
+            logger.debug("[FUSE-OPEN] Skipping readahead (L1 cached): %s", original_path)
 
         return fd
 
@@ -121,7 +123,7 @@ class IOHandler:
             prefetched = ctx.readahead.on_read(fh, original_path, offset, size)
             if prefetched is not None:
                 logger.debug(
-                    f"[FUSE-READ] READAHEAD HIT: {original_path}[{offset}:{offset + size}]"
+                    "[FUSE-READ] READAHEAD HIT: %s[%d:%d]", original_path, offset, offset + size
                 )
                 return cast("bytes", prefetched)
 
@@ -163,7 +165,7 @@ class IOHandler:
 
         basename = original_path.split("/")[-1]
         if is_os_metadata_file(basename):
-            logger.debug(f"Blocked write to OS metadata file: {original_path}")
+            logger.debug("Blocked write to OS metadata file: %s", original_path)
             raise FuseOSError(errno.EPERM)
 
         write_ctx = None if file_info.get("auth_verified") else ctx.context

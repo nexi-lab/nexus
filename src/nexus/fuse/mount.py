@@ -144,7 +144,7 @@ class NexusFUSE:
 
         # Check if mount point is empty
         if list(self.mount_point.iterdir()):
-            logger.warning(f"Mount point is not empty: {self.mount_point}")
+            logger.warning("Mount point is not empty: %s", self.mount_point)
 
         # Issue #1305: Build OperationContext for namespace-scoped mounts
         context = None
@@ -165,8 +165,10 @@ class NexusFUSE:
                 groups=[],
             )
             logger.info(
-                f"[FUSE] Namespace-scoped mount: agent_id={self._agent_id}, "
-                f"subject_type={subject_type}, zone_id={self._zone_id}"
+                "[FUSE] Namespace-scoped mount: agent_id=%s, subject_type=%s, zone_id=%s",
+                self._agent_id,
+                subject_type,
+                self._zone_id,
             )
 
             # A2-B: Try to obtain NamespaceManager for direct visibility checks
@@ -239,10 +241,10 @@ class NexusFUSE:
                     "auto_cache": True,  # Enable automatic kernel caching
                 }
             )
-            logger.info(f"FUSE options: {fuse_options}")
+            logger.info("FUSE options: %s", fuse_options)
 
         # Mount filesystem
-        logger.info(f"Mounting Nexus to {self.mount_point} (mode={self.mode.value})")
+        logger.info("Mounting Nexus to %s (mode=%s)", self.mount_point, self.mode.value)
 
         if foreground:
             # Run in foreground (blocking)
@@ -265,7 +267,7 @@ class NexusFUSE:
                         **fuse_options,
                     )
                 except Exception as e:
-                    logger.error(f"FUSE mount error: {e}")
+                    logger.error("FUSE mount error: %s", e)
                 finally:
                     self._mounted = False
 
@@ -282,7 +284,7 @@ class NexusFUSE:
             if not self._mounted:
                 raise RuntimeError("Failed to mount filesystem")
 
-            logger.info(f"Mounted Nexus to {self.mount_point} (background)")
+            logger.info("Mounted Nexus to %s (background)", self.mount_point)
 
             # Issue #1076: Automatic cache warmup after mount
             # Always enabled - non-blocking, lightweight, reduces first-access latency
@@ -303,8 +305,9 @@ class NexusFUSE:
                 WarmupConfig = _cw.WarmupConfig
 
                 logger.info(
-                    f"[WARMUP] Starting automatic warmup for mount at / "
-                    f"(depth={self.warmup_depth}, max_files={self.warmup_max_files})"
+                    "[WARMUP] Starting automatic warmup for mount at / (depth=%d, max_files=%d)",
+                    self.warmup_depth,
+                    self.warmup_max_files,
                 )
 
                 config = WarmupConfig(
@@ -329,12 +332,12 @@ class NexusFUSE:
                 asyncio.set_event_loop(loop)
                 try:
                     stats = loop.run_until_complete(do_warmup())
-                    logger.info(f"[WARMUP] Mount warmup complete: {stats.to_dict()}")
+                    logger.info("[WARMUP] Mount warmup complete: %s", stats.to_dict())
                 finally:
                     loop.close()
 
             except Exception as e:
-                logger.warning(f"[WARMUP] Mount warmup failed (non-critical): {e}")
+                logger.warning("[WARMUP] Mount warmup failed (non-critical): %s", e)
 
         self._warmup_thread = threading.Thread(target=warmup_thread, daemon=True)
         self._warmup_thread.start()
@@ -348,7 +351,7 @@ class NexusFUSE:
         if not self._mounted:
             raise RuntimeError("Filesystem is not mounted")
 
-        logger.info(f"Unmounting {self.mount_point}")
+        logger.info("Unmounting %s", self.mount_point)
 
         # Use platform-specific unmount command
         import platform
@@ -373,7 +376,7 @@ class NexusFUSE:
                 raise RuntimeError(f"Unsupported platform: {system}")
 
             self._mounted = False
-            logger.info(f"Unmounted {self.mount_point}")
+            logger.info("Unmounted %s", self.mount_point)
 
             # Issue #1115: Stop event loop thread
             if self._event_loop is not None:
@@ -382,7 +385,7 @@ class NexusFUSE:
                 logger.info("[FUSE] Event loop stopped")
 
         except subprocess.CalledProcessError as e:
-            logger.error(f"Failed to unmount: {e.stderr.decode()}")
+            logger.error("Failed to unmount: %s", e.stderr.decode())
             raise RuntimeError(f"Failed to unmount: {e.stderr.decode()}") from e
 
     def is_mounted(self) -> bool:
@@ -412,7 +415,7 @@ class NexusFUSE:
             try:
                 self.unmount()
             except Exception as e:
-                logger.error(f"Error unmounting in context manager: {e}")
+                logger.error("Error unmounting in context manager: %s", e)
 
 
 def mount_nexus(

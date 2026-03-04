@@ -283,7 +283,7 @@ class RustFUSEClient:
                     break
         except (ConnectionError, BrokenPipeError, OSError) as e:
             # Issue 2A: Connection lost — try reconnecting and retrying once
-            logger.warning(f"Daemon connection lost during {method}: {e}")
+            logger.warning("Daemon connection lost during %s: %s", method, e)
             self._reconnect()
 
             # Retry the request on the new connection

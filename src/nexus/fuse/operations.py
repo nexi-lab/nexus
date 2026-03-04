@@ -119,7 +119,7 @@ class NexusFUSEOperations(Operations):
                     )
                     use_rust = False
             except Exception as e:
-                logger.error(f"[FUSE] Failed to initialize Rust client: {e}")
+                logger.error("[FUSE] Failed to initialize Rust client: %s", e)
                 logger.warning("[FUSE] Falling back to Python client")
                 use_rust = False
 
@@ -145,7 +145,7 @@ class NexusFUSEOperations(Operations):
                 local_disk_cache = LocalDiskCache(**ldc_kwargs)
                 logger.info("[FUSE] L2 LocalDiskCache enabled for faster reads")
             except Exception as e:
-                logger.warning(f"[FUSE] Failed to initialize LocalDiskCache: {e}")
+                logger.warning("[FUSE] Failed to initialize LocalDiskCache: %s", e)
 
         # Initialize event dispatcher
         enable_events = cache_config.get("events_enabled", True) and HAS_EVENT_BUS
@@ -198,11 +198,12 @@ class NexusFUSEOperations(Operations):
                     zone_id=get_zone_id(self._ctx),
                 )
                 logger.info(
-                    f"[FUSE] Readahead enabled: buffer={readahead_config.buffer_pool_mb}MB, "
-                    f"workers={readahead_config.prefetch_workers}"
+                    "[FUSE] Readahead enabled: buffer=%sMB, workers=%s",
+                    readahead_config.buffer_pool_mb,
+                    readahead_config.prefetch_workers,
                 )
             except Exception as e:
-                logger.warning(f"[FUSE] Failed to initialize ReadaheadManager: {e}")
+                logger.warning("[FUSE] Failed to initialize ReadaheadManager: %s", e)
         self._ctx.readahead = readahead
 
         # Expose shared state for backward compatibility (tests access these directly)

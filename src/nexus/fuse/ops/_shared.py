@@ -138,16 +138,16 @@ def _handle_remote_exception(e: Exception, operation: str, path: str, **context:
     context_str = ", ".join(f"{k}={v}" for k, v in context.items()) if context else ""
 
     if isinstance(e, RemoteTimeoutError):
-        logger.error(f"[FUSE-{operation}] Timeout: {path} - {e} ({context_str})")
+        logger.error("[FUSE-%s] Timeout: %s - %s (%s)", operation, path, e, context_str)
         raise FuseOSError(errno.ETIMEDOUT) from e
     if isinstance(e, RemoteConnectionError):
-        logger.error(f"[FUSE-{operation}] Connection error: {path} - {e}")
+        logger.error("[FUSE-%s] Connection error: %s - %s", operation, path, e)
         raise FuseOSError(errno.ECONNREFUSED) from e
     if isinstance(e, RemoteFilesystemError):
-        logger.error(f"[FUSE-{operation}] Remote error: {path} - {e}")
+        logger.error("[FUSE-%s] Remote error: %s - %s", operation, path, e)
         raise FuseOSError(errno.EIO) from e
 
-    logger.exception(f"[FUSE-{operation}] Unexpected error: {path} ({context_str})")
+    logger.exception("[FUSE-%s] Unexpected error: %s (%s)", operation, path, context_str)
     raise FuseOSError(errno.EIO) from e
 
 
@@ -171,7 +171,7 @@ def fuse_operation(op_name: str) -> Callable[..., Any]:
             except NexusFileNotFoundError:
                 raise FuseOSError(errno.ENOENT) from None
             except NexusPermissionError as e:
-                logger.error(f"[FUSE-{op_name}] Permission denied: {path_arg} - {e}")
+                logger.error("[FUSE-%s] Permission denied: %s - %s", op_name, path_arg, e)
                 raise FuseOSError(errno.EACCES) from e
             except Exception as e:
                 _handle_remote_exception(e, op_name, path_arg)
@@ -220,10 +220,10 @@ def try_rust(
     except OSError as e:
         if e.errno == errno.ENOENT:
             raise FuseOSError(errno.ENOENT) from None
-        logger.warning(f"[FUSE-{op_name}] Rust failed: {e}, using Python")
+        logger.warning("[FUSE-%s] Rust failed: %s, using Python", op_name, e)
         return (False, None)
     except Exception as e:
-        logger.warning(f"[FUSE-{op_name}] Rust failed: {e}, using Python")
+        logger.warning("[FUSE-%s] Rust failed: %s, using Python", op_name, e)
         return (False, None)
 
 
@@ -282,31 +282,34 @@ def get_file_content(
     if view_type and (ctx.mode.value == "text" or ctx.mode.value == "smart"):
         cached_parsed = ctx.cache.get_parsed(path, view_type)
         if cached_parsed is not None:
-            logger.debug(f"[FUSE-CONTENT] PARSED CACHE HIT: {path}")
+            logger.debug("[FUSE-CONTENT] PARSED CACHE HIT: %s", path)
             return cached_parsed
 
     # L1: Check in-memory content cache
     content = ctx.cache.get_content(path)
 
     if content is not None:
-        logger.info(f"[FUSE-CONTENT] L1 MEMORY HIT: {path} ({len(content)} bytes)")
+        logger.info("[FUSE-CONTENT] L1 MEMORY HIT: %s (%d bytes)", path, len(content))
     else:
         # L2: Check local disk cache
         content = get_from_local_disk_cache(ctx, path)
 
         if content is not None:
-            logger.info(f"[FUSE-CONTENT] L2 DISK HIT: {path} ({len(content)} bytes)")
+            logger.info("[FUSE-CONTENT] L2 DISK HIT: %s (%d bytes)", path, len(content))
         else:
             # L3/L4: Read from backend
             read_ctx = None if skip_auth else ctx.context
-            logger.info(f"[FUSE-CONTENT] L3 BACKEND FETCH: {path}")
+            logger.info("[FUSE-CONTENT] L3 BACKEND FETCH: %s", path)
             fetch_start = time.time()
             raw_content = ctx.nexus_fs.sys_read(path, context=read_ctx)
             fetch_time = time.time() - fetch_start
             assert isinstance(raw_content, bytes), "Expected bytes from read()"
             content = raw_content
             logger.info(
-                f"[FUSE-CONTENT] L3 BACKEND GOT: {path} ({len(content)} bytes) in {fetch_time:.3f}s"
+                "[FUSE-CONTENT] L3 BACKEND GOT: %s (%d bytes) in %.3fs",
+                path,
+                len(content),
+                fetch_time,
             )
 
             put_to_local_disk_cache(ctx, path, content, priority=cache_priority)
@@ -370,7 +373,7 @@ def read_range_from_backend(ctx: FUSESharedContext, path: str, offset: int, size
         end = min(offset + size, len(content))
         return content[offset:end]
     except Exception as e:
-        logger.warning(f"[FUSE-READAHEAD] Failed to read {path}:{offset}+{size}: {e}")
+        logger.warning("[FUSE-READAHEAD] Failed to read %s:%d+%d: %s", path, offset, size, e)
         return b""
 
 
@@ -388,10 +391,10 @@ def get_from_local_disk_cache(ctx: FUSESharedContext, path: str) -> bytes | None
             "bytes | None", ctx.local_disk_cache.get(content_hash, zone_id=zone_id)
         )
         if content is not None:
-            logger.debug(f"[FUSE-L2] HIT: {path} (zone={zone_id})")
+            logger.debug("[FUSE-L2] HIT: %s (zone=%s)", path, zone_id)
         return content
     except Exception as e:
-        logger.debug(f"[FUSE-L2] Error reading {path}: {e}")
+        logger.debug("[FUSE-L2] Error reading %s: %s", path, e)
         return None
 
 
@@ -418,9 +421,9 @@ def put_to_local_disk_cache(
             store_blocks=store_blocks,
             priority=priority,
         )
-        logger.debug(f"[FUSE-L2] CACHED: {path} ({len(content)} bytes, zone={zone_id})")
+        logger.debug("[FUSE-L2] CACHED: %s (%d bytes, zone=%s)", path, len(content), zone_id)
     except Exception as e:
-        logger.debug(f"[FUSE-L2] Error caching {path}: {e}")
+        logger.debug("[FUSE-L2] Error caching %s: %s", path, e)
 
 
 def get_metadata(ctx: FUSESharedContext, path: str) -> Any:
@@ -449,7 +452,7 @@ def stat_size_fallback(ctx: FUSESharedContext, path: str) -> int:
             pass  # stat fallback — handled below with default return 0
 
     # Issue 15A: Return 0 instead of reading full content
-    logger.debug(f"[FUSE-PERF] stat fallback: returning 0 for {path}")
+    logger.debug("[FUSE-PERF] stat fallback: returning 0 for %s", path)
     return 0
 
 

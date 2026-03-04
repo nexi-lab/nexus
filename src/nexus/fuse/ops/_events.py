@@ -80,10 +80,10 @@ class FUSEEventDispatcher:
                     self._event_loop,
                 )
             else:
-                logger.debug(f"[FUSE-EVENT] No event loop, skipping: {event_type} {path}")
+                logger.debug("[FUSE-EVENT] No event loop, skipping: %s %s", event_type, path)
 
         except Exception as e:
-            logger.debug(f"[FUSE-EVENT] Failed to fire event: {e}")
+            logger.debug("[FUSE-EVENT] Failed to fire event: %s", e)
 
     async def _dispatch(self, event: Any) -> None:
         """Dispatch event to all downstream systems."""
@@ -92,7 +92,7 @@ class FUSEEventDispatcher:
                 try:
                     await self._event_bus.publish(event)
                 except Exception as e:
-                    logger.debug(f"[FUSE-EVENT] Event bus publish failed: {e}")
+                    logger.debug("[FUSE-EVENT] Event bus publish failed: %s", e)
 
             try:
                 sub_manager = self._subscription_manager
@@ -111,9 +111,9 @@ class FUSEEventDispatcher:
                         zone_id=event.zone_id or ROOT_ZONE_ID,
                     )
             except Exception as e:
-                logger.debug(f"[FUSE-EVENT] Webhook broadcast failed: {e}")
+                logger.debug("[FUSE-EVENT] Webhook broadcast failed: %s", e)
 
-            logger.debug(f"[FUSE-EVENT] Dispatched: {event.type} {event.path}")
+            logger.debug("[FUSE-EVENT] Dispatched: %s %s", event.type, event.path)
 
         except Exception as e:
-            logger.debug(f"[FUSE-EVENT] Dispatch failed: {e}")
+            logger.debug("[FUSE-EVENT] Dispatch failed: %s", e)

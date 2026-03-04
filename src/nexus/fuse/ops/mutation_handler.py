@@ -40,7 +40,7 @@ class MutationHandler:
         # Block OS metadata files
         basename = path.split("/")[-1]
         if is_os_metadata_file(basename):
-            logger.debug(f"Blocked creation of OS metadata file: {path}")
+            logger.debug("Blocked creation of OS metadata file: %s", path)
             raise FuseOSError(errno.EPERM)
 
         original_path, view_type = parse_virtual_path_for_fuse(ctx, path)
@@ -141,7 +141,7 @@ class MutationHandler:
         check_namespace_visible(ctx, new_path)
 
         if ctx.nexus_fs.sys_access(new_path):
-            logger.error(f"Destination {new_path} already exists")
+            logger.error("Destination %s already exists", new_path)
             raise FuseOSError(errno.EEXIST)
 
         if ctx.nexus_fs.sys_is_directory(old_path, context=ctx.context):
@@ -172,7 +172,7 @@ class MutationHandler:
     def _rename_file(self, old_path: str, new_path: str) -> None:
         """Metadata-only file rename."""
         ctx = self._ctx
-        logger.debug(f"Renaming file {old_path} to {new_path}")
+        logger.debug("Renaming file %s to %s", old_path, new_path)
 
         ok, _ = try_rust(ctx, "RENAME", "rename", old_path, new_path)
         if not ok:
@@ -181,12 +181,12 @@ class MutationHandler:
     def _rename_directory(self, old_path: str, new_path: str) -> None:
         """Recursive directory rename: list + move files + rmdir source."""
         ctx = self._ctx
-        logger.debug(f"Renaming directory {old_path} to {new_path}")
+        logger.debug("Renaming directory %s to %s", old_path, new_path)
 
         try:
             ctx.nexus_fs.sys_mkdir(new_path, parents=True, exist_ok=True)
         except Exception as e:
-            logger.debug(f"mkdir {new_path} failed (may already exist): {e}")
+            logger.debug("mkdir %s failed (may already exist): %s", new_path, e)
 
         files = ctx.nexus_fs.sys_readdir(
             old_path, recursive=True, details=True, context=ctx.context
@@ -198,8 +198,8 @@ class MutationHandler:
             if not file_info.get("is_directory", False):
                 src_file = file_info["path"]
                 dest_file = src_file.replace(old_path, new_path, 1)
-                logger.debug(f"  Moving file {src_file} to {dest_file}")
+                logger.debug("  Moving file %s to %s", src_file, dest_file)
                 ctx.nexus_fs.sys_rename(src_file, dest_file)
 
-        logger.debug(f"Removing source directory {old_path}")
+        logger.debug("Removing source directory %s", old_path)
         ctx.nexus_fs.sys_rmdir(old_path, recursive=True)

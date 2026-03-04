@@ -233,8 +233,10 @@ class ReadSession:
                 new_window = min(self.readahead_window * 2, self.max_window)
                 if new_window != self.readahead_window:
                     logger.debug(
-                        f"[READAHEAD] Window growth: {self.readahead_window} -> {new_window} "
-                        f"(sequential_count={self.sequential_count})"
+                        "[READAHEAD] Window growth: %s -> %s (sequential_count=%d)",
+                        self.readahead_window,
+                        new_window,
+                        self.sequential_count,
                     )
                 self.readahead_window = new_window
 
@@ -243,8 +245,10 @@ class ReadSession:
             # Random access detected - reset state
             if self.sequential_count > 0:
                 logger.debug(
-                    f"[READAHEAD] Random access detected: expected={expected_offset}, "
-                    f"actual={offset}, diff={offset_diff}"
+                    "[READAHEAD] Random access detected: expected=%s, actual=%s, diff=%s",
+                    expected_offset,
+                    offset,
+                    offset_diff,
                 )
             self.sequential_count = 0
             self.readahead_window = DEFAULT_INITIAL_WINDOW
@@ -363,7 +367,8 @@ class PrefetchBufferPool:
         }
 
         logger.info(
-            f"[READAHEAD] PrefetchBufferPool initialized: max_size={max_size_bytes / (1024 * 1024):.1f}MB"
+            "[READAHEAD] PrefetchBufferPool initialized: max_size=%.1fMB",
+            max_size_bytes / (1024 * 1024),
         )
 
     def get(self, path: str, offset: int, size: int) -> bytes | None:
@@ -430,7 +435,9 @@ class PrefetchBufferPool:
         # Don't store if larger than entire pool
         if data_size > self._max_size:
             logger.warning(
-                f"[READAHEAD] Block too large for buffer pool: {data_size} > {self._max_size}"
+                "[READAHEAD] Block too large for buffer pool: %s > %s",
+                data_size,
+                self._max_size,
             )
             return False
 
@@ -462,8 +469,11 @@ class PrefetchBufferPool:
             self._access_order.append((path, offset))
 
             logger.debug(
-                f"[READAHEAD] Buffered {data_size} bytes at {path}:{offset} "
-                f"(pool: {self._current_size / (1024 * 1024):.1f}MB)"
+                "[READAHEAD] Buffered %s bytes at %s:%s (pool: %.1fMB)",
+                data_size,
+                path,
+                offset,
+                self._current_size / (1024 * 1024),
             )
             return True
 
@@ -484,7 +494,7 @@ class PrefetchBufferPool:
         if not self._buffers[path]:
             del self._buffers[path]
 
-        logger.debug(f"[READAHEAD] Evicted buffer {path}:{offset}")
+        logger.debug("[READAHEAD] Evicted buffer %s:%s", path, offset)
 
     def invalidate_path(self, path: str) -> int:
         """Invalidate all buffers for a path.
@@ -510,7 +520,7 @@ class PrefetchBufferPool:
             # Clean up access order
             self._access_order = [(p, o) for p, o in self._access_order if p != path]
 
-            logger.debug(f"[READAHEAD] Invalidated {count} buffers for {path}")
+            logger.debug("[READAHEAD] Invalidated %d buffers for %s", count, path)
             return count
 
     def clear(self) -> None:
@@ -623,9 +633,13 @@ class ReadaheadManager:
         self._shutdown = False
 
         logger.info(
-            f"[READAHEAD] Manager initialized: workers={config.prefetch_workers}, "
-            f"buffer={config.buffer_pool_mb}MB, block_size={config.block_size / (1024 * 1024):.1f}MB, "
-            f"max_blocks={config.max_blocks_per_trigger}, prefetch_on_open={config.prefetch_on_open}"
+            "[READAHEAD] Manager initialized: workers=%d, buffer=%dMB, "
+            "block_size=%.1fMB, max_blocks=%d, prefetch_on_open=%s",
+            config.prefetch_workers,
+            config.buffer_pool_mb,
+            config.block_size / (1024 * 1024),
+            config.max_blocks_per_trigger,
+            config.prefetch_on_open,
         )
 
     def on_open(
@@ -653,8 +667,9 @@ class ReadaheadManager:
             profile_cfg = io_profile.config()
             if not profile_cfg.readahead_enabled:
                 logger.debug(
-                    f"[READAHEAD] Skipping on_open for {path} "
-                    f"(io_profile={io_profile} disables readahead)"
+                    "[READAHEAD] Skipping on_open for %s (io_profile=%s disables readahead)",
+                    path,
+                    io_profile,
                 )
                 return
 
@@ -671,7 +686,7 @@ class ReadaheadManager:
         # Immediately trigger prefetch from offset 0
         # This assumes most files will be read sequentially from start
         # (common pattern for Docker sandbox: cat, head, reading config files)
-        logger.debug(f"[READAHEAD] Prefetch on open: {path} (fh={fh})")
+        logger.debug("[READAHEAD] Prefetch on open: %s (fh=%d)", path, fh)
 
         # Set sequential count to trigger prefetch immediately
         session.sequential_count = self._config.min_sequential_count
@@ -714,7 +729,7 @@ class ReadaheadManager:
                 with self._stats_lock:
                     self._stats["prefetch_triggered"] += 1
 
-        logger.info(f"[READAHEAD] Prefetch on open started: {path} ({num_blocks} blocks)")
+        logger.info("[READAHEAD] Prefetch on open started: %s (%d blocks)", path, num_blocks)
 
     def on_read(self, fh: int, path: str, offset: int, size: int) -> bytes | None:
         """Called before each read operation.
@@ -744,7 +759,7 @@ class ReadaheadManager:
         prefetched = self._buffer_pool.get(path, offset, size)
         if prefetched is not None:
             session.record_prefetch_hit()
-            logger.debug(f"[READAHEAD] HIT: {path}:{offset}+{size}")
+            logger.debug("[READAHEAD] HIT: %s:%s+%s", path, offset, size)
             return prefetched
 
         session.record_prefetch_miss()
@@ -810,8 +825,10 @@ class ReadaheadManager:
                 self._buffer_pool.invalidate_path(session.path)
 
             logger.debug(
-                f"[READAHEAD] Session released: {session.path} "
-                f"(hits={session.prefetch_hits}, misses={session.prefetch_misses})"
+                "[READAHEAD] Session released: %s (hits=%d, misses=%d)",
+                session.path,
+                session.prefetch_hits,
+                session.prefetch_misses,
             )
 
     def invalidate_path(self, path: str) -> None:
@@ -862,7 +879,7 @@ class ReadaheadManager:
                     max_window=max_window,
                     sequential_tolerance=self._config.sequential_tolerance,
                 )
-                logger.debug(f"[READAHEAD] New session: fh={fh}, path={path}")
+                logger.debug("[READAHEAD] New session: fh=%d, path=%s", fh, path)
             return self._sessions[fh]
 
     def _trigger_prefetch(self, session: ReadSession, start_offset: int) -> None:
@@ -920,8 +937,11 @@ class ReadaheadManager:
 
         if blocks_submitted > 0:
             logger.debug(
-                f"[READAHEAD] Prefetch triggered: {session.path}:{block_start} "
-                f"({blocks_submitted} blocks, window={session.readahead_window})"
+                "[READAHEAD] Prefetch triggered: %s:%s (%d blocks, window=%s)",
+                session.path,
+                block_start,
+                blocks_submitted,
+                session.readahead_window,
             )
 
     def _prefetch_block(
@@ -960,14 +980,16 @@ class ReadaheadManager:
                     self._stats["prefetch_completed"] += 1
                     self._stats["bytes_prefetched"] += len(data)
 
-                logger.debug(f"[READAHEAD] Prefetch complete: {path}:{offset} ({len(data)} bytes)")
+                logger.debug(
+                    "[READAHEAD] Prefetch complete: %s:%s (%d bytes)", path, offset, len(data)
+                )
             else:
                 session.cancel_prefetch(offset)
                 with self._stats_lock:
                     self._stats["prefetch_failed"] += 1
 
         except Exception as e:
-            logger.warning(f"[READAHEAD] Prefetch failed: {path}:{offset} - {e}")
+            logger.warning("[READAHEAD] Prefetch failed: %s:%s - %s", path, offset, e)
             session.cancel_prefetch(offset)
             with self._stats_lock:
                 self._stats["prefetch_failed"] += 1
@@ -1009,10 +1031,10 @@ class ReadaheadManager:
                     with self._stats_lock:
                         self._stats["l2_cache_warms"] += 1
 
-                    logger.debug(f"[READAHEAD] L2 cache warmed: {path}:{offset}")
+                    logger.debug("[READAHEAD] L2 cache warmed: %s:%s", path, offset)
 
         except Exception as e:
-            logger.debug(f"[READAHEAD] L2 cache warm failed: {path}:{offset} - {e}")
+            logger.debug("[READAHEAD] L2 cache warm failed: %s:%s - %s", path, offset, e)
 
     def get_stats(self) -> dict[str, Any]:
         """Get readahead statistics."""

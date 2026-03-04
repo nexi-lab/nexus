@@ -46,7 +46,7 @@ class MetadataHandler:
         if cached_attrs is not None:
             elapsed = time.time() - start_time
             if elapsed > 0.001:
-                logger.debug(f"[FUSE-PERF] getattr CACHED: path={path}, {elapsed:.3f}s")
+                logger.debug("[FUSE-PERF] getattr CACHED: path=%s, %.3fs", path, elapsed)
             return cached_attrs
 
         # Handle virtual views (.raw, .txt, .md)
@@ -70,7 +70,7 @@ class MetadataHandler:
                     attrs = self._build_file_attrs(rust_meta.size)
                 ctx.cache.cache_attr(path, attrs)
                 elapsed = time.time() - start_time
-                logger.debug(f"[FUSE-PERF] getattr via RUST: path={path}, {elapsed:.3f}s")
+                logger.debug("[FUSE-PERF] getattr via RUST: path=%s, %.3fs", path, elapsed)
                 return attrs
 
         # Check if it's a directory
@@ -117,7 +117,7 @@ class MetadataHandler:
 
         elapsed = time.time() - start_time
         if elapsed > 0.01:
-            logger.info(f"[FUSE-PERF] getattr UNCACHED: path={path}, {elapsed:.3f}s")
+            logger.info("[FUSE-PERF] getattr UNCACHED: path=%s, %.3fs", path, elapsed)
         return attrs
 
     def _build_file_attrs(self, file_size: int) -> dict[str, Any]:
@@ -205,11 +205,11 @@ class MetadataHandler:
             cached_entries = ctx.dir_cache.get(cache_key)
         if cached_entries is not None:
             logger.info(
-                f"[FUSE-PERF] readdir CACHE HIT: path={path}, {len(cached_entries)} entries"
+                "[FUSE-PERF] readdir CACHE HIT: path=%s, %d entries", path, len(cached_entries)
             )
             return cast("list[str]", cached_entries)
 
-        logger.info(f"[FUSE-PERF] readdir START: path={path}")
+        logger.info("[FUSE-PERF] readdir START: path=%s", path)
 
         entries = [".", ".."]
 
@@ -222,8 +222,10 @@ class MetadataHandler:
             entries.extend([f.name for f in file_entries])
             elapsed = time.time() - start_time
             logger.info(
-                f"[FUSE-PERF] readdir DONE via RUST: path={path}, "
-                f"{len(entries)} entries, {elapsed:.3f}s"
+                "[FUSE-PERF] readdir DONE via RUST: path=%s, %d entries, %.3fs",
+                path,
+                len(entries),
+                elapsed,
             )
             with ctx.dir_cache_lock:
                 ctx.dir_cache[cache_key] = entries
@@ -237,7 +239,7 @@ class MetadataHandler:
         list_elapsed = time.time() - list_start
         files = files_raw if isinstance(files_raw, list) else []
         logger.info(
-            f"[FUSE-PERF] readdir list() took {list_elapsed:.3f}s, returned {len(files)} items"
+            "[FUSE-PERF] readdir list() took %.3fs, returned %d items", list_elapsed, len(files)
         )
 
         for file_info in files:
@@ -279,9 +281,11 @@ class MetadataHandler:
                 and (not isinstance(f, dict) or f.get("size", 0) < prefetch_max_file_size)
             ]
             logger.info(
-                f"[FUSE-PERF] readdir prefetch check: {len(small_files)} small files, "
-                f"has_read_bulk={hasattr(ctx.nexus_fs, 'read_bulk')}, "
-                f"sample_paths={small_files[:3] if small_files else []}"
+                "[FUSE-PERF] readdir prefetch check: %d small files, "
+                "has_read_bulk=%s, sample_paths=%s",
+                len(small_files),
+                hasattr(ctx.nexus_fs, "read_bulk"),
+                small_files[:3] if small_files else [],
             )
             if small_files and hasattr(ctx.nexus_fs, "read_bulk"):
                 try:
@@ -292,16 +296,19 @@ class MetadataHandler:
                             ctx.cache.cache_content(fpath, content)
                     prefetch_elapsed = time.time() - prefetch_start
                     logger.info(
-                        f"[FUSE-PERF] readdir content prefetch: "
-                        f"{len(bulk_content)} files in {prefetch_elapsed:.3f}s"
+                        "[FUSE-PERF] readdir content prefetch: %d files in %.3fs",
+                        len(bulk_content),
+                        prefetch_elapsed,
                     )
                 except Exception as e:
-                    logger.warning(f"[FUSE-PERF] readdir content prefetch failed: {e}")
+                    logger.warning("[FUSE-PERF] readdir content prefetch failed: %s", e)
 
         total_elapsed = time.time() - start_time
         logger.info(
-            f"[FUSE-PERF] readdir DONE: path={path}, {len(entries)} entries, "
-            f"{total_elapsed:.3f}s total"
+            "[FUSE-PERF] readdir DONE: path=%s, %d entries, %.3fs total",
+            path,
+            len(entries),
+            total_elapsed,
         )
 
         with ctx.dir_cache_lock:

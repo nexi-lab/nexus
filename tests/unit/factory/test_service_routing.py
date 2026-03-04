@@ -50,28 +50,27 @@ class TestResolveServiceAttr:
         result = resolve_service_attr(obj, "get_namespace")
         assert result is svc.get_namespace_sync
 
-    def test_glob_routed_via_methods(self) -> None:
-        """glob is a userspace tool routed via SERVICE_METHODS."""
-        assert SERVICE_METHODS["glob"] == "search_service"
+    def test_glob_not_in_service_methods(self) -> None:
+        """glob removed from SERVICE_METHODS — callers use search_service directly."""
+        assert "glob" not in SERVICE_METHODS
+        assert "glob_batch" not in SERVICE_METHODS
         obj = MagicMock()
-        obj.__dict__["search_service"] = svc = MagicMock()
-        result = resolve_service_attr(obj, "glob")
-        assert result is svc.glob
+        obj.__dict__["search_service"] = MagicMock()
+        assert resolve_service_attr(obj, "glob") is None
 
-    def test_grep_routed_via_methods(self) -> None:
-        """grep is a userspace tool routed via SERVICE_METHODS."""
-        assert SERVICE_METHODS["grep"] == "search_service"
+    def test_grep_not_in_service_methods(self) -> None:
+        """grep removed from SERVICE_METHODS — callers use search_service directly."""
+        assert "grep" not in SERVICE_METHODS
         obj = MagicMock()
-        obj.__dict__["search_service"] = svc = MagicMock()
-        result = resolve_service_attr(obj, "grep")
-        assert result is svc.grep
+        obj.__dict__["search_service"] = MagicMock()
+        assert resolve_service_attr(obj, "grep") is None
 
 
 class TestRoutingTableCompleteness:
     """Sanity checks for the routing tables."""
 
     def test_service_methods_non_empty(self) -> None:
-        assert len(SERVICE_METHODS) >= 57
+        assert len(SERVICE_METHODS) >= 54
 
     def test_service_aliases_non_empty(self) -> None:
         assert len(SERVICE_ALIASES) >= 53

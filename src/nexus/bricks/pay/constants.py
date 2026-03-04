@@ -9,7 +9,15 @@ Related: Issue #1199 (Nexus Pay hybrid architecture)
 """
 
 import hashlib
-from decimal import Decimal
+
+# =============================================================================
+# Amount Conversion (re-exported from contracts/pay_types.py)
+# =============================================================================
+from nexus.contracts.pay_types import (  # noqa: F401
+    MICRO_UNIT_SCALE,
+    credits_to_micro,
+    micro_to_credits,
+)
 
 # =============================================================================
 # Ledger Codes
@@ -38,39 +46,6 @@ TRANSFER_CODE_REFUND = 6  # Refund/reversal
 # =============================================================================
 SYSTEM_TREASURY_TB_ID = 1
 ESCROW_ACCOUNT_TB_ID = 2
-
-# =============================================================================
-# Amount Conversion
-# =============================================================================
-# Credits are stored as integers in micro-units (6 decimal places)
-# Example: 1.0 credit = 1_000_000 micro-credits
-MICRO_UNIT_SCALE = 1_000_000
-
-
-def credits_to_micro(credits: Decimal | float | int) -> int:
-    """Convert credits to micro-credits (internal storage format).
-
-    Uses Decimal arithmetic internally to avoid float precision loss.
-
-    Args:
-        credits: Amount in credits (e.g., Decimal("1.5") or 1.5)
-
-    Returns:
-        Amount in micro-credits (e.g., 1_500_000)
-    """
-    return int(Decimal(str(credits)) * MICRO_UNIT_SCALE)
-
-
-def micro_to_credits(micro: int) -> Decimal:
-    """Convert micro-credits to credits (display format).
-
-    Args:
-        micro: Amount in micro-credits
-
-    Returns:
-        Amount in credits as Decimal.
-    """
-    return Decimal(str(micro)) / MICRO_UNIT_SCALE
 
 
 # =============================================================================

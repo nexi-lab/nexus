@@ -10,7 +10,6 @@ The service layer works exclusively in Decimal credits.
 Issue #2189: Extracted from bricks/pay/spending_policy_service.py.
 """
 
-import importlib as _il
 import json
 import logging
 import uuid
@@ -18,17 +17,15 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
+from nexus.contracts.pay_types import (
+    SpendingApproval,
+    SpendingPolicy,
+    credits_to_micro,
+    micro_to_credits,
+)
+
 if TYPE_CHECKING:
-    from nexus.bricks.pay.constants import credits_to_micro, micro_to_credits
-    from nexus.bricks.pay.spending_policy import SpendingApproval, SpendingPolicy
     from nexus.storage.record_store import RecordStoreABC
-else:
-    _pay_const = _il.import_module("nexus.bricks.pay.constants")
-    credits_to_micro = _pay_const.credits_to_micro
-    micro_to_credits = _pay_const.micro_to_credits
-    _pay_policy = _il.import_module("nexus.bricks.pay.spending_policy")
-    SpendingApproval = _pay_policy.SpendingApproval
-    SpendingPolicy = _pay_policy.SpendingPolicy
 
 logger = logging.getLogger(__name__)
 

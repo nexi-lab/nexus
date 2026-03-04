@@ -27,8 +27,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# All fields accepted by NexusFS._bind_wired_services() (dict path).
-# Derived from nexus_fs.py:290-326.
+# All fields accepted by bind_wired_services() (dict path).
+# Derived from nexus.factory.service_routing.bind_wired_services.
 _WIRED_FIELDS: list[str] = [
     # Services
     "rebac_service",
@@ -70,9 +70,11 @@ def _boot_remote_services(nfs: "NexusFS", call_rpc: Callable[..., Any]) -> None:
 
     proxy = RemoteServiceProxy(call_rpc, service_name="universal")
 
-    # Fill all wired service slots via _bind_wired_services (dict path)
+    # Fill all wired service slots via bind_wired_services (dict path)
+    from nexus.factory.service_routing import bind_wired_services
+
     wired_dict: dict[str, Any] = dict.fromkeys(_WIRED_FIELDS, proxy)
-    nfs._bind_wired_services(wired_dict)
+    bind_wired_services(nfs, wired_dict)
 
     # BrickServices field not covered by WiredServices
     nfs.version_service = proxy

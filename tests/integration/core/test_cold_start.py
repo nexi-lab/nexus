@@ -62,19 +62,16 @@ class TestColdStartNexusFSConstruction:
     """Verify NexusFS can be constructed without factory (test mode)."""
 
     def test_nexus_fs_minimal_construction(self) -> None:
-        """NexusFS should construct with just backend + metadata_store."""
+        """NexusFS should construct with just metadata_store."""
         from unittest.mock import MagicMock
 
         from nexus.core.config import ParseConfig
         from nexus.core.nexus_fs import NexusFS
 
-        mock_backend = MagicMock()
-        mock_backend.content_cache = None
         mock_metadata = MagicMock()
         mock_metadata.list = MagicMock(return_value=[])
 
         nx = NexusFS(
-            backend=mock_backend,
             metadata_store=mock_metadata,
             parsing=ParseConfig(auto_parse=False),
         )
@@ -85,24 +82,22 @@ class TestColdStartNexusFSConstruction:
         assert nx.mcp_service is None
 
     def test_wired_services_can_be_bound(self) -> None:
-        """_bind_wired_services should accept WiredServices dataclass."""
+        """bind_wired_services should accept WiredServices dataclass."""
         from unittest.mock import MagicMock
 
         from nexus.core.config import ParseConfig, WiredServices
         from nexus.core.nexus_fs import NexusFS
+        from nexus.factory.service_routing import bind_wired_services
 
-        mock_backend = MagicMock()
-        mock_backend.content_cache = None
         mock_metadata = MagicMock()
         mock_metadata.list = MagicMock(return_value=[])
 
         nx = NexusFS(
-            backend=mock_backend,
             metadata_store=mock_metadata,
             parsing=ParseConfig(auto_parse=False),
         )
 
         mock_svc = MagicMock()
         ws = WiredServices(rebac_service=mock_svc)
-        nx._bind_wired_services(ws)
+        bind_wired_services(nx, ws)
         assert nx.rebac_service is mock_svc

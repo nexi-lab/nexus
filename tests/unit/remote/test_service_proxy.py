@@ -128,47 +128,46 @@ class TestBootRemoteServices:
 
     def test_wires_all_service_slots(self):
         """_boot_remote_services fills all wired service slots with proxy."""
-        from unittest.mock import MagicMock
+        from unittest.mock import MagicMock, patch
 
         from nexus.factory._remote import _WIRED_FIELDS, _boot_remote_services
         from nexus.remote.service_proxy import RemoteServiceProxy
 
-        # Create a mock NexusFS with _bind_wired_services
         nfs = MagicMock()
-        nfs._bind_wired_services = MagicMock()
 
         _, call_rpc = _make_recorder()
-        _boot_remote_services(nfs, call_rpc)
+        with patch("nexus.factory.service_routing.bind_wired_services") as mock_bind:
+            _boot_remote_services(nfs, call_rpc)
 
-        # _bind_wired_services was called with a dict covering all fields
-        nfs._bind_wired_services.assert_called_once()
-        wired_dict = nfs._bind_wired_services.call_args[0][0]
-
-        assert isinstance(wired_dict, dict)
-        for field in _WIRED_FIELDS:
-            assert field in wired_dict
-            assert isinstance(wired_dict[field], RemoteServiceProxy)
+            # bind_wired_services was called with nfs and a dict covering all fields
+            mock_bind.assert_called_once()
+            target, wired_dict = mock_bind.call_args[0]
+            assert target is nfs
+            assert isinstance(wired_dict, dict)
+            for field in _WIRED_FIELDS:
+                assert field in wired_dict
+                assert isinstance(wired_dict[field], RemoteServiceProxy)
 
         # version_service also set
         assert isinstance(nfs.version_service, RemoteServiceProxy)
 
     def test_all_slots_are_same_proxy_instance(self):
         """All slots share one proxy instance (universal pass-through)."""
-        from unittest.mock import MagicMock
+        from unittest.mock import MagicMock, patch
 
         from nexus.factory._remote import _boot_remote_services
 
         nfs = MagicMock()
-        nfs._bind_wired_services = MagicMock()
 
         _, call_rpc = _make_recorder()
-        _boot_remote_services(nfs, call_rpc)
+        with patch("nexus.factory.service_routing.bind_wired_services") as mock_bind:
+            _boot_remote_services(nfs, call_rpc)
 
-        wired_dict = nfs._bind_wired_services.call_args[0][0]
-        proxies = list(wired_dict.values())
+            wired_dict = mock_bind.call_args[0][1]
+            proxies = list(wired_dict.values())
 
-        # All values should be the same object
-        assert all(p is proxies[0] for p in proxies)
+            # All values should be the same object
+            assert all(p is proxies[0] for p in proxies)
 
 
 # ---------------------------------------------------------------------------
@@ -180,9 +179,9 @@ class TestServiceMethodsEventEntries:
     """Verify event/locking methods are in the dispatch table."""
 
     def test_event_methods_registered(self):
-        """lock, unlock, extend_lock, wait_for_changes are in _SERVICE_METHODS."""
-        from nexus.core.nexus_fs import NexusFS
+        """lock, unlock, extend_lock, wait_for_changes are in SERVICE_METHODS."""
+        from nexus.factory.service_routing import SERVICE_METHODS
 
         for method in ("lock", "unlock", "extend_lock", "wait_for_changes"):
-            assert method in NexusFS._SERVICE_METHODS, f"{method} missing from _SERVICE_METHODS"
-            assert NexusFS._SERVICE_METHODS[method] == "events_service"
+            assert method in SERVICE_METHODS, f"{method} missing from SERVICE_METHODS"
+            assert SERVICE_METHODS[method] == "events_service"

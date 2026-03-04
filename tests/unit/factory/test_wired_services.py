@@ -1,4 +1,4 @@
-"""Tests for WiredServices dataclass and _boot_wired_services typing (Issue #2133)."""
+"""Tests for WiredServices dataclass and bind_wired_services (Issue #2133, #1381)."""
 
 import dataclasses
 from typing import Any
@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from nexus.core.config import WiredServices
+from nexus.factory.service_routing import bind_wired_services
 
 
 class TestWiredServicesDataclass:
@@ -40,8 +41,8 @@ class TestWiredServicesDataclass:
         assert len(dataclasses.fields(WiredServices)) == 22
 
 
-class TestNexusFSBindWiredServices:
-    """Test NexusFS._bind_wired_services accepts both WiredServices and dict."""
+class TestBindWiredServices:
+    """Test bind_wired_services accepts both WiredServices and dict."""
 
     @pytest.fixture()
     def nx(self) -> Any:
@@ -62,14 +63,14 @@ class TestNexusFSBindWiredServices:
     def test_bind_wired_services_dataclass(self, nx: Any) -> None:
         mock_svc = MagicMock()
         ws = WiredServices(rebac_service=mock_svc, mount_service=mock_svc)
-        nx._bind_wired_services(ws)
+        bind_wired_services(nx, ws)
         assert nx.rebac_service is mock_svc
         assert nx.mount_service is mock_svc
         assert nx.mcp_service is None
 
     def test_bind_wired_services_dict(self, nx: Any) -> None:
         mock_svc = MagicMock()
-        nx._bind_wired_services({"rebac_service": mock_svc, "mount_service": mock_svc})
+        bind_wired_services(nx, {"rebac_service": mock_svc, "mount_service": mock_svc})
         assert nx.rebac_service is mock_svc
         assert nx.mount_service is mock_svc
         assert nx.mcp_service is None

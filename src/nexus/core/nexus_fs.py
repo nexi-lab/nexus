@@ -28,7 +28,6 @@ from nexus.core.config import (
     ParseConfig,
     PermissionConfig,
     SystemServices,
-    WiredServices,
 )
 from nexus.core.file_events import FileEvent, FileEventType
 from nexus.core.hash_fast import hash_content
@@ -239,58 +238,8 @@ class NexusFS(  # type: ignore[misc]
 
         self._dispatch: KernelDispatch = KernelDispatch()
 
-    def _bind_wired_services(self, wired: WiredServices | dict[str, Any]) -> None:
-        """Bind wired services from factory two-phase init.
-
-        Args:
-            wired: WiredServices dataclass (from _boot_wired_services).
-                   Also accepts dict for backward compatibility with tests.
-
-        Issue #2133: Accepts WiredServices frozen dataclass.
-        """
-        if isinstance(wired, dict):
-            # Backward compat for tests that pass a dict
-            self.rebac_service = wired.get("rebac_service")
-            self.mount_service = wired.get("mount_service")
-            self._gateway = wired.get("gateway")
-            self._mount_core_service = wired.get("mount_core_service")
-            self._sync_service = wired.get("sync_service")
-            self._sync_job_service = wired.get("sync_job_service")
-            self._mount_persist_service = wired.get("mount_persist_service")
-            self.mcp_service = wired.get("mcp_service")
-            self.llm_service = wired.get("llm_service")
-            self.oauth_service = wired.get("oauth_service")
-            self.search_service = wired.get("search_service")
-            self.share_link_service = wired.get("share_link_service")
-            self.events_service = wired.get("events_service")
-            self._workspace_rpc_service = wired.get("workspace_rpc_service")
-            self._agent_rpc_service = wired.get("agent_rpc_service")
-            self._user_provisioning_service = wired.get("user_provisioning_service")
-            self._sandbox_rpc_service = wired.get("sandbox_rpc_service")
-            self._metadata_export_service = wired.get("metadata_export_service")
-            self._descendant_checker = wired.get("descendant_checker")
-            self._memory_provider = wired.get("memory_provider")
-            return
-        self.rebac_service = wired.rebac_service
-        self.mount_service = wired.mount_service
-        self._gateway = wired.gateway
-        self._mount_core_service = wired.mount_core_service
-        self._sync_service = wired.sync_service
-        self._sync_job_service = wired.sync_job_service
-        self._mount_persist_service = wired.mount_persist_service
-        self.mcp_service = wired.mcp_service
-        self.llm_service = wired.llm_service
-        self.oauth_service = wired.oauth_service
-        self.search_service = wired.search_service
-        self.share_link_service = wired.share_link_service
-        self.events_service = wired.events_service
-        self._workspace_rpc_service = wired.workspace_rpc_service
-        self._agent_rpc_service = wired.agent_rpc_service
-        self._user_provisioning_service = wired.user_provisioning_service
-        self._sandbox_rpc_service = wired.sandbox_rpc_service
-        self._metadata_export_service = wired.metadata_export_service
-        self._descendant_checker = wired.descendant_checker
-        self._memory_provider = wired.memory_provider
+    # Services wired by factory via bind_wired_services() (Issue #1381).
+    # See nexus.factory.service_routing.bind_wired_services().
 
     @property
     def _service_extras(self) -> dict[str, Any]:
@@ -4043,168 +3992,18 @@ class NexusFS(  # type: ignore[misc]
     # Generated dynamically below via _rebac_delegate().
     # ------------------------------------------------------------------
 
-    # Service forwarding: __getattr__ routes method calls to services (Issue #2033)
-
-    _SERVICE_METHODS: dict[str, str] = {
-        # WorkspaceRPCService
-        "workspace_snapshot": "_workspace_rpc_service",
-        "workspace_restore": "_workspace_rpc_service",
-        "workspace_log": "_workspace_rpc_service",
-        "workspace_diff": "_workspace_rpc_service",
-        "snapshot_begin": "_workspace_rpc_service",
-        "snapshot_commit": "_workspace_rpc_service",
-        "snapshot_rollback": "_workspace_rpc_service",
-        "load_workspace_memory_config": "_workspace_rpc_service",
-        "register_workspace": "_workspace_rpc_service",
-        "unregister_workspace": "_workspace_rpc_service",
-        "update_workspace": "_workspace_rpc_service",
-        "list_workspaces": "_workspace_rpc_service",
-        "get_workspace_info": "_workspace_rpc_service",
-        "register_memory": "_workspace_rpc_service",
-        "unregister_memory": "_workspace_rpc_service",
-        "list_registered_memories": "_workspace_rpc_service",
-        "get_memory_info": "_workspace_rpc_service",
-        # AgentRPCService
-        "register_agent": "_agent_rpc_service",
-        "update_agent": "_agent_rpc_service",
-        "list_agents": "_agent_rpc_service",
-        "get_agent": "_agent_rpc_service",
-        "delete_agent": "_agent_rpc_service",
-        # UserProvisioningService
-        "provision_user": "_user_provisioning_service",
-        "deprovision_user": "_user_provisioning_service",
-        # SandboxRPCService
-        "sandbox_create": "_sandbox_rpc_service",
-        "sandbox_run": "_sandbox_rpc_service",
-        "sandbox_validate": "_sandbox_rpc_service",
-        "sandbox_pause": "_sandbox_rpc_service",
-        "sandbox_resume": "_sandbox_rpc_service",
-        "sandbox_stop": "_sandbox_rpc_service",
-        "sandbox_list": "_sandbox_rpc_service",
-        "sandbox_status": "_sandbox_rpc_service",
-        "sandbox_get_or_create": "_sandbox_rpc_service",
-        "sandbox_connect": "_sandbox_rpc_service",
-        "sandbox_disconnect": "_sandbox_rpc_service",
-        # MetadataExportService
-        "export_metadata": "_metadata_export_service",
-        "import_metadata": "_metadata_export_service",
-        # MountCoreService
-        "add_mount": "_mount_core_service",
-        "remove_mount": "_mount_core_service",
-        "list_connectors": "_mount_core_service",
-        "list_mounts": "_mount_core_service",
-        "get_mount": "_mount_core_service",
-        "has_mount": "_mount_core_service",
-        # MountPersistService
-        "save_mount": "_mount_persist_service",
-        "list_saved_mounts": "_mount_persist_service",
-        "load_mount": "_mount_persist_service",
-        "delete_saved_mount": "_mount_persist_service",
-        # SearchService (list/glob/grep are thin forwarders, not __getattr__)
-        # asemantic_search* are in _SERVICE_ALIASES (name transformation: a-prefix removed)
-        "glob_batch": "search_service",
-        # MCPService
-        "mcp_list_mounts": "mcp_service",
-        # OAuthCredentialService — routed via _SERVICE_ALIASES (name differs)
-        # LLMService
-        "create_llm_reader": "llm_service",
-        # ReBACService direct methods (no _sync suffix)
-        "set_rebac_option": "rebac_service",
-        "get_rebac_option": "rebac_service",
-        "register_namespace": "rebac_service",
-        # EventsService (Issue #1166)
-        "wait_for_changes": "events_service",
-        "lock": "events_service",
-        "extend_lock": "events_service",
-        "unlock": "events_service",
-    }
-
-    # Special aliases where service method name differs
-    _SERVICE_ALIASES: dict[str, tuple[str, str]] = {
-        # OAuthCredentialService: RPC name → brick method name
-        "oauth_list_providers": ("oauth_service", "list_providers"),
-        "oauth_get_auth_url": ("oauth_service", "get_auth_url"),
-        "oauth_exchange_code": ("oauth_service", "exchange_code"),
-        "oauth_list_credentials": ("oauth_service", "list_credentials"),
-        "oauth_revoke_credential": ("oauth_service", "revoke_credential"),
-        "oauth_test_credential": ("oauth_service", "test_credential"),
-        "list_memories": ("_workspace_rpc_service", "list_registered_memories"),
-        "sandbox_available": ("_sandbox_rpc_service", "sandbox_available"),
-        "get_sync_job": ("_sync_job_service", "get_job"),
-        "list_sync_jobs": ("_sync_job_service", "list_jobs"),
-        "load_all_saved_mounts": ("_mount_persist_service", "load_all_mounts"),
-        # Dir visibility cache: NexusFS method names → cache method names
-        "get_dir_visibility_cache_metrics": ("_dir_visibility_cache", "get_metrics"),
-        "clear_dir_visibility_cache": ("_dir_visibility_cache", "clear"),
-        # SearchService async methods: a-prefix removed when calling service
-        "asemantic_search": ("search_service", "semantic_search"),
-        "asemantic_search_index": ("search_service", "semantic_search_index"),
-        "asemantic_search_stats": ("search_service", "semantic_search_stats"),
-        # SyncService / SyncJobService (Issue #2033)
-        "sync_mount": ("_sync_service", "sync_mount_flat"),
-        "sync_mount_async": ("_sync_job_service", "sync_mount_async"),
-        "cancel_sync_job": ("_sync_job_service", "cancel_sync_job"),
-        # VersionService async methods (Issue #2033)
-        "aget_version": ("version_service", "get_version"),
-        "alist_versions": ("version_service", "list_versions"),
-        "arollback": ("version_service", "rollback"),
-        "adiff_versions": ("version_service", "diff_versions"),
-        # ReBACService async methods (Issue #2033)
-        "arebac_create": ("rebac_service", "rebac_create"),
-        "arebac_delete": ("rebac_service", "rebac_delete"),
-        "arebac_check": ("rebac_service", "rebac_check"),
-        "arebac_check_batch": ("rebac_service", "rebac_check_batch"),
-        "arebac_expand": ("rebac_service", "rebac_expand"),
-        "arebac_explain": ("rebac_service", "rebac_explain"),
-        "arebac_list_tuples": ("rebac_service", "rebac_list_tuples"),
-        "aget_namespace": ("rebac_service", "get_namespace"),
-        # ReBACService sync methods with _sync suffix (Issue #2033)
-        "rebac_create": ("rebac_service", "rebac_create_sync"),
-        "rebac_check": ("rebac_service", "rebac_check_sync"),
-        "rebac_check_batch": ("rebac_service", "rebac_check_batch_sync"),
-        "rebac_delete": ("rebac_service", "rebac_delete_sync"),
-        "rebac_list_tuples": ("rebac_service", "rebac_list_tuples_sync"),
-        "rebac_expand": ("rebac_service", "rebac_expand_sync"),
-        "rebac_explain": ("rebac_service", "rebac_explain_sync"),
-        "share_with_user": ("rebac_service", "share_with_user_sync"),
-        "share_with_group": ("rebac_service", "share_with_group_sync"),
-        "grant_consent": ("rebac_service", "grant_consent_sync"),
-        "revoke_consent": ("rebac_service", "revoke_consent_sync"),
-        "make_public": ("rebac_service", "make_public_sync"),
-        "make_private": ("rebac_service", "make_private_sync"),
-        "apply_dynamic_viewer_filter": ("rebac_service", "apply_dynamic_viewer_filter_sync"),
-        "list_outgoing_shares": ("rebac_service", "list_outgoing_shares_sync"),
-        "list_incoming_shares": ("rebac_service", "list_incoming_shares_sync"),
-        "get_dynamic_viewer_config": ("rebac_service", "get_dynamic_viewer_config_sync"),
-        "namespace_create": ("rebac_service", "namespace_create_sync"),
-        "namespace_delete": ("rebac_service", "namespace_delete_sync"),
-        "namespace_list": ("rebac_service", "namespace_list_sync"),
-        "get_namespace": ("rebac_service", "get_namespace_sync"),
-        # ReBACService direct methods (no _sync suffix)
-        "rebac_expand_with_privacy": ("rebac_service", "rebac_expand_with_privacy_sync"),
-    }
+    # Service forwarding: __getattr__ delegates to factory routing (Issue #1381)
 
     def __getattr__(self, name: str) -> Any:
-        """Forward extracted facade methods to their service objects.
+        """Forward service method calls via factory routing tables.
 
-        This enables callers to continue using nx.method_name() after
-        facade methods were removed from NexusFS (Issue #2033).
+        Routing tables live in nexus.factory.service_routing (Issue #1381).
         """
-        # Check aliases first (method name differs on service)
-        alias = NexusFS._SERVICE_ALIASES.get(name)
-        if alias is not None:
-            svc_attr, svc_method = alias
-            svc = self.__dict__.get(svc_attr)
-            if svc is not None:
-                return getattr(svc, svc_method)
+        from nexus.factory.service_routing import resolve_service_attr
 
-        # Standard forwarding (same method name on service)
-        svc_attr_std = NexusFS._SERVICE_METHODS.get(name)
-        if svc_attr_std is not None:
-            svc = self.__dict__.get(svc_attr_std)
-            if svc is not None:
-                return getattr(svc, name)
-
+        result = resolve_service_attr(self, name)
+        if result is not None:
+            return result
         raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
 
     def _grant_mount_owner_permission(self, mount_point: str, context: Any | None) -> None:
@@ -4290,45 +4089,7 @@ class NexusFS(  # type: ignore[misc]
             return [{"path": e.path, "size": e.size, "etag": e.etag} for e in entries]
         return [e.path for e in entries]
 
-    def glob(self, pattern: str, path: str = "/", context: Any = None) -> builtins.list[str]:
-        return self.search_service.glob(pattern=pattern, path=path, context=context)
-
-    def grep(
-        self,
-        pattern: str,
-        path: str = "/",
-        file_pattern: str | None = None,
-        ignore_case: bool = False,
-        max_results: int = 100,
-        search_mode: str = "auto",
-        context: Any = None,
-    ) -> builtins.list[dict[str, Any]]:
-        return self.search_service.grep(
-            pattern=pattern,
-            path=path,
-            file_pattern=file_pattern,
-            ignore_case=ignore_case,
-            max_results=max_results,
-            search_mode=search_mode,
-            context=context,
-        )
-
-    @staticmethod
-    def _run_async(coro: Any) -> Any:
-        """Run async coroutine safely, handling both running and non-running event loops.
-
-        Uses the unified sync_bridge to avoid the ThreadPoolExecutor + asyncio.run()
-        anti-pattern (Issue #1300).
-
-        Args:
-            coro: Coroutine to run
-
-        Returns:
-            Result of the coroutine
-        """
-        from nexus.lib.sync_bridge import run_sync
-
-        return run_sync(coro)
+    # _run_async: replaced by direct run_sync() calls (Issue #1381)
 
     @rpc_expose(description="Backfill sparse directory index for fast listings", admin_only=True)
     def backfill_directory_index(
@@ -4359,24 +4120,28 @@ class NexusFS(  # type: ignore[misc]
         self, path: str, version: int, context: OperationContext | None = None
     ) -> bytes:
         """Get a specific version of a file."""
-        return cast(
-            bytes, NexusFS._run_async(self.version_service.get_version(path, version, context))
-        )
+        from nexus.lib.sync_bridge import run_sync
+
+        return cast(bytes, run_sync(self.version_service.get_version(path, version, context)))
 
     @rpc_expose(description="List file versions")
     def list_versions(
         self, path: str, context: OperationContext | None = None
     ) -> builtins.list[dict[str, Any]]:
         """List all versions of a file."""
+        from nexus.lib.sync_bridge import run_sync
+
         return cast(
             builtins.list[dict[str, Any]],
-            NexusFS._run_async(self.version_service.list_versions(path, context)),
+            run_sync(self.version_service.list_versions(path, context)),
         )
 
     @rpc_expose(description="Rollback file to previous version")
     def rollback(self, path: str, version: int, context: OperationContext | None = None) -> None:
         """Rollback file to a previous version."""
-        cast(None, NexusFS._run_async(self.version_service.rollback(path, version, context)))
+        from nexus.lib.sync_bridge import run_sync
+
+        cast(None, run_sync(self.version_service.rollback(path, version, context)))
 
     @rpc_expose(description="Compare file versions")
     def diff_versions(
@@ -4388,9 +4153,11 @@ class NexusFS(  # type: ignore[misc]
         context: OperationContext | None = None,
     ) -> dict[str, Any] | str:
         """Compare two versions of a file."""
+        from nexus.lib.sync_bridge import run_sync
+
         return cast(
             dict[str, Any] | str,
-            NexusFS._run_async(self.version_service.diff_versions(path, v1, v2, mode, context)),
+            run_sync(self.version_service.diff_versions(path, v1, v2, mode, context)),
         )
 
     def _get_subject_from_context(self, context: Any) -> tuple[str, str] | None:
@@ -4399,7 +4166,7 @@ class NexusFS(  # type: ignore[misc]
 
         return get_subject_from_context(context)
 
-    # sync_mount, sync_mount_async, cancel_sync_job → _SERVICE_ALIASES (Issue #2033)
+    # sync_mount, sync_mount_async, cancel_sync_job → SERVICE_ALIASES (Issue #2033)
     async def ainitialize_semantic_search(
         self,
         embedding_provider: str | None = None,

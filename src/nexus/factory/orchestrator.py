@@ -429,7 +429,9 @@ def create_nexus_fs(
         return name in _resolved_bricks
 
     _wired = _boot_wired_services(nx, kernel_services, system_services, brick_services, _brick_on)
-    nx._bind_wired_services(_wired)
+    from nexus.factory.service_routing import bind_wired_services
+
+    bind_wired_services(nx, _wired)
     _mds = getattr(_wired, "metadata_export_service", None)
     if _mds is not None:
         cast(Any, nx)._metadata_export_service = _mds

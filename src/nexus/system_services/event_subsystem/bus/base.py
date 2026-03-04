@@ -102,6 +102,7 @@ class EventBusBase(ABC):
         zone_id: str,
         path_pattern: str,
         timeout: float = 30.0,
+        since_version: int | None = None,
     ) -> FileEvent | None:
         """Wait for an event matching the path pattern.
 
@@ -109,6 +110,7 @@ class EventBusBase(ABC):
             zone_id: Zone ID to subscribe to
             path_pattern: Path pattern to match
             timeout: Maximum time to wait in seconds
+            since_version: If set, skip events with version <= this value
 
         Returns:
             FileEvent if matched, None on timeout

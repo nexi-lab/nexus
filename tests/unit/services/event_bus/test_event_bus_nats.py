@@ -656,7 +656,7 @@ class TestNatsEventBusWaitForEvent:
         assert result.path == "/inbox/test.txt"
 
     @pytest.mark.asyncio
-    async def test_wait_for_event_respects_since_revision(self, mock_nats_connect, make_bus):
+    async def test_wait_for_event_respects_since_version(self, mock_nats_connect, make_bus):
         _, _, js = mock_nats_connect
         bus = make_bus()
         await bus.start()
@@ -665,13 +665,13 @@ class TestNatsEventBusWaitForEvent:
             type=FileEventType.FILE_WRITE,
             path="/inbox/test.txt",
             zone_id="z1",
-            revision=5,
+            version=5,
         )
         new_event = FileEvent(
             type=FileEventType.FILE_WRITE,
             path="/inbox/test.txt",
             zone_id="z1",
-            revision=10,
+            version=10,
         )
 
         mock_sub = AsyncMock()
@@ -683,10 +683,10 @@ class TestNatsEventBusWaitForEvent:
         mock_sub.unsubscribe = AsyncMock()
         js.subscribe = AsyncMock(return_value=mock_sub)
 
-        result = await bus.wait_for_event("z1", "/inbox/", timeout=5.0, since_revision=7)
+        result = await bus.wait_for_event("z1", "/inbox/", timeout=5.0, since_version=7)
 
         assert result is not None
-        assert result.revision == 10
+        assert result.version == 10
 
     @pytest.mark.asyncio
     async def test_wait_for_event_requires_start(self, make_bus):

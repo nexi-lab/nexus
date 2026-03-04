@@ -54,6 +54,7 @@ async def agent_loop(
     ctx: OperationContext,
     *,
     on_event: Callable[[AgentEvent], Awaitable[None]] | None = None,
+    on_checkpoint: Callable[[list[Message]], Awaitable[None]] | None = None,
     cwd: str | None = None,
     sandbox_id: str | None = None,
 ) -> list[Message]:
@@ -66,6 +67,8 @@ async def agent_loop(
         config: Process config with limits (max_turns, etc.).
         ctx: OperationContext for VFS permission checks.
         on_event: Optional async callback for streaming events.
+        on_checkpoint: Optional async callback to save messages after each tool
+            dispatch round. Enables crash recovery mid-conversation.
         cwd: Agent's current working directory for path resolution.
         sandbox_id: Sandbox ID for bash/python tool execution.
 
@@ -126,10 +129,15 @@ async def agent_loop(
                 messages.append(
                     Message(
                         role=MessageRole.TOOL,
+                        name=tc.function.name,
                         content=result,
                         tool_call_id=tc.id,
                     )
                 )
+
+            # Checkpoint after each tool dispatch round for crash recovery
+            if on_checkpoint:
+                await on_checkpoint(messages)
 
             turn += 1
             continue

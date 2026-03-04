@@ -263,6 +263,9 @@ class ProcessManager:
         async def _on_event(event: AgentEvent) -> None:
             await queue.put(event)
 
+        async def _on_checkpoint(messages: list[Message]) -> None:
+            await self._session_store.save(pid, messages, ctx, cwd=agent_cwd)
+
         async def _run_loop() -> None:
             try:
                 result_messages = await agent_loop(
@@ -272,8 +275,10 @@ class ProcessManager:
                     config=config,
                     ctx=ctx,
                     on_event=_on_event,
+                    on_checkpoint=_on_checkpoint,
                     cwd=agent_cwd,
                 )
+                # Final save (captures the last assistant message / Completed)
                 await self._session_store.save(pid, result_messages, ctx, cwd=agent_cwd)
             except Exception as exc:
                 error_msg = f"Agent loop failed for {pid}: {exc}"

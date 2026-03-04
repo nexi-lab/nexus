@@ -453,9 +453,9 @@ class LiteLLMProvider(LLMProvider):
         elif self.config.native_tool_calling is False:
             self._function_calling_active = False
         else:
-            self._function_calling_active = litellm.supports_function_calling(
-                model=self.config.model
-            )
+            # True = force on — caller explicitly opts in (e.g. custom
+            # OpenAI-compatible endpoints not in litellm's registry)
+            self._function_calling_active = True
 
         # Configure vision
         self._vision_supported = bool(

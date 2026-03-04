@@ -464,7 +464,7 @@ class ReBACPermissionCache:
                 self._revision_cache[effective_zone] = (revision, current_time)
                 return revision // self._revision_quantization_window
             except Exception as e:  # fail-safe: returns 0 → shared bucket (still functional)
-                logger.warning(f"Failed to fetch revision for {effective_zone}: {e}")
+                logger.warning("Failed to fetch revision for %s: %s", effective_zone, e)
 
         return 0  # Fallback: all entries share same bucket (still functional)
 
@@ -495,7 +495,7 @@ class ReBACPermissionCache:
                 self._revision_cache[effective_zone] = (revision, current_time)
                 return revision
             except Exception as e:  # fail-safe: returns 0 fallback
-                logger.warning(f"Failed to fetch revision for {effective_zone}: {e}")
+                logger.warning("Failed to fetch revision for %s: %s", effective_zone, e)
 
         return 0  # Fallback
 
@@ -834,7 +834,7 @@ class ReBACPermissionCache:
             if self._enable_metrics:
                 with self._lock:
                     self._stampede_timeouts += 1
-            logger.warning(f"Stampede wait timeout for key: {key[:50]}...")
+            logger.warning("Stampede wait timeout for key: %s...", key[:50])
             return None
 
         # Computation finished, get result from cache

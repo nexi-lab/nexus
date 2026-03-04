@@ -118,8 +118,12 @@ class AsyncPermissionEnforcer:
         subject = context.get_subject()
 
         logger.debug(
-            f"[ASYNC-PERM] Checking: subject={subject}, permission={permission_name}, "
-            f"object=({object_type}, {path}), zone={zone_id}"
+            "[ASYNC-PERM] Checking: subject=%s, permission=%s, object=(%s, %s), zone=%s",
+            subject,
+            permission_name,
+            object_type,
+            path,
+            zone_id,
         )
 
         start_time = time.perf_counter()
@@ -134,7 +138,7 @@ class AsyncPermissionEnforcer:
 
         if result:
             elapsed = (time.perf_counter() - start_time) * 1000
-            logger.debug(f"[ASYNC-PERM] Direct check passed ({elapsed:.1f}ms)")
+            logger.debug("[ASYNC-PERM] Direct check passed (%.1fms)", elapsed)
             return True
 
         # 2. Check parent directories for inherited permissions
@@ -149,7 +153,7 @@ class AsyncPermissionEnforcer:
                 break
 
             checked_parents.append(parent_path)
-            logger.debug(f"[ASYNC-PERM] Checking parent: {parent_path}")
+            logger.debug("[ASYNC-PERM] Checking parent: %s", parent_path)
 
             parent_result = await self.rebac_manager.rebac_check(
                 subject=subject,
@@ -160,7 +164,7 @@ class AsyncPermissionEnforcer:
 
             if parent_result:
                 elapsed = (time.perf_counter() - start_time) * 1000
-                logger.debug(f"[ASYNC-PERM] Parent check passed: {parent_path} ({elapsed:.1f}ms)")
+                logger.debug("[ASYNC-PERM] Parent check passed: %s (%.1fms)", parent_path, elapsed)
                 return True
 
             current_path = parent_path
@@ -169,7 +173,7 @@ class AsyncPermissionEnforcer:
         if context.agent_id:
             parent = await self._get_agent_owner(context.agent_id, zone_id)
             if parent and parent[0] == "user":
-                logger.debug(f"[ASYNC-PERM] Checking agent owner: {parent}")
+                logger.debug("[ASYNC-PERM] Checking agent owner: %s", parent)
                 user_result = await self.rebac_manager.rebac_check(
                     subject=("user", parent[1]),
                     permission=permission_name,
@@ -178,11 +182,11 @@ class AsyncPermissionEnforcer:
                 )
                 if user_result:
                     elapsed = (time.perf_counter() - start_time) * 1000
-                    logger.debug(f"[ASYNC-PERM] Agent owner check passed ({elapsed:.1f}ms)")
+                    logger.debug("[ASYNC-PERM] Agent owner check passed (%.1fms)", elapsed)
                     return True
 
         elapsed = (time.perf_counter() - start_time) * 1000
-        logger.debug(f"[ASYNC-PERM] Permission denied ({elapsed:.1f}ms)")
+        logger.debug("[ASYNC-PERM] Permission denied (%.1fms)", elapsed)
         return False
 
     async def filter_paths_by_permission(
@@ -241,7 +245,10 @@ class AsyncPermissionEnforcer:
                 filtered.append(path)
 
         logger.info(
-            f"[ASYNC-PERM] Bulk filter: {len(paths)} paths -> {len(filtered)} allowed ({elapsed:.1f}ms)"
+            "[ASYNC-PERM] Bulk filter: %d paths -> %d allowed (%.1fms)",
+            len(paths),
+            len(filtered),
+            elapsed,
         )
 
         return filtered

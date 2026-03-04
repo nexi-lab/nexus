@@ -122,7 +122,7 @@ def check_permissions_bulk_rust(
 
         return result  # type: ignore[no-any-return]  # allowed
     except (RuntimeError, ValueError) as e:
-        logger.error(f"Rust permission check failed: {e}", exc_info=True)
+        logger.error("Rust permission check failed: %s", e, exc_info=True)
         raise
 
 
@@ -167,15 +167,17 @@ def check_permissions_bulk_with_fallback(
             result = check_permissions_bulk_rust(checks, tuples, namespace_configs, tuple_version)
             elapsed = time.perf_counter() - start
             logger.info(
-                f"[RUST-INNER] Pure Rust computation: {elapsed * 1000:.1f}ms for {len(checks)} checks"
+                "[RUST-INNER] Pure Rust computation: %.1fms for %d checks",
+                elapsed * 1000,
+                len(checks),
             )
             return result
         except (RuntimeError, ValueError) as e:
-            logger.warning(f"Rust permission check failed, falling back to Python: {e}")
+            logger.warning("Rust permission check failed, falling back to Python: %s", e)
             # Fall through to Python implementation
 
     # Fallback: compute in Python
-    logger.debug(f"Computing {len(checks)} permissions in Python")
+    logger.debug("Computing %d permissions in Python", len(checks))
     return _check_permissions_bulk_python(checks, tuples, namespace_configs)
 
 
@@ -357,12 +359,18 @@ def check_permission_single_rust(
         )
         elapsed = time.perf_counter() - start
         logger.debug(
-            f"[RUST-SINGLE] Permission check: {subject_type}:{subject_id} "
-            f"{permission} {object_type}:{object_id} = {result} ({elapsed * 1000:.2f}ms)"
+            "[RUST-SINGLE] Permission check: %s:%s %s %s:%s = %s (%.2fms)",
+            subject_type,
+            subject_id,
+            permission,
+            object_type,
+            object_id,
+            result,
+            elapsed * 1000,
         )
         return result
     except (RuntimeError, ValueError) as e:
-        logger.error(f"Rust single permission check failed: {e}", exc_info=True)
+        logger.error("Rust single permission check failed: %s", e, exc_info=True)
         raise
 
 
@@ -408,7 +416,7 @@ def check_permission_single_with_fallback(
                 namespace_configs,
             )
         except (RuntimeError, ValueError) as e:
-            logger.warning(f"Rust single check failed, falling back to Python: {e}")
+            logger.warning("Rust single check failed, falling back to Python: %s", e)
             # Fall through to Python
 
     # Fallback: use Python bulk check with single item
@@ -494,13 +502,17 @@ def expand_subjects_rust(
         )
         elapsed = time.perf_counter() - start
         logger.debug(
-            f"[RUST-EXPAND] Expand {permission} on {object_type}:{object_id} "
-            f"found {len(result)} subjects ({elapsed * 1000:.2f}ms)"
+            "[RUST-EXPAND] Expand %s on %s:%s found %d subjects (%.2fms)",
+            permission,
+            object_type,
+            object_id,
+            len(result),
+            elapsed * 1000,
         )
         # Convert from list of tuples to list of tuples (already correct format)
         return [(t[0], t[1]) for t in result]
     except (RuntimeError, ValueError) as e:
-        logger.error(f"Rust expand_subjects failed: {e}", exc_info=True)
+        logger.error("Rust expand_subjects failed: %s", e, exc_info=True)
         raise
 
 
@@ -539,7 +551,7 @@ def expand_subjects_with_fallback(
                 namespace_configs,
             )
         except (RuntimeError, ValueError) as e:
-            logger.warning(f"Rust expand_subjects failed, falling back to Python: {e}")
+            logger.warning("Rust expand_subjects failed, falling back to Python: %s", e)
             # Fall through to Python
 
     # Fallback: Python implementation
@@ -617,14 +629,19 @@ def list_objects_for_subject_rust(
         )
         elapsed = time.perf_counter() - start
         logger.debug(
-            f"[RUST-LIST-OBJECTS] List {object_type}s with {permission} for "
-            f"{subject_type}:{subject_id} (prefix={path_prefix}) "
-            f"found {len(result)} objects ({elapsed * 1000:.2f}ms)"
+            "[RUST-LIST-OBJECTS] List %ss with %s for %s:%s (prefix=%s) found %d objects (%.2fms)",
+            object_type,
+            permission,
+            subject_type,
+            subject_id,
+            path_prefix,
+            len(result),
+            elapsed * 1000,
         )
         # Convert from list of tuples to list of tuples (already correct format)
         return [(t[0], t[1]) for t in result]
     except (RuntimeError, ValueError) as e:
-        logger.error(f"Rust list_objects_for_subject failed: {e}", exc_info=True)
+        logger.error("Rust list_objects_for_subject failed: %s", e, exc_info=True)
         raise
 
 
@@ -675,7 +692,7 @@ def list_objects_for_subject_with_fallback(
                 offset,
             )
         except (RuntimeError, ValueError) as e:
-            logger.warning(f"Rust list_objects_for_subject failed, falling back to Python: {e}")
+            logger.warning("Rust list_objects_for_subject failed, falling back to Python: %s", e)
             # Fall through to Python
 
     # Fallback: Python implementation

@@ -156,7 +156,7 @@ class PermissionCacheCoordinator:
             logger.debug("[TIGER-BITMAP] pyroaring not available")
             return None
         except Exception as e:
-            logger.warning(f"[TIGER-BITMAP] Bitmap filtering failed: {e}")
+            logger.warning("[TIGER-BITMAP] Bitmap filtering failed: %s", e)
             return None
 
     # =========================================================================
@@ -241,8 +241,9 @@ class PermissionCacheCoordinator:
 
         if allowed:
             logger.info(
-                f"[LEOPARD-INDEX] Allowed {len(allowed)} paths via cached directory grants, "
-                f"{len(remaining)} remaining"
+                "[LEOPARD-INDEX] Allowed %d paths via cached directory grants, %d remaining",
+                len(allowed),
+                len(remaining),
             )
 
         return (allowed, remaining)
@@ -264,8 +265,11 @@ class PermissionCacheCoordinator:
         new_dirs = existing_dirs | dirs
         self._leopard_dir_index[key] = new_dirs
         logger.info(
-            f"[LEOPARD-INDEX] Cached {len(dirs)} accessible directories "
-            f"for {subject_type}:{subject_id} (total: {len(new_dirs)})"
+            "[LEOPARD-INDEX] Cached %d accessible directories for %s:%s (total: %d)",
+            len(dirs),
+            subject_type,
+            subject_id,
+            len(new_dirs),
         )
 
     # =========================================================================

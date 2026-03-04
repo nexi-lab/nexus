@@ -99,13 +99,18 @@ class DirectoryVisibilityCache:
                 if (time.time() - entry.computed_at) < self._ttl:
                     self._hits += 1
                     logger.debug(
-                        f"[DirVisCache] HIT: {subject_type}:{subject_id} -> {dir_path} = {entry.visible} ({entry.reason})"
+                        "[DirVisCache] HIT: %s:%s -> %s = %s (%s)",
+                        subject_type,
+                        subject_id,
+                        dir_path,
+                        entry.visible,
+                        entry.reason,
                     )
                     return entry.visible
                 else:
                     # Expired - remove and return miss
                     del self._cache[key]
-                    logger.debug(f"[DirVisCache] EXPIRED: {key}")
+                    logger.debug("[DirVisCache] EXPIRED: %s", key)
 
             self._misses += 1
             return None
@@ -142,7 +147,12 @@ class DirectoryVisibilityCache:
                 reason=reason,
             )
             logger.debug(
-                f"[DirVisCache] SET: {subject_type}:{subject_id} -> {dir_path} = {visible} ({reason})"
+                "[DirVisCache] SET: %s:%s -> %s = %s (%s)",
+                subject_type,
+                subject_id,
+                dir_path,
+                visible,
+                reason,
             )
 
     def compute_from_tiger_bitmap(
@@ -219,14 +229,16 @@ class DirectoryVisibilityCache:
                         True,
                         f"descendant:{res_path}",
                     )
-                    logger.debug(f"[DirVisCache] BITMAP_COMPUTE: {dir_path} visible via {res_path}")
+                    logger.debug(
+                        "[DirVisCache] BITMAP_COMPUTE: %s visible via %s", dir_path, res_path
+                    )
                     return True
 
         # No descendants found
         self.set_visible(
             zone_id, subject_type, subject_id, dir_path, False, "no_descendants_in_bitmap"
         )
-        logger.debug(f"[DirVisCache] BITMAP_COMPUTE: {dir_path} not visible")
+        logger.debug("[DirVisCache] BITMAP_COMPUTE: %s not visible", dir_path)
         return False
 
     def invalidate(
@@ -293,8 +305,12 @@ class DirectoryVisibilityCache:
 
             if invalidated > 0:
                 logger.debug(
-                    f"[DirVisCache] INVALIDATE: {invalidated} entries "
-                    f"(zone={zone_id}, subject={subject_type}:{subject_id}, path={dir_path})"
+                    "[DirVisCache] INVALIDATE: %d entries (zone=%s, subject=%s:%s, path=%s)",
+                    invalidated,
+                    zone_id,
+                    subject_type,
+                    subject_id,
+                    dir_path,
                 )
 
         return invalidated
@@ -360,7 +376,7 @@ class DirectoryVisibilityCache:
         for key, _ in entries[:to_remove]:
             del self._cache[key]
 
-        logger.debug(f"[DirVisCache] EVICT: removed {to_remove} oldest entries")
+        logger.debug("[DirVisCache] EVICT: removed %d oldest entries", to_remove)
 
     def get_metrics(self) -> dict:
         """Get cache metrics.

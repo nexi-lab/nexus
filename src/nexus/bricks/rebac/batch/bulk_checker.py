@@ -124,14 +124,14 @@ class BulkPermissionChecker:
             Dict mapping each check tuple to its result (True/False)
         """
         bulk_start = time_module.perf_counter()
-        logger.debug(f"rebac_check_bulk: Checking {len(checks)} permissions in batch")
+        logger.debug("rebac_check_bulk: Checking %d permissions in batch", len(checks))
 
         # Log sample of checks for debugging
         if checks and len(checks) <= 10:
-            logger.debug(f"[BULK-DEBUG] All checks: {checks}")
+            logger.debug("[BULK-DEBUG] All checks: %s", checks)
         elif checks:
-            logger.debug(f"[BULK-DEBUG] First 5 checks: {checks[:5]}")
-            logger.debug(f"[BULK-DEBUG] Last 5 checks: {checks[-5:]}")
+            logger.debug("[BULK-DEBUG] First 5 checks: %s", checks[:5])
+            logger.debug("[BULK-DEBUG] Last 5 checks: %s", checks[-5:])
 
         if not checks:
             return {}
@@ -166,7 +166,7 @@ class BulkPermissionChecker:
         if not cache_misses:
             return results
 
-        logger.debug(f"Cache misses: {len(cache_misses)}, fetching tuples in bulk")
+        logger.debug("Cache misses: %d, fetching tuples in bulk", len(cache_misses))
 
         # PHASE 1: Fetch all relevant tuples in bulk
         tuples_graph, _ancestor_paths = self._phase_fetch_tuples(cache_misses, zone_id)
@@ -176,7 +176,8 @@ class BulkPermissionChecker:
         memo_stats = {"hits": 0, "misses": 0, "max_depth": 0}
 
         logger.debug(
-            f"Starting computation for {len(cache_misses)} cache misses with shared memo cache"
+            "Starting computation for %d cache misses with shared memo cache",
+            len(cache_misses),
         )
 
         # Log schema verification for first check
@@ -223,7 +224,9 @@ class BulkPermissionChecker:
         l1_hits = 0
         l1_cache_enabled = self._l1_cache is not None
         logger.debug(
-            f"[BULK-DEBUG] L1 cache enabled: {l1_cache_enabled}, consistency: {consistency}"
+            "[BULK-DEBUG] L1 cache enabled: %s, consistency: %s",
+            l1_cache_enabled,
+            consistency,
         )
 
         cache_misses: list[tuple[tuple[str, str], str, tuple[str, str]]] = []
@@ -234,7 +237,7 @@ class BulkPermissionChecker:
             and consistency == ConsistencyLevel.EVENTUAL
         ):
             l1_cache_stats = self._l1_cache.get_stats()
-            logger.debug(f"[BULK-DEBUG] L1 cache stats before lookup: {l1_cache_stats}")
+            logger.debug("[BULK-DEBUG] L1 cache stats before lookup: %s", l1_cache_stats)
 
             for check in checks:
                 subject, permission, obj = check
@@ -249,7 +252,10 @@ class BulkPermissionChecker:
 
             l1_elapsed = (time_module.perf_counter() - l1_start) * 1000
             logger.debug(
-                f"[BULK-PERF] L1 cache lookup: {l1_hits} hits, {len(cache_misses)} misses in {l1_elapsed:.1f}ms"
+                "[BULK-PERF] L1 cache lookup: %d hits, %d misses in %.1fms",
+                l1_hits,
+                len(cache_misses),
+                l1_elapsed,
             )
 
             if not cache_misses:
@@ -262,7 +268,9 @@ class BulkPermissionChecker:
         else:
             cache_misses = list(checks)
             logger.debug(
-                f"[BULK-DEBUG] Skipping L1 cache (enabled={l1_cache_enabled}, consistency={consistency})"
+                "[BULK-DEBUG] Skipping L1 cache (enabled=%s, consistency=%s)",
+                l1_cache_enabled,
+                consistency,
             )
 
         return cache_misses
@@ -309,7 +317,10 @@ class BulkPermissionChecker:
 
         tiger_elapsed = (time_module.perf_counter() - tiger_start) * 1000
         logger.debug(
-            f"[BULK-PERF] Tiger Cache BULK: {tiger_hits} hits, {len(tiger_remaining)} remaining in {tiger_elapsed:.1f}ms (2 queries)"
+            "[BULK-PERF] Tiger Cache BULK: %d hits, %d remaining in %.1fms (2 queries)",
+            tiger_hits,
+            len(tiger_remaining),
+            tiger_elapsed,
         )
 
         if not tiger_remaining:
@@ -363,8 +374,11 @@ class BulkPermissionChecker:
             all_entities = list(all_subjects | all_objects)
 
             logger.debug(
-                f"[BULK-UNNEST] Fetching tuples for {len(all_entities)} entities in single query "
-                f"(was: {len(all_subjects_list)} subjects + {len(all_objects_list)} objects in batches)"
+                "[BULK-UNNEST] Fetching tuples for %d entities in single query "
+                "(was: %d subjects + %d objects in batches)",
+                len(all_entities),
+                len(all_subjects_list),
+                len(all_objects_list),
             )
 
             fetch_start = time_module.perf_counter()
@@ -372,7 +386,9 @@ class BulkPermissionChecker:
             fetch_duration = (time_module.perf_counter() - fetch_start) * 1000
 
             logger.debug(
-                f"[BULK-UNNEST] Fetched {len(tuples_graph)} tuples in {fetch_duration:.1f}ms"
+                "[BULK-UNNEST] Fetched %d tuples in %.1fms",
+                len(tuples_graph),
+                fetch_duration,
             )
 
             # Cross-zone shares
@@ -382,7 +398,8 @@ class BulkPermissionChecker:
                 )
                 if cross_zone_count > 0:
                     logger.debug(
-                        f"[BULK-UNNEST] Fetched {cross_zone_count} cross-zone tuples in single query"
+                        "[BULK-UNNEST] Fetched %d cross-zone tuples in single query",
+                        cross_zone_count,
                     )
 
                 # Compute parent relationships in memory
@@ -392,11 +409,13 @@ class BulkPermissionChecker:
                     )
                     if computed_parent_count > 0:
                         logger.debug(
-                            f"Computed {computed_parent_count} parent tuples in memory for file hierarchy"
+                            "Computed %d parent tuples in memory for file hierarchy",
+                            computed_parent_count,
                         )
 
             logger.debug(
-                f"Fetched {len(tuples_graph)} tuples in bulk for graph computation (includes parent hierarchy)"
+                "Fetched %d tuples in bulk for graph computation (includes parent hierarchy)",
+                len(tuples_graph),
             )
 
         return tuples_graph, ancestor_paths
@@ -648,7 +667,11 @@ class BulkPermissionChecker:
         if namespace and namespace.has_permission(permission):
             usersets = namespace.get_permission_usersets(permission)
             logger.debug(
-                f"[SCHEMA-VERIFY] Permission '{permission}' on '{obj_type}' expands to {len(usersets)} relations: {usersets}"
+                "[SCHEMA-VERIFY] Permission '%s' on '%s' expands to %d relations: %s",
+                permission,
+                obj_type,
+                len(usersets),
+                usersets,
             )
             logger.debug(
                 "[SCHEMA-VERIFY] Expected: 3 for hybrid schema (viewer, editor, owner) or 9 for flattened"
@@ -691,7 +714,9 @@ class BulkPermissionChecker:
                 sample_type = list(namespace_configs.keys())[0]
                 sample_config = namespace_configs[sample_type]
                 logger.debug(
-                    f"[RUST-DEBUG] Sample namespace config for '{sample_type}': {str(sample_config)[:200]}"
+                    "[RUST-DEBUG] Sample namespace config for '%s': %s",
+                    sample_type,
+                    str(sample_config)[:200],
                 )
 
             import time
@@ -707,7 +732,10 @@ class BulkPermissionChecker:
             rust_elapsed = time.perf_counter() - rust_start
             per_check_us = (rust_elapsed / len(cache_misses)) * 1_000_000
             logger.debug(
-                f"[RUST-TIMING] {len(cache_misses)} checks in {rust_elapsed * 1000:.1f}ms = {per_check_us:.1f}µs/check"
+                "[RUST-TIMING] %d checks in %.1fms = %.1fus/check",
+                len(cache_misses),
+                rust_elapsed * 1000,
+                per_check_us,
             )
 
             # Convert results and cache in L1
@@ -734,7 +762,7 @@ class BulkPermissionChecker:
                     l1_cache_writes += 1
 
             if l1_cache_writes > 0:
-                logger.debug(f"[RUST-PERF] Wrote {l1_cache_writes} results to L1 in-memory cache")
+                logger.debug("[RUST-PERF] Wrote %d results to L1 in-memory cache", l1_cache_writes)
 
             # Write-through to Tiger Cache (Issue #935)
             self._write_through_tiger_cache(
@@ -786,7 +814,7 @@ class BulkPermissionChecker:
                     memo_stats=memo_stats,
                 )
             except (RuntimeError, ValueError, OperationalError) as e:
-                logger.warning(f"Bulk check failed for {check}, falling back: {e}")
+                logger.warning("Bulk check failed for %s, falling back: %s", check, e)
                 result = self._rebac_check_single(
                     subject, permission, obj, zone_id=zone_id, consistency=consistency
                 )
@@ -832,7 +860,7 @@ class BulkPermissionChecker:
                         tiger_updates[group_key].add(resource_int_id)
                         tiger_writes += 1
                 except (KeyError, ValueError) as e:
-                    logger.debug(f"[TIGER] Failed to get int_id for {obj}: {e}")
+                    logger.debug("[TIGER] Failed to get int_id for %s: %s", obj, e)
 
         # Bulk add to Tiger Cache bitmaps (memory)
         for group_key, int_ids in tiger_updates.items():
@@ -862,7 +890,7 @@ class BulkPermissionChecker:
                         zone_id=t,
                     )
                 except (RuntimeError, OperationalError) as e:
-                    logger.debug(f"[TIGER] Background persist failed: {e}")
+                    logger.debug("[TIGER] Background persist failed: %s", e)
 
         threading.Thread(
             target=_persist_updates,
@@ -872,8 +900,10 @@ class BulkPermissionChecker:
 
         if tiger_writes > 0:
             logger.debug(
-                f"[TIGER] Write-through: {tiger_writes} positive results "
-                f"to {len(tiger_updates)} Tiger Cache bitmaps (async persist started)"
+                "[TIGER] Write-through: %d positive results "
+                "to %d Tiger Cache bitmaps (async persist started)",
+                tiger_writes,
+                len(tiger_updates),
             )
 
     def _log_bulk_stats(
@@ -887,21 +917,27 @@ class BulkPermissionChecker:
         total_accesses = memo_stats["hits"] + memo_stats["misses"]
         hit_rate = (memo_stats["hits"] / total_accesses * 100) if total_accesses > 0 else 0
 
-        logger.debug(f"Bulk memo cache stats: {len(bulk_memo_cache)} unique checks stored")
+        logger.debug("Bulk memo cache stats: %d unique checks stored", len(bulk_memo_cache))
         logger.debug(
-            f"Cache performance: {memo_stats['hits']} hits + {memo_stats['misses']} misses = {total_accesses} total accesses"
+            "Cache performance: %d hits + %d misses = %d total accesses",
+            memo_stats["hits"],
+            memo_stats["misses"],
+            total_accesses,
         )
-        logger.debug(f"Cache hit rate: {hit_rate:.1f}% ({memo_stats['hits']}/{total_accesses})")
-        logger.debug(f"Max traversal depth reached: {memo_stats.get('max_depth', 0)}")
+        logger.debug("Cache hit rate: %.1f%% (%d/%d)", hit_rate, memo_stats["hits"], total_accesses)
+        logger.debug("Max traversal depth reached: %d", memo_stats.get("max_depth", 0))
 
         total_elapsed = (time_module.perf_counter() - bulk_start) * 1000
         allowed_count = sum(1 for r in results.values() if r)
         denied_count = len(results) - allowed_count
         logger.debug(
-            f"[BULK-PERF] rebac_check_bulk completed: {len(results)} results "
-            f"({allowed_count} allowed, {denied_count} denied) in {total_elapsed:.1f}ms"
+            "[BULK-PERF] rebac_check_bulk completed: %d results (%d allowed, %d denied) in %.1fms",
+            len(results),
+            allowed_count,
+            denied_count,
+            total_elapsed,
         )
 
         if self._l1_cache is not None:
             l1_stats_after = self._l1_cache.get_stats()
-            logger.debug(f"[BULK-DEBUG] L1 cache stats after: {l1_stats_after}")
+            logger.debug("[BULK-DEBUG] L1 cache stats after: %s", l1_stats_after)

@@ -156,7 +156,7 @@ class PermissionCacheCoordinator:
             logger.debug("[TIGER-BITMAP] pyroaring not available")
             return None
         except Exception as e:  # fail-safe: bitmap filtering is optional optimization
-            logger.warning(f"[TIGER-BITMAP] Bitmap filtering failed: {e}")
+            logger.warning("[TIGER-BITMAP] Bitmap filtering failed: %s", e)
             return None
 
     # =========================================================================

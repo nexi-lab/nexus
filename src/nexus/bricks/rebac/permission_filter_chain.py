@@ -69,7 +69,7 @@ class TigerBitmapStrategy:
             return FilterResult(allowed=[], remaining=remaining)
 
         allowed, still_remaining = result
-        logger.debug(f"[TIGER-BITMAP] {len(allowed)} allowed, {len(still_remaining)} remaining")
+        logger.debug("[TIGER-BITMAP] %d allowed, %d remaining", len(allowed), len(still_remaining))
 
         # Check bitmap completeness — if complete, skip fallback.
         # Only short-circuit when the bitmap found SOME allowed paths.
@@ -77,7 +77,7 @@ class TigerBitmapStrategy:
         # zone-prefixed vs non-prefixed path mismatch) — fall through to
         # the full ReBAC check to avoid false denials.
         if still_remaining and allowed and ctx.cache.is_bitmap_complete(ctx.subject, ctx.zone_id):
-            logger.info(f"[BITMAP-COMPLETE] Skipped {len(still_remaining)} fallback checks")
+            logger.info("[BITMAP-COMPLETE] Skipped %d fallback checks", len(still_remaining))
             return FilterResult(allowed=allowed, remaining=[], short_circuit=True)
 
         return FilterResult(allowed=allowed, remaining=still_remaining)
@@ -153,8 +153,9 @@ class HierarchyPreFilterStrategy:
         }
 
         logger.info(
-            f"[HIERARCHY-PREFILTER] {len(accessible_parents)}/{len(unique_parents)} "
-            f"parents accessible"
+            "[HIERARCHY-PREFILTER] %d/%d parents accessible",
+            len(accessible_parents),
+            len(unique_parents),
         )
 
         # Store accessible directories in Leopard index
@@ -169,8 +170,11 @@ class HierarchyPreFilterStrategy:
 
             skipped = len(remaining) - len(kept)
             logger.info(
-                f"[HIERARCHY-PREFILTER] Reduced fallback: {len(remaining)} -> "
-                f"{len(kept)} paths (skipped {skipped} under denied parents)"
+                "[HIERARCHY-PREFILTER] Reduced fallback: %d -> "
+                "%d paths (skipped %d under denied parents)",
+                len(remaining),
+                len(kept),
+                skipped,
             )
 
             if not accessible_parents and len(remaining) > 100:
@@ -214,9 +218,11 @@ class HierarchyPreFilterStrategy:
                     filtered_parents.append(parent)
 
             logger.info(
-                f"[HIERARCHY-TOPLEVEL] {len(denied_top_level)}/{len(top_level_dirs)} "
-                f"top-level dirs denied, reduced parents: "
-                f"{len(unique_parents)} -> {len(filtered_parents)}"
+                "[HIERARCHY-TOPLEVEL] %d/%d top-level dirs denied, reduced parents: %d -> %d",
+                len(denied_top_level),
+                len(top_level_dirs),
+                len(unique_parents),
+                len(filtered_parents),
             )
             return filtered_parents
 
@@ -246,7 +252,7 @@ class ZonePreFilterStrategy:
             kept.append(path)
 
         if skipped:
-            logger.debug(f"[ZONE-PREFILTER] Skipped {skipped} paths not in zone {ctx.zone_id}")
+            logger.debug("[ZONE-PREFILTER] Skipped %d paths not in zone %s", skipped, ctx.zone_id)
 
         return FilterResult(allowed=[], remaining=kept)
 
@@ -287,14 +293,14 @@ class BulkReBACStrategy:
         try:
             results = ctx.rebac_manager.rebac_check_bulk(checks, zone_id=ctx.zone_id)
         except (OSError, ConnectionError, TimeoutError) as e:
-            logger.warning(f"[BULK-REBAC] Bulk check failed, retrying once: {e}")
+            logger.warning("[BULK-REBAC] Bulk check failed, retrying once: %s", e)
             try:
                 results = ctx.rebac_manager.rebac_check_bulk(checks, zone_id=ctx.zone_id)
             except Exception as e2:  # fail-safe: second failure → deny all (fail-closed)
-                logger.error(f"[BULK-REBAC] Bulk check failed twice: {e2}")
+                logger.error("[BULK-REBAC] Bulk check failed twice: %s", e2)
                 return FilterResult(allowed=[], remaining=[], short_circuit=True)
         except Exception as e:  # fail-safe: non-retryable error → deny all (fail-closed)
-            logger.error(f"[BULK-REBAC] Bulk check failed (non-retryable): {e}")
+            logger.error("[BULK-REBAC] Bulk check failed (non-retryable): %s", e)
             return FilterResult(allowed=[], remaining=[], short_circuit=True)
 
         allowed = [

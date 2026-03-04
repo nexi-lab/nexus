@@ -78,7 +78,7 @@ class TigerCacheRenameHook:
                         resource_int_id=int_id,
                     )
                 except Exception as e:
-                    logger.warning(f"[LEOPARD] Failed to remove from bitmap: {e}")
+                    logger.warning("[LEOPARD] Failed to remove from bitmap: %s", e)
 
             for grant in new_grants:
                 key = grant_key(grant)
@@ -104,7 +104,7 @@ class TigerCacheRenameHook:
                         zone_id,
                     )
                 except Exception as e:
-                    logger.warning(f"[LEOPARD] Failed to add to bitmap: {e}")
+                    logger.warning("[LEOPARD] Failed to add to bitmap: %s", e)
 
     def _get_directory_files(
         self, old_dir: str, new_dir: str, zone_id: str
@@ -127,5 +127,5 @@ class TigerCacheRenameHook:
                     result.append((old_file_path, new_file_path))
             return result
         except Exception as e:
-            logger.warning(f"[LEOPARD] Failed to list directory files: {e}")
+            logger.warning("[LEOPARD] Failed to list directory files: %s", e)
             return []

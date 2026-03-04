@@ -112,7 +112,7 @@ class DirectoryGrantExpander:
                     )
                 return grants
         except Exception as e:
-            logger.error(f"[LEOPARD-WORKER] Failed to get pending grants: {e}")
+            logger.error("[LEOPARD-WORKER] Failed to get pending grants: %s", e)
             return []
 
     def _mark_in_progress(self, grant_id: int, total_count: int) -> bool:
@@ -143,7 +143,7 @@ class DirectoryGrantExpander:
                 result = conn.execute(stmt)
                 return result.rowcount > 0
         except Exception as e:
-            logger.error(f"[LEOPARD-WORKER] Failed to mark in_progress: {e}")
+            logger.error("[LEOPARD-WORKER] Failed to mark in_progress: %s", e)
             return False
 
     def _update_progress(self, grant_id: int, expanded_count: int) -> bool:
@@ -173,7 +173,7 @@ class DirectoryGrantExpander:
                 result = conn.execute(stmt)
                 return result.rowcount > 0
         except Exception as e:
-            logger.error(f"[LEOPARD-WORKER] Failed to update progress: {e}")
+            logger.error("[LEOPARD-WORKER] Failed to update progress: %s", e)
             return False
 
     def _mark_completed(self, grant_id: int, expanded_count: int) -> bool:
@@ -205,7 +205,7 @@ class DirectoryGrantExpander:
                 result = conn.execute(stmt)
                 return result.rowcount > 0
         except Exception as e:
-            logger.error(f"[LEOPARD-WORKER] Failed to mark completed: {e}")
+            logger.error("[LEOPARD-WORKER] Failed to mark completed: %s", e)
             return False
 
     def _mark_failed(self, grant_id: int, error_message: str) -> bool:
@@ -236,7 +236,7 @@ class DirectoryGrantExpander:
                 result = conn.execute(stmt)
                 return result.rowcount > 0
         except Exception as e:
-            logger.error(f"[LEOPARD-WORKER] Failed to mark failed: {e}")
+            logger.error("[LEOPARD-WORKER] Failed to mark failed: %s", e)
             return False
 
     def _get_directory_descendants(
@@ -265,7 +265,7 @@ class DirectoryGrantExpander:
             )
             return [f.path for f in files if f.path]
         except Exception as e:
-            logger.error(f"[LEOPARD-WORKER] Failed to list directory: {e}")
+            logger.error("[LEOPARD-WORKER] Failed to list directory: %s", e)
             return []
 
     def expand_grant(self, grant: dict) -> tuple[int, bool]:
@@ -287,8 +287,12 @@ class DirectoryGrantExpander:
         already_expanded = grant.get("expanded_count", 0)
 
         logger.info(
-            f"[LEOPARD-WORKER] Starting expansion for grant {grant_id}: "
-            f"{directory_path} -> {subject_type}:{subject_id} ({permission})"
+            "[LEOPARD-WORKER] Starting expansion for grant %s: %s -> %s:%s (%s)",
+            grant_id,
+            directory_path,
+            subject_type,
+            subject_id,
+            permission,
         )
 
         try:
@@ -298,7 +302,7 @@ class DirectoryGrantExpander:
             if not descendants:
                 # No files - mark as completed
                 self._mark_completed(grant_id, 0)
-                logger.info(f"[LEOPARD-WORKER] Grant {grant_id}: no files to expand")
+                logger.info("[LEOPARD-WORKER] Grant %s: no files to expand", grant_id)
                 return 0, True
 
             total_count = len(descendants)
@@ -306,14 +310,17 @@ class DirectoryGrantExpander:
             # Mark as in_progress with total count
             if not self._mark_in_progress(grant_id, total_count):
                 # Someone else is processing this grant
-                logger.info(f"[LEOPARD-WORKER] Grant {grant_id} already being processed")
+                logger.info("[LEOPARD-WORKER] Grant %s already being processed", grant_id)
                 return 0, False
 
             # Skip already expanded files (for resume)
             if already_expanded > 0:
                 descendants = descendants[already_expanded:]
                 logger.info(
-                    f"[LEOPARD-WORKER] Grant {grant_id}: resuming from {already_expanded}/{total_count}"
+                    "[LEOPARD-WORKER] Grant %s: resuming from %d/%d",
+                    grant_id,
+                    already_expanded,
+                    total_count,
                 )
 
             # Process in batches
@@ -338,20 +345,25 @@ class DirectoryGrantExpander:
                 self._update_progress(grant_id, expanded_count)
 
                 logger.debug(
-                    f"[LEOPARD-WORKER] Grant {grant_id}: {expanded_count}/{total_count} "
-                    f"({100 * expanded_count / total_count:.1f}%)"
+                    "[LEOPARD-WORKER] Grant %s: %d/%d (%.1f%%)",
+                    grant_id,
+                    expanded_count,
+                    total_count,
+                    100 * expanded_count / total_count,
                 )
 
             # Mark as completed
             self._mark_completed(grant_id, expanded_count)
             logger.info(
-                f"[LEOPARD-WORKER] Grant {grant_id} completed: {expanded_count} files expanded"
+                "[LEOPARD-WORKER] Grant %s completed: %d files expanded",
+                grant_id,
+                expanded_count,
             )
             return expanded_count, True
 
         except Exception as e:
             error_msg = f"Expansion failed: {e}"
-            logger.error(f"[LEOPARD-WORKER] Grant {grant_id}: {error_msg}")
+            logger.error("[LEOPARD-WORKER] Grant %s: %s", grant_id, error_msg)
             self._mark_failed(grant_id, error_msg)
             return 0, False
 
@@ -369,7 +381,7 @@ class DirectoryGrantExpander:
         if not grants:
             return 0
 
-        logger.info(f"[LEOPARD-WORKER] Processing {len(grants)} pending grants")
+        logger.info("[LEOPARD-WORKER] Processing %d pending grants", len(grants))
 
         total_expanded = 0
         for grant in grants:
@@ -400,7 +412,7 @@ class DirectoryGrantExpander:
                 expanded = await asyncio.to_thread(self.process_pending_grants)
 
                 if expanded > 0:
-                    logger.info(f"[LEOPARD-WORKER] Expanded {expanded} files this cycle")
+                    logger.info("[LEOPARD-WORKER] Expanded %d files this cycle", expanded)
 
                 # Wait before next poll (or until stopped)
                 try:
@@ -415,7 +427,7 @@ class DirectoryGrantExpander:
                     pass
 
             except Exception as e:
-                logger.error(f"[LEOPARD-WORKER] Worker error: {e}")
+                logger.error("[LEOPARD-WORKER] Worker error: %s", e)
                 # Wait before retrying on error
                 await asyncio.sleep(self.POLL_INTERVAL * 2)
 

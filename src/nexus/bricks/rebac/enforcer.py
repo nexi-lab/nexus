@@ -219,8 +219,8 @@ class PermissionEnforcer:
         """
         self._cache.invalidate(subject_type, subject_id, zone_id)
         logger.debug(
-            f"[CACHE-INVALIDATE] Invalidated cache for "
-            f"{(subject_type, subject_id, zone_id) if subject_type else 'all'}"
+            "[CACHE-INVALIDATE] Invalidated cache for %s",
+            (subject_type, subject_id, zone_id) if subject_type else "all",
         )
 
     def has_accessible_descendants(
@@ -286,14 +286,16 @@ class PermissionEnforcer:
 
             if accessible_paths is None:
                 logger.debug(
-                    f"[BATCH-OPT] No bitmap for {subject_type}:{subject_id}, "
-                    f"returning all True for {len(prefixes)} prefixes"
+                    "[BATCH-OPT] No bitmap for %s:%s, returning all True for %d prefixes",
+                    subject_type,
+                    subject_id,
+                    len(prefixes),
                 )
                 return dict.fromkeys(prefixes, True)
 
             if not accessible_paths:
                 if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(f"[BATCH-OPT] Empty paths for {subject_type}:{subject_id}")
+                    logger.debug("[BATCH-OPT] Empty paths for %s:%s", subject_type, subject_id)
                 return dict.fromkeys(prefixes, False)
 
             # Try Rust-accelerated prefix matching (Issue #1565)
@@ -316,9 +318,13 @@ class PermissionEnforcer:
             elapsed = (time.time() - start) * 1000
             found_count = sum(1 for v in results.values() if v)
             logger.debug(
-                f"[BATCH-OPT] has_accessible_descendants_batch: "
-                f"{found_count}/{len(prefixes)} accessible in {elapsed:.1f}ms "
-                f"(paths: {len(accessible_paths)})"
+                "[BATCH-OPT] has_accessible_descendants_batch: "
+                "%d/%d accessible in %.1fms "
+                "(paths: %d)",
+                found_count,
+                len(prefixes),
+                elapsed,
+                len(accessible_paths),
             )
             return results
 
@@ -363,7 +369,12 @@ class PermissionEnforcer:
             True
         """
         logger.debug(
-            f"[PermissionEnforcer.check] path={path}, perm={permission.name}, user={context.user_id}, is_admin={context.is_admin}, is_system={context.is_system}"
+            "[PermissionEnforcer.check] path=%s, perm=%s, user=%s, is_admin=%s, is_system=%s",
+            path,
+            permission.name,
+            context.user_id,
+            context.is_admin,
+            context.is_system,
         )
 
         # Map Permission enum to string
@@ -497,7 +508,10 @@ class PermissionEnforcer:
             True if ReBAC grants permission, False otherwise
         """
         logger.debug(
-            f"[_check_rebac] path={path}, permission={permission}, context.user_id={context.user_id}"
+            "[_check_rebac] path=%s, permission=%s, context.user_id=%s",
+            path,
+            permission,
+            context.user_id,
         )
 
         if not self.rebac_manager:
@@ -510,7 +524,7 @@ class PermissionEnforcer:
         permission_name = self._permission_to_string(permission)
         if permission_name == "unknown":
             if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"  -> DENY (unknown permission: {permission})")
+                logger.debug("  -> DENY (unknown permission: %s)", permission)
             return False
 
         # Get backend-specific object type for ReBAC check
@@ -560,7 +574,12 @@ class PermissionEnforcer:
         subject = context.get_subject()
 
         logger.debug(
-            f"[_check_rebac] Calling rebac_check: subject={subject}, permission={permission_name}, object=('{object_type}', '{object_id}'), zone_id={zone_id}"
+            "[_check_rebac] Calling rebac_check: subject=%s, permission=%s, object=('%s', '%s'), zone_id=%s",
+            subject,
+            permission_name,
+            object_type,
+            object_id,
+            zone_id,
         )
 
         # Issue #921: Record access for hotspot detection (before cache/graph check)
@@ -631,7 +650,8 @@ class PermissionEnforcer:
                     zone_id=zone_id,
                 ):
                     logger.debug(
-                        f"[_check_rebac] ALLOW TRAVERSE (has {implied_perm.upper()} permission)"
+                        "[_check_rebac] ALLOW TRAVERSE (has %s permission)",
+                        implied_perm.upper(),
                     )
                     return True
 
@@ -653,7 +673,9 @@ class PermissionEnforcer:
                     )
                     if boundary_result:
                         logger.debug(
-                            f"[_check_rebac] ALLOW (boundary cache hit: {object_id} → {boundary})"
+                            "[_check_rebac] ALLOW (boundary cache hit: %s → %s)",
+                            object_id,
+                            boundary,
                         )
                         return True
                     self._boundary_cache.invalidate_permission_change(
@@ -675,7 +697,9 @@ class PermissionEnforcer:
                 )
                 if parent_result:
                     if logger.isEnabledFor(logging.DEBUG):
-                        logger.debug(f"[_check_rebac] ALLOW (inherited from parent: {parent_path})")
+                        logger.debug(
+                            "[_check_rebac] ALLOW (inherited from parent: %s)", parent_path
+                        )
                     if self._boundary_cache:
                         self._boundary_cache.set_boundary(
                             zone_id,
@@ -724,8 +748,9 @@ class PermissionEnforcer:
                 )
                 if boundary_result:
                     logger.debug(
-                        f"[_check_rebac_batched] ALLOW (boundary cache hit: "
-                        f"{object_id} → {boundary})"
+                        "[_check_rebac_batched] ALLOW (boundary cache hit: %s → %s)",
+                        object_id,
+                        boundary,
                     )
                     return True
                 self._boundary_cache.invalidate_permission_change(
@@ -764,7 +789,9 @@ class PermissionEnforcer:
             if results.get(check, False):
                 granting_path = check[2][1]  # object_id from the check tuple
                 if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(f"[_check_rebac_batched] ALLOW via {check[1]} on {granting_path}")
+                    logger.debug(
+                        "[_check_rebac_batched] ALLOW via %s on %s", check[1], granting_path
+                    )
                 # Update boundary cache if granted via an ancestor
                 if self._boundary_cache and granting_path != object_id:
                     self._boundary_cache.set_boundary(
@@ -778,8 +805,11 @@ class PermissionEnforcer:
                 return True
 
         logger.debug(
-            f"[_check_rebac_batched] DENY {permission_name} on {object_id} "
-            f"(checked {len(checks)} tuples across {len(ancestors)} ancestors)"
+            "[_check_rebac_batched] DENY %s on %s (checked %d tuples across %d ancestors)",
+            permission_name,
+            object_id,
+            len(checks),
+            len(ancestors),
         )
         return False
 
@@ -1013,8 +1043,10 @@ class PermissionEnforcer:
             subject = context.get_subject()
 
             logger.debug(
-                f"[PERF-FILTER] filter_list START: {len(paths)} paths, "
-                f"subject={subject}, zone={zone_id}"
+                "[PERF-FILTER] filter_list START: %d paths, subject=%s, zone=%s",
+                len(paths),
+                subject,
+                zone_id,
             )
 
             from nexus.bricks.rebac.permission_filter_chain import (
@@ -1036,8 +1068,10 @@ class PermissionEnforcer:
 
             overall_elapsed = time.time() - overall_start
             logger.info(
-                f"[PERF-FILTER] filter_list DONE: {overall_elapsed:.3f}s total, "
-                f"allowed {len(filtered)}/{len(paths)} paths"
+                "[PERF-FILTER] filter_list DONE: %.3fs total, allowed %d/%d paths",
+                overall_elapsed,
+                len(filtered),
+                len(paths),
             )
             return filtered
 

@@ -110,11 +110,18 @@ class ZoneAwareTraversal:
         if memo_key in memo:
             cached_result = memo[memo_key]
             stats.cache_hits += 1
-            logger.debug(f"{indent}[MEMO-HIT] {memo_key} = {cached_result}")
+            logger.debug("%s[MEMO-HIT] %s = %s", indent, memo_key, cached_result)
             return cached_result
 
         logger.debug(
-            f"{indent}┌─[PERM-CHECK depth={depth}] {subject.entity_type}:{subject.entity_id} → '{permission}' → {obj.entity_type}:{obj.entity_id}"
+            "%s┌─[PERM-CHECK depth=%d] %s:%s → '%s' → %s:%s",
+            indent,
+            depth,
+            subject.entity_type,
+            subject.entity_id,
+            permission,
+            obj.entity_type,
+            obj.entity_id,
         )
 
         # P0-5: Check execution time (using perf_counter for monotonic measurement)
@@ -132,7 +139,7 @@ class ZoneAwareTraversal:
         # Check for cycles (within this traversal path only)
         visit_key = memo_key  # Same key format
         if visit_key in visited:
-            logger.debug(f"{indent}← CYCLE DETECTED, returning False")
+            logger.debug("%s← CYCLE DETECTED, returning False", indent)
             return False
         visited.add(visit_key)
         stats.nodes_visited += 1
@@ -144,12 +151,14 @@ class ZoneAwareTraversal:
         # Get namespace config
         namespace = self._get_namespace(obj.entity_type)
         if not namespace:
-            logger.debug(f"{indent}  No namespace for {obj.entity_type}, checking direct relation")
+            logger.debug(
+                "%s  No namespace for %s, checking direct relation", indent, obj.entity_type
+            )
             stats.queries += 1
             if self.enable_graph_limits and stats.queries > GraphLimits.MAX_TUPLE_QUERIES:
                 raise GraphLimitExceeded("queries", GraphLimits.MAX_TUPLE_QUERIES, stats.queries)
             result = self.has_direct_relation(subject, permission, obj, zone_id, context)
-            logger.debug(f"{indent}← RESULT: {result}")
+            logger.debug("%s← RESULT: %s", indent, result)
             memo[memo_key] = result
             return result
 
@@ -178,25 +187,39 @@ class ZoneAwareTraversal:
             usersets = namespace.get_permission_usersets(permission)
             if usersets:
                 logger.debug(
-                    f"{indent}├─[PERM-MAPPING] Permission '{permission}' maps to relations: {usersets}"
+                    "%s├─[PERM-MAPPING] Permission '%s' maps to relations: %s",
+                    indent,
+                    permission,
+                    usersets,
                 )
                 for i, relation in enumerate(usersets):
                     logger.debug(
-                        f"{indent}├─[PERM-REL {i + 1}/{len(usersets)}] Checking relation '{relation}' for permission '{permission}'"
+                        "%s├─[PERM-REL %d/%d] Checking relation '%s' for permission '%s'",
+                        indent,
+                        i + 1,
+                        len(usersets),
+                        relation,
+                        permission,
                     )
                     try:
                         result = _recurse(subject, relation, obj)
-                        logger.debug(f"{indent}│ └─[RESULT] '{relation}' = {result}")
+                        logger.debug("%s│ └─[RESULT] '%s' = %s", indent, relation, result)
                         if result:
-                            logger.debug(f"{indent}└─[✅ GRANTED] via relation '{relation}'")
+                            logger.debug("%s└─[GRANTED] via relation '%s'", indent, relation)
                             return _store(True)
                     except (RuntimeError, ValueError) as e:
                         logger.error(
-                            f"{indent}│ └─[ERROR] Exception while checking '{relation}': {type(e).__name__}: {e}"
+                            "%s│ └─[ERROR] Exception while checking '%s': %s: %s",
+                            indent,
+                            relation,
+                            type(e).__name__,
+                            e,
                         )
                         raise
                 logger.debug(
-                    f"{indent}└─[❌ DENIED] No relations granted access for permission '{permission}'"
+                    "%s└─[DENIED] No relations granted access for permission '%s'",
+                    indent,
+                    permission,
                 )
                 return _store(False)
 
@@ -204,20 +227,24 @@ class ZoneAwareTraversal:
         rel_config = namespace.get_relation_config(permission)
         if not rel_config:
             logger.debug(
-                f"{indent}  No relation config for '{permission}', checking direct relation"
+                "%s  No relation config for '%s', checking direct relation",
+                indent,
+                permission,
             )
             stats.queries += 1
             if self.enable_graph_limits and stats.queries > GraphLimits.MAX_TUPLE_QUERIES:
                 raise GraphLimitExceeded("queries", GraphLimits.MAX_TUPLE_QUERIES, stats.queries)
             result = self.has_direct_relation(subject, permission, obj, zone_id, context)
-            logger.debug(f"{indent}← RESULT: {result}")
+            logger.debug("%s← RESULT: %s", indent, result)
             memo[memo_key] = result
             return result
 
         # Handle union (OR of multiple relations)
         if namespace.has_union(permission):
             union_relations = namespace.get_union_relations(permission)
-            logger.debug(f"{indent}├─[UNION] Relation '{permission}' expands to: {union_relations}")
+            logger.debug(
+                "%s├─[UNION] Relation '%s' expands to: %s", indent, permission, union_relations
+            )
 
             # P0-5: Check fan-out limit
             if self.enable_graph_limits and len(union_relations) > GraphLimits.MAX_FAN_OUT:
@@ -225,25 +252,44 @@ class ZoneAwareTraversal:
 
             for i, rel in enumerate(union_relations):
                 logger.debug(
-                    f"{indent}│ ├─[UNION {i + 1}/{len(union_relations)}] Checking: '{rel}'"
+                    "%s│ ├─[UNION %d/%d] Checking: '%s'",
+                    indent,
+                    i + 1,
+                    len(union_relations),
+                    rel,
                 )
                 try:
                     result = _recurse(subject, rel, obj)
-                    logger.debug(f"{indent}│ │ └─[RESULT] '{rel}' = {result}")
+                    logger.debug("%s│ │ └─[RESULT] '%s' = %s", indent, rel, result)
                     if result:
-                        logger.debug(f"{indent}└─[✅ GRANTED] via union member '{rel}'")
+                        logger.debug("%s└─[GRANTED] via union member '%s'", indent, rel)
                         return _store(True)
                 except GraphLimitExceeded as e:
                     logger.error(
-                        f"{indent}[depth={depth}]   [{i + 1}/{len(union_relations)}] GraphLimitExceeded while checking '{rel}': limit_type={e.limit_type}, limit_value={e.limit_value}, actual_value={e.actual_value}"
+                        "%s[depth=%d]   [%d/%d] GraphLimitExceeded while checking '%s': limit_type=%s, limit_value=%s, actual_value=%s",
+                        indent,
+                        depth,
+                        i + 1,
+                        len(union_relations),
+                        rel,
+                        e.limit_type,
+                        e.limit_value,
+                        e.actual_value,
                     )
                     raise
                 except (RuntimeError, ValueError) as e:
                     logger.error(
-                        f"{indent}[depth={depth}]   [{i + 1}/{len(union_relations)}] Unexpected exception while checking '{rel}': {type(e).__name__}: {e}"
+                        "%s[depth=%d]   [%d/%d] Unexpected exception while checking '%s': %s: %s",
+                        indent,
+                        depth,
+                        i + 1,
+                        len(union_relations),
+                        rel,
+                        type(e).__name__,
+                        e,
                     )
                     raise
-            logger.debug(f"{indent}└─[❌ DENIED] - no union members granted access")
+            logger.debug("%s└─[DENIED] - no union members granted access", indent)
             return _store(False)
 
         # Handle tupleToUserset (indirect relation via another object)
@@ -253,7 +299,11 @@ class ZoneAwareTraversal:
                 tupleset_relation = ttu["tupleset"]
                 computed_userset = ttu["computedUserset"]
                 logger.debug(
-                    f"{indent}├─[TTU] '{permission}' = tupleToUserset(tupleset='{tupleset_relation}', computed='{computed_userset}')"
+                    "%s├─[TTU] '%s' = tupleToUserset(tupleset='%s', computed='%s')",
+                    indent,
+                    permission,
+                    tupleset_relation,
+                    computed_userset,
                 )
 
                 # Pattern 1 (parent-style): Find objects where (obj, tupleset_relation, ?)
@@ -265,7 +315,11 @@ class ZoneAwareTraversal:
 
                 related_objects = self.find_related_objects(obj, tupleset_relation, zone_id)
                 logger.debug(
-                    f"{indent}│ ├─[TTU-PARENT] Found {len(related_objects)} objects via '{tupleset_relation}': {[f'{o.entity_type}:{o.entity_id}' for o in related_objects]}"
+                    "%s│ ├─[TTU-PARENT] Found %d objects via '%s': %s",
+                    indent,
+                    len(related_objects),
+                    tupleset_relation,
+                    [f"{o.entity_type}:{o.entity_id}" for o in related_objects],
                 )
 
                 # P0-5: Check fan-out limit
@@ -276,11 +330,18 @@ class ZoneAwareTraversal:
 
                 for related_obj in related_objects:
                     logger.debug(
-                        f"{indent}  Checking '{computed_userset}' on related object {related_obj.entity_type}:{related_obj.entity_id}"
+                        "%s  Checking '%s' on related object %s:%s",
+                        indent,
+                        computed_userset,
+                        related_obj.entity_type,
+                        related_obj.entity_id,
                     )
                     if _recurse(subject, computed_userset, related_obj):
                         logger.debug(
-                            f"{indent}← RESULT: True (via tupleToUserset parent pattern on {related_obj.entity_type}:{related_obj.entity_id})"
+                            "%s← RESULT: True (via tupleToUserset parent pattern on %s:%s)",
+                            indent,
+                            related_obj.entity_type,
+                            related_obj.entity_id,
                         )
                         return _store(True)
 
@@ -289,7 +350,8 @@ class ZoneAwareTraversal:
                 # NOT for parent relations which would cause exponential blow-up
                 if tupleset_relation == "parent":
                     logger.debug(
-                        f"{indent}│ └─[TTU-SKIP] Skipping Pattern 2 for 'parent' tupleset (not a group pattern)"
+                        "%s│ └─[TTU-SKIP] Skipping Pattern 2 for 'parent' tupleset (not a group pattern)",
+                        indent,
                     )
                     return _store(False)
 
@@ -301,7 +363,12 @@ class ZoneAwareTraversal:
 
                 related_subjects = self.find_subjects(obj, tupleset_relation, zone_id)
                 logger.debug(
-                    f"{indent}[depth={depth}]   Pattern 2 (group): Found {len(related_subjects)} subjects with '{tupleset_relation}' on obj: {[f'{s.entity_type}:{s.entity_id}' for s in related_subjects]}"
+                    "%s[depth=%d]   Pattern 2 (group): Found %d subjects with '%s' on obj: %s",
+                    indent,
+                    depth,
+                    len(related_subjects),
+                    tupleset_relation,
+                    [f"{s.entity_type}:{s.entity_id}" for s in related_subjects],
                 )
 
                 # P0-5: Check fan-out limit for group pattern
@@ -312,24 +379,32 @@ class ZoneAwareTraversal:
 
                 for related_subj in related_subjects:
                     logger.debug(
-                        f"{indent}  Checking if {subject} has '{computed_userset}' on {related_subj.entity_type}:{related_subj.entity_id}"
+                        "%s  Checking if %s has '%s' on %s:%s",
+                        indent,
+                        subject,
+                        computed_userset,
+                        related_subj.entity_type,
+                        related_subj.entity_id,
                     )
                     if _recurse(subject, computed_userset, related_subj):
                         logger.debug(
-                            f"{indent}← RESULT: True (via tupleToUserset group pattern on {related_subj.entity_type}:{related_subj.entity_id})"
+                            "%s← RESULT: True (via tupleToUserset group pattern on %s:%s)",
+                            indent,
+                            related_subj.entity_type,
+                            related_subj.entity_id,
                         )
                         return _store(True)
 
-            logger.debug(f"{indent}← RESULT: False (tupleToUserset found no access)")
+            logger.debug("%s← RESULT: False (tupleToUserset found no access)", indent)
             return _store(False)
 
         # Direct relation check (fallback)
-        logger.debug(f"{indent}[depth={depth}] Checking direct relation (fallback)")
+        logger.debug("%s[depth=%d] Checking direct relation (fallback)", indent, depth)
         stats.queries += 1
         if self.enable_graph_limits and stats.queries > GraphLimits.MAX_TUPLE_QUERIES:
             raise GraphLimitExceeded("queries", GraphLimits.MAX_TUPLE_QUERIES, stats.queries)
         result = self.has_direct_relation(subject, permission, obj, zone_id, context)
-        logger.debug(f"{indent}← [EXIT depth={depth}] Direct relation result: {result}")
+        logger.debug("%s← [EXIT depth=%d] Direct relation result: %s", indent, depth, result)
         memo[memo_key] = result
         return result
 
@@ -501,7 +576,10 @@ class ZoneAwareTraversal:
                         return True
                 except GraphLimitExceeded:
                     logger.warning(
-                        f"Userset check hit limits: {subject} -> {userset_relation} -> {userset_entity}, skipping"
+                        "Userset check hit limits: %s -> %s -> %s, skipping",
+                        subject,
+                        userset_relation,
+                        userset_entity,
                     )
                     continue
 
@@ -524,14 +602,18 @@ class ZoneAwareTraversal:
         Returns:
             List of related object entities within the zone
         """
-        logger.debug(f"find_related_objects: obj={obj}, relation={relation}, zone_id={zone_id}")
+        logger.debug(
+            "find_related_objects: obj=%s, relation=%s, zone_id=%s", obj, relation, zone_id
+        )
 
         # For parent relation on files, compute from path instead of querying DB
         if relation == "parent" and obj.entity_type == "file":
             parent_path = str(PurePosixPath(obj.entity_id).parent)
             if parent_path != obj.entity_id and parent_path != ".":
                 logger.debug(
-                    f"find_related_objects: Computed parent from path: {obj.entity_id} -> {parent_path}"
+                    "find_related_objects: Computed parent from path: %s -> %s",
+                    obj.entity_id,
+                    parent_path,
                 )
                 return [Entity("file", parent_path)]
             return []
@@ -549,7 +631,11 @@ class ZoneAwareTraversal:
             results = [Entity(row.object_type, row.object_id) for row in conn.execute(stmt)]
 
             logger.debug(
-                f"find_related_objects: Found {len(results)} objects for {obj} via '{relation}': {[str(r) for r in results]}"
+                "find_related_objects: Found %d objects for %s via '%s': %s",
+                len(results),
+                obj,
+                relation,
+                [str(r) for r in results],
             )
             return results
 
@@ -566,7 +652,7 @@ class ZoneAwareTraversal:
         Returns:
             List of subject entities (the subjects from matching tuples)
         """
-        logger.debug(f"find_subjects: Looking for (?, '{relation}', {obj})")
+        logger.debug("find_subjects: Looking for (?, '%s', %s)", relation, obj)
 
         now = datetime.now(UTC)
         stmt = select(RT.subject_type, RT.subject_id).where(
@@ -581,6 +667,10 @@ class ZoneAwareTraversal:
             results = [Entity(row.subject_type, row.subject_id) for row in conn.execute(stmt)]
 
             logger.debug(
-                f"find_subjects: Found {len(results)} subjects for (?, '{relation}', {obj}): {[str(r) for r in results]}"
+                "find_subjects: Found %d subjects for (?, '%s', %s): %s",
+                len(results),
+                relation,
+                obj,
+                [str(r) for r in results],
             )
             return results

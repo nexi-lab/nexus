@@ -729,7 +729,7 @@ class NamespaceManager:
         try:
             current_revision = self._rebac_manager.get_zone_revision(zone_id)
         except Exception:  # fail-safe: thread-isolated SQLite, defaults to 0
-            logger.warning(f"[NAMESPACE] Failed to get zone revision for {zone_id}, using 0")
+            logger.warning("[NAMESPACE] Failed to get zone revision for %s, using 0", zone_id)
             current_revision = 0
 
         # Cache the result (5-tuple: mount_entries, mount_paths, revision, zone_id, grants_hash)
@@ -764,8 +764,12 @@ class NamespaceManager:
 
         elapsed_ms = (time.perf_counter() - start) * 1000
         logger.debug(
-            f"[NAMESPACE] Rebuilt mount table for {subject_type}:{subject_id}: "
-            f"{len(mount_entries)} mounts from {len(object_paths)} objects in {elapsed_ms:.1f}ms"
+            "[NAMESPACE] Rebuilt mount table for %s:%s: %d mounts from %d objects in %.1fms",
+            subject_type,
+            subject_id,
+            len(mount_entries),
+            len(object_paths),
+            elapsed_ms,
         )
 
         return mount_entries, mount_paths

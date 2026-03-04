@@ -298,9 +298,12 @@ class HotspotDetector:
                 if time_until_expiry < self._config.prefetch_before_expiry_seconds:
                     candidates.append(entry)
                     logger.debug(
-                        f"[HOTSPOT] Prefetch candidate: {entry.subject_type}:{entry.subject_id} "
-                        f"-> {entry.permission} (expires in {time_until_expiry:.1f}s, "
-                        f"accesses={entry.access_count})"
+                        "[HOTSPOT] Prefetch candidate: %s:%s -> %s (expires in %.1fs, accesses=%d)",
+                        entry.subject_type,
+                        entry.subject_id,
+                        entry.permission,
+                        time_until_expiry,
+                        entry.access_count,
                     )
 
         return candidates[: self._config.max_prefetch_batch]
@@ -329,7 +332,7 @@ class HotspotDetector:
                 removed += 1
 
         if removed > 0:
-            logger.debug(f"[HOTSPOT] Cleaned up {removed} stale entries")
+            logger.debug("[HOTSPOT] Cleaned up %d stale entries", removed)
 
         return removed
 
@@ -396,8 +399,9 @@ class HotspotPrefetcher:
         """
         self._running = True
         logger.info(
-            f"[HOTSPOT] Starting prefetcher (interval: {self._config.prefetch_interval_seconds}s, "
-            f"batch: {self._config.max_prefetch_batch})"
+            "[HOTSPOT] Starting prefetcher (interval: %ds, batch: %d)",
+            self._config.prefetch_interval_seconds,
+            self._config.max_prefetch_batch,
         )
 
         cleanup_counter = 0
@@ -410,7 +414,9 @@ class HotspotPrefetcher:
 
                 if prefetched > 0:
                     logger.info(
-                        f"[HOTSPOT] Prefetched {prefetched} entries in {self._last_cycle_duration:.2f}s"
+                        "[HOTSPOT] Prefetched %d entries in %.2fs",
+                        prefetched,
+                        self._last_cycle_duration,
                     )
 
                 # Periodic cleanup
@@ -422,7 +428,7 @@ class HotspotPrefetcher:
                     cleanup_counter = 0
 
             except Exception as e:  # fail-safe: background prefetch must not crash loop
-                logger.error(f"[HOTSPOT] Prefetch cycle failed: {e}", exc_info=True)
+                logger.error("[HOTSPOT] Prefetch cycle failed: %s", e, exc_info=True)
 
             await asyncio.sleep(self._config.prefetch_interval_seconds)
 
@@ -462,13 +468,18 @@ class HotspotPrefetcher:
                 self._detector._prefetches_triggered += 1
 
                 logger.debug(
-                    f"[HOTSPOT] Queued prefetch: {entry.subject_type}:{entry.subject_id} "
-                    f"-> {entry.permission} (priority=1)"
+                    "[HOTSPOT] Queued prefetch: %s:%s -> %s (priority=1)",
+                    entry.subject_type,
+                    entry.subject_id,
+                    entry.permission,
                 )
 
             except (RuntimeError, ValueError, KeyError) as e:
                 logger.warning(
-                    f"[HOTSPOT] Failed to queue prefetch for {entry.subject_type}:{entry.subject_id}: {e}"
+                    "[HOTSPOT] Failed to queue prefetch for %s:%s: %s",
+                    entry.subject_type,
+                    entry.subject_id,
+                    e,
                 )
 
         return prefetched

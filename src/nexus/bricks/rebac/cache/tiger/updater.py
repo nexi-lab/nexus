@@ -137,7 +137,7 @@ class TigerCacheUpdater:
             result = connection.execute(stmt)
             count = result.rowcount
             if count > 0:
-                logger.info(f"[TIGER] Reset {count} stuck queue entries to pending")
+                logger.info("[TIGER] Reset %d stuck queue entries to pending", count)
             return count
 
         if conn:
@@ -199,10 +199,12 @@ class TigerCacheUpdater:
             processed = 0
             result = connection.execute(select_query)
             entries = list(result)
-            logger.info(f"[TIGER] do_process: fetched {len(entries)} entries from queue")
+            logger.info("[TIGER] do_process: fetched %d entries from queue", len(entries))
 
             for i, entry in enumerate(entries):
-                logger.info(f"[TIGER] Processing entry {i + 1}/{len(entries)}: {entry.subject_id}")
+                logger.info(
+                    "[TIGER] Processing entry %d/%d: %s", i + 1, len(entries), entry.subject_id
+                )
                 try:
                     # Mark as processing
                     connection.execute(
@@ -249,10 +251,13 @@ class TigerCacheUpdater:
                     # Leave entry in 'processing' state - it will be cleaned up later
                     if is_lock_error(e):
                         logger.debug(
-                            f"[TIGER] Database lock during queue processing for entry {entry.queue_id}, will retry later"
+                            "[TIGER] Database lock during queue processing for entry %s, will retry later",
+                            entry.queue_id,
                         )
                     else:
-                        logger.error(f"[TIGER] Failed to process queue entry {entry.queue_id}: {e}")
+                        logger.error(
+                            "[TIGER] Failed to process queue entry %s: %s", entry.queue_id, e
+                        )
                         try:
                             connection.execute(
                                 update(TCQ)
@@ -266,7 +271,8 @@ class TigerCacheUpdater:
                         except (OperationalError, RuntimeError) as update_err:
                             # fail-safe: if status update fails, just log and continue
                             logger.debug(
-                                f"[TIGER] Could not update queue entry status: {update_err}"
+                                "[TIGER] Could not update queue entry status: %s",
+                                update_err,
                             )
 
             return processed
@@ -274,22 +280,23 @@ class TigerCacheUpdater:
         try:
             if conn:
                 result = do_process(conn)
-                logger.info(f"[TIGER] Queue processing complete (external conn): {result} entries")
+                logger.info("[TIGER] Queue processing complete (external conn): %d entries", result)
                 return result
             else:
                 with self._engine.begin() as new_conn:
                     result = do_process(new_conn)
                 # Commit happens here when 'with' block exits
-                logger.info(f"[TIGER] Queue processing COMMITTED: {result} entries processed")
+                logger.info("[TIGER] Queue processing COMMITTED: %d entries processed", result)
                 return result
         except (OperationalError, RuntimeError) as e:
             # Handle lock errors at the top level (e.g., during SELECT)
             if is_lock_error(e):
                 logger.debug(
-                    f"[TIGER] Database lock during queue processing, will retry later: {e}"
+                    "[TIGER] Database lock during queue processing, will retry later: %s",
+                    e,
                 )
                 return 0
-            logger.error(f"[TIGER] Queue processing FAILED: {e}")
+            logger.error("[TIGER] Queue processing FAILED: %s", e)
             raise
 
     def _compute_accessible_resources(

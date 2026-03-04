@@ -62,7 +62,7 @@ class TigerCacheManager:
             ):
                 synced = self.sync_resource_map()
                 if synced > 0:
-                    logger.info(f"Synced {synced} resources to Tiger resource map")
+                    logger.info("Synced %d resources to Tiger resource map", synced)
 
             # 2. Warm Tiger Cache (optional, can be slow for large systems)
             # Only warm if explicitly enabled via environment variable
@@ -72,14 +72,14 @@ class TigerCacheManager:
             ):
                 entries = self._warm_cache_fn(zone_id=self._default_zone_id)
                 if entries > 0:
-                    logger.info(f"Warmed Tiger Cache with {entries} entries")
+                    logger.info("Warmed Tiger Cache with %d entries", entries)
 
             # 3. Start Tiger Cache background worker
             self.start_worker()
 
         except Exception as e:
             # Don't fail initialization if optimizations fail
-            logger.warning(f"Failed to initialize performance optimizations: {e}")
+            logger.warning("Failed to initialize performance optimizations: %s", e)
 
     def sync_resource_map(self) -> int:
         """Populate tiger_resource_map from existing metadata.
@@ -127,13 +127,13 @@ class TigerCacheManager:
                 count += 1
 
                 if count % log_interval == 0:
-                    logger.debug(f"Tiger resource map sync progress: {count} resources...")
+                    logger.debug("Tiger resource map sync progress: %d resources...", count)
 
-            logger.info(f"Tiger resource map sync complete: {count} resources")
+            logger.info("Tiger resource map sync complete: %d resources", count)
             return count
 
         except Exception as e:
-            logger.warning(f"Failed to sync resource map from metadata: {e}")
+            logger.warning("Failed to sync resource map from metadata: %s", e)
             return 0
 
     def start_worker(self) -> None:
@@ -180,9 +180,9 @@ class TigerCacheManager:
                     if process_queue_fn is not None:
                         processed = process_queue_fn(batch_size=1)
                         if processed > 0:
-                            logger.debug(f"Tiger Cache worker processed {processed} updates")
+                            logger.debug("Tiger Cache worker processed %d updates", processed)
                 except Exception as e:
-                    logger.warning(f"Tiger Cache worker error: {e}")
+                    logger.warning("Tiger Cache worker error: %s", e)
 
                 # Sleep longer since write-through handles new grants
                 # This worker is just for legacy queue cleanup
@@ -196,7 +196,7 @@ class TigerCacheManager:
             daemon=True,
         )
         self._tiger_worker_thread.start()
-        logger.debug(f"Tiger Cache worker started (interval={interval}s)")
+        logger.debug("Tiger Cache worker started (interval=%ss)", interval)
 
     def stop_worker(self) -> None:
         """Stop the Tiger Cache background worker.

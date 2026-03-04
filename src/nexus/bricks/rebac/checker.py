@@ -125,14 +125,20 @@ class PermissionChecker:
         # ----------------------------------------------------------
         if ctx.is_admin or ctx.is_system:
             logger.debug(
-                f"_check_permission: SKIPPED (admin/system bypass) - "
-                f"path={path}, permission={permission.name}, user={ctx.user_id}"
+                "_check_permission: SKIPPED (admin/system bypass) - "
+                "path=%s, permission=%s, user=%s",
+                path,
+                permission.name,
+                ctx.user_id,
             )
             return
 
         logger.debug(
-            f"_check_permission: path={path}, permission={permission.name}, "
-            f"user={ctx.user_id}, zone={getattr(ctx, 'zone_id', None)}"
+            "_check_permission: path=%s, permission=%s, user=%s, zone=%s",
+            path,
+            permission.name,
+            ctx.user_id,
+            getattr(ctx, "zone_id", None),
         )
 
         # ----------------------------------------------------------
@@ -147,7 +153,8 @@ class PermissionChecker:
         original_path, view_type = parse_virtual_path(path, metadata_exists)
         if view_type == "md":
             logger.debug(
-                f"  -> Virtual view detected: checking permissions on original file {original_path}"
+                "  -> Virtual view detected: checking permissions on original file %s",
+                original_path,
             )
             permission_path = original_path
         else:
@@ -167,7 +174,9 @@ class PermissionChecker:
             subject_id = ctx.subject_id or ctx.user_id
             if file_meta.owner_id == subject_id:
                 logger.debug(
-                    f"  -> OWNER FAST-PATH: {subject_id} owns {permission_path}, skipping ReBAC"
+                    "  -> OWNER FAST-PATH: %s owns %s, skipping ReBAC",
+                    subject_id,
+                    permission_path,
                 )
                 return  # Owner has all permissions
 
@@ -180,7 +189,7 @@ class PermissionChecker:
                 f"cannot check {permission.name} permission for '{path}'"
             )
         result = self._permission_enforcer.check(permission_path, permission, ctx)
-        logger.debug(f"  -> permission_enforcer.check returned: {result}")
+        logger.debug("  -> permission_enforcer.check returned: %s", result)
 
         if not result:
             raise PermissionError(

@@ -127,8 +127,10 @@ class IteratorCache:
                     if self._enable_metrics:
                         self._hits += 1
                     logger.debug(
-                        f"Iterator cache hit for query_hash={query_hash}, "
-                        f"cursor_id={cursor_id}, count={cached.total_count}"
+                        "Iterator cache hit for query_hash=%s, cursor_id=%s, count=%d",
+                        query_hash,
+                        cursor_id,
+                        cached.total_count,
                     )
                     return cursor_id, cached.results, cached.total_count
                 else:
@@ -139,12 +141,15 @@ class IteratorCache:
                 self._misses += 1
 
         # Compute results outside lock to avoid blocking
-        logger.debug(f"Iterator cache miss for query_hash={query_hash}, computing...")
+        logger.debug("Iterator cache miss for query_hash=%s, computing...", query_hash)
         start_time = time.perf_counter()
         results = compute_fn()
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         logger.debug(
-            f"Computed {len(results)} results in {elapsed_ms:.1f}ms for query_hash={query_hash}"
+            "Computed %d results in %.1fms for query_hash=%s",
+            len(results),
+            elapsed_ms,
+            query_hash,
         )
 
         with self._lock:
@@ -242,8 +247,9 @@ class IteratorCache:
 
             if cursors_to_delete:
                 logger.debug(
-                    f"Iterator cache: Invalidated {len(cursors_to_delete)} entries "
-                    f"for zone {zone_id}"
+                    "Iterator cache: Invalidated %d entries for zone %s",
+                    len(cursors_to_delete),
+                    zone_id,
                 )
 
             return len(cursors_to_delete)
@@ -282,7 +288,7 @@ class IteratorCache:
             self._query_to_cursor.clear()
             if self._enable_metrics:
                 self._evictions += count
-            logger.info(f"Iterator cache cleared ({count} entries)")
+            logger.info("Iterator cache cleared (%d entries)", count)
 
     def get_stats(self) -> dict[str, Any]:
         """

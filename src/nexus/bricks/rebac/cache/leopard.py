@@ -292,7 +292,10 @@ class LeopardIndex:
             if cached is not None:
                 if logger.isEnabledFor(logging.DEBUG):
                     logger.debug(
-                        f"[LEOPARD] Cache hit for {member_type}:{member_id} -> {len(cached)} groups"
+                        "[LEOPARD] Cache hit for %s:%s -> %d groups",
+                        member_type,
+                        member_id,
+                        len(cached),
                     )
                 return cached
 
@@ -303,7 +306,9 @@ class LeopardIndex:
         if self._cache:
             self._cache.set_transitive_groups(member_type, member_id, zone_id, groups)
             if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"[LEOPARD] Cached {member_type}:{member_id} -> {len(groups)} groups")
+                logger.debug(
+                    "[LEOPARD] Cached %s:%s -> %d groups", member_type, member_id, len(groups)
+                )
 
         return groups
 

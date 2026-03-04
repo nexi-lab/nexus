@@ -429,7 +429,9 @@ class ReBACManager:
             # Legacy ConsistencyLevel
             consistency_level = consistency
         logger.debug(
-            f"ReBACManager.rebac_check called: enforce_zone_isolation={self.enforce_zone_isolation}, MAX_DEPTH={GraphLimits.MAX_DEPTH}"
+            "ReBACManager.rebac_check called: enforce_zone_isolation=%s, MAX_DEPTH=%s",
+            self.enforce_zone_isolation,
+            GraphLimits.MAX_DEPTH,
         )
 
         # Issue #702: OTel tracing — wrap the entire check in a root span
@@ -488,12 +490,14 @@ class ReBACManager:
                 )
                 if boundary_result:
                     if logger.isEnabledFor(logging.DEBUG):
-                        logger.debug(f"  -> Boundary Cache HIT: {object_id} → {boundary}")
+                        logger.debug("  -> Boundary Cache HIT: %s → %s", object_id, boundary)
                     return True
                 else:
                     # Boundary no longer valid - invalidate
                     logger.debug(
-                        f"  -> Boundary Cache STALE: {boundary} no longer grants {permission}"
+                        "  -> Boundary Cache STALE: %s no longer grants %s",
+                        boundary,
+                        permission,
                     )
                     self._boundary_cache.invalidate_permission_change(
                         effective_zone, subject_type, subject_id, permission, boundary
@@ -520,7 +524,7 @@ class ReBACManager:
         # If zone isolation is disabled, use base (non-zone-aware) check path
         if not self.enforce_zone_isolation:
             if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"  -> Falling back to base check path, max_depth={self.max_depth}")
+                logger.debug("  -> Falling back to base check path, max_depth=%s", self.max_depth)
             result = self._rebac_check_base(subject, permission, object, context, zone_id)
 
             # Write-through to Tiger Cache (Issue #935)
@@ -538,7 +542,9 @@ class ReBACManager:
             subject, permission, object, context, zone_id, consistency_level, min_revision
         )
         logger.debug(
-            f"  -> rebac_check_detailed result: allowed={detailed_result.allowed}, indeterminate={detailed_result.indeterminate}"
+            "  -> rebac_check_detailed result: allowed=%s, indeterminate=%s",
+            detailed_result.allowed,
+            detailed_result.indeterminate,
         )
 
         # Write-through to Tiger Cache (Issue #935)
@@ -715,8 +721,12 @@ class ReBACManager:
                     effective_zone, subject_type, subject_id, permission, object_id, parent_path
                 )
                 logger.info(
-                    f"[BoundaryCache] Cached: {subject_type}:{subject_id} {permission} "
-                    f"{object_id} → {parent_path}"
+                    "[BoundaryCache] Cached: %s:%s %s %s → %s",
+                    subject_type,
+                    subject_id,
+                    permission,
+                    object_id,
+                    parent_path,
                 )
                 return
 
@@ -772,8 +782,9 @@ class ReBACManager:
             elif not is_public_check:
                 # Development/test: Allow defaulting but log stack trace for debugging
                 logger.warning(
-                    f"rebac_check called without zone_id, defaulting to 'root'. "
-                    f"This is only allowed in development. Stack:\n{''.join(traceback.format_stack()[-5:])}"
+                    "rebac_check called without zone_id, defaulting to 'root'. "
+                    "This is only allowed in development. Stack:\n%s",
+                    "".join(traceback.format_stack()[-5:]),
                 )
             zone_id = ROOT_ZONE_ID
 
@@ -844,7 +855,7 @@ class ReBACManager:
             )
             if cached is not None:
                 if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(f"  -> CACHE HIT: returning cached result={cached}")
+                    logger.debug("  -> CACHE HIT: returning cached result=%s", cached)
                 decision_time_ms = (time.perf_counter() - start_time) * 1000
                 return CheckResult(
                     allowed=cached,
@@ -975,14 +986,19 @@ class ReBACManager:
                 elapsed_ms = (time.perf_counter() - start_time) * 1000
                 stats.duration_ms = elapsed_ms
                 logger.debug(
-                    f"[RUST-SINGLE] Permission check completed in {elapsed_ms:.2f}ms: "
-                    f"{subject.entity_type}:{subject.entity_id} {permission} "
-                    f"{obj.entity_type}:{obj.entity_id} = {result}"
+                    "[RUST-SINGLE] Permission check completed in %.2fms: %s:%s %s %s:%s = %s",
+                    elapsed_ms,
+                    subject.entity_type,
+                    subject.entity_id,
+                    permission,
+                    obj.entity_type,
+                    obj.entity_id,
+                    result,
                 )
                 return result
 
         except (RuntimeError, ValueError) as e:
-            logger.warning(f"Rust single permission check failed, falling back to Python: {e}")
+            logger.warning("Rust single permission check failed, falling back to Python: %s", e)
             # Fall through to Python implementation
 
         # Fallback to Python implementation
@@ -1100,7 +1116,7 @@ class ReBACManager:
                 for permission in permissions:
                     callback(zone_id, subject_type, subject_id, permission, object_id)
             except (RuntimeError, ValueError, KeyError) as e:
-                logger.warning(f"[BOUNDARY-CACHE] Invalidator {callback_id} failed: {e}")
+                logger.warning("[BOUNDARY-CACHE] Invalidator %s failed: %s", callback_id, e)
 
     # =========================================================================
     # Issue #919: Directory Visibility Cache Invalidation
@@ -1205,10 +1221,13 @@ class ReBACManager:
             try:
                 callback(zone_id, object_path)
                 logger.debug(
-                    f"[DIR-VIS-CACHE] Invalidator {callback_id} called for {zone_id}:{object_path}"
+                    "[DIR-VIS-CACHE] Invalidator %s called for %s:%s",
+                    callback_id,
+                    zone_id,
+                    object_path,
                 )
             except (RuntimeError, ValueError, KeyError) as e:
-                logger.warning(f"[DIR-VIS-CACHE] Invalidator {callback_id} failed: {e}")
+                logger.warning("[DIR-VIS-CACHE] Invalidator %s failed: %s", callback_id, e)
 
     def rebac_write(
         self,
@@ -1781,7 +1800,7 @@ class ReBACManager:
                             )
                         except (OperationalError, ProgrammingError) as e:
                             if logger.isEnabledFor(logging.DEBUG):
-                                logger.debug(f"[TIGER] Revoke failed: {e}")
+                                logger.debug("[TIGER] Revoke failed: %s", e)
 
             # Leopard: Update transitive closure for membership relations
             if tuple_info["relation"] in self.MEMBERSHIP_RELATIONS:
@@ -2284,9 +2303,15 @@ class ReBACManager:
         zone_id = normalize_zone_id(zone_id)
 
         logger.debug(
-            f"[LIST-OBJECTS] Starting for {subject_type}:{subject_id} "
-            f"permission={permission} object_type={object_type} "
-            f"path_prefix={path_prefix} zone_id={zone_id}"
+            "[LIST-OBJECTS] Starting for %s:%s "
+            "permission=%s object_type=%s "
+            "path_prefix=%s zone_id=%s",
+            subject_type,
+            subject_id,
+            permission,
+            object_type,
+            path_prefix,
+            zone_id,
         )
 
         # Fetch all relevant tuples for this zone
@@ -2294,13 +2319,15 @@ class ReBACManager:
         # CROSS-ZONE FIX: Include cross-zone shares where this user is the recipient
         tuples = self._fetch_tuples_for_zone(zone_id, include_cross_zone_for_user=subject_id)
         if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"[LIST-OBJECTS] Fetched {len(tuples)} tuples for zone {zone_id}")
+            logger.debug("[LIST-OBJECTS] Fetched %d tuples for zone %s", len(tuples), zone_id)
 
         # Get namespace configs
         namespace_configs = self._get_namespace_configs_dict()
 
         logger.debug(
-            f"[LIST-OBJECTS] Namespace configs: file relations={len(namespace_configs.get('file', {}).get('relations', {}))} permissions={len(namespace_configs.get('file', {}).get('permissions', {}))}"
+            "[LIST-OBJECTS] Namespace configs: file relations=%d permissions=%d",
+            len(namespace_configs.get("file", {}).get("relations", {})),
+            len(namespace_configs.get("file", {}).get("permissions", {})),
         )
 
         # Try Rust implementation first (much faster)
@@ -2319,11 +2346,15 @@ class ReBACManager:
                 )
                 elapsed = (time.perf_counter() - start_time) * 1000
                 logger.debug(
-                    f"[LIST-OBJECTS] Rust completed: {len(result)} objects in {elapsed:.1f}ms"
+                    "[LIST-OBJECTS] Rust completed: %d objects in %.1fms",
+                    len(result),
+                    elapsed,
                 )
                 return result
             except (RuntimeError, ValueError) as e:
-                logger.warning(f"Rust list_objects_for_subject failed, falling back to Python: {e}")
+                logger.warning(
+                    "Rust list_objects_for_subject failed, falling back to Python: %s", e
+                )
                 # Fall through to Python implementation
 
         # Python fallback implementation
@@ -2492,8 +2523,10 @@ class ReBACManager:
 
         elapsed = (time.perf_counter() - start_time) * 1000
         logger.debug(
-            f"[LIST-OBJECTS] Python completed: {len(result)} objects "
-            f"(from {len(candidate_objects)} candidates) in {elapsed:.1f}ms"
+            "[LIST-OBJECTS] Python completed: %d objects (from %d candidates) in %.1fms",
+            len(result),
+            len(candidate_objects),
+            elapsed,
         )
 
         return result
@@ -2822,7 +2855,7 @@ class ReBACManager:
                     logger.info("Default namespaces initialized successfully")
                 except Exception as e:  # fail-safe: namespace init is best-effort at startup
                     sa_conn.rollback()
-                    logger.warning(f"Failed to initialize namespaces: {type(e).__name__}: {e}")
+                    logger.warning("Failed to initialize namespaces: %s: %s", type(e).__name__, e)
                     logger.debug(traceback.format_exc())
 
     def _fix_sql_placeholders(self, sql: str) -> str:
@@ -2912,7 +2945,7 @@ class ReBACManager:
             conn.commit()
         except Exception as e:  # fail-safe: tables may not exist yet at startup
             logger = logging.getLogger(__name__)
-            logger.warning(f"Failed to register default namespaces: {type(e).__name__}: {e}")
+            logger.warning("Failed to register default namespaces: %s: %s", type(e).__name__, e)
             logger.debug(traceback.format_exc())
 
     def _initialize_default_namespaces(self) -> None:
@@ -3253,7 +3286,11 @@ class ReBACManager:
         object_entity = Entity(object[0], object[1])
 
         logger.debug(
-            f"🔍 REBAC CHECK: subject={subject_entity}, permission={permission}, object={object_entity}, zone_id={zone_id}"
+            "REBAC CHECK: subject=%s, permission=%s, object=%s, zone_id=%s",
+            subject_entity,
+            permission,
+            object_entity,
+            zone_id,
         )
 
         # Clean up expired tuples first (this will invalidate affected caches)
@@ -3275,7 +3312,9 @@ class ReBACManager:
                 if cached is not None:
                     if logger.isEnabledFor(logging.DEBUG):
                         logger.debug(
-                            f"✅ CACHE HIT: result={cached}, needs_refresh={needs_refresh}"
+                            "CACHE HIT: result=%s, needs_refresh=%s",
+                            cached,
+                            needs_refresh,
                         )
                     if needs_refresh:
                         # Schedule background refresh without blocking
@@ -3288,7 +3327,7 @@ class ReBACManager:
                 cached = self._get_cached_check(subject_entity, permission, object_entity, zone_id)
                 if cached is not None:
                     if logger.isEnabledFor(logging.DEBUG):
-                        logger.debug(f"✅ CACHE HIT: result={cached}")
+                        logger.debug("CACHE HIT: result=%s", cached)
                     return cached
 
             # Cache miss - use stampede prevention (Issue #878)
@@ -3309,7 +3348,7 @@ class ReBACManager:
                     wait_result = self._l1_cache.wait_for_compute(cache_key)
                     if wait_result is not None:
                         if logger.isEnabledFor(logging.DEBUG):
-                            logger.debug(f"✅ STAMPEDE: Got result from leader: {wait_result}")
+                            logger.debug("STAMPEDE: Got result from leader: %s", wait_result)
                         return wait_result
                     # Timeout or error - fall through to compute ourselves
                     logger.debug("⚠️ STAMPEDE: Wait timeout, computing ourselves")
@@ -3329,7 +3368,7 @@ class ReBACManager:
                     )
                     delta = time.perf_counter() - start_time
                     if logger.isEnabledFor(logging.DEBUG):
-                        logger.debug(f"{'✅' if result else '❌'} REBAC RESULT: {result}")
+                        logger.debug("REBAC RESULT: %s", result)
 
                     # Cache result and release lock with delta for XFetch (Issue #718)
                     self._l1_cache.release_compute(
@@ -3367,7 +3406,7 @@ class ReBACManager:
         delta = time.perf_counter() - start_time
 
         if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"{'✅' if result else '❌'} REBAC RESULT: {result}")
+            logger.debug("REBAC RESULT: %s", result)
 
         # Cache result (only if no context) with delta for XFetch (Issue #718)
         if context is None:
@@ -3494,8 +3533,11 @@ class ReBACManager:
                 uncached_checks.append((i, (subject, permission, obj)))
 
         logger.debug(
-            f"🚀 Batch check: {len(checks)} total, {len(results)} cached, "
-            f"{len(uncached_checks)} to compute (Rust={'enabled' if use_rust and is_rust_available() else 'disabled'})"
+            "Batch check: %d total, %d cached, %d to compute (Rust=%s)",
+            len(checks),
+            len(results),
+            len(uncached_checks),
+            "enabled" if use_rust and is_rust_available() else "disabled",
         )
 
         # Phase 2: Compute uncached checks
@@ -3503,7 +3545,8 @@ class ReBACManager:
             if use_rust and is_rust_available() and len(uncached_checks) >= 10:
                 # Use Rust for bulk computation (efficient for 10+ checks)
                 logger.debug(
-                    f"⚡ Using Rust acceleration for {len(uncached_checks)} uncached checks"
+                    "Using Rust acceleration for %d uncached checks",
+                    len(uncached_checks),
                 )
                 try:
                     start_time = time.perf_counter()
@@ -3528,7 +3571,7 @@ class ReBACManager:
                             delta=avg_delta,
                         )
                 except Exception as e:  # fail-safe: Rust fallback to Python computation
-                    logger.warning(f"Rust batch computation failed, falling back to Python: {e}")
+                    logger.warning("Rust batch computation failed, falling back to Python: %s", e)
                     # Fall back to Python computation
                     self._compute_batch_python(uncached_checks, results)
             else:
@@ -3537,7 +3580,9 @@ class ReBACManager:
                     "batch too small (<10)" if len(uncached_checks) < 10 else "Rust not available"
                 )
                 logger.debug(
-                    f"🐍 Using Python computation for {len(uncached_checks)} checks ({reason})"
+                    "Using Python computation for %d checks (%s)",
+                    len(uncached_checks),
+                    reason,
                 )
                 self._compute_batch_python(uncached_checks, results)
 
@@ -3643,7 +3688,7 @@ class ReBACManager:
                 )
 
             if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"📦 Fetched {len(tuples)} tuples for batch computation")
+                logger.debug("Fetched %d tuples for batch computation", len(tuples))
             return tuples
 
     # ====================================================================================
@@ -3983,7 +4028,7 @@ class ReBACManager:
         )
         thread.start()
         if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"🔄 REFRESH: Scheduled background refresh for {cache_key[:50]}...")
+            logger.debug("REFRESH: Scheduled background refresh for %s...", cache_key[:50])
 
     def _background_refresh_worker(
         self,
@@ -4036,9 +4081,9 @@ class ReBACManager:
             self._cache_check_result(subject_entity, permission, object_entity, result, zone_id)
 
             if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"✅ REFRESH: Background refresh complete for {cache_key[:50]}...")
+                logger.debug("REFRESH: Background refresh complete for %s...", cache_key[:50])
         except Exception as e:  # fail-safe: background refresh must not crash thread
-            logger.warning(f"REFRESH: Background refresh failed for {cache_key[:50]}: {e}")
+            logger.warning("REFRESH: Background refresh failed for %s: %s", cache_key[:50], e)
         finally:
             if self._l1_cache:
                 self._l1_cache.complete_refresh(cache_key)

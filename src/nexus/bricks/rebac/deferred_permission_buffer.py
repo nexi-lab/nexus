@@ -89,8 +89,9 @@ class DeferredPermissionBuffer:
         self._flush_thread.start()
         self._started = True
         logger.info(
-            f"DeferredPermissionBuffer started (interval={self._flush_interval}s, "
-            f"max_batch={self._max_batch_size})"
+            "DeferredPermissionBuffer started (interval=%ss, max_batch=%d)",
+            self._flush_interval,
+            self._max_batch_size,
         )
 
     def stop(self, timeout: float = 5.0) -> None:
@@ -113,10 +114,10 @@ class DeferredPermissionBuffer:
 
         self._started = False
         logger.info(
-            f"DeferredPermissionBuffer stopped. Stats: "
-            f"hierarchy={self._total_hierarchy_flushed}, "
-            f"grants={self._total_grants_flushed}, "
-            f"flushes={self._flush_count}"
+            "DeferredPermissionBuffer stopped. Stats: hierarchy=%d, grants=%d, flushes=%d",
+            self._total_hierarchy_flushed,
+            self._total_grants_flushed,
+            self._flush_count,
         )
 
     def queue_hierarchy(self, path: str, zone_id: str) -> None:
@@ -204,7 +205,7 @@ class DeferredPermissionBuffer:
                 try:
                     self._flush_sync()
                 except Exception as e:  # fail-safe: background flush must not crash thread
-                    logger.error(f"DeferredPermissionBuffer flush error: {e}")
+                    logger.error("DeferredPermissionBuffer flush error: %s", e)
 
     def _flush_sync(self) -> None:
         """Flush all pending operations using batch APIs."""
@@ -240,7 +241,7 @@ class DeferredPermissionBuffer:
 
                 self._total_hierarchy_flushed += hierarchy_count
             except (OperationalError, TimeoutError, RuntimeError) as e:
-                logger.warning(f"Hierarchy flush failed, re-queueing: {e}")
+                logger.warning("Hierarchy flush failed, re-queueing: %s", e)
                 # Re-queue on failure
                 with self._lock:
                     self._pending_hierarchy.extend(hierarchy_batch)
@@ -252,7 +253,7 @@ class DeferredPermissionBuffer:
                 grants_count = len(grants_batch)
                 self._total_grants_flushed += grants_count
             except (OperationalError, TimeoutError, RuntimeError) as e:
-                logger.warning(f"Grant flush failed, re-queueing: {e}")
+                logger.warning("Grant flush failed, re-queueing: %s", e)
                 # Re-queue on failure
                 with self._lock:
                     self._pending_grants.extend(grants_batch)
@@ -261,8 +262,10 @@ class DeferredPermissionBuffer:
             elapsed_ms = (time.perf_counter() - start_time) * 1000
             self._flush_count += 1
             logger.debug(
-                f"[DEFERRED-FLUSH] hierarchy={hierarchy_count}, "
-                f"grants={grants_count}, elapsed={elapsed_ms:.1f}ms"
+                "[DEFERRED-FLUSH] hierarchy=%d, grants=%d, elapsed=%.1fms",
+                hierarchy_count,
+                grants_count,
+                elapsed_ms,
             )
 
 

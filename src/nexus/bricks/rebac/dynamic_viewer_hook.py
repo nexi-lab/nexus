@@ -54,7 +54,10 @@ class DynamicViewerReadHook:
             return
 
         logger.info(
-            f"[DynamicViewerHook] Applying filter for {subject} on {ctx.path}: {column_config}"
+            "[DynamicViewerHook] Applying filter for %s on %s: %s",
+            subject,
+            ctx.path,
+            column_config,
         )
 
         content_str = ctx.content.decode("utf-8") if isinstance(ctx.content, bytes) else ctx.content
@@ -68,4 +71,4 @@ class DynamicViewerReadHook:
         else:
             ctx.content = str(filtered).encode("utf-8")
 
-        logger.info(f"[DynamicViewerHook] Successfully filtered {ctx.path}")
+        logger.info("[DynamicViewerHook] Successfully filtered %s", ctx.path)

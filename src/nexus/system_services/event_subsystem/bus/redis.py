@@ -57,6 +57,7 @@ class RedisEventBus(EventBusBase):
         redis_client: PubSubClientProtocol,
         record_store: "RecordStoreABC | None" = None,
         node_id: str | None = None,
+        event_log: Any = None,
     ):
         """Initialize RedisEventBus.
 
@@ -64,13 +65,19 @@ class RedisEventBus(EventBusBase):
             redis_client: PubSubClientProtocol provider (e.g., DragonflyClient)
             record_store: RecordStoreABC for PG SSOT (optional)
             node_id: Unique node identifier for checkpoint tracking (auto-generated if None)
+            event_log: Optional EventLogProtocol for durable WAL persistence (Issue #1397)
         """
         super().__init__(record_store=record_store, node_id=node_id)
         self._redis = redis_client
+        self._event_log = event_log
         self._pubsub: Any = None
 
         # Event deduplication cache (5s TTL) - prevents retry storms
         self._dedup_cache: TTLCache[str, bool] = TTLCache(maxsize=10000, ttl=5.0)
+
+    def set_event_log(self, event_log: Any) -> None:
+        """Wire an event log for WAL-first durability (Issue #1397)."""
+        self._event_log = event_log
 
     def _channel_name(self, zone_id: str) -> str:
         """Get Redis channel name for a zone."""
@@ -97,6 +104,13 @@ class RedisEventBus(EventBusBase):
         if event.event_id in self._dedup_cache:
             logger.debug(f"Duplicate event {event.event_id}, skipping")
             return 0  # Already published
+
+        # WAL append (best-effort) — Issue #1397
+        if self._event_log is not None:
+            try:
+                await self._event_log.append(event)
+            except Exception as exc:
+                logger.warning("Event log append failed (best-effort): %s", exc)
 
         zone_id = event.zone_id or ROOT_ZONE_ID
         channel = self._channel_name(zone_id)

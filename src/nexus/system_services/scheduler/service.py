@@ -45,6 +45,27 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _task_to_status_dict(task: ScheduledTask) -> dict[str, Any]:
+    """Convert a ScheduledTask to a status response dict (DRY helper, Issue #2748)."""
+    return {
+        "id": task.id,
+        "status": task.status,
+        "agent_id": task.agent_id,
+        "executor_id": task.executor_id,
+        "task_type": task.task_type,
+        "priority_tier": PriorityTier(task.priority_tier).name.lower(),
+        "effective_tier": task.effective_tier,
+        "priority_class": task.priority_class,
+        "request_state": task.request_state,
+        "enqueued_at": task.enqueued_at.isoformat() if task.enqueued_at else "",
+        "started_at": task.started_at.isoformat() if task.started_at else None,
+        "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+        "deadline": task.deadline.isoformat() if task.deadline else None,
+        "boost_amount": str(task.boost_amount),
+        "error_message": task.error_message,
+    }
+
+
 class SchedulerService:
     """High-level scheduler service implementing SchedulerProtocol.
 
@@ -231,23 +252,7 @@ class SchedulerService:
             task = await self._queue.get_task(conn, task_id)
         if task is None:
             return None
-        return {
-            "id": task.id,
-            "status": task.status,
-            "agent_id": task.agent_id,
-            "executor_id": task.executor_id,
-            "task_type": task.task_type,
-            "priority_tier": PriorityTier(task.priority_tier).name.lower(),
-            "effective_tier": task.effective_tier,
-            "priority_class": task.priority_class,
-            "request_state": task.request_state,
-            "enqueued_at": task.enqueued_at.isoformat() if task.enqueued_at else "",
-            "started_at": task.started_at.isoformat() if task.started_at else None,
-            "completed_at": task.completed_at.isoformat() if task.completed_at else None,
-            "deadline": task.deadline.isoformat() if task.deadline else None,
-            "boost_amount": str(task.boost_amount),
-            "error_message": task.error_message,
-        }
+        return _task_to_status_dict(task)
 
     async def get_status_scoped(
         self,
@@ -263,23 +268,7 @@ class SchedulerService:
             task = await self._queue.get_task_scoped(conn, task_id, agent_id)
         if task is None:
             return None
-        return {
-            "id": task.id,
-            "status": task.status,
-            "agent_id": task.agent_id,
-            "executor_id": task.executor_id,
-            "task_type": task.task_type,
-            "priority_tier": PriorityTier(task.priority_tier).name.lower(),
-            "effective_tier": task.effective_tier,
-            "priority_class": task.priority_class,
-            "request_state": task.request_state,
-            "enqueued_at": task.enqueued_at.isoformat() if task.enqueued_at else "",
-            "started_at": task.started_at.isoformat() if task.started_at else None,
-            "completed_at": task.completed_at.isoformat() if task.completed_at else None,
-            "deadline": task.deadline.isoformat() if task.deadline else None,
-            "boost_amount": str(task.boost_amount),
-            "error_message": task.error_message,
-        }
+        return _task_to_status_dict(task)
 
     async def complete(self, task_id: str, *, error: str | None = None) -> None:
         """Mark a task as completed or failed, and update fair-share counter."""

@@ -1343,8 +1343,8 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
                 is_active=1,
                 email_verified=1 if registration.email_verified else 0,
                 user_metadata=None,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
+                created_at=datetime.now(UTC).replace(tzinfo=None),
+                updated_at=datetime.now(UTC).replace(tzinfo=None),
             )
             session.add(user)
             session.flush()

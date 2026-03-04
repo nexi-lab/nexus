@@ -186,9 +186,9 @@ class TestBootSystemServices:
             "zone_lifecycle",
             # DT_PIPE manager (Issue #809)
             "pipe_manager",
-            # Issue #2195, #2360
-            "event_log",
             "scheduler_service",
+            # Agent Runtime (AGENT-PROCESS-ARCHITECTURE)
+            "agent_runtime",
         }
         assert expected_keys == set(result.keys())
 

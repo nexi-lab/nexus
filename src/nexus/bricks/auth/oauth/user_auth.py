@@ -8,7 +8,7 @@ import json
 import logging
 import secrets
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
@@ -212,7 +212,7 @@ class OAuthUserAuth:
                 if not user or user.is_active == 0:
                     raise ValueError("User account is inactive")
 
-                existing_oauth.last_used_at = datetime.utcnow()
+                existing_oauth.last_used_at = datetime.now(UTC).replace(tzinfo=None)
                 session.add(existing_oauth)
                 session.flush()
                 session.expunge(user)
@@ -268,8 +268,8 @@ class OAuthUserAuth:
                 is_active=1,
                 email_verified=1 if email_verified else 0,
                 user_metadata=None,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
+                created_at=datetime.now(UTC).replace(tzinfo=None),
+                updated_at=datetime.now(UTC).replace(tzinfo=None),
             )
 
             session.add(user)
@@ -344,8 +344,8 @@ class OAuthUserAuth:
                 else None
             ),
             provider_profile=provider_profile,
-            created_at=datetime.utcnow(),
-            last_used_at=datetime.utcnow(),
+            created_at=datetime.now(UTC).replace(tzinfo=None),
+            last_used_at=datetime.now(UTC).replace(tzinfo=None),
         )
 
         session.add(oauth_account)

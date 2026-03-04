@@ -1159,7 +1159,7 @@ class SearchDaemon:
             Number of documents successfully embedded
         """
         import uuid
-        from datetime import datetime
+        from datetime import UTC, datetime
 
         if not self._bm25s_index:
             logger.warning("[BULK-EMBED] No BM25S index available")
@@ -1184,7 +1184,7 @@ class SearchDaemon:
         # Step 1: Build deterministic UUID5 path_ids for each virtual path
         ns = uuid.UUID("12345678-1234-5678-1234-567812345678")
         path_id_map: dict[str, str] = {}
-        now = datetime.utcnow()
+        now = datetime.now(UTC).replace(tzinfo=None)
 
         unique_vpaths: list[str] = []
         for i in range(total):

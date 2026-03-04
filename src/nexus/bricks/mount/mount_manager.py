@@ -11,6 +11,7 @@ Supports:
 """
 
 import json
+import logging
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -19,6 +20,8 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import select
 
 from nexus.storage.models import MountConfigModel
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -358,7 +361,7 @@ class MountManager:
 
             except Exception as e:
                 # Log error but continue with other mounts
-                print(f"Warning: Failed to restore mount {mount_data['mount_point']}: {e}")
+                logger.warning("Failed to restore mount %s: %s", mount_data["mount_point"], e)
                 continue
 
         return mount_configs

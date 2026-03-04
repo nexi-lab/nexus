@@ -4,9 +4,12 @@ This module provides reusable system prompts that can be used by agents
 to understand how to interact with Nexus filesystem and sandbox tools.
 """
 
+import logging
 from typing import Any, Literal
 
 from langchain_core.runnables import RunnableConfig
+
+logger = logging.getLogger(__name__)
 
 # Base system prompt describing Nexus tools
 NEXUS_TOOLS_SYSTEM_PROMPT = """# Nexus Filesystem & Sandbox Tools
@@ -207,8 +210,7 @@ def get_skills_prompt(config: RunnableConfig, state: dict[str, Any] | None = Non
 
     except Exception as e:
         # If skills listing fails, return empty string (don't break the agent)
-        # In production, you might want to log this warning
-        print(f"Warning: Could not fetch skills for prompt: {e}")
+        logger.warning("Could not fetch skills for prompt: %s", e)
         return ""
 
 

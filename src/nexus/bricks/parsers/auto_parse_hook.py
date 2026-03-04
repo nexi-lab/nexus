@@ -78,30 +78,38 @@ class AutoParseWriteHook:
 
             if "disk" in error_msg.lower() or "space" in error_msg.lower():
                 logger.error(
-                    f"Auto-parse FAILED for {path}: Disk error - {error_type}: {error_msg}"
+                    "Auto-parse FAILED for %s: Disk error - %s: %s", path, error_type, error_msg
                 )
             elif "database" in error_msg.lower() or "connection" in error_msg.lower():
-                logger.error(f"Auto-parse FAILED for {path}: DB error - {error_type}: {error_msg}")
+                logger.error(
+                    "Auto-parse FAILED for %s: DB error - %s: %s", path, error_type, error_msg
+                )
             elif "memory" in error_msg.lower() or isinstance(e, MemoryError):
                 logger.error(
-                    f"Auto-parse FAILED for {path}: Memory error - {error_type}: {error_msg}"
+                    "Auto-parse FAILED for %s: Memory error - %s: %s", path, error_type, error_msg
                 )
             elif "permission" in error_msg.lower() or isinstance(e, PermissionError | OSError):
                 logger.warning(
-                    f"Auto-parse FAILED for {path}: Permission error - {error_type}: {error_msg}"
+                    "Auto-parse FAILED for %s: Permission error - %s: %s",
+                    path,
+                    error_type,
+                    error_msg,
                 )
             elif (
                 "unsupported" in error_msg.lower()
                 or "not supported" in error_msg.lower()
                 or error_type == "UnsupportedFormatException"
             ):
-                logger.debug(f"Auto-parse skipped for {path}: Unsupported format - {error_msg}")
+                logger.debug("Auto-parse skipped for %s: Unsupported format - %s", path, error_msg)
             else:
                 import traceback
 
                 logger.warning(
-                    f"Auto-parse FAILED for {path}: {error_type}: {error_msg}\n"
-                    f"Stack trace:\n{traceback.format_exc()}"
+                    "Auto-parse FAILED for %s: %s: %s\nStack trace:\n%s",
+                    path,
+                    error_type,
+                    error_msg,
+                    traceback.format_exc(),
                 )
 
     def shutdown(self, timeout: float = 10.0) -> dict[str, Any]:
@@ -117,7 +125,7 @@ class AutoParseWriteHook:
         if total == 0:
             return {"total_threads": 0, "completed": 0, "timed_out": 0, "timeout_threads": []}
 
-        logger.info(f"Waiting for {total} parser threads to complete (timeout: {timeout}s)...")
+        logger.info("Waiting for %d parser threads to complete (timeout: %ss)...", total, timeout)
 
         completed = 0
         timed_out = 0
@@ -128,14 +136,16 @@ class AutoParseWriteHook:
             if thread.is_alive():
                 timed_out += 1
                 timeout_threads.append(thread.name)
-                logger.warning(f"Parser thread '{thread.name}' did not complete within {timeout}s.")
+                logger.warning(
+                    "Parser thread '%s' did not complete within %ss.", thread.name, timeout
+                )
             else:
                 completed += 1
 
         with self._lock:
             self._threads.clear()
 
-        logger.info(f"Parser thread shutdown: {completed} completed, {timed_out} timed out")
+        logger.info("Parser thread shutdown: %d completed, %d timed out", completed, timed_out)
         return {
             "total_threads": total,
             "completed": completed,

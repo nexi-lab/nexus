@@ -116,9 +116,9 @@ class MemoryWithPaging(Memory):
                 vector_db=vector_db,
             )
             logger.info(
-                f"MemGPT 3-tier paging enabled: "
-                f"main_capacity={main_capacity}, "
-                f"recall_max_age={recall_max_age_hours}h"
+                "MemGPT 3-tier paging enabled: main_capacity=%d, recall_max_age=%sh",
+                main_capacity,
+                recall_max_age_hours,
             )
         else:
             self.pager = None
@@ -213,7 +213,7 @@ class MemoryWithPaging(Memory):
             memory = self.memory_router.get_memory_by_id(memory_id)
             if memory:
                 self.pager.add_to_main(memory)
-                logger.debug(f"Added memory {memory_id} to main context via paging")
+                logger.debug("Added memory %s to main context via paging", memory_id)
 
         return memory_id
 

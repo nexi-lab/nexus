@@ -424,7 +424,10 @@ class SearchService:
                 import traceback
 
                 logger.debug(
-                    f"Dynamic connector list_dir failed for {path}: {e}\n{traceback.format_exc()}"
+                    "Dynamic connector list_dir failed for %s: %s\n%s",
+                    path,
+                    e,
+                    traceback.format_exc(),
                 )
 
         # Issue #904: Extract zone_id for PREWHERE-style DB filtering
@@ -459,9 +462,14 @@ class SearchService:
         )
 
         logger.info(
-            f"[LIST-DEBUG] START path={path}, recursive={recursive}, zone={list_zone_id}, "
-            f"details={details}, has_list_dir_entries={hasattr(self.metadata, 'list_directory_entries')}, "
-            f"has_context={context is not None}"
+            "[LIST-DEBUG] START path=%s, recursive=%s, zone=%s, "
+            "details=%s, has_list_dir_entries=%s, has_context=%s",
+            path,
+            recursive,
+            list_zone_id,
+            details,
+            hasattr(self.metadata, "list_directory_entries"),
+            context is not None,
         )
         if (
             not recursive
@@ -483,7 +491,7 @@ class SearchService:
                 _rebac_manager,
             )
             sample_paths = [m.path for m in all_files[:5]]
-            logger.info(f"[LIST-DEBUG] FALLBACK all_files sample: {sample_paths}")
+            logger.info("[LIST-DEBUG] FALLBACK all_files sample: %s", sample_paths)
 
         # Issue #904: Fetch cross-zone shared files
         if list_zone_id and subject_type and subject_id:
@@ -495,8 +503,9 @@ class SearchService:
                 prefix=list_prefix,
             )
             logger.info(
-                f"[LIST-TIMING] cross_zone_lookup: {(_time.time() - _ct_start) * 1000:.1f}ms, "
-                f"{len(cross_zone_paths) if cross_zone_paths else 0} paths"
+                "[LIST-TIMING] cross_zone_lookup: %.1fms, %d paths",
+                (_time.time() - _ct_start) * 1000,
+                len(cross_zone_paths) if cross_zone_paths else 0,
             )
             if cross_zone_paths:
                 existing_paths = {meta.path for meta in all_files}
@@ -524,8 +533,9 @@ class SearchService:
                 if "/" not in rel_path:
                     results.append(meta)
             logger.info(
-                f"[LIST-DEBUG] after non-recursive filter: {len(results)} results "
-                f"(from {len(all_files)} all_files)"
+                "[LIST-DEBUG] after non-recursive filter: %d results (from %d all_files)",
+                len(results),
+                len(all_files),
             )
 
         # Issue #900: Single Permission Pass
@@ -542,7 +552,9 @@ class SearchService:
             results_before = len(results)
             results = [meta for meta in results if meta.path in allowed_set]
             logger.info(
-                f"[LIST-DEBUG] after perm filter: {len(results)} results (was {results_before})"
+                "[LIST-DEBUG] after perm filter: %d results (was %d)",
+                len(results),
+                results_before,
             )
         else:
             if not recursive:
@@ -551,7 +563,7 @@ class SearchService:
         # Sort by path
         _sort_start = _time.time()
         results.sort(key=lambda m: m.path)
-        logger.info(f"[LIST-TIMING] sort_results: {(_time.time() - _sort_start) * 1000:.1f}ms")
+        logger.info("[LIST-TIMING] sort_results: %.1fms", (_time.time() - _sort_start) * 1000)
 
         # Add directories to results
         directories = self._list_infer_directories(
@@ -565,7 +577,7 @@ class SearchService:
             zone_id=list_zone_id,
         )
 
-        logger.info(f"[LIST-DEBUG] FINAL directories: {sorted(directories)[:10]}")
+        logger.info("[LIST-DEBUG] FINAL directories: %s", sorted(directories)[:10])
 
         # Build output
         if details:
@@ -680,15 +692,16 @@ class SearchService:
                         else:
                             results.append(full_path)
                 except Exception as e:
-                    logger.warning(f"[LIST-PARALLEL] Failed to list '{virtual_path}': {e}")
+                    logger.warning("[LIST-PARALLEL] Failed to list '%s': %s", virtual_path, e)
 
         if depth >= LIST_PARALLEL_MAX_DEPTH:
             logger.warning(
-                f"[LIST-PARALLEL] Hit max depth {LIST_PARALLEL_MAX_DEPTH}, truncating traversal"
+                "[LIST-PARALLEL] Hit max depth %d, truncating traversal",
+                LIST_PARALLEL_MAX_DEPTH,
             )
 
         elapsed = time.time() - start_time
-        logger.debug(f"[LIST-PARALLEL] Completed: {len(results)} entries in {elapsed:.3f}s")
+        logger.debug("[LIST-PARALLEL] Completed: %d entries in %.3fs", len(results), elapsed)
 
         return results
 
@@ -845,13 +858,15 @@ class SearchService:
 
         if dir_entries is None:
             logger.info(
-                f"[LIST-TIMING] list_directory_entries(): {_idx_elapsed:.1f}ms (sparse index MISS)"
+                "[LIST-TIMING] list_directory_entries(): %.1fms (sparse index MISS)",
+                _idx_elapsed,
             )
             return [], set(), False, _revision_before
 
         logger.info(
-            f"[LIST-TIMING] list_directory_entries(): {_idx_elapsed:.1f}ms, "
-            f"{len(dir_entries)} entries (sparse index HIT)"
+            "[LIST-TIMING] list_directory_entries(): %.1fms, %d entries (sparse index HIT)",
+            _idx_elapsed,
+            len(dir_entries),
         )
 
         all_files = []
@@ -885,8 +900,9 @@ class SearchService:
                     )
                 )
         logger.info(
-            f"[LIST-TIMING] has_accessible_descendants(): "
-            f"{(_time.time() - _perm_start) * 1000:.1f}ms for {len(dir_entries)} entries"
+            "[LIST-TIMING] has_accessible_descendants(): %.1fms for %d entries",
+            (_time.time() - _perm_start) * 1000,
+            len(dir_entries),
         )
 
         # Check revision consistency
@@ -899,8 +915,9 @@ class SearchService:
             _revision_after = _rebac_manager._get_zone_revision_for_grant(list_zone_id)
             if _revision_after != _revision_before:
                 logger.warning(
-                    f"[LIST-TIMING] Revision changed ({_revision_before} -> {_revision_after}), "
-                    f"falling back to full list"
+                    "[LIST-TIMING] Revision changed (%s -> %s), falling back to full list",
+                    _revision_before,
+                    _revision_after,
                 )
                 _use_fast_path = False
 
@@ -945,14 +962,15 @@ class SearchService:
                     if _accessible_int_ids is not None:
                         if len(_accessible_int_ids) > 0:
                             logger.info(
-                                f"[PREDICATE-PUSHDOWN] Got {len(_accessible_int_ids)} accessible "
-                                f"int IDs in {(_time.time() - _pushdown_start) * 1000:.1f}ms"
+                                "[PREDICATE-PUSHDOWN] Got %d accessible int IDs in %.1fms",
+                                len(_accessible_int_ids),
+                                (_time.time() - _pushdown_start) * 1000,
                             )
                         else:
                             logger.info("[PREDICATE-PUSHDOWN] Empty int IDs, falling back")
                             _accessible_int_ids = None
                 except Exception as e:
-                    logger.warning(f"[PREDICATE-PUSHDOWN] Failed to get int IDs: {e}")
+                    logger.warning("[PREDICATE-PUSHDOWN] Failed to get int IDs: %s", e)
                     _accessible_int_ids = None
 
         _meta_start = _time.time()
@@ -961,8 +979,9 @@ class SearchService:
             zone_id=list_zone_id,
         )
         logger.info(
-            f"[LIST-TIMING] metadata.list(): {(_time.time() - _meta_start) * 1000:.1f}ms, "
-            f"{len(all_files)} files"
+            "[LIST-TIMING] metadata.list(): %.1fms, %d files",
+            (_time.time() - _meta_start) * 1000,
+            len(all_files),
         )
 
         # Predicate pushdown: filter by accessible_int_ids at service layer
@@ -977,9 +996,11 @@ class SearchService:
                     in _accessible_int_ids
                 ]
                 logger.info(
-                    f"[PREDICATE-PUSHDOWN] Service-layer filter: "
-                    f"{before_count} -> {len(all_files)} files "
-                    f"({len(_accessible_int_ids)} accessible int IDs)"
+                    "[PREDICATE-PUSHDOWN] Service-layer filter: "
+                    "%d -> %d files (%d accessible int IDs)",
+                    before_count,
+                    len(all_files),
+                    len(_accessible_int_ids),
                 )
 
             # Issue #1147: Check if revision changed during query (TOCTOU race detection)
@@ -999,8 +1020,9 @@ class SearchService:
                         zone_id=list_zone_id,
                     )
                     logger.info(
-                        f"[LIST-TIMING] metadata.list() retry: "
-                        f"{(_time.time() - _meta_start) * 1000:.1f}ms, {len(all_files)} files"
+                        "[LIST-TIMING] metadata.list() retry: %.1fms, %d files",
+                        (_time.time() - _meta_start) * 1000,
+                        len(all_files),
                     )
                     _accessible_int_ids = None
 
@@ -1044,8 +1066,8 @@ class SearchService:
         if _accessible_int_ids is not None:
             allowed_set = {meta.path for meta in all_files}
             logger.info(
-                f"[PREDICATE-PUSHDOWN] Skipped filter_list() - "
-                f"using {len(allowed_set)} pre-filtered paths"
+                "[PREDICATE-PUSHDOWN] Skipped filter_list() - using %d pre-filtered paths",
+                len(allowed_set),
             )
         else:
             allowed_list = self._permission_enforcer.filter_list(list(candidate_paths), ctx)
@@ -1056,10 +1078,12 @@ class SearchService:
             allowed_set.update(_preapproved_dirs)
 
         logger.debug(
-            f"[PERF-LIST] Permission filter: {filter_elapsed:.3f}s, "
-            f"allowed {len(allowed_set)}/{len(candidate_paths)} paths"
+            "[PERF-LIST] Permission filter: %.3fs, allowed %d/%d paths",
+            filter_elapsed,
+            len(allowed_set),
+            len(candidate_paths),
         )
-        logger.debug(f"[PERF-LIST] Total: {time.time() - perm_start:.3f}s")
+        logger.debug("[PERF-LIST] Total: %.3fs", time.time() - perm_start)
 
         return allowed_set, backend_dirs
 
@@ -1115,8 +1139,9 @@ class SearchService:
                 directories.update(backend_dirs)
 
         logger.info(
-            f"[LIST-TIMING] dir_processing: {(_time.time() - _dir_start) * 1000:.1f}ms, "
-            f"{len(directories)} dirs"
+            "[LIST-TIMING] dir_processing: %.1fms, %d dirs",
+            (_time.time() - _dir_start) * 1000,
+            len(directories),
         )
         return directories
 
@@ -1203,9 +1228,12 @@ class SearchService:
                     directories.add(dir_path)
 
         logger.info(
-            f"[LIST-TIMING] backend_dir_checks: {(_time.time() - _bd_start) * 1000:.1f}ms, "
-            f"traverse={_traverse_checks}, prefix={_prefix_checks}, "
-            f"skipped_cross_zone={_skipped_cross_zone}"
+            "[LIST-TIMING] backend_dir_checks: %.1fms, "
+            "traverse=%d, prefix=%d, skipped_cross_zone=%d",
+            (_time.time() - _bd_start) * 1000,
+            _traverse_checks,
+            _prefix_checks,
+            _skipped_cross_zone,
         )
 
     def _list_build_details(
@@ -1250,7 +1278,9 @@ class SearchService:
         all_results = file_results + dir_results
         all_results.sort(key=lambda x: str(x["path"]))
         logger.info(
-            f"[LIST-TIMING] TOTAL: {(_time.time() - _list_start) * 1000:.1f}ms for path={path}"
+            "[LIST-TIMING] TOTAL: %.1fms for path=%s",
+            (_time.time() - _list_start) * 1000,
+            path,
         )
         self._record_read_if_tracking(context, "directory", path, "list")
         return all_results
@@ -1276,7 +1306,9 @@ class SearchService:
         all_paths = file_paths + sorted(directories)
         all_paths.sort()
         logger.info(
-            f"[LIST-TIMING] TOTAL: {(_time.time() - _list_start) * 1000:.1f}ms for path={path}"
+            "[LIST-TIMING] TOTAL: %.1fms for path=%s",
+            (_time.time() - _list_start) * 1000,
+            path,
         )
         self._record_read_if_tracking(context, "directory", path, "list")
         return all_paths
@@ -1464,7 +1496,10 @@ class SearchService:
             )
             if paths:
                 logger.debug(
-                    f"[CROSS-ZONE] Found {len(paths)} shared paths for {subject_type}:{subject_id}"
+                    "[CROSS-ZONE] Found %d shared paths for %s:%s",
+                    len(paths),
+                    subject_type,
+                    subject_id,
                 )
             self._cross_zone_cache[cache_key] = paths
             return paths
@@ -1518,8 +1553,9 @@ class SearchService:
             list[str], self.list(search_path, recursive=True, context=context)
         )
         logger.debug(
-            f"[GLOB] Phase 2: list() found {len(accessible_files)} files "
-            f"in {time.time() - list_start:.3f}s"
+            "[GLOB] Phase 2: list() found %d files in %.3fs",
+            len(accessible_files),
+            time.time() - list_start,
         )
         if not accessible_files:
             return []
@@ -1529,7 +1565,8 @@ class SearchService:
         accessible_files = _filter_ignored_paths(accessible_files)
         if pre_filter_count != len(accessible_files):
             logger.debug(
-                f"[GLOB] Issue #538: Filtered {pre_filter_count - len(accessible_files)} paths"
+                "[GLOB] Issue #538: Filtered %d paths",
+                pre_filter_count - len(accessible_files),
             )
 
         # Phase 3: Strategy selection (Issue #929)
@@ -1575,8 +1612,12 @@ class SearchService:
                     matches.append(file_path)
 
         logger.debug(
-            f"[GLOB] {strategy.value}: matched {len(matches)}/{len(accessible_files)} files "
-            f"in {time.time() - match_start:.3f}s (total: {time.time() - glob_start:.3f}s)"
+            "[GLOB] %s: matched %d/%d files in %.3fs (total: %.3fs)",
+            strategy.value,
+            len(matches),
+            len(accessible_files),
+            time.time() - match_start,
+            time.time() - glob_start,
         )
 
         # Sort by mtime (newest first) (Issue #538)
@@ -1588,7 +1629,7 @@ class SearchService:
                     key=lambda p: (-(metadata_map.get(p, 0) or 0), p),
                 )
             except Exception as e:
-                logger.debug(f"[GLOB] mtime sort failed ({e}), falling back to alphabetical")
+                logger.debug("[GLOB] mtime sort failed (%s), falling back to alphabetical", e)
                 return sorted(matches)
         return []
 
@@ -1716,7 +1757,7 @@ class SearchService:
             pre_filter_count = len(files)
             files = _filter_ignored_paths(files)
             if pre_filter_count != len(files):
-                logger.debug(f"[GREP] Issue #538: Filtered {pre_filter_count - len(files)} paths")
+                logger.debug("[GREP] Issue #538: Filtered %d paths", pre_filter_count - len(files))
 
         if not files:
             return []
@@ -1862,7 +1903,7 @@ class SearchService:
                             ]
                             remaining_results = remaining_results - len(results)
             except Exception as e:
-                logger.debug(f"[GREP] Mmap optimization failed: {e}")
+                logger.debug("[GREP] Mmap optimization failed: %s", e)
 
         # Rust-accelerated grep for remaining
         if (
@@ -1986,7 +2027,7 @@ class SearchService:
                         break
             return results
         except Exception as e:
-            logger.warning(f"[GREP] Zoekt search failed: {e}")
+            logger.warning("[GREP] Zoekt search failed: %s", e)
             return None
 
     def _try_grep_with_trigram(
@@ -2204,12 +2245,14 @@ class SearchService:
                 if len(all_results) >= max_results:
                     break
             except Exception as e:
-                logger.debug(f"[GREP-PARALLEL] Chunk failed: {e}")
+                logger.debug("[GREP-PARALLEL] Chunk failed: %s", e)
 
         timer.__exit__(None, None, None)
         logger.debug(
-            f"[GREP-PARALLEL] {len(files)} files, {len(all_results)} results "
-            f"in {timer.elapsed:.3f}s"
+            "[GREP-PARALLEL] %d files, %d results in %.3fs",
+            len(files),
+            len(all_results),
+            timer.elapsed,
         )
         return all_results[:max_results]
 

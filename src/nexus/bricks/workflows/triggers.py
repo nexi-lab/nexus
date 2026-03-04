@@ -181,7 +181,7 @@ class TriggerManager:
         """Register a trigger with a callback."""
         trigger_type = trigger.trigger_type.value
         self.triggers[trigger_type].append((trigger, callback))
-        logger.info(f"Registered {trigger_type} trigger with pattern: {trigger.get_pattern()}")
+        logger.info("Registered %s trigger with pattern: %s", trigger_type, trigger.get_pattern())
 
     def unregister_trigger(self, trigger: BaseTrigger) -> None:
         """Unregister a trigger."""
@@ -212,7 +212,7 @@ class TriggerManager:
                     await callback(event_context)
                     triggered_count += 1
                 except Exception as e:
-                    logger.error(f"Error executing trigger callback: {e}")
+                    logger.error("Error executing trigger callback: %s", e)
 
         return triggered_count
 

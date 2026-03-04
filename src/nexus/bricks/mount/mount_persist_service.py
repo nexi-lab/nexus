@@ -110,12 +110,12 @@ class MountPersistService:
             subject_type, subject_id = get_user_identity(context)
             if subject_id:
                 owner_user_id = f"{subject_type}:{subject_id}"
-                logger.info(f"[SAVE_MOUNT] Auto-populated owner_user_id: {owner_user_id}")
+                logger.info("[SAVE_MOUNT] Auto-populated owner_user_id: %s", owner_user_id)
 
         if zone_id is None and context:
             zone_id = get_zone_id(context)
             if zone_id:
-                logger.info(f"[SAVE_MOUNT] Auto-populated zone_id: {zone_id}")
+                logger.info("[SAVE_MOUNT] Auto-populated zone_id: %s", zone_id)
 
         assert self._manager is not None
         mount_id = self._manager.save_mount(
@@ -140,7 +140,7 @@ class MountPersistService:
                 context=context,
             )
         except Exception as e:
-            logger.warning(f"[SAVE_MOUNT] Mount saved but activation failed: {e}")
+            logger.warning("[SAVE_MOUNT] Mount saved but activation failed: %s", e)
 
         return mount_id
 
@@ -165,7 +165,7 @@ class MountPersistService:
 
         # Check if mount is already active
         if self._mounts.has_mount(mount_point):
-            logger.info(f"[LOAD_MOUNT] Mount already active: {mount_point}")
+            logger.info("[LOAD_MOUNT] Mount already active: %s", mount_point)
             # Return the mount_id from database
             assert self._manager is not None
             config = self._manager.get_mount(mount_point)
@@ -213,7 +213,7 @@ class MountPersistService:
             logger.info("No saved mounts found in database")
             return {"loaded": 0, "synced": 0, "failed": 0, "errors": []}
 
-        logger.info(f"Found {len(saved_mounts)} saved mount(s) to load")
+        logger.info("Found %d saved mount(s) to load", len(saved_mounts))
 
         loaded = 0
         failed = 0
@@ -223,7 +223,7 @@ class MountPersistService:
         for mount in saved_mounts:
             mount_point = mount["mount_point"]
             try:
-                logger.info(f"Loading mount: {mount_point} ({mount['backend_type']})")
+                logger.info("Loading mount: %s (%s)", mount_point, mount["backend_type"])
 
                 # Parse backend config
                 backend_config = mount["backend_config"]
@@ -240,7 +240,7 @@ class MountPersistService:
                 )
 
                 loaded += 1
-                logger.info(f"Successfully loaded mount: {mount_point}")
+                logger.info("Successfully loaded mount: %s", mount_point)
 
                 # Auto-sync if requested
                 if auto_sync and self._sync:
@@ -252,7 +252,7 @@ class MountPersistService:
 
                     if is_connector:
                         try:
-                            logger.info(f"Auto-syncing connector mount: {mount_point}")
+                            logger.info("Auto-syncing connector mount: %s", mount_point)
                             from nexus.contracts.types import SyncContext
 
                             # Build context from mount owner if available
@@ -267,14 +267,15 @@ class MountPersistService:
                             result = self._sync.sync_mount(ctx)
                             synced += 1
                             logger.info(
-                                f"Synced {mount_point}: "
-                                f"{result.files_scanned} scanned, "
-                                f"{result.files_created} created"
+                                "Synced %s: %d scanned, %d created",
+                                mount_point,
+                                result.files_scanned,
+                                result.files_created,
                             )
                         except Exception as sync_e:
-                            logger.warning(f"Failed to sync {mount_point}: {sync_e}")
+                            logger.warning("Failed to sync %s: %s", mount_point, sync_e)
                     else:
-                        logger.info(f"Skipping auto-sync for {mount_point} (not a connector)")
+                        logger.info("Skipping auto-sync for %s (not a connector)", mount_point)
 
             except Exception as e:
                 failed += 1
@@ -282,7 +283,9 @@ class MountPersistService:
                 errors.append(error_msg)
                 logger.error(error_msg)
 
-        logger.info(f"Mount loading complete: {loaded} loaded, {synced} synced, {failed} failed")
+        logger.info(
+            "Mount loading complete: %d loaded, %d synced, %d failed", loaded, synced, failed
+        )
 
         return {"loaded": loaded, "synced": synced, "failed": failed, "errors": errors}
 
@@ -309,12 +312,12 @@ class MountPersistService:
             subject_type, subject_id = get_user_identity(context)
             if subject_id:
                 owner_user_id = f"{subject_type}:{subject_id}"
-                logger.info(f"[LIST_SAVED_MOUNTS] Auto-filtering by owner: {owner_user_id}")
+                logger.info("[LIST_SAVED_MOUNTS] Auto-filtering by owner: %s", owner_user_id)
 
         if zone_id is None and context:
             zone_id = get_zone_id(context)
             if zone_id:
-                logger.info(f"[LIST_SAVED_MOUNTS] Auto-filtering by zone: {zone_id}")
+                logger.info("[LIST_SAVED_MOUNTS] Auto-filtering by zone: %s", zone_id)
 
         assert self._manager is not None
         return self._manager.list_mounts(owner_user_id=owner_user_id, zone_id=zone_id)
@@ -364,5 +367,5 @@ class MountPersistService:
                 subject_id=subject_id,
             )
         except Exception as e:
-            logger.warning(f"Failed to build sync context: {e}")
+            logger.warning("Failed to build sync context: %s", e)
             return None

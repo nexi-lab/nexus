@@ -233,10 +233,10 @@ class KlavisClient:
 
             except httpx.HTTPStatusError as e:
                 # This endpoint might not exist, return empty list
-                logger.warning(f"Failed to list Klavis providers: {e}")
+                logger.warning("Failed to list Klavis providers: %s", e)
                 return []
             except Exception as e:
-                logger.warning(f"Failed to list Klavis providers: {e}")
+                logger.warning("Failed to list Klavis providers: %s", e)
                 return []
 
     async def get_connection_status(

@@ -130,7 +130,7 @@ class WorkflowLoader:
             WorkflowTrigger or None if invalid
         """
         if not isinstance(data, dict):
-            logger.warning(f"Invalid trigger data: {data}")
+            logger.warning("Invalid trigger data: %s", data)
             return None
 
         trigger_type_str = data.get("type")
@@ -142,7 +142,7 @@ class WorkflowLoader:
         try:
             trigger_type = TriggerType(trigger_type_str)
         except ValueError:
-            logger.warning(f"Unknown trigger type: {trigger_type_str}")
+            logger.warning("Unknown trigger type: %s", trigger_type_str)
             return None
 
         # Extract config (everything except 'type')
@@ -161,7 +161,7 @@ class WorkflowLoader:
             WorkflowAction or None if invalid
         """
         if not isinstance(data, dict):
-            logger.warning(f"Invalid action data: {data}")
+            logger.warning("Invalid action data: %s", data)
             return None
 
         action_name = data.get("name")
@@ -217,7 +217,7 @@ class WorkflowLoader:
         with open(file_path, "w") as f:
             yaml.dump(data, f, default_flow_style=False, sort_keys=False)
 
-        logger.info(f"Saved workflow definition to {file_path}")
+        logger.info("Saved workflow definition to %s", file_path)
 
     @staticmethod
     def discover_workflows(directory: str | Path) -> list[WorkflowDefinition]:
@@ -231,7 +231,7 @@ class WorkflowLoader:
         """
         directory = Path(directory)
         if not directory.exists():
-            logger.warning(f"Workflow directory not found: {directory}")
+            logger.warning("Workflow directory not found: %s", directory)
             return []
 
         workflows = []
@@ -239,16 +239,16 @@ class WorkflowLoader:
             try:
                 workflow = WorkflowLoader.load_from_file(yaml_file)
                 workflows.append(workflow)
-                logger.info(f"Discovered workflow: {workflow.name} from {yaml_file}")
+                logger.info("Discovered workflow: %s from %s", workflow.name, yaml_file)
             except Exception as e:
-                logger.error(f"Failed to load workflow from {yaml_file}: {e}")
+                logger.error("Failed to load workflow from %s: %s", yaml_file, e)
 
         for yml_file in directory.glob("**/*.yml"):
             try:
                 workflow = WorkflowLoader.load_from_file(yml_file)
                 workflows.append(workflow)
-                logger.info(f"Discovered workflow: {workflow.name} from {yml_file}")
+                logger.info("Discovered workflow: %s from %s", workflow.name, yml_file)
             except Exception as e:
-                logger.error(f"Failed to load workflow from {yml_file}: {e}")
+                logger.error("Failed to load workflow from %s: %s", yml_file, e)
 
         return workflows

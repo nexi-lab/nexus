@@ -299,7 +299,7 @@ class VersionService:
             Rollback creates a new version rather than deleting history.
             This preserves the audit trail and allows rolling forward again.
         """
-        logger.info(f"[ROLLBACK] path={path}, version={version}")
+        logger.info("[ROLLBACK] path=%s, version=%s", path, version)
 
         # Validate and normalize path
         path = self._validate_path(path)
@@ -374,7 +374,7 @@ class VersionService:
             self.metadata._cache.invalidate_path(path)
             logger.debug("Cache invalidated for path=%s", path)
 
-        logger.info(f"[ROLLBACK] Completed for path={path}")
+        logger.info("[ROLLBACK] Completed for path=%s", path)
 
     @rpc_expose(description="Compare file versions")
     async def diff_versions(

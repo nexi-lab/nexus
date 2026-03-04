@@ -80,10 +80,10 @@ class ArchivalStore:
 
             # TODO: Trigger hierarchical consolidation (Issue #4 from review)
             if trigger_consolidation and logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"Consolidation not implemented yet for memory {merged.memory_id}")
+                logger.debug("Consolidation not implemented yet for memory %s", merged.memory_id)
 
             if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"Stored memory {merged.memory_id} in archival")
+                logger.debug("Stored memory %s in archival", merged.memory_id)
         except Exception:
             session.rollback()
             raise
@@ -113,7 +113,7 @@ class ArchivalStore:
             try:
                 return self._db_vector_search(query_embedding, threshold, limit)
             except Exception as e:
-                logger.warning(f"DB vector search failed, falling back to Python: {e}")
+                logger.warning("DB vector search failed, falling back to Python: %s", e)
 
         # Fallback to Python-based similarity search (capped to prevent O(n) full scan)
         session = self._session_factory()
@@ -132,8 +132,9 @@ class ArchivalStore:
 
             if len(archival_memories) >= _PYTHON_SEARCH_CAP:
                 logger.warning(
-                    f"Archival Python search capped at {_PYTHON_SEARCH_CAP} memories. "
-                    f"Enable pgvector for full semantic search over large archives."
+                    "Archival Python search capped at %d memories. "
+                    "Enable pgvector for full semantic search over large archives.",
+                    _PYTHON_SEARCH_CAP,
                 )
 
             return self._simple_similarity_search(

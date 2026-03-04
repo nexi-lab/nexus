@@ -151,7 +151,7 @@ class ContextManager:
             try:
                 self._importance_cache[mid] = memory.importance or 0.5
             except DetachedInstanceError:
-                logger.debug(f"Detached instance for {mid}, using default importance 0.5")
+                logger.debug("Detached instance for %s, using default importance 0.5", mid)
                 self._importance_cache[mid] = 0.5
 
             # Enforce max capacity (drop oldest if over limit)
@@ -164,8 +164,11 @@ class ContextManager:
 
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug(
-                    f"Added memory {mid} to context "
-                    f"({len(self._buffer)}/{self.max_items}), evicted {len(evicted)}"
+                    "Added memory %s to context (%d/%d), evicted %d",
+                    mid,
+                    len(self._buffer),
+                    self.max_items,
+                    len(evicted),
                 )
 
             return evicted
@@ -285,8 +288,10 @@ class ContextManager:
         loaded_count = self._add_batch(memories)
 
         logger.info(
-            f"Warm-up loaded {loaded_count} memories into context "
-            f"(zone={zone_id}, capacity={self.max_items})"
+            "Warm-up loaded %d memories into context (zone=%s, capacity=%d)",
+            loaded_count,
+            zone_id,
+            self.max_items,
         )
         return loaded_count
 
@@ -316,7 +321,7 @@ class ContextManager:
                 try:
                     self._importance_cache[mid] = memory.importance or 0.5
                 except DetachedInstanceError:
-                    logger.debug(f"Detached instance for {mid}, using default importance 0.5")
+                    logger.debug("Detached instance for %s, using default importance 0.5", mid)
                     self._importance_cache[mid] = 0.5
 
             # Enforce max capacity (drop oldest if over limit)
@@ -374,7 +379,9 @@ class ContextManager:
 
         if logger.isEnabledFor(logging.INFO):
             logger.info(
-                f"Evicted {len(evicted)} memories (scores: {[s.score for s in scores[:3]]}...)"
+                "Evicted %d memories (scores: %s...)",
+                len(evicted),
+                [s.score for s in scores[:3]],
             )
 
         return evicted

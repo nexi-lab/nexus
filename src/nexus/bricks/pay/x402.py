@@ -266,7 +266,7 @@ class X402Client:
         """Get cached verification if still valid (TTLCache handles expiration)."""
         cached = self._verification_cache.get(cache_key)
         if cached is not None:
-            logger.debug(f"Cache hit for payment verification: {cache_key[:20]}...")
+            logger.debug("Cache hit for payment verification: %s...", cache_key[:20])
         return cached
 
     def _cache_verification(self, cache_key: str, verification: X402PaymentVerification) -> None:

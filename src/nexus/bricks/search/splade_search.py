@@ -81,7 +81,9 @@ class SpladeRetriever:
             self._model = AutoModelForMaskedLM.from_pretrained(self._model_name)
             self._model.eval()
             logger.info(
-                f"SPLADE model loaded: {self._model_name} (vocab={self._tokenizer.vocab_size})"
+                "SPLADE model loaded: %s (vocab=%d)",
+                self._model_name,
+                self._tokenizer.vocab_size,
             )
 
         await asyncio.to_thread(_load)
@@ -135,7 +137,7 @@ class SpladeRetriever:
             raise RuntimeError("SPLADE not initialized")
 
         total = len(documents)
-        logger.info(f"[SPLADE] Indexing {total} documents...")
+        logger.info("[SPLADE] Indexing %d documents...", total)
 
         def _index_batch(batch: list[tuple[str, str]]) -> list[tuple[str, str, dict]]:
             results = []
@@ -158,9 +160,9 @@ class SpladeRetriever:
                 indexed += 1
 
             if (start // batch_size) % 10 == 0:
-                logger.info(f"[SPLADE] Indexed {indexed}/{total} docs")
+                logger.info("[SPLADE] Indexed %d/%d docs", indexed, total)
 
-        logger.info(f"[SPLADE] Indexing complete: {indexed} documents")
+        logger.info("[SPLADE] Indexing complete: %d documents", indexed)
         return indexed
 
     async def search(

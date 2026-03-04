@@ -158,9 +158,9 @@ class MCPConnectionManager:
                             key = f"{conn.provider}:{conn.user_id}"
                             self._connections[key] = conn
                         except Exception as e:
-                            logger.warning(f"Failed to load connection from {path}: {e}")
+                            logger.warning("Failed to load connection from %s: %s", path, e)
         except Exception as e:
-            logger.warning(f"Failed to load connections: {e}")
+            logger.warning("Failed to load connections: %s", e)
 
     def _save_connection(self, conn: "MCPConnection") -> None:
         """Save a connection to storage."""
@@ -181,7 +181,7 @@ class MCPConnectionManager:
                 self.filesystem.sys_write(path, content.encode("utf-8"))
 
         except Exception as e:
-            logger.error(f"Failed to save connection: {e}")
+            logger.error("Failed to save connection: %s", e)
 
     def _delete_connection(self, provider: str, user_id: str) -> None:
         """Delete a connection from storage."""
@@ -192,7 +192,7 @@ class MCPConnectionManager:
                 if self.filesystem.sys_access(path):
                     self.filesystem.sys_unlink(path)
         except Exception as e:
-            logger.warning(f"Failed to delete connection file: {e}")
+            logger.warning("Failed to delete connection file: %s", e)
 
     async def connect(
         self,
@@ -250,7 +250,7 @@ class MCPConnectionManager:
 
         try:
             # 1. Create MCP instance - this returns both the MCP URL and OAuth URL if needed
-            logger.info(f"Creating MCP instance for {config.name}...")
+            logger.info("Creating MCP instance for %s...", config.name)
             mcp_instance = await self.klavis.create_mcp_instance(
                 provider=klavis_name,
                 user_id=user_id,
@@ -259,10 +259,10 @@ class MCPConnectionManager:
 
             # 2. If OAuth is required, do the OAuth flow
             if mcp_instance.oauth_url:
-                logger.info(f"OAuth required for {config.name}")
+                logger.info("OAuth required for %s", config.name)
 
                 if open_browser:
-                    logger.info(f"Opening browser for {config.name} authorization...")
+                    logger.info("Opening browser for %s authorization...", config.name)
                     webbrowser.open(mcp_instance.oauth_url)
 
                     # Wait for OAuth callback
@@ -271,13 +271,13 @@ class MCPConnectionManager:
                 else:
                     # Don't wait for callback when browser is not opened
                     # User will manually complete OAuth
-                    logger.info(f"OAuth URL (complete manually): {mcp_instance.oauth_url}")
+                    logger.info("OAuth URL (complete manually): %s", mcp_instance.oauth_url)
                     logger.info("Skipping callback wait (--no-browser mode)")
             else:
-                logger.info(f"No OAuth required for {config.name}, instance ready")
+                logger.info("No OAuth required for %s, instance ready", config.name)
 
             # 3. Mount the MCP server in Nexus
-            logger.info(f"Mounting MCP server: {mcp_instance.url}")
+            logger.info("Mounting MCP server: %s", mcp_instance.url)
             mount = MCPMount(
                 name=config.name,
                 description=config.description or f"{config.display_name} via Klavis",
@@ -299,7 +299,7 @@ class MCPConnectionManager:
             self._connections[key] = connection
             self._save_connection(connection)
 
-            logger.info(f"Connected to {config.name} via Klavis")
+            logger.info("Connected to %s via Klavis", config.name)
             return connection
 
         except KlavisError as e:
@@ -323,8 +323,10 @@ class MCPConnectionManager:
         # The full OAuth flow would require the TokenManager integration
 
         logger.warning(
-            f"Local OAuth flow for {config.name} requires manual setup. "
-            f"Use 'nexus oauth setup-{config.name}' to configure credentials first."
+            "Local OAuth flow for %s requires manual setup. "
+            "Use 'nexus oauth setup-%s' to configure credentials first.",
+            config.name,
+            config.name,
         )
 
         # Create connection record
@@ -393,7 +395,7 @@ class MCPConnectionManager:
 
         try:
             await site.start()
-            logger.debug(f"OAuth callback server listening on port {port}")
+            logger.debug("OAuth callback server listening on port %s", port)
 
             # Wait for callback or timeout
             try:
@@ -429,7 +431,7 @@ class MCPConnectionManager:
         try:
             await self.mount_manager.unmount(provider)
         except Exception as e:
-            logger.warning(f"Failed to unmount {provider}: {e}")
+            logger.warning("Failed to unmount %s: %s", provider, e)
 
         # Disconnect from Klavis if applicable
         if connection.provider_type == ProviderType.KLAVIS and self.klavis:
@@ -438,13 +440,13 @@ class MCPConnectionManager:
                 klavis_name = config.klavis_name if config and config.klavis_name else provider
                 await self.klavis.disconnect(klavis_name, user_id)
             except Exception as e:
-                logger.warning(f"Failed to disconnect from Klavis: {e}")
+                logger.warning("Failed to disconnect from Klavis: %s", e)
 
         # Remove from storage
         del self._connections[key]
         self._delete_connection(provider, user_id)
 
-        logger.info(f"Disconnected from {provider}")
+        logger.info("Disconnected from %s", provider)
         return True
 
     def list_connections(self, user_id: str | None = None) -> "list[MCPConnection]":

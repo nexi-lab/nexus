@@ -49,19 +49,19 @@ class ContentParserEngine:
                 parse_info["parsed"] = True
                 parse_info["cached"] = True
                 parse_info["provider"] = self._metadata.get_file_metadata(path, "parser_name")
-                logger.debug(f"Using cached parsed_text for {path}")
+                logger.debug("Using cached parsed_text for %s", path)
                 return (
                     cached_text.encode("utf-8") if isinstance(cached_text, str) else cached_text,
                     parse_info,
                 )
 
             if self._provider_registry is None:
-                logger.debug(f"No provider registry available for parsing {path}")
+                logger.debug("No provider registry available for parsing %s", path)
                 return content, parse_info
 
             provider = self._provider_registry.get_provider(path)
             if not provider:
-                logger.debug(f"No parse provider available for {path}")
+                logger.debug("No parse provider available for %s", path)
                 return content, parse_info
 
             try:
@@ -81,16 +81,16 @@ class ContentParserEngine:
                         )
                         self._metadata.set_file_metadata(path, "parser_name", provider.name)
                     except Exception as cache_err:
-                        logger.warning(f"Failed to cache parsed content for {path}: {cache_err}")
+                        logger.warning("Failed to cache parsed content for %s: %s", path, cache_err)
 
                     return parsed_content, parse_info
 
             except Exception as parse_err:
-                logger.warning(f"Failed to parse {path} with {provider.name}: {parse_err}")
+                logger.warning("Failed to parse %s with %s: %s", path, provider.name, parse_err)
                 return content, parse_info
 
         except Exception as e:
-            logger.warning(f"Error getting parsed content for {path}: {e}")
+            logger.warning("Error getting parsed content for %s: %s", path, e)
 
         return content, parse_info
 

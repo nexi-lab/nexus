@@ -98,7 +98,7 @@ class OAuthKlavisMappings:
         """
         path = Path(path)
         if not path.exists():
-            logger.warning(f"OAuth mappings config not found: {path}")
+            logger.warning("OAuth mappings config not found: %s", path)
             return cls()
 
         with open(path) as f:
@@ -146,7 +146,8 @@ class OAuthKlavisMappings:
 
         # Return empty mappings with built-in defaults
         logger.warning(
-            f"No oauth-klavis-mappings.yaml found, using built-in defaults. Tried: {tried_paths}"
+            "No oauth-klavis-mappings.yaml found, using built-in defaults. Tried: %s",
+            tried_paths,
         )
         return cls.with_builtin_defaults()
 

@@ -422,26 +422,27 @@ class OpenRouterQueryExpander(QueryExpander):
                     expansions = self._parse_response(response.choices[0].message.content)
                     if expansions:
                         logger.debug(
-                            f"Query expansion succeeded with model={model}, "
-                            f"expansions={len(expansions)}"
+                            "Query expansion succeeded with model=%s, expansions=%d",
+                            model,
+                            len(expansions),
                         )
                         return expansions
 
             except TimeoutError:
-                logger.warning(f"Query expansion timeout with model={model}")
+                logger.warning("Query expansion timeout with model=%s", model)
                 last_error = TimeoutError(f"Timeout with {model}")
             except Exception as e:
                 error_str = str(e).lower()
                 if "rate_limit" in error_str or "429" in error_str:
-                    logger.warning(f"Rate limited on model={model}, trying next")
+                    logger.warning("Rate limited on model=%s, trying next", model)
                     last_error = e
                 else:
-                    logger.warning(f"Query expansion error with model={model}: {e}")
+                    logger.warning("Query expansion error with model=%s: %s", model, e)
                     last_error = e
 
         # All models failed
         if last_error:
-            logger.error(f"All query expansion models failed. Last error: {last_error}")
+            logger.error("All query expansion models failed. Last error: %s", last_error)
 
         return []
 
@@ -540,8 +541,10 @@ class SignalDetector:
 
         if is_strong:
             logger.debug(
-                f"Strong BM25 signal detected: top={top_score:.3f}, "
-                f"second={second_score:.3f}, gap={top_score - second_score:.3f}"
+                "Strong BM25 signal detected: top=%.3f, second=%.3f, gap=%.3f",
+                top_score,
+                second_score,
+                top_score - second_score,
             )
 
         return is_strong
@@ -641,10 +644,10 @@ class CachedQueryExpander(QueryExpander):
         try:
             cached = await self.cache.get(cache_key)
             if cached is not None:
-                logger.debug(f"Query expansion cache hit for key={cache_key}")
+                logger.debug("Query expansion cache hit for key=%s", cache_key)
                 return self._deserialize(cached.decode())
         except Exception as e:
-            logger.warning(f"Cache read error: {e}")
+            logger.warning("Cache read error: %s", e)
 
         # Cache miss - generate expansions
         expansions = await self.expander.expand(query, context)
@@ -653,9 +656,9 @@ class CachedQueryExpander(QueryExpander):
         if expansions:
             try:
                 await self.cache.set(cache_key, self._serialize(expansions).encode(), ttl=self.ttl)
-                logger.debug(f"Cached query expansion for key={cache_key}")
+                logger.debug("Cached query expansion for key=%s", cache_key)
             except Exception as e:
-                logger.warning(f"Cache write error: {e}")
+                logger.warning("Cache write error: %s", e)
 
         return expansions
 
@@ -756,7 +759,7 @@ class QueryExpansionService:
                 latency_ms=latency_ms,
             )
         except Exception as e:
-            logger.error(f"Query expansion failed: {e}")
+            logger.error("Query expansion failed: %s", e)
             latency_ms = (time.perf_counter() - start_time) * 1000
 
             return ExpansionResult(

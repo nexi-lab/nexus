@@ -1808,7 +1808,7 @@ def main() -> None:
             import logging
 
             logger = logging.getLogger(__name__)
-            logger.warning(f"Failed to add API key middleware: {e}")
+            logger.warning("Failed to add API key middleware: %s", e)
 
     # Run with selected transport
     if transport == "stdio":

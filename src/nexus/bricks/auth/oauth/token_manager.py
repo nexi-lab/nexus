@@ -180,7 +180,7 @@ class TokenManager:
     def register_provider(self, provider_name: str, provider: Any) -> None:
         """Register an OAuth provider."""
         self.providers[provider_name] = provider
-        logger.info(f"Registered OAuth provider: {provider_name}")
+        logger.info("Registered OAuth provider: %s", provider_name)
 
     async def store_credential(
         self,
@@ -240,7 +240,10 @@ class TokenManager:
                 session.commit()
 
                 logger.info(
-                    f"Updated OAuth credential: {provider}:{user_email} (user_id={user_id})"
+                    "Updated OAuth credential: %s:%s (user_id=%s)",
+                    provider,
+                    user_email,
+                    user_id,
                 )
                 self._log_audit(
                     "credential_updated",
@@ -277,7 +280,7 @@ class TokenManager:
                 session.commit()
                 session.refresh(model)
 
-                logger.info(f"Stored OAuth credential: {provider}:{user_email}")
+                logger.info("Stored OAuth credential: %s:%s", provider, user_email)
                 self._log_audit(
                     "credential_created",
                     provider,
@@ -356,8 +359,9 @@ class TokenManager:
                     # Rate limit: skip if refreshed recently
                     if self._is_refresh_rate_limited(model):
                         logger.debug(
-                            f"Refresh rate limited for {provider}:{user_email}, "
-                            f"returning current token"
+                            "Refresh rate limited for %s:%s, returning current token",
+                            provider,
+                            user_email,
                         )
                         if self._cache_store is not None:
                             await self._cache_store.set(
@@ -367,7 +371,7 @@ class TokenManager:
                             )
                         return credential.access_token
 
-                    logger.info(f"Token expired for {provider}:{user_email}, refreshing...")
+                    logger.info("Token expired for %s:%s, refreshing...", provider, user_email)
 
                     if provider not in self.providers:
                         raise AuthenticationError(f"Provider not registered: {provider}")
@@ -381,7 +385,7 @@ class TokenManager:
                                 timeout=_PROVIDER_REFRESH_TIMEOUT_SECONDS,
                             )
                         except TimeoutError:
-                            logger.error(f"OAuth refresh timed out for {provider}:{user_email}")
+                            logger.error("OAuth refresh timed out for %s:%s", provider, user_email)
                             raise AuthenticationError(
                                 f"OAuth refresh timed out for {provider}"
                             ) from None
@@ -448,8 +452,10 @@ class TokenManager:
 
                             rotated = True
                             logger.info(
-                                f"Refresh token rotated for {provider}:{user_email} "
-                                f"(counter={model.rotation_counter})"
+                                "Refresh token rotated for %s:%s (counter=%s)",
+                                provider,
+                                user_email,
+                                model.rotation_counter,
                             )
                         elif new_credential.refresh_token:
                             # Same refresh token returned — just update access token
@@ -472,7 +478,9 @@ class TokenManager:
                         refreshed = True
 
                     except OAuthError as e:
-                        logger.error(f"Failed to refresh token for {provider}:{user_email}: {e}")
+                        logger.error(
+                            "Failed to refresh token for %s:%s: %s", provider, user_email, e
+                        )
                         raise AuthenticationError(f"Failed to refresh token: {e}") from e
 
                 # Single commit: all credential updates + last_used_at
@@ -599,7 +607,7 @@ class TokenManager:
                 try:
                     await oauth_provider.revoke_token(credential)
                 except Exception as e:
-                    logger.warning(f"Failed to revoke via provider API: {e}")
+                    logger.warning("Failed to revoke via provider API: %s", e)
 
             # Capture audit fields before commit (avoids DetachedInstanceError)
             audit_credential_id = model.credential_id
@@ -609,7 +617,7 @@ class TokenManager:
             model.revoked_at = datetime.now(UTC)
             session.commit()
 
-            logger.info(f"Revoked OAuth credential: {provider}:{user_email}")
+            logger.info("Revoked OAuth credential: %s:%s", provider, user_email)
             self._log_audit(
                 "credential_revoked",
                 provider,
@@ -729,7 +737,11 @@ class TokenManager:
         audit log.  Always falls back to the Python logger.
         """
         logger.info(
-            f"AUDIT: {operation} | provider={provider} | user={user_email} | zone={zone_id}"
+            "AUDIT: %s | provider=%s | user=%s | zone=%s",
+            operation,
+            provider,
+            user_email,
+            zone_id,
         )
 
         if self._audit_logger is not None:

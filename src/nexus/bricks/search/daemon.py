@@ -234,8 +234,9 @@ class SearchDaemon:
                 embedding_provider=self._embedding_provider,
             )
             logger.info(
-                f"Entropy filtering enabled: threshold={self.config.entropy_threshold}, "
-                f"alpha={self.config.entropy_alpha}"
+                "Entropy filtering enabled: threshold=%s, alpha=%s",
+                self.config.entropy_threshold,
+                self.config.entropy_alpha,
             )
 
         # Initialize indexing pipeline for parallel refresh (Issue #1094)
@@ -345,8 +346,10 @@ class SearchDaemon:
                 self.stats.bm25_documents = doc_count
                 self.stats.bm25_load_time_ms = (time.perf_counter() - start) * 1000
                 logger.info(
-                    f"BM25S index loaded: {doc_count} documents in "
-                    f"{self.stats.bm25_load_time_ms:.1f}ms (mmap={self.config.bm25s_mmap})"
+                    "BM25S index loaded: %d documents in %.1fms (mmap=%s)",
+                    doc_count,
+                    self.stats.bm25_load_time_ms,
+                    self.config.bm25s_mmap,
                 )
             else:
                 logger.warning("BM25S index initialization failed")
@@ -354,7 +357,7 @@ class SearchDaemon:
         except ImportError:
             logger.debug("BM25S not available")
         except Exception as e:
-            logger.error(f"Failed to initialize BM25S index: {e}")
+            logger.error("Failed to initialize BM25S index: %s", e)
 
     async def _init_database_pool(self) -> None:
         """Initialize and warm the database connection pool."""
@@ -395,12 +398,13 @@ class SearchDaemon:
             self.stats.db_pool_warmup_time_ms = (time.perf_counter() - start) * 1000
 
             logger.info(
-                f"Database pool warmed: {self.stats.db_pool_size} connections in "
-                f"{self.stats.db_pool_warmup_time_ms:.1f}ms"
+                "Database pool warmed: %d connections in %.1fms",
+                self.stats.db_pool_size,
+                self.stats.db_pool_warmup_time_ms,
             )
 
         except Exception as e:
-            logger.error(f"Failed to initialize database pool: {e}")
+            logger.error("Failed to initialize database pool: %s", e)
 
     async def _warm_vector_index(self) -> None:
         """Warm the vector index by executing a dummy query.
@@ -439,11 +443,11 @@ class SearchDaemon:
                     logger.debug("Vector index warmup query skipped: %s", e)
 
             self.stats.vector_warmup_time_ms = (time.perf_counter() - start) * 1000
-            logger.info(f"Vector index warmed in {self.stats.vector_warmup_time_ms:.1f}ms")
+            logger.info("Vector index warmed in %.1fms", self.stats.vector_warmup_time_ms)
 
         except Exception as e:
             # Non-fatal - vector search will still work, just slower first time
-            logger.debug(f"Vector index warmup skipped: {e}")
+            logger.debug("Vector index warmup skipped: %s", e)
 
     async def _check_zoekt(self) -> None:
         """Check if Zoekt trigram search is available."""
@@ -538,7 +542,7 @@ class SearchDaemon:
             return results
 
         except TimeoutError:
-            logger.warning(f"Search timeout after {self.config.query_timeout_seconds}s")
+            logger.warning("Search timeout after %ss", self.config.query_timeout_seconds)
             return []
 
     async def _keyword_search(
@@ -643,7 +647,7 @@ class SearchDaemon:
                 ]
 
         except Exception as e:
-            logger.error(f"Semantic search error: {e}")
+            logger.error("Semantic search error: %s", e)
             return []
 
     async def _splade_search(
@@ -668,7 +672,7 @@ class SearchDaemon:
                 for r in results
             ]
         except Exception as e:
-            logger.debug(f"SPLADE search failed: {e}")
+            logger.debug("SPLADE search failed: %s", e)
             return []
 
     async def _hybrid_search(
@@ -777,7 +781,7 @@ class SearchDaemon:
             ]
 
         except Exception as e:
-            logger.debug(f"Zoekt search failed: {e}")
+            logger.debug("Zoekt search failed: %s", e)
             return []
 
     async def _search_bm25s(
@@ -810,7 +814,7 @@ class SearchDaemon:
             ]
 
         except Exception as e:
-            logger.debug(f"BM25S search failed: {e}")
+            logger.debug("BM25S search failed: %s", e)
             return []
 
     async def _search_fts(
@@ -875,7 +879,7 @@ class SearchDaemon:
                 ]
 
         except Exception as e:
-            logger.error(f"FTS search error: {e}")
+            logger.error("FTS search error: %s", e)
             return []
 
     async def _get_query_embedding(self, query: str) -> list[float] | None:
@@ -892,7 +896,7 @@ class SearchDaemon:
             embedding = await provider.embed_text(query)
             return list(embedding) if embedding else None
         except Exception as e:
-            logger.debug(f"Could not get query embedding: {e}")
+            logger.debug("Could not get query embedding: %s", e)
             return None
 
     # =========================================================================
@@ -934,7 +938,7 @@ class SearchDaemon:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"Index refresh error: {e}")
+                logger.error("Index refresh error: %s", e)
 
     @staticmethod
     def _strip_zone_prefix(path: str) -> str:
@@ -1179,7 +1183,7 @@ class SearchDaemon:
             logger.info("[BULK-EMBED] BM25S corpus is empty")
             return 0
 
-        logger.info(f"[BULK-EMBED] Processing {total} documents from BM25S corpus")
+        logger.info("[BULK-EMBED] Processing %d documents from BM25S corpus", total)
 
         # Step 1: Build deterministic UUID5 path_ids for each virtual path
         ns = uuid.UUID("12345678-1234-5678-1234-567812345678")
@@ -1229,7 +1233,7 @@ class SearchDaemon:
                         {"pid": pid, "vpath": vpath, "now": now},
                     )
                 await session.commit()
-            logger.info(f"[BULK-EMBED] Registered {len(new_vpaths)} new files in file_paths")
+            logger.info("[BULK-EMBED] Registered %d new files in file_paths", len(new_vpaths))
 
         # Step 2: Feed to standard indexing pipeline with UUID path_ids
         docs_to_embed: list[tuple[str, str, str]] = []
@@ -1249,11 +1253,11 @@ class SearchDaemon:
                 )
                 embedded += len(batch)
                 if batch_start % (batch_size * 5) == 0:
-                    logger.info(f"[BULK-EMBED] Progress: {embedded}/{len(docs_to_embed)}")
+                    logger.info("[BULK-EMBED] Progress: %d/%d", embedded, len(docs_to_embed))
             except Exception as e:
-                logger.warning(f"[BULK-EMBED] Batch failed at {batch_start}: {e}")
+                logger.warning("[BULK-EMBED] Batch failed at %d: %s", batch_start, e)
 
-        logger.info(f"[BULK-EMBED] Complete: {embedded}/{len(docs_to_embed)} documents embedded")
+        logger.info("[BULK-EMBED] Complete: %d/%d documents embedded", embedded, len(docs_to_embed))
         return embedded
 
     # =========================================================================

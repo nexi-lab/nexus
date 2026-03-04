@@ -240,21 +240,29 @@ class WorkspaceRegistry:
         if context:
             # Handle both dict (from RPC) and OperationContext (direct calls)
             logger.warning(
-                f"[CONTEXT-DEBUG] register_workspace: context type={type(context)}, context={context}"
+                "[CONTEXT-DEBUG] register_workspace: context type=%s, context=%s",
+                type(context),
+                context,
             )
             if isinstance(context, dict):
                 user_id = context.get("user_id") or context.get("user_id")
                 agent_id = context.get("agent_id")
                 zone_id = context.get("zone_id") or context.get("zone")
                 logger.warning(
-                    f"[CONTEXT-DEBUG] Extracted from dict: user_id={user_id}, agent_id={agent_id}, zone_id={zone_id}"
+                    "[CONTEXT-DEBUG] Extracted from dict: user_id=%s, agent_id=%s, zone_id=%s",
+                    user_id,
+                    agent_id,
+                    zone_id,
                 )
             else:
                 user_id = getattr(context, "user_id", None)
                 agent_id = getattr(context, "agent_id", None)
                 zone_id = getattr(context, "zone_id", None)
                 logger.warning(
-                    f"[CONTEXT-DEBUG] Extracted from object: user_id={user_id}, agent_id={agent_id}, zone_id={zone_id}"
+                    "[CONTEXT-DEBUG] Extracted from object: user_id=%s, agent_id=%s, zone_id=%s",
+                    user_id,
+                    agent_id,
+                    zone_id,
                 )
 
             # Validate agent ownership
@@ -300,25 +308,32 @@ class WorkspaceRegistry:
         # Workspaces are just directories, so we grant permission on the FILE object
         # The workspace manager will check FILE permissions (using the file namespace)
         logger.warning(
-            f"[AUTO-GRANT] workspace_registry: path={path}, user_id={user_id}, rebac_manager={self.rebac_manager is not None}"
+            "[AUTO-GRANT] workspace_registry: path=%s, user_id=%s, rebac_manager=%s",
+            path,
+            user_id,
+            self.rebac_manager is not None,
         )
         if self.rebac_manager and user_id:
             try:
                 # Grant permission on FILE object (for both file operations and workspace operations)
-                logger.warning(f"[AUTO-GRANT] Creating tuple: user:{user_id} → owner → file:{path}")
+                logger.warning(
+                    "[AUTO-GRANT] Creating tuple: user:%s -> owner -> file:%s", user_id, path
+                )
                 self.rebac_manager.rebac_write(
                     subject=("user", user_id),
                     relation="direct_owner",  # Use concrete relation, not computed union
                     object=("file", path),
                     zone_id=zone_id,  # v0.5.0: Pass zone_id from context
                 )
-                logger.warning(f"[AUTO-GRANT] ✓ SUCCESS: user:{user_id} → owner → file:{path}")
+                logger.warning("[AUTO-GRANT] SUCCESS: user:%s -> owner -> file:%s", user_id, path)
             except Exception as e:
                 # Don't fail registration if permission grant fails
-                logger.error(f"[AUTO-GRANT] ✗ FAILED: {e}", exc_info=True)
+                logger.error("[AUTO-GRANT] FAILED: %s", e, exc_info=True)
         else:
             logger.warning(
-                f"[AUTO-GRANT] SKIPPED: rebac={self.rebac_manager is not None}, user={user_id}"
+                "[AUTO-GRANT] SKIPPED: rebac=%s, user=%s",
+                self.rebac_manager is not None,
+                user_id,
             )
 
         return config
@@ -555,24 +570,31 @@ class WorkspaceRegistry:
 
         # v0.5.0: Auto-grant ownership to registering user
         logger.warning(
-            f"[AUTO-GRANT] workspace_registry: path={path}, user_id={user_id}, rebac_manager={self.rebac_manager is not None}"
+            "[AUTO-GRANT] workspace_registry: path=%s, user_id=%s, rebac_manager=%s",
+            path,
+            user_id,
+            self.rebac_manager is not None,
         )
         if self.rebac_manager and user_id:
             try:
-                logger.warning(f"[AUTO-GRANT] Creating tuple: user:{user_id} → owner → file:{path}")
+                logger.warning(
+                    "[AUTO-GRANT] Creating tuple: user:%s -> owner -> file:%s", user_id, path
+                )
                 self.rebac_manager.rebac_write(
                     subject=("user", user_id),
                     relation="direct_owner",  # Use concrete relation, not computed union
                     object=("file", path),
                     zone_id=zone_id,  # v0.5.0: Pass zone_id from context
                 )
-                logger.warning(f"[AUTO-GRANT] ✓ SUCCESS: user:{user_id} → owner → file:{path}")
+                logger.warning("[AUTO-GRANT] SUCCESS: user:%s -> owner -> file:%s", user_id, path)
             except Exception as e:
                 # Don't fail registration if permission grant fails
-                logger.error(f"[AUTO-GRANT] ✗ FAILED: {e}", exc_info=True)
+                logger.error("[AUTO-GRANT] FAILED: %s", e, exc_info=True)
         else:
             logger.warning(
-                f"[AUTO-GRANT] SKIPPED: rebac={self.rebac_manager is not None}, user={user_id}"
+                "[AUTO-GRANT] SKIPPED: rebac=%s, user=%s",
+                self.rebac_manager is not None,
+                user_id,
             )
 
         return config

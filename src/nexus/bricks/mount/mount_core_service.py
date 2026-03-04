@@ -173,7 +173,7 @@ class MountCoreService:
             return result
 
         result["removed"] = True
-        logger.info(f"Removed mount from router: {mount_point}")
+        logger.info("Removed mount from router: %s", mount_point)
 
         # Extract zone_id once for all cleanup operations
         zone_id = get_zone_id(context)
@@ -186,7 +186,7 @@ class MountCoreService:
             paths_to_delete.append(mount_point)  # Include mount point itself
             self._gw.metadata_delete_batch(paths_to_delete)
             result["files_deleted"] = len(paths_to_delete)
-            logger.info(f"Deleted {len(paths_to_delete)} metadata entries for {mount_point}")
+            logger.info("Deleted %d metadata entries for %s", len(paths_to_delete), mount_point)
         except Exception as e:
             _record_error(result, f"Failed to delete metadata entries for {mount_point}: {e}")
 
@@ -195,7 +195,9 @@ class MountCoreService:
             dir_entries_deleted = self._gw.delete_directory_entries_recursive(mount_point, zone_id)
             result["directory_entries_deleted"] = dir_entries_deleted
             logger.info(
-                f"Deleted {dir_entries_deleted} directory index entries under {mount_point}"
+                "Deleted %d directory index entries under %s",
+                dir_entries_deleted,
+                mount_point,
             )
         except Exception as e:
             _record_error(result, f"Failed to clean up directory index: {e}")
@@ -204,7 +206,7 @@ class MountCoreService:
         try:
             removed = self._gw.remove_parent_tuples(mount_point, zone_id)
             result["permissions_cleaned"] += removed
-            logger.info(f"Removed {removed} parent tuples for {mount_point}")
+            logger.info("Removed %d parent tuples for %s", removed, mount_point)
         except Exception as e:
             _record_error(result, f"Failed to clean up parent tuples: {e}")
 
@@ -215,17 +217,20 @@ class MountCoreService:
                 zone_id=zone_id,
             )
             result["permissions_cleaned"] += deleted
-            logger.info(f"Removed {deleted} permission tuples for {mount_point}")
+            logger.info("Removed %d permission tuples for %s", deleted, mount_point)
         except Exception as e:
             _record_error(result, f"Failed to delete permission tuples: {e}")
 
         if result["errors"]:
-            logger.warning(f"Mount removed with {len(result['errors'])} errors: {result['errors']}")
+            logger.warning(
+                "Mount removed with %d errors: %s", len(result["errors"]), result["errors"]
+            )
         else:
             logger.info(
-                f"Successfully removed mount {mount_point} "
-                f"(directory_deleted={result['directory_deleted']}, "
-                f"permissions_cleaned={result['permissions_cleaned']})"
+                "Successfully removed mount %s (directory_deleted=%s, permissions_cleaned=%s)",
+                mount_point,
+                result["directory_deleted"],
+                result["permissions_cleaned"],
             )
 
         return result
@@ -245,7 +250,7 @@ class MountCoreService:
         mounts = []
 
         router_mounts = list(self._gw.router.list_mounts())
-        logger.info(f"[LIST_MOUNTS] Total mounts in router: {len(router_mounts)}")
+        logger.info("[LIST_MOUNTS] Total mounts in router: %d", len(router_mounts))
 
         for mount_info in router_mounts:
             mount_point = mount_info.mount_point
@@ -376,14 +381,14 @@ class MountCoreService:
             mount_point: Virtual path
             context: Operation context
         """
-        logger.info(f"Setting up mount point: {mount_point}")
+        logger.info("Setting up mount point: %s", mount_point)
 
         # Create directory entry
         try:
             self._gw.sys_mkdir(mount_point, parents=True, exist_ok=True, context=context)
-            logger.info(f"Created directory entry for mount point: {mount_point}")
+            logger.info("Created directory entry for mount point: %s", mount_point)
         except Exception as e:
-            logger.warning(f"Failed to create directory entry: {e}")
+            logger.warning("Failed to create directory entry: %s", e)
 
         # Grant owner permission
         self._grant_owner_permission(mount_point, context)
@@ -419,11 +424,14 @@ class MountCoreService:
             )
 
             logger.info(
-                f"Granted direct_owner to {subject_type}:{subject_id} "
-                f"for {mount_point} (tuple_id={tuple_id})"
+                "Granted direct_owner to %s:%s for %s (tuple_id=%s)",
+                subject_type,
+                subject_id,
+                mount_point,
+                tuple_id,
             )
         except Exception as e:
-            logger.warning(f"Failed to grant permission for {mount_point}: {e}")
+            logger.warning("Failed to grant permission for %s: %s", mount_point, e)
 
     def _check_permission(
         self,
@@ -533,11 +541,11 @@ class MountCoreService:
             try:
                 self._rmdir_fn(mount_point, recursive=True, context=context)
                 result["directory_deleted"] = True
-                logger.info(f"Deleted mount point directory: {mount_point}")
+                logger.info("Deleted mount point directory: %s", mount_point)
             except Exception as e:
                 result["warnings"].append(
                     f"Failed to delete mount point directory (non-fatal): {e}"
                 )
-                logger.warning(f"Failed to delete mount point directory {mount_point}: {e}")
+                logger.warning("Failed to delete mount point directory %s: %s", mount_point, e)
 
         return result

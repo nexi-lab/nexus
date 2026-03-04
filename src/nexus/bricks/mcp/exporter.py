@@ -600,11 +600,11 @@ class MCPToolExporter:
                 tool_def = self._create_tool_definition(tool_data)
                 await self._export_tool(tool_def, output_path)
                 exported += 1
-                logger.debug(f"Exported tool: {tool_def.name}")
+                logger.debug("Exported tool: %s", tool_def.name)
             except Exception as e:
-                logger.warning(f"Failed to export tool {tool_data.get('name')}: {e}")
+                logger.warning("Failed to export tool %s: %s", tool_data.get("name"), e)
 
-        logger.info(f"Exported {exported} Nexus MCP tools to {output_path}")
+        logger.info("Exported %s Nexus MCP tools to %s", exported, output_path)
         return exported
 
     def _create_tool_definition(self, tool_data: dict[str, Any]) -> MCPToolDefinition:

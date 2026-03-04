@@ -70,7 +70,7 @@ class RecallStore:
 
             session.commit()
             if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"Appended memory {merged.memory_id} to recall store")
+                logger.debug("Appended memory %s to recall store", merged.memory_id)
         except Exception:
             session.rollback()
             raise
@@ -95,7 +95,7 @@ class RecallStore:
                 merged.namespace = f"{self.namespace}/{strip_tier_prefix(merged.namespace)}"
             session.commit()
             if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"Batch appended {len(memories)} memories to recall store")
+                logger.debug("Batch appended %d memories to recall store", len(memories))
         except Exception:
             session.rollback()
             raise

@@ -239,7 +239,7 @@ class MountService:
                 return result
 
             result["removed"] = True
-            logger.info(f"Removed mount from router: {mount_point}")
+            logger.info("Removed mount from router: %s", mount_point)
 
             # Delete the mount point directory (but not the files inside)
             if self.nexus_fs and hasattr(self.nexus_fs, "metadata"):
@@ -248,7 +248,7 @@ class MountService:
                         # Soft delete the directory entry from metadata
                         self.nexus_fs.metadata.delete(mount_point)
                         result["directory_deleted"] = True
-                        logger.info(f"Deleted mount point directory: {mount_point}")
+                        logger.info("Deleted mount point directory: %s", mount_point)
                 except Exception as e:
                     error_msg = f"Failed to delete mount point directory {mount_point}: {e}"
                     result["errors"].append(error_msg)
@@ -263,7 +263,7 @@ class MountService:
                             mount_point, zone_id
                         )
                         result["permissions_cleaned"] += tuples_removed
-                        logger.info(f"Removed {tuples_removed} parent tuples for {mount_point}")
+                        logger.info("Removed %d parent tuples for %s", tuples_removed, mount_point)
                 except Exception as e:
                     error_msg = f"Failed to clean up parent tuples: {e}"
                     result["errors"].append(error_msg)
@@ -281,7 +281,7 @@ class MountService:
                         if tid and svc.rebac_delete_sync(tid):
                             deleted += 1
                     result["permissions_cleaned"] += deleted
-                    logger.info(f"Removed {deleted} permission tuples for {mount_point}")
+                    logger.info("Removed %d permission tuples for %s", deleted, mount_point)
                 except Exception as e:
                     error_msg = f"Failed to delete permission tuples: {e}"
                     result["errors"].append(error_msg)
@@ -289,13 +289,14 @@ class MountService:
 
             if result["errors"]:
                 logger.warning(
-                    f"Mount removed with {len(result['errors'])} errors: {result['errors']}"
+                    "Mount removed with %d errors: %s", len(result["errors"]), result["errors"]
                 )
             else:
                 logger.info(
-                    f"Successfully removed mount {mount_point} "
-                    f"(directory_deleted={result['directory_deleted']}, "
-                    f"permissions_cleaned={result['permissions_cleaned']})"
+                    "Successfully removed mount %s (directory_deleted=%s, permissions_cleaned=%s)",
+                    mount_point,
+                    result["directory_deleted"],
+                    result["permissions_cleaned"],
                 )
 
             return result
@@ -378,12 +379,12 @@ class MountService:
                     _nx: Any = self.nexus_fs
                     _nx.sys_rmdir(mount_point, recursive=True, context=context)
                     result["directory_deleted"] = True
-                    logger.info(f"Deleted mount point directory: {mount_point}")
+                    logger.info("Deleted mount point directory: %s", mount_point)
                 except Exception as e:
                     result["warnings"].append(
                         f"Failed to delete mount point directory (non-fatal): {e}"
                     )
-                    logger.warning(f"Failed to delete mount point directory {mount_point}: {e}")
+                    logger.warning("Failed to delete mount point directory %s: %s", mount_point, e)
 
             return result
 
@@ -476,22 +477,25 @@ class MountService:
             mounts = []
 
             # Log context details for debugging
-            logger.info(f"[LIST_MOUNTS] Called with context: {context}")
+            logger.info("[LIST_MOUNTS] Called with context: %s", context)
             if context:
-                logger.info(f"[LIST_MOUNTS] Context type: {type(context)}")
+                logger.info("[LIST_MOUNTS] Context type: %s", type(context))
                 subject_type, subject_id = get_user_identity(context)
                 zone_id = get_zone_id(context)
                 logger.info(
-                    f"[LIST_MOUNTS] Extracted: subject={subject_type}:{subject_id}, zone={zone_id}"
+                    "[LIST_MOUNTS] Extracted: subject=%s:%s, zone=%s",
+                    subject_type,
+                    subject_id,
+                    zone_id,
                 )
 
             router_mounts = list(self.router.list_mounts())
-            logger.info(f"[LIST_MOUNTS] Total mounts in router: {len(router_mounts)}")
+            logger.info("[LIST_MOUNTS] Total mounts in router: %d", len(router_mounts))
 
             for mount_info in router_mounts:
                 # Filter by permission - only include mounts the user can access
                 mount_point = mount_info.mount_point
-                logger.info(f"[LIST_MOUNTS] Checking mount: {mount_point}")
+                logger.info("[LIST_MOUNTS] Checking mount: %s", mount_point)
 
                 # Check if user has permission to access this mount
                 has_permission = False
@@ -501,8 +505,11 @@ class MountService:
                         zone_id = get_zone_id(context)
 
                         logger.info(
-                            f"[LIST_MOUNTS] Checking permission for {subject_type}:{subject_id} "
-                            f"on {mount_point} (zone={zone_id})"
+                            "[LIST_MOUNTS] Checking permission for %s:%s on %s (zone=%s)",
+                            subject_type,
+                            subject_id,
+                            mount_point,
+                            zone_id,
                         )
 
                         # Admin users can see all mounts
@@ -510,8 +517,10 @@ class MountService:
                         if is_admin:
                             has_permission = True
                             logger.info(
-                                f"[LIST_MOUNTS] Admin user {subject_type}:{subject_id} - "
-                                f"granting access to {mount_point}"
+                                "[LIST_MOUNTS] Admin user %s:%s - granting access to %s",
+                                subject_type,
+                                subject_id,
+                                mount_point,
                             )
                         elif subject_id:
                             # Check if user has read permission (includes owner, editor, viewer)
@@ -522,24 +531,29 @@ class MountService:
                                 zone_id=zone_id,
                             )
                             logger.info(
-                                f"[LIST_MOUNTS] Permission check result for "
-                                f"{subject_type}:{subject_id} on {mount_point}: {has_permission}"
+                                "[LIST_MOUNTS] Permission check result for %s:%s on %s: %s",
+                                subject_type,
+                                subject_id,
+                                mount_point,
+                                has_permission,
                             )
                         else:
                             logger.warning(
-                                f"[LIST_MOUNTS] No subject_id in context for {mount_point}"
+                                "[LIST_MOUNTS] No subject_id in context for %s", mount_point
                             )
                     except Exception as e:
                         # If permission check fails, exclude this mount for safety
                         logger.error(
-                            f"[LIST_MOUNTS] Permission check failed for {mount_point}: {e}",
+                            "[LIST_MOUNTS] Permission check failed for %s: %s",
+                            mount_point,
+                            e,
                             exc_info=True,
                         )
                         has_permission = False
                 else:
                     # No context or no ReBAC configured — include all mounts
                     logger.info(
-                        f"[LIST_MOUNTS] No context or no rebac_check - allowing {mount_point}"
+                        "[LIST_MOUNTS] No context or no rebac_check - allowing %s", mount_point
                     )
                     has_permission = True
 
@@ -673,12 +687,12 @@ class MountService:
                 subject_type, subject_id = get_user_identity(context)
                 if subject_id:
                     owner_user_id = f"{subject_type}:{subject_id}"
-                    logger.info(f"[SAVE_MOUNT] Auto-populated owner_user_id: {owner_user_id}")
+                    logger.info("[SAVE_MOUNT] Auto-populated owner_user_id: %s", owner_user_id)
 
             if zone_id is None and context:
                 zone_id = get_zone_id(context)
                 if zone_id:
-                    logger.info(f"[SAVE_MOUNT] Auto-populated zone_id: {zone_id}")
+                    logger.info("[SAVE_MOUNT] Auto-populated zone_id: %s", zone_id)
 
             assert self.mount_manager is not None
             mount_id = self.mount_manager.save_mount(
@@ -743,12 +757,12 @@ class MountService:
                 subject_type, subject_id = get_user_identity(context)
                 if subject_id:
                     owner_user_id = f"{subject_type}:{subject_id}"
-                    logger.info(f"[LIST_SAVED_MOUNTS] Auto-filtering by owner: {owner_user_id}")
+                    logger.info("[LIST_SAVED_MOUNTS] Auto-filtering by owner: %s", owner_user_id)
 
             if zone_id is None and context:
                 zone_id = get_zone_id(context)
                 if zone_id:
-                    logger.info(f"[LIST_SAVED_MOUNTS] Auto-filtering by zone: {zone_id}")
+                    logger.info("[LIST_SAVED_MOUNTS] Auto-filtering by zone: %s", zone_id)
 
             assert self.mount_manager is not None
             return self.mount_manager.list_mounts(owner_user_id=owner_user_id, zone_id=zone_id)
@@ -1088,15 +1102,15 @@ class MountService:
             mount_point: The virtual path of the mount
             context: Operation context containing user/subject information
         """
-        logger.info(f"Setting up mount point: {mount_point}")
+        logger.info("Setting up mount point: %s", mount_point)
 
         # Create directory entry for the mount point
         if self.nexus_fs and hasattr(self.nexus_fs, "sys_mkdir"):
             try:
                 self.nexus_fs.sys_mkdir(mount_point, parents=True, exist_ok=True)
-                logger.info(f"✓ Created directory entry for mount point: {mount_point}")
+                logger.info("✓ Created directory entry for mount point: %s", mount_point)
             except Exception as e:
-                logger.warning(f"Failed to create directory entry for mount {mount_point}: {e}")
+                logger.warning("Failed to create directory entry for mount %s: %s", mount_point, e)
 
         # Grant direct_owner permission to the creating user
         if context:
@@ -1112,11 +1126,17 @@ class MountService:
                         zone_id=zone_id,
                     )
                     logger.info(
-                        f"✓ Granted direct_owner to {subject_type}:{subject_id} for {mount_point}"
+                        "✓ Granted direct_owner to %s:%s for %s",
+                        subject_type,
+                        subject_id,
+                        mount_point,
                     )
                 except Exception as e:
                     logger.warning(
-                        f"Failed to grant direct_owner for {mount_point}: {type(e).__name__}: {e}"
+                        "Failed to grant direct_owner for %s: %s: %s",
+                        mount_point,
+                        type(e).__name__,
+                        e,
                     )
             else:
                 logger.warning(

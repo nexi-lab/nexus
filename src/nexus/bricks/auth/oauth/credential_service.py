@@ -117,7 +117,7 @@ class OAuthCredentialService:
                 provider_dict["icon_url"] = provider_config.icon_url
             providers.append(provider_dict)
 
-        logger.info(f"Listed {len(providers)} OAuth providers")
+        logger.info("Listed %d OAuth providers", len(providers))
         return providers
 
     # =========================================================================
@@ -136,7 +136,7 @@ class OAuthCredentialService:
         """Get OAuth authorization URL for any provider."""
         import secrets
 
-        logger.info(f"Generating OAuth authorization URL for provider={provider}")
+        logger.info("Generating OAuth authorization URL for provider=%s", provider)
 
         state = secrets.token_urlsafe(32)
         provider_instance = self._create_provider(provider, redirect_uri, scopes)
@@ -163,8 +163,9 @@ class OAuthCredentialService:
         from nexus.lib.context_utils import get_zone_id
 
         logger.info(
-            f"Exchanging OAuth code for provider={provider}, "
-            f"user_email={'provided' if user_email else 'will fetch'}"
+            "Exchanging OAuth code for provider=%s, user_email=%s",
+            provider,
+            "provided" if user_email else "will fetch",
         )
 
         provider_instance = self._create_provider(provider, redirect_uri)
@@ -184,7 +185,7 @@ class OAuthCredentialService:
         except ValueError:
             raise
         except Exception as e:
-            logger.error(f"Failed to exchange OAuth code: {e}")
+            logger.error("Failed to exchange OAuth code: %s", e)
             raise ValueError(f"Failed to exchange authorization code: {e}") from e
 
         if not user_email:
@@ -217,8 +218,9 @@ class OAuthCredentialService:
             )
 
             logger.info(
-                f"Successfully stored OAuth credential for {user_email} "
-                f"(credential_id={credential_id})"
+                "Successfully stored OAuth credential for %s (credential_id=%s)",
+                user_email,
+                credential_id,
             )
 
             return {
@@ -230,7 +232,7 @@ class OAuthCredentialService:
                 "success": True,
             }
         except Exception as e:
-            logger.error(f"Failed to store OAuth credential: {e}")
+            logger.error("Failed to store OAuth credential: %s", e)
             raise ValueError(f"Failed to store credential: {e}") from e
 
     # =========================================================================
@@ -277,8 +279,11 @@ class OAuthCredentialService:
             result.append(cred)
 
         logger.info(
-            f"Listed {len(result)} OAuth credentials for user_id={current_user_id}, "
-            f"zone={zone_id}, provider={provider}"
+            "Listed %d OAuth credentials for user_id=%s, zone=%s, provider=%s",
+            len(result),
+            current_user_id,
+            zone_id,
+            provider,
         )
         return result
 
@@ -307,13 +312,13 @@ class OAuthCredentialService:
             )
 
             if success:
-                logger.info(f"Revoked OAuth credential for {provider}:{user_email}")
+                logger.info("Revoked OAuth credential for %s:%s", provider, user_email)
                 return {"success": True}
             else:
                 raise ValueError(f"Credential not found: {provider}:{user_email}")
 
         except Exception as e:
-            logger.error(f"Failed to revoke credential: {e}")
+            logger.error("Failed to revoke credential: %s", e)
             raise ValueError(f"Failed to revoke credential: {e}") from e
 
     @rpc_expose(name="oauth_test_credential", description="Test OAuth credential validity")
@@ -349,7 +354,7 @@ class OAuthCredentialService:
                     None,
                 )
 
-                logger.info(f"OAuth credential test successful for {provider}:{user_email}")
+                logger.info("OAuth credential test successful for %s:%s", provider, user_email)
                 return {
                     "valid": True,
                     "refreshed": True,
@@ -362,7 +367,7 @@ class OAuthCredentialService:
                 }
 
         except Exception as e:
-            logger.error(f"OAuth credential test failed: {e}")
+            logger.error("OAuth credential test failed: %s", e)
             return {
                 "valid": False,
                 "error": str(e),
@@ -435,7 +440,7 @@ class OAuthCredentialService:
                 logger.debug("TokenManager database not configured; OAuth credentials unavailable")
                 return None
 
-            logger.debug(f"TokenManager database URL resolved to: {db_path}")
+            logger.debug("TokenManager database URL resolved to: %s", db_path)
 
             if db_path.startswith(("postgresql://", "mysql://", "sqlite://")):
                 self._token_manager = TokenManager(db_url=db_path)
@@ -471,7 +476,7 @@ class OAuthCredentialService:
             scopes=scopes,
         )
 
-        logger.debug(f"Created provider {provider} using factory (config: {config_name})")
+        logger.debug("Created provider %s using factory (config: %s)", provider, config_name)
         return provider_instance
 
     def _register_provider(self, provider_instance: Any) -> None:
@@ -606,6 +611,6 @@ class OAuthCredentialService:
                         logger.debug("X/Twitter user lookup failed: %s", e)
 
         except Exception as e:
-            logger.warning(f"Failed to fetch user email from provider {provider_name}: {e}")
+            logger.warning("Failed to fetch user email from provider %s: %s", provider_name, e)
 
         return None

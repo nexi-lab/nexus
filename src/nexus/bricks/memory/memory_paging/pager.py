@@ -116,7 +116,7 @@ class MemoryPager:
         # Move evicted memories to recall (single transaction for the batch)
         if evicted:
             if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"Evicting {len(evicted)} memories from main -> recall")
+                logger.debug("Evicting %d memories from main -> recall", len(evicted))
             self.recall.append_batch(evicted)
 
         # Thread-safe debounced archival check + cache invalidation
@@ -185,8 +185,10 @@ class MemoryPager:
 
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
-                f"Search results: {len(main_memories)} main, "
-                f"{len(recall_memories)} recall, {len(archival_results)} archival"
+                "Search results: %d main, %d recall, %d archival",
+                len(main_memories),
+                len(recall_memories),
+                len(archival_results),
             )
 
         return results
@@ -324,8 +326,9 @@ class MemoryPager:
 
             if archived_count > 0:
                 logger.info(
-                    f"Archived {archived_count} old memories from recall -> archival "
-                    f"(older than {self.recall_max_age_hours}h)"
+                    "Archived %d old memories from recall -> archival (older than %sh)",
+                    archived_count,
+                    self.recall_max_age_hours,
                 )
         except Exception:
             session.rollback()

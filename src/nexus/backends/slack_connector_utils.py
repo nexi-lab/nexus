@@ -39,7 +39,7 @@ def list_channels(
         ]
     """
     if not silent:
-        print(f"📥 Fetching channels (types: {types})...")
+        logger.info("Fetching channels (types: %s)", types)
 
     channels = []
     cursor = None
@@ -99,7 +99,7 @@ def list_channels(
             break
 
     if not silent:
-        print(f"   Found {len(channels)} channels")
+        logger.info("Found %d channels", len(channels))
 
     return channels
 
@@ -141,7 +141,7 @@ def list_messages_from_channel(
         ]
     """
     if not silent:
-        print(f"📥 Fetching messages from #{channel_name}...")
+        logger.info("Fetching messages from #%s", channel_name)
 
     messages = []
     cursor = None
@@ -213,7 +213,7 @@ def list_messages_from_channel(
             break
 
     if not silent:
-        print(f"   Found {len(messages)} messages in #{channel_name}")
+        logger.info("Found %d messages in #%s", len(messages), channel_name)
 
     return messages
 
@@ -249,7 +249,7 @@ def list_thread_replies(
         messages = result.get("messages", [])
 
         if not silent and len(messages) > 1:
-            print(f"   Found {len(messages) - 1} replies in thread {thread_ts}")
+            logger.info("Found %d replies in thread %s", len(messages) - 1, thread_ts)
 
         return messages
 
@@ -369,26 +369,25 @@ def print_channel_statistics(
         channels: List of channel objects
         messages_by_channel: Dict mapping channel_id -> messages
     """
-    print("\n" + "=" * 80)
-    print("SLACK CHANNEL STATISTICS")
-    print("=" * 80)
-
     total_messages = sum(len(msgs) for msgs in messages_by_channel.values())
-    print(f"\n📊 Total channels: {len(channels)}")
-    print(f"📊 Total messages: {total_messages}")
 
     # Group by channel type
     public_channels = [c for c in channels if not c.get("is_private")]
     private_channels = [c for c in channels if c.get("is_private")]
 
-    print(f"\n📁 Public channels: {len(public_channels)}")
-    print(f"🔒 Private channels: {len(private_channels)}")
-
     # Top channels by message count
     channel_msg_counts = [(c, len(messages_by_channel.get(c["id"], []))) for c in channels]
     channel_msg_counts.sort(key=lambda x: x[1], reverse=True)
 
-    print("\n📈 Top channels by message count:")
-    for channel, count in channel_msg_counts[:10]:
-        channel_name = channel.get("name", channel["id"])
-        print(f"   #{channel_name}: {count} messages")
+    top_channels = ", ".join(
+        f"#{c.get('name', c['id'])}={count}" for c, count in channel_msg_counts[:10]
+    )
+
+    logger.info(
+        "Slack channel statistics: %d channels (%d public, %d private), %d total messages. Top: %s",
+        len(channels),
+        len(public_channels),
+        len(private_channels),
+        total_messages,
+        top_channels,
+    )

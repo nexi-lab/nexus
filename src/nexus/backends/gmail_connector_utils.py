@@ -177,7 +177,7 @@ def list_emails_by_folder(
     # Priority 1: SENT emails
     if "SENT" in folders_to_fetch:
         if not silent and "SENT" in folder_filter:
-            print("📥 Fetching SENT emails...")
+            logger.info("Fetching SENT emails")
         sent_messages = fetch_with_labels(["SENT"], max_results)
         for msg in sent_messages:
             thread_id = msg["threadId"]
@@ -196,14 +196,16 @@ def list_emails_by_folder(
                 folder_stats["SENT"]["threads"].add(thread_id)
             seen_ids.add(message_id)
         if not silent and "SENT" in folder_filter:
-            print(
-                f"   Found {len(sent_messages)} SENT emails in {len(folder_stats['SENT']['threads'])} threads"
+            logger.info(
+                "Found %d SENT emails in %d threads",
+                len(sent_messages),
+                len(folder_stats["SENT"]["threads"]),
             )
 
     # Priority 2: STARRED in INBOX (excluding SENT)
     if "STARRED" in folders_to_fetch:
         if not silent and "STARRED" in folder_filter:
-            print("📥 Fetching STARRED + INBOX emails...")
+            logger.info("Fetching STARRED + INBOX emails")
         starred_messages = fetch_with_labels(["STARRED", "INBOX"], max_results)
         for msg in starred_messages:
             message_id = msg["id"]
@@ -223,14 +225,16 @@ def list_emails_by_folder(
                     folder_stats["STARRED"]["threads"].add(thread_id)
                 seen_ids.add(message_id)
         if not silent and "STARRED" in folder_filter:
-            print(
-                f"   Found {folder_stats['STARRED']['emails']} STARRED emails in {len(folder_stats['STARRED']['threads'])} threads (excluding SENT)"
+            logger.info(
+                "Found %d STARRED emails in %d threads (excluding SENT)",
+                folder_stats["STARRED"]["emails"],
+                len(folder_stats["STARRED"]["threads"]),
             )
 
     # Priority 3: IMPORTANT in INBOX (excluding SENT, STARRED)
     if "IMPORTANT" in folders_to_fetch:
         if not silent and "IMPORTANT" in folder_filter:
-            print("📥 Fetching IMPORTANT + INBOX emails...")
+            logger.info("Fetching IMPORTANT + INBOX emails")
         important_messages = fetch_with_labels(["IMPORTANT", "INBOX"], max_results)
         for msg in important_messages:
             message_id = msg["id"]
@@ -250,14 +254,16 @@ def list_emails_by_folder(
                     folder_stats["IMPORTANT"]["threads"].add(thread_id)
                 seen_ids.add(message_id)
         if not silent and "IMPORTANT" in folder_filter:
-            print(
-                f"   Found {folder_stats['IMPORTANT']['emails']} IMPORTANT emails in {len(folder_stats['IMPORTANT']['threads'])} threads (excluding SENT, STARRED)"
+            logger.info(
+                "Found %d IMPORTANT emails in %d threads (excluding SENT, STARRED)",
+                folder_stats["IMPORTANT"]["emails"],
+                len(folder_stats["IMPORTANT"]["threads"]),
             )
 
     # Priority 4: Remaining INBOX emails
     if "INBOX" in folders_to_fetch:
         if not silent and "INBOX" in folder_filter:
-            print("📥 Fetching remaining INBOX emails...")
+            logger.info("Fetching remaining INBOX emails")
         inbox_messages = fetch_with_labels(["INBOX"], max_results)
         for msg in inbox_messages:
             message_id = msg["id"]
@@ -277,18 +283,22 @@ def list_emails_by_folder(
                     folder_stats["INBOX"]["threads"].add(thread_id)
                 seen_ids.add(message_id)
         if not silent and "INBOX" in folder_filter:
-            print(
-                f"   Found {folder_stats['INBOX']['emails']} remaining INBOX emails in {len(folder_stats['INBOX']['threads'])} threads"
+            logger.info(
+                "Found %d remaining INBOX emails in %d threads",
+                folder_stats["INBOX"]["emails"],
+                len(folder_stats["INBOX"]["threads"]),
             )
 
     if not silent:
-        print(f"\n✅ Categorized {len(seen_ids)} total emails")
-
-        # Print summary
-        print("\n📋 Summary:")
+        logger.info("Categorized %d total emails", len(seen_ids))
         for folder in ["SENT", "STARRED", "IMPORTANT", "INBOX"]:
             stats = folder_stats[folder]
-            print(f"   {folder}: {stats['emails']} emails in {len(stats['threads'])} threads")
+            logger.info(
+                "  %s: %d emails in %d threads",
+                folder,
+                stats["emails"],
+                len(stats["threads"]),
+            )
 
     return all_emails
 
@@ -299,10 +309,6 @@ def print_folder_statistics(emails: list[dict[str, Any]]) -> None:
     Args:
         emails: List of email objects with folder and thread information
     """
-    print("\n" + "=" * 80)
-    print("FOLDER STATISTICS (GROUPED BY THREADS)")
-    print("=" * 80)
-
     # Group by folder
     folder_groups: dict[str, list[dict]] = {
         "SENT": [],
@@ -313,7 +319,7 @@ def print_folder_statistics(emails: list[dict[str, Any]]) -> None:
 
     for email in emails:
         folder = email.get("folder")
-        if folder in folder_groups:
+        if folder and folder in folder_groups:
             folder_groups[folder].append(email)
 
     total_emails = len(emails)
@@ -324,8 +330,11 @@ def print_folder_statistics(emails: list[dict[str, Any]]) -> None:
         for email in folder_emails:
             all_threads.add(email["threadId"])
 
-    print(f"\n📊 Total emails: {total_emails}")
-    print(f"\n📊 Total threads: {len(all_threads)}")
+    logger.info(
+        "Folder statistics: %d total emails, %d total threads",
+        total_emails,
+        len(all_threads),
+    )
 
     for folder in ["SENT", "STARRED", "IMPORTANT", "INBOX"]:
         folder_emails = folder_groups[folder]
@@ -337,17 +346,13 @@ def print_folder_statistics(emails: list[dict[str, Any]]) -> None:
 
         percentage = (num_emails / total_emails * 100) if total_emails > 0 else 0
 
-        print(f"\n📁 {folder}:")
-        print(f"   Emails: {num_emails} ({percentage:.1f}%)")
-        print(f"   Threads: {num_threads}")
-
-        # Show first 3 emails as samples
-        if folder_emails:
-            print("   Sample paths:")
-            for email in folder_emails[:5]:
-                print(f"      {email['path']}")
-            if num_emails > 5:
-                print(f"      ... and {num_emails - 5} more")
+        logger.info(
+            "  %s: %d emails (%.1f%%), %d threads",
+            folder,
+            num_emails,
+            percentage,
+            num_threads,
+        )
 
 
 def fetch_emails_batch(

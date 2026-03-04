@@ -185,7 +185,7 @@ class GoogleDriveConnectorBackend(Backend):
             For multi-user production, leave user_email=None to auto-detect from context.
             This ensures each user accesses their own Drive.
         """
-        print(f"[GDRIVE-INIT] __init__ called: user_email={user_email}, provider={provider}")
+        logger.info("GDrive __init__: user_email=%s, provider=%s", user_email, provider)
 
         # Import TokenManager here to avoid circular imports
         # Support both file paths and database URLs
@@ -219,10 +219,7 @@ class GoogleDriveConnectorBackend(Backend):
 
     def _register_oauth_provider(self) -> None:
         """Register OAuth provider with TokenManager using OAuthProviderFactory."""
-        import logging
         import traceback
-
-        logger = logging.getLogger(__name__)
 
         try:
             import importlib as _il_oauth
@@ -241,21 +238,18 @@ class GoogleDriveConnectorBackend(Backend):
                 )
                 # Register with TokenManager using the provider name from config
                 self.token_manager.register_provider(self.provider, provider_instance)
-                logger.info(
-                    f"✓ Registered OAuth provider '{self.provider}' for Google Drive backend"
-                )
-                print(f"[GDRIVE-INIT] ✓ Registered OAuth provider '{self.provider}' from config")
+                logger.info("Registered OAuth provider '%s' from config", self.provider)
             except ValueError as e:
                 # Provider not found in config or credentials not set
                 logger.warning(
-                    f"OAuth provider '{self.provider}' not available: {e}. "
-                    "OAuth flow must be initiated manually via the Integrations page."
+                    "OAuth provider '%s' not available: %s. "
+                    "OAuth flow must be initiated manually via the Integrations page.",
+                    self.provider,
+                    e,
                 )
-                print(f"[GDRIVE-INIT] ⚠ OAuth provider '{self.provider}' not available: {e}")
         except Exception as e:
             error_msg = f"Failed to register OAuth provider: {e}\n{traceback.format_exc()}"
-            logger.error(error_msg)
-            print(f"[GDRIVE-INIT] ✗ {error_msg}")
+            logger.error("Failed to register OAuth provider: %s", error_msg)
 
     def check_connection(self, context: "OperationContext | None" = None) -> HandlerStatusResponse:
         """

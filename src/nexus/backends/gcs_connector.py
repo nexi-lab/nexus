@@ -240,7 +240,7 @@ class GCSConnectorBackend(PathBackend, CacheConnectorMixin):
             return versions
 
         except Exception as e:
-            logger.warning(f"[GCS] Batch version fetch failed: {e}, falling back")
+            logger.warning("[GCS] Batch version fetch failed: %s, falling back", e)
             return super().batch_get_versions(backend_paths, contexts)
 
     # === Signed URLs ===

@@ -145,7 +145,7 @@ class WriteBackService:
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.error(f"[WRITE_BACK] Subscribe loop error: {e}")
+            logger.error("[WRITE_BACK] Subscribe loop error: %s", e)
 
     async def _on_file_event(self, event: FileEvent) -> None:
         """Handle an incoming file event: filter and enqueue if applicable."""
@@ -196,7 +196,7 @@ class WriteBackService:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"[WRITE_BACK] Poll loop error: {e}")
+                logger.error("[WRITE_BACK] Poll loop error: %s", e)
             await asyncio.sleep(self._poll_interval)
 
     async def _process_all_backends(self) -> None:
@@ -242,7 +242,7 @@ class WriteBackService:
                     )
                 )
             except ConflictAbortError as e:
-                logger.warning(f"[WRITE_BACK] Conflict ABORT on {entry.path}: {e}")
+                logger.warning("[WRITE_BACK] Conflict ABORT on %s: %s", entry.path, e)
                 self._backlog_store.mark_failed(entry.id, str(e))
                 self._metrics.record_failure(entry.backend_name)
                 await self._event_bus.publish(
@@ -253,7 +253,7 @@ class WriteBackService:
                     )
                 )
             except Exception as e:
-                logger.warning(f"[WRITE_BACK] Failed to write-back {entry.path}: {e}")
+                logger.warning("[WRITE_BACK] Failed to write-back %s: %s", entry.path, e)
                 self._backlog_store.mark_failed(entry.id, str(e))
                 self._metrics.record_failure(entry.backend_name)
                 await self._event_bus.publish(
@@ -434,7 +434,7 @@ class WriteBackService:
             try:
                 self._conflict_log_store.log_conflict(record)
             except Exception as e:
-                logger.warning(f"[WRITE_BACK] Failed to log conflict: {e}")
+                logger.warning("[WRITE_BACK] Failed to log conflict: %s", e)
 
         # Act on outcome
         match outcome:
@@ -444,18 +444,21 @@ class WriteBackService:
                 )
             case ResolutionOutcome.BACKEND_WINS:
                 logger.info(
-                    f"[WRITE_BACK] Conflict on {entry.path}: backend wins, skipping write-back"
+                    "[WRITE_BACK] Conflict on %s: backend wins, skipping write-back",
+                    entry.path,
                 )
                 return False
             case ResolutionOutcome.NEXUS_WINS:
                 logger.info(
-                    f"[WRITE_BACK] Conflict on {entry.path}: nexus wins, proceeding with write-back"
+                    "[WRITE_BACK] Conflict on %s: nexus wins, proceeding with write-back",
+                    entry.path,
                 )
                 return True
             case ResolutionOutcome.RENAME_CONFLICT:
                 logger.info(
-                    f"[WRITE_BACK] Conflict on {entry.path}: creating conflict "
-                    f"copy at {conflict_copy_path}"
+                    "[WRITE_BACK] Conflict on %s: creating conflict copy at %s",
+                    entry.path,
+                    conflict_copy_path,
                 )
                 self._create_conflict_copy(entry.path, conflict_copy_path)  # type: ignore[arg-type]
                 return True
@@ -491,7 +494,7 @@ class WriteBackService:
             if content is not None:
                 self._gw.sys_write(conflict_path, content)
         except Exception as e:
-            logger.warning(f"[WRITE_BACK] Failed to create conflict copy: {e}")
+            logger.warning("[WRITE_BACK] Failed to create conflict copy: %s", e)
 
     @staticmethod
     def _generate_conflict_copy_path(path: str, backend_name: str) -> str:
@@ -555,7 +558,7 @@ class WriteBackService:
                 return result
             return getattr(result, "data", None) if result else None
         except Exception as e:
-            logger.warning(f"[WRITE_BACK] Failed to read {path}: {e}")
+            logger.warning("[WRITE_BACK] Failed to read %s: %s", path, e)
             return None
 
     def _get_semaphore(self, backend_name: str) -> asyncio.Semaphore:

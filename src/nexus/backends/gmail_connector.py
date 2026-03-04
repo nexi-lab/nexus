@@ -274,12 +274,14 @@ class GmailConnectorBackend(
                 )
                 # Register with TokenManager using the provider name from config
                 self.token_manager.register_provider(self.provider, provider_instance)  # type: ignore[arg-type]
-                logger.info(f"✓ Registered OAuth provider '{self.provider}' for Gmail backend")
+                logger.info("Registered OAuth provider '%s' for Gmail backend", self.provider)
             except ValueError as e:
                 # Provider not found in config or credentials not set
                 logger.warning(
-                    f"OAuth provider '{self.provider}' not available: {e}. "
-                    "OAuth flow must be initiated manually via the Integrations page."
+                    "OAuth provider '%s' not available: %s. "
+                    "OAuth flow must be initiated manually via the Integrations page.",
+                    self.provider,
+                    e,
                 )
         except Exception as e:
             error_msg = f"Failed to register OAuth provider: {e}\n{traceback.format_exc()}"
@@ -327,7 +329,7 @@ class GmailConnectorBackend(
 
             return skill_md_content
         except Exception as e:
-            logger.warning(f"Failed to load static SKILL.md: {e}, using auto-generated")
+            logger.warning("Failed to load static SKILL.md: %s, using auto-generated", e)
             return super().generate_skill_doc(mount_path)
 
     def write_skill_docs(self, mount_path: str, filesystem: Any = None) -> dict[str, Any]:

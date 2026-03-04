@@ -66,17 +66,20 @@ def list_channels(
                         if retry < max_retries - 1:
                             delay = base_delay * (2**retry)
                             logger.warning(
-                                f"[LIST-CHANNELS] Rate limit hit, retrying in {delay}s "
-                                f"(attempt {retry + 1}/{max_retries})"
+                                "[LIST-CHANNELS] Rate limit hit, retrying in %ss (attempt %d/%d)",
+                                delay,
+                                retry + 1,
+                                max_retries,
                             )
                             time.sleep(delay)
                         else:
                             logger.error(
-                                f"[LIST-CHANNELS] Rate limit exceeded after {max_retries} retries"
+                                "[LIST-CHANNELS] Rate limit exceeded after %d retries",
+                                max_retries,
                             )
                             raise
                     else:
-                        logger.error(f"[LIST-CHANNELS] Failed to list channels: {e}")
+                        logger.error("[LIST-CHANNELS] Failed to list channels: %s", e)
                         raise
 
             if result is None or not result.get("ok"):
@@ -95,7 +98,7 @@ def list_channels(
                 break
 
         except Exception as e:
-            logger.error(f"[LIST-CHANNELS] Error listing channels: {e}")
+            logger.error("[LIST-CHANNELS] Error listing channels: %s", e)
             break
 
     if not silent:
@@ -174,17 +177,22 @@ def list_messages_from_channel(
                         if retry < max_retries - 1:
                             delay = base_delay * (2**retry)
                             logger.warning(
-                                f"[LIST-MESSAGES] Rate limit hit for #{channel_name}, "
-                                f"retrying in {delay}s (attempt {retry + 1}/{max_retries})"
+                                "[LIST-MESSAGES] Rate limit hit for #%s, "
+                                "retrying in %ss (attempt %d/%d)",
+                                channel_name,
+                                delay,
+                                retry + 1,
+                                max_retries,
                             )
                             time.sleep(delay)
                         else:
                             logger.error(
-                                f"[LIST-MESSAGES] Rate limit exceeded after {max_retries} retries"
+                                "[LIST-MESSAGES] Rate limit exceeded after %d retries",
+                                max_retries,
                             )
                             raise
                     else:
-                        logger.error(f"[LIST-MESSAGES] Failed to list messages: {e}")
+                        logger.error("[LIST-MESSAGES] Failed to list messages: %s", e)
                         raise
 
             if result is None or not result.get("ok"):
@@ -209,7 +217,7 @@ def list_messages_from_channel(
                 break
 
         except Exception as e:
-            logger.error(f"[LIST-MESSAGES] Error listing messages from #{channel_name}: {e}")
+            logger.error("[LIST-MESSAGES] Error listing messages from #%s: %s", channel_name, e)
             break
 
     if not silent:
@@ -243,7 +251,7 @@ def list_thread_replies(
 
         if not result.get("ok"):
             error = result.get("error", "unknown_error")
-            logger.error(f"[LIST-THREAD-REPLIES] Slack API error: {error}")
+            logger.error("[LIST-THREAD-REPLIES] Slack API error: %s", error)
             return []
 
         messages = result.get("messages", [])
@@ -254,7 +262,7 @@ def list_thread_replies(
         return messages
 
     except Exception as e:
-        logger.error(f"[LIST-THREAD-REPLIES] Error fetching thread replies: {e}")
+        logger.error("[LIST-THREAD-REPLIES] Error fetching thread replies: %s", e)
         return []
 
 
@@ -292,7 +300,7 @@ def get_user_info(
 
         if not result.get("ok"):
             error = result.get("error", "unknown_error")
-            logger.warning(f"[GET-USER-INFO] Failed to get user {user_id}: {error}")
+            logger.warning("[GET-USER-INFO] Failed to get user %s: %s", user_id, error)
             return None
 
         user_info = result.get("user")
@@ -304,7 +312,7 @@ def get_user_info(
         return user_info
 
     except Exception as e:
-        logger.warning(f"[GET-USER-INFO] Error fetching user {user_id}: {e}")
+        logger.warning("[GET-USER-INFO] Error fetching user %s: %s", user_id, e)
         return None
 
 

@@ -106,7 +106,7 @@ def generate_download_url(
         return None
 
     except Exception as e:
-        logger.warning(f"Failed to generate download URL for {path}: {e}")
+        logger.warning("Failed to generate download URL for %s: %s", path, e)
         return None
 
 
@@ -277,9 +277,13 @@ def handle_list(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any
         _build_elapsed = (_time.time() - _build_start) * 1000
         _total_elapsed = (_time.time() - _handle_start) * 1000
         logger.info(
-            f"[HANDLE-LIST] path={params.path}, list={_list_elapsed:.1f}ms, "
-            f"build={_build_elapsed:.1f}ms, total={_total_elapsed:.1f}ms, "
-            f"files={len(items)}, has_more={paginated['has_more']}"
+            "[HANDLE-LIST] path=%s, list=%.1fms, build=%.1fms, total=%.1fms, files=%d, has_more=%s",
+            params.path,
+            _list_elapsed,
+            _build_elapsed,
+            _total_elapsed,
+            len(items),
+            paginated["has_more"],
         )
         return response
 
@@ -296,8 +300,12 @@ def handle_list(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any
     _build_elapsed = (_time.time() - _build_start) * 1000
     _total_elapsed = (_time.time() - _handle_start) * 1000
     logger.info(
-        f"[HANDLE-LIST] path={params.path}, list={_list_elapsed:.1f}ms, "
-        f"build={_build_elapsed:.1f}ms, total={_total_elapsed:.1f}ms, files={len(entries)}"
+        "[HANDLE-LIST] path=%s, list=%.1fms, build=%.1fms, total=%.1fms, files=%d",
+        params.path,
+        _list_elapsed,
+        _build_elapsed,
+        _total_elapsed,
+        len(entries),
     )
     return response
 

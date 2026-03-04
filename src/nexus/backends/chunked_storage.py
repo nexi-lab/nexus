@@ -320,10 +320,10 @@ class ChunkedStorageMixin:
         is_new = self._cas.store(chunk_hash, chunk_bytes, extra_meta={"is_chunk": True})
         if is_new:
             self._cas_bloom_add(chunk_hash)
-            logger.debug(f"Wrote new chunk {chunk_hash[:16]}... ({len(chunk_bytes)} bytes)")
+            logger.debug("Wrote new chunk %s... (%d bytes)", chunk_hash[:16], len(chunk_bytes))
         else:
             meta = self._cas.read_meta(chunk_hash)
-            logger.debug(f"Chunk {chunk_hash[:16]}... exists, ref_count={meta.ref_count}")
+            logger.debug("Chunk %s... exists, ref_count=%d", chunk_hash[:16], meta.ref_count)
         return chunk_hash
 
     def _write_chunked(
@@ -356,8 +356,10 @@ class ChunkedStorageMixin:
         chunk_tuples = self._chunk_content_cdc(content)
 
         logger.info(
-            f"Chunking {len(content)} bytes -> {len(chunk_tuples)} chunks "
-            f"(avg {len(content) // len(chunk_tuples) if chunk_tuples else 0} bytes)"
+            "Chunking %d bytes -> %d chunks (avg %d bytes)",
+            len(content),
+            len(chunk_tuples),
+            len(content) // len(chunk_tuples) if chunk_tuples else 0,
         )
 
         # Write chunks in parallel for better throughput
@@ -422,8 +424,11 @@ class ChunkedStorageMixin:
 
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         logger.info(
-            f"Wrote chunked content: {len(content)} bytes -> {len(chunk_infos)} chunks "
-            f"in {elapsed_ms:.1f}ms (manifest={manifest_hash[:16]}...)"
+            "Wrote chunked content: %d bytes -> %d chunks in %.1fms (manifest=%s...)",
+            len(content),
+            len(chunk_infos),
+            elapsed_ms,
+            manifest_hash[:16],
         )
 
         return manifest_hash
@@ -486,8 +491,10 @@ class ChunkedStorageMixin:
 
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         logger.debug(
-            f"Read chunked content: {len(content)} bytes from {manifest.chunk_count} chunks "
-            f"in {elapsed_ms:.1f}ms"
+            "Read chunked content: %d bytes from %d chunks in %.1fms",
+            len(content),
+            manifest.chunk_count,
+            elapsed_ms,
         )
 
         return content
@@ -517,10 +524,10 @@ class ChunkedStorageMixin:
         """
         deleted = self._cas.release(chunk_hash)
         if deleted:
-            logger.debug(f"Deleted chunk {chunk_hash[:16]}... (ref_count=0)")
+            logger.debug("Deleted chunk %s... (ref_count=0)", chunk_hash[:16])
         else:
             meta = self._cas.read_meta(chunk_hash)
-            logger.debug(f"Decremented chunk {chunk_hash[:16]}... ref_count to {meta.ref_count}")
+            logger.debug("Decremented chunk %s... ref_count to %d", chunk_hash[:16], meta.ref_count)
 
     def _delete_chunked(
         self,
@@ -545,7 +552,7 @@ class ChunkedStorageMixin:
         deleted = self._cas.release(content_hash)
 
         if not deleted:
-            logger.debug(f"Decremented manifest {content_hash[:16]}... ref_count")
+            logger.debug("Decremented manifest %s... ref_count", content_hash[:16])
             return
 
         # Last reference — parallelize chunk releases
@@ -557,8 +564,9 @@ class ChunkedStorageMixin:
                 future.result()  # Propagate exceptions
 
         logger.info(
-            f"Deleted chunked content {content_hash[:16]}... "
-            f"({manifest.chunk_count} chunks unreferenced)"
+            "Deleted chunked content %s... (%d chunks unreferenced)",
+            content_hash[:16],
+            manifest.chunk_count,
         )
 
     def _get_content_size_chunked(self, content_hash: str) -> int:

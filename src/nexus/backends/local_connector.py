@@ -330,13 +330,13 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
             try:
                 cached = self._read_from_cache(cache_path, original=True)
                 if cached and not cached.stale and cached.content_binary:
-                    logger.info(f"[LocalConnectorBackend] L1 cache hit: {cache_path}")
+                    logger.info("[LocalConnectorBackend] L1 cache hit: %s", cache_path)
                     return cached.content_binary
             except Exception as e:
                 logger.debug("[CACHE] Cache read failed for %s: %s", cache_path, e)
 
         # Step 2: L1 miss - read from disk
-        logger.debug(f"[LocalConnectorBackend] L1 cache miss, reading from disk: {path}")
+        logger.debug("[LocalConnectorBackend] L1 cache miss, reading from disk: %s", path)
         physical = self._to_physical(path)
 
         if not physical.exists():
@@ -490,7 +490,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
                     entries.append(entry)
                 except OSError:
                     # Skip entries we can't stat (broken symlinks, permission issues)
-                    logger.debug(f"Skipping unreadable entry: {item}")
+                    logger.debug("Skipping unreadable entry: %s", item)
                     continue
             return HandlerResponse.ok(data=entries)
         except PermissionError as e:

@@ -138,7 +138,7 @@ class SyncService:
         # Step 1.5: Acquire per-mount lock (non-blocking to avoid queueing)
         lock = self._get_mount_lock(ctx.mount_point)
         if not lock.acquire(blocking=False):
-            logger.warning(f"[SYNC_MOUNT] Sync already in progress for {ctx.mount_point}")
+            logger.warning("[SYNC_MOUNT] Sync already in progress for %s", ctx.mount_point)
             result = SyncResult()
             result.errors.append(f"Sync already in progress for {ctx.mount_point}")
             return result
@@ -234,7 +234,7 @@ class SyncService:
                 result.mounts_skipped += 1
                 continue
 
-            logger.info(f"[SYNC_MOUNT] Syncing mount: {mp}")
+            logger.info("[SYNC_MOUNT] Syncing mount: %s", mp)
             try:
                 # Create new context for this mount
                 mount_ctx = SyncContext(
@@ -269,7 +269,7 @@ class SyncService:
 
             except Exception as e:
                 result.errors.append(f"[{mp}] Failed to sync: {e}")
-                logger.warning(f"[SYNC_MOUNT] Failed to sync {mp}: {e}")
+                logger.warning("[SYNC_MOUNT] Failed to sync %s: %s", mp, e)
 
         logger.info(
             f"[SYNC_MOUNT] All mounts sync complete: "
@@ -508,7 +508,7 @@ class SyncService:
 
                 if isinstance(cb_error, SyncCancelled):
                     raise
-                logger.warning(f"Progress callback error: {cb_error}")
+                logger.warning("Progress callback error: %s", cb_error)
 
         files_found.add(virtual_path)
 
@@ -552,7 +552,7 @@ class SyncService:
                         )
             except Exception as e:
                 # Delta check failed - proceed with full sync for this file
-                logger.warning(f"[DELTA_SYNC] Change detection failed for {virtual_path}: {e}")
+                logger.warning("[DELTA_SYNC] Change detection failed for %s: %s", virtual_path, e)
 
         # Check if file exists in metadata
         existing_meta = self._gw.metadata_get(virtual_path)
@@ -770,7 +770,7 @@ class SyncService:
 
         except Exception as e:
             result.errors.append(f"Failed to create directory marker for {virtual_path}: {e}")
-            logger.warning(f"Failed to create directory marker for {virtual_path}: {e}")
+            logger.warning("Failed to create directory marker for %s: %s", virtual_path, e)
 
     def _sync_deletions(
         self,
@@ -807,7 +807,7 @@ class SyncService:
                     if mp and mp != ctx.mount_point and mp != "/":
                         other_mount_points.add(mp)
             except (OSError, ValueError, KeyError) as e:
-                logger.debug(f"Could not list other mount points: {e}")
+                logger.debug("Could not list other mount points: %s", e)
 
             # Resolve zone_id for change log cleanup
             zone_id = self._resolve_zone_id(ctx)
@@ -846,7 +846,7 @@ class SyncService:
                         paths_to_delete.append(existing_path)
                 except Exception as e:
                     result.errors.append(f"Failed to delete {existing_path}: {e}")
-                    logger.warning(f"Failed to delete {existing_path}: {e}")
+                    logger.warning("Failed to delete %s: %s", existing_path, e)
 
             # Issue #1127: Batch-delete stale change log entries (single DB session)
             if paths_to_delete:
@@ -856,7 +856,7 @@ class SyncService:
 
         except Exception as e:
             result.errors.append(f"Failed to check for deletions: {e}")
-            logger.warning(f"Failed to check for deletions: {e}")
+            logger.warning("Failed to check for deletions: %s", e)
 
     def _sync_content(
         self,
@@ -925,7 +925,7 @@ class SyncService:
 
         except Exception as e:
             result.errors.append(f"Failed to sync content cache: {e}")
-            logger.warning(f"Failed to sync content cache: {e}")
+            logger.warning("Failed to sync content cache: %s", e)
 
     # =========================================================================
     # Helper Methods
@@ -1000,7 +1000,7 @@ class SyncService:
             # list_dir on a file path raises OS-level errors — treat as single file
             return True
         except Exception as e:
-            logger.warning(f"Unexpected error checking if single file {backend_path}: {e}")
+            logger.warning("Unexpected error checking if single file %s: %s", backend_path, e)
             return False
 
     def _sync_single_file(
@@ -1038,11 +1038,11 @@ class SyncService:
         Returns:
             Set of files found
         """
-        logger.info(f"[SYNC_MOUNT] Syncing single file: {virtual_path}")
+        logger.info("[SYNC_MOUNT] Syncing single file: %s", virtual_path)
 
         # Check pattern match with explicit logging for single-file sync
         if not self._matches_patterns(virtual_path, ctx):
-            logger.info(f"[SYNC_MOUNT] Skipping {virtual_path} - filtered by patterns")
+            logger.info("[SYNC_MOUNT] Skipping %s - filtered by patterns", virtual_path)
             return files_found
 
         # Delegate to _sync_file for full processing (including delta sync)
@@ -1095,7 +1095,7 @@ class SyncService:
                 result: int = backend.get_content_size("", size_context)
                 return result
         except (OSError, ValueError, AttributeError) as e:
-            logger.debug(f"Could not get file size for {backend_path}: {e}")
+            logger.debug("Could not get file size for %s: %s", backend_path, e)
         return 0
 
     def _matches_patterns(self, file_path: str, ctx: SyncContext) -> bool:

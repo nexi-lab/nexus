@@ -137,16 +137,18 @@ def setup_telemetry(
         _set_rebac_tracer(trace.get_tracer("nexus.bricks.rebac"))
 
         logger.info(
-            f"OpenTelemetry initialized: service={_service_name}, "
-            f"endpoint={_endpoint}, sample_ratio={_sample_ratio}"
+            "OpenTelemetry initialized: service=%s, endpoint=%s, sample_ratio=%s",
+            _service_name,
+            _endpoint,
+            _sample_ratio,
         )
         return True
 
     except ImportError as e:
-        logger.warning(f"OpenTelemetry packages not installed: {e}")
+        logger.warning("OpenTelemetry packages not installed: %s", e)
         return False
     except Exception as e:
-        logger.error(f"Failed to initialize OpenTelemetry: {e}")
+        logger.error("Failed to initialize OpenTelemetry: %s", e)
         return False
 
 
@@ -161,7 +163,7 @@ def _instrument_libraries() -> None:
     except ImportError:
         logger.debug("httpx instrumentation not available")
     except Exception as e:
-        logger.warning(f"Failed to instrument httpx: {e}")
+        logger.warning("Failed to instrument httpx: %s", e)
 
     # SQLAlchemy - database
     try:
@@ -175,7 +177,7 @@ def _instrument_libraries() -> None:
     except ImportError:
         logger.debug("sqlalchemy instrumentation not available")
     except Exception as e:
-        logger.warning(f"Failed to instrument sqlalchemy: {e}")
+        logger.warning("Failed to instrument sqlalchemy: %s", e)
 
     # Redis - cache
     try:
@@ -186,7 +188,7 @@ def _instrument_libraries() -> None:
     except ImportError:
         logger.debug("redis instrumentation not available")
     except Exception as e:
-        logger.warning(f"Failed to instrument redis: {e}")
+        logger.warning("Failed to instrument redis: %s", e)
 
     # aiohttp - async HTTP client (used by some backends)
     try:
@@ -197,7 +199,7 @@ def _instrument_libraries() -> None:
     except ImportError:
         logger.debug("aiohttp instrumentation not available")
     except Exception as e:
-        logger.warning(f"Failed to instrument aiohttp: {e}")
+        logger.warning("Failed to instrument aiohttp: %s", e)
 
 
 def instrument_fastapi_app(app: object) -> bool:
@@ -227,7 +229,7 @@ def instrument_fastapi_app(app: object) -> bool:
         logger.debug("FastAPI instrumentation not available")
         return False
     except Exception as e:
-        logger.warning(f"Failed to instrument FastAPI: {e}")
+        logger.warning("Failed to instrument FastAPI: %s", e)
         return False
 
 
@@ -246,7 +248,7 @@ def shutdown_telemetry() -> None:
             provider.shutdown()
         logger.info("OpenTelemetry shutdown complete")
     except Exception as e:
-        logger.warning(f"Error during OpenTelemetry shutdown: {e}")
+        logger.warning("Error during OpenTelemetry shutdown: %s", e)
     finally:
         reset_telemetry_state()
         # Reset rebac tracer

@@ -112,7 +112,7 @@ class BackendIOService:
 
         # Check if this connector has bulk download support
         if hasattr(connector, "_bulk_download_blobs") and hasattr(connector, "_get_blob_path"):
-            logger.info(f"[BATCH-READ] Using bulk download for {len(paths)} paths")
+            logger.info("[BATCH-READ] Using bulk download for %d paths", len(paths))
 
             blob_paths = [connector._get_blob_path(path) for path in paths]
 
@@ -137,22 +137,22 @@ class BackendIOService:
                     results[backend_path] = content
 
             logger.info(
-                f"[BATCH-READ] Bulk download complete: {len(results)}/{len(paths)} successful"
+                "[BATCH-READ] Bulk download complete: %d/%d successful", len(results), len(paths)
             )
             return results
 
         # Check if this connector has custom bulk download support
         if hasattr(connector, "_bulk_download_contents"):
-            logger.info(f"[BATCH-READ] Using connector bulk download for {len(paths)} paths")
+            logger.info("[BATCH-READ] Using connector bulk download for %d paths", len(paths))
             results = connector._bulk_download_contents(paths, contexts)
             logger.info(
-                f"[BATCH-READ] Bulk download complete: {len(results)}/{len(paths)} successful"
+                "[BATCH-READ] Bulk download complete: %d/%d successful", len(results), len(paths)
             )
             return results
 
         # Fallback: sequential reads for non-blob connectors
         # Use connector's _read_content_from_backend (preserves MRO overrides)
-        logger.info(f"[BATCH-READ] Falling back to sequential reads for {len(paths)} paths")
+        logger.info("[BATCH-READ] Falling back to sequential reads for %d paths", len(paths))
         results = {}
         for path in paths:
             context = contexts.get(path) if contexts else None

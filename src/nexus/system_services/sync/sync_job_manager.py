@@ -138,7 +138,7 @@ class SyncJobManager:
             session.add(job)
             session.commit()
 
-        logger.info(f"Created sync job {job_id} for mount {mount_point}")
+        logger.info("Created sync job %s for mount %s", job_id, mount_point)
         return job_id
 
     async def start_job(self, job_id: str, nexus_fs: "NexusFS") -> None:
@@ -165,7 +165,7 @@ class SyncJobManager:
         task = asyncio.create_task(self._run_sync(job_id, nexus_fs))
         self._active_jobs[job_id] = task
 
-        logger.info(f"Started sync job {job_id}")
+        logger.info("Started sync job %s", job_id)
 
     def cancel_job(self, job_id: str) -> bool:
         """Request cancellation of a running sync job.
@@ -181,12 +181,12 @@ class SyncJobManager:
             return False
 
         if job["status"] != "running":
-            logger.warning(f"Cannot cancel job {job_id}: status is {job['status']}")
+            logger.warning("Cannot cancel job %s: status is %s", job_id, job["status"])
             return False
 
         # Set cancellation flag
         self._cancellation_flags[job_id] = True
-        logger.info(f"Requested cancellation for sync job {job_id}")
+        logger.info("Requested cancellation for sync job %s", job_id)
 
         return True
 
@@ -256,7 +256,7 @@ class SyncJobManager:
             job = session.execute(stmt).scalar_one_or_none()
 
             if not job:
-                logger.warning(f"Job {job_id} not found for status update")
+                logger.warning("Job %s not found for status update", job_id)
                 return
 
             job.status = status
@@ -376,7 +376,9 @@ class SyncJobManager:
             )
 
             logger.info(
-                f"Sync job {job_id} completed: {result.get('files_scanned', 0)} files scanned"
+                "Sync job %s completed: %d files scanned",
+                job_id,
+                result.get("files_scanned", 0),
             )
 
         except SyncCancelled:
@@ -386,7 +388,7 @@ class SyncJobManager:
                 status="cancelled",
                 error_message="Job was cancelled by user",
             )
-            logger.info(f"Sync job {job_id} was cancelled")
+            logger.info("Sync job %s was cancelled", job_id)
 
         except Exception as e:
             # Mark as failed
@@ -396,7 +398,7 @@ class SyncJobManager:
                 status="failed",
                 error_message=error_msg,
             )
-            logger.error(f"Sync job {job_id} failed: {error_msg}", exc_info=True)
+            logger.error("Sync job %s failed: %s", job_id, error_msg, exc_info=True)
 
         finally:
             # Cleanup

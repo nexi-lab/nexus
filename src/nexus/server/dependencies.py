@@ -197,7 +197,7 @@ async def resolve_auth(
             result = await _state.auth_provider.authenticate(token)
             _auth_elapsed = (_time.time() - _auth_start) * 1000
             if _auth_elapsed > 10:  # Log if auth takes >10ms
-                logger.info(f"[AUTH-TIMING] provider auth took {_auth_elapsed:.1f}ms (cache miss)")
+                logger.info("[AUTH-TIMING] provider auth took %.1fms (cache miss)", _auth_elapsed)
             if result is None:
                 # Issue #16: random delay on auth failure to mitigate timing side-channel.
                 # Delay BEFORE set_result so singleflight waiters also experience it.

@@ -162,14 +162,16 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
             self._cas_bloom = BloomFilter(self._bloom_capacity, self._bloom_fp_rate)
             self._populate_cas_bloom_from_disk()
             logger.debug(
-                f"CAS Bloom filter initialized: capacity={self._bloom_capacity}, "
-                f"fp_rate={self._bloom_fp_rate}, memory={self._cas_bloom.memory_bytes} bytes"
+                "CAS Bloom filter initialized: capacity=%d, fp_rate=%s, memory=%d bytes",
+                self._bloom_capacity,
+                self._bloom_fp_rate,
+                self._cas_bloom.memory_bytes,
             )
         except ImportError:
             logger.warning("nexus_fast not available, CAS Bloom filter disabled")
             self._cas_bloom = None
         except Exception as e:
-            logger.warning(f"Failed to initialize CAS Bloom filter: {e}")
+            logger.warning("Failed to initialize CAS Bloom filter: %s", e)
             self._cas_bloom = None
 
     def _populate_cas_bloom_from_disk(self) -> None:
@@ -192,9 +194,9 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
 
             if keys:
                 self._cas_bloom.add_bulk(keys)
-                logger.info(f"CAS Bloom filter populated with {len(keys)} entries from disk")
+                logger.info("CAS Bloom filter populated with %d entries from disk", len(keys))
         except Exception as e:
-            logger.warning(f"Failed to populate CAS Bloom filter from disk: {e}")
+            logger.warning("Failed to populate CAS Bloom filter from disk: %s", e)
 
     def _cas_bloom_check(self, content_hash: str) -> bool:
         """Check Bloom filter for possible CAS content existence.
@@ -863,7 +865,7 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         meta_path = upload_dir / "_meta.json"
         meta_path.write_text(json.dumps(meta), encoding="utf-8")
 
-        logger.debug(f"Initialized multipart upload {upload_id} for {backend_path}")
+        logger.debug("Initialized multipart upload %s for %s", upload_id, backend_path)
         return upload_id
 
     def upload_part(
@@ -945,7 +947,7 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
 
         # Clean up temp directory
         shutil.rmtree(upload_dir, ignore_errors=True)
-        logger.debug(f"Completed multipart upload {upload_id} -> {content_hash}")
+        logger.debug("Completed multipart upload %s -> %s", upload_id, content_hash)
 
         return content_hash
 
@@ -963,4 +965,4 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         upload_dir = self.root_path / "uploads" / upload_id
         if upload_dir.exists():
             shutil.rmtree(upload_dir, ignore_errors=True)
-            logger.debug(f"Aborted multipart upload {upload_id}")
+            logger.debug("Aborted multipart upload %s", upload_id)

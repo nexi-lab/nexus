@@ -161,7 +161,7 @@ class PassthroughBackend(Backend):
 
             os.replace(str(tmp_path), str(pointer_path))
             tmp_path = None
-            logger.debug(f"Wrote pointer: {virtual_path} -> {content_hash}")
+            logger.debug("Wrote pointer: %s -> %s", virtual_path, content_hash)
 
         except OSError as e:
             raise BackendError(
@@ -185,10 +185,10 @@ class PassthroughBackend(Backend):
             content = pointer_path.read_text(encoding="utf-8").strip()
             if content.startswith(POINTER_PREFIX):
                 return content[len(POINTER_PREFIX) :]
-            logger.warning(f"Invalid pointer format at {virtual_path}: {content[:50]}")
+            logger.warning("Invalid pointer format at %s: %s", virtual_path, content[:50])
             return None
         except OSError as e:
-            logger.warning(f"Failed to read pointer {virtual_path}: {e}")
+            logger.warning("Failed to read pointer %s: %s", virtual_path, e)
             return None
 
     def _delete_pointer(self, virtual_path: str) -> bool:
@@ -273,7 +273,7 @@ class PassthroughBackend(Backend):
 
                 os.replace(str(tmp_path), str(cas_path))
                 tmp_path = None
-                logger.debug(f"Wrote CAS content: {content_hash}")
+                logger.debug("Wrote CAS content: %s", content_hash)
 
             except OSError as e:
                 raise BackendError(

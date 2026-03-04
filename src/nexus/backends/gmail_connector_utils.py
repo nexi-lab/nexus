@@ -143,18 +143,22 @@ def list_emails_by_folder(
                         if retry < max_retries - 1:
                             delay = base_delay * (2**retry)
                             logger.warning(
-                                f"[LIST-EMAILS] Rate limit hit (429), retrying in {delay}s "
-                                f"(attempt {retry + 1}/{max_retries})"
+                                "[LIST-EMAILS] Rate limit hit (429), retrying in %ss "
+                                "(attempt %d/%d)",
+                                delay,
+                                retry + 1,
+                                max_retries,
                             )
                             time.sleep(delay)
                         else:
                             logger.error(
-                                f"[LIST-EMAILS] Rate limit exceeded after {max_retries} retries"
+                                "[LIST-EMAILS] Rate limit exceeded after %d retries",
+                                max_retries,
                             )
                             raise
                     else:
                         # Non-rate-limit error
-                        logger.error(f"[LIST-EMAILS] Failed to list messages: {e}")
+                        logger.error("[LIST-EMAILS] Failed to list messages: %s", e)
                         raise
 
             if result is None:
@@ -388,7 +392,7 @@ def fetch_emails_batch(
                     else:
                         # Log non-429 errors immediately (these won't be retried)
                         logger.warning(
-                            f"[BATCH-FETCH] Error fetching message {request_id}: {exception}"
+                            "[BATCH-FETCH] Error fetching message %s: %s", request_id, exception
                         )
                     return  # Skip on error
 
@@ -398,7 +402,7 @@ def fetch_emails_batch(
                         email_data = parse_message_func(response)
                         email_cache[message_id] = email_data
                     except Exception as e:
-                        logger.warning(f"[BATCH-FETCH] Error parsing message {request_id}: {e}")
+                        logger.warning("[BATCH-FETCH] Error parsing message %s: %s", request_id, e)
                         pass  # Skip on parse error
 
             return _callback
@@ -433,8 +437,12 @@ def fetch_emails_batch(
                         # Exponential backoff: 1s, 2s, 4s, 8s, 16s
                         delay = base_delay * (2**retry)
                         logger.warning(
-                            f"[BATCH-FETCH] {len(failed_429_ids)} messages hit rate limit (429), "
-                            f"retrying in {delay}s (attempt {retry + 1}/{max_retries})"
+                            "[BATCH-FETCH] %d messages hit rate limit (429), "
+                            "retrying in %ss (attempt %d/%d)",
+                            len(failed_429_ids),
+                            delay,
+                            retry + 1,
+                            max_retries,
                         )
                         time.sleep(delay)
                         # Set up next iteration to retry only the failed messages
@@ -442,8 +450,10 @@ def fetch_emails_batch(
                         continue  # Retry with failed messages
                     else:
                         logger.warning(
-                            f"[BATCH-FETCH] {len(failed_429_ids)} messages still failing after "
-                            f"{max_retries} retries: {failed_429_ids[:5]}..."
+                            "[BATCH-FETCH] %d messages still failing after %d retries: %s...",
+                            len(failed_429_ids),
+                            max_retries,
+                            failed_429_ids[:5],
                         )
 
                 # Success - no failures or retries exhausted
@@ -458,19 +468,27 @@ def fetch_emails_batch(
                         # Exponential backoff: 1s, 2s, 4s, 8s, 16s
                         delay = base_delay * (2**retry)
                         logger.warning(
-                            f"[BATCH-FETCH] Batch request hit rate limit (429), retrying in {delay}s "
-                            f"(attempt {retry + 1}/{max_retries}) for {len(ids_to_fetch)} messages"
+                            "[BATCH-FETCH] Batch request hit rate limit (429), retrying in %ss "
+                            "(attempt %d/%d) for %d messages",
+                            delay,
+                            retry + 1,
+                            max_retries,
+                            len(ids_to_fetch),
                         )
                         time.sleep(delay)
                         # Keep same ids_to_fetch for next iteration
                     else:
                         logger.warning(
-                            f"[BATCH-FETCH] Batch rate limit exceeded after {max_retries} retries "
-                            f"for {len(ids_to_fetch)} messages"
+                            "[BATCH-FETCH] Batch rate limit exceeded after %d retries "
+                            "for %d messages",
+                            max_retries,
+                            len(ids_to_fetch),
                         )
                 else:
                     # Non-rate-limit error - log and break
                     logger.warning(
-                        f"[BATCH-FETCH] Batch execute failed for {len(ids_to_fetch)} messages: {e}"
+                        "[BATCH-FETCH] Batch execute failed for %d messages: %s",
+                        len(ids_to_fetch),
+                        e,
                     )
                     break

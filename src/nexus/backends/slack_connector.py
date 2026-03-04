@@ -178,12 +178,14 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
                 provider_instance = factory.create_provider(name=self.provider)
                 # Register with TokenManager using the provider name from config
                 self.token_manager.register_provider(self.provider, provider_instance)
-                logger.info(f"✓ Registered OAuth provider '{self.provider}' for Slack backend")
+                logger.info("Registered OAuth provider '%s' for Slack backend", self.provider)
             except ValueError as e:
                 # Provider not found in config or credentials not set
                 logger.warning(
-                    f"OAuth provider '{self.provider}' not available: {e}. "
-                    "OAuth flow must be initiated manually via the Integrations page."
+                    "OAuth provider '%s' not available: %s. "
+                    "OAuth flow must be initiated manually via the Integrations page.",
+                    self.provider,
+                    e,
                 )
         except Exception as e:
             error_msg = f"Failed to register OAuth provider: {e}\n{traceback.format_exc()}"

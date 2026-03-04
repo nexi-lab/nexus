@@ -175,7 +175,7 @@ async def fire_rpc_event(
 
         await subscription_manager.broadcast(event_type, data, zone_id)
     except Exception as e:
-        logger.warning(f"[RPC] Failed to fire event {event_type} for {path}: {e}")
+        logger.warning("[RPC] Failed to fire event %s for %s: %s", event_type, path, e)
 
 
 async def dispatch_method(

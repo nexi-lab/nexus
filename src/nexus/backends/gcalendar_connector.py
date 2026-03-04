@@ -291,14 +291,16 @@ send_notifications: true
             try:
                 provider_instance = factory.create_provider(name=self.provider)
                 self.token_manager.register_provider(self.provider, provider_instance)
-                logger.info(f"Registered OAuth provider '{self.provider}' for Calendar backend")
+                logger.info("Registered OAuth provider '%s' for Calendar backend", self.provider)
             except ValueError as e:
                 logger.warning(
-                    f"OAuth provider '{self.provider}' not available: {e}. "
-                    "OAuth flow must be initiated manually via the Integrations page."
+                    "OAuth provider '%s' not available: %s. "
+                    "OAuth flow must be initiated manually via the Integrations page.",
+                    self.provider,
+                    e,
                 )
         except Exception as e:
-            logger.error(f"Failed to register OAuth provider: {e}")
+            logger.error("Failed to register OAuth provider: %s", e)
 
     @property
     def name(self) -> str:
@@ -604,7 +606,7 @@ send_notifications: true
         # Validate traits
         warnings = self.validate_traits("create_event", data)
         for warning in warnings:
-            logger.warning(f"Create event warning: {warning}")
+            logger.warning("Create event warning: %s", warning)
 
         # Validate schema
         validated = self.validate_schema("create_event", data)
@@ -630,7 +632,7 @@ send_notifications: true
                     {"event_id": event_id, "calendar_id": calendar_id},
                 )
 
-            logger.info(f"Created calendar event: {event_id}")
+            logger.info("Created calendar event: %s", event_id)
             return event_id
 
         except Exception as e:
@@ -662,7 +664,7 @@ send_notifications: true
         # Validate traits
         warnings = self.validate_traits("update_event", data)
         for warning in warnings:
-            logger.warning(f"Update event warning: {warning}")
+            logger.warning("Update event warning: %s", warning)
 
         # Validate schema
         validated = self.validate_schema("update_event", data)
@@ -698,7 +700,7 @@ send_notifications: true
             if checkpoint:
                 self.clear_checkpoint(checkpoint.checkpoint_id)
 
-            logger.info(f"Updated calendar event: {event_id}")
+            logger.info("Updated calendar event: %s", event_id)
             return "updated"
 
         except Exception as e:
@@ -766,7 +768,7 @@ send_notifications: true
             if checkpoint:
                 self.clear_checkpoint(checkpoint.checkpoint_id)
 
-            logger.info(f"Deleted calendar event: {event_id}")
+            logger.info("Deleted calendar event: %s", event_id)
 
         except Exception as e:
             if checkpoint:

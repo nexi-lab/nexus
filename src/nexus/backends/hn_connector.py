@@ -223,7 +223,7 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
             result: dict[str, Any] | None = response.json()
             return result
         except Exception as e:
-            logger.warning(f"Failed to fetch item {item_id}: {e}")
+            logger.warning("Failed to fetch item %s: %s", item_id, e)
             return None
 
     async def _fetch_items_batch(self, item_ids: list[int]) -> list[dict[str, Any]]:
@@ -427,7 +427,7 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
         if self._has_caching():
             cached = self._read_from_cache(cache_path, original=True)
             if cached and not cached.stale and cached.content_binary:
-                logger.info(f"[HN] Cache hit: {path}")
+                logger.info("[HN] Cache hit: %s", path)
                 return cached.content_binary
 
         # Resolve path
@@ -440,7 +440,7 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
             )
 
         # Fetch from HN API
-        logger.info(f"[HN] Fetching from API: {feed}/{rank}")
+        logger.info("[HN] Fetching from API: %s/%s", feed, rank)
 
         async def _fetch() -> bytes:
             try:
@@ -465,7 +465,7 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
                     zone_id=zone_id,
                 )
             except Exception as e:
-                logger.warning(f"Failed to cache {path}: {e}")
+                logger.warning("Failed to cache %s: %s", path, e)
 
         return content
 

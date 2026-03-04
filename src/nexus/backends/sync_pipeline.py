@@ -104,7 +104,7 @@ class SyncPipelineService:
         virtual_paths = list(backend_to_virtual.values())
 
         # STEP 2: Bulk load existing cache entries (L1 + L2)
-        logger.info(f"[CACHE-SYNC] Step 2: Bulk loading cache for {len(virtual_paths)} paths...")
+        logger.info("[CACHE-SYNC] Step 2: Bulk loading cache for %d paths...", len(virtual_paths))
         cached_entries = self._step2_load_cache(virtual_paths)
 
         # STEP 3: Determine which files need backend reads
@@ -115,7 +115,8 @@ class SyncPipelineService:
 
         # STEP 4: Batch read content from backend
         logger.info(
-            f"[CACHE-SYNC] Step 4: Batch reading {len(files_needing_backend)} files from backend..."
+            "[CACHE-SYNC] Step 4: Batch reading %d files from backend...",
+            len(files_needing_backend),
         )
         backend_contents = self._step4_read_backend(files_needing_backend, file_contexts)
 
@@ -128,20 +129,22 @@ class SyncPipelineService:
         # STEP 6: Batch write to cache (single transaction)
         if cache_entries_to_write:
             logger.info(
-                f"[CACHE-SYNC] Step 6: Batch writing {len(cache_entries_to_write)} entries..."
+                "[CACHE-SYNC] Step 6: Batch writing %d entries...", len(cache_entries_to_write)
             )
             self._step6_write_cache(cache_entries_to_write, result)
 
         # STEP 7: Generate embeddings (optional)
         if files_to_embed:
             logger.info(
-                f"[CACHE-SYNC] Step 7: Generating embeddings for {len(files_to_embed)} files..."
+                "[CACHE-SYNC] Step 7: Generating embeddings for %d files...", len(files_to_embed)
             )
             self._step7_generate_embeddings(files_to_embed, result)
 
         logger.info(
-            f"[CACHE-SYNC] Complete: synced={result.files_synced}, "
-            f"skipped={result.files_skipped}, errors={len(result.errors)}"
+            "[CACHE-SYNC] Complete: synced=%d, skipped=%d, errors=%d",
+            result.files_synced,
+            result.files_skipped,
+            len(result.errors),
         )
 
         # Notify search indexer to reindex if files were synced (Issue #2188: DI callback)
@@ -225,8 +228,9 @@ class SyncPipelineService:
             result.files_skipped += original_count - len(backend_to_virtual)
 
         logger.info(
-            f"[CACHE-SYNC] Step 1 complete: {len(backend_to_virtual)} files to process "
-            f"(filtered {result.files_skipped} by patterns)"
+            "[CACHE-SYNC] Step 1 complete: %d files to process (filtered %d by patterns)",
+            len(backend_to_virtual),
+            result.files_skipped,
         )
         return list(backend_to_virtual.keys()), backend_to_virtual
 
@@ -236,8 +240,9 @@ class SyncPipelineService:
             virtual_paths, original=True
         )
         logger.info(
-            f"[CACHE-SYNC] Step 2 complete: {len(cached_entries)} entries found in cache "
-            f"({len(virtual_paths) - len(cached_entries)} not cached)"
+            "[CACHE-SYNC] Step 2 complete: %d entries found in cache (%d not cached)",
+            len(cached_entries),
+            len(virtual_paths) - len(cached_entries),
         )
         return cached_entries
 
@@ -280,7 +285,7 @@ class SyncPipelineService:
 
             # Skip immutable cached files (Gmail emails never change)
             if cached and not cached.stale and cached.backend_version == IMMUTABLE_VERSION:
-                logger.debug(f"[CACHE] SYNC SKIP (immutable): {vpath}")
+                logger.debug("[CACHE] SYNC SKIP (immutable): %s", vpath)
                 result.files_skipped += 1
                 continue
 
@@ -291,14 +296,14 @@ class SyncPipelineService:
         # Batch fetch versions if supported
         if paths_needing_version_check and hasattr(connector, "batch_get_versions"):
             logger.info(
-                f"[CACHE-SYNC] Batch fetching versions for "
-                f"{len(paths_needing_version_check)} files..."
+                "[CACHE-SYNC] Batch fetching versions for %d files...",
+                len(paths_needing_version_check),
             )
             try:
                 versions = connector.batch_get_versions(paths_needing_version_check, all_contexts)
-                logger.info(f"[CACHE-SYNC] Batch version fetch complete: {len(versions)} versions")
+                logger.info("[CACHE-SYNC] Batch version fetch complete: %d versions", len(versions))
             except Exception as e:
-                logger.warning(f"[CACHE-SYNC] Batch version fetch failed: {e}")
+                logger.warning("[CACHE-SYNC] Batch version fetch failed: %s", e)
                 versions = {}
 
         # Filter files based on version checks
@@ -328,7 +333,7 @@ class SyncPipelineService:
                     and cached.backend_version
                     and cached.backend_version == version
                 ):
-                    logger.debug(f"[CACHE] SYNC SKIP (version match): {vpath}")
+                    logger.debug("[CACHE] SYNC SKIP (version match): %s", vpath)
                     result.files_skipped += 1
                     continue
 
@@ -345,8 +350,9 @@ class SyncPipelineService:
                 result.errors.append(f"Failed to prepare sync for {backend_path}: {e}")
 
         logger.info(
-            f"[CACHE-SYNC] Step 3 complete: {len(files_needing_backend)} files need backend reads "
-            f"({len(files) - len(files_needing_backend)} skipped as fresh)"
+            "[CACHE-SYNC] Step 3 complete: %d files need backend reads (%d skipped as fresh)",
+            len(files_needing_backend),
+            len(files) - len(files_needing_backend),
         )
         return files_needing_backend, file_contexts, file_metadata
 
@@ -360,8 +366,10 @@ class SyncPipelineService:
             files, contexts
         )
         logger.info(
-            f"[CACHE-SYNC] Step 4 complete: {len(backend_contents)}/{len(files)} files read "
-            f"({len(files) - len(backend_contents)} failed)"
+            "[CACHE-SYNC] Step 4 complete: %d/%d files read (%d failed)",
+            len(backend_contents),
+            len(files),
+            len(files) - len(backend_contents),
         )
         return backend_contents
 
@@ -391,13 +399,15 @@ class SyncPipelineService:
                     content_hash = hash_content(content)
                     cached_hash = hash_content(cached.content_binary)
                     if content_hash == cached_hash:
-                        logger.debug(f"[CACHE] SYNC SKIP (hash match): {vpath}")
+                        logger.debug("[CACHE] SYNC SKIP (hash match): %s", vpath)
                         result.files_skipped += 1
                         continue
 
                 # Skip if too large
                 if len(content) > max_size:
-                    logger.debug(f"[CACHE] SYNC SKIP (too large): {vpath} ({len(content)} bytes)")
+                    logger.debug(
+                        "[CACHE] SYNC SKIP (too large): %s (%d bytes)", vpath, len(content)
+                    )
                     result.files_skipped += 1
                     continue
 
@@ -431,8 +441,9 @@ class SyncPipelineService:
                 result.errors.append(f"Failed to process {backend_path}: {e}")
 
         logger.info(
-            f"[CACHE-SYNC] Step 5 complete: {len(cache_entries_to_write)} entries prepared "
-            f"({result.bytes_synced} bytes total)"
+            "[CACHE-SYNC] Step 5 complete: %d entries prepared (%d bytes total)",
+            len(cache_entries_to_write),
+            result.bytes_synced,
         )
         return cache_entries_to_write, files_to_embed
 
@@ -444,10 +455,10 @@ class SyncPipelineService:
         """Step 6: Batch write to cache (single transaction)."""
         try:
             self._connector.batch_write_to_cache(cache_entries)
-            logger.info(f"[CACHE-SYNC] Step 6 complete: {len(cache_entries)} entries written")
+            logger.info("[CACHE-SYNC] Step 6 complete: %d entries written", len(cache_entries))
         except Exception as e:
             result.errors.append(f"Failed to batch write cache entries: {e}")
-            logger.error(f"[CACHE-SYNC] Step 6 failed: {e}")
+            logger.error("[CACHE-SYNC] Step 6 failed: %s", e)
 
     def _step7_generate_embeddings(
         self,
@@ -463,7 +474,7 @@ class SyncPipelineService:
                 result.errors.append(f"Failed to generate embeddings for {vpath}: {e}")
 
         logger.info(
-            f"[CACHE-SYNC] Step 7 complete: {result.embeddings_generated} embeddings generated"
+            "[CACHE-SYNC] Step 7 complete: %d embeddings generated", result.embeddings_generated
         )
 
     # =========================================================================

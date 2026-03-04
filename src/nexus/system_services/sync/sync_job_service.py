@@ -104,7 +104,7 @@ class SyncJobService:
 
                 job = manager.get_job(job_id)
                 if not job:
-                    logger.error(f"[SYNC_JOB] Job not found: {job_id}")
+                    logger.error("[SYNC_JOB] Job not found: %s", job_id)
                     return
 
                 params = job.get("params", {})
@@ -133,18 +133,18 @@ class SyncJobService:
 
                 result = self._sync.sync_mount(ctx)
                 manager.complete_job(job_id, asdict(result))
-                logger.info(f"[SYNC_JOB] Job {job_id} completed successfully")
+                logger.info("[SYNC_JOB] Job %s completed successfully", job_id)
 
             except SyncCancelled:
                 manager.mark_cancelled(job_id)
-                logger.info(f"[SYNC_JOB] Job {job_id} was cancelled")
+                logger.info("[SYNC_JOB] Job %s was cancelled", job_id)
             except Exception as e:
                 manager.fail_job(job_id, str(e))
-                logger.error(f"[SYNC_JOB] Job {job_id} failed: {e}")
+                logger.error("[SYNC_JOB] Job %s failed: %s", job_id, e)
 
         thread = threading.Thread(target=execute, daemon=True, name=f"sync-job-{job_id[:8]}")
         thread.start()
-        logger.info(f"[SYNC_JOB] Started job {job_id} in background thread")
+        logger.info("[SYNC_JOB] Started job %s in background thread", job_id)
 
     def get_job(self, job_id: str) -> dict[str, Any] | None:
         """Get job status and progress.

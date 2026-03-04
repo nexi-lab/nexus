@@ -118,7 +118,7 @@ class SyncBacklogStore(SyncStoreBase):
             session.commit()
             return True
         except Exception as e:
-            logger.warning(f"Failed to enqueue backlog for {path}: {e}")
+            logger.warning("Failed to enqueue backlog for %s: %s", path, e)
             session.rollback()
             return False
         finally:
@@ -150,7 +150,7 @@ class SyncBacklogStore(SyncStoreBase):
             rows = session.execute(stmt).all()
             return [(row[0], row[1]) for row in rows]
         except Exception as e:
-            logger.warning(f"Failed to fetch distinct backend zones: {e}")
+            logger.warning("Failed to fetch distinct backend zones: %s", e)
             return []
         finally:
             session.close()
@@ -193,7 +193,7 @@ class SyncBacklogStore(SyncStoreBase):
             rows = session.execute(stmt).scalars().all()
             return [self._to_entry(row) for row in rows]
         except Exception as e:
-            logger.warning(f"Failed to fetch pending backlog for {backend_name}: {e}")
+            logger.warning("Failed to fetch pending backlog for %s: %s", backend_name, e)
             return []
         finally:
             session.close()
@@ -256,7 +256,7 @@ class SyncBacklogStore(SyncStoreBase):
             session.commit()
             return True
         except Exception as e:
-            logger.warning(f"Failed to mark backlog {entry_id} as failed: {e}")
+            logger.warning("Failed to mark backlog %s as failed: %s", entry_id, e)
             session.rollback()
             return False
         finally:
@@ -329,11 +329,14 @@ class SyncBacklogStore(SyncStoreBase):
             total: int = ttl_expired + cap_expired
             if total > 0:
                 logger.info(
-                    f"[SYNC_BACKLOG] Expired {total} entries (ttl={ttl_expired}, cap={cap_expired})"
+                    "[SYNC_BACKLOG] Expired %d entries (ttl=%d, cap=%d)",
+                    total,
+                    ttl_expired,
+                    cap_expired,
                 )
             return total
         except Exception as e:
-            logger.warning(f"Failed to expire stale backlog entries: {e}")
+            logger.warning("Failed to expire stale backlog entries: %s", e)
             session.rollback()
             return 0
         finally:
@@ -368,7 +371,7 @@ class SyncBacklogStore(SyncStoreBase):
             rows = session.execute(stmt).all()
             return dict(rows)
         except Exception as e:
-            logger.warning(f"Failed to get backlog stats: {e}")
+            logger.warning("Failed to get backlog stats: %s", e)
             return {}
         finally:
             session.close()
@@ -414,7 +417,11 @@ class SyncBacklogStore(SyncStoreBase):
             return bool(result.rowcount > 0)
         except Exception as e:
             logger.warning(
-                f"Failed to transition backlog {entry_id} from {from_status} to {new_status}: {e}"
+                "Failed to transition backlog %s from %s to %s: %s",
+                entry_id,
+                from_status,
+                new_status,
+                e,
             )
             session.rollback()
             return False

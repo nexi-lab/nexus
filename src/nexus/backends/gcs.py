@@ -140,7 +140,7 @@ class GCSBackend(CASBackend):
                 ctx = contexts.get(h, context) if contexts else context
                 return (h, self.read_content(h, context=ctx))
             except Exception as e:
-                logger.warning(f"[GCS] batch_read_content failed for {h}: {e}")
+                logger.warning("[GCS] batch_read_content failed for %s: %s", h, e)
                 return (h, None)
 
         result: dict[str, bytes | None] = {}

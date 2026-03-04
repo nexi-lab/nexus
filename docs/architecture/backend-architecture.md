@@ -7,24 +7,52 @@
 
 ---
 
-## 1. Problem: Three Coexisting Backend Architectures
+## 1. Problem: Legacy Backends Coexisting with New Composition
 
-After PR #2738 merged the CAS x Backend composition (#1323), we have three overlapping
-backend architectures coexisting in the codebase:
+After PR #2738 merged the CAS x Backend composition (#1323), we have two generations
+of backend architecture coexisting. The new architecture serves cloud backends; the old
+monoliths still serve local storage. Goal: migrate everything to the new model, then
+delete all legacy code.
 
-| Architecture | Files | Lines | Status |
+### 1.1 New Architecture (#1323) — Active
+
+| File | Lines | Class | Role |
 |---|---|---|---|
-| **New (#1323)**: `CASBackend` + `PathBackend` + `BlobTransport` | `cas_backend.py`, `path_backend.py`, `blob_transport.py` | 1,066 | Active — cloud backends migrated |
-| **Old monolith**: `LocalBackend` + `CASBlobStore` + `ChunkedStorageMixin` | `local.py`, `cas_blob_store.py`, `chunked_storage.py` | 2,106 | Legacy — local storage only |
-| **Old passthrough**: `PassthroughBackend` | `passthrough.py` | 527 | Legacy — inotify pointer files |
+| `cas_backend.py` | 427 | `CASBackend(Backend)` | CAS addressing engine |
+| `path_backend.py` | 499 | `PathBackend(Backend)` | Path addressing engine |
+| `blob_transport.py` | 140 | `BlobTransport` (Protocol) | Transport abstraction (9 methods) |
+| `gcs.py` | 153 | `GCSBackend(CASBackend)` | Thin: CAS + GCS transport |
+| `gcs_connector.py` | 368 | `GCSConnectorBackend(PathBackend)` | Thin: Path + GCS transport |
+| `s3_connector.py` | 321 | `S3ConnectorBackend(PathBackend)` | Thin: Path + S3 transport |
+| `transports/gcs_transport.py` | 326 | `GCSBlobTransport` | GCS blob I/O |
+| `transports/s3_transport.py` | 413 | `S3BlobTransport` | S3 blob I/O |
 
-**The problem:** `LocalBackend` (966L) is a monolith that bundles CAS addressing, CDC
-chunking, Bloom filter, StripeLock, and ContentCache into one class. It cannot compose
-with the new `BlobTransport` abstraction. Meanwhile, `PassthroughBackend` (527L)
-reimplements path-based storage from scratch instead of using `PathBackend` + transport.
+### 1.2 Legacy — To Be Migrated and Deleted
 
-**Target state:** Delete all three legacy files (~2,060 lines), replace with
-`CASBackend(LocalBlobTransport)` and `PathBackend(LocalBlobTransport)`.
+| File | Lines | Class | Replaced By |
+|---|---|---|---|
+| `local.py` | 966 | `LocalBackend` | `CASBackend(LocalBlobTransport)` + feature DI |
+| `passthrough.py` | 527 | `PassthroughBackend` | `PathBackend(LocalBlobTransport)` + EventBus |
+| `cas_blob_store.py` | 567 | `CASBlobStore`, `_StripeLock`, `CASMeta` | Split into `LocalBlobTransport` (I/O) + `CASBackend` (metadata) |
+| `chunked_storage.py` | 573 | `ChunkedStorageMixin` | `CDCEngine` (standalone) |
+| `async_local.py` | 755 | `AsyncLocalBackend` | Async wrapper around `CASBackend(LocalBlobTransport)` |
+| `local_connector.py` | 808 | `LocalConnectorBackend` | `PathBackend(LocalBlobTransport)` + `CacheConnectorMixin` |
+| **Total** | **~4,196** | | |
+
+**Why migrate `async_local.py`:** Async variant of `LocalBackend`, uses `CASBlobStore`
+directly, not registered in `ConnectorRegistry`. Same monolith problem.
+
+**Why migrate `local_connector.py`:** Subclasses `Backend` directly for local FS
+reference mode ("keeps files in original location, no CAS duplication"). Should become
+`PathBackend(LocalBlobTransport)` + `CacheConnectorMixin` — same pattern as
+`GCSConnectorBackend`.
+
+### 1.3 API Connectors — Out of Scope
+
+The API-based connectors (`gdrive_connector.py`, `gmail_connector.py`,
+`gcalendar_connector.py`, `slack_connector.py`, `hn_connector.py`, `x_connector.py`)
+subclass `Backend` directly but interact with REST APIs, not blob stores. The
+`BlobTransport` abstraction does not apply to them. They remain as-is.
 
 ---
 
@@ -33,34 +61,67 @@ reimplements path-based storage from scratch instead of using `PathBackend` + tr
 PR #1323 established the principle: **transport** (WHERE blobs live) and **addressing**
 (HOW blobs are identified) are orthogonal axes.
 
+### 2.1 Composition Matrix (Existing Transports Only)
+
 ```
-                     Transport (WHERE)
-                     Local       GCS         S3         Azure(future)
-                   +-----------+-----------+-----------+--------------+
-Addressing   CAS   | Local+CAS | GCS+CAS   | S3+CAS   | Azure+CAS    |
-(HOW)              |           |           |           |              |
-             Path  | Local+Path| GCS+Path  | S3+Path   | Azure+Path   |
-                   +-----------+-----------+-----------+--------------+
+                    Transport (WHERE)
+                    Local           GCS             S3
+                  +---------------+---------------+---------------+
+Addressing  CAS   | CASBackend    | CASBackend    | CASBackend    |
+(HOW)             | + LocalBlob   | + GCSBlob     | + S3Blob      |
+                  | Transport     | Transport     | Transport     |
+                  | (new)         | (existing)    | (planned)     |
+                  +---------------+---------------+---------------+
+            Path  | PathBackend   | PathBackend   | PathBackend   |
+                  | + LocalBlob   | + GCSBlob     | + S3Blob      |
+                  | Transport     | Transport     | Transport     |
+                  | (new)         | (existing)    | (existing)    |
+                  +---------------+---------------+---------------+
 ```
 
-**Addressing** (CASBackend vs PathBackend) decides how content is identified:
+**Current state of each cell:**
+
+| Cell | Connector Name | Status |
+|---|---|---|
+| CAS + Local | `"local"` | **To migrate** — currently `LocalBackend` monolith |
+| CAS + GCS | `"gcs"` | **Done** — `GCSBackend(CASBackend)` + `GCSBlobTransport` |
+| CAS + S3 | `"s3"` (planned) | **Future** — `S3BlobTransport` exists but no CAS wiring yet |
+| Path + Local | `"passthrough"`, `"local_connector"` | **To migrate** — currently separate monoliths |
+| Path + GCS | `"gcs_connector"` | **Done** — `GCSConnectorBackend(PathBackend)` + `GCSBlobTransport` |
+| Path + S3 | `"s3_connector"` | **Done** — `S3ConnectorBackend(PathBackend)` + `S3BlobTransport` |
+
+### 2.2 Addressing Semantics
 
 | Axis | CAS Addressing | Path Addressing |
 |---|---|---|
 | Identity | BLAKE3 hash of content | User-supplied file path |
-| Dedup | Automatic — same content = same key | None — each path is independent |
-| Ref counting | Yes — delete decrements, GC at zero | No — always 1 |
-| Use case | Local storage, content-addressed archives | Cloud connectors, external sync |
+| Dedup | Automatic — same content = same key | None — each path independent |
+| Ref counting | Yes — ref++/ref--, GC at zero | No — content lifecycle = 1:1 with path |
+| Use case | Default for all Nexus-owned storage, snapshots, versioning, federation replication | External connectors (user's existing bucket/folder), passthrough/inotify |
 
-**Transport** (BlobTransport) decides where bytes physically live:
+**When to use CAS:** All storage that Nexus owns and manages. CAS enables automatic
+deduplication, content integrity verification (hash = address), and zero-copy COW
+snapshots via ref-count holds. Federation progressive replication requires CAS — blobs
+are hash-verified on transfer.
 
-| Transport | Medium | Atomicity | Latency |
+**When to use Path:** External storage where Nexus must not reorganize content layout.
+The user's existing GCS bucket, S3 bucket, or local folder stays browseable by external
+tools. No CAS hash-named blobs.
+
+### 2.3 Ref Counting Clarification: Two Layers
+
+Ref counting operates at two independent layers:
+
+| Layer | Mechanism | Where | Purpose |
 |---|---|---|---|
-| `LocalBlobTransport` (new) | Local filesystem | `os.replace()` | ~50us |
-| `GCSBlobTransport` | Google Cloud Storage | Server-side | ~50ms |
-| `S3BlobTransport` | Amazon S3 | Server-side | ~80ms |
+| **Metastore** | `i_links_count` on `FileMetadata` | redb | Mount references. DT_MOUNT increments, zone removal blocked if > 0. |
+| **Backend** | `ref_count` in `.meta` sidecar | ObjectStore | Content references. CAS dedup: multiple paths -> same blob. GC at zero. |
 
-### 2.1 BlobTransport Protocol (9 methods)
+These are orthogonal. Federation DT_MOUNT increments `i_links_count` in the metastore —
+it never touches `Backend.get_ref_count()`. Path-addressed backends return ref_count=1
+because there is no content dedup (each path owns its blob exclusively).
+
+### 2.4 BlobTransport Protocol (9 methods)
 
 From `backends/blob_transport.py` (140 lines):
 
@@ -79,6 +140,16 @@ class BlobTransport(Protocol):
     def stream_blob(self, key, chunk_size=8192, version_id=None) -> Iterator[bytes]: ...
 ```
 
+### 2.5 Transport Inventory (Complete)
+
+Three transports exist. This is the complete set needed for V0:
+
+| Transport | File | Lines | Status |
+|---|---|---|---|
+| `LocalBlobTransport` | `transports/local_transport.py` | ~150 (new) | To create — extracts I/O from `CASBlobStore` + `LocalBackend` |
+| `GCSBlobTransport` | `transports/gcs_transport.py` | 326 | Existing — `google.cloud.storage`, signed URLs, generation tracking |
+| `S3BlobTransport` | `transports/s3_transport.py` | 413 | Existing — `boto3`, presigned URLs, multipart, versioning |
+
 Linux analogy: `BlobTransport` is the **block device driver** (ext4 doesn't care if
 the disk is SSD or NVMe). `CASBackend`/`PathBackend` are the **filesystem layer**
 (ext4 vs FAT32 — different addressing, same block device interface).
@@ -87,20 +158,20 @@ the disk is SSD or NVMe). `CASBackend`/`PathBackend` are the **filesystem layer*
 
 ## 3. CRUD Behavior Matrix
 
-Each WHERE x HOW combination produces different CRUD semantics:
+Each WHERE x HOW combination produces different CRUD semantics.
 
 ### 3.1 CAS + LocalBlobTransport (replaces LocalBackend)
 
 | Op | Behavior |
 |---|---|
-| **Write** | `hash = blake3(content)` -> `put_blob("cas/{h[:2]}/{h[2:4]}/{h}", content)` -> increment ref_count in `.meta` sidecar |
-| **Read** | `get_blob("cas/{h[:2]}/{h[2:4]}/{h}")` -> verify hash (optional) -> return bytes |
-| **Delete** | Decrement ref_count in `.meta` -> if zero, `delete_blob()` + cleanup empty dirs |
-| **Exists** | Bloom filter fast-miss check -> `blob_exists()` on miss |
+| **Write** | `hash = blake3(content)` -> Bloom `add(hash)` -> `put_blob("cas/{h[:2]}/{h[2:4]}/{h}", content)` -> ref++ in `.meta` sidecar (under StripeLock) -> populate ContentCache |
+| **Read** | ContentCache check -> `get_blob("cas/{h[:2]}/{h[2:4]}/{h}")` -> return bytes |
+| **Delete** | StripeLock -> ref-- in `.meta` -> if zero: `delete_blob()` + cleanup empty dirs |
+| **Exists** | Bloom `might_exist(hash)` -> false = definite miss (skip disk) -> true = `blob_exists()` to confirm |
 | **Stream** | `stream_blob()` with 64KB chunks (local seek-based) |
+| **Large file** | CDC: files >= 16MB -> FastCDC split -> store chunks + manifest -> reassemble on read |
 
-Enhancements over cloud CAS: Bloom filter, StripeLock for metadata coordination,
-CDC chunking for large files, ContentCache for hot reads.
+Full local optimization stack: Bloom, StripeLock, CDC, ContentCache.
 
 ### 3.2 CAS + GCSBlobTransport (current GCSBackend)
 
@@ -108,13 +179,13 @@ CDC chunking for large files, ContentCache for hot reads.
 |---|---|
 | **Write** | `hash = blake3(content)` -> `put_blob(key, content)` -> write JSON metadata sidecar |
 | **Read** | `get_blob(key)` -> return bytes |
-| **Delete** | Decrement ref_count in metadata -> if zero, `delete_blob()` |
+| **Delete** | ref-- in metadata sidecar -> if zero: `delete_blob()` |
 | **Exists** | `blob_exists()` — network round-trip |
 | **Stream** | `stream_blob()` via GCS streaming download |
 
-No Bloom, no StripeLock (cloud operations are server-side atomic), no CDC.
+No Bloom, no StripeLock (cloud ops are server-side atomic), no CDC, no local cache.
 
-### 3.3 Path + LocalBlobTransport (replaces PassthroughBackend)
+### 3.3 Path + LocalBlobTransport (replaces PassthroughBackend + LocalConnectorBackend)
 
 | Op | Behavior |
 |---|---|
@@ -124,7 +195,8 @@ No Bloom, no StripeLock (cloud operations are server-side atomic), no CDC.
 | **Exists** | `blob_exists(backend_path)` — `os.path.exists()` |
 | **Stream** | `stream_blob(backend_path)` with seek-based chunked reads |
 
-No ref counting (always 1), no dedup. OS-native paths for inotify/fswatch compatibility.
+No ref counting (content 1:1 with path), no dedup. OS-native paths enable
+inotify/fswatch compatibility.
 
 ### 3.4 Path + GCSBlobTransport / S3BlobTransport (current connectors)
 
@@ -142,16 +214,23 @@ Supports versioning (`version_id`), bulk download, signed URLs. No CAS semantics
 
 ## 4. Feature Migration: LocalBackend -> CASBackend
 
-`LocalBackend` (966L) bundles five optimization features that must migrate to
-`CASBackend` as optional DI parameters:
+`LocalBackend` (966L) bundles four optimization features that must migrate to
+`CASBackend` as optional DI parameters. These are addressing-level concerns, not
+transport-level — they operate on content hashes and CAS metadata, not raw blob I/O.
 
-| Feature | Source | Lines | Purpose | Cloud-applicable? |
-|---|---|---|---|---|
-| **BloomFilter** | `nexus_fast` (Rust) | ~30L init | Fast negative lookup. Skip disk I/O for non-existent hashes. | No — network latency dominates |
-| **CDC** | `ChunkedStorageMixin` | 573L | Content-defined chunking for files >= 16MB. Dedup at chunk level. | Future — GCS/S3 multipart |
-| **StripeLock** | `CASBlobStore._StripeLock` | ~30L class | 64-stripe lock for metadata read-modify-write on local fs. | No — cloud ops are atomic |
-| **ContentCache** | `ContentCache` (DI) | ~10L wiring | In-memory LRU for hot reads. | Yes — but latency profile differs |
-| **Multipart** | `MultipartUploadMixin` | via mixin | Chunked upload for large files. | Yes — cloud-native multipart |
+| Feature | Source | Purpose | Why CASBackend (not transport) |
+|---|---|---|---|
+| **BloomFilter** | `nexus_fast` (Rust) | Fast negative lookup on `content_exists()`. Populated from disk scan at startup, updated on every write. | Operates on content hashes — CAS addressing concept |
+| **CDC** | `ChunkedStorageMixin` (573L) | Content-defined chunking for files >= 16MB via FastCDC. Chunk-level dedup. | Decides how to split before writing — addressing decision |
+| **StripeLock** | `CASBlobStore._StripeLock` (~30L) | 64-stripe lock for local metadata sidecar read-modify-write. | Coordinates CAS ref_count updates — metadata concern |
+| **ContentCache** | `ContentCache` (DI) | In-memory LRU keyed by content hash for hot reads. | Keyed by content_hash — CAS addressing concept |
+
+**Multipart upload** stays at the connector level. Currently used in production via
+TUS resumable upload endpoints (`/api/v2/uploads`) -> `ChunkedUploadService` ->
+`LocalBackend.init_multipart()`. For the new architecture, `S3ConnectorBackend` already
+delegates multipart to `S3BlobTransport`. `CASBackend` with `LocalBlobTransport` should
+also support multipart via the transport layer (add `init_multipart` / `upload_part` /
+`complete_multipart` / `abort_multipart` to `LocalBlobTransport`).
 
 ### 4.1 CASBackend Constructor (After Migration)
 
@@ -213,18 +292,18 @@ ObjectStoreABC (kernel contract)
   |
   Backend (service-level base, 748L)
   |
-  |-- CASBackend(transport, bloom?, cdc?, cache?, stripe_lock?)     ← addressing
-  |     |-- LocalBlobTransport    → "local" connector               ← transport
-  |     |-- GCSBlobTransport      → "gcs" connector
-  |     |-- S3BlobTransport       → "s3_cas" connector (future)
+  |-- CASBackend(transport, bloom?, cdc?, cache?, stripe_lock?)     <- addressing
+  |     |-- LocalBlobTransport    -> "local" connector               <- transport
+  |     |-- GCSBlobTransport      -> "gcs" connector
+  |     |-- S3BlobTransport       -> "s3" connector (future)
   |
-  |-- PathBackend(transport)                                         ← addressing
-  |     |-- LocalBlobTransport    → "passthrough" connector          ← transport
-  |     |-- GCSBlobTransport      → "gcs_connector"
-  |     |-- S3BlobTransport       → "s3_connector"
+  |-- PathBackend(transport)                                         <- addressing
+  |     |-- LocalBlobTransport    -> "passthrough", "local_connector" <- transport
+  |     |-- GCSBlobTransport      -> "gcs_connector"
+  |     |-- S3BlobTransport       -> "s3_connector"
   |
   BlobTransport (Protocol, 9 methods)
-  |-- LocalBlobTransport  (new, ~150L) ← extracts I/O from CASBlobStore + LocalBackend
+  |-- LocalBlobTransport  (new, ~150L)
   |-- GCSBlobTransport    (existing, 326L)
   |-- S3BlobTransport     (existing, 413L)
 ```
@@ -264,81 +343,89 @@ class LocalBlobTransport:
     def blob_exists(self, key):
         return (self._root / key).exists()
 
-    # ... remaining 5 methods
+    # ... remaining 5 methods (get_blob_size, list_blobs, copy_blob,
+    #     create_directory_marker, stream_blob)
 ```
 
 ~150 lines. Reuses the atomic temp-write + `os.replace()` pattern from `CASBlobStore`.
+Also supports `MultipartUploadMixin` methods for TUS resumable uploads.
 
 ---
 
 ## 6. WAL Clarification: Three Separate Systems
 
-The codebase has (or will have) three distinct WAL/log systems. They are separate and
-serve different purposes:
+The codebase has (or will have) three distinct WAL/log systems. They serve different
+purposes and should not be confused.
 
 ```
-+------------------+    +------------------+    +------------------+
-| Event WAL        |    | Raft Log         |    | WriteWAL         |
-| (nexus_wal/)     |    | (openraft)       |    | (proposed)       |
-+------------------+    +------------------+    +------------------+
-| Purpose:         |    | Purpose:         |    | Purpose:         |
-| FileEvent        |    | Metadata         |    | Write buffering  |
-| durability for   |    | consensus in     |    | Hot/cold delta   |
-| EventBus         |    | federation mode  |    | path separation  |
-+------------------+    +------------------+    +------------------+
-| Writes:          |    | Writes:          |    | Writes:          |
-| FileEvent        |    | RaftEntry        |    | ContentDelta     |
-| (JSON via orjson)|    | (protobuf)       |    | (binary frames)  |
-+------------------+    +------------------+    +------------------+
-| Consumers:       |    | Consumers:       |    | Consumers:       |
-| EventBus ->      |    | RaftMetastore -> |    | Flush worker ->  |
-| CDC, Search,     |    | redb metastore   |    | BlobTransport    |
-| Watch, Audit     |    | apply            |    | (eventual write) |
-+------------------+    +------------------+    +------------------+
-| Engine:          |    | Engine:          |    | Engine:          |
-| nexus_wal (Rust) |    | openraft (Rust)  |    | nexus_wal (Rust) |
-| CRC32 + segments |    | Raft protocol    |    | reuse WAL engine |
-+------------------+    +------------------+    +------------------+
-| Status:          |    | Status:          |    | Status:          |
-| Implemented      |    | Implemented      |    | Proposed (#1397) |
-| (#1397)          |    | (federation)     |    | Post-V0          |
-+------------------+    +------------------+    +------------------+
++-------------------+    +------------------+    +------------------+
+| Event WAL         |    | Raft Log         |    | WriteWAL         |
+| (nexus_wal/)      |    | (openraft)       |    | (proposed)       |
++-------------------+    +------------------+    +------------------+
+| Purpose:          |    | Purpose:         |    | Purpose:         |
+| FileEvent         |    | Metadata         |    | Write buffering  |
+| durability for    |    | consensus in     |    | Hot/cold delta   |
+| EventBus          |    | federation mode  |    | path separation  |
++-------------------+    +------------------+    +------------------+
+| Writes:           |    | Writes:          |    | Writes:          |
+| FileEvent         |    | RaftEntry        |    | ContentDelta     |
+| (JSON via orjson) |    | (protobuf)       |    | (binary frames)  |
++-------------------+    +------------------+    +------------------+
+| Engine:           |    | Engine:          |    | Engine:          |
+| nexus_wal (Rust)  |    | openraft (Rust)  |    | nexus_wal (Rust) |
+| CRC32 + segments  |    | Raft protocol    |    | reuse WAL engine |
++-------------------+    +------------------+    +------------------+
+| Status:           |    | Status:          |    | Status:          |
+| BROKEN - see 6.1  |    | Implemented      |    | Proposed (#1397) |
+|                   |    | (federation)     |    | Post-V0          |
++-------------------+    +------------------+    +------------------+
 ```
 
-### 6.1 Event WAL (`nexus_wal/`)
+### 6.1 Event WAL (`nexus_wal/`) — BROKEN, Decide: Fix or Delete
 
-**What it is:** Durable event log for the EventBus subsystem. Sub-5us writes via Rust
-PyO3 extension. Segment-based (configurable rotation size), CRC32 integrity, crash
-recovery. Located at `rust/nexus_wal/` and `system_services/event_subsystem/log/wal.py`.
+**Rust engine:** `rust/nexus_wal/` — fully implemented. Sub-5us appends, CRC32 integrity,
+segment rotation, crash recovery. Compiled and available via `_nexus_wal.PyWAL`.
 
-**What it is NOT:** Not a write-ahead log for content writes. Does not buffer blob data.
-Does not participate in the write path. The name "WAL" is used in the database sense
-(durable sequential log) but serves event durability, not write buffering.
+**Python wrapper:** `system_services/event_subsystem/log/wal.py` — `WALEventLog` class,
+correctly imports `PyWAL`, correctly exported from `__init__.py`.
+
+**The bug:** `system_services/event_subsystem/log/factory.py` line 37 imports from
+`wal_backend` — a module that **does not exist**. The correct module is `wal`. This
+causes `ImportError` which the factory catches silently, returning `None`. As a result:
+
+- `_boot_system_services()` gets `event_log = None`
+- `RedisEventBus.set_event_log()` is never called
+- `RedisEventBus.publish()` skips the `self._event_log.append(event)` codepath
+- **The Event WAL is silently dead in all production deployments.**
+
+**Decision needed:** Either fix the import (`wal_backend` -> `wal`) and ship the Event
+WAL as intended, or delete the entire subsystem (`rust/nexus_wal/`, `log/wal.py`,
+`log/factory.py`, `log/protocol.py`) if we decide the WriteWAL (#1397) supersedes it.
+
+The Rust `nexus_wal` engine itself is valuable — if we fix Event WAL, we keep it. If
+we delete Event WAL, the Rust engine is still needed for WriteWAL (#1397).
 
 ### 6.2 Raft Log (federation mode)
 
-**What it is:** The Raft consensus protocol's replicated log. Used by `RaftMetastore`
-to replicate metadata operations across zone members. Entries are `RaftEntry` protobuf
-messages. Managed by the `openraft` Rust crate.
+The Raft consensus protocol's replicated log. Used by `RaftMetastore` to replicate
+metadata operations across zone members. Entries are `RaftEntry` protobuf messages.
+Managed by the `openraft` Rust crate.
 
-**When active:** Only in SC (Strong Consistency) deployment mode with federation enabled.
+Only active in SC (Strong Consistency) deployment mode with federation enabled.
 Single-node or EC (Eventual Consistency) mode does not use Raft.
 
 ### 6.3 WriteWAL (proposed, #1397)
 
-**What it is:** A hot/cold path separator for content writes. Incoming writes land in a
-fast WAL buffer (the "hot path"), acknowledged immediately. A background flush worker
-drains the WAL to `BlobTransport` (the "cold path").
+A hot/cold path separator for content writes. Incoming writes land in a fast WAL buffer
+(the "hot path"), acknowledged immediately. A background flush worker drains the WAL to
+`BlobTransport` (the "cold path").
 
-**Why:** Decouples write latency from storage latency. Enables batch flush, write
-coalescing, and delta compression. Particularly valuable for local storage where
-fsync dominates write time.
+Decouples write latency from storage latency. Enables batch flush, write coalescing,
+and delta compression. Will reuse the `nexus_wal` Rust engine with `ContentDelta`
+binary frames instead of JSON `FileEvent` payloads.
 
-**Engine reuse:** Will reuse the `nexus_wal` Rust engine (same CRC32 + segment rotation),
-but with `ContentDelta` binary frames instead of JSON `FileEvent` payloads.
-
-**Status:** Post-V0. The current write path (direct `BlobTransport.put_blob()`) is
-correct and sufficient for V0.
+**Status:** Post-V0. The current synchronous write path (direct `BlobTransport.put_blob()`)
+is correct and sufficient for V0.
 
 ---
 
@@ -399,7 +486,7 @@ slot in without changing the `CASBackend`/`PathBackend` interface — only the i
 Create `backends/transports/local_transport.py`:
 - Extract blob I/O from `CASBlobStore.write_blob/read_blob/blob_exists`
 - Extract directory ops from `LocalBackend.mkdir/rmdir/is_directory/list_dir`
-- Implement all 9 `BlobTransport` protocol methods
+- Implement all 9 `BlobTransport` protocol methods + multipart support
 - Test: `BlobTransport` protocol conformance, atomic write, fsync behavior
 
 ### Phase 2: Feature migration into CASBackend
@@ -414,25 +501,37 @@ Test: CAS + Local with all features enabled matches `LocalBackend` behavior.
 
 ### Phase 3: PathBackend + LocalBlobTransport verification
 
-Wire `PathBackend(LocalBlobTransport)` as `"passthrough"` connector:
-- Verify directory listing, path-based read/write, delete
-- Verify no ref counting (always returns 1)
-- No pointer files needed — `PathBackend` stores at actual paths
+Wire `PathBackend(LocalBlobTransport)` to replace both:
+- `"passthrough"` -> `PathBackend(LocalBlobTransport)` — inotify-compatible local paths
+- `"local_connector"` -> `PathBackend(LocalBlobTransport)` + `CacheConnectorMixin`
 
-Test: `PassthroughBackend` feature parity.
+Test: Feature parity with `PassthroughBackend` and `LocalConnectorBackend`.
 
-### Phase 4: Factory rewire + deletion
+### Phase 4: AsyncLocalBackend migration
+
+Replace `AsyncLocalBackend` (755L) with async wrapper around
+`CASBackend(LocalBlobTransport)`. Currently not in `ConnectorRegistry` — evaluate
+whether to register or keep as internal.
+
+### Phase 5: Factory rewire + legacy deletion
 
 Update `ConnectorRegistry` and `BackendFactory`:
 - `"local"` -> `CASBackend(LocalBlobTransport, bloom=..., cdc=..., cache=..., stripe_lock=True)`
 - `"passthrough"` -> `PathBackend(LocalBlobTransport)`
-- Delete `LocalBackend`, `PassthroughBackend`, `CASBlobStore`
+- `"local_connector"` -> `PathBackend(LocalBlobTransport)` + `CacheConnectorMixin`
+- Delete: `local.py`, `passthrough.py`, `cas_blob_store.py`, `chunked_storage.py`,
+  `async_local.py`, `local_connector.py`
 
-### Phase 5: WriteWAL hot/cold path (post-V0, #1397)
+### Phase 6: Event WAL decision
+
+Fix broken import in `log/factory.py` (`wal_backend` -> `wal`) OR delete Event WAL
+subsystem entirely. See Section 6.1.
+
+### Phase 7: WriteWAL hot/cold path (post-V0, #1397)
 
 See Section 7.
 
-### Phase 6: ObjectStoreABC addressing-agnostic refactor (post-V0, #1396)
+### Phase 8: ObjectStoreABC addressing-agnostic refactor (post-V0, #1396)
 
 Refactor `ObjectStoreABC` to remove CAS-specific assumptions (`content_hash` parameters,
 `get_ref_count`). CAS vs Path addressing becomes purely a backend concern, not a kernel
@@ -454,7 +553,7 @@ contract concern.
 | File | Change |
 |---|---|
 | `backends/cas_backend.py` (427L) | Add optional `bloom_filter`, `cdc_engine`, `content_cache`, `use_stripe_lock` DI params |
-| `backends/factory.py` (177L) | Rewire `"local"` and `"passthrough"` connector creation |
+| `backends/factory.py` (177L) | Rewire `"local"`, `"passthrough"`, `"local_connector"` connector creation |
 | `backends/registry.py` (650L) | Update connector registration for new wiring |
 | `backends/__init__.py` (130L) | Update exports: remove old, add `LocalBlobTransport`, `CDCEngine` |
 
@@ -464,18 +563,20 @@ contract concern.
 |---|---|---|
 | `backends/local.py` | 966 | `CASBackend(LocalBlobTransport)` + feature DI |
 | `backends/passthrough.py` | 527 | `PathBackend(LocalBlobTransport)` |
-| `backends/cas_blob_store.py` | 567 | `LocalBlobTransport` (I/O) + `CASBackend` (addressing) + `_StripeLock` (inline) |
+| `backends/cas_blob_store.py` | 567 | `LocalBlobTransport` (I/O) + `CASBackend` (metadata) |
 | `backends/chunked_storage.py` | 573 | `CDCEngine` (standalone class) |
-| **Total deleted** | **~2,633** | |
+| `backends/async_local.py` | 755 | Async wrapper around `CASBackend(LocalBlobTransport)` |
+| `backends/local_connector.py` | 808 | `PathBackend(LocalBlobTransport)` + `CacheConnectorMixin` |
+| **Total deleted** | **~4,196** | |
 
 ### Net Change
 
 | Metric | Count |
 |---|---|
 | New code | ~450L (`LocalBlobTransport` + `CDCEngine`) |
-| Deleted code | ~2,633L (4 legacy files) |
+| Deleted code | ~4,196L (6 legacy files) |
 | Modified code | ~100L (DI params + factory rewire) |
-| **Net** | **~-2,083L** |
+| **Net** | **~-3,646L** |
 
 ---
 
@@ -488,16 +589,19 @@ contract concern.
 - `PathBackend` core logic (`path_backend.py`, 499L) — addressing engine
 - `GCSBlobTransport` (`gcs_transport.py`, 326L) — cloud transport
 - `S3BlobTransport` (`s3_transport.py`, 413L) — cloud transport
-- All cloud connector thin classes (GCSBackend, GCSConnectorBackend, S3ConnectorBackend)
-- Event WAL (`nexus_wal/`) — unrelated system, stays as-is
+- All cloud connector thin classes (`GCSBackend`, `GCSConnectorBackend`, `S3ConnectorBackend`)
+- All API connectors (gdrive, gmail, gcalendar, slack, hn, x)
+- All wrappers (`DelegatingBackend`, `CachingBackendWrapper`, `CompressedStorage`, etc.)
 - `nexus_fast.BloomFilter` (Rust) — reused via DI injection
+- `nexus_wal` Rust engine — kept for WriteWAL (#1397)
 
 **Goes (deleted):**
 - `LocalBackend` (966L) — monolith split into composition
-- `PassthroughBackend` (527L) — replaced by `PathBackend` + transport
+- `PassthroughBackend` (527L) — replaced by `PathBackend` + local transport
 - `CASBlobStore` (567L) — split into `LocalBlobTransport` + `CASBackend` metadata
 - `ChunkedStorageMixin` (573L) — replaced by `CDCEngine`
-- `MultipartUploadMixin` usage in local — multipart not needed for local (direct write)
+- `AsyncLocalBackend` (755L) — replaced by async `CASBackend` wrapper
+- `LocalConnectorBackend` (808L) — replaced by `PathBackend` + local transport + cache mixin
 
 ---
 
@@ -537,17 +641,10 @@ print('OK: LocalBlobTransport conforms to BlobTransport')
 
 ## 12. Open Questions
 
-1. **Multipart upload for local?** `LocalBackend` supports multipart via `MultipartUploadMixin`.
-   Do we need this for `LocalBlobTransport`, or is direct `put_blob()` sufficient? (Likely
-   sufficient — multipart is a cloud concern for upload resumability.)
-
-2. **Bloom filter persistence.** Currently `LocalBackend` rebuilds Bloom on startup by
-   scanning CAS directory. Should `CASBackend` persist Bloom state to disk for faster
-   cold start? (Deferred — startup scan is fast enough for V0.)
-
-3. **`on_write_callback` migration.** `LocalBackend` has `on_write_callback` for Zoekt
+1. **`on_write_callback` migration.** `LocalBackend` has `on_write_callback` for Zoekt
    reindex (#1520). This should migrate to EventBus observer pattern (#809, #810) rather
    than being wired into `CASBackend`. (Align with DT_PIPE design.)
 
-4. **StripeLock scope.** Currently 64 stripes in `CASBlobStore`. Is this optimal? Should
-   `CASBackend` expose stripe count as a DI param? (Defer — 64 is battle-tested.)
+2. **Event WAL: fix or delete?** The Rust engine works. The Python wiring has a one-line
+   bug. Fix is trivial (`wal_backend` -> `wal` in `log/factory.py`). But if WriteWAL
+   (#1397) supersedes Event WAL's purpose, deleting may be cleaner. Decision needed.

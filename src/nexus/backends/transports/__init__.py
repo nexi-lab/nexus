@@ -1,11 +1,14 @@
-"""BlobTransport implementations for cloud storage providers.
+"""BlobTransport implementations for storage providers.
 
-Each transport provides raw key→blob I/O for a specific cloud backend.
+Each transport provides raw key→blob I/O for a specific storage backend.
 Transports are shared between CAS and Path addressing engines.
 """
 
+from nexus.backends.transports.local_transport import LocalBlobTransport
+
 __all__ = [
     "GCSBlobTransport",
+    "LocalBlobTransport",
     "S3BlobTransport",
 ]
 

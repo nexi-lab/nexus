@@ -27,7 +27,7 @@ from nexus.contracts.backend_address import BackendAddress
 from nexus.contracts.exceptions import NexusFileNotFoundError
 
 if TYPE_CHECKING:
-    from nexus.backends.backend import Backend
+    from nexus.backends.base.backend import Backend
     from nexus.core.metastore import MetastoreABC
     from nexus.security.tls.config import ZoneTlsConfig
 

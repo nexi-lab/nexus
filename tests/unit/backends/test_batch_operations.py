@@ -12,9 +12,9 @@ from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from nexus.backends.backend import Backend
-from nexus.backends.cache_mixin import CacheConnectorMixin
-from nexus.backends.path_backend import PathBackend
+from nexus.backends.base.backend import Backend
+from nexus.backends.base.path_backend import PathBackend
+from nexus.backends.wrappers.cache_mixin import CacheConnectorMixin
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.contracts.types import OperationContext
 from nexus.core.object_store import WriteResult

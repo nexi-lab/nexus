@@ -19,7 +19,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from nexus.backends.local import LocalBackend
+from nexus.backends.storage.local import LocalBackend
 from nexus.lib.sync_bridge import shutdown_sync_bridge
 from nexus.storage.record_store import SQLAlchemyRecordStore
 

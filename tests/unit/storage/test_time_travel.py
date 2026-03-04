@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from nexus.backends.local import LocalBackend
+from nexus.backends.storage.local import LocalBackend
 from nexus.bricks.versioning.time_travel_service import TimeTravelService
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.core.config import PermissionConfig

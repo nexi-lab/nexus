@@ -11,7 +11,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from nexus.backends.local import LocalBackend
+from nexus.backends.storage.local import LocalBackend
 from nexus.bricks.memory.router import MemoryViewRouter
 from nexus.bricks.memory.service import Memory
 from nexus.bricks.rebac.entity_registry import EntityRegistry

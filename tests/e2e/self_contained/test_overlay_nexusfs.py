@@ -10,7 +10,7 @@ No Raft required — uses DictMetastore implementing MetastoreABC.
 
 import pytest
 
-from nexus.backends.local import LocalBackend
+from nexus.backends.storage.local import LocalBackend
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.contracts.metadata import FileMetadata
 from nexus.contracts.workspace_manifest import ManifestEntry, WorkspaceManifest

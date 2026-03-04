@@ -28,7 +28,7 @@ from nexus.bricks.sandbox.isolation import IsolatedBackend, IsolationConfig
 def _make_isolated_local_backend(storage_dir: str) -> IsolatedBackend:
     """Create IsolatedBackend wrapping a real LocalBackend."""
     cfg = IsolationConfig(
-        backend_module="nexus.backends.local",
+        backend_module="nexus.backends.storage.local",
         backend_class="LocalBackend",
         backend_kwargs={"root_path": storage_dir},
         pool_size=2,

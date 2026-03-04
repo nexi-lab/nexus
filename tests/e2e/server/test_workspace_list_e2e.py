@@ -114,7 +114,7 @@ def server():
     server_script = f"""
 import sys, os
 sys.path.insert(0, os.environ.get('PYTHONPATH', ''))
-from nexus.backends.local import LocalBackend
+from nexus.backends.storage.local import LocalBackend
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.core.config import PermissionConfig

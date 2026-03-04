@@ -29,8 +29,8 @@ class TestCompressEncryptChain:
     def test_describe_full_chain(self) -> None:
         from cryptography.hazmat.primitives.ciphers.aead import AESGCMSIV
 
-        from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
-        from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
+        from nexus.backends.wrappers.compressed import CompressedStorage, CompressedStorageConfig
+        from nexus.backends.wrappers.encrypted import EncryptedStorage, EncryptedStorageConfig
 
         mock, _ = make_storage_mock()
         key = AESGCMSIV.generate_key(bit_length=256)
@@ -49,8 +49,8 @@ class TestCompressEncryptChain:
     def test_roundtrip_through_chain(self) -> None:
         from cryptography.hazmat.primitives.ciphers.aead import AESGCMSIV
 
-        from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
-        from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
+        from nexus.backends.wrappers.compressed import CompressedStorage, CompressedStorageConfig
+        from nexus.backends.wrappers.encrypted import EncryptedStorage, EncryptedStorageConfig
 
         mock, storage = make_storage_mock()
         key = AESGCMSIV.generate_key(bit_length=256)
@@ -82,8 +82,8 @@ class TestCompressEncryptChain:
         """Same content through same chain should produce same hash."""
         from cryptography.hazmat.primitives.ciphers.aead import AESGCMSIV
 
-        from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
-        from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
+        from nexus.backends.wrappers.compressed import CompressedStorage, CompressedStorageConfig
+        from nexus.backends.wrappers.encrypted import EncryptedStorage, EncryptedStorageConfig
 
         mock, storage = make_storage_mock()
         key = AESGCMSIV.generate_key(bit_length=256)
@@ -106,8 +106,8 @@ class TestCompressEncryptChain:
         """batch_read_content through chain should decompress + decrypt all."""
         from cryptography.hazmat.primitives.ciphers.aead import AESGCMSIV
 
-        from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
-        from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
+        from nexus.backends.wrappers.compressed import CompressedStorage, CompressedStorageConfig
+        from nexus.backends.wrappers.encrypted import EncryptedStorage, EncryptedStorageConfig
 
         mock, storage = make_storage_mock()
         key = AESGCMSIV.generate_key(bit_length=256)
@@ -135,8 +135,8 @@ class TestEncryptCompressChain:
     def test_describe_reversed(self) -> None:
         from cryptography.hazmat.primitives.ciphers.aead import AESGCMSIV
 
-        from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
-        from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
+        from nexus.backends.wrappers.compressed import CompressedStorage, CompressedStorageConfig
+        from nexus.backends.wrappers.encrypted import EncryptedStorage, EncryptedStorageConfig
 
         mock, _ = make_storage_mock()
         key = AESGCMSIV.generate_key(bit_length=256)
@@ -156,8 +156,8 @@ class TestEncryptCompressChain:
         """Reversed ordering should still produce correct roundtrip."""
         from cryptography.hazmat.primitives.ciphers.aead import AESGCMSIV
 
-        from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
-        from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
+        from nexus.backends.wrappers.compressed import CompressedStorage, CompressedStorageConfig
+        from nexus.backends.wrappers.encrypted import EncryptedStorage, EncryptedStorageConfig
 
         mock, storage = make_storage_mock()
         key = AESGCMSIV.generate_key(bit_length=256)
@@ -191,9 +191,9 @@ class TestWrapperChainPerformance:
         """3-layer wrapper chain should add < 5ms per read/write operation."""
         from cryptography.hazmat.primitives.ciphers.aead import AESGCMSIV
 
-        from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
-        from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
-        from nexus.backends.logging_wrapper import LoggingBackendWrapper
+        from nexus.backends.wrappers.compressed import CompressedStorage, CompressedStorageConfig
+        from nexus.backends.wrappers.encrypted import EncryptedStorage, EncryptedStorageConfig
+        from nexus.backends.wrappers.logging import LoggingBackendWrapper
 
         mock, storage = make_storage_mock()
         key = AESGCMSIV.generate_key(bit_length=256)
@@ -246,9 +246,9 @@ class TestCacheWrapperChain:
         """cache → compress → encrypt → leaf roundtrip."""
         from cryptography.hazmat.primitives.ciphers.aead import AESGCMSIV
 
-        from nexus.backends.caching_backend_wrapper import CacheWrapperConfig, CachingBackendWrapper
-        from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
-        from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
+        from nexus.backends.wrappers.caching import CacheWrapperConfig, CachingBackendWrapper
+        from nexus.backends.wrappers.compressed import CompressedStorage, CompressedStorageConfig
+        from nexus.backends.wrappers.encrypted import EncryptedStorage, EncryptedStorageConfig
 
         mock, storage = make_storage_mock()
         key = AESGCMSIV.generate_key(bit_length=256)
@@ -281,7 +281,7 @@ class TestCacheWrapperChain:
     def test_cache_only_chain(self) -> None:
         """cache → leaf: verify cache hit skips inner."""
 
-        from nexus.backends.caching_backend_wrapper import CacheWrapperConfig, CachingBackendWrapper
+        from nexus.backends.wrappers.caching import CacheWrapperConfig, CachingBackendWrapper
 
         mock, storage = make_storage_mock()
         cached = CachingBackendWrapper(
@@ -306,9 +306,9 @@ class TestCacheWrapperChain:
         """describe() shows full chain with cache."""
         from cryptography.hazmat.primitives.ciphers.aead import AESGCMSIV
 
-        from nexus.backends.caching_backend_wrapper import CacheWrapperConfig, CachingBackendWrapper
-        from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
-        from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
+        from nexus.backends.wrappers.caching import CacheWrapperConfig, CachingBackendWrapper
+        from nexus.backends.wrappers.compressed import CompressedStorage, CompressedStorageConfig
+        from nexus.backends.wrappers.encrypted import EncryptedStorage, EncryptedStorageConfig
 
         mock, _ = make_storage_mock()
         key = AESGCMSIV.generate_key(bit_length=256)
@@ -340,7 +340,7 @@ class TestPerformanceRegression:
 
     def test_factory_wrap_construction_overhead(self) -> None:
         """BackendFactory.wrap() should take < 5ms per call."""
-        from nexus.backends.factory import BackendFactory
+        from nexus.backends.base.factory import BackendFactory
 
         mock, _ = make_storage_mock()
 
@@ -356,10 +356,10 @@ class TestPerformanceRegression:
         """4-layer chain (cache → compress → encrypt → logging → leaf) < 10ms per op."""
         from cryptography.hazmat.primitives.ciphers.aead import AESGCMSIV
 
-        from nexus.backends.caching_backend_wrapper import CacheWrapperConfig, CachingBackendWrapper
-        from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
-        from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
-        from nexus.backends.logging_wrapper import LoggingBackendWrapper
+        from nexus.backends.wrappers.caching import CacheWrapperConfig, CachingBackendWrapper
+        from nexus.backends.wrappers.compressed import CompressedStorage, CompressedStorageConfig
+        from nexus.backends.wrappers.encrypted import EncryptedStorage, EncryptedStorageConfig
+        from nexus.backends.wrappers.logging import LoggingBackendWrapper
 
         mock, storage = make_storage_mock()
         key = AESGCMSIV.generate_key(bit_length=256)

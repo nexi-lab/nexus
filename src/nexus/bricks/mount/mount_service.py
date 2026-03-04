@@ -23,7 +23,7 @@ def _needs_token_manager_db(backend_type: str, config: dict[str, Any]) -> bool:
     """Check if backend needs token_manager_db auto-injection."""
     if "token_manager_db" in config:
         return False
-    from nexus.backends.registry import ConnectorRegistry
+    from nexus.backends.base.registry import ConnectorRegistry
 
     try:
         info = ConnectorRegistry.get_info(backend_type)
@@ -171,7 +171,7 @@ class MountService:
                     )
 
             # Create backend via centralized factory
-            from nexus.backends.factory import BackendFactory
+            from nexus.backends.base.factory import BackendFactory
 
             # Get record store for caching support if available
             record_store = None
@@ -429,7 +429,7 @@ class MountService:
                 - requires: List of optional dependencies (list[str])
                 - user_scoped: Whether connector requires per-user OAuth (bool)
         """
-        from nexus.backends.registry import ConnectorRegistry
+        from nexus.backends.base.registry import ConnectorRegistry
 
         def _list_connectors_sync() -> list[dict[str, Any]]:
             if category:

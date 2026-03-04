@@ -53,7 +53,7 @@ class ConnectorCapabilitiesResponse(BaseModel):
 @router.get("", response_model=ConnectorsListResponse)
 def list_connectors() -> ConnectorsListResponse:
     """List all registered connectors with their capabilities."""
-    from nexus.backends.registry import ConnectorRegistry
+    from nexus.backends.base.registry import ConnectorRegistry
 
     connectors = []
     for info in ConnectorRegistry.list_all():
@@ -73,7 +73,7 @@ def list_connectors() -> ConnectorsListResponse:
 @router.get("/{name}/capabilities", response_model=ConnectorCapabilitiesResponse)
 def get_connector_capabilities(name: str) -> ConnectorCapabilitiesResponse:
     """Get capabilities for a specific connector."""
-    from nexus.backends.registry import ConnectorRegistry
+    from nexus.backends.base.registry import ConnectorRegistry
 
     if not ConnectorRegistry.is_registered(name):
         raise HTTPException(status_code=404, detail=f"Connector '{name}' not found")

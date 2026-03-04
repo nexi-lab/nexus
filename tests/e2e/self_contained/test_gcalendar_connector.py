@@ -24,7 +24,7 @@ from nexus.backends.connectors.calendar.schemas import (
     TimeSlot,
     UpdateEventSchema,
 )
-from nexus.backends.local import LocalBackend
+from nexus.backends.storage.local import LocalBackend
 from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
@@ -87,11 +87,11 @@ def mock_calendar_service():
 @pytest.fixture
 def calendar_backend(mock_calendar_service, tmp_path):
     """Create a Calendar backend with mocked Google service."""
-    from nexus.backends.gcalendar_connector import GoogleCalendarConnectorBackend
+    from nexus.backends.connectors.calendar.connector import GoogleCalendarConnectorBackend
 
     # Create a mock token manager
     with patch(
-        "nexus.backends.gcalendar_connector.GoogleCalendarConnectorBackend._register_oauth_provider"
+        "nexus.backends.connectors.calendar.connector.GoogleCalendarConnectorBackend._register_oauth_provider"
     ):
         backend = GoogleCalendarConnectorBackend(
             token_manager_db=str(tmp_path / "tokens.db"),

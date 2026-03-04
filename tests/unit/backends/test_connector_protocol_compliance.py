@@ -22,7 +22,7 @@ References:
 
 import pytest
 
-from nexus.backends.local import LocalBackend
+from nexus.backends.storage.local import LocalBackend
 from nexus.core.protocols.connector import (
     BatchContentProtocol,
     ConnectorProtocol,

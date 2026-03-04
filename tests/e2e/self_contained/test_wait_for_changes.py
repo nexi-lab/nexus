@@ -12,7 +12,7 @@ import asyncio
 
 import pytest
 
-from nexus.backends.passthrough import PassthroughBackend
+from nexus.backends.storage.passthrough import PassthroughBackend
 from nexus.bricks.watch.file_watcher import ChangeType, FileChange, FileWatcher
 
 pytestmark = pytest.mark.quarantine

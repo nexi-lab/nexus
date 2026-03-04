@@ -39,7 +39,7 @@ class BenchMockBackend:
         return True
 
     def connect(self, context: Any = None) -> Any:  # noqa: ARG002
-        from nexus.backends.backend import HandlerStatusResponse
+        from nexus.backends.base.backend import HandlerStatusResponse
 
         return HandlerStatusResponse(success=True)
 
@@ -47,7 +47,7 @@ class BenchMockBackend:
         pass
 
     def check_connection(self, context: Any = None) -> Any:  # noqa: ARG002
-        from nexus.backends.backend import HandlerStatusResponse
+        from nexus.backends.base.backend import HandlerStatusResponse
 
         return HandlerStatusResponse(success=True)
 

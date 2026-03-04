@@ -72,7 +72,7 @@ async def redis_client():
 @pytest.fixture
 async def nx_with_lock(temp_dir, redis_client, isolated_db):
     """Create a NexusFS instance with distributed lock manager configured."""
-    from nexus.backends.passthrough import PassthroughBackend
+    from nexus.backends.storage.passthrough import PassthroughBackend
     from nexus.core.nexus_fs import NexusFS
     from nexus.lib.distributed_lock import RedisLockManager
 
@@ -100,7 +100,7 @@ async def nx_pair_with_lock(temp_dir, redis_client, isolated_db, tmp_path):
     This simulates two agents accessing the same NexusFS through a shared database
     (like Postgres in production). The lock manager is also shared via Redis.
     """
-    from nexus.backends.passthrough import PassthroughBackend
+    from nexus.backends.storage.passthrough import PassthroughBackend
     from nexus.core.nexus_fs import NexusFS
     from nexus.lib.distributed_lock import RedisLockManager
 
@@ -142,7 +142,7 @@ def nx_sync_with_lock(temp_dir, isolated_db):
     Actual connections are created per-operation by _acquire_lock_sync.
     This fixture is suitable for testing write(lock=True) in pure sync context.
     """
-    from nexus.backends.passthrough import PassthroughBackend
+    from nexus.backends.storage.passthrough import PassthroughBackend
     from nexus.cache.dragonfly import DragonflyClient
     from nexus.core.nexus_fs import NexusFS
     from nexus.lib.distributed_lock import RedisLockManager
@@ -388,7 +388,7 @@ class TestWriteWithLock:
         import threading
         import time
 
-        from nexus.backends.passthrough import PassthroughBackend
+        from nexus.backends.storage.passthrough import PassthroughBackend
         from nexus.cache.dragonfly import DragonflyClient
         from nexus.core.nexus_fs import NexusFS
         from nexus.lib.distributed_lock import RedisLockManager
@@ -669,7 +669,7 @@ class TestEdgeCases:
 
     def test_write_lock_no_lock_manager_warns(self, temp_dir, isolated_db):
         """Test write(lock=True) without lock manager logs warning and proceeds."""
-        from nexus.backends.passthrough import PassthroughBackend
+        from nexus.backends.storage.passthrough import PassthroughBackend
         from nexus.core.nexus_fs import NexusFS
 
         backend = PassthroughBackend(base_path=temp_dir)
@@ -791,7 +791,7 @@ class TestMultiThreadingContention:
         """
         import threading
 
-        from nexus.backends.passthrough import PassthroughBackend
+        from nexus.backends.storage.passthrough import PassthroughBackend
         from nexus.cache.dragonfly import DragonflyClient
         from nexus.core.nexus_fs import NexusFS
         from nexus.lib.distributed_lock import RedisLockManager
@@ -1174,7 +1174,7 @@ class TestLockIsolation:
 
         Zone A's lock on /file.txt should NOT block Zone B's lock on /file.txt.
         """
-        from nexus.backends.passthrough import PassthroughBackend
+        from nexus.backends.storage.passthrough import PassthroughBackend
         from nexus.cache.dragonfly import DragonflyClient
         from nexus.contracts.types import OperationContext
         from nexus.core.nexus_fs import NexusFS

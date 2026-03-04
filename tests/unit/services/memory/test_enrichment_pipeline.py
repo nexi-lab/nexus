@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import pytest
 
-from nexus.backends.local import LocalBackend
+from nexus.backends.storage.local import LocalBackend
 from nexus.bricks.memory.service import Memory
 from nexus.bricks.rebac.entity_registry import EntityRegistry
 from tests.helpers.in_memory_record_store import InMemoryRecordStore

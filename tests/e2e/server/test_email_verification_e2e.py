@@ -29,7 +29,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from starlette.testclient import TestClient
 
-from nexus.backends.local import LocalBackend
+from nexus.backends.storage.local import LocalBackend
 from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
 from nexus.bricks.auth.providers.database_local import DatabaseLocalAuth
 from nexus.bricks.auth.providers.discriminator import DiscriminatingAuthProvider

@@ -6,7 +6,7 @@ that ensures only constructor-compatible kwargs are forwarded.
 
 from typing import Any
 
-from nexus.backends.factory import BackendFactory
+from nexus.backends.base.factory import BackendFactory
 
 # ---------------------------------------------------------------------------
 # Helper classes with known signatures

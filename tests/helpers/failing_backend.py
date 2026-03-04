@@ -20,7 +20,7 @@ Usage:
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
-from nexus.backends.backend import Backend, FileInfo, HandlerStatusResponse
+from nexus.backends.base.backend import Backend, FileInfo, HandlerStatusResponse
 from nexus.contracts.exceptions import BackendError
 from nexus.core.object_store import WriteResult
 

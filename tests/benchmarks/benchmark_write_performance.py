@@ -82,7 +82,7 @@ def run_benchmark(enable_deferred: bool = False):
     Args:
         enable_deferred: If True, use deferred permission buffer for faster writes
     """
-    from nexus.backends.local import LocalBackend
+    from nexus.backends.storage.local import LocalBackend
     from nexus.contracts.types import OperationContext
     from nexus.core.nexus_fs import NexusFS
 

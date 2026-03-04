@@ -19,8 +19,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.backends.backend import Backend
-from nexus.backends.local import LocalBackend
+from nexus.backends.base.backend import Backend
+from nexus.backends.storage.local import LocalBackend
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.object_store import ObjectStoreABC, WriteResult, _validate_hash
 

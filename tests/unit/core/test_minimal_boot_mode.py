@@ -89,7 +89,7 @@ class TestMinimalBootViaFactory:
     """Factory creates bare kernel when record_store is None (MINIMAL path)."""
 
     def test_create_nexus_fs_no_record_store(self, tmp_path: "Path") -> None:
-        from nexus.backends.local import LocalBackend
+        from nexus.backends.storage.local import LocalBackend
         from nexus.factory.orchestrator import create_nexus_fs
         from tests.helpers.dict_metastore import DictMetastore
 
@@ -108,7 +108,7 @@ class TestMinimalBootViaFactory:
         assert nx._permission_enforcer is None
 
     def test_minimal_mode_nexus_has_router(self, tmp_path: "Path") -> None:
-        from nexus.backends.local import LocalBackend
+        from nexus.backends.storage.local import LocalBackend
         from nexus.factory.orchestrator import create_nexus_fs
         from tests.helpers.dict_metastore import DictMetastore
 
@@ -320,7 +320,7 @@ class TestMinimalIntegrationViaConnect:
         self, tmp_path: "Path", monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """connect() with profile=kernel gives a functional NexusFS."""
-        from nexus.backends.local import LocalBackend
+        from nexus.backends.storage.local import LocalBackend
         from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_bricks
         from nexus.core.config import PermissionConfig
         from nexus.factory.orchestrator import create_nexus_fs
@@ -366,7 +366,7 @@ class TestMinimalIntegrationViaConnect:
 
         monkeypatch.setenv("NEXUS_PROFILE", "minimal")
 
-        from nexus.backends.local import LocalBackend
+        from nexus.backends.storage.local import LocalBackend
         from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_bricks
         from nexus.factory.orchestrator import create_nexus_fs
         from tests.helpers.dict_metastore import DictMetastore
@@ -387,7 +387,7 @@ class TestMinimalIntegrationViaConnect:
 
     def test_minimal_profile_dispatch_has_no_observers(self, tmp_path: "Path") -> None:
         """MINIMAL mode has only the late-binding EventBusObserver (no record store to sync)."""
-        from nexus.backends.local import LocalBackend
+        from nexus.backends.storage.local import LocalBackend
         from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_bricks
         from nexus.factory.orchestrator import create_nexus_fs
         from tests.helpers.dict_metastore import DictMetastore
@@ -409,7 +409,7 @@ class TestMinimalIntegrationViaConnect:
 
     def test_minimal_profile_no_workflow_engine(self, tmp_path: "Path") -> None:
         """MINIMAL mode has no workflow engine."""
-        from nexus.backends.local import LocalBackend
+        from nexus.backends.storage.local import LocalBackend
         from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_bricks
         from nexus.factory.orchestrator import create_nexus_fs
         from tests.helpers.dict_metastore import DictMetastore

@@ -61,7 +61,7 @@ read/write files via NexusFS, persist conversation state to CAS, and be managed
 │  nice/renice                        →  QoS class (premium/standard/ │
 │                                        spot)                        │
 │  CPU (instruction execution)        →  LLM provider (inference)     │
-│  Syscall table (sys_call_table)     →  NexusSyscallTable            │
+│  Syscall table (sys_call_table)     →  ToolDispatcher               │
 │  errno                              →  NexusError hierarchy         │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -82,7 +82,7 @@ Linux:                              Nexus:
 CPU fetch-decode-execute cycle:     Agent loop cycle:
 1. Fetch instruction                1. Send context to LLM
 2. Decode opcode                    2. LLM decides action
-3. Execute (may trap to kernel)     3. If tool call → trap to Nexus kernel
+3. Execute (may trap to kernel)     3. If tool call → dispatch to VFS/Sandbox
 4. Return to user mode              4. Return tool result, continue loop
 ```
 
@@ -90,48 +90,57 @@ CPU fetch-decode-execute cycle:     Agent loop cycle:
 
 ## 3. Architecture Overview
 
+The agent runtime is a **system service** (`system_services/agent_runtime/`),
+not a separate "userspace". It calls VFS, Sandbox, Search, and LLM via
+**direct Python function calls** — no RPC, no serialization boundary.
+
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│  AGENT USERSPACE                                                        │
+│  SYSTEM SERVICES TIER  (system_services/)                               │
 │                                                                         │
 │  ┌─────────────────────────────────────────────────────────────────┐    │
-│  │  Nexus Native Agent Loop (Python)                                 │    │
-│  │  ┌─────────┐  ┌──────────┐  ┌──────────┐  ┌─────────────────┐  │    │
-│  │  │ System   │  │ Context  │  │ Tool     │  │ Event Stream    │  │    │
-│  │  │ Prompt   │  │ Manager  │  │ Executor │  │ (AgentEvent)    │  │    │
-│  │  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────────┬────────┘  │    │
-│  └───────┼──────────────┼────────────┼──────────────────┼───────────┘    │
-│          │              │            │                   │               │
-│          │         ┌────▼────────────▼──────────┐       │               │
-│          │         │   NEXUS SYSCALL BOUNDARY    │       │               │
-│          │         │   (NexusSyscallTable)       │       │               │
-│          │         └────┬────────────┬──────────┘       │               │
-└──────────┼──────────────┼────────────┼──────────────────┼───────────────┘
-           │              │            │                   │
-┌──────────▼──────────────▼────────────▼──────────────────▼───────────────┐
-│  NEXUS KERNEL                                                           │
+│  │  agent_runtime/                                                   │    │
+│  │                                                                   │    │
+│  │  ┌─────────────────┐   ┌──────────────────┐   ┌──────────────┐  │    │
+│  │  │ ProcessManager   │──▶│  agent_loop()     │──▶│ SessionStore │  │    │
+│  │  │ (spawn, resume,  │   │  (loop.py)        │   │ (checkpoint) │  │    │
+│  │  │  kill, list)     │   │  LLM ←→ tools     │   └──────────────┘  │    │
+│  │  └─────────────────┘   └────────┬───────────┘                     │    │
+│  │                                  │ direct Python calls             │    │
+│  │                         ┌────────▼───────────┐                    │    │
+│  │                         │  ToolDispatcher     │                    │    │
+│  │                         │  (tool_dispatcher.py│                    │    │
+│  │                         │   routes tool calls)│                    │    │
+│  │                         └──┬──┬──┬──┬──┬─────┘                    │    │
+│  └────────────────────────────┼──┼──┼──┼──┼──────────────────────────┘    │
+│                               │  │  │  │  │                               │
+│  ┌────────────────┐  ┌───────┘  │  │  │  └───────┐  ┌────────────────┐  │
+│  │ Scheduler      │  │          │  │  │          │  │ PipeManager    │  │
+│  │ (Astraea)      │  │          │  │  │          │  │ (IPC)          │  │
+│  └────────────────┘  │          │  │  │          │  └────────────────┘  │
+└──────────────────────┼──────────┼──┼──┼──────────┼──────────────────────┘
+                       │          │  │  │          │
+┌──────────────────────▼──────────▼──┼──▼──────────▼──────────────────────┐
+│  BRICKS TIER  (bricks/)            │                                    │
+│                                    │                                    │
+│  ┌─────────┐ ┌────────┐ ┌──────┐  │  ┌─────────┐ ┌─────┐ ┌────────┐  │
+│  │ Sandbox  │ │ Search │ │Memory│  │  │Workflows│ │ Pay │ │  MCP   │  │
+│  └─────────┘ └────────┘ └──────┘  │  └─────────┘ └─────┘ └────────┘  │
+└───────────────────────────────────┼─────────────────────────────────────┘
+                                    │
+┌───────────────────────────────────▼─────────────────────────────────────┐
+│  CORE TIER  (core/)                                                     │
 │                                                                         │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌────────────┐  │
-│  │ VFS          │  │ Process      │  │ Scheduler    │  │ IPC        │  │
-│  │ (11 syscalls)│  │ Manager      │  │ (Astraea)    │  │ (Pipes,    │  │
-│  │              │  │ (NEW)        │  │              │  │  Events)   │  │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘  └─────┬──────┘  │
-│         │                 │                  │                │         │
-│  ┌──────▼─────────────────▼──────────────────▼────────────────▼──────┐  │
-│  │  Storage Pillars                                                  │  │
-│  │  ┌────────────┐ ┌─────────────┐ ┌─────────────┐ ┌────────────┐  │  │
-│  │  │ Metastore  │ │ ObjectStore │ │ RecordStore  │ │ CacheStore │  │  │
-│  │  │ (inodes)   │ │ (CAS blobs) │ │ (relational) │ │ (ephemeral)│  │  │
-│  │  └────────────┘ └─────────────┘ └─────────────┘ └────────────┘  │  │
-│  └───────────────────────────────────────────────────────────────────┘  │
-│                                                                         │
-│  ┌──────────────────────────────────────────────────────────────────┐   │
-│  │  BRICKS (Agent Services)                                         │   │
-│  │  ┌─────┐ ┌────────┐ ┌──────┐ ┌─────────┐ ┌─────┐ ┌──────────┐ │   │
-│  │  │ LLM │ │ Memory │ │Search│ │ Sandbox │ │ Pay │ │ Workflows│ │   │
-│  │  └─────┘ └────────┘ └──────┘ └─────────┘ └─────┘ └──────────┘ │   │
-│  └──────────────────────────────────────────────────────────────────┘   │
+│  ┌──────────────┐  ┌──────────────────────────────────────────────────┐ │
+│  │ VFS (NexusFS) │  │  Storage Pillars                                │ │
+│  │ read/write/   │  │  ┌──────────┐ ┌───────────┐ ┌──────────┐      │ │
+│  │ edit/readdir  │  │  │Metastore │ │ObjectStore│ │RecordStore│      │ │
+│  └──────────────┘  │  └──────────┘ └───────────┘ └──────────┘      │ │
+│                     └──────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────────────────┘
+
+Data flow:  LLM ──tool_call──▶ agent_loop ──▶ ToolDispatcher ──▶ VFS/Sandbox/...
+            LLM ◀──result──── agent_loop ◀── ToolDispatcher ◀── VFS/Sandbox/...
 ```
 
 ---
@@ -221,34 +230,32 @@ class FileDescriptor:
 
 ---
 
-## 5. Nexus Syscall Table: Agent Tool → Kernel Call Mapping
+## 5. Tool Dispatch: Agent Tool → Service Call Mapping
 
-Every agent tool call becomes a Nexus kernel syscall. The agent NEVER touches
-the host filesystem or network directly — everything goes through Nexus.
+Every agent tool call is dispatched by `ToolDispatcher` to the appropriate
+Nexus service. The agent NEVER touches the host filesystem or network
+directly — everything goes through Nexus VFS or SandboxProtocol.
 
-### 5.1 Tool → Syscall Mapping
+### 5.1 Tool → Service Mapping
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│  Agent Tool            →   Nexus Syscall          →   Kernel Path        │
+│  LLM Tool Name         →   ToolDispatcher Method   →   Backend           │
 ├─────────────────────────────────────────────────────────────────────────┤
-│  read(path)          →   sys_read(path)          →   VFS → ObjectStore │
-│  write(path, content)→   sys_write(path, bytes)  →   VFS → ObjectStore │
-│  edit(path, old, new)→   sys_read + sys_write    →   VFS (atomic R/W)  │
-│  bash(cmd)           →   sys_exec(cmd)           →   SandboxProtocol   │
-│  grep(pattern, path) →   sys_search(query)       →   SearchBrick       │
-│  find(pattern)       →   sys_readdir(recursive)  →   VFS → Metastore   │
-│  ls(path)            →   sys_readdir(path)       →   VFS → Metastore   │
-│                                                                         │
-│  --- NEW AGENT-SPECIFIC SYSCALLS ---                                    │
-│  memory_store(key,v) →   sys_mem_write           →   MemoryBrick       │
-│  memory_search(q)    →   sys_mem_search          →   MemoryBrick       │
-│  agent_spawn(config) →   sys_fork + sys_exec     →   ProcessManager    │
-│  agent_send(pid,msg) →   sys_pipe_write          →   PipeManager       │
-│  agent_recv()        →   sys_pipe_read           →   PipeManager       │
-│  pay(amount, to)     →   sys_pay                 →   PayBrick          │
-│  llm_call(prompt)    →   sys_llm_read            →   LLMBrick          │
+│  read_file(path)       →   _read()                →   VFS.sys_read      │
+│  write_file(path, ...) →   _write()               →   VFS.sys_write     │
+│  edit_file(path, ...)  →   _edit()                →   VFS read + write  │
+│  bash(command)         →   _bash()                →   SandboxProtocol   │
+│  python(code)          →   _python()              →   SandboxProtocol   │
+│  grep(pattern, path)   →   _grep()                →   VFS.grep          │
+│  glob(pattern)         →   _glob()                →   VFS.glob          │
+│  list_dir(path)        →   _list_dir()            →   VFS.sys_readdir   │
 └─────────────────────────────────────────────────────────────────────────┘
+
+These 8 tools are sufficient. Memory is accessed via read_file/write_file on
+MEMORY.md. Agent lifecycle (spawn/kill) is managed by ProcessManager at the
+API layer, not through LLM tool calls. New tools can be added by registering
+a handler method in ToolDispatcher — no new abstractions needed.
 ```
 
 ### 5.2 New Kernel Contract: `ProcessManagerProtocol`
@@ -347,9 +354,9 @@ class ProcessManagerProtocol(Protocol):
         ...
 ```
 
-### 5.3 New Kernel Contract: `AgentSyscallTable`
+### 5.3 Tool Dispatch Table (ToolDispatcher)
 
-This is the boundary between agent userspace and Nexus kernel — analogous to
+The `ToolDispatcher` routes LLM tool calls to Nexus services — analogous to
 Linux's `sys_call_table`. Each agent tool invocation is dispatched through this table.
 
 ```
@@ -648,7 +655,7 @@ async def agent_loop(
 | `AgentProcessConfig` | `contracts/agent_process.py` | `execve` args | Spawn configuration |
 | `AgentSignal` | `contracts/agent_process.py` | `signal.h` | Signal enum |
 | `ProcessManagerProtocol` | `contracts/protocols/process_manager.py` | `kernel/fork.c` | Process lifecycle |
-| `AgentSyscallProtocol` | `contracts/protocols/agent_syscall.py` | `sys_call_table` | Tool→kernel dispatch |
+| `ToolDispatcher` | `system_services/agent_runtime/tool_dispatcher.py` | `sys_call_table` | Tool→service dispatch |
 | `ProcFSResolver` | `core/procfs_resolver.py` | `fs/proc/` | `__proc__` virtual dir |
 
 ### 9.2 Extensions to Existing Contracts
@@ -704,25 +711,24 @@ User prompt: "Fix the bug in auth.py and run tests"
    │                                                               │
 4. AgentRuntime.execute(process, prompt) ─────────────────────────│
    │                                                               │
-   │  ┌─ AGENT LOOP (native Python) ────────────────────────┐    │
+   │  ┌─ AGENT LOOP (loop.py) ──────────────────────────────┐    │
    │  │                                                       │    │
-   │  │  Turn 1: LLM → tool_call("read", {path: "auth.py"}) │    │
+   │  │  Turn 1: LLM → tool_call("read_file", {path: ...})  │    │
    │  │          │                                            │    │
    │  │          ▼                                            │    │
-   │  │  AgentSyscallTable.sys_read(ctx, "auth.py")          │    │
-   │  │    → ReBAC check: ctx.owner_id has READ on path? ✓   │    │
+   │  │  ToolDispatcher.dispatch(ctx, tool_call)              │    │
    │  │    → VFS.sys_read("/zone-1/agents/agent-abc-123/     │    │
    │  │                     workspace/auth.py")               │    │
    │  │    → Metastore.get(path) → FileMetadata{hash: "a1b2"}│    │
    │  │    → ObjectStore.read_content("a1b2") → bytes        │    │
    │  │    → return content to agent loop                     │    │
    │  │                                                       │    │
-   │  │  Turn 2: LLM → tool_call("edit", {path, old, new})  │    │
+   │  │  Turn 2: LLM → tool_call("edit_file", {path, ...})  │    │
    │  │          │                                            │    │
    │  │          ▼                                            │    │
-   │  │  AgentSyscallTable.sys_read(ctx, path) → old content │    │
+   │  │  ToolDispatcher._read(ctx, path) → old content       │    │
    │  │  Apply edit (old_string → new_string)                 │    │
-   │  │  AgentSyscallTable.sys_write(ctx, path, new_content) │    │
+   │  │  ToolDispatcher._write(ctx, path, new_content)       │    │
    │  │    → VFS.sys_write() → ObjectStore.write_content()    │    │
    │  │    → new hash "c3d4", Metastore updated               │    │
    │  │    → FileEvent emitted (OBSERVE phase)                │    │
@@ -730,7 +736,7 @@ User prompt: "Fix the bug in auth.py and run tests"
    │  │  Turn 3: LLM → tool_call("bash", {cmd: "pytest"})   │    │
    │  │          │                                            │    │
    │  │          ▼                                            │    │
-   │  │  AgentSyscallTable.sys_exec(ctx, "pytest")           │    │
+   │  │  ToolDispatcher._bash(ctx, "pytest")                 │    │
    │  │    → SandboxProtocol.run_code(sandbox_id, "bash",    │    │
    │  │        "pytest", timeout=300)                         │    │
    │  │    → {stdout: "...", exit_code: 0}                    │    │
@@ -857,10 +863,10 @@ class AgentProcessConfig:
     extensions: tuple[str, ...] = ()
 ```
 
-Resource enforcement is done at the syscall boundary:
+Resource enforcement is done at the tool dispatch boundary:
 
 ```
-AgentSyscallTable.sys_write(ctx, path, content):
+ToolDispatcher._write(ctx, path, content):
     process = ProcessManager.get_process(ctx.agent_id)
 
     # Check storage limit

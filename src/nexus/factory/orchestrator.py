@@ -452,7 +452,11 @@ def create_nexus_fs(
         _blm.register("cache", _cache_brick, protocol_name="CacheProtocol")
 
     # --- Register INTERCEPT hooks on KernelDispatch (Issue #900) ---
-    _register_vfs_hooks(nx, permission_checker=_permission_checker, auto_parse=parsing.auto_parse)
+    _register_vfs_hooks(
+        nx,
+        permission_checker=_permission_checker,
+        auto_parse=parsing.auto_parse if parsing else True,
+    )
 
     return nx
 

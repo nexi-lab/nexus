@@ -640,13 +640,22 @@ class NexusFSGateway:
     ) -> None:
         """Record a read operation for dependency tracking (Issue #1166).
 
+        Delegates to ``OperationContext.record_read()`` when read-tracking
+        is enabled.  The revision is fetched from the RevisionNotifier
+        injected by factory (Issue #1382).
+
         Args:
             context: Operation context (may contain dependency tracker)
             resource_type: Type of resource read (e.g., "file")
             resource_id: Identifier for the resource
             access_type: Type of access (default: "content")
         """
-        pass  # read-tracking removed; will be redesigned as a service-layer concern
+        if context is None or not context.track_reads:
+            return
+        notifier = getattr(self._fs, "_revision_notifier", None)
+        zone_id = getattr(context, "zone_id", None) or "root"
+        revision = notifier.get_latest_revision(zone_id) if notifier else 0
+        context.record_read(resource_type, resource_id, revision, access_type)
 
     @property
     def backend(self) -> Any:

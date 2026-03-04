@@ -402,9 +402,10 @@ class TestMinimalIntegrationViaConnect:
             enabled_bricks=resolve_enabled_bricks(DeploymentProfile.MINIMAL),
         )
 
-        # EventBusObserver is unconditionally registered with late-binding
-        # (Issue #969); it won't publish if no bus is configured.
-        assert nx._dispatch.observer_count == 1
+        # EventBusObserver + RevisionTrackingObserver are unconditionally
+        # registered (Issue #969, #1382); they degrade gracefully when
+        # no bus or version is configured.
+        assert nx._dispatch.observer_count == 2
 
     def test_minimal_profile_no_workflow_engine(self, tmp_path: "Path") -> None:
         """MINIMAL mode has no workflow engine."""

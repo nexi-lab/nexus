@@ -55,7 +55,6 @@ class FileEvent:
     size: int | None = None
     etag: str | None = None
     agent_id: str | None = None
-    revision: int | None = None
     vector_clock: str | None = None
 
     # Identity & write-specific context
@@ -83,8 +82,6 @@ class FileEvent:
             result["etag"] = self.etag
         if self.agent_id is not None:
             result["agent_id"] = self.agent_id
-        if self.revision is not None:
-            result["revision"] = self.revision
         if self.vector_clock is not None:
             result["vector_clock"] = self.vector_clock
         if self.user_id is not None:
@@ -114,7 +111,6 @@ class FileEvent:
             size=data.get("size"),
             etag=data.get("etag"),
             agent_id=data.get("agent_id"),
-            revision=data.get("revision"),
             vector_clock=data.get("vector_clock"),
             user_id=data.get("user_id"),
             version=data.get("version"),

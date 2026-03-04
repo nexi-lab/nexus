@@ -202,8 +202,6 @@ def create_nexus_services(
         pipe_manager=system_dict.get("pipe_manager"),
         # Scheduler (Issue #2195)
         scheduler_service=system_dict.get("scheduler_service"),
-        # Agent Runtime (AGENT-PROCESS-ARCHITECTURE)
-        agent_runtime=system_dict.get("agent_runtime"),
     )
 
     brick_services = _BrickServices(

@@ -660,7 +660,11 @@ def create_mcp_server(
             With pagination: nexus_glob("**/*.py", "/workspace", limit=50, offset=0)
         """
         nx_instance: Any = _get_nexus_instance(ctx)
-        all_matches = nx_instance.glob(pattern, path)
+        _search = getattr(nx_instance, "search_service", None)
+        if _search is not None:
+            all_matches = _search.glob(pattern, path)
+        else:
+            all_matches = nx_instance.glob(pattern, path)
         total = len(all_matches)
 
         # Apply pagination
@@ -727,7 +731,11 @@ def create_mcp_server(
             To get next 50 matches: nexus_grep("TODO", "/workspace", limit=50, offset=50)
         """
         nx_instance: Any = _get_nexus_instance(ctx)
-        all_results = nx_instance.grep(pattern, path, ignore_case=ignore_case)
+        _search = getattr(nx_instance, "search_service", None)
+        if _search is not None:
+            all_results = _search.grep(pattern, path, ignore_case=ignore_case)
+        else:
+            all_results = nx_instance.grep(pattern, path, ignore_case=ignore_case)
         total = len(all_results)
 
         # Apply pagination

@@ -238,19 +238,19 @@ class TestFileDiscoveryOperations:
 
     def test_glob(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
         """Test glob returns unscoped paths."""
-        mock_fs.glob.return_value = [
+        mock_fs.search_service.glob.return_value = [
             "/zones/team_12/users/user_1/workspace/test_a.py",
             "/zones/team_12/users/user_1/workspace/test_b.py",
         ]
         result = scoped_fs.glob("test_*.py", "/workspace")
-        mock_fs.glob.assert_called_once_with(
+        mock_fs.search_service.glob.assert_called_once_with(
             "test_*.py", "/zones/team_12/users/user_1/workspace", None
         )
         assert result == ["/workspace/test_a.py", "/workspace/test_b.py"]
 
     def test_grep(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
         """Test grep returns unscoped file paths."""
-        mock_fs.grep.return_value = [
+        mock_fs.search_service.grep.return_value = [
             {
                 "file": "/zones/team_12/users/user_1/workspace/app.py",
                 "line": 10,
@@ -258,7 +258,7 @@ class TestFileDiscoveryOperations:
             }
         ]
         result = scoped_fs.grep("TODO", "/workspace")
-        mock_fs.grep.assert_called_once()
+        mock_fs.search_service.grep.assert_called_once()
         assert result[0]["file"] == "/workspace/app.py"
 
 

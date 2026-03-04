@@ -656,7 +656,7 @@ class TestNatsEventBusWaitForEvent:
         assert result.path == "/inbox/test.txt"
 
     @pytest.mark.asyncio
-    async def test_wait_for_event_respects_since_revision(self, mock_nats_connect, make_bus):
+    async def test_wait_for_event_respects_since_version(self, mock_nats_connect, make_bus):
         _, _, js = mock_nats_connect
         bus = make_bus()
         await bus.start()
@@ -683,7 +683,7 @@ class TestNatsEventBusWaitForEvent:
         mock_sub.unsubscribe = AsyncMock()
         js.subscribe = AsyncMock(return_value=mock_sub)
 
-        result = await bus.wait_for_event("z1", "/inbox/", timeout=5.0, since_revision=7)
+        result = await bus.wait_for_event("z1", "/inbox/", timeout=5.0, since_version=7)
 
         assert result is not None
         assert result.version == 10

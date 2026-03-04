@@ -659,7 +659,7 @@ def create_mcp_server(
             To find all Python files: nexus_glob("**/*.py", "/workspace")
             With pagination: nexus_glob("**/*.py", "/workspace", limit=50, offset=0)
         """
-        nx_instance = _get_nexus_instance(ctx)
+        nx_instance: Any = _get_nexus_instance(ctx)
         all_matches = nx_instance.glob(pattern, path)
         total = len(all_matches)
 
@@ -726,7 +726,7 @@ def create_mcp_server(
             To get first 50 matches: nexus_grep("TODO", "/workspace", limit=50)
             To get next 50 matches: nexus_grep("TODO", "/workspace", limit=50, offset=50)
         """
-        nx_instance = _get_nexus_instance(ctx)
+        nx_instance: Any = _get_nexus_instance(ctx)
         all_results = nx_instance.grep(pattern, path, ignore_case=ignore_case)
         total = len(all_results)
 

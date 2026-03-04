@@ -129,14 +129,12 @@ class TestSearchServiceDelegation:
         )
 
     def test_glob_delegates(self, mock_fs, context):
-        """glob forwards pattern, path, context."""
+        """glob forwards pattern, path, context via __getattr__ pass-through."""
         matches = ["/data/test.py"]
         mock_fs.search_service.glob = MagicMock(return_value=matches)
         result = mock_fs.glob("*.py", path="/data", context=context)
         assert result == matches
-        mock_fs.search_service.glob.assert_called_once_with(
-            pattern="*.py", path="/data", context=context
-        )
+        mock_fs.search_service.glob.assert_called_once_with("*.py", path="/data", context=context)
 
     def test_glob_batch_delegates(self, mock_fs, context):
         """glob_batch forwards patterns, path, context."""
@@ -146,7 +144,7 @@ class TestSearchServiceDelegation:
         assert result == batch
 
     def test_grep_delegates(self, mock_fs, context):
-        """grep forwards all args."""
+        """grep forwards all args via __getattr__ pass-through."""
         results = [{"path": "/a.py", "line": 1, "match": "import os"}]
         mock_fs.search_service.grep = MagicMock(return_value=results)
         result = mock_fs.grep(
@@ -157,12 +155,9 @@ class TestSearchServiceDelegation:
         )
         assert result == results
         mock_fs.search_service.grep.assert_called_once_with(
-            pattern="import os",
+            "import os",
             path="/src",
-            file_pattern=None,
             ignore_case=True,
-            max_results=100,
-            search_mode="auto",
             context=context,
         )
 

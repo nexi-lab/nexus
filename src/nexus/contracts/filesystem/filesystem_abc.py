@@ -337,28 +337,3 @@ class NexusFilesystemABC(ABC):
     ) -> builtins.list[dict[str, Any]]:
         """Write multiple files. Default: N × write()."""
         return [self.write(p, c, context=context) for p, c in files]
-
-    # ── Search (requires service override) ────────────────────────
-
-    def glob(self, pattern: str, path: str = "/", context: Any = None) -> builtins.list[str]:
-        """Find files matching a glob pattern (like glob(3)).
-
-        Requires SearchService. Override in NexusFS.
-        """
-        raise NotImplementedError("Override in NexusFS (requires SearchService)")
-
-    def grep(
-        self,
-        pattern: str,
-        path: str = "/",
-        file_pattern: str | None = None,
-        ignore_case: bool = False,
-        max_results: int = 1000,
-        search_mode: str = "auto",
-        context: Any = None,
-    ) -> builtins.list[dict[str, Any]]:
-        """Search file contents using regex patterns (like grep(1)).
-
-        Requires SearchService. Override in NexusFS.
-        """
-        raise NotImplementedError("Override in NexusFS (requires SearchService)")

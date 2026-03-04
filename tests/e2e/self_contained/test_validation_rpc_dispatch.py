@@ -26,11 +26,10 @@ class TestSandboxValidateDispatch:
 
     def test_sandbox_validate_in_service_methods(self):
         """sandbox_validate is dispatched via _sandbox_rpc_service, not METHOD_PARAMS."""
-        from nexus.core.nexus_fs import NexusFS
+        from nexus.factory.service_routing import SERVICE_METHODS
 
-        dispatch = NexusFS._SERVICE_METHODS
-        assert "sandbox_validate" in dispatch
-        assert dispatch["sandbox_validate"] == "_sandbox_rpc_service"
+        assert "sandbox_validate" in SERVICE_METHODS
+        assert SERVICE_METHODS["sandbox_validate"] == "_sandbox_rpc_service"
 
 
 class TestValidationResultSerialization:

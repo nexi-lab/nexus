@@ -56,8 +56,7 @@ class LifespanServices:
     zone_lifecycle: Any = None
     pipe_manager: Any = None  # DT_PIPE manager (Issue #809)
 
-    # --- Issue #2195, #2360: EventLog + Scheduler (from SystemServices) ----
-    event_log: Any = None
+    # --- Issue #2195, #2360: Scheduler (from SystemServices) ----
     scheduler_service: "SchedulerProtocol | None" = None
 
     # --- DT_PIPE consumers (Issue #810) -----------------------------------
@@ -121,8 +120,7 @@ class LifespanServices:
             pipe_manager=(getattr(_sys, "pipe_manager", None) if _sys else None),
             # Issue #810: DT_PIPE Zoekt consumer
             zoekt_pipe_consumer=(getattr(_brk, "zoekt_pipe_consumer", None) if _brk else None),
-            # Issue #2195: EventLog + Scheduler
-            event_log=(getattr(_sys, "event_log", None) if _sys else None),
+            # Issue #2195: Scheduler
             scheduler_service=(getattr(_sys, "scheduler_service", None) if _sys else None),
             # Brick services
             brick_services=_brk,

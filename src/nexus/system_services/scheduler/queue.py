@@ -29,6 +29,16 @@ from nexus.system_services.scheduler.models import ScheduledTask
 # SQL Statements
 # =============================================================================
 
+# DRY: shared column list for all RETURNING / SELECT clauses (Issue #2748)
+_TASK_COLUMNS = """\
+    id::text, agent_id, executor_id, task_type,
+    payload::text, priority_tier, effective_tier,
+    enqueued_at, status, deadline,
+    boost_amount, boost_tiers, boost_reservation_id,
+    started_at, completed_at, error_message,
+    zone_id, idempotency_key,
+    request_state, priority_class, executor_state, estimated_service_time"""
+
 _SQL_ENQUEUE = """
 INSERT INTO scheduled_tasks (
     agent_id, executor_id, task_type, payload,
@@ -41,7 +51,7 @@ ON CONFLICT (idempotency_key) DO UPDATE SET agent_id = EXCLUDED.agent_id
 RETURNING id::text
 """
 
-_SQL_DEQUEUE = """
+_SQL_DEQUEUE = f"""
 UPDATE scheduled_tasks
 SET status = 'running', started_at = now()
 WHERE id = (
@@ -51,17 +61,10 @@ WHERE id = (
     FOR UPDATE SKIP LOCKED
     LIMIT 1
 )
-RETURNING
-    id::text, agent_id, executor_id, task_type,
-    payload::text, priority_tier, effective_tier,
-    enqueued_at, status, deadline,
-    boost_amount, boost_tiers, boost_reservation_id,
-    started_at, completed_at, error_message,
-    zone_id, idempotency_key,
-    request_state, priority_class, executor_state, estimated_service_time
+RETURNING {_TASK_COLUMNS}
 """
 
-_SQL_DEQUEUE_BY_EXECUTOR = """
+_SQL_DEQUEUE_BY_EXECUTOR = f"""
 UPDATE scheduled_tasks
 SET status = 'running', started_at = now()
 WHERE id = (
@@ -71,17 +74,10 @@ WHERE id = (
     FOR UPDATE SKIP LOCKED
     LIMIT 1
 )
-RETURNING
-    id::text, agent_id, executor_id, task_type,
-    payload::text, priority_tier, effective_tier,
-    enqueued_at, status, deadline,
-    boost_amount, boost_tiers, boost_reservation_id,
-    started_at, completed_at, error_message,
-    zone_id, idempotency_key,
-    request_state, priority_class, executor_state, estimated_service_time
+RETURNING {_TASK_COLUMNS}
 """
 
-_SQL_DEQUEUE_HRRN = """
+_SQL_DEQUEUE_HRRN = f"""
 UPDATE scheduled_tasks
 SET status = 'running', started_at = now()
 WHERE id = (
@@ -96,17 +92,10 @@ WHERE id = (
     FOR UPDATE SKIP LOCKED
     LIMIT 1
 )
-RETURNING
-    id::text, agent_id, executor_id, task_type,
-    payload::text, priority_tier, effective_tier,
-    enqueued_at, status, deadline,
-    boost_amount, boost_tiers, boost_reservation_id,
-    started_at, completed_at, error_message,
-    zone_id, idempotency_key,
-    request_state, priority_class, executor_state, estimated_service_time
+RETURNING {_TASK_COLUMNS}
 """
 
-_SQL_DEQUEUE_HRRN_BY_EXECUTOR = """
+_SQL_DEQUEUE_HRRN_BY_EXECUTOR = f"""
 UPDATE scheduled_tasks
 SET status = 'running', started_at = now()
 WHERE id = (
@@ -121,14 +110,7 @@ WHERE id = (
     FOR UPDATE SKIP LOCKED
     LIMIT 1
 )
-RETURNING
-    id::text, agent_id, executor_id, task_type,
-    payload::text, priority_tier, effective_tier,
-    enqueued_at, status, deadline,
-    boost_amount, boost_tiers, boost_reservation_id,
-    started_at, completed_at, error_message,
-    zone_id, idempotency_key,
-    request_state, priority_class, executor_state, estimated_service_time
+RETURNING {_TASK_COLUMNS}
 """
 
 _SQL_COMPLETE = """
@@ -151,28 +133,14 @@ WHERE id = $1 AND agent_id = $2 AND status = 'queued'
 RETURNING status
 """
 
-_SQL_GET_TASK = """
-SELECT
-    id::text, agent_id, executor_id, task_type,
-    payload::text, priority_tier, effective_tier,
-    enqueued_at, status, deadline,
-    boost_amount, boost_tiers, boost_reservation_id,
-    started_at, completed_at, error_message,
-    zone_id, idempotency_key,
-    request_state, priority_class, executor_state, estimated_service_time
+_SQL_GET_TASK = f"""
+SELECT {_TASK_COLUMNS}
 FROM scheduled_tasks
 WHERE id = $1
 """
 
-_SQL_GET_TASK_SCOPED = """
-SELECT
-    id::text, agent_id, executor_id, task_type,
-    payload::text, priority_tier, effective_tier,
-    enqueued_at, status, deadline,
-    boost_amount, boost_tiers, boost_reservation_id,
-    started_at, completed_at, error_message,
-    zone_id, idempotency_key,
-    request_state, priority_class, executor_state, estimated_service_time
+_SQL_GET_TASK_SCOPED = f"""
+SELECT {_TASK_COLUMNS}
 FROM scheduled_tasks
 WHERE id = $1 AND agent_id = $2
 """
@@ -210,7 +178,7 @@ WITH updated AS (
 SELECT count(*) FROM updated
 """
 
-_SQL_NOTIFY = "SELECT pg_notify('task_enqueued', $1)"
+_SQL_NOTIFY = "SELECT pg_notify('task_enqueued', $1::text)"
 
 _SQL_CANCEL_BY_AGENT = """
 UPDATE scheduled_tasks
@@ -374,8 +342,9 @@ class TaskQueue:
             estimated_service_time,
         )
 
-        # Notify dispatcher
-        await conn.execute(_SQL_NOTIFY, str(task_id))
+        # Notify dispatcher with JSON payload for per-executor routing (Issue #2748)
+        notify_payload = json.dumps({"task_id": str(task_id), "executor_id": executor_id})
+        await conn.execute(_SQL_NOTIFY, notify_payload)
 
         return str(task_id)
 

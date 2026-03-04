@@ -17,7 +17,11 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from nexus.contracts.agent_process import (
+from nexus.contracts.llm_types import Message
+from nexus.system_services.agent_runtime.loop import agent_loop
+from nexus.system_services.agent_runtime.session_store import SessionStore
+from nexus.system_services.agent_runtime.tool_dispatcher import ToolDispatcher
+from nexus.system_services.agent_runtime.types import (
     AgentContext,
     AgentEvent,
     AgentProcess,
@@ -26,10 +30,6 @@ from nexus.contracts.agent_process import (
     AgentSignal,
     Error,
 )
-from nexus.contracts.llm_types import Message
-from nexus.system_services.agent_runtime.loop import agent_loop
-from nexus.system_services.agent_runtime.session_store import SessionStore
-from nexus.system_services.agent_runtime.tool_dispatcher import ToolDispatcher
 
 if TYPE_CHECKING:
     from nexus.contracts.protocols.llm_provider import LLMProviderProtocol

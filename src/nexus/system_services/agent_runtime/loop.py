@@ -17,28 +17,28 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
-from nexus.contracts.agent_process import (
+from nexus.contracts.llm_types import Message, MessageRole, ToolCall, ToolFunction
+from nexus.system_services.agent_runtime.types import (
     Completed,
     Error,
     TextDelta,
     ToolCallResult,
     ToolCallStart,
 )
-from nexus.contracts.llm_types import Message, MessageRole, ToolCall, ToolFunction
 
 # Message passed to the LLM; the provider's _format_messages() handles
 # serialisation (vision flags, tool-call flags, etc.), so we must hand
 # it real Message objects — NOT pre-serialised dicts.
 
 if TYPE_CHECKING:
-    from nexus.contracts.agent_process import (
+    from nexus.contracts.protocols.llm_provider import LLMProviderProtocol
+    from nexus.contracts.types import OperationContext
+    from nexus.system_services.agent_runtime.tool_dispatcher import ToolDispatcher
+    from nexus.system_services.agent_runtime.types import (
         AgentContext,
         AgentEvent,
         AgentProcessConfig,
     )
-    from nexus.contracts.protocols.llm_provider import LLMProviderProtocol
-    from nexus.contracts.types import OperationContext
-    from nexus.system_services.agent_runtime.tool_dispatcher import ToolDispatcher
 
 logger = logging.getLogger(__name__)
 

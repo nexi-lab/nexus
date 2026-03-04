@@ -140,14 +140,14 @@ def process_manager(nexus_fs_direct, llm_provider):
 
 async def test_spawn_and_simple_chat(process_manager):
     """Spawn an agent, send a simple message, verify we get a text response."""
-    from nexus.contracts.agent_process import (
+    from nexus.contracts.llm_types import Message, MessageRole
+    from nexus.system_services.agent_runtime.types import (
         AgentProcessConfig,
         AgentProcessState,
         Completed,
         Error,
         TextDelta,
     )
-    from nexus.contracts.llm_types import Message, MessageRole
 
     zone_id = f"test-zone-{uuid.uuid4().hex[:8]}"
     owner_id = "test-owner"
@@ -191,15 +191,15 @@ async def test_spawn_and_simple_chat(process_manager):
 
 async def test_agent_with_read_file_tool(process_manager, nexus_fs_direct):
     """Spawn an agent with file tools, ask it to read a file."""
-    from nexus.contracts.agent_process import (
+    from nexus.contracts.llm_types import Message, MessageRole
+    from nexus.contracts.types import OperationContext
+    from nexus.system_services.agent_runtime.types import (
         AgentProcessConfig,
         Error,
         TextDelta,
         ToolCallResult,
         ToolCallStart,
     )
-    from nexus.contracts.llm_types import Message, MessageRole
-    from nexus.contracts.types import OperationContext
 
     zone_id = f"test-zone-{uuid.uuid4().hex[:8]}"
     owner_id = "test-owner"
@@ -260,12 +260,12 @@ async def test_agent_with_read_file_tool(process_manager, nexus_fs_direct):
 
 async def test_checkpoint_persists_across_resume(process_manager):
     """Verify conversation persists: first turn sets context, second turn recalls it."""
-    from nexus.contracts.agent_process import (
+    from nexus.contracts.llm_types import Message, MessageRole
+    from nexus.system_services.agent_runtime.types import (
         AgentProcessConfig,
         Error,
         TextDelta,
     )
-    from nexus.contracts.llm_types import Message, MessageRole
 
     zone_id = f"test-zone-{uuid.uuid4().hex[:8]}"
     owner_id = "test-owner"
@@ -309,7 +309,7 @@ async def test_checkpoint_persists_across_resume(process_manager):
 
 async def test_terminate_removes_process(process_manager):
     """Verify terminate removes agent from process table."""
-    from nexus.contracts.agent_process import AgentProcessConfig
+    from nexus.system_services.agent_runtime.types import AgentProcessConfig
 
     zone_id = f"test-zone-{uuid.uuid4().hex[:8]}"
 

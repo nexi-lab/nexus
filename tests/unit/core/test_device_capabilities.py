@@ -23,7 +23,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from nexus.contracts.deployment_profile import DeploymentProfile
-from nexus.core.device_capabilities import (
+from nexus.lib.device_capabilities import (
     BRICK_REQUIREMENTS,
     BrickRequirement,
     DeviceCapabilities,
@@ -105,7 +105,7 @@ class TestGetSystemMemoryMb:
         original_import = builtins.__import__
 
         with (
-            patch("nexus.core.device_capabilities.platform.system", return_value="Darwin"),
+            patch("nexus.lib.device_capabilities.platform.system", return_value="Darwin"),
             patch("builtins.__import__", side_effect=_import_fail),
             patch("subprocess.run") as mock_run,
         ):
@@ -129,7 +129,7 @@ class TestGetSystemMemoryMb:
         with (
             patch("builtins.__import__", side_effect=_import_fail),
             patch(
-                "nexus.core.device_capabilities.platform.system",
+                "nexus.lib.device_capabilities.platform.system",
                 side_effect=OSError("unknown platform"),
             ),
         ):
@@ -262,7 +262,7 @@ class TestDetectCapabilities:
         monkeypatch.setenv("NEXUS_CPU_CORES", "2")
         monkeypatch.setenv("NEXUS_HAS_GPU", "false")
 
-        with caplog.at_level(logging.INFO, logger="nexus.core.device_capabilities"):
+        with caplog.at_level(logging.INFO, logger="nexus.lib.device_capabilities"):
             detect_capabilities()
 
         assert any("detected in" in record.message for record in caplog.records)
@@ -420,21 +420,21 @@ class TestWarnIfProfileExceedsDevice:
 
     def test_warns_when_profile_exceeds(self, caplog: pytest.LogCaptureFixture) -> None:
         caps = DeviceCapabilities(memory_mb=256)  # → EMBEDDED
-        with caplog.at_level(logging.WARNING, logger="nexus.core.device_capabilities"):
+        with caplog.at_level(logging.WARNING, logger="nexus.lib.device_capabilities"):
             warn_if_profile_exceeds_device(DeploymentProfile.FULL, caps)
 
         assert any("may exceed device capabilities" in r.message for r in caplog.records)
 
     def test_no_warning_when_appropriate(self, caplog: pytest.LogCaptureFixture) -> None:
         caps = DeviceCapabilities(memory_mb=8192)  # → FULL
-        with caplog.at_level(logging.WARNING, logger="nexus.core.device_capabilities"):
+        with caplog.at_level(logging.WARNING, logger="nexus.lib.device_capabilities"):
             warn_if_profile_exceeds_device(DeploymentProfile.LITE, caps)
 
         assert not any("may exceed" in r.message for r in caplog.records)
 
     def test_no_warning_when_exact_match(self, caplog: pytest.LogCaptureFixture) -> None:
         caps = DeviceCapabilities(memory_mb=8192)  # → FULL
-        with caplog.at_level(logging.WARNING, logger="nexus.core.device_capabilities"):
+        with caplog.at_level(logging.WARNING, logger="nexus.lib.device_capabilities"):
             warn_if_profile_exceeds_device(DeploymentProfile.FULL, caps)
 
         assert not any("may exceed" in r.message for r in caplog.records)

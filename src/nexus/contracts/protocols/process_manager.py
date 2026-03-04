@@ -13,13 +13,13 @@ from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from nexus.contracts.agent_process import (
+    from nexus.contracts.llm_types import Message
+    from nexus.system_services.agent_runtime.types import (
         AgentEvent,
         AgentProcess,
         AgentProcessConfig,
         AgentSignal,
     )
-    from nexus.contracts.llm_types import Message
 
 
 @runtime_checkable

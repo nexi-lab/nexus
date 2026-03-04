@@ -352,58 +352,48 @@ Also supports `MultipartUploadMixin` methods for TUS resumable uploads.
 
 ---
 
-## 6. WAL Clarification: Three Separate Systems
+## 6. WAL Clarification: Two Systems (Event WAL Deleted)
 
-The codebase has (or will have) three distinct WAL/log systems. They serve different
-purposes and should not be confused.
+The codebase has two distinct log systems. A third (Event WAL) was deleted because it
+was broken in production and never verified to work.
 
 ```
-+-------------------+    +------------------+    +------------------+
-| Event WAL         |    | Raft Log         |    | WriteWAL         |
-| (nexus_wal/)      |    | (openraft)       |    | (proposed)       |
-+-------------------+    +------------------+    +------------------+
-| Purpose:          |    | Purpose:         |    | Purpose:         |
-| FileEvent         |    | Metadata         |    | Write buffering  |
-| durability for    |    | consensus in     |    | Hot/cold delta   |
-| EventBus          |    | federation mode  |    | path separation  |
-+-------------------+    +------------------+    +------------------+
-| Writes:           |    | Writes:          |    | Writes:          |
-| FileEvent         |    | RaftEntry        |    | ContentDelta     |
-| (JSON via orjson) |    | (protobuf)       |    | (binary frames)  |
-+-------------------+    +------------------+    +------------------+
-| Engine:           |    | Engine:          |    | Engine:          |
-| nexus_wal (Rust)  |    | openraft (Rust)  |    | nexus_wal (Rust) |
-| CRC32 + segments  |    | Raft protocol    |    | reuse WAL engine |
-+-------------------+    +------------------+    +------------------+
-| Status:           |    | Status:          |    | Status:          |
-| BROKEN - see 6.1  |    | Implemented      |    | Proposed (#1397) |
-|                   |    | (federation)     |    | Post-V0          |
-+-------------------+    +------------------+    +------------------+
++------------------+    +------------------+
+| Raft Log         |    | WriteWAL         |
+| (openraft)       |    | (proposed)       |
++------------------+    +------------------+
+| Purpose:         |    | Purpose:         |
+| Metadata         |    | Write buffering  |
+| consensus in     |    | Hot/cold delta   |
+| federation mode  |    | path separation  |
++------------------+    +------------------+
+| Writes:          |    | Writes:          |
+| RaftEntry        |    | ContentDelta     |
+| (protobuf)       |    | (binary frames)  |
++------------------+    +------------------+
+| Engine:          |    | Engine:          |
+| openraft (Rust)  |    | New Rust WAL     |
++------------------+    +------------------+
+| Status:          |    | Status:          |
+| Implemented      |    | Proposed (#1397) |
+| (federation)     |    | Post-V0          |
++------------------+    +------------------+
 ```
 
-### 6.1 Event WAL (`nexus_wal/`) — BROKEN, Decide: Fix or Delete
+### 6.1 Event WAL — DELETED
 
-**Rust engine:** `rust/nexus_wal/` — fully implemented. Sub-5us appends, CRC32 integrity,
-segment rotation, crash recovery. Compiled and available via `_nexus_wal.PyWAL`.
+The `rust/nexus_wal/` Rust engine and `system_services/event_subsystem/log/wal.py`
+Python wrapper have been deleted. Rationale:
 
-**Python wrapper:** `system_services/event_subsystem/log/wal.py` — `WALEventLog` class,
-correctly imports `PyWAL`, correctly exported from `__init__.py`.
+- The factory had a broken import (`wal_backend` vs `wal`) causing the WAL to be
+  silently dead in all production deployments.
+- No production user ever verified it worked end-to-end.
+- Code with unknown correctness should not remain in the codebase.
+- If WriteWAL (#1397) needs a Rust WAL engine, it will be purpose-built.
 
-**The bug:** `system_services/event_subsystem/log/factory.py` line 37 imports from
-`wal_backend` — a module that **does not exist**. The correct module is `wal`. This
-causes `ImportError` which the factory catches silently, returning `None`. As a result:
-
-- `_boot_system_services()` gets `event_log = None`
-- `RedisEventBus.set_event_log()` is never called
-- `RedisEventBus.publish()` skips the `self._event_log.append(event)` codepath
-- **The Event WAL is silently dead in all production deployments.**
-
-**Decision needed:** Either fix the import (`wal_backend` -> `wal`) and ship the Event
-WAL as intended, or delete the entire subsystem (`rust/nexus_wal/`, `log/wal.py`,
-`log/factory.py`, `log/protocol.py`) if we decide the WriteWAL (#1397) supersedes it.
-
-The Rust `nexus_wal` engine itself is valuable — if we fix Event WAL, we keep it. If
-we delete Event WAL, the Rust engine is still needed for WriteWAL (#1397).
+Files deleted: `rust/nexus_wal/` (2,563L), `log/wal.py` (141L), `log/factory.py` (50L),
+`log/protocol.py` (112L), plus all WAL-only tests (~982L). All WAL wiring removed from
+factory, lifespan, RedisEventBus, proxy, CI, and config.
 
 ### 6.2 Raft Log (federation mode)
 
@@ -421,11 +411,11 @@ A hot/cold path separator for content writes. Incoming writes land in a fast WAL
 `BlobTransport` (the "cold path").
 
 Decouples write latency from storage latency. Enables batch flush, write coalescing,
-and delta compression. Will reuse the `nexus_wal` Rust engine with `ContentDelta`
-binary frames instead of JSON `FileEvent` payloads.
+and delta compression.
 
 **Status:** Post-V0. The current synchronous write path (direct `BlobTransport.put_blob()`)
-is correct and sufficient for V0.
+is correct and sufficient for V0. The Rust WAL engine will be built from scratch when
+needed — purpose-built for ContentDelta frames, not repurposed from the deleted Event WAL.
 
 ---
 
@@ -522,16 +512,11 @@ Update `ConnectorRegistry` and `BackendFactory`:
 - Delete: `local.py`, `passthrough.py`, `cas_blob_store.py`, `chunked_storage.py`,
   `async_local.py`, `local_connector.py`
 
-### Phase 6: Event WAL decision
-
-Fix broken import in `log/factory.py` (`wal_backend` -> `wal`) OR delete Event WAL
-subsystem entirely. See Section 6.1.
-
-### Phase 7: WriteWAL hot/cold path (post-V0, #1397)
+### Phase 6: WriteWAL hot/cold path (post-V0, #1397)
 
 See Section 7.
 
-### Phase 8: ObjectStoreABC addressing-agnostic refactor (post-V0, #1396)
+### Phase 7: ObjectStoreABC addressing-agnostic refactor (post-V0, #1396)
 
 Refactor `ObjectStoreABC` to remove CAS-specific assumptions (`content_hash` parameters,
 `get_ref_count`). CAS vs Path addressing becomes purely a backend concern, not a kernel
@@ -593,7 +578,6 @@ contract concern.
 - All API connectors (gdrive, gmail, gcalendar, slack, hn, x)
 - All wrappers (`DelegatingBackend`, `CachingBackendWrapper`, `CompressedStorage`, etc.)
 - `nexus_fast.BloomFilter` (Rust) — reused via DI injection
-- `nexus_wal` Rust engine — kept for WriteWAL (#1397)
 
 **Goes (deleted):**
 - `LocalBackend` (966L) — monolith split into composition
@@ -644,7 +628,3 @@ print('OK: LocalBlobTransport conforms to BlobTransport')
 1. **`on_write_callback` migration.** `LocalBackend` has `on_write_callback` for Zoekt
    reindex (#1520). This should migrate to EventBus observer pattern (#809, #810) rather
    than being wired into `CASBackend`. (Align with DT_PIPE design.)
-
-2. **Event WAL: fix or delete?** The Rust engine works. The Python wiring has a one-line
-   bug. Fix is trivial (`wal_backend` -> `wal` in `log/factory.py`). But if WriteWAL
-   (#1397) supersedes Event WAL's purpose, deleting may be cleaner. Decision needed.

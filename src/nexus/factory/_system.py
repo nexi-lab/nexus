@@ -450,23 +450,6 @@ def _boot_system_services(
         except Exception as exc:
             logger.warning("[BOOT:SYSTEM] ZoneLifecycleService unavailable: %s", exc)
 
-    # --- EventLog (Issue #2195) ---
-    event_log: Any = None
-    if not _on("eventlog"):
-        logger.debug("[BOOT:SYSTEM] EventLog disabled by profile")
-    else:
-        try:
-            from nexus.system_services.event_subsystem.log.factory import create_event_log
-            from nexus.system_services.event_subsystem.log.protocol import EventLogConfig
-
-            event_log = create_event_log(EventLogConfig())
-            if event_log is not None:
-                logger.debug("[BOOT:SYSTEM] EventLog created")
-            else:
-                logger.debug("[BOOT:SYSTEM] EventLog: no backend available (graceful degrade)")
-        except Exception as exc:
-            logger.warning("[BOOT:SYSTEM] EventLog unavailable: %s", exc)
-
     # --- Scheduler Service (Issue #2195, #2360) ---
     scheduler_service: Any = None
     if not _on("scheduler"):
@@ -529,7 +512,6 @@ def _boot_system_services(
         "brick_reconciler": brick_reconciler,
         "eviction_manager": eviction_manager,
         "zone_lifecycle": zone_lifecycle,
-        "event_log": event_log,
         "scheduler_service": scheduler_service,
     }
 

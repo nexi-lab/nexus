@@ -6,11 +6,18 @@ and reference-counted.
 
     CASBackend(transport: BlobTransport)
         ├── GCSBackend      — thin: creates GCSBlobTransport, registered as "gcs"
+        ├── LocalCASBackend  — thin: creates LocalBlobTransport + features
         └── (future S3CAS)  — thin: creates S3BlobTransport
 
 The transport is INTERNAL — callers never see BlobTransport.  They see Backend.
 Thin subclasses exist for: registration, CONNECTION_ARGS, connector-specific
 features (batch reads, signed URLs, versioning).
+
+Feature DI (optional, local-only optimizations):
+    bloom_filter  — Bloom pre-check for fast content_exists() miss
+    content_cache — In-memory cache for read_content() hot path
+    stripe_lock   — Per-hash threading.Lock for metadata read-modify-write
+    on_write_callback — Write notification (e.g. Zoekt reindex)
 
 Storage layout (in transport key-space):
     cas/<hash[0:2]>/<hash[2:4]>/<hash>       # Content blob
@@ -19,7 +26,7 @@ Storage layout (in transport key-space):
 
 References:
     - Issue #1323: CAS x Backend orthogonal composition
-    - backends/cas_blob_store.py — local CAS engine (reference, NOT reused)
+    - backends/cas_blob_store.py — local CAS engine (_StripeLock source)
 """
 
 from __future__ import annotations
@@ -71,9 +78,19 @@ class CASBackend(Backend):
         transport: BlobTransport,
         *,
         backend_name: str | None = None,
+        # Feature DI — local-only optimizations, all None-safe
+        bloom_filter: Any | None = None,
+        content_cache: Any | None = None,
+        stripe_lock: Any | None = None,
+        on_write_callback: Any | None = None,
     ) -> None:
         self._transport = transport
         self._backend_name = backend_name or f"cas-{transport.transport_name}"
+        # Feature DI: None means feature disabled (cloud backends pass nothing)
+        self._bloom = bloom_filter  # nexus_fast.BloomFilter
+        self._cache = content_cache  # storage.content_cache.ContentCache
+        self._stripe_lock = stripe_lock  # cas_blob_store._StripeLock
+        self._on_write_callback = on_write_callback
 
     @property
     def name(self) -> str:
@@ -92,7 +109,10 @@ class CASBackend(Backend):
         return f"cas/{content_hash[:2]}/{content_hash[2:4]}/{content_hash}.meta"
 
     def _read_meta(self, content_hash: str) -> dict[str, Any]:
-        """Read metadata sidecar.  Returns default dict if not found."""
+        """Read metadata sidecar.  Returns default dict if not found.
+
+        When stripe_lock is injected, caller must hold the lock before calling.
+        """
         key = self._meta_key(content_hash)
         try:
             data, _ = self._transport.get_blob(key)
@@ -108,7 +128,10 @@ class CASBackend(Backend):
             ) from e
 
     def _write_meta(self, content_hash: str, meta: dict[str, Any]) -> None:
-        """Write metadata sidecar (JSON)."""
+        """Write metadata sidecar (JSON).
+
+        When stripe_lock is injected, caller must hold the lock before calling.
+        """
         key = self._meta_key(content_hash)
         try:
             self._transport.put_blob(key, json.dumps(meta).encode(), "application/json")
@@ -119,6 +142,29 @@ class CASBackend(Backend):
                 path=content_hash,
             ) from e
 
+    def _meta_update_locked(self, content_hash: str, updater: "Any") -> dict[str, Any]:
+        """Read-modify-write metadata under stripe lock (if available).
+
+        Args:
+            content_hash: Hash identifying the content.
+            updater: Callable(meta_dict) -> meta_dict that modifies metadata.
+
+        Returns:
+            The updated metadata dict.
+        """
+        if self._stripe_lock is not None:
+            lock = self._stripe_lock.acquire_for(content_hash)
+            with lock:
+                meta = self._read_meta(content_hash)
+                meta = updater(meta)
+                self._write_meta(content_hash, meta)
+                return meta
+        else:
+            meta = self._read_meta(content_hash)
+            meta = updater(meta)
+            self._write_meta(content_hash, meta)
+            return meta
+
     # === Content Operations (ObjectStoreABC) ===
 
     def write_content(
@@ -128,15 +174,30 @@ class CASBackend(Backend):
         key = self._blob_key(content_hash)
 
         try:
-            is_new = not self._transport.blob_exists(key)
+            # Blob write is idempotent (same content → same key), safe without lock
+            self._transport.put_blob(key, content)
 
-            if is_new:
-                self._transport.put_blob(key, content)
-                self._write_meta(content_hash, {"ref_count": 1, "size": len(content)})
-            else:
-                meta = self._read_meta(content_hash)
+            # Metadata update: read-modify-write under stripe lock to avoid
+            # TOCTOU race where multiple threads all see ref_count=0 and set 1.
+            def _update_meta(meta: dict[str, Any]) -> dict[str, Any]:
                 meta["ref_count"] = meta.get("ref_count", 0) + 1
-                self._write_meta(content_hash, meta)
+                meta["size"] = len(content)
+                return meta
+
+            updated = self._meta_update_locked(content_hash, _update_meta)
+            is_new = updated.get("ref_count", 0) == 1
+
+            # Feature DI: Bloom filter
+            if self._bloom is not None:
+                self._bloom.add(content_hash)
+
+            # Feature DI: Content cache
+            if self._cache is not None:
+                self._cache.put(content_hash, content)
+
+            # Feature DI: Write callback (e.g. Zoekt reindex)
+            if is_new and self._on_write_callback is not None:
+                self._on_write_callback(key)
 
             return WriteResult(content_hash=content_hash, size=len(content))
 
@@ -150,6 +211,12 @@ class CASBackend(Backend):
             ) from e
 
     def read_content(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
+        # Feature DI: cache hit → skip transport
+        if self._cache is not None:
+            cached = self._cache.get(content_hash)
+            if cached is not None:
+                return cached
+
         key = self._blob_key(content_hash)
 
         try:
@@ -164,7 +231,13 @@ class CASBackend(Backend):
                     path=content_hash,
                 )
 
-            return bytes(data)
+            content = bytes(data)
+
+            # Feature DI: cache on miss
+            if self._cache is not None:
+                self._cache.put(content_hash, content)
+
+            return content
 
         except NexusFileNotFoundError:
             raise
@@ -184,18 +257,26 @@ class CASBackend(Backend):
             if not self._transport.blob_exists(key):
                 raise NexusFileNotFoundError(content_hash)
 
-            meta = self._read_meta(content_hash)
-            ref_count = meta.get("ref_count", 1)
+            def _do_delete() -> None:
+                meta = self._read_meta(content_hash)
+                ref_count = meta.get("ref_count", 1)
 
-            if ref_count <= 1:
-                # Last reference — delete blob and metadata
-                self._transport.delete_blob(key)
-                meta_key = self._meta_key(content_hash)
-                if self._transport.blob_exists(meta_key):
-                    self._transport.delete_blob(meta_key)
+                if ref_count <= 1:
+                    # Last reference — delete blob and metadata
+                    self._transport.delete_blob(key)
+                    meta_key = self._meta_key(content_hash)
+                    if self._transport.blob_exists(meta_key):
+                        self._transport.delete_blob(meta_key)
+                else:
+                    meta["ref_count"] = ref_count - 1
+                    self._write_meta(content_hash, meta)
+
+            if self._stripe_lock is not None:
+                lock = self._stripe_lock.acquire_for(content_hash)
+                with lock:
+                    _do_delete()
             else:
-                meta["ref_count"] = ref_count - 1
-                self._write_meta(content_hash, meta)
+                _do_delete()
 
         except NexusFileNotFoundError:
             raise
@@ -210,6 +291,9 @@ class CASBackend(Backend):
 
     def content_exists(self, content_hash: str, context: "OperationContext | None" = None) -> bool:
         try:
+            # Bloom filter fast-miss: definitely not present → skip transport I/O
+            if self._bloom is not None and not self._bloom.might_exist(content_hash):
+                return False
             key = self._blob_key(content_hash)
             return self._transport.blob_exists(key)
         except Exception:

@@ -20,7 +20,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from nexus.backends.local import LocalBackend
+from nexus.backends.storage.local import LocalBackend
 from nexus.bricks.memory.service import Memory
 from nexus.bricks.rebac.entity_registry import EntityRegistry
 from nexus.storage.models import Base, MemoryModel

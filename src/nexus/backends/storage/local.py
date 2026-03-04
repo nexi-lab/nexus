@@ -1,0 +1,927 @@
+"""Unified local filesystem backend with CAS and directory support."""
+
+import errno
+import json
+import logging
+import shutil
+import time
+from collections.abc import Iterator
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+from nexus.backends.base.backend import Backend
+from nexus.backends.base.cas_blob_store import CASBlobStore
+from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
+from nexus.backends.engines.multipart import MultipartUpload
+from nexus.contracts.capabilities import ConnectorCapability
+from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
+from nexus.core.hash_fast import hash_content
+from nexus.core.object_store import WriteResult
+from nexus.storage.content_cache import ContentCache
+
+if TYPE_CHECKING:
+    from nexus_fast import BloomFilter
+
+    from nexus.contracts.types import OperationContext
+
+logger = logging.getLogger(__name__)
+
+# Default Bloom filter settings for CAS
+DEFAULT_CAS_BLOOM_CAPACITY = 100_000
+DEFAULT_CAS_BLOOM_FP_RATE = 0.01  # 1% false positive rate
+
+
+@register_connector(
+    "local",
+    description="Local filesystem with CAS deduplication",
+    category="storage",
+)
+class LocalBackend(Backend, MultipartUpload):
+    """
+    Unified local filesystem backend with CDC chunked storage.
+
+    Combines:
+    - Content-addressable storage (CAS) for automatic deduplication
+    - Content-Defined Chunking (CDC) for large files (>=16MB)
+    - Directory operations for filesystem compatibility
+
+    Storage structure:
+        root/
+        ├── cas/              # Content storage (by hash)
+        │   ├── ab/
+        │   │   └── cd/
+        │   │       ├── abcd1234...ef56        # Content file or chunk
+        │   │       ├── abcd1234...ef56.meta   # Metadata (ref count, is_chunk)
+        │   │       ├── 5678efgh...            # Chunked manifest (JSON)
+        │   │       └── 5678efgh...meta        # Manifest metadata
+        └── dirs/             # Virtual directory structure
+            ├── workspace/
+            └── projects/
+
+    Features:
+    - Content deduplication (same content stored once)
+    - CDC chunking for large files (Issue #1074)
+    - Per-chunk reference counting for cross-file deduplication
+    - Parallel chunk I/O for better throughput
+    - Reference counting for safe deletion
+    - Atomic write operations
+    - Thread-safe file locking
+    - Directory support for compatibility
+    """
+
+    _CAPABILITIES = frozenset(
+        {
+            ConnectorCapability.ROOT_PATH,
+            ConnectorCapability.PARALLEL_MMAP,
+            ConnectorCapability.MULTIPART_UPLOAD,
+            ConnectorCapability.STREAMING,
+            ConnectorCapability.BATCH_CONTENT,
+            ConnectorCapability.DIRECTORY_LISTING,
+        }
+    )
+
+    CONNECTION_ARGS: dict[str, ConnectionArg] = {
+        "root_path": ConnectionArg(
+            type=ArgType.PATH,
+            description="Root directory for storage",
+            required=True,
+            config_key="data_dir",
+        ),
+    }
+
+    _cas_bloom: "BloomFilter | None"
+
+    def __init__(
+        self,
+        root_path: str | Path,
+        content_cache: ContentCache | None = None,
+        batch_read_workers: int = 8,
+        bloom_capacity: int = DEFAULT_CAS_BLOOM_CAPACITY,
+        bloom_fp_rate: float = DEFAULT_CAS_BLOOM_FP_RATE,
+        on_write_callback: Any | None = None,
+    ):
+        """
+        Initialize local backend.
+
+        Args:
+            root_path: Root directory for storage
+            content_cache: Optional content cache for faster reads (default: None)
+            batch_read_workers: Max parallel workers for batch reads (default: 8).
+                               Use lower values (1-2) for HDDs, higher (8-16) for SSDs/NVMe.
+            bloom_capacity: Expected number of CAS entries (default: 100,000)
+            bloom_fp_rate: Target false positive rate (default: 0.01 = 1%)
+            on_write_callback: Optional callback(path: str) for write notifications
+                              (e.g., zoekt reindex). Injected by factory (Issue #1520).
+        """
+        self.root_path = Path(root_path).resolve()
+        self.cas_root = self.root_path / "cas"  # CAS content storage
+        self.dir_root = self.root_path / "dirs"  # Directory structure
+        self.content_cache = content_cache  # Optional content cache for fast reads
+        self.batch_read_workers = batch_read_workers  # Max parallel workers for batch reads
+        self._cas_bloom = None
+        self._bloom_capacity = bloom_capacity
+        self._bloom_fp_rate = bloom_fp_rate
+        self.on_write_callback = on_write_callback
+        self._ensure_roots()
+        self._cas = CASBlobStore(self.cas_root)
+        self._init_cas_bloom_filter()
+
+    @property
+    def name(self) -> str:
+        """Backend identifier name."""
+        return "local"
+
+    # --- Capability flags ---
+
+    @property
+    def has_root_path(self) -> bool:
+        """LocalBackend has a local root_path for physical storage."""
+        return True
+
+    @property
+    def supports_parallel_mmap_read(self) -> bool:
+        """LocalBackend supports Rust-accelerated parallel mmap reads."""
+        return True
+
+    def _ensure_roots(self) -> None:
+        """Create root directories if they don't exist."""
+        try:
+            self.cas_root.mkdir(parents=True, exist_ok=True)
+            self.dir_root.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            raise BackendError(
+                f"Failed to create root directories: {e}", backend="local", path=str(self.root_path)
+            ) from e
+
+    def _init_cas_bloom_filter(self) -> None:
+        """Initialize Bloom filter for fast CAS content existence checks."""
+        try:
+            from nexus_fast import BloomFilter
+
+            self._cas_bloom = BloomFilter(self._bloom_capacity, self._bloom_fp_rate)
+            self._populate_cas_bloom_from_disk()
+            logger.debug(
+                f"CAS Bloom filter initialized: capacity={self._bloom_capacity}, "
+                f"fp_rate={self._bloom_fp_rate}, memory={self._cas_bloom.memory_bytes} bytes"
+            )
+        except ImportError:
+            logger.warning("nexus_fast not available, CAS Bloom filter disabled")
+            self._cas_bloom = None
+        except Exception as e:
+            logger.warning(f"Failed to initialize CAS Bloom filter: {e}")
+            self._cas_bloom = None
+
+    def _populate_cas_bloom_from_disk(self) -> None:
+        """Populate Bloom filter from existing CAS entries on disk.
+
+        Scans the CAS directory and adds all content hashes to the Bloom filter.
+        This is called on startup to ensure the filter reflects disk state.
+        """
+        if self._cas_bloom is None or not self.cas_root.exists():
+            return
+
+        keys: list[str] = []
+        try:
+            # Scan all content files in CAS directory (excluding .meta and .lock files)
+            for content_file in self.cas_root.rglob("*"):
+                if content_file.is_file() and content_file.suffix not in (".meta", ".lock"):
+                    # The filename is the content hash
+                    content_hash = content_file.name
+                    keys.append(content_hash)
+
+            if keys:
+                self._cas_bloom.add_bulk(keys)
+                logger.info(f"CAS Bloom filter populated with {len(keys)} entries from disk")
+        except Exception as e:
+            logger.warning(f"Failed to populate CAS Bloom filter from disk: {e}")
+
+    def _cas_bloom_check(self, content_hash: str) -> bool:
+        """Check Bloom filter for possible CAS content existence.
+
+        Returns:
+            True if content might exist (need to check disk)
+            False if content definitely does not exist (skip disk I/O)
+        """
+        if self._cas_bloom is None:
+            return True  # No Bloom filter, always check disk
+        return bool(self._cas_bloom.might_exist(content_hash))
+
+    def _cas_bloom_add(self, content_hash: str) -> None:
+        """Add content hash to Bloom filter after writing to disk."""
+        if self._cas_bloom is not None:
+            self._cas_bloom.add(content_hash)
+
+    # === Content Operations (CAS) ===
+
+    def _compute_hash(self, content: bytes) -> str:
+        """Compute BLAKE3 hash of content (Rust-accelerated).
+
+        Uses BLAKE3 for ~3x faster hashing than SHA-256.
+        Falls back to SHA-256 if Rust extension is not available.
+        """
+        return hash_content(content)
+
+    def _hash_to_path(self, content_hash: str) -> Path:
+        """
+        Convert content hash to filesystem path.
+
+        Uses two-level directory structure:
+        cas/ab/cd/abcd1234...ef56
+
+        Args:
+            content_hash: SHA-256 hash as hex string
+
+        Returns:
+            Path object for content file
+        """
+        if len(content_hash) < 4:
+            raise ValueError(f"Invalid hash length: {content_hash}")
+
+        dir1 = content_hash[:2]
+        dir2 = content_hash[2:4]
+
+        return self.cas_root / dir1 / dir2 / content_hash
+
+    def _get_meta_path(self, content_hash: str) -> Path:
+        """Get path to metadata file for content."""
+        content_path = self._hash_to_path(content_hash)
+        return content_path.with_suffix(".meta")
+
+    def _read_metadata(self, content_hash: str) -> dict[str, Any]:
+        """Read metadata for content. Delegates to CASBlobStore."""
+        return self._cas.read_meta(content_hash).to_dict()
+
+    def _write_metadata(self, content_hash: str, metadata: dict[str, Any]) -> None:
+        """Write metadata for content. Delegates to CASBlobStore."""
+        from nexus.backends.base.cas_blob_store import CASMeta
+
+        self._cas.write_meta(content_hash, CASMeta.from_dict(metadata))
+
+    def write_content(
+        self, content: bytes, context: "OperationContext | None" = None
+    ) -> WriteResult:
+        """
+        Write content to CAS storage and return a WriteResult.
+
+        Large files (>=16MB by default) are automatically chunked using
+        Content-Defined Chunking (CDC) for better deduplication across
+        file versions and parallel I/O.
+
+        If content already exists, increments reference count.
+
+        Args:
+            content: File content as bytes
+            context: Operation context (ignored for local backend)
+
+        Returns:
+            WriteResult with content_hash and size.
+        """
+        content_hash = self._compute_hash(content)
+
+        is_new = self._cas.store(content_hash, content)
+
+        # Add to cache since we have the content in memory
+        if self.content_cache is not None:
+            self.content_cache.put(content_hash, content)
+
+        # Add to Bloom filter for fast future lookups
+        self._cas_bloom_add(content_hash)
+
+        # Notify search brick of write (e.g., Zoekt reindex) via callback (Issue #1520)
+        if is_new and self.on_write_callback is not None:
+            content_path = self._hash_to_path(content_hash)
+            self.on_write_callback(str(content_path))
+
+        return WriteResult(content_hash=content_hash, size=len(content))
+
+    def read_content(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
+        """Read content by its hash with retry for Windows file locking.
+
+        Transparently handles both single-blob and chunked content.
+        Chunked content is automatically reassembled from its chunks.
+
+        Uses Bloom filter for fast miss detection after checking in-memory cache.
+
+        Args:
+            content_hash: SHA-256/BLAKE3 hash as hex string
+            context: Operation context (ignored for local backend)
+
+        Returns:
+            File content as bytes.
+
+        Raises:
+            NexusFileNotFoundError: If content does not exist.
+            BackendError: If read operation fails.
+        """
+        # Check cache first for fast path
+        if self.content_cache is not None:
+            cached_content = self.content_cache.get(content_hash)
+            if cached_content is not None:
+                return cached_content
+
+        # Note: We intentionally do NOT use Bloom filter for early rejection here
+        # because another process/instance sharing the same root may have written
+        # content that isn't in our Bloom filter. The Bloom filter is only used
+        # for content_exists() optimization.
+        # TODO: Consider shared Bloom filter for multi-process scenarios.
+
+        # Cache miss - read single-blob from disk
+        content_path = self._hash_to_path(content_hash)
+
+        # Retry logic for Windows file locking issues
+        max_retries = 3
+        retry_delay = 0.01  # 10ms
+
+        for attempt in range(max_retries):
+            # Check if file exists (with retry for race conditions)
+            if not content_path.exists():
+                if attempt < max_retries - 1:
+                    # File might be mid-write - retry
+                    time.sleep(retry_delay)
+                    continue
+                # File genuinely doesn't exist
+                raise NexusFileNotFoundError(
+                    path=content_hash,
+                    message=f"CAS content not found: {content_hash}",
+                )
+
+            try:
+                # Read using mmap for better performance (immutable content files)
+                try:
+                    from nexus_fast import read_file
+
+                    content: bytes | None = read_file(str(content_path))
+                    if content is None:
+                        if attempt < max_retries - 1:
+                            time.sleep(retry_delay)
+                            continue
+                        raise NexusFileNotFoundError(
+                            path=content_hash,
+                            message=f"CAS content not found: {content_hash}",
+                        )
+                except ImportError:
+                    # Fallback to standard read
+                    content = content_path.read_bytes()
+
+                # Verify hash
+                actual_hash = self._compute_hash(content)
+                if actual_hash != content_hash:
+                    raise BackendError(
+                        f"Content hash mismatch: expected {content_hash}, got {actual_hash}",
+                        backend="local",
+                        path=content_hash,
+                    )
+
+                # Add to cache for future reads
+                if self.content_cache is not None:
+                    self.content_cache.put(content_hash, content)
+
+                return content
+
+            except (NexusFileNotFoundError, BackendError):
+                raise
+            except OSError as e:
+                # File might be locked on Windows - retry
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                raise BackendError(
+                    f"Failed to read content: {e}",
+                    backend="local",
+                    path=content_hash,
+                ) from e
+
+        # Should never reach here
+        raise BackendError(
+            f"Failed to read content after {max_retries} retries",
+            backend="local",
+            path=content_hash,
+        )
+
+    def batch_read_content(
+        self,
+        content_hashes: list[str],
+        context: "OperationContext | None" = None,
+        *,
+        contexts: "dict[str, OperationContext] | None" = None,
+    ) -> dict[str, bytes | None]:
+        """
+        Optimized batch read for local backend with parallel disk I/O.
+
+        Leverages content cache to reduce disk I/O operations, then reads
+        uncached content in parallel using a thread pool for improved performance
+        on SSDs and network storage.
+
+        Args:
+            content_hashes: List of SHA-256 hashes as hex strings
+            context: Operation context (ignored for local backend)
+            contexts: Per-hash contexts (ignored — local backend uses CAS paths)
+
+        Performance:
+            - Cache hits: O(1) per file
+            - Cache misses: Parallel disk reads (up to 8 concurrent)
+            - Expected speedup: 3-8x for batch reads with cache misses
+        """
+        result: dict[str, bytes | None] = {}
+
+        # First pass: check cache for all hashes
+        uncached_hashes = []
+        if self.content_cache is not None:
+            for content_hash in content_hashes:
+                cached_content = self.content_cache.get(content_hash)
+                if cached_content is not None:
+                    result[content_hash] = cached_content
+                else:
+                    uncached_hashes.append(content_hash)
+        else:
+            uncached_hashes = list(content_hashes)
+
+        # Second pass: read uncached content from disk in parallel
+        if uncached_hashes:
+            # Use parallel reads for better I/O throughput on SSDs
+            # Limit workers to configured max or file count, whichever is smaller
+            max_workers = min(self.batch_read_workers, len(uncached_hashes))
+
+            if max_workers == 1:
+                # Single file - no need for thread pool overhead
+                try:
+                    result[uncached_hashes[0]] = self.read_content(
+                        uncached_hashes[0], context=context
+                    )
+                except Exception:
+                    result[uncached_hashes[0]] = None
+            else:
+                # Multiple files - use parallel reads
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+
+                def read_one(content_hash: str) -> tuple[str, bytes | None]:
+                    """Read a single file, returning (hash, content) or (hash, None) on error."""
+                    try:
+                        return (content_hash, self.read_content(content_hash, context=context))
+                    except Exception:
+                        return (content_hash, None)
+
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = {executor.submit(read_one, h): h for h in uncached_hashes}
+                    for future in as_completed(futures):
+                        hash_key, file_content = future.result()
+                        result[hash_key] = file_content
+
+        return result
+
+    def stream_content(
+        self, content_hash: str, chunk_size: int = 65536, context: "OperationContext | None" = None
+    ) -> Any:
+        """
+        Stream content from disk in chunks without loading entire file into memory.
+
+        This is optimized for local filesystem to use native file streaming.
+        For very large files (GB+), this prevents memory exhaustion.
+
+        Args:
+            content_hash: SHA-256 hash as hex string
+            chunk_size: Size of each chunk in bytes (default: 8KB)
+            context: Operation context (ignored for local backend)
+        """
+        content_path = self._hash_to_path(content_hash)
+
+        # Check if file exists
+        if not content_path.exists():
+            raise NexusFileNotFoundError(
+                path=content_hash,
+                message=f"CAS content not found: {content_hash}",
+            )
+
+        # Stream file in chunks directly from disk
+        try:
+            with open(content_path, "rb") as f:
+                while True:
+                    chunk = f.read(chunk_size)
+                    if not chunk:
+                        break
+                    yield chunk
+        except OSError as e:
+            raise BackendError(
+                f"Failed to stream content: {e}", backend="local", path=content_hash
+            ) from e
+
+    def stream_range(
+        self,
+        content_hash: str,
+        start: int,
+        end: int,
+        chunk_size: int = 65536,
+        context: "OperationContext | None" = None,
+    ) -> "Iterator[bytes]":
+        """Efficient seek-based range streaming for local CAS.
+
+        Uses file seek to jump directly to the requested offset, avoiding
+        reading unnecessary bytes. Much faster than the default read+slice
+        for large files.
+
+        Args:
+            content_hash: Content hash (BLAKE3 hex)
+            start: First byte position (inclusive, 0-based)
+            end: Last byte position (inclusive, 0-based)
+            chunk_size: Size of each yielded chunk in bytes
+            context: Operation context (ignored for local backend)
+
+        Yields:
+            bytes: Chunks covering the requested range
+        """
+        content_path = self._hash_to_path(content_hash)
+        if not content_path.exists():
+            raise NexusFileNotFoundError(
+                path=content_hash,
+                message=f"CAS content not found: {content_hash}",
+            )
+
+        bytes_remaining = end - start + 1
+        try:
+            with open(content_path, "rb") as f:
+                f.seek(start)
+                while bytes_remaining > 0:
+                    chunk = f.read(min(chunk_size, bytes_remaining))
+                    if not chunk:
+                        break
+                    bytes_remaining -= len(chunk)
+                    yield chunk
+        except OSError as e:
+            raise BackendError(
+                f"Failed to stream range: {e}", backend="local", path=content_hash
+            ) from e
+
+    def write_stream(
+        self,
+        chunks: "Iterator[bytes]",
+        context: "OperationContext | None" = None,
+    ) -> WriteResult:
+        """
+        Write content from an iterator of chunks with true streaming.
+
+        Streams chunks directly to disk via CASBlobStore.store_streaming()
+        with incremental hashing -- no full-content buffer in memory.
+
+        For files above the CDC threshold (16 MB), a two-phase approach
+        is used: store as single blob first, then re-chunk via CDC.
+
+        Args:
+            chunks: Iterator yielding byte chunks
+            context: Operation context (ignored for local backend)
+
+        Returns:
+            WriteResult with content_hash and size.
+        """
+        cas_result = self._cas.store_streaming(chunks)
+        content_hash = cas_result.content_hash
+
+        # Update Bloom filter
+        self._cas_bloom_add(content_hash)
+
+        # Notify search brick of write (e.g., Zoekt reindex) via callback
+        if cas_result.is_new and self.on_write_callback is not None:
+            content_path = self._hash_to_path(content_hash)
+            self.on_write_callback(str(content_path))
+
+        return WriteResult(content_hash=content_hash, size=cas_result.size)
+
+    def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:
+        """Delete content by hash with reference counting.
+
+        Handles both single-blob and chunked content. For chunked content,
+        decrements ref_count on all chunks and deletes those with ref_count=0.
+
+        Args:
+            content_hash: SHA-256/BLAKE3 hash as hex string
+            context: Operation context (ignored for local backend)
+
+        Raises:
+            NexusFileNotFoundError: If content does not exist.
+        """
+        content_path = self._hash_to_path(content_hash)
+
+        if not content_path.exists():
+            raise NexusFileNotFoundError(
+                path=content_hash,
+                message=f"CAS content not found: {content_hash}",
+            )
+
+        # Delegate to CASBlobStore (no FileLock)
+        self._cas.release(content_hash)
+
+    def content_exists(self, content_hash: str, context: "OperationContext | None" = None) -> bool:
+        """Check if content exists.
+
+        Uses Bloom filter for fast miss detection - avoids disk I/O
+        for content that definitely doesn't exist.
+
+        Args:
+            content_hash: SHA-256 hash as hex string
+            context: Operation context (ignored for local backend)
+
+        Returns:
+            True if content exists, False otherwise.
+        """
+        # Fast path: Bloom filter says content definitely doesn't exist
+        if not self._cas_bloom_check(content_hash):
+            return False
+
+        content_path = self._hash_to_path(content_hash)
+        return content_path.exists()
+
+    def get_content_size(self, content_hash: str, context: "OperationContext | None" = None) -> int:
+        """Get content size in bytes.
+
+        For chunked content, returns the original file size (not manifest size).
+
+        Args:
+            content_hash: SHA-256/BLAKE3 hash as hex string
+            context: Operation context (ignored for local backend)
+
+        Returns:
+            Content size in bytes.
+
+        Raises:
+            NexusFileNotFoundError: If content does not exist.
+        """
+        content_path = self._hash_to_path(content_hash)
+
+        if not content_path.exists():
+            raise NexusFileNotFoundError(
+                path=content_hash,
+                message=f"CAS content not found: {content_hash}",
+            )
+
+        return content_path.stat().st_size
+
+    def get_ref_count(self, content_hash: str, context: "OperationContext | None" = None) -> int:
+        """Get reference count for content.
+
+        Args:
+            content_hash: SHA-256 hash as hex string
+            context: Operation context (ignored for local backend)
+
+        Returns:
+            Number of references to this content.
+
+        Raises:
+            NexusFileNotFoundError: If content does not exist.
+        """
+        if not self.content_exists(content_hash, context=context):
+            raise NexusFileNotFoundError(
+                path=content_hash,
+                message=f"CAS content not found: {content_hash}",
+            )
+
+        metadata = self._read_metadata(content_hash)
+        return int(metadata.get("ref_count", 0))
+
+    # === Directory Operations ===
+
+    def mkdir(
+        self,
+        path: str,
+        parents: bool = False,
+        exist_ok: bool = False,
+        context: "OperationContext | None" = None,
+    ) -> None:
+        """Create directory in virtual directory structure.
+
+        Args:
+            path: Directory path (relative to backend root)
+            parents: Create parent directories if needed (like mkdir -p)
+            exist_ok: Don't raise error if directory exists
+            context: Operation context (ignored for local backend)
+
+        Raises:
+            BackendError: If directory creation fails.
+        """
+        full_path = self.dir_root / path.lstrip("/")
+
+        try:
+            if parents:
+                full_path.mkdir(parents=True, exist_ok=exist_ok)
+            else:
+                full_path.mkdir(exist_ok=exist_ok)
+        except FileExistsError:
+            if exist_ok:
+                return
+            raise BackendError(
+                f"Directory already exists: {path}",
+                backend="local",
+                path=path,
+            ) from None
+        except FileNotFoundError:
+            raise BackendError(
+                f"Parent directory not found: {path}",
+                backend="local",
+                path=path,
+            ) from None
+
+    def rmdir(
+        self,
+        path: str,
+        recursive: bool = False,
+        context: "OperationContext | None" = None,
+    ) -> None:
+        """Remove directory from virtual directory structure.
+
+        Raises:
+            NexusFileNotFoundError: If directory does not exist.
+            BackendError: If path is not a directory or removal fails.
+        """
+        full_path = self.dir_root / path.lstrip("/")
+
+        if not full_path.exists():
+            raise NexusFileNotFoundError(
+                path=path,
+                message=f"Directory not found: {path}",
+            )
+
+        if not full_path.is_dir():
+            raise BackendError(
+                f"Path is not a directory: {path}",
+                backend="local",
+                path=path,
+            )
+
+        try:
+            if recursive:
+                shutil.rmtree(full_path)
+            else:
+                full_path.rmdir()
+        except OSError as e:
+            # Directory not empty
+            if e.errno in (errno.ENOTEMPTY, 66):  # errno.ENOTEMPTY or macOS errno 66
+                raise BackendError(
+                    f"Directory not empty: {path}",
+                    backend="local",
+                    path=path,
+                ) from e
+            raise
+
+    def is_directory(self, path: str, context: "OperationContext | None" = None) -> bool:
+        """Check if path is a directory.
+
+        Returns:
+            True if path is a directory, False otherwise.
+        """
+        full_path = self.dir_root / path.lstrip("/")
+        return full_path.exists() and full_path.is_dir()
+
+    def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:
+        """List directory contents using local filesystem."""
+        try:
+            full_path = self.dir_root / path.lstrip("/")
+            if not full_path.exists():
+                raise FileNotFoundError(f"Directory not found: {path}")
+            if not full_path.is_dir():
+                raise NotADirectoryError(f"Not a directory: {path}")
+
+            entries = []
+            for entry in full_path.iterdir():
+                name = entry.name
+                # Mark directories with trailing slash
+                if entry.is_dir():
+                    name += "/"
+                entries.append(name)
+
+            return sorted(entries)
+        except (FileNotFoundError, NotADirectoryError):
+            raise
+        except Exception as e:
+            raise OSError(f"Failed to list directory {path}: {e}") from e
+
+    # === Multipart Upload Operations (Issue #788) ===
+
+    def init_multipart(
+        self,
+        backend_path: str,
+        content_type: str = "application/octet-stream",
+        metadata: dict[str, str] | None = None,
+    ) -> str:
+        """Initialize a multipart upload by creating a temp directory.
+
+        Args:
+            backend_path: Logical path for the upload target.
+            content_type: MIME type (stored in metadata).
+            metadata: Optional key-value metadata.
+
+        Returns:
+            Upload ID (UUID-based directory name).
+        """
+        import uuid
+
+        upload_id = str(uuid.uuid4())
+        upload_dir = self.root_path / "uploads" / upload_id
+        upload_dir.mkdir(parents=True, exist_ok=True)
+
+        # Store metadata for the upload
+        meta = {"content_type": content_type, "backend_path": backend_path}
+        if metadata:
+            meta.update(metadata)
+
+        meta_path = upload_dir / "_meta.json"
+        meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+        logger.debug(f"Initialized multipart upload {upload_id} for {backend_path}")
+        return upload_id
+
+    def upload_part(
+        self,
+        backend_path: str,
+        upload_id: str,
+        part_number: int,
+        data: bytes,
+    ) -> dict[str, Any]:
+        """Write a part file to the upload temp directory.
+
+        Args:
+            backend_path: Logical path (unused for local, kept for interface).
+            upload_id: Upload ID from init_multipart().
+            part_number: 1-based part number.
+            data: Raw bytes for this chunk.
+
+        Returns:
+            Dict with "etag" (hash of the part data) and "part_number".
+        """
+        upload_dir = self.root_path / "uploads" / upload_id
+        if not upload_dir.exists():
+            raise BackendError(
+                f"Upload directory not found: {upload_id}",
+                backend="local",
+                path=backend_path,
+            )
+
+        part_path = upload_dir / f"part_{part_number:06d}"
+        part_path.write_bytes(data)
+
+        part_hash = hash_content(data)
+        return {"etag": part_hash, "part_number": part_number}
+
+    def complete_multipart(
+        self,
+        backend_path: str,
+        upload_id: str,
+        parts: list[dict[str, Any]],
+    ) -> str:
+        """Assemble all parts into final content and write via CAS.
+
+        Concatenates parts in order, writes to CAS via write_content(),
+        then cleans up the temp directory.
+
+        Args:
+            backend_path: Logical path (unused for local CAS).
+            upload_id: Upload ID from init_multipart().
+            parts: Ordered list of part dicts (from upload_part responses).
+
+        Returns:
+            Content hash of the assembled file.
+        """
+        upload_dir = self.root_path / "uploads" / upload_id
+        if not upload_dir.exists():
+            raise BackendError(
+                f"Upload directory not found: {upload_id}",
+                backend="local",
+                path=backend_path,
+            )
+
+        # Sort parts by part_number and concatenate
+        sorted_parts = sorted(parts, key=lambda p: p["part_number"])
+        assembled = bytearray()
+        for part_info in sorted_parts:
+            part_path = upload_dir / f"part_{part_info['part_number']:06d}"
+            if not part_path.exists():
+                raise BackendError(
+                    f"Part file not found: part_{part_info['part_number']:06d}",
+                    backend="local",
+                    path=backend_path,
+                )
+            assembled.extend(part_path.read_bytes())
+
+        # Write assembled content to CAS
+        content = bytes(assembled)
+        result = self.write_content(content)
+        content_hash = result.content_hash
+
+        # Clean up temp directory
+        shutil.rmtree(upload_dir, ignore_errors=True)
+        logger.debug(f"Completed multipart upload {upload_id} -> {content_hash}")
+
+        return content_hash
+
+    def abort_multipart(
+        self,
+        backend_path: str,
+        upload_id: str,
+    ) -> None:
+        """Abort a multipart upload and remove the temp directory.
+
+        Args:
+            backend_path: Logical path (unused for cleanup).
+            upload_id: Upload ID from init_multipart().
+        """
+        upload_dir = self.root_path / "uploads" / upload_id
+        if upload_dir.exists():
+            shutil.rmtree(upload_dir, ignore_errors=True)
+            logger.debug(f"Aborted multipart upload {upload_id}")

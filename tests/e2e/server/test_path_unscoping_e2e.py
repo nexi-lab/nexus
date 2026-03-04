@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
-from nexus.backends.local import LocalBackend
+from nexus.backends.storage.local import LocalBackend
 from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
 from nexus.storage.raft_metadata_store import RaftMetadataStore

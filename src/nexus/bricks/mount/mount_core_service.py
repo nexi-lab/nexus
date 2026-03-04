@@ -311,7 +311,7 @@ class MountCoreService:
         Returns:
             List of connector info dictionaries
         """
-        from nexus.backends.registry import ConnectorRegistry
+        from nexus.backends.base.registry import ConnectorRegistry
 
         if category:
             connectors = ConnectorRegistry.list_by_category(category)
@@ -338,7 +338,7 @@ class MountCoreService:
         """Check if backend needs token_manager_db auto-injection."""
         if "token_manager_db" in config:
             return False
-        from nexus.backends.registry import ConnectorRegistry
+        from nexus.backends.base.registry import ConnectorRegistry
 
         try:
             info = ConnectorRegistry.get_info(backend_type)
@@ -361,7 +361,7 @@ class MountCoreService:
         Raises:
             KeyError: If backend type is not registered
         """
-        from nexus.backends.factory import BackendFactory
+        from nexus.backends.base.factory import BackendFactory
 
         return BackendFactory.create(backend_type, config, record_store=self._gw.record_store)
 

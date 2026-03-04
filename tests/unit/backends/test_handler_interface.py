@@ -11,8 +11,8 @@ Tests the new handler interface methods added to the Backend base class:
 
 import pytest
 
-from nexus.backends.backend import HandlerStatusResponse
-from nexus.backends.local import LocalBackend
+from nexus.backends.base.backend import HandlerStatusResponse
+from nexus.backends.storage.local import LocalBackend
 
 
 class TestHandlerStatusResponse:

@@ -12,7 +12,7 @@ import os
 
 import pytest
 
-from nexus.backends.chunked_storage import CDC_THRESHOLD_BYTES
+from nexus.backends.engines.cdc import CDC_THRESHOLD_BYTES
 
 
 def encode_bytes_param(data: bytes) -> dict:

@@ -22,7 +22,7 @@ from nexus.storage.raft_metadata_store import RaftMetadataStore
 @pytest.fixture
 def nx_with_mount():
     """Create NexusFS instance with mount manager support via factory."""
-    from nexus.backends.local import LocalBackend
+    from nexus.backends.storage.local import LocalBackend
     from nexus.factory import create_nexus_fs
 
     with tempfile.TemporaryDirectory() as tmpdir:

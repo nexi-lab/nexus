@@ -16,13 +16,13 @@ class TestDescribableConformance:
     """Verify concrete types implement the Describable protocol."""
 
     def test_encrypted_backend_is_describable(self) -> None:
-        from nexus.backends.encrypted_wrapper import EncryptedStorage
+        from nexus.backends.wrappers.encrypted import EncryptedStorage
         from nexus.contracts.describable import Describable
 
         assert issubclass(EncryptedStorage, Describable)
 
     def test_compressed_backend_is_describable(self) -> None:
-        from nexus.backends.compressed_wrapper import CompressedStorage
+        from nexus.backends.wrappers.compressed import CompressedStorage
         from nexus.contracts.describable import Describable
 
         assert issubclass(CompressedStorage, Describable)

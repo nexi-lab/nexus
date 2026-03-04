@@ -150,7 +150,7 @@ class TestRenameMetadataConsistency:
 
 def _create_local_backend(tmp_path):
     """Helper to create a LocalBackend for testing."""
-    from nexus.backends.local import LocalBackend
+    from nexus.backends.storage.local import LocalBackend
 
     data_dir = tmp_path / "data"
     data_dir.mkdir(exist_ok=True)

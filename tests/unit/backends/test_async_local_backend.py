@@ -13,7 +13,7 @@ import pytest
 import pytest_asyncio
 
 # These imports will fail until we implement AsyncLocalBackend
-from nexus.backends.async_local import AsyncLocalBackend
+from nexus.backends.storage.async_local import AsyncLocalBackend
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 

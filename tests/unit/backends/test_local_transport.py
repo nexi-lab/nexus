@@ -8,7 +8,7 @@ References:
 
 import pytest
 
-from nexus.backends.blob_transport import BlobTransport
+from nexus.backends.base.blob_transport import BlobTransport
 from nexus.backends.transports.local_transport import LocalBlobTransport
 from nexus.contracts.exceptions import NexusFileNotFoundError
 

@@ -517,7 +517,7 @@ class MCPService:
 
         import httpx
 
-        from nexus.backends.service_map import ServiceMap
+        from nexus.backends.misc.service_map import ServiceMap
 
         _mcp_models = _il.import_module("nexus.bricks.mcp.models")
         MCPMount = _mcp_models.MCPMount

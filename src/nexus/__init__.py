@@ -60,9 +60,9 @@ if TYPE_CHECKING:
     # Type hints for IDE support - these don't trigger actual imports
     from pathlib import Path
 
-    from nexus.backends.backend import Backend
-    from nexus.backends.gcs import GCSBackend
-    from nexus.backends.local import LocalBackend
+    from nexus.backends.base.backend import Backend
+    from nexus.backends.storage.gcs import GCSBackend
+    from nexus.backends.storage.local import LocalBackend
     from nexus.config import NexusConfig, load_config
     from nexus.contracts.exceptions import (
         BackendError,
@@ -99,9 +99,9 @@ _lazy_imports_cache: dict[str, Any] = {}
 # Mapping of attribute names to their import paths
 _LAZY_IMPORTS = {
     # Backends
-    "Backend": ("nexus.backends.backend", "Backend"),
-    "LocalBackend": ("nexus.backends.local", "LocalBackend"),
-    "GCSBackend": ("nexus.backends.gcs", "GCSBackend"),
+    "Backend": ("nexus.backends.base.backend", "Backend"),
+    "LocalBackend": ("nexus.backends.storage.local", "LocalBackend"),
+    "GCSBackend": ("nexus.backends.storage.gcs", "GCSBackend"),
     # Config
     "NexusConfig": ("nexus.config", "NexusConfig"),
     "load_config": ("nexus.config", "load_config"),
@@ -190,8 +190,8 @@ def connect(
     from pathlib import Path
 
     # Lazy load dependencies
-    from nexus.backends.backend import Backend
-    from nexus.backends.local import LocalBackend
+    from nexus.backends.base.backend import Backend
+    from nexus.backends.storage.local import LocalBackend
     from nexus.config import NexusConfig, load_config
     from nexus.core.nexus_fs import NexusFS
     from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -229,7 +229,7 @@ def connect(
         )
 
         # RemoteBackend + RemoteMetastore — stateless proxies, server is SSOT.
-        from nexus.backends.remote import RemoteBackend
+        from nexus.backends.storage.remote import RemoteBackend
         from nexus.factory import create_nexus_fs as _create_remote_nfs
         from nexus.storage.remote_metastore import RemoteMetastore
 
@@ -265,7 +265,7 @@ def connect(
     # Create backend based on configuration
     backend: Backend
     if cfg.backend == "gcs":
-        from nexus.backends.gcs import GCSBackend
+        from nexus.backends.storage.gcs import GCSBackend
 
         if not cfg.gcs_bucket_name:
             raise ValueError(

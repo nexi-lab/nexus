@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nexus.backends.backend import FileInfo
+from nexus.backends.base.backend import FileInfo
 from nexus.contracts.exceptions import NexusFileNotFoundError
 
 # =============================================================================
@@ -25,7 +25,7 @@ class TestLocalConnectorGetFileInfo:
 
     @pytest.fixture()
     def connector(self, tmp_path: Path):
-        from nexus.backends.local_connector import LocalConnectorBackend
+        from nexus.backends.storage.local_connector import LocalConnectorBackend
 
         return LocalConnectorBackend(tmp_path)
 
@@ -111,7 +111,7 @@ class TestGCSConnectorGetFileInfo:
 
     @pytest.fixture()
     def connector(self, mock_bucket):
-        from nexus.backends.gcs_connector import GCSConnectorBackend
+        from nexus.backends.storage.gcs_connector import GCSConnectorBackend
 
         with patch.object(GCSConnectorBackend, "__init__", lambda self, *a, **kw: None):
             c = GCSConnectorBackend.__new__(GCSConnectorBackend)
@@ -210,7 +210,7 @@ class TestS3ConnectorGetFileInfo:
 
     @pytest.fixture()
     def connector(self, mock_client):
-        from nexus.backends.s3_connector import S3ConnectorBackend
+        from nexus.backends.storage.s3_connector import S3ConnectorBackend
 
         with patch.object(S3ConnectorBackend, "__init__", lambda self, *a, **kw: None):
             c = S3ConnectorBackend.__new__(S3ConnectorBackend)

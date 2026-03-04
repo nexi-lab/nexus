@@ -42,7 +42,7 @@ def test_app():
     # Create LocalBackend and NexusFS instance
     import tempfile
 
-    from nexus.backends.local import LocalBackend
+    from nexus.backends.storage.local import LocalBackend
 
     auth_tmpdir = tempfile.mkdtemp(prefix="nexus-test-auth-")
     backend = LocalBackend(root_path=auth_tmpdir)

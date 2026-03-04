@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from nexus.backends.local import LocalBackend
+from nexus.backends.storage.local import LocalBackend
 from nexus.bricks.memory.memory_with_paging import MemoryWithPaging
 from nexus.storage.models import Base
 

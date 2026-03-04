@@ -8,8 +8,8 @@ from typing import Any
 
 import pytest
 
-from nexus.backends.backend import Backend
-from nexus.backends.factory import BackendFactory
+from nexus.backends.base.backend import Backend
+from nexus.backends.base.factory import BackendFactory
 
 
 class TestBackendFactory:
@@ -77,7 +77,7 @@ class TestBackendFactoryWrap:
 
     def test_wrap_logging(self, tmp_path: Any) -> None:
         """wrap("logging") creates a LoggingBackendWrapper."""
-        from nexus.backends.logging_wrapper import LoggingBackendWrapper
+        from nexus.backends.wrappers.logging import LoggingBackendWrapper
 
         base = BackendFactory.create("local", {"data_dir": str(tmp_path / "data")})
         wrapped = BackendFactory.wrap(base, "logging")
@@ -85,7 +85,7 @@ class TestBackendFactoryWrap:
 
     def test_wrap_compressed(self, tmp_path: Any) -> None:
         """wrap("compress") creates a CompressedStorage."""
-        from nexus.backends.compressed_wrapper import CompressedStorage
+        from nexus.backends.wrappers.compressed import CompressedStorage
 
         base = BackendFactory.create("local", {"data_dir": str(tmp_path / "data")})
         wrapped = BackendFactory.wrap(base, "compress")
@@ -95,7 +95,7 @@ class TestBackendFactoryWrap:
         """wrap("encrypt") creates an EncryptedStorage."""
         from cryptography.hazmat.primitives.ciphers.aead import AESGCMSIV
 
-        from nexus.backends.encrypted_wrapper import EncryptedStorage
+        from nexus.backends.wrappers.encrypted import EncryptedStorage
 
         key = AESGCMSIV.generate_key(bit_length=256)
         base = BackendFactory.create("local", {"data_dir": str(tmp_path / "data")})
@@ -104,7 +104,7 @@ class TestBackendFactoryWrap:
 
     def test_wrap_caching(self, tmp_path: Any) -> None:
         """wrap("cache") creates a CachingBackendWrapper."""
-        from nexus.backends.caching_backend_wrapper import CachingBackendWrapper
+        from nexus.backends.wrappers.caching import CachingBackendWrapper
 
         base = BackendFactory.create("local", {"data_dir": str(tmp_path / "data")})
         wrapped = BackendFactory.wrap(base, "cache")

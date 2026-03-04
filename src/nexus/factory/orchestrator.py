@@ -6,7 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
-    from nexus.backends.backend import Backend
+    from nexus.backends.base.backend import Backend
     from nexus.bricks.workflows.protocol import WorkflowProtocol
     from nexus.contracts.types import AuditConfig
     from nexus.core.config import (

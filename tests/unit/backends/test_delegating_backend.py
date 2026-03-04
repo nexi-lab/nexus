@@ -11,8 +11,8 @@ from unittest.mock import MagicMock, PropertyMock
 
 import pytest
 
-from nexus.backends.backend import Backend
-from nexus.backends.delegating import DelegatingBackend
+from nexus.backends.base.backend import Backend
+from nexus.backends.storage.delegating import DelegatingBackend
 from nexus.core.object_store import WriteResult
 
 # ---------------------------------------------------------------------------

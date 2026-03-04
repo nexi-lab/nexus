@@ -24,7 +24,7 @@ from typing import Any
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
-from nexus.backends.backend import Backend
+from nexus.backends.base.backend import Backend
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.storage.models import FilePathModel, OperationLogModel
 

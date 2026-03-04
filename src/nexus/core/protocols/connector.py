@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from nexus.backends.backend import FileInfo, HandlerStatusResponse
+    from nexus.backends.base.backend import FileInfo, HandlerStatusResponse
     from nexus.contracts.types import OperationContext
     from nexus.core.object_store import WriteResult
     from nexus.contracts.capabilities import ConnectorCapability

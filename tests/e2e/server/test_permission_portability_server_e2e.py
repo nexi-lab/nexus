@@ -89,7 +89,7 @@ def _make_nexus_fs(data_dir: Path, *, enforce_permissions: bool = False):
     permission data persists to disk and can be shared with the server
     subprocess via NEXUS_DATABASE_URL.
     """
-    from nexus.backends.local import LocalBackend
+    from nexus.backends.storage.local import LocalBackend
     from nexus.core.config import ParseConfig, PermissionConfig
     from nexus.factory import create_nexus_fs
     from nexus.storage.raft_metadata_store import RaftMetadataStore

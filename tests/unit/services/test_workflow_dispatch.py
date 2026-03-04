@@ -147,7 +147,6 @@ class TestOnMutation:
             type=FileEventType.FILE_WRITE,
             path="/test/file.txt",
             zone_id="root",
-            revision=42,
             agent_id="agent-1",
             user_id="user-1",
             timestamp="2026-02-19T00:00:00",
@@ -177,7 +176,7 @@ class TestOnMutation:
             type=FileEventType.FILE_DELETE,
             path="/test/gone.txt",
             zone_id="root",
-            revision=43,
+            version=43,
         )
         svc.on_mutation(event)
 
@@ -198,7 +197,7 @@ class TestOnMutation:
             type=FileEventType.FILE_RENAME,
             path="/old/path.txt",
             zone_id="root",
-            revision=44,
+            version=44,
             new_path="/new/path.txt",
         )
         svc.on_mutation(event)

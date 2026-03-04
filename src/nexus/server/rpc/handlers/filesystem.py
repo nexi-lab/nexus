@@ -141,7 +141,7 @@ async def handle_read_async(
         if result:
             return result
 
-    # If not parsed and no metadata, use plain sys_read (Tier 1)
+    # Plain sys_read (Tier 1) — no metadata, no parsing
     if not parsed and not return_metadata:
         read_result: bytes = await to_thread_with_timeout(
             nexus_fs.sys_read,
@@ -150,14 +150,32 @@ async def handle_read_async(
         )
         return read_result
 
-    # For metadata and/or parsed reads, use read() (Tier 2 convenience)
+    # Read raw content via kernel
     read_result_rich: bytes | dict[str, Any] = await to_thread_with_timeout(
         nexus_fs.read,
         params.path,
         context=context,
         return_metadata=return_metadata,
-        parsed=parsed,
     )
+
+    # Apply parsed-content transform via ContentParserEngine (brick layer)
+    if parsed:
+        _engine = getattr(nexus_fs, "_parser_engine", None)
+        if _engine is not None:
+            raw = (
+                read_result_rich["content"]
+                if isinstance(read_result_rich, dict)
+                else read_result_rich
+            )
+            content, parse_info = _engine.get_parsed_content(params.path, raw)
+            if isinstance(read_result_rich, dict):
+                read_result_rich["content"] = content
+                read_result_rich["parsed"] = parse_info.get("parsed", False)
+                read_result_rich["parse_provider"] = parse_info.get("provider")
+                read_result_rich["parse_cached"] = parse_info.get("cached", False)
+            else:
+                read_result_rich = content
+
     if isinstance(read_result_rich, dict):
         read_result_rich = unscope_internal_dict(read_result_rich, ["path", "virtual_path"])
     return read_result_rich

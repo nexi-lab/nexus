@@ -452,12 +452,18 @@ def create_nexus_fs(
         _blm.register("cache", _cache_brick, protocol_name="CacheProtocol")
 
     # --- Register INTERCEPT hooks on KernelDispatch (Issue #900) ---
-    _register_vfs_hooks(nx, permission_checker=_permission_checker)
+    _register_vfs_hooks(
+        nx,
+        permission_checker=_permission_checker,
+        auto_parse=parsing.auto_parse if parsing else True,
+    )
 
     return nx
 
 
-def _register_vfs_hooks(nx: "NexusFS", *, permission_checker: Any = None) -> None:
+def _register_vfs_hooks(
+    nx: "NexusFS", *, permission_checker: Any = None, auto_parse: bool = True
+) -> None:
     """Register hooks + observers into kernel-owned dispatch (Issue #900).
 
     Kernel creates KernelDispatch with empty callback lists at init.
@@ -524,16 +530,25 @@ def _register_vfs_hooks(nx: "NexusFS", *, permission_checker: Any = None) -> Non
             )
         )
 
-    # AutoParseWriteHook (post-write: background parsing)
+    # ContentParserEngine (on-demand parsed reads — Issue #1383)
+    from nexus.bricks.parsers.engine import ContentParserEngine
+
+    nx._parser_engine = ContentParserEngine(
+        metadata=nx.metadata,
+        provider_registry=getattr(nx, "provider_registry", None),
+    )
+
+    # AutoParseWriteHook (post-write: background parsing + cache invalidation)
     parser_reg = getattr(nx, "parser_registry", None)
     parse_fn = getattr(nx, "_virtual_view_parse_fn", None)
-    if parser_reg is not None and parse_fn is not None:
+    if auto_parse and parser_reg is not None and parse_fn is not None:
         from nexus.bricks.parsers.auto_parse_hook import AutoParseWriteHook
 
         dispatch.register_intercept_write(
             AutoParseWriteHook(
                 get_parser=parser_reg.get_parser,
                 parse_fn=parse_fn,
+                metadata=nx.metadata,
             )
         )
 

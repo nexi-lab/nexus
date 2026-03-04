@@ -241,10 +241,10 @@ class ReactiveSubscriptionManager:
 
         # Read-set lookup via registry (O(1+d))
         if zone_id is not None:
-            revision = 0
+            version = event.version or 0
             affected_query_ids = self._registry.get_affected_queries(
                 write_path=event.path,
-                write_revision=revision,
+                write_revision=version,
                 zone_id=zone_id,
             )
 

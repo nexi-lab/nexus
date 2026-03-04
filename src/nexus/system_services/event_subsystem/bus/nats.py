@@ -376,6 +376,7 @@ class NatsEventBus(EventBusBase):
         zone_id: str,
         path_pattern: str,
         timeout: float = 30.0,
+        since_version: int | None = None,
     ) -> FileEvent | None:
         """Wait for a matching event using an ephemeral consumer.
 
@@ -383,6 +384,7 @@ class NatsEventBus(EventBusBase):
             zone_id: Zone ID to subscribe to.
             path_pattern: Path pattern to match.
             timeout: Maximum time to wait in seconds.
+            since_version: If set, skip events with version <= this value.
 
         Returns:
             FileEvent if matched, None on timeout.
@@ -423,6 +425,10 @@ class NatsEventBus(EventBusBase):
                     continue
 
                 if not event.matches_path_pattern(path_pattern):
+                    continue
+
+                # Skip events at or below the requested version threshold
+                if since_version is not None and (event.version or 0) <= since_version:
                     continue
 
                 return event

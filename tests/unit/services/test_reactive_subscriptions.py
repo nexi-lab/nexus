@@ -264,13 +264,13 @@ class TestFindAffectedConnections:
         path: str = "/inbox/a.txt",
         zone_id: str = "zone1",
         event_type: str = "file_write",
-        revision: int = 20,
+        version: int = 20,
     ) -> FileEvent:
         return FileEvent(
             type=event_type,
             path=path,
             zone_id=zone_id,
-            revision=revision,
+            version=version,
         )
 
     @pytest.mark.asyncio
@@ -287,7 +287,7 @@ class TestFindAffectedConnections:
         )
         await manager.register(sub, read_set=rs)
 
-        event = self._make_event(path="/inbox/a.txt", revision=20)
+        event = self._make_event(path="/inbox/a.txt", version=20)
         result = manager.find_affected_connections(event)
 
         assert result == {"conn1"}
@@ -308,7 +308,7 @@ class TestFindAffectedConnections:
         )
         await manager.register(sub, read_set=rs)
 
-        event = self._make_event(path="/inbox/new_file.txt", revision=20)
+        event = self._make_event(path="/inbox/new_file.txt", version=20)
         result = manager.find_affected_connections(event)
 
         assert result == {"conn1"}
@@ -327,7 +327,7 @@ class TestFindAffectedConnections:
         )
         await manager.register(sub, read_set=rs)
 
-        event = self._make_event(path="/docs/readme.md", revision=20)
+        event = self._make_event(path="/docs/readme.md", version=20)
         result = manager.find_affected_connections(event)
 
         assert result == set()
@@ -408,7 +408,7 @@ class TestFindAffectedConnections:
         await manager.register(sub1, read_set=rs1)
         await manager.register(sub2, read_set=rs2)
 
-        event = self._make_event(path="/inbox/a.txt", revision=20)
+        event = self._make_event(path="/inbox/a.txt", version=20)
         result = manager.find_affected_connections(event)
 
         assert result == {"conn1"}  # Deduplicated
@@ -442,13 +442,13 @@ class TestFindAffectedSubscriptions:
         path: str = "/inbox/a.txt",
         zone_id: str = "zone1",
         event_type: str = "file_write",
-        revision: int = 20,
+        version: int = 20,
     ) -> FileEvent:
         return FileEvent(
             type=event_type,
             path=path,
             zone_id=zone_id,
-            revision=revision,
+            version=version,
         )
 
     @pytest.mark.asyncio
@@ -788,7 +788,7 @@ class TestStats:
             type="file_write",
             path="/inbox/a.txt",
             zone_id="zone1",
-            revision=10,
+            version=10,
         )
         manager.find_affected_connections(event)
         manager.find_affected_connections(event)

@@ -207,6 +207,7 @@ class RedisEventBus(EventBusBase):
         zone_id: str,
         path_pattern: str,
         timeout: float = 30.0,
+        since_version: int | None = None,
     ) -> FileEvent | None:
         """Wait for an event matching the path pattern.
 
@@ -214,6 +215,7 @@ class RedisEventBus(EventBusBase):
             zone_id: Zone ID to subscribe to
             path_pattern: Path pattern to match
             timeout: Maximum time to wait in seconds
+            since_version: If set, skip events with version <= this value
 
         Returns:
             FileEvent if matched, None on timeout
@@ -224,6 +226,7 @@ class RedisEventBus(EventBusBase):
                 path_pattern,
                 timeout,
                 use_fresh_connection=False,
+                since_version=since_version,
             )
         except RuntimeError as exc:
             if "attached to a different loop" in str(exc):
@@ -233,6 +236,7 @@ class RedisEventBus(EventBusBase):
                     path_pattern,
                     timeout,
                     use_fresh_connection=True,
+                    since_version=since_version,
                 )
             raise
 
@@ -243,6 +247,7 @@ class RedisEventBus(EventBusBase):
         timeout: float,
         *,
         use_fresh_connection: bool = False,
+        since_version: int | None = None,
     ) -> FileEvent | None:
         """Internal implementation for wait_for_event."""
         channel = self._channel_name(zone_id)
@@ -293,6 +298,9 @@ class RedisEventBus(EventBusBase):
                         continue
 
                     if event.matches_path_pattern(path_pattern):
+                        # Skip events at or below the requested version threshold
+                        if since_version is not None and (event.version or 0) <= since_version:
+                            continue
                         logger.debug("Matched event: %s on %s", event.type, event.path)
                         return event
 

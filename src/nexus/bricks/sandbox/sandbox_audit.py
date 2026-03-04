@@ -58,7 +58,7 @@ class SandboxAuditLogger:
                 extra=self._creation_extra(sandbox_id, profile, agent_id),
             )
         except (OSError, ValueError, AttributeError, TypeError) as exc:
-            print(f"[audit] log_creation failed: {exc}", file=sys.stderr)
+            sys.stderr.write(f"[audit] log_creation failed: {exc}\n")
 
     def log_violation(
         self,
@@ -88,7 +88,7 @@ class SandboxAuditLogger:
                 },
             )
         except (OSError, ValueError, AttributeError, TypeError) as exc:
-            print(f"[audit] log_violation failed: {exc}", file=sys.stderr)
+            sys.stderr.write(f"[audit] log_violation failed: {exc}\n")
 
     def log_destruction(
         self,
@@ -114,7 +114,7 @@ class SandboxAuditLogger:
                 },
             )
         except (OSError, ValueError, AttributeError, TypeError) as exc:
-            print(f"[audit] log_destruction failed: {exc}", file=sys.stderr)
+            sys.stderr.write(f"[audit] log_destruction failed: {exc}\n")
 
     def log_egress_attempt(
         self,
@@ -145,7 +145,7 @@ class SandboxAuditLogger:
                 },
             )
         except (OSError, ValueError, AttributeError, TypeError) as exc:
-            print(f"[audit] log_egress_attempt failed: {exc}", file=sys.stderr)
+            sys.stderr.write(f"[audit] log_egress_attempt failed: {exc}\n")
 
     @staticmethod
     def _creation_extra(

@@ -15,9 +15,9 @@ from unittest.mock import MagicMock, PropertyMock
 
 import pytest
 
-from nexus.backends.backend import Backend
-from nexus.backends.delegating import DelegatingBackend
-from nexus.backends.registry import ConnectorRegistry
+from nexus.backends.base.backend import Backend
+from nexus.backends.base.registry import ConnectorRegistry
+from nexus.backends.storage.delegating import DelegatingBackend
 from nexus.contracts.capabilities import (
     BLOB_CONNECTOR_CAPABILITIES,
     CORE_CAPABILITIES,
@@ -296,27 +296,27 @@ class TestCapabilityProtocolMapping:
     """get_capability_protocols() returns valid mapping."""
 
     def test_mapping_is_dict(self) -> None:
-        from nexus.backends.registry import get_capability_protocols
+        from nexus.backends.base.registry import get_capability_protocols
 
         mapping = get_capability_protocols()
         assert isinstance(mapping, dict)
 
     def test_mapping_keys_are_capabilities(self) -> None:
-        from nexus.backends.registry import get_capability_protocols
+        from nexus.backends.base.registry import get_capability_protocols
 
         mapping = get_capability_protocols()
         for key in mapping:
             assert isinstance(key, ConnectorCapability)
 
     def test_mapping_values_are_types(self) -> None:
-        from nexus.backends.registry import get_capability_protocols
+        from nexus.backends.base.registry import get_capability_protocols
 
         mapping = get_capability_protocols()
         for value in mapping.values():
             assert isinstance(value, type)
 
     def test_expected_protocol_mappings(self) -> None:
-        from nexus.backends.registry import get_capability_protocols
+        from nexus.backends.base.registry import get_capability_protocols
 
         mapping = get_capability_protocols()
         assert ConnectorCapability.STREAMING in mapping

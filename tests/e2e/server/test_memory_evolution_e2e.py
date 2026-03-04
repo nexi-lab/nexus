@@ -105,7 +105,7 @@ def api_keys(db_session_factory):
 @pytest.fixture
 def app_with_auth(tmp_path, db_session_factory, api_keys):
     """Create FastAPI app with DatabaseAPIKeyAuth."""
-    from nexus.backends.local import LocalBackend
+    from nexus.backends.storage.local import LocalBackend
     from nexus.core.nexus_fs import NexusFS
     from nexus.server.fastapi_server import create_app
     from nexus.storage.record_store import SQLAlchemyRecordStore

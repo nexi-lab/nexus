@@ -1,7 +1,7 @@
 """Unit tests for service map module."""
 
-from nexus.backends.registry import ConnectorRegistry
-from nexus.backends.service_map import (
+from nexus.backends.base.registry import ConnectorRegistry
+from nexus.backends.misc.service_map import (
     SERVICE_REGISTRY,
     ServiceInfo,
     ServiceMap,

@@ -23,7 +23,7 @@ from nexus.backends.connectors.gmail.schemas import (
     ReplyEmailSchema,
     SendEmailSchema,
 )
-from nexus.backends.local import LocalBackend
+from nexus.backends.storage.local import LocalBackend
 from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
@@ -84,10 +84,12 @@ def mock_gmail_service():
 @pytest.fixture
 def gmail_backend(mock_gmail_service, tmp_path):
     """Create a Gmail backend with mocked Google service."""
-    from nexus.backends.gmail_connector import GmailConnectorBackend
+    from nexus.backends.connectors.gmail.connector import GmailConnectorBackend
 
     # Create a mock token manager
-    with patch("nexus.backends.gmail_connector.GmailConnectorBackend._register_oauth_provider"):
+    with patch(
+        "nexus.backends.connectors.gmail.connector.GmailConnectorBackend._register_oauth_provider"
+    ):
         backend = GmailConnectorBackend(
             token_manager_db=str(tmp_path / "tokens.db"),
             user_email="test@example.com",

@@ -109,7 +109,7 @@ def api_keys(pg_session_factory):
 @pytest.fixture
 def app(tmp_path, pg_engine, pg_session_factory, api_keys):
     """FastAPI app with PostgreSQL, permissions enabled, database auth."""
-    from nexus.backends.local import LocalBackend
+    from nexus.backends.storage.local import LocalBackend
     from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
     from nexus.bricks.auth.providers.discriminator import DiscriminatingAuthProvider
     from nexus.core.config import MemoryConfig, PermissionConfig

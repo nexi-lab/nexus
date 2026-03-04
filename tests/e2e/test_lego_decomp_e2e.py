@@ -79,7 +79,7 @@ def _create_factory_nexus_fs(
     Uses create_nexus_fs() from nexus.factory — the recommended entry
     point that wires ALL services (ReBAC, Permissions, VersionService, etc.).
     """
-    from nexus.backends.local import LocalBackend
+    from nexus.backends.storage.local import LocalBackend
     from nexus.factory import create_nexus_fs, create_record_store
     from tests.helpers.dict_metastore import DictMetastore
 

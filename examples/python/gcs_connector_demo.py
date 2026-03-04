@@ -232,7 +232,7 @@ def demo_with_server():
 
 def demo_local():
     """Run demo locally (no server)."""
-    from nexus.backends.gcs_connector import GCSConnectorBackend
+    from nexus.backends.storage.gcs_connector import GCSConnectorBackend
     from nexus.sdk import connect
 
     print_section("Running Local Demo (No Server)")

@@ -94,9 +94,9 @@ __all__ = [
 from pathlib import Path
 from typing import Union
 
-from nexus.backends.backend import Backend
-from nexus.backends.gcs import GCSBackend
-from nexus.backends.local import LocalBackend
+from nexus.backends.base.backend import Backend
+from nexus.backends.storage.gcs import GCSBackend
+from nexus.backends.storage.local import LocalBackend
 from nexus.bricks.rebac.domain import WILDCARD_SUBJECT, Entity, ReBACTuple
 from nexus.bricks.rebac.enforcer import PermissionEnforcer
 from nexus.bricks.rebac.manager import (

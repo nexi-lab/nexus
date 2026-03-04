@@ -314,7 +314,7 @@ def create_backend_from_config(
         >>> backend = create_backend_from_config("local", {"root_path": "./data"})
         >>> backend = create_backend_from_config("gcs", {"bucket": "my-bucket"})
     """
-    from nexus.backends.factory import BackendFactory
+    from nexus.backends.base.factory import BackendFactory
 
     return BackendFactory.create(backend_type, config, record_store=record_store)
 

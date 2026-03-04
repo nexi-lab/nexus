@@ -2,7 +2,7 @@
 
 import pytest
 
-from nexus.backends.passthrough import POINTER_PREFIX, PassthroughBackend
+from nexus.backends.storage.passthrough import POINTER_PREFIX, PassthroughBackend
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 

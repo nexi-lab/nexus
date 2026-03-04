@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from nexus.backends.local import LocalBackend
+from nexus.backends.storage.local import LocalBackend
 from nexus.contracts.exceptions import NexusFileNotFoundError
 
 # =============================================================================
@@ -43,7 +43,7 @@ class TestDefaultBackendStreamRange:
 
         # Use the base class default impl by calling through the method
         # (LocalBackend overrides, so we test the base default explicitly)
-        from nexus.backends.backend import Backend
+        from nexus.backends.base.backend import Backend
 
         chunks = list(Backend.stream_range(backend, content_hash, 0, 9))
         result = b"".join(chunks)
@@ -54,7 +54,7 @@ class TestDefaultBackendStreamRange:
         data = b"0123456789ABCDEF"
         content_hash = _write_content(backend, data)
 
-        from nexus.backends.backend import Backend
+        from nexus.backends.base.backend import Backend
 
         chunks = list(Backend.stream_range(backend, content_hash, 5, 10))
         result = b"".join(chunks)
@@ -65,7 +65,7 @@ class TestDefaultBackendStreamRange:
         data = b"0123456789ABCDEF"
         content_hash = _write_content(backend, data)
 
-        from nexus.backends.backend import Backend
+        from nexus.backends.base.backend import Backend
 
         chunks = list(Backend.stream_range(backend, content_hash, 10, 15))
         result = b"".join(chunks)
@@ -151,7 +151,7 @@ class TestLocalBackendStreamRange:
 class TestAsyncLocalBackendStreamRange:
     @pytest.mark.asyncio
     async def test_first_10_bytes(self, tmp_path: Path) -> None:
-        from nexus.backends.async_local import AsyncLocalBackend
+        from nexus.backends.storage.async_local import AsyncLocalBackend
 
         backend = AsyncLocalBackend(root_path=tmp_path)
         await backend.initialize()
@@ -168,7 +168,7 @@ class TestAsyncLocalBackendStreamRange:
 
     @pytest.mark.asyncio
     async def test_middle_range(self, tmp_path: Path) -> None:
-        from nexus.backends.async_local import AsyncLocalBackend
+        from nexus.backends.storage.async_local import AsyncLocalBackend
 
         backend = AsyncLocalBackend(root_path=tmp_path)
         await backend.initialize()
@@ -185,7 +185,7 @@ class TestAsyncLocalBackendStreamRange:
 
     @pytest.mark.asyncio
     async def test_nonexistent_hash_raises(self, tmp_path: Path) -> None:
-        from nexus.backends.async_local import AsyncLocalBackend
+        from nexus.backends.storage.async_local import AsyncLocalBackend
 
         backend = AsyncLocalBackend(root_path=tmp_path)
         await backend.initialize()

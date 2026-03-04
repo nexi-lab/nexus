@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from nexus.backends.local import LocalBackend
+from nexus.backends.storage.local import LocalBackend
 from nexus.bricks.mcp.server import create_mcp_server
 from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs

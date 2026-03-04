@@ -51,7 +51,7 @@ class MockBackend:
     # ── lifecycle ──
 
     def connect(self, context=None):
-        from nexus.backends.backend import HandlerStatusResponse
+        from nexus.backends.base.backend import HandlerStatusResponse
 
         return HandlerStatusResponse(success=True)
 
@@ -59,7 +59,7 @@ class MockBackend:
         pass
 
     def check_connection(self, context=None):
-        from nexus.backends.backend import HandlerStatusResponse
+        from nexus.backends.base.backend import HandlerStatusResponse
 
         return HandlerStatusResponse(success=True)
 

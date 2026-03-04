@@ -34,7 +34,7 @@ from nexus.lib.permission_utils import check_permission
 from .change_log_store import ChangeLogEntry, ChangeLogStore
 
 if TYPE_CHECKING:
-    from nexus.backends.backend import FileInfo
+    from nexus.backends.base.backend import FileInfo
     from nexus.contracts.types import OperationContext
     from nexus.system_services.gateway import NexusFSGateway
 
@@ -888,7 +888,7 @@ class SyncService:
         )
 
         try:
-            from nexus.backends.cache_mixin import SyncResult as CacheSyncResult
+            from nexus.backends.wrappers.cache_mixin import SyncResult as CacheSyncResult
 
             # Determine path for cache sync
             cache_sync_path = None

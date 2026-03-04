@@ -26,7 +26,7 @@ script_dir = Path(__file__).parent
 src_dir = script_dir.parent / "src"
 sys.path.insert(0, str(src_dir))
 
-from nexus.backends.local import LocalBackend  # noqa: E402
+from nexus.backends.storage.local import LocalBackend  # noqa: E402
 from nexus.core.nexus_fs import NexusFS  # noqa: E402
 from nexus.storage.raft_metadata_store import RaftMetadataStore  # noqa: E402
 

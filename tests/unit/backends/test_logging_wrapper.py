@@ -21,8 +21,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.backends.backend import HandlerStatusResponse
-from nexus.backends.logging_wrapper import LoggingBackendWrapper
+from nexus.backends.base.backend import HandlerStatusResponse
+from nexus.backends.wrappers.logging import LoggingBackendWrapper
 from nexus.core.object_store import WriteResult
 from tests.unit.backends.wrapper_test_helpers import make_leaf
 
@@ -70,7 +70,7 @@ class TestContentOperationLogs:
         self, logged: LoggingBackendWrapper, mock_inner: MagicMock, caplog: pytest.LogCaptureFixture
     ) -> None:
         mock_inner.read_content.return_value = b"content"
-        with caplog.at_level(logging.DEBUG, logger="nexus.backends.logging_wrapper"):
+        with caplog.at_level(logging.DEBUG, logger="nexus.backends.wrappers.logging"):
             result = logged.read_content("abcdef123456")
         assert result == b"content"
         assert len(caplog.records) == 1
@@ -85,7 +85,7 @@ class TestContentOperationLogs:
         self, logged: LoggingBackendWrapper, mock_inner: MagicMock, caplog: pytest.LogCaptureFixture
     ) -> None:
         mock_inner.write_content.return_value = WriteResult(content_hash="hash123456ab", size=11)
-        with caplog.at_level(logging.DEBUG, logger="nexus.backends.logging_wrapper"):
+        with caplog.at_level(logging.DEBUG, logger="nexus.backends.wrappers.logging"):
             result = logged.write_content(b"hello world")
         assert isinstance(result, WriteResult)
         assert len(caplog.records) == 1
@@ -98,7 +98,7 @@ class TestContentOperationLogs:
         self, logged: LoggingBackendWrapper, mock_inner: MagicMock, caplog: pytest.LogCaptureFixture
     ) -> None:
         mock_inner.delete_content.return_value = None
-        with caplog.at_level(logging.DEBUG, logger="nexus.backends.logging_wrapper"):
+        with caplog.at_level(logging.DEBUG, logger="nexus.backends.wrappers.logging"):
             logged.delete_content("abcdef123456")
         assert len(caplog.records) == 1
         assert "delete_content" in caplog.records[0].message
@@ -107,7 +107,7 @@ class TestContentOperationLogs:
         self, logged: LoggingBackendWrapper, mock_inner: MagicMock, caplog: pytest.LogCaptureFixture
     ) -> None:
         mock_inner.content_exists.return_value = True
-        with caplog.at_level(logging.DEBUG, logger="nexus.backends.logging_wrapper"):
+        with caplog.at_level(logging.DEBUG, logger="nexus.backends.wrappers.logging"):
             result = logged.content_exists("abcdef123456")
         assert result is True
         assert len(caplog.records) == 1
@@ -131,7 +131,7 @@ class TestBatchReadLogs:
             "hash2": None,
             "hash3": b"data3",
         }
-        with caplog.at_level(logging.DEBUG, logger="nexus.backends.logging_wrapper"):
+        with caplog.at_level(logging.DEBUG, logger="nexus.backends.wrappers.logging"):
             results = logged.batch_read_content(["hash1", "hash2", "hash3"])
         assert results["hash1"] == b"data1"
         assert results["hash2"] is None
@@ -153,7 +153,7 @@ class TestDirectoryOperationLogs:
         self, logged: LoggingBackendWrapper, mock_inner: MagicMock, caplog: pytest.LogCaptureFixture
     ) -> None:
         mock_inner.mkdir.return_value = None
-        with caplog.at_level(logging.DEBUG, logger="nexus.backends.logging_wrapper"):
+        with caplog.at_level(logging.DEBUG, logger="nexus.backends.wrappers.logging"):
             logged.mkdir("/test/dir", parents=True)
         assert len(caplog.records) == 1
         assert "mkdir" in caplog.records[0].message
@@ -163,7 +163,7 @@ class TestDirectoryOperationLogs:
         self, logged: LoggingBackendWrapper, mock_inner: MagicMock, caplog: pytest.LogCaptureFixture
     ) -> None:
         mock_inner.rmdir.return_value = None
-        with caplog.at_level(logging.DEBUG, logger="nexus.backends.logging_wrapper"):
+        with caplog.at_level(logging.DEBUG, logger="nexus.backends.wrappers.logging"):
             logged.rmdir("/test/dir", recursive=True)
         assert len(caplog.records) == 1
         assert "rmdir" in caplog.records[0].message
@@ -182,7 +182,7 @@ class TestLifecycleLogs:
         self, logged: LoggingBackendWrapper, mock_inner: MagicMock, caplog: pytest.LogCaptureFixture
     ) -> None:
         mock_inner.connect.return_value = HandlerStatusResponse(success=True)
-        with caplog.at_level(logging.INFO, logger="nexus.backends.logging_wrapper"):
+        with caplog.at_level(logging.INFO, logger="nexus.backends.wrappers.logging"):
             result = logged.connect()
         assert result.success
         assert len(caplog.records) == 1
@@ -192,7 +192,7 @@ class TestLifecycleLogs:
     def test_disconnect_logs_info(
         self, logged: LoggingBackendWrapper, mock_inner: MagicMock, caplog: pytest.LogCaptureFixture
     ) -> None:
-        with caplog.at_level(logging.INFO, logger="nexus.backends.logging_wrapper"):
+        with caplog.at_level(logging.INFO, logger="nexus.backends.wrappers.logging"):
             logged.disconnect()
         assert len(caplog.records) == 1
         assert caplog.records[0].levelno == logging.INFO
@@ -211,7 +211,7 @@ class TestCheckConnectionLogs:
         self, logged: LoggingBackendWrapper, mock_inner: MagicMock, caplog: pytest.LogCaptureFixture
     ) -> None:
         mock_inner.check_connection.return_value = HandlerStatusResponse(success=True)
-        with caplog.at_level(logging.DEBUG, logger="nexus.backends.logging_wrapper"):
+        with caplog.at_level(logging.DEBUG, logger="nexus.backends.wrappers.logging"):
             result = logged.check_connection()
         assert result.success
         assert len(caplog.records) == 1
@@ -248,7 +248,7 @@ class TestDelegationCorrectness:
     ) -> None:
         mock_inner.read_content.side_effect = RuntimeError("not found")
         with (
-            caplog.at_level(logging.DEBUG, logger="nexus.backends.logging_wrapper"),
+            caplog.at_level(logging.DEBUG, logger="nexus.backends.wrappers.logging"),
             pytest.raises(RuntimeError, match="not found"),
         ):
             logged.read_content("missing-hash")
@@ -272,7 +272,7 @@ class TestExceptionLogging:
     ) -> None:
         mock_inner.read_content.side_effect = RuntimeError("connection lost")
         with (
-            caplog.at_level(logging.DEBUG, logger="nexus.backends.logging_wrapper"),
+            caplog.at_level(logging.DEBUG, logger="nexus.backends.wrappers.logging"),
             pytest.raises(RuntimeError, match="connection lost"),
         ):
             logged.read_content("some-hash")
@@ -288,7 +288,7 @@ class TestExceptionLogging:
     ) -> None:
         mock_inner.write_content.side_effect = OSError("disk full")
         with (
-            caplog.at_level(logging.DEBUG, logger="nexus.backends.logging_wrapper"),
+            caplog.at_level(logging.DEBUG, logger="nexus.backends.wrappers.logging"),
             pytest.raises(OSError, match="disk full"),
         ):
             logged.write_content(b"data")
@@ -300,7 +300,7 @@ class TestExceptionLogging:
     ) -> None:
         mock_inner.connect.side_effect = ConnectionError("refused")
         with (
-            caplog.at_level(logging.INFO, logger="nexus.backends.logging_wrapper"),
+            caplog.at_level(logging.INFO, logger="nexus.backends.wrappers.logging"),
             pytest.raises(ConnectionError, match="refused"),
         ):
             logged.connect()

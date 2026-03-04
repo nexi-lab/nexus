@@ -16,12 +16,12 @@ from pathlib import Path
 
 import pytest
 
-from nexus.backends.caching_backend_wrapper import (
+from nexus.backends.storage.local import LocalBackend
+from nexus.backends.wrappers.caching import (
     CacheStrategy,
     CacheWrapperConfig,
     CachingBackendWrapper,
 )
-from nexus.backends.local import LocalBackend
 from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs

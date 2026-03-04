@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nexus.backends.local_connector import LocalConnectorBackend
+from nexus.backends.storage.local_connector import LocalConnectorBackend
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.object_store import WriteResult
 

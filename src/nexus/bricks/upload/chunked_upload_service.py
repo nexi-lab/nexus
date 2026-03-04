@@ -15,7 +15,7 @@ import logging
 import uuid
 import zlib
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import (
@@ -30,7 +30,7 @@ from nexus.storage.models.upload_session import UploadSessionModel
 from .upload_session import UploadSession, UploadStatus
 
 if TYPE_CHECKING:
-    from nexus.backends.multipart_upload_mixin import MultipartUploadMixin
+    from nexus.backends.engines.multipart import MultipartUpload
     from nexus.core.protocols.connector import ConnectorProtocol
     from nexus.storage.record_store import RecordStoreABC
 
@@ -81,7 +81,7 @@ class ChunkedUploadService:
 
     Architecture:
         - Session state is persisted in SQLAlchemy (survives server restarts)
-        - Chunk data flows through backend's MultipartUploadMixin if available
+        - Chunk data flows through backend's MultipartUpload interface if available
         - Falls back to temp directory assembly for non-multipart backends
         - Checksum verification per-chunk (sha256, md5, crc32)
         - TTL-based expiration with background sweep + lazy cleanup
@@ -160,7 +160,7 @@ class ChunkedUploadService:
             backend_upload_id: str | None = None
             backend_name: str | None = None
             if self._supports_multipart():
-                mixin: MultipartUploadMixin = self._backend  # type: ignore[assignment]
+                mixin = cast("MultipartUpload", self._backend)
                 backend_upload_id = await asyncio.to_thread(
                     mixin.init_multipart,
                     target_path,
@@ -350,7 +350,7 @@ class ChunkedUploadService:
         # Abort backend multipart if active
         if session.backend_upload_id and self._supports_multipart():
             try:
-                mixin: MultipartUploadMixin = self._backend  # type: ignore[assignment]
+                mixin = cast("MultipartUpload", self._backend)
                 await asyncio.to_thread(
                     mixin.abort_multipart,
                     session.target_path,
@@ -459,9 +459,9 @@ class ChunkedUploadService:
 
     def _supports_multipart(self) -> bool:
         """Check if backend supports native multipart uploads."""
-        from nexus.backends.multipart_upload_mixin import MultipartUploadMixin
+        from nexus.backends.engines.multipart import MultipartUpload
 
-        return isinstance(self._backend, MultipartUploadMixin)
+        return isinstance(self._backend, MultipartUpload)
 
     def _get_or_create_session_lock(self, upload_id: str) -> asyncio.Lock:
         """Get or create a per-session asyncio.Lock."""
@@ -573,7 +573,7 @@ class ChunkedUploadService:
             Part info dict with at least "etag" and "part_number".
         """
         if self._supports_multipart() and session.backend_upload_id:
-            mixin: MultipartUploadMixin = self._backend  # type: ignore[assignment]
+            mixin = cast("MultipartUpload", self._backend)
             return await asyncio.to_thread(
                 mixin.upload_part,
                 session.target_path,
@@ -607,7 +607,7 @@ class ChunkedUploadService:
         content_hash: str
 
         if self._supports_multipart() and session.backend_upload_id:
-            mixin: MultipartUploadMixin = self._backend  # type: ignore[assignment]
+            mixin = cast("MultipartUpload", self._backend)
             content_hash = await asyncio.to_thread(
                 mixin.complete_multipart,
                 session.target_path,
@@ -668,7 +668,7 @@ class ChunkedUploadService:
         # Abort backend multipart if active
         if session.backend_upload_id and self._supports_multipart():
             try:
-                mixin: MultipartUploadMixin = self._backend  # type: ignore[assignment]
+                mixin = cast("MultipartUpload", self._backend)
                 await asyncio.to_thread(
                     mixin.abort_multipart,
                     session.target_path,

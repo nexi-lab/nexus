@@ -28,7 +28,7 @@ Note:
         from nexus.cache.dragonfly import DragonflyCacheStore
 """
 
-from nexus.backends.caching_backend_wrapper import (
+from nexus.backends.wrappers.caching import (
     CacheStrategy,
     CacheWrapperConfig,
     CachingBackendWrapper,

@@ -47,7 +47,7 @@ class TestEncryptedDescribe:
     """describe() should prepend encryption layer info."""
 
     def test_single_wrapper(self) -> None:
-        from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
+        from nexus.backends.wrappers.encrypted import EncryptedStorage, EncryptedStorageConfig
 
         leaf = make_leaf("local")
         config = EncryptedStorageConfig(key=_generate_key(), metrics_enabled=False)
@@ -55,7 +55,7 @@ class TestEncryptedDescribe:
         assert wrapper.describe() == "encrypt(AES-256-GCM-SIV) → local"
 
     def test_chain_with_logging(self) -> None:
-        from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
+        from nexus.backends.wrappers.encrypted import EncryptedStorage, EncryptedStorageConfig
 
         leaf = make_leaf("s3")
         leaf.describe.return_value = "logging → s3"
@@ -64,7 +64,7 @@ class TestEncryptedDescribe:
         assert wrapper.describe() == "encrypt(AES-256-GCM-SIV) → logging → s3"
 
     def test_is_describable(self) -> None:
-        from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
+        from nexus.backends.wrappers.encrypted import EncryptedStorage, EncryptedStorageConfig
 
         leaf = make_leaf("local")
         config = EncryptedStorageConfig(key=_generate_key(), metrics_enabled=False)
@@ -81,7 +81,7 @@ class TestEncryptedRoundtrip:
     """Write + read should return identical plaintext."""
 
     def test_basic_roundtrip(self) -> None:
-        from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
+        from nexus.backends.wrappers.encrypted import EncryptedStorage, EncryptedStorageConfig
 
         mock, storage = make_storage_mock()
         config = EncryptedStorageConfig(key=_generate_key(), metrics_enabled=False)
@@ -96,7 +96,7 @@ class TestEncryptedRoundtrip:
         assert read_resp == plaintext
 
     def test_binary_roundtrip(self) -> None:
-        from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
+        from nexus.backends.wrappers.encrypted import EncryptedStorage, EncryptedStorageConfig
 
         mock, storage = make_storage_mock()
         config = EncryptedStorageConfig(key=_generate_key(), metrics_enabled=False)
@@ -110,7 +110,7 @@ class TestEncryptedRoundtrip:
         assert read_resp == plaintext
 
     def test_large_content_roundtrip(self) -> None:
-        from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
+        from nexus.backends.wrappers.encrypted import EncryptedStorage, EncryptedStorageConfig
 
         mock, storage = make_storage_mock()
         config = EncryptedStorageConfig(key=_generate_key(), metrics_enabled=False)
@@ -133,7 +133,7 @@ class TestEncryptedCASDedup:
     """Same plaintext + same key should produce same ciphertext → same hash."""
 
     def test_deterministic_encryption(self) -> None:
-        from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
+        from nexus.backends.wrappers.encrypted import EncryptedStorage, EncryptedStorageConfig
 
         mock, storage = make_storage_mock()
         key = _generate_key()
@@ -146,7 +146,7 @@ class TestEncryptedCASDedup:
         assert hash1 == hash2, "GCM-SIV should produce identical ciphertext for identical plaintext"
 
     def test_different_plaintext_different_hash(self) -> None:
-        from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
+        from nexus.backends.wrappers.encrypted import EncryptedStorage, EncryptedStorageConfig
 
         mock, storage = make_storage_mock()
         config = EncryptedStorageConfig(key=_generate_key(), metrics_enabled=False)
@@ -166,7 +166,7 @@ class TestEncryptedErrors:
     """Decryption errors should fail loudly."""
 
     def test_corrupted_ciphertext(self) -> None:
-        from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
+        from nexus.backends.wrappers.encrypted import EncryptedStorage, EncryptedStorageConfig
 
         mock, storage = make_storage_mock()
         config = EncryptedStorageConfig(key=_generate_key(), metrics_enabled=False)
@@ -185,7 +185,7 @@ class TestEncryptedErrors:
             wrapper.read_content(content_hash)
 
     def test_wrong_key_fails(self) -> None:
-        from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
+        from nexus.backends.wrappers.encrypted import EncryptedStorage, EncryptedStorageConfig
 
         mock, storage = make_storage_mock()
         key1 = _generate_key()
@@ -207,7 +207,7 @@ class TestEncryptedErrors:
             wrapper2.read_content(content_hash)
 
     def test_inner_read_error_propagated(self) -> None:
-        from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
+        from nexus.backends.wrappers.encrypted import EncryptedStorage, EncryptedStorageConfig
 
         leaf = make_leaf("local")
         leaf.read_content.side_effect = NexusFileNotFoundError("disk I/O error")
@@ -227,7 +227,7 @@ class TestEncryptedPassthrough:
     """passthrough_unencrypted=True should handle pre-encryption content."""
 
     def test_passthrough_reads_unencrypted_content(self) -> None:
-        from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
+        from nexus.backends.wrappers.encrypted import EncryptedStorage, EncryptedStorageConfig
 
         mock, storage = make_storage_mock()
         config = EncryptedStorageConfig(
@@ -247,7 +247,7 @@ class TestEncryptedPassthrough:
         assert read_resp == raw
 
     def test_no_passthrough_rejects_unencrypted_content(self) -> None:
-        from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
+        from nexus.backends.wrappers.encrypted import EncryptedStorage, EncryptedStorageConfig
 
         mock, storage = make_storage_mock()
         config = EncryptedStorageConfig(
@@ -276,7 +276,7 @@ class TestEncryptedEmptyContent:
     """Empty content should encrypt/decrypt correctly."""
 
     def test_empty_roundtrip(self) -> None:
-        from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
+        from nexus.backends.wrappers.encrypted import EncryptedStorage, EncryptedStorageConfig
 
         mock, storage = make_storage_mock()
         config = EncryptedStorageConfig(key=_generate_key(), metrics_enabled=False)
@@ -298,7 +298,7 @@ class TestEncryptedDelegation:
     """Non-content ops should pass through to inner backend."""
 
     def test_mkdir_delegates(self) -> None:
-        from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
+        from nexus.backends.wrappers.encrypted import EncryptedStorage, EncryptedStorageConfig
 
         leaf = make_leaf("local")
         leaf.mkdir.return_value = None
@@ -310,7 +310,7 @@ class TestEncryptedDelegation:
         assert result is None
 
     def test_rmdir_delegates(self) -> None:
-        from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
+        from nexus.backends.wrappers.encrypted import EncryptedStorage, EncryptedStorageConfig
 
         leaf = make_leaf("local")
         leaf.rmdir.return_value = None
@@ -331,13 +331,13 @@ class TestEncryptedConfig:
     """Config validation at construction time."""
 
     def test_invalid_key_length_raises(self) -> None:
-        from nexus.backends.encrypted_wrapper import EncryptedStorageConfig
+        from nexus.backends.wrappers.encrypted import EncryptedStorageConfig
 
         with pytest.raises(ValueError, match="key.*32 bytes"):
             EncryptedStorageConfig(key=b"too-short")
 
     def test_valid_key_accepted(self) -> None:
-        from nexus.backends.encrypted_wrapper import EncryptedStorageConfig
+        from nexus.backends.wrappers.encrypted import EncryptedStorageConfig
 
         config = EncryptedStorageConfig(key=_generate_key())
         assert len(config.key) == 32
@@ -352,7 +352,7 @@ class TestEncryptedBatch:
     """batch_read_content should decrypt each item individually."""
 
     def test_batch_read_decrypts_all(self) -> None:
-        from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
+        from nexus.backends.wrappers.encrypted import EncryptedStorage, EncryptedStorageConfig
 
         mock, storage = make_storage_mock()
         config = EncryptedStorageConfig(key=_generate_key(), metrics_enabled=False)
@@ -370,7 +370,7 @@ class TestEncryptedBatch:
         assert results[h3] == b"gamma"
 
     def test_batch_read_handles_missing(self) -> None:
-        from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
+        from nexus.backends.wrappers.encrypted import EncryptedStorage, EncryptedStorageConfig
 
         mock, storage = make_storage_mock()
         config = EncryptedStorageConfig(key=_generate_key(), metrics_enabled=False)

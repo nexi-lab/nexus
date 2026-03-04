@@ -2,7 +2,7 @@
 
 import os
 
-from nexus.backends.chunked_storage import CDC_THRESHOLD_BYTES
+from nexus.backends.engines.cdc import CDC_THRESHOLD_BYTES
 
 
 class TestChunkedStorageE2E:
@@ -45,7 +45,7 @@ class TestChunkedStorageE2E:
 
     def test_large_file_chunks_created(self, nexus_fs) -> None:
         """Test that individual chunks are created in CAS."""
-        from nexus.backends.chunked_storage import ChunkedReference
+        from nexus.backends.engines.cdc import ChunkedReference
 
         large_content = os.urandom(CDC_THRESHOLD_BYTES + 1024 * 1024)
 
@@ -66,7 +66,7 @@ class TestChunkedStorageE2E:
 
     def test_large_file_delete_cleans_chunks(self, nexus_fs) -> None:
         """Test that deleting chunked files cleans up chunks."""
-        from nexus.backends.chunked_storage import ChunkedReference
+        from nexus.backends.engines.cdc import ChunkedReference
 
         large_content = os.urandom(CDC_THRESHOLD_BYTES + 100_000)
 
@@ -209,7 +209,7 @@ class TestChunkedStorageCDCBehavior:
 
     def test_similar_files_share_chunks(self, nexus_fs) -> None:
         """Test that similar files (with common prefix) share some chunks."""
-        from nexus.backends.chunked_storage import ChunkedReference
+        from nexus.backends.engines.cdc import ChunkedReference
 
         # Create two files with identical prefix but different suffix
         common_prefix = os.urandom(CDC_THRESHOLD_BYTES)

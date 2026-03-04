@@ -75,7 +75,7 @@ def _boot_wired_services(
             # Mount a LocalConnector at /agents for IPC file storage
             from pathlib import Path
 
-            from nexus.backends.local_connector import LocalConnectorBackend
+            from nexus.backends.storage.local_connector import LocalConnectorBackend
 
             _ipc_data_dir = Path(getattr(nx, "_data_dir", "data")) / "ipc"
             _ipc_data_dir.mkdir(parents=True, exist_ok=True)

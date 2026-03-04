@@ -51,8 +51,8 @@ from nexus.cache.settings import CacheSettings
 from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
 
 if TYPE_CHECKING:
-    from nexus.backends.backend import Backend
-    from nexus.backends.caching_backend_wrapper import CacheWrapperConfig, CachingBackendWrapper
+    from nexus.backends.base.backend import Backend
+    from nexus.backends.wrappers.caching import CacheWrapperConfig, CachingBackendWrapper
     from nexus.cache.dragonfly import DragonflyClient
     from nexus.cache.protocols import RecordStoreProtocol
 
@@ -333,14 +333,14 @@ class CacheFactory:
         if not self._initialized:
             raise RuntimeError("CacheFactory not initialized. Call initialize() first.")
 
-        from nexus.backends.caching_backend_wrapper import CacheWrapperConfig, CachingBackendWrapper
+        from nexus.backends.wrappers.caching import CacheWrapperConfig, CachingBackendWrapper
 
         effective_config = config or CacheWrapperConfig()
 
         # Optional logging layer (Recursive Wrapping — PART 16, Issue #1449)
         wrapped_inner: Backend = inner
         if enable_logging:
-            from nexus.backends.logging_wrapper import LoggingBackendWrapper
+            from nexus.backends.wrappers.logging import LoggingBackendWrapper
 
             wrapped_inner = LoggingBackendWrapper(inner=inner)
 

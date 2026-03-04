@@ -12,7 +12,7 @@ import tempfile
 from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
-from nexus.backends.local import LocalBackend
+from nexus.backends.storage.local import LocalBackend
 from nexus.core.router import (
     AccessDeniedError,
     InvalidPathError,

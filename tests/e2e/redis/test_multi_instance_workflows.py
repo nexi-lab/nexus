@@ -107,7 +107,7 @@ async def redis_client():
 @pytest.fixture
 async def nexus_fs(temp_nexus_dir, db_path_agent1, shared_event_bus):
     """Create a NexusFS instance with event bus and Raft-based locks."""
-    from nexus.backends.passthrough import PassthroughBackend
+    from nexus.backends.storage.passthrough import PassthroughBackend
 
     backend = PassthroughBackend(base_path=temp_nexus_dir)
     # Each agent gets its own sled database (sled uses exclusive file locks)
@@ -147,7 +147,7 @@ async def second_nexus_fs(temp_nexus_dir, db_path_agent2, shared_event_bus):
     shared between instances without a Raft cluster. For shared lock tests,
     see test_raft_distributed.py (Docker-based).
     """
-    from nexus.backends.passthrough import PassthroughBackend
+    from nexus.backends.storage.passthrough import PassthroughBackend
 
     backend = PassthroughBackend(base_path=temp_nexus_dir)
     # Each agent gets its own sled database (sled uses exclusive file locks)

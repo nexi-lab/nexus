@@ -12,7 +12,7 @@ import threading
 from collections.abc import Iterator
 from typing import Any, cast
 
-from nexus.backends.backend import Backend, HandlerStatusResponse
+from nexus.backends.base.backend import Backend, HandlerStatusResponse
 from nexus.bricks.sandbox.isolation._pool import IsolatedPool
 from nexus.bricks.sandbox.isolation.config import IsolationConfig
 from nexus.bricks.sandbox.isolation.errors import (

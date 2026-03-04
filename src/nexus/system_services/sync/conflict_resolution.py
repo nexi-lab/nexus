@@ -23,7 +23,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from nexus.backends.backend import FileInfo
+    from nexus.backends.base.backend import FileInfo
 
     from .change_log_store import ChangeLogEntry
 

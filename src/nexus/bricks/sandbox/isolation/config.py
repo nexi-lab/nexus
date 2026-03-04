@@ -10,7 +10,7 @@ class IsolationConfig:
     """Immutable configuration for IsolatedBackend.
 
     Attributes:
-        backend_module: Dotted import path (e.g. ``"nexus.backends.gdrive_connector"``).
+        backend_module: Dotted import path (e.g. ``"nexus.backends.connectors.gdrive.connector"``).
         backend_class: Class name inside *backend_module*.
         backend_kwargs: Keyword arguments forwarded to the backend constructor.
             All values must be picklable.  Stored internally as a read-only

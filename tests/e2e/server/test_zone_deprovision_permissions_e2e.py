@@ -58,7 +58,7 @@ def app_with_auth():
         conn.commit()
 
     # Create NexusFS via factory
-    from nexus.backends.local import LocalBackend
+    from nexus.backends.storage.local import LocalBackend
     from nexus.factory import create_nexus_fs
     from nexus.storage.raft_metadata_store import RaftMetadataStore
     from nexus.storage.record_store import SQLAlchemyRecordStore

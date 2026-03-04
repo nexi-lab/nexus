@@ -55,7 +55,7 @@ def async_registry(sqlite_registry: AgentRegistry) -> AsyncAgentRegistry:
 @pytest.fixture()
 def real_router(tmp_path: Path) -> PathRouter:
     """Real PathRouter with a local backend mount."""
-    from nexus.backends.local import LocalBackend
+    from nexus.backends.storage.local import LocalBackend
     from tests.helpers.dict_metastore import DictMetastore
 
     storage = tmp_path / "storage"
@@ -332,7 +332,7 @@ class TestServerLifespanWiring:
         """
         from unittest.mock import MagicMock
 
-        from nexus.backends.local import LocalBackend
+        from nexus.backends.storage.local import LocalBackend
         from nexus.bricks.rebac.async_namespace_manager import AsyncNamespaceManager
         from nexus.contracts.protocols.namespace_manager import NamespaceManagerProtocol
         from nexus.core.async_router import AsyncVFSRouter

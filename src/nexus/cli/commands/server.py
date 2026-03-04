@@ -1283,7 +1283,7 @@ def serve(
                 # Create /workspace directory using direct filesystem access
                 # We need to bypass the nx object since permissions are enforced
                 # Instead, use the underlying backend directly
-                from nexus.backends.local import LocalBackend
+                from nexus.backends.storage.local import LocalBackend
 
                 data_dir = backend_config.data_dir
                 backend = LocalBackend(data_dir)

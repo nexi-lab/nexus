@@ -34,7 +34,7 @@ def test_provision_user() -> bool:
 
     # Initialize NexusFS with LocalBackend and in-memory database
     print("1. Initializing NexusFS...")
-    from nexus.backends.local import LocalBackend
+    from nexus.backends.storage.local import LocalBackend
 
     backend = LocalBackend(root_path="/tmp/nexus_test")
     # Use in-memory SQLite database for testing

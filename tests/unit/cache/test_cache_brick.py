@@ -149,7 +149,7 @@ class TestCacheBrickBackendWrapper:
 
     def test_create_backend_wrapper(self) -> None:
         """create_caching_wrapper should return a CachingBackendWrapper."""
-        from nexus.backends.caching_backend_wrapper import CachingBackendWrapper
+        from nexus.backends.wrappers.caching import CachingBackendWrapper
         from nexus.cache.brick import CacheBrick
 
         brick = CacheBrick()

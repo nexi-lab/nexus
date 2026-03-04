@@ -4,8 +4,8 @@ import inspect
 
 import pytest
 
-from nexus.backends.backend import Backend
-from nexus.backends.registry import (
+from nexus.backends.base.backend import Backend
+from nexus.backends.base.registry import (
     ArgType,
     ConnectionArg,
     ConnectorInfo,
@@ -73,7 +73,7 @@ class DummyBackend(Backend):
 def clear_registry():
     """Clear registry before and after each test."""
     import nexus.backends as _backends
-    import nexus.backends.service_map as _sm
+    import nexus.backends.misc.service_map as _sm
 
     # Ensure optional backends are registered before saving
     _backends._register_optional_backends()
@@ -308,7 +308,7 @@ class TestBuiltinConnectorRegistration:
     def test_local_backend_registered_with_correct_info(self):
         """Test LocalBackend registration info."""
         # Re-register local for this test
-        from nexus.backends.local import LocalBackend
+        from nexus.backends.storage.local import LocalBackend
 
         # LocalBackend should be registered via decorator
         if ConnectorRegistry.is_registered("local"):
@@ -452,7 +452,7 @@ class TestConnectionArgs:
 
     def test_builtin_connectors_have_connection_args(self):
         """Test that builtin connectors have CONNECTION_ARGS defined."""
-        from nexus.backends.local import LocalBackend
+        from nexus.backends.storage.local import LocalBackend
 
         # LocalBackend should have CONNECTION_ARGS
         assert hasattr(LocalBackend, "CONNECTION_ARGS")
@@ -598,7 +598,7 @@ class TestExhaustiveBackendMappings:
 
     def test_local_backend_config_key_mapping(self):
         """Test LocalBackend maps data_dir -> root_path (backward compat)."""
-        from nexus.backends.local import LocalBackend
+        from nexus.backends.storage.local import LocalBackend
 
         ConnectorRegistry.register("local", LocalBackend)
         info = ConnectorRegistry.get_info("local")
@@ -607,7 +607,7 @@ class TestExhaustiveBackendMappings:
 
     def test_passthrough_backend_config_key_mapping(self):
         """Test PassthroughBackend maps data_dir -> base_path (backward compat)."""
-        from nexus.backends.passthrough import PassthroughBackend
+        from nexus.backends.storage.passthrough import PassthroughBackend
 
         ConnectorRegistry.register("passthrough", PassthroughBackend)
         info = ConnectorRegistry.get_info("passthrough")

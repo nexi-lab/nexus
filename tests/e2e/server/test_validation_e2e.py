@@ -27,7 +27,7 @@ from nexus.bricks.sandbox.sandbox_provider import CodeExecutionResult
 
 def _create_test_app(tmp_path: Path, enforce_permissions: bool = False):
     """Create a FastAPI app with real NexusFS for testing."""
-    from nexus.backends.local import LocalBackend
+    from nexus.backends.storage.local import LocalBackend
     from nexus.core.config import PermissionConfig
     from nexus.factory import create_nexus_fs
     from nexus.server.fastapi_server import create_app

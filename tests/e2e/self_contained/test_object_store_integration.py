@@ -9,7 +9,7 @@ tests exercise LocalBackend directly through the ABC interface.
 
 import pytest
 
-from nexus.backends.local import LocalBackend
+from nexus.backends.storage.local import LocalBackend
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.object_store import ObjectStoreABC
 

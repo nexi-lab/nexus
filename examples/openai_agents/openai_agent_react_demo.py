@@ -112,7 +112,7 @@ def connect_to_nexus(tenant_id: str = "openai-agents-demo", agent_id: str = "rea
         from pathlib import Path
 
         from nexus import NexusFS
-        from nexus.backends.local import LocalBackend
+        from nexus.backends.storage.local import LocalBackend
 
         data_dir = Path(f"/tmp/nexus-{tenant_id}")
         backend = LocalBackend(root_path=data_dir)

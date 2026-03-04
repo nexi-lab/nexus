@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from nexus.backends.registry import ConnectorInfo
+from nexus.backends.base.registry import ConnectorInfo
 from nexus.contracts.capabilities import ConnectorCapability
 from nexus.server.api.v2.routers.connectors import router
 
@@ -50,7 +50,7 @@ def _make_connector_info(
 class TestListConnectors:
     """GET /api/v2/connectors endpoint."""
 
-    @patch("nexus.backends.registry.ConnectorRegistry")
+    @patch("nexus.backends.base.registry.ConnectorRegistry")
     def test_returns_empty_list(self, mock_registry: MagicMock) -> None:
         mock_registry.list_all.return_value = []
         resp = _client.get("/api/v2/connectors")
@@ -58,7 +58,7 @@ class TestListConnectors:
         data = resp.json()
         assert data["connectors"] == []
 
-    @patch("nexus.backends.registry.ConnectorRegistry")
+    @patch("nexus.backends.base.registry.ConnectorRegistry")
     def test_returns_connectors_with_capabilities(self, mock_registry: MagicMock) -> None:
         mock_registry.list_all.return_value = [
             _make_connector_info(
@@ -93,7 +93,7 @@ class TestListConnectors:
         assert gmail["name"] == "gmail_connector"
         assert gmail["user_scoped"] is True
 
-    @patch("nexus.backends.registry.ConnectorRegistry")
+    @patch("nexus.backends.base.registry.ConnectorRegistry")
     def test_capabilities_are_sorted(self, mock_registry: MagicMock) -> None:
         mock_registry.list_all.return_value = [
             _make_connector_info(
@@ -120,7 +120,7 @@ class TestListConnectors:
 class TestGetConnectorCapabilities:
     """GET /api/v2/connectors/{name}/capabilities endpoint."""
 
-    @patch("nexus.backends.registry.ConnectorRegistry")
+    @patch("nexus.backends.base.registry.ConnectorRegistry")
     def test_returns_capabilities(self, mock_registry: MagicMock) -> None:
         mock_registry.is_registered.return_value = True
         mock_registry.get_info.return_value = _make_connector_info(
@@ -135,14 +135,14 @@ class TestGetConnectorCapabilities:
         assert data["name"] == "s3_connector"
         assert set(data["capabilities"]) == {"signed_url", "multipart_upload"}
 
-    @patch("nexus.backends.registry.ConnectorRegistry")
+    @patch("nexus.backends.base.registry.ConnectorRegistry")
     def test_not_found_returns_404(self, mock_registry: MagicMock) -> None:
         mock_registry.is_registered.return_value = False
         resp = _client.get("/api/v2/connectors/nonexistent/capabilities")
         assert resp.status_code == 404
         assert "not found" in resp.json()["detail"]
 
-    @patch("nexus.backends.registry.ConnectorRegistry")
+    @patch("nexus.backends.base.registry.ConnectorRegistry")
     def test_empty_capabilities(self, mock_registry: MagicMock) -> None:
         mock_registry.is_registered.return_value = True
         mock_registry.get_info.return_value = _make_connector_info(

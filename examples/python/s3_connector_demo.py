@@ -235,7 +235,7 @@ def demo_with_server():
 
 def demo_local():
     """Run demo locally (no server)."""
-    from nexus.backends.s3_connector import S3ConnectorBackend
+    from nexus.backends.storage.s3_connector import S3ConnectorBackend
     from nexus.sdk import connect
 
     print_section("Running Local Demo (No Server)")

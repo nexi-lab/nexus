@@ -4,7 +4,7 @@ import tempfile
 
 import pytest
 
-from nexus.backends.local import LocalBackend
+from nexus.backends.storage.local import LocalBackend
 from nexus.contracts.exceptions import AccessDeniedError, InvalidPathError, PathNotMountedError
 from nexus.core.router import PathRouter
 from tests.helpers.dict_metastore import DictMetastore

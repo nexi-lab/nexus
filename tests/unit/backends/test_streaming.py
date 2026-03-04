@@ -7,10 +7,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.backends.backend import Backend
-from nexus.backends.cas_blob_store import WriteResult
-from nexus.backends.local import LocalBackend
-from nexus.backends.path_backend import PathBackend
+from nexus.backends.base.backend import Backend
+from nexus.backends.base.cas_blob_store import WriteResult
+from nexus.backends.base.path_backend import PathBackend
+from nexus.backends.storage.local import LocalBackend
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.core.hash_fast import create_hasher, hash_content
 from nexus.core.object_store import WriteResult as ObjectStoreWriteResult
@@ -266,7 +266,7 @@ class TestCASBlobStoreStreaming:
 
     @pytest.fixture
     def cas(self, tmp_path: Path):
-        from nexus.backends.cas_blob_store import CASBlobStore
+        from nexus.backends.base.cas_blob_store import CASBlobStore
 
         cas_root = tmp_path / "cas"
         cas_root.mkdir()
@@ -548,7 +548,7 @@ class TestReadRangeRPC:
 
     def test_read_range_basic(self, tmp_path: Path) -> None:
         """Test basic read_range functionality."""
-        from nexus.backends.local import LocalBackend
+        from nexus.backends.storage.local import LocalBackend
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
@@ -574,7 +574,7 @@ class TestReadRangeRPC:
 
     def test_read_range_validates_parameters(self, tmp_path: Path) -> None:
         """Test read_range validates start/end parameters."""
-        from nexus.backends.local import LocalBackend
+        from nexus.backends.storage.local import LocalBackend
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
@@ -601,7 +601,7 @@ class TestReadRangeRPC:
 
     def test_read_range_empty_range(self, tmp_path: Path) -> None:
         """Test read_range with empty range (start == end)."""
-        from nexus.backends.local import LocalBackend
+        from nexus.backends.storage.local import LocalBackend
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
@@ -623,7 +623,7 @@ class TestReadRangeRPC:
 
     def test_read_range_beyond_file_size(self, tmp_path: Path) -> None:
         """Test read_range when range extends beyond file size."""
-        from nexus.backends.local import LocalBackend
+        from nexus.backends.storage.local import LocalBackend
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
@@ -651,7 +651,7 @@ class TestStatRPC:
 
     def test_stat_returns_metadata_without_content(self, tmp_path: Path) -> None:
         """Test stat() returns file metadata without reading file content."""
-        from nexus.backends.local import LocalBackend
+        from nexus.backends.storage.local import LocalBackend
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
@@ -680,7 +680,7 @@ class TestStatRPC:
 
     def test_stat_file_not_found(self, tmp_path: Path) -> None:
         """Test stat() raises error for non-existent file."""
-        from nexus.backends.local import LocalBackend
+        from nexus.backends.storage.local import LocalBackend
         from nexus.contracts.exceptions import NexusFileNotFoundError
 
         data_dir = tmp_path / "data"
@@ -701,7 +701,7 @@ class TestStatRPC:
 
     def test_stat_directory(self, tmp_path: Path) -> None:
         """Test stat() on a directory."""
-        from nexus.backends.local import LocalBackend
+        from nexus.backends.storage.local import LocalBackend
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"

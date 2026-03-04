@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from nexus.backends.backend import Backend
+from nexus.backends.base.backend import Backend
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.object_store import WriteResult
 from nexus.core.protocols.connector import (
@@ -98,7 +98,7 @@ def mock_backend() -> _MockBackend:
 
 @pytest.fixture()
 def local_backend(tmp_path: Any) -> Backend:
-    from nexus.backends.local import LocalBackend
+    from nexus.backends.storage.local import LocalBackend
 
     return LocalBackend(root_path=str(tmp_path / "nexus-data"))
 
@@ -109,7 +109,7 @@ def backend(request: Any, tmp_path: Any) -> Backend:
     if request.param == "mock":
         return _MockBackend()
     elif request.param == "local":
-        from nexus.backends.local import LocalBackend
+        from nexus.backends.storage.local import LocalBackend
 
         return LocalBackend(root_path=str(tmp_path / "nexus-data"))
     raise ValueError(f"Unknown backend: {request.param}")

@@ -182,7 +182,7 @@ def make_test_nexus(
     if backend is None:
         from pathlib import Path
 
-        from nexus.backends.local import LocalBackend
+        from nexus.backends.storage.local import LocalBackend
 
         data_dir = Path(tmp_path) / "data"
         data_dir.mkdir(exist_ok=True)

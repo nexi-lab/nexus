@@ -77,7 +77,7 @@ class TestDIFlowsToConstructors:
         """GCSBackend accepts operation_timeout/upload_timeout from profile."""
         import inspect
 
-        from nexus.backends.gcs import GCSBackend
+        from nexus.backends.storage.gcs import GCSBackend
 
         sig = inspect.signature(GCSBackend.__init__)
         assert "operation_timeout" in sig.parameters

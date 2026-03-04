@@ -394,7 +394,7 @@ def sync_service_with_pg(pg_session_factory):
 @pytest.fixture()
 def local_connector_mount(tmp_path):
     """Create a real LocalConnectorBackend with test files."""
-    from nexus.backends.local_connector import LocalConnectorBackend
+    from nexus.backends.storage.local_connector import LocalConnectorBackend
 
     mount_dir = tmp_path / "external_mount"
     mount_dir.mkdir()

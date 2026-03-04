@@ -23,8 +23,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.backends.cas_backend import CASBackend
-from nexus.backends.cas_blob_store import _StripeLock
+from nexus.backends.base.cas_backend import CASBackend
+from nexus.backends.base.cas_blob_store import _StripeLock
 from nexus.backends.transports.local_transport import LocalBlobTransport
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content

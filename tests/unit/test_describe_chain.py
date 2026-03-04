@@ -14,15 +14,15 @@ import pytest
 # Reusable test key for EncryptedStorage tests
 from cryptography.hazmat.primitives.ciphers.aead import AESGCMSIV
 
-from nexus.backends.backend import Backend
-from nexus.backends.caching_backend_wrapper import (
+from nexus.backends.base.backend import Backend
+from nexus.backends.storage.delegating import DelegatingBackend
+from nexus.backends.wrappers.caching import (
     CacheWrapperConfig,
     CachingBackendWrapper,
 )
-from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
-from nexus.backends.delegating import DelegatingBackend
-from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
-from nexus.backends.logging_wrapper import LoggingBackendWrapper
+from nexus.backends.wrappers.compressed import CompressedStorage, CompressedStorageConfig
+from nexus.backends.wrappers.encrypted import EncryptedStorage, EncryptedStorageConfig
+from nexus.backends.wrappers.logging import LoggingBackendWrapper
 from nexus.contracts.describable import Describable
 
 _TEST_KEY = AESGCMSIV.generate_key(bit_length=256)

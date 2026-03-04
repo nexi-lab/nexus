@@ -16,8 +16,8 @@ from pathlib import Path
 
 import pytest
 
-from nexus.backends.local_connector import LocalConnectorBackend
-from nexus.backends.registry import create_connector
+from nexus.backends.base.registry import create_connector
+from nexus.backends.storage.local_connector import LocalConnectorBackend
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.contracts.types import OperationContext
 
@@ -86,7 +86,7 @@ class TestRegistryIntegration:
 
     def test_registry_name(self, local_folder: Path):
         """Should be registered as 'local_connector'."""
-        from nexus.backends.registry import ConnectorRegistry
+        from nexus.backends.base.registry import ConnectorRegistry
 
         # Trigger lazy registration
         create_connector("local_connector", local_path=str(local_folder))

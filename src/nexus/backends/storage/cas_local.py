@@ -42,7 +42,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Default Bloom filter settings
+# Default Bloom filter settings (tuned for typical CAS workloads)
 DEFAULT_CAS_BLOOM_CAPACITY = 100_000
 DEFAULT_CAS_BLOOM_FP_RATE = 0.01
 

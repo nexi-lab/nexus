@@ -176,12 +176,11 @@ class TestBootRemoteServices:
 
 
 class TestServiceMethodsEventEntries:
-    """Verify event/locking methods are in the dispatch table."""
+    """Verify event/locking methods retired from dispatch table (Phase 2-5)."""
 
-    def test_event_methods_registered(self):
-        """lock, unlock, extend_lock, wait_for_changes are in SERVICE_METHODS."""
+    def test_event_methods_not_in_service_methods(self):
+        """lock, unlock, extend_lock, wait_for_changes retired — callers use events_service directly."""
         from nexus.factory.service_routing import SERVICE_METHODS
 
         for method in ("lock", "unlock", "extend_lock", "wait_for_changes"):
-            assert method in SERVICE_METHODS, f"{method} missing from SERVICE_METHODS"
-            assert SERVICE_METHODS[method] == "events_service"
+            assert method not in SERVICE_METHODS, f"{method} should not be in SERVICE_METHODS"

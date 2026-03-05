@@ -5,12 +5,41 @@ core/ -> services/ import dependency. These are stateless functions
 with no service-layer dependencies.
 """
 
+import contextlib
+import json
 import logging
 from typing import Any
 
 from nexus.contracts.types import OperationContext
 
 logger = logging.getLogger(__name__)
+
+
+def compute_agent_path(agent_id: str, user_id: str, zone_id: str) -> str:
+    """Compute the NexusFS directory path for an agent.
+
+    Agent IDs may contain a comma-separated prefix (e.g. "user_id,agent_name").
+    This extracts the agent name part and builds the canonical path.
+
+    Returns:
+        Path like ``/zone/{zone_id}/user/{user_id}/agent/{agent_name}``.
+    """
+    agent_name_part = agent_id.split(",", 1)[1] if "," in agent_id else agent_id
+    return f"/zone/{zone_id}/user/{user_id}/agent/{agent_name_part}"
+
+
+def parse_entity_metadata(entity_metadata_str: str | None) -> dict[str, Any]:
+    """Safely parse JSON entity metadata string into a dict.
+
+    Returns an empty dict on None input or parse failure.
+    """
+    if not entity_metadata_str:
+        return {}
+    with contextlib.suppress(json.JSONDecodeError, TypeError):
+        result = json.loads(entity_metadata_str)
+        if isinstance(result, dict):
+            return result
+    return {}
 
 
 def extract_zone_id(context: dict[str, Any] | Any | None) -> str | None:

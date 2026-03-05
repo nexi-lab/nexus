@@ -261,6 +261,10 @@ class SystemServices:
     # Scheduler — task scheduling service (Issue #2195, #2360)
     scheduler_service: Any = None
 
+    # Agent Runtime — process lifecycle + tool dispatch (Issue #2761)
+    process_manager: Any = None
+    tool_dispatcher: Any = None
+
 
 # ---------------------------------------------------------------------------
 # BrickServices — Tier 2: optional, silent on failure

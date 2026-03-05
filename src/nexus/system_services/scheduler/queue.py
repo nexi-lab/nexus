@@ -113,6 +113,51 @@ WHERE id = (
 RETURNING {_TASK_COLUMNS}
 """
 
+_SQL_DEQUEUE_BATCH = """
+UPDATE scheduled_tasks
+SET status = 'running', started_at = now()
+WHERE id = ANY(
+    SELECT id FROM scheduled_tasks
+    WHERE status = 'queued'
+    ORDER BY effective_tier ASC, enqueued_at ASC
+    FOR UPDATE SKIP LOCKED
+    LIMIT $1
+)
+RETURNING
+    id::text, agent_id, executor_id, task_type,
+    payload::text, priority_tier, effective_tier,
+    enqueued_at, status, deadline,
+    boost_amount, boost_tiers, boost_reservation_id,
+    started_at, completed_at, error_message,
+    zone_id, idempotency_key,
+    request_state, priority_class, executor_state, estimated_service_time
+"""
+
+_SQL_DEQUEUE_BATCH_HRRN = """
+UPDATE scheduled_tasks
+SET status = 'running', started_at = now()
+WHERE id = ANY(
+    SELECT id FROM scheduled_tasks
+    WHERE status = 'queued'
+      AND executor_state IN ('CONNECTED', 'IDLE', 'UNKNOWN')
+    ORDER BY
+        priority_class ASC,
+        (EXTRACT(EPOCH FROM (now() - enqueued_at)) + estimated_service_time)
+            / GREATEST(estimated_service_time, 0.001) DESC,
+        enqueued_at ASC
+    FOR UPDATE SKIP LOCKED
+    LIMIT $1
+)
+RETURNING
+    id::text, agent_id, executor_id, task_type,
+    payload::text, priority_tier, effective_tier,
+    enqueued_at, status, deadline,
+    boost_amount, boost_tiers, boost_reservation_id,
+    started_at, completed_at, error_message,
+    zone_id, idempotency_key,
+    request_state, priority_class, executor_state, estimated_service_time
+"""
+
 _SQL_COMPLETE = """
 UPDATE scheduled_tasks
 SET status = $2, completed_at = now(), error_message = $3
@@ -209,6 +254,21 @@ WHERE status = 'queued'
   AND priority_class = 'background'
   AND EXTRACT(EPOCH FROM (now() - enqueued_at)) > $1
 RETURNING id
+"""
+
+_SQL_EVICT_LOWEST_PRIORITY = """
+UPDATE scheduled_tasks
+SET status = 'cancelled'
+WHERE id = ANY(
+    SELECT id FROM scheduled_tasks
+    WHERE status = 'queued'
+      AND (COALESCE((payload->>'worker_pid'), '') = ''
+           OR NOT (payload->>'worker_pid') = ANY($2::text[]))
+    ORDER BY effective_tier DESC, enqueued_at ASC
+    FOR UPDATE SKIP LOCKED
+    LIMIT $1
+)
+RETURNING id::text
 """
 
 _SQL_COUNT_PENDING = """
@@ -386,6 +446,30 @@ class TaskQueue:
             return None
         return _row_to_task(row)
 
+    async def dequeue_batch(
+        self,
+        conn: Any,
+        batch_size: int,
+        *,
+        use_hrrn: bool = False,
+    ) -> list[ScheduledTask]:
+        """Dequeue up to batch_size tasks atomically.
+
+        Uses FOR UPDATE SKIP LOCKED to safely handle concurrent workers.
+        All dequeued tasks are atomically set to 'running'.
+
+        Args:
+            conn: Database connection.
+            batch_size: Maximum number of tasks to dequeue.
+            use_hrrn: Use HRRN scoring instead of classic tier ordering.
+        """
+        if batch_size <= 0:
+            return []
+
+        sql = _SQL_DEQUEUE_BATCH_HRRN if use_hrrn else _SQL_DEQUEUE_BATCH
+        rows = await conn.fetch(sql, batch_size)
+        return [_row_to_task(row) for row in rows]
+
     async def complete(
         self,
         conn: Any,
@@ -468,6 +552,30 @@ class TaskQueue:
         else:
             row = await conn.fetchrow(_SQL_COUNT_PENDING)
         return row["cnt"] if row else 0
+
+    async def evict_lowest_priority(
+        self,
+        conn: Any,
+        count: int,
+        *,
+        immune_pids: list[str] | None = None,
+    ) -> list[str]:
+        """Evict (cancel) up to `count` lowest-priority queued tasks.
+
+        Tasks whose payload.worker_pid is in `immune_pids` are skipped.
+        Returns list of evicted task IDs.
+
+        Args:
+            conn: Database connection.
+            count: Maximum number of tasks to evict.
+            immune_pids: Worker PIDs that are immune from eviction.
+        """
+        if count <= 0:
+            return []
+
+        pids = immune_pids or []
+        rows = await conn.fetch(_SQL_EVICT_LOWEST_PRIORITY, count, pids)
+        return [row["id"] for row in rows]
 
     async def get_queue_metrics(
         self, conn: Any, *, zone_id: str | None = None

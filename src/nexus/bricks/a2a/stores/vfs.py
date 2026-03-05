@@ -91,6 +91,7 @@ class VFSTaskStore:
         *,
         zone_id: str,
         agent_id: str | None = None,
+        expected_version: int | None = None,  # noqa: ARG002
     ) -> None:
         effective_agent_id = agent_id or _UNASSIGNED_AGENT
         _validate_id(effective_agent_id, "agent_id")

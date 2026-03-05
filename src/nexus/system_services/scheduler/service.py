@@ -372,6 +372,55 @@ class SchedulerService:
 
         return task
 
+    async def dequeue_batch(
+        self,
+        batch_size: int,
+        *,
+        executor_id: str | None = None,  # noqa: ARG002
+    ) -> list[ScheduledTask]:
+        """Dequeue up to batch_size tasks atomically for fan-out.
+
+        Uses HRRN dequeue when enabled, falls back to classic ordering.
+        Updates fair-share counters for all dequeued tasks.
+
+        Args:
+            batch_size: Maximum number of tasks to dequeue.
+            executor_id: Reserved for future per-executor batch dequeue.
+        """
+        async with self.pool.acquire() as conn:
+            tasks = await self._queue.dequeue_batch(
+                conn,
+                batch_size,
+                use_hrrn=self._use_hrrn,
+            )
+
+        for task in tasks:
+            self._fair_share.record_start(task.agent_id)
+
+        return tasks
+
+    async def evict_lowest_priority(
+        self,
+        count: int,
+        *,
+        immune_pids: list[str] | None = None,
+    ) -> list[str]:
+        """Evict up to `count` lowest-priority queued tasks.
+
+        Tasks whose worker_pid is in immune_pids are skipped (worker immunity).
+        Returns list of evicted task IDs.
+
+        Args:
+            count: Maximum number of tasks to evict.
+            immune_pids: Worker PIDs immune from eviction (copilot-delegated workers).
+        """
+        async with self.pool.acquire() as conn:
+            return await self._queue.evict_lowest_priority(
+                conn,
+                count,
+                immune_pids=immune_pids,
+            )
+
     async def run_aging_sweep(self) -> int:
         """Run one aging sweep cycle."""
         now = datetime.now(UTC)

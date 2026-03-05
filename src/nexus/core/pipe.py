@@ -53,6 +53,10 @@ class PipeClosedError(PipeError):
     """Operation on a closed pipe."""
 
 
+class PipeTimeoutError(PipeError):
+    """Pipe operation timed out."""
+
+
 class PipeNotFoundError(PipeError):
     """No pipe registered at the given path."""
 
@@ -111,13 +115,17 @@ class RingBuffer:
         self._not_full = asyncio.Event()
         self._not_full.set()  # initially not full
 
-    async def write(self, data: bytes, *, blocking: bool = True) -> int:
+    async def write(
+        self, data: bytes, *, blocking: bool = True, timeout: float | None = None
+    ) -> int:
         """Write a message to the buffer.
 
         Args:
             data: Message bytes. Empty bytes (b"") are silently ignored.
             blocking: If True, wait until space is available.
                       If False, raise PipeFullError immediately.
+            timeout: Maximum seconds to wait (None = wait forever).
+                     Only meaningful when blocking=True.
 
         Returns:
             Number of bytes written.
@@ -125,6 +133,7 @@ class RingBuffer:
         Raises:
             PipeClosedError: Buffer is closed.
             PipeFullError: Non-blocking and buffer is full.
+            PipeTimeoutError: Timed out waiting for space.
             ValueError: Message larger than total capacity.
         """
         if self._closed:
@@ -141,8 +150,16 @@ class RingBuffer:
             if not blocking:
                 raise PipeFullError(f"buffer full ({self._size}/{self._capacity} bytes)")
             self._not_full.clear()
-            # Wait for space or close
-            await self._not_full.wait()
+            # Re-check after clear to avoid lost-wakeup race
+            if self._size + msg_len <= self._capacity:
+                break
+            if timeout is not None:
+                try:
+                    await asyncio.wait_for(self._not_full.wait(), timeout=timeout)
+                except TimeoutError:
+                    raise PipeTimeoutError("write timed out") from None
+            else:
+                await self._not_full.wait()
             if self._closed:
                 raise PipeClosedError("write to closed pipe")
 
@@ -155,12 +172,14 @@ class RingBuffer:
 
         return msg_len
 
-    async def read(self, *, blocking: bool = True) -> bytes:
+    async def read(self, *, blocking: bool = True, timeout: float | None = None) -> bytes:
         """Read the next message from the buffer.
 
         Args:
             blocking: If True, wait until a message is available.
                       If False, raise PipeEmptyError immediately.
+            timeout: Maximum seconds to wait (None = wait forever).
+                     Only meaningful when blocking=True.
 
         Returns:
             The next message bytes.
@@ -168,6 +187,7 @@ class RingBuffer:
         Raises:
             PipeClosedError: Buffer is closed AND empty.
             PipeEmptyError: Non-blocking and buffer is empty.
+            PipeTimeoutError: Timed out waiting for data.
         """
         while not self._buf:
             if self._closed:
@@ -175,7 +195,16 @@ class RingBuffer:
             if not blocking:
                 raise PipeEmptyError("buffer empty")
             self._not_empty.clear()
-            await self._not_empty.wait()
+            # Re-check after clear to avoid lost-wakeup race
+            if self._buf:
+                break
+            if timeout is not None:
+                try:
+                    await asyncio.wait_for(self._not_empty.wait(), timeout=timeout)
+                except TimeoutError:
+                    raise PipeTimeoutError("read timed out") from None
+            else:
+                await self._not_empty.wait()
 
         msg = self._buf.popleft()
         self._size -= len(msg)
@@ -233,6 +262,9 @@ class RingBuffer:
         """
         while self._size >= self._capacity and not self._closed:
             self._not_full.clear()
+            # Re-check after clear to avoid lost-wakeup race
+            if self._size < self._capacity or self._closed:
+                break
             await self._not_full.wait()
 
     async def wait_readable(self) -> None:
@@ -243,6 +275,9 @@ class RingBuffer:
         """
         while not self._buf and not self._closed:
             self._not_empty.clear()
+            # Re-check after clear to avoid lost-wakeup race
+            if self._buf or self._closed:
+                break
             await self._not_empty.wait()
 
     def peek(self) -> bytes | None:

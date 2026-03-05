@@ -61,6 +61,14 @@ class InvalidStateTransitionError(A2AError):
     grpc_status = grpc.StatusCode.FAILED_PRECONDITION
 
 
+class StaleTaskVersionError(A2AError):
+    """Task version mismatch -- concurrent modification detected."""
+
+    code = -32005
+    message = "Stale task version"
+    grpc_status = grpc.StatusCode.ABORTED
+
+
 class UnsupportedOperationError(A2AError):
     """Requested operation is not supported."""
 

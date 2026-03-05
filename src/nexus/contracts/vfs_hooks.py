@@ -202,6 +202,62 @@ class VFSRmdirHook(Protocol):
     def on_post_rmdir(self, ctx: RmdirHookContext) -> None: ...
 
 
+# ---------------------------------------------------------------------------
+# Process hook contexts — agent runtime (Issue #2761)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ProcessSpawnHookContext:
+    """Context passed through process spawn hooks (Issue #2761)."""
+
+    agent_id: str
+    zone_id: str
+    pid: str
+    parent_pid: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    warnings: list[OperationWarning] = field(default_factory=list)
+    extra: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ProcessTerminateHookContext:
+    """Context passed through process terminate hooks (Issue #2761)."""
+
+    pid: str
+    agent_id: str
+    zone_id: str
+    reason: str = "terminated"
+    exit_code: int = 0
+    warnings: list[OperationWarning] = field(default_factory=list)
+    extra: dict[str, Any] = field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Process hook protocol — agent runtime (Issue #2761)
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class VFSProcessHook(Protocol):
+    """Hook for agent process lifecycle events (Issue #2761)."""
+
+    @property
+    def name(self) -> str: ...
+
+    def on_pre_proc_spawn(self, ctx: ProcessSpawnHookContext) -> None:
+        """Called before a process is spawned. May raise to abort."""
+        ...
+
+    def on_post_proc_spawn(self, ctx: ProcessSpawnHookContext) -> None:
+        """Called after a process is spawned."""
+        ...
+
+    def on_post_proc_terminate(self, ctx: ProcessTerminateHookContext) -> None:
+        """Called after a process is terminated."""
+        ...
+
+
 @dataclass
 class WriteBatchHookContext:
     """Context passed through write-batch hooks (Issue #900)."""

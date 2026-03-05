@@ -188,6 +188,9 @@ class NexusFS(  # type: ignore[misc]
         self._context_branch_service = sys_svc.context_branch_service
         # Zone lifecycle — write gating during deprovisioning (Issue #2061)
         self._zone_lifecycle = getattr(sys_svc, "zone_lifecycle", None)
+        # Agent runtime — process lifecycle + tool dispatch (Issue #2761)
+        self._process_manager = getattr(sys_svc, "process_manager", None)
+        self._tool_dispatcher = getattr(sys_svc, "tool_dispatcher", None)
 
         # =====================================================================
         # Tier 2: BRICK services (Issue #2034: from BrickServices)
@@ -4109,6 +4112,196 @@ class NexusFS(  # type: ignore[misc]
         from nexus.lib.sync_bridge import run_sync
 
         return cast(bytes, run_sync(self.version_service.get_version(path, version, context)))
+
+    # =====================================================================
+    # Process syscalls — agent runtime (Issue #2761)
+    # =====================================================================
+
+    @rpc_expose(description="Spawn an agent process")
+    def sys_proc_spawn(
+        self,
+        agent_id: str,
+        zone_id: str,
+        *,
+        parent_pid: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        context: OperationContext | None = None,  # noqa: ARG002
+    ) -> dict[str, Any]:
+        """Spawn a new agent process.
+
+        Delegates to ProcessManager.spawn() via sync bridge.
+        Fires process hooks via KernelDispatch.
+        """
+        if self._process_manager is None:
+            msg = "ProcessManager not available (agent_runtime disabled)"
+            raise BackendError(msg)
+
+        from nexus.contracts.vfs_hooks import ProcessSpawnHookContext
+        from nexus.lib.sync_bridge import run_sync
+
+        proc = run_sync(
+            self._process_manager.spawn(
+                agent_id,
+                zone_id,
+                parent_pid=parent_pid,
+                metadata=metadata or {},
+            )
+        )
+
+        hook_ctx = ProcessSpawnHookContext(
+            agent_id=proc.agent_id,
+            zone_id=proc.zone_id,
+            pid=proc.pid,
+            parent_pid=proc.parent_pid,
+            metadata=dict(proc.metadata),
+        )
+        self._dispatch.intercept_post_proc_spawn(hook_ctx)
+
+        return {
+            "pid": proc.pid,
+            "agent_id": proc.agent_id,
+            "zone_id": proc.zone_id,
+            "state": proc.state.value,
+            "parent_pid": proc.parent_pid,
+            "warnings": [w.__dict__ for w in hook_ctx.warnings],
+        }
+
+    @rpc_expose(description="Terminate an agent process")
+    def sys_proc_kill(
+        self,
+        pid: str,
+        *,
+        reason: str = "terminated",
+        context: OperationContext | None = None,  # noqa: ARG002
+    ) -> dict[str, Any]:
+        """Terminate a running agent process.
+
+        Delegates to ProcessManager.terminate() via sync bridge.
+        Fires process terminate hooks via KernelDispatch.
+        """
+        if self._process_manager is None:
+            msg = "ProcessManager not available (agent_runtime disabled)"
+            raise BackendError(msg)
+
+        from nexus.contracts.vfs_hooks import ProcessTerminateHookContext
+        from nexus.lib.sync_bridge import run_sync
+
+        # Get process info before termination for hook context
+        proc = run_sync(self._process_manager.get_process(pid))
+
+        terminated = run_sync(self._process_manager.terminate(pid, reason=reason))
+
+        if terminated and proc is not None:
+            hook_ctx = ProcessTerminateHookContext(
+                pid=pid,
+                agent_id=proc.agent_id,
+                zone_id=proc.zone_id,
+                reason=reason,
+                exit_code=-15,
+            )
+            self._dispatch.intercept_post_proc_terminate(hook_ctx)
+
+        return {"pid": pid, "terminated": terminated}
+
+    @rpc_expose(description="Wait for an agent process to exit")
+    def sys_proc_wait(
+        self,
+        pid: str,
+        *,
+        timeout: float | None = None,
+        context: OperationContext | None = None,  # noqa: ARG002
+    ) -> dict[str, Any]:
+        """Wait for a process to terminate and return exit status.
+
+        Delegates to ProcessManager.wait() via sync bridge.
+        """
+        if self._process_manager is None:
+            msg = "ProcessManager not available (agent_runtime disabled)"
+            raise BackendError(msg)
+
+        from nexus.lib.sync_bridge import run_sync
+
+        status = run_sync(self._process_manager.wait(pid, timeout=timeout))
+        return {
+            "pid": status.pid,
+            "exit_code": status.exit_code,
+            "reason": status.reason,
+            "terminated_at": status.terminated_at.isoformat(),
+        }
+
+    @rpc_expose(description="List agent processes")
+    def sys_proc_list(
+        self,
+        *,
+        zone_id: str | None = None,
+        state: str | None = None,
+        context: OperationContext | None = None,  # noqa: ARG002
+    ) -> list[dict[str, Any]]:
+        """List agent processes with optional filters.
+
+        Delegates to ProcessManager.list_processes() via sync bridge.
+        """
+        if self._process_manager is None:
+            msg = "ProcessManager not available (agent_runtime disabled)"
+            raise BackendError(msg)
+
+        from nexus.lib.sync_bridge import run_sync
+
+        state_enum = None
+        if state is not None:
+            from nexus.contracts.agent_runtime_types import ProcessState
+
+            state_enum = ProcessState(state)
+
+        procs = run_sync(self._process_manager.list_processes(zone_id=zone_id, state=state_enum))
+        return [
+            {
+                "pid": p.pid,
+                "agent_id": p.agent_id,
+                "zone_id": p.zone_id,
+                "state": p.state.value,
+                "parent_pid": p.parent_pid,
+                "turn_count": p.turn_count,
+            }
+            for p in procs
+        ]
+
+    @rpc_expose(description="Dispatch a tool call for an agent")
+    def sys_dispatch(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        *,
+        agent_id: str,
+        zone_id: str,
+        context: OperationContext | None = None,  # noqa: ARG002
+    ) -> dict[str, Any]:
+        """Dispatch a tool call to its registered handler.
+
+        Delegates to ToolDispatcher.dispatch() via sync bridge.
+        """
+        if self._tool_dispatcher is None:
+            msg = "ToolDispatcher not available (agent_runtime disabled)"
+            raise BackendError(msg)
+
+        from nexus.lib.sync_bridge import run_sync
+
+        result = run_sync(
+            self._tool_dispatcher.dispatch(
+                tool_name,
+                arguments,
+                agent_id=agent_id,
+                zone_id=zone_id,
+            )
+        )
+        return {
+            "tool_call_id": result.tool_call_id,
+            "name": result.name,
+            "output": result.output,
+            "error": result.error,
+            "success": result.success,
+            "duration_ms": result.duration_ms,
+        }
 
     @rpc_expose(description="List file versions")
     def list_versions(

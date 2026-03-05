@@ -518,7 +518,7 @@ class TestRebacListTuples:
 
 
 class TestRebacOptions:
-    """Tests for ReBAC configuration options."""
+    """Tests for ReBAC configuration options (via rebac_service)."""
 
     def test_set_rebac_option_max_depth(self, nx: NexusFS) -> None:
         """Test setting max_depth option."""
@@ -574,7 +574,7 @@ class TestNamespaceOperations:
             }
         )
 
-        # Verify namespace exists
+        # Verify namespace exists (use sync variant — get_namespace is async)
         ns = nx.rebac_service.get_namespace_sync("document")
         assert ns is not None
         assert ns["object_type"] == "document"

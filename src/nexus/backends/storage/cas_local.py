@@ -42,7 +42,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Default Bloom filter settings
+# Default Bloom filter settings (tuned for typical CAS workloads)
 DEFAULT_CAS_BLOOM_CAPACITY = 100_000
 DEFAULT_CAS_BLOOM_FP_RATE = 0.01
 
@@ -152,6 +152,14 @@ class CASLocalBackend(CASBackend, MultipartUpload):
     @property
     def supports_parallel_mmap_read(self) -> bool:
         return True
+
+    def _hash_to_path(self, content_hash: str) -> Path:
+        """Convert content hash to full disk path for parallel mmap reads."""
+        return self.root_path / self._blob_key(content_hash)
+
+    def _is_chunked_content(self, content_hash: str) -> bool:
+        """Check if content was stored as CDC chunks."""
+        return self._cdc.is_chunked(content_hash)
 
     # === Content Operations (override CASBackend for CDC routing) ===
 

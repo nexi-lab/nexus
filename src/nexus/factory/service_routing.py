@@ -67,11 +67,6 @@ SERVICE_METHODS: dict[str, str] = {
     "list_saved_mounts": "_mount_persist_service",
     "load_mount": "_mount_persist_service",
     "delete_saved_mount": "_mount_persist_service",
-    # EventsService (lock/watch)
-    "lock": "events_service",
-    "unlock": "events_service",
-    "extend_lock": "events_service",
-    "wait_for_changes": "events_service",
 }
 
 SERVICE_ALIASES: dict[str, tuple[str, str]] = {

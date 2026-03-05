@@ -197,7 +197,7 @@ class TestListMountsPermissionFiltering:
         )
 
         # Grant Bob direct_viewer permission on the shared mount
-        nx_with_permissions.rebac_create(
+        nx_with_permissions.rebac_service.rebac_create_sync(
             subject=("user", "bob@example.com"),
             relation="direct_viewer",
             object=("file", "/mnt/shared"),

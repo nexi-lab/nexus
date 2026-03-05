@@ -60,37 +60,37 @@ class TestListWorkspacesAuthGuard:
     def test_raises_when_context_is_none(self, nexus_fs) -> None:
         """No context at all should raise ValueError."""
         with pytest.raises(ValueError, match="requires authenticated context"):
-            nexus_fs.list_workspaces(context=None)
+            nexus_fs._workspace_rpc_service.list_workspaces(context=None)
 
     def test_raises_when_user_id_missing(self, nexus_fs) -> None:
         """Context without user_id should raise ValueError."""
         ctx = _make_context(user_id=None, zone_id="root")
         with pytest.raises(ValueError, match="requires authenticated context"):
-            nexus_fs.list_workspaces(context=ctx)
+            nexus_fs._workspace_rpc_service.list_workspaces(context=ctx)
 
     def test_raises_when_zone_id_missing(self, nexus_fs) -> None:
         """Context without zone_id should raise ValueError."""
         ctx = _make_context(user_id="alice", zone_id=None)
         with pytest.raises(ValueError, match="requires authenticated context"):
-            nexus_fs.list_workspaces(context=ctx)
+            nexus_fs._workspace_rpc_service.list_workspaces(context=ctx)
 
     def test_raises_when_both_missing(self, nexus_fs) -> None:
         """Context with neither user_id nor zone_id should raise ValueError."""
         ctx = _make_context(user_id=None, zone_id=None)
         with pytest.raises(ValueError, match="requires authenticated context"):
-            nexus_fs.list_workspaces(context=ctx)
+            nexus_fs._workspace_rpc_service.list_workspaces(context=ctx)
 
     def test_raises_when_user_id_empty_string(self, nexus_fs) -> None:
         """Context with empty string user_id should raise ValueError."""
         ctx = _make_context(user_id="", zone_id="root")
         with pytest.raises(ValueError, match="requires authenticated context"):
-            nexus_fs.list_workspaces(context=ctx)
+            nexus_fs._workspace_rpc_service.list_workspaces(context=ctx)
 
     def test_raises_when_zone_id_empty_string(self, nexus_fs) -> None:
         """Context with empty string zone_id should raise ValueError."""
         ctx = _make_context(user_id="alice", zone_id="")
         with pytest.raises(ValueError, match="requires authenticated context"):
-            nexus_fs.list_workspaces(context=ctx)
+            nexus_fs._workspace_rpc_service.list_workspaces(context=ctx)
 
 
 class TestListWorkspacesFiltering:
@@ -104,7 +104,7 @@ class TestListWorkspacesFiltering:
         ]
 
         ctx = _make_context(user_id="alice", zone_id="root")
-        result = nexus_fs.list_workspaces(context=ctx)
+        result = nexus_fs._workspace_rpc_service.list_workspaces(context=ctx)
 
         assert len(result) == 1
         assert result[0]["path"] == "/zone/root/user/alice/workspace/project1"
@@ -117,7 +117,7 @@ class TestListWorkspacesFiltering:
         ]
 
         ctx = _make_context(user_id="alice", zone_id="root")
-        result = nexus_fs.list_workspaces(context=ctx)
+        result = nexus_fs._workspace_rpc_service.list_workspaces(context=ctx)
 
         assert len(result) == 1
         assert result[0]["path"] == "/shared/team-project"
@@ -134,7 +134,7 @@ class TestListWorkspacesFiltering:
         ]
 
         ctx = _make_context(user_id="alice", zone_id="root")
-        result = nexus_fs.list_workspaces(context=ctx)
+        result = nexus_fs._workspace_rpc_service.list_workspaces(context=ctx)
 
         assert len(result) == 2
         paths = [r["path"] for r in result]
@@ -148,7 +148,7 @@ class TestListWorkspacesFiltering:
         ]
 
         ctx = _make_context(user_id="alice", zone_id="root")
-        result = nexus_fs.list_workspaces(context=ctx)
+        result = nexus_fs._workspace_rpc_service.list_workspaces(context=ctx)
 
         assert result == []
 
@@ -157,7 +157,7 @@ class TestListWorkspacesFiltering:
         nexus_fs._workspace_registry.list_workspaces.return_value = []
 
         ctx = _make_context(user_id="alice", zone_id="root")
-        result = nexus_fs.list_workspaces(context=ctx)
+        result = nexus_fs._workspace_rpc_service.list_workspaces(context=ctx)
 
         assert result == []
 
@@ -169,7 +169,7 @@ class TestListWorkspacesFiltering:
         ]
 
         ctx = _make_context(user_id="alice", zone_id="root")
-        result = nexus_fs.list_workspaces(context=ctx)
+        result = nexus_fs._workspace_rpc_service.list_workspaces(context=ctx)
 
         assert len(result) == 1
         assert result[0]["path"] == "/zone/root/user/alice/workspace/legacy"
@@ -182,7 +182,7 @@ class TestListWorkspacesFiltering:
 
         # Some contexts use 'user' instead of 'user_id'
         ctx = SimpleNamespace(user_id="alice", zone_id="root")
-        result = nexus_fs.list_workspaces(context=ctx)
+        result = nexus_fs._workspace_rpc_service.list_workspaces(context=ctx)
 
         assert len(result) == 1
         assert result[0]["created_by"] == "alice"
@@ -194,6 +194,6 @@ class TestListWorkspacesFiltering:
         ]
 
         ctx = _make_context(user_id="alice", zone_id="root")
-        result = nexus_fs.list_workspaces(context=ctx)
+        result = nexus_fs._workspace_rpc_service.list_workspaces(context=ctx)
 
         assert len(result) == 1

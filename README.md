@@ -68,7 +68,7 @@ import asyncio
 from pathlib import Path
 from pydantic import SecretStr
 
-from nexus.backends.local import LocalBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -86,7 +86,7 @@ async def main():
     data = Path("/tmp/nexus-agent")
     data.mkdir(exist_ok=True)
     nx = create_nexus_fs(
-        backend=LocalBackend(root_path=str(data / "files")),
+        backend=CASLocalBackend(root_path=str(data / "files")),
         metadata_store=RaftMetadataStore.embedded(str(data / "raft")),
         record_store=SQLAlchemyRecordStore(),
         permissions=PermissionConfig(enforce=False),

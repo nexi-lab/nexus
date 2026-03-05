@@ -60,7 +60,7 @@ def nexus_fs_direct(tmp_path):
     """Minimal NexusFS instance (no HTTP server)."""
     os.environ.setdefault("NEXUS_JWT_SECRET", "test-agent-engine-e2e")
 
-    from nexus.backends.local import LocalBackend
+    from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.core.config import PermissionConfig
     from nexus.factory import create_nexus_fs
     from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -68,7 +68,7 @@ def nexus_fs_direct(tmp_path):
 
     storage = tmp_path / "storage"
     storage.mkdir()
-    backend = LocalBackend(root_path=str(storage))
+    backend = CASLocalBackend(root_path=str(storage))
     meta = RaftMetadataStore.embedded(str(tmp_path / "raft"))
     rec = SQLAlchemyRecordStore()  # in-memory SQLite
 

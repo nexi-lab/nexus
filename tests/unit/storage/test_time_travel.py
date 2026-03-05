@@ -312,6 +312,11 @@ class TestTimeTravelDebug:
         # Write file
         nx.sys_write(path, b"Content")
 
+        # Set permissions using ReBAC (v0.6.0+)
+        nx.rebac_service.rebac_create_sync(
+            subject=("user", "testowner"), relation="direct_owner", object=("file", path)
+        )
+
         # Write again to create a new version
         nx.sys_write(path, b"Updated content")
 

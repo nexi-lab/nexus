@@ -3,6 +3,8 @@
 Manage AI agents for delegation and multi-agent workflows.
 """
 
+from typing import Any
+
 import click
 from rich.console import Console
 from rich.table import Table
@@ -67,10 +69,10 @@ def register_cmd(
         nexus agent register alice "Data Analyst Agent" --with-api-key
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx: Any = get_filesystem(backend_config)
 
         # Register agent (context with user_id will be extracted from auth)
-        result = nx.register_agent(  # type: ignore[attr-defined]
+        result = nx._agent_rpc_service.register_agent(
             agent_id=agent_id,
             name=name,
             description=description,
@@ -108,9 +110,9 @@ def list_cmd(
         nexus agent list
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx: Any = get_filesystem(backend_config)
 
-        agents = nx.list_agents()  # type: ignore[attr-defined]
+        agents = nx._agent_rpc_service.list_agents()
 
         if not agents:
             console.print("[yellow]No agents registered[/yellow]")
@@ -164,9 +166,9 @@ def info_cmd(
         nexus agent info alice
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx: Any = get_filesystem(backend_config)
 
-        agent = nx.get_agent(agent_id)  # type: ignore[attr-defined]
+        agent = nx._agent_rpc_service.get_agent(agent_id)
 
         if not agent:
             console.print(f"[red]✗[/red] Agent not found: {agent_id}")
@@ -207,7 +209,7 @@ def delete_cmd(
         nexus agent delete alice --yes
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx: Any = get_filesystem(backend_config)
 
         # Confirm deletion
         if not yes:
@@ -222,7 +224,7 @@ def delete_cmd(
                 nx.close()
                 return
 
-        result = nx.delete_agent(agent_id)  # type: ignore[attr-defined]
+        result = nx._agent_rpc_service.delete_agent(agent_id)
 
         if result:
             console.print(f"[green]✓[/green] Deleted agent: {agent_id}")

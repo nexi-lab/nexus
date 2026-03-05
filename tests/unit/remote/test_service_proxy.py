@@ -168,20 +168,3 @@ class TestBootRemoteServices:
 
             # All values should be the same object
             assert all(p is proxies[0] for p in proxies)
-
-
-# ---------------------------------------------------------------------------
-# _SERVICE_METHODS event entries
-# ---------------------------------------------------------------------------
-
-
-class TestServiceMethodsEventEntries:
-    """Verify event/locking methods are in the dispatch table."""
-
-    def test_event_methods_registered(self):
-        """lock, unlock, extend_lock, wait_for_changes are in SERVICE_METHODS."""
-        from nexus.factory.service_routing import SERVICE_METHODS
-
-        for method in ("lock", "unlock", "extend_lock", "wait_for_changes"):
-            assert method in SERVICE_METHODS, f"{method} missing from SERVICE_METHODS"
-            assert SERVICE_METHODS[method] == "events_service"

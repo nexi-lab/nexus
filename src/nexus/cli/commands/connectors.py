@@ -74,7 +74,7 @@ def _list_connectors_local(category: str | None) -> list[dict]:
 
 def _list_connectors_remote(nx: Any, category: str | None) -> list[dict[str, Any]]:
     """List connectors from remote server via RPC."""
-    result: list[dict[str, Any]] = nx.list_connectors(category=category)
+    result: list[dict[str, Any]] = nx._mount_core_service.list_connectors(category=category)
     return result
 
 
@@ -109,7 +109,7 @@ def list_connectors(category: str | None, as_json: bool, backend_config: Backend
     try:
         # Check if we're connecting to a remote server
         if backend_config.remote_url:
-            nx = get_filesystem(backend_config)
+            nx: Any = get_filesystem(backend_config)
             try:
                 connectors = _list_connectors_remote(nx, category)
             except AttributeError:
@@ -172,7 +172,7 @@ def connector_info(connector_name: str, backend_config: BackendConfig) -> None:
     try:
         # Get connector info
         if backend_config.remote_url:
-            nx = get_filesystem(backend_config)
+            nx: Any = get_filesystem(backend_config)
             try:
                 connectors = _list_connectors_remote(nx, None)
                 info = next((c for c in connectors if c["name"] == connector_name), None)

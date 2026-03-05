@@ -13,8 +13,8 @@ Addressing   +--------+-------+-------+--------------+
              | through| Trans | Trans |   Trans      |
              +--------+-------+-------+--------------+
 
-A single GCSBlobTransport is shared between GCSBackend (CAS addressing)
-and GCSConnectorBackend (path addressing) — this is the value of
+A single GCSBlobTransport is shared between CASGCSBackend (CAS addressing)
+and PathGCSBackend (path addressing) — this is the value of
 orthogonal composition.
 
 Design decisions:

@@ -68,7 +68,7 @@ __all__ = [
     # Backends
     "Backend",
     "CASLocalBackend",
-    "GCSBackend",
+    "CASGCSBackend",
     # Exceptions
     "NexusError",
     "FileNotFoundError",
@@ -95,8 +95,8 @@ from pathlib import Path
 from typing import Union
 
 from nexus.backends.base.backend import Backend
+from nexus.backends.storage.cas_gcs import CASGCSBackend
 from nexus.backends.storage.cas_local import CASLocalBackend
-from nexus.backends.storage.gcs import GCSBackend
 from nexus.bricks.rebac.domain import WILDCARD_SUBJECT, Entity, ReBACTuple
 from nexus.bricks.rebac.enforcer import PermissionEnforcer
 from nexus.bricks.rebac.manager import (

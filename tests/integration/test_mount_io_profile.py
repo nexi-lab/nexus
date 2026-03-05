@@ -109,7 +109,7 @@ class TestMountConfigModelIOProfile:
         model = MountConfigModel(
             mount_id="test-456",
             mount_point="/weights",
-            backend_type="gcs",
+            backend_type="cas_gcs",
             backend_config='{"bucket": "ml-weights"}',
             io_profile="fast_read",
         )

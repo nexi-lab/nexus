@@ -5,7 +5,7 @@ storage semantics: content is stored by hash, automatically deduplicated,
 and reference-counted.
 
     CASBackend(transport: BlobTransport)
-        ├── GCSBackend      — thin: creates GCSBlobTransport, registered as "gcs"
+        ├── CASGCSBackend   — thin: creates GCSBlobTransport, registered as "cas_gcs"
         ├── CASLocalBackend  — thin: creates LocalBlobTransport + features
         └── (future S3CAS)  — thin: creates S3BlobTransport
 
@@ -31,6 +31,7 @@ References:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 from collections.abc import Callable, Iterator
@@ -40,7 +41,7 @@ from nexus.backends.base.backend import Backend
 from nexus.backends.base.blob_transport import BlobTransport
 from nexus.contracts.capabilities import ConnectorCapability
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
-from nexus.core.hash_fast import hash_content
+from nexus.core.hash_fast import create_hasher, hash_content
 from nexus.core.object_store import WriteResult
 
 if TYPE_CHECKING:
@@ -347,9 +348,81 @@ class CASBackend(Backend):
         chunks: Iterator[bytes],
         context: "OperationContext | None" = None,
     ) -> WriteResult:
-        # Collect chunks for hashing (matches write_content behavior)
-        content = b"".join(chunks)
-        return self.write_content(content, context=context)
+        import os
+        import tempfile
+
+        # Stream chunks to a temp file while computing hash incrementally.
+        # This avoids buffering the entire content in memory (Issue #1625).
+        hasher = create_hasher()
+        total_size = 0
+
+        # Write to a temp file in the transport root (same filesystem → fast rename)
+        staging_dir = None
+        if hasattr(self._transport, "_root"):
+            staging_dir = self._transport._root
+
+        try:
+            with tempfile.NamedTemporaryFile(mode="wb", dir=staging_dir, delete=False) as tmp:
+                tmp_path = tmp.name
+                for chunk in chunks:
+                    hasher.update(chunk)
+                    tmp.write(chunk)
+                    total_size += len(chunk)
+                tmp.flush()
+                if hasattr(self._transport, "_fsync") and self._transport._fsync:
+                    os.fsync(tmp.fileno())
+        except BaseException:
+            # Cleanup temp file on error
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_path)
+            raise
+
+        content_hash = hasher.hexdigest()
+        key = self._blob_key(content_hash)
+
+        try:
+            # Move temp file to final blob location if transport supports it;
+            # otherwise fall back to reading the temp file.
+            if hasattr(self._transport, "put_blob_from_path"):
+                self._transport.put_blob_from_path(key, tmp_path)
+            else:
+                try:
+                    with open(tmp_path, "rb") as f:
+                        data = f.read()
+                    self._transport.put_blob(key, data)
+                finally:
+                    with contextlib.suppress(OSError):
+                        os.unlink(tmp_path)
+
+            # Metadata update under stripe lock
+            def _update_meta(meta: dict[str, Any]) -> dict[str, Any]:
+                meta["ref_count"] = meta.get("ref_count", 0) + 1
+                meta["size"] = total_size
+                return meta
+
+            updated = self._meta_update_locked(content_hash, _update_meta)
+            is_new = updated.get("ref_count", 0) == 1
+
+            # Feature DI: Bloom filter
+            if self._bloom is not None:
+                self._bloom.add(content_hash)
+
+            # Feature DI: Write callback
+            if is_new and self._on_write_callback is not None:
+                self._on_write_callback(key)
+
+            # Skip cache for streamed content (avoid loading into memory)
+
+            return WriteResult(content_hash=content_hash, size=total_size)
+
+        except (BackendError, NexusFileNotFoundError):
+            raise
+        except Exception as e:
+            raise BackendError(
+                f"Failed to write stream: {e}",
+                backend=self.name,
+                path=content_hash,
+            ) from e
 
     def batch_read_content(
         self,

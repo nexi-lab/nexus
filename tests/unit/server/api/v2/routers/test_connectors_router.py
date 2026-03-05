@@ -62,7 +62,7 @@ class TestListConnectors:
     def test_returns_connectors_with_capabilities(self, mock_registry: MagicMock) -> None:
         mock_registry.list_all.return_value = [
             _make_connector_info(
-                name="gcs_connector",
+                name="path_gcs",
                 description="Google Cloud Storage",
                 category="storage",
                 capabilities=frozenset(
@@ -83,7 +83,7 @@ class TestListConnectors:
         assert len(data["connectors"]) == 2
 
         gcs = data["connectors"][0]
-        assert gcs["name"] == "gcs_connector"
+        assert gcs["name"] == "path_gcs"
         assert gcs["description"] == "Google Cloud Storage"
         assert gcs["category"] == "storage"
         assert set(gcs["capabilities"]) == {"signed_url", "rename"}

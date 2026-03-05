@@ -299,7 +299,7 @@ class TestSavedMounts:
         result = asyncio.run(
             mount_service.save_mount(
                 mount_point="/mnt/test",
-                backend_type="gcs_connector",
+                backend_type="path_gcs",
                 backend_config={"bucket": "test-bucket"},
             )
         )

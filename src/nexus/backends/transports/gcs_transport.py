@@ -1,6 +1,6 @@
 """GCS BlobTransport — raw key→blob I/O over Google Cloud Storage.
 
-Shared between GCSBackend (CAS addressing) and GCSConnectorBackend (path
+Shared between CASGCSBackend (CAS addressing) and PathGCSBackend (path
 addressing).  This is the value of orthogonal composition — one transport
 implementation serves both addressing strategies.
 

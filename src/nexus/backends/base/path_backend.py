@@ -5,8 +5,8 @@ files are stored at their actual paths, with no CAS transformation or
 deduplication.
 
     PathBackend(transport: BlobTransport)
-        ├── GCSConnectorBackend  — thin: creates GCSBlobTransport + cache
-        ├── S3ConnectorBackend   — thin: creates S3BlobTransport + cache + multipart
+        ├── PathGCSBackend       — thin: creates GCSBlobTransport + cache
+        ├── PathS3Backend        — thin: creates S3BlobTransport + cache + multipart
         └── (future Azure)       — thin: creates AzureBlobTransport
 
 This replaces ``BaseBlobStorageConnector`` which used abstract methods (inheritance)

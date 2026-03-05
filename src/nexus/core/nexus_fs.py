@@ -3237,7 +3237,7 @@ class NexusFS(  # type: ignore[misc]
                     if (
                         hasattr(new_route.backend, "bucket")
                         and hasattr(new_route.backend, "_get_blob_path")
-                        and new_route.backend.name == "gcs_connector"
+                        and new_route.backend.name == "path_gcs"
                     ):
                         # GCS-specific attributes (dynamically checked with hasattr above)
                         dest_blob = new_route.backend.bucket.blob(

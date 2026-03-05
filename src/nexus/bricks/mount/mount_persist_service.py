@@ -15,7 +15,7 @@ Example:
     # Save mount config
     mount_id = persist_service.save_mount(
         mount_point="/mnt/gcs",
-        backend_type="gcs_connector",
+        backend_type="path_gcs",
         backend_config={"bucket": "my-bucket"},
     )
 

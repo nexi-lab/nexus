@@ -3,7 +3,7 @@
 Thin subclass of PathBackend that:
 - Creates a GCSBlobTransport for raw GCS I/O (shared with GCSBackend CAS)
 - Mixes in CacheConnectorMixin for L1+L2 caching
-- Registers as "gcs_connector" via @register_connector
+- Registers as "path_gcs" via @register_connector
 - Adds GCS-specific features: signed URLs, versioning, batch version fetch
 
 Storage structure:
@@ -39,13 +39,13 @@ logger = logging.getLogger(__name__)
 
 
 @register_connector(
-    "gcs_connector",
+    "path_gcs",
     description="Google Cloud Storage with direct path mapping",
     category="storage",
     requires=["google-cloud-storage"],
     service_name="gcs",
 )
-class GCSConnectorBackend(PathBackend, CacheConnectorMixin):
+class PathGCSBackend(PathBackend, CacheConnectorMixin):
     """Google Cloud Storage connector with direct path mapping and caching.
 
     Features:
@@ -125,7 +125,7 @@ class GCSConnectorBackend(PathBackend, CacheConnectorMixin):
 
             super().__init__(
                 transport,
-                backend_name="gcs_connector",
+                backend_name="path_gcs",
                 bucket_name=bucket_name,
                 prefix=prefix,
                 versioning_enabled=versioning_enabled,
@@ -142,7 +142,7 @@ class GCSConnectorBackend(PathBackend, CacheConnectorMixin):
         except Exception as e:
             raise BackendError(
                 f"Failed to initialize GCS connector backend: {e}",
-                backend="gcs_connector",
+                backend="path_gcs",
                 path=bucket_name,
             ) from e
 
@@ -276,7 +276,7 @@ class GCSConnectorBackend(PathBackend, CacheConnectorMixin):
         if not context or not context.backend_path:
             raise BackendError(
                 message="GCS connector requires backend_path in OperationContext.",
-                backend="gcs_connector",
+                backend="path_gcs",
             )
 
         cache_path = self._get_cache_path(context) or context.backend_path
@@ -319,7 +319,7 @@ class GCSConnectorBackend(PathBackend, CacheConnectorMixin):
         if not context or not context.backend_path:
             raise BackendError(
                 message="GCS connector requires backend_path in OperationContext.",
-                backend="gcs_connector",
+                backend="path_gcs",
             )
 
         virtual_path = context.backend_path
@@ -355,7 +355,7 @@ class GCSConnectorBackend(PathBackend, CacheConnectorMixin):
         if not context or not context.backend_path:
             raise BackendError(
                 message="GCS connector requires backend_path in OperationContext.",
-                backend="gcs_connector",
+                backend="path_gcs",
             )
 
         virtual_path = context.backend_path

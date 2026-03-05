@@ -2,7 +2,7 @@
 
 Thin subclass of CASBackend that:
 - Creates a GCSBlobTransport for raw GCS I/O
-- Registers as "gcs" connector via @register_connector
+- Registers as "cas_gcs" connector via @register_connector
 - Declares CONNECTION_ARGS for factory instantiation
 - Overrides batch_read_content with GCS-optimized parallel downloads
 
@@ -37,12 +37,12 @@ logger = logging.getLogger(__name__)
 
 
 @register_connector(
-    "gcs",
+    "cas_gcs",
     description="Google Cloud Storage with CAS deduplication",
     category="storage",
     requires=["google-cloud-storage"],
 )
-class GCSBackend(CASBackend):
+class CASGCSBackend(CASBackend):
     """Google Cloud Storage backend with CAS deduplication.
 
     Storage layout:

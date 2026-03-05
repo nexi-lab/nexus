@@ -29,6 +29,7 @@ from nexus.contracts.agent_runtime_types import (
     DeliveryPolicy,
     ProcessState,
     ToolPermissionDeniedError,
+    ToolResult,
     WorkerConfig,
 )
 from nexus.system_services.agent_runtime.agent_loop import agent_loop
@@ -179,7 +180,7 @@ def _make_mock_td() -> MagicMock:
         agent_id: str,
         zone_id: str,
         tool_call_id: str | None = None,
-    ) -> Any:
+    ) -> ToolResult:
         # Check permission first
         allowed = await _check_permission(tool_name, agent_id=agent_id, zone_id=zone_id)
         if not allowed:
@@ -188,7 +189,12 @@ def _make_mock_td() -> MagicMock:
         if handler is None:
             msg = f"Tool not found: {tool_name}"
             raise ValueError(msg)
-        return await handler(**arguments)
+        raw = await handler(**arguments)
+        return ToolResult(
+            tool_call_id=tool_call_id or "",
+            name=tool_name,
+            output=str(raw),
+        )
 
     td.set_manifest = MagicMock(side_effect=_set_manifest)
     td.check_permission = AsyncMock(side_effect=_check_permission)
@@ -276,13 +282,15 @@ class TestDelegationLifecycle:
         assert worker.parent_pid == copilot.pid
         assert worker.agent_id == "worker-summarize"
 
-        # 3. A2A task exists in SUBMITTED state
-        task = await tm.get_task(result.task_id, zone_id="zone-e2e")
-        assert task.status.state == TaskState.SUBMITTED
+        # 3. Let _run_worker() background task transition SUBMITTED → WORKING
+        await asyncio.sleep(0)
 
-        # 4. Simulate worker completing the task
-        await tm.update_task_state(result.task_id, TaskState.WORKING, zone_id="zone-e2e")
-        await tm.update_task_state(result.task_id, TaskState.COMPLETED, zone_id="zone-e2e")
+        task = await tm.get_task(result.task_id, zone_id="zone-e2e")
+        assert task.status.state == TaskState.WORKING
+
+        # 4. Simulate worker completing the task via orchestrator
+        #    (complete_task sets the asyncio.Event that collect() waits on)
+        await orchestrator.complete_task(result.task_id, zone_id="zone-e2e")
 
         # 5. Copilot collects result
         collected = await orchestrator.collect(result.task_id, zone_id="zone-e2e")
@@ -503,8 +511,9 @@ class TestFanOutCancellationE2E:
         t2 = await tm.get_task(results[2].task_id, zone_id="zone-e2e")
 
         assert t0.status.state == TaskState.CANCELED
-        assert t1.status.state == TaskState.SUBMITTED  # Still running
-        assert t2.status.state == TaskState.SUBMITTED
+        # t1/t2 may be SUBMITTED or WORKING (background _run_worker may have run)
+        assert t1.status.state in {TaskState.SUBMITTED, TaskState.WORKING}
+        assert t2.status.state in {TaskState.SUBMITTED, TaskState.WORKING}
 
 
 # ======================================================================

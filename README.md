@@ -99,11 +99,15 @@ async def main():
     ))
 
     # 3. Spawn agent and chat
-    pm = ProcessManager(vfs=nx, llm_provider=llm)
-    proc = await pm.spawn("user1", "default", config=AgentProcessConfig(
-        name="my-agent",
-        tools=("read_file", "write_file", "grep", "glob"),
-    ))
+    #    Option A: Registry-based (agent_id looks up pre-registered AgentSpec)
+    pm = ProcessManager(vfs=nx, llm_provider=llm, agent_registry=registry)
+    proc = await pm.spawn("user1", "default", agent_id="my-coder")
+
+    #    Option B: Inline config (backward compatible)
+    # proc = await pm.spawn("user1", "default", config=AgentProcessConfig(
+    #     name="my-agent",
+    #     tools=("read_file", "write_file", "grep", "glob"),
+    # ))
 
     async for event in pm.resume(
         proc.pid,
@@ -123,7 +127,7 @@ asyncio.run(main())
 
 ### Copilot/Worker Delegation
 
-Spawn restricted workers with budget caps and permission inheritance:
+Spawn restricted workers with budget caps, permission inheritance, and real-time streaming:
 
 ```python
 from nexus.system_services.agent_runtime import CopilotOrchestrator
@@ -132,17 +136,21 @@ orchestrator = CopilotOrchestrator(
     process_manager=pm, task_manager=tm, tool_dispatcher=td,
 )
 
+# Stream worker results in real-time (IMMEDIATE delivery policy)
 result = await orchestrator.delegate(
     copilot_pid=copilot.pid,
     message="Research competitor pricing",
     worker_config=WorkerConfig(
         agent_id="researcher",
         zone_id="zone-1",
-        tool_allowlist=("web_search", "read_file"),  # inherit-and-restrict
+        tool_allowlist=("web_search", "read_file"),
         budget_tokens=50_000,
     ),
 )
+async for event in orchestrator.stream(result.task_id, zone_id="zone-1"):
+    print(event)  # real-time results, no polling
 
+# Or await completion directly
 task = await orchestrator.collect(result.task_id, zone_id="zone-1")
 ```
 

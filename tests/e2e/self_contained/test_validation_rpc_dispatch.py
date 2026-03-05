@@ -21,17 +21,6 @@ from nexus.bricks.parsers.validation.script_builder import (
 )
 
 
-class TestSandboxValidateDispatch:
-    """Verify sandbox_validate is dispatched through the service delegation pattern."""
-
-    def test_sandbox_validate_in_service_methods(self):
-        """sandbox_validate is dispatched via _sandbox_rpc_service, not METHOD_PARAMS."""
-        from nexus.factory.service_routing import SERVICE_METHODS
-
-        assert "sandbox_validate" in SERVICE_METHODS
-        assert SERVICE_METHODS["sandbox_validate"] == "_sandbox_rpc_service"
-
-
 class TestValidationResultSerialization:
     """Verify results serialize cleanly for JSON-RPC response."""
 

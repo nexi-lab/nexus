@@ -385,7 +385,7 @@ def sync_mount(
     """
     try:
         # Get filesystem (works with both local and remote)
-        nx = get_filesystem(backend_config)
+        nx: Any = get_filesystem(backend_config)
 
         # Convert tuples to lists for include/exclude
         include_patterns = list(include) if include else None
@@ -399,7 +399,7 @@ def sync_mount(
                 sys.exit(1)
 
             try:
-                result = nx.sync_mount_async(  # type: ignore[attr-defined]
+                result = nx._sync_job_service.sync_mount_async(
                     mount_point=mount_point,
                     path=path,
                     recursive=True,
@@ -437,7 +437,7 @@ def sync_mount(
                 console.print("[cyan](dry run - no changes will be made)[/cyan]")
 
         try:
-            result = nx.sync_mount(  # type: ignore[attr-defined]
+            result = nx._sync_service.sync_mount_flat(
                 mount_point=mount_point,
                 path=path,
                 recursive=True,
@@ -547,12 +547,12 @@ def sync_status(
     import time
 
     try:
-        nx = get_filesystem(backend_config)
+        nx: Any = get_filesystem(backend_config)
 
         if job_id:
             # Show specific job
             try:
-                job = nx.get_sync_job(job_id)  # type: ignore[attr-defined]
+                job = nx._sync_job_service.get_job(job_id)
             except AttributeError:
                 console.print("[red]Error:[/red] This Nexus instance doesn't support sync jobs")
                 sys.exit(1)
@@ -577,7 +577,7 @@ def sync_status(
                 try:
                     while True:
                         time.sleep(2)
-                        job = nx.get_sync_job(job_id)  # type: ignore[attr-defined]
+                        job = nx._sync_job_service.get_job(job_id)
                         if not job:
                             break
                         # Clear and redisplay
@@ -590,7 +590,7 @@ def sync_status(
         else:
             # List recent running jobs
             try:
-                jobs = nx.list_sync_jobs(status="running", limit=10)  # type: ignore[attr-defined]
+                jobs = nx._sync_job_service.list_jobs(status="running", limit=10)
             except AttributeError:
                 console.print("[red]Error:[/red] This Nexus instance doesn't support sync jobs")
                 sys.exit(1)
@@ -682,10 +682,10 @@ def sync_cancel(
         nexus mounts sync-cancel abc123
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx: Any = get_filesystem(backend_config)
 
         try:
-            result = nx.cancel_sync_job(job_id)  # type: ignore[attr-defined]
+            result = nx._sync_job_service.cancel_sync_job(job_id)
         except AttributeError:
             console.print("[red]Error:[/red] This Nexus instance doesn't support sync jobs")
             sys.exit(1)
@@ -737,10 +737,10 @@ def sync_jobs(
         nexus mounts sync-jobs --status failed
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx: Any = get_filesystem(backend_config)
 
         try:
-            jobs = nx.list_sync_jobs(mount_point=mount, status=status, limit=limit)  # type: ignore[attr-defined]
+            jobs = nx._sync_job_service.list_jobs(mount_point=mount, status=status, limit=limit)
         except AttributeError:
             console.print("[red]Error:[/red] This Nexus instance doesn't support sync jobs")
             sys.exit(1)

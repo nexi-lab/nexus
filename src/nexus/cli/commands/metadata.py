@@ -133,13 +133,15 @@ def export_metadata(
         from nexus.core.nexus_fs import NexusFS
         from nexus.lib.export_import import ExportFilter
 
-        nx = get_filesystem(backend_config)
+        nx_raw: Any = get_filesystem(backend_config)
 
         # Note: Only standalone mode supports metadata export
-        if not isinstance(nx, NexusFS):
+        if not isinstance(nx_raw, NexusFS):
             console.print("[red]Error:[/red] Metadata export is only available in standalone mode")
-            nx.close()
+            nx_raw.close()
             sys.exit(1)
+
+        nx: Any = nx_raw  # keep as Any to access DI service slots
 
         # Parse after time if provided
         after_time = None
@@ -175,7 +177,7 @@ def export_metadata(
             console.print("  [yellow]Including deleted files[/yellow]")
 
         with console.status("[yellow]Exporting metadata...[/yellow]", spinner="dots"):
-            count = cast(Any, nx).export_metadata(output, filter=export_filter)
+            count = nx._metadata_export_service.export_metadata(output, filter=export_filter)
 
         nx.close()
 
@@ -231,13 +233,15 @@ def import_metadata(
         from nexus.core.nexus_fs import NexusFS
         from nexus.lib.export_import import ConflictMode, ImportOptions
 
-        nx = get_filesystem(backend_config)
+        nx_raw: Any = get_filesystem(backend_config)
 
         # Note: Only standalone mode supports metadata import
-        if not isinstance(nx, NexusFS):
+        if not isinstance(nx_raw, NexusFS):
             console.print("[red]Error:[/red] Metadata import is only available in standalone mode")
-            nx.close()
+            nx_raw.close()
             sys.exit(1)
+
+        nx: Any = nx_raw  # keep as Any to access DI service slots
 
         # Create import options
         import_options = ImportOptions(
@@ -255,7 +259,7 @@ def import_metadata(
             console.print("  [yellow]Not preserving original IDs[/yellow]")
 
         with console.status("[yellow]Importing metadata...[/yellow]", spinner="dots"):
-            result = cast(Any, nx).import_metadata(input_file, options=import_options)
+            result = nx._metadata_export_service.import_metadata(input_file, options=import_options)
 
         nx.close()
 

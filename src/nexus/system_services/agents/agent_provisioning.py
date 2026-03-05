@@ -53,7 +53,7 @@ def create_impersonated_user_agent(
     agent_id = f"{user_id},ImpersonatedUser"
 
     try:
-        agent_result = nx.register_agent(
+        agent_result = nx._agent_rpc_service.register_agent(
             agent_id=agent_id,
             name="ImpersonatedUser",
             description="Digital twin agent - no separate identity, inherits all user permissions",
@@ -96,7 +96,7 @@ def create_untrusted_agent(
     agent_id = f"{user_id},UntrustedAgent"
 
     try:
-        agent_result = nx.register_agent(
+        agent_result = nx._agent_rpc_service.register_agent(
             agent_id=agent_id,
             name="UntrustedAgent",
             description="Untrusted agent with API key - zero permissions by default, read-only access granted explicitly",

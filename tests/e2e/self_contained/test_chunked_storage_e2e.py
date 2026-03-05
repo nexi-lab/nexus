@@ -22,7 +22,7 @@ class TestChunkedStorageE2E:
         # Verify not chunked
         etag = nexus_fs.get_etag("/test_small.txt")
         backend = nexus_fs.router.route("/").backend
-        assert not backend._is_chunked_content(etag), "Small file should not be chunked"
+        assert not backend._cdc.is_chunked(etag), "Small file should not be chunked"
 
     def test_large_file_chunked_write_read(self, nexus_fs) -> None:
         """Test that large files are chunked and can be read back correctly."""
@@ -37,7 +37,7 @@ class TestChunkedStorageE2E:
         assert etag is not None
 
         backend = nexus_fs.router.route("/").backend
-        assert backend._is_chunked_content(etag), "Large file should be chunked"
+        assert backend._cdc.is_chunked(etag), "Large file should be chunked"
 
         # Read back
         read_content = nexus_fs.sys_read("/test_large.bin")
@@ -55,12 +55,12 @@ class TestChunkedStorageE2E:
         backend = nexus_fs.router.route("/").backend
 
         # Read manifest
-        manifest_path = backend._hash_to_path(etag)
+        manifest_path = backend._transport._resolve(backend._blob_key(etag))
         manifest = ChunkedReference.from_json(manifest_path.read_bytes())
 
         # Verify each chunk exists
         for chunk_info in manifest.chunks:
-            chunk_path = backend._hash_to_path(chunk_info.chunk_hash)
+            chunk_path = backend._transport._resolve(backend._blob_key(chunk_info.chunk_hash))
             assert chunk_path.exists(), f"Chunk {chunk_info.chunk_hash[:16]}... should exist"
             assert chunk_path.stat().st_size == chunk_info.length
 
@@ -77,12 +77,14 @@ class TestChunkedStorageE2E:
         backend = nexus_fs.router.route("/").backend
 
         # Get chunk hashes before delete
-        manifest = ChunkedReference.from_json(backend._hash_to_path(content_hash).read_bytes())
+        manifest = ChunkedReference.from_json(
+            backend._transport._resolve(backend._blob_key(content_hash)).read_bytes()
+        )
         chunk_hashes = [c.chunk_hash for c in manifest.chunks]
 
         # Verify chunks exist
         for ch in chunk_hashes:
-            assert backend._hash_to_path(ch).exists()
+            assert backend._transport._resolve(backend._blob_key(ch)).exists()
 
         # Delete
         nexus_fs.sys_unlink("/delete_test.bin")
@@ -92,7 +94,9 @@ class TestChunkedStorageE2E:
 
         # Verify chunks are deleted (ref_count was 1)
         for ch in chunk_hashes:
-            assert not backend._hash_to_path(ch).exists(), f"Chunk {ch[:16]}... should be deleted"
+            assert not backend._transport._resolve(backend._blob_key(ch)).exists(), (
+                f"Chunk {ch[:16]}... should be deleted"
+            )
 
     def test_file_size_correct_for_chunked(self, nexus_fs) -> None:
         """Test that file metadata shows original size, not manifest size."""
@@ -145,8 +149,8 @@ class TestChunkedStorageBackwardCompatibility:
         small_etag = nexus_fs.get_etag("/small.txt")
         large_etag = nexus_fs.get_etag("/large.bin")
 
-        assert not backend._is_chunked_content(small_etag)
-        assert backend._is_chunked_content(large_etag)
+        assert not backend._cdc.is_chunked(small_etag)
+        assert backend._cdc.is_chunked(large_etag)
 
         # Read both
         assert nexus_fs.sys_read("/small.txt") == small_content
@@ -175,13 +179,13 @@ class TestChunkedStorageBackwardCompatibility:
         etag1 = nexus_fs.get_etag("/overwrite.bin")
 
         backend = nexus_fs.router.route("/").backend
-        assert not backend._is_chunked_content(etag1)
+        assert not backend._cdc.is_chunked(etag1)
 
         # Overwrite with large
         nexus_fs.sys_write("/overwrite.bin", large_content)
         etag2 = nexus_fs.get_etag("/overwrite.bin")
 
-        assert backend._is_chunked_content(etag2)
+        assert backend._cdc.is_chunked(etag2)
         assert nexus_fs.sys_read("/overwrite.bin") == large_content
 
     def test_overwrite_large_with_small(self, nexus_fs) -> None:
@@ -194,13 +198,13 @@ class TestChunkedStorageBackwardCompatibility:
         etag1 = nexus_fs.get_etag("/overwrite2.bin")
 
         backend = nexus_fs.router.route("/").backend
-        assert backend._is_chunked_content(etag1)
+        assert backend._cdc.is_chunked(etag1)
 
         # Overwrite with small
         nexus_fs.sys_write("/overwrite2.bin", small_content)
         etag2 = nexus_fs.get_etag("/overwrite2.bin")
 
-        assert not backend._is_chunked_content(etag2)
+        assert not backend._cdc.is_chunked(etag2)
         assert nexus_fs.sys_read("/overwrite2.bin") == small_content
 
 
@@ -228,8 +232,12 @@ class TestChunkedStorageCDCBehavior:
         backend = nexus_fs.router.route("/").backend
 
         # Read manifests
-        manifest_a = ChunkedReference.from_json(backend._hash_to_path(etag_a).read_bytes())
-        manifest_b = ChunkedReference.from_json(backend._hash_to_path(etag_b).read_bytes())
+        manifest_a = ChunkedReference.from_json(
+            backend._transport._resolve(backend._blob_key(etag_a)).read_bytes()
+        )
+        manifest_b = ChunkedReference.from_json(
+            backend._transport._resolve(backend._blob_key(etag_b)).read_bytes()
+        )
 
         # Get chunk sets
         chunks_a = {c.chunk_hash for c in manifest_a.chunks}

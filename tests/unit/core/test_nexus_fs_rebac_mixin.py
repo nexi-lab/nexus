@@ -521,35 +521,35 @@ class TestRebacOptions:
 
     def test_set_rebac_option_max_depth(self, nx: NexusFS) -> None:
         """Test setting max_depth option."""
-        nx.set_rebac_option("max_depth", 15)
-        value = nx.get_rebac_option("max_depth")
+        nx.rebac_service.set_rebac_option("max_depth", 15)
+        value = nx.rebac_service.get_rebac_option("max_depth")
         assert value == 15
 
     def test_set_rebac_option_cache_ttl(self, nx: NexusFS) -> None:
         """Test setting cache_ttl option."""
-        nx.set_rebac_option("cache_ttl", 600)
-        value = nx.get_rebac_option("cache_ttl")
+        nx.rebac_service.set_rebac_option("cache_ttl", 600)
+        value = nx.rebac_service.get_rebac_option("cache_ttl")
         assert value == 600
 
     def test_set_rebac_option_invalid_key(self, nx: NexusFS) -> None:
         """Test setting invalid option raises ValueError."""
         with pytest.raises(ValueError, match="Unknown ReBAC option"):
-            nx.set_rebac_option("invalid_option", 10)
+            nx.rebac_service.set_rebac_option("invalid_option", 10)
 
     def test_get_rebac_option_invalid_key(self, nx: NexusFS) -> None:
         """Test getting invalid option raises ValueError."""
         with pytest.raises(ValueError, match="Unknown ReBAC option"):
-            nx.get_rebac_option("invalid_option")
+            nx.rebac_service.get_rebac_option("invalid_option")
 
     def test_set_rebac_option_invalid_max_depth_value(self, nx: NexusFS) -> None:
         """Test setting invalid max_depth value raises ValueError."""
         with pytest.raises(ValueError, match="max_depth must be"):
-            nx.set_rebac_option("max_depth", 0)
+            nx.rebac_service.set_rebac_option("max_depth", 0)
 
     def test_set_rebac_option_invalid_cache_ttl_value(self, nx: NexusFS) -> None:
         """Test setting invalid cache_ttl value raises ValueError."""
         with pytest.raises(ValueError, match="cache_ttl must be"):
-            nx.set_rebac_option("cache_ttl", -1)
+            nx.rebac_service.set_rebac_option("cache_ttl", -1)
 
 
 class TestNamespaceOperations:
@@ -557,7 +557,7 @@ class TestNamespaceOperations:
 
     def test_register_namespace(self, nx: NexusFS) -> None:
         """Test registering a namespace."""
-        nx.register_namespace(
+        nx.rebac_service.register_namespace(
             {
                 "object_type": "document",
                 "config": {
@@ -574,21 +574,21 @@ class TestNamespaceOperations:
         )
 
         # Verify namespace exists
-        ns = nx.get_namespace("document")
+        ns = nx.rebac_service.get_namespace_sync("document")
         assert ns is not None
         assert ns["object_type"] == "document"
 
     def test_register_namespace_invalid_format(self, nx: NexusFS) -> None:
         """Test that invalid namespace format raises ValueError."""
         with pytest.raises(ValueError, match="object_type"):
-            nx.register_namespace({"config": {}})
+            nx.rebac_service.register_namespace({"config": {}})
 
         with pytest.raises(ValueError, match="config"):
-            nx.register_namespace({"object_type": "test"})
+            nx.rebac_service.register_namespace({"object_type": "test"})
 
     def test_get_namespace_nonexistent(self, nx: NexusFS) -> None:
         """Test getting nonexistent namespace returns None."""
-        result = nx.get_namespace("nonexistent")
+        result = nx.rebac_service.get_namespace_sync("nonexistent")
         # Might return None or a default - the actual behavior depends on implementation
         assert result is None or isinstance(result, dict)
 
@@ -608,7 +608,7 @@ class TestNamespaceOperations:
             },
         )
 
-        ns = nx.get_namespace("project")
+        ns = nx.rebac_service.get_namespace_sync("project")
         assert ns is not None
 
     def test_namespace_create_invalid_config(self, nx: NexusFS) -> None:
@@ -646,7 +646,7 @@ class TestNamespaceOperations:
         assert deleted is True
 
         # Verify deleted
-        ns = nx.get_namespace("deletable")
+        ns = nx.rebac_service.get_namespace_sync("deletable")
         assert ns is None
 
     def test_namespace_delete_nonexistent(self, nx: NexusFS) -> None:

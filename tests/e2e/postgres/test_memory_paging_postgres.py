@@ -109,7 +109,7 @@ def api_keys(pg_session_factory):
 @pytest.fixture
 def app(tmp_path, pg_engine, pg_session_factory, api_keys):
     """FastAPI app with PostgreSQL, permissions enabled, database auth."""
-    from nexus.backends.storage.local import LocalBackend
+    from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
     from nexus.bricks.auth.providers.discriminator import DiscriminatingAuthProvider
     from nexus.core.config import MemoryConfig, PermissionConfig
@@ -117,7 +117,7 @@ def app(tmp_path, pg_engine, pg_session_factory, api_keys):
     from nexus.server.fastapi_server import create_app
 
     tmpdir = tempfile.mkdtemp(prefix="nexus-pg-paging-")
-    backend = LocalBackend(root_path=tmpdir)
+    backend = CASLocalBackend(root_path=tmpdir)
 
     from nexus.storage.record_store import SQLAlchemyRecordStore
     from tests.helpers.dict_metastore import DictMetastore

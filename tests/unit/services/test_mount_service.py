@@ -315,7 +315,7 @@ class TestSavedMounts:
             asyncio.run(
                 service.save_mount(
                     mount_point="/mnt/test",
-                    backend_type="local",
+                    backend_type="cas_local",
                     backend_config={"data_dir": "/tmp"},
                 )
             )

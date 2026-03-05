@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from nexus import LocalBackend, NexusFS
+from nexus import CASLocalBackend, NexusFS
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.storage.operation_logger import OperationLogger
@@ -30,14 +30,14 @@ def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]
 
 
 @pytest.fixture
-def local_backend(temp_dir: Path) -> LocalBackend:
-    """Create a LocalBackend for direct CAS operations in tests."""
-    return LocalBackend(temp_dir)
+def local_backend(temp_dir: Path) -> CASLocalBackend:
+    """Create a CASLocalBackend for direct CAS operations in tests."""
+    return CASLocalBackend(temp_dir)
 
 
 @pytest.fixture
 def nx(
-    temp_dir: Path, local_backend: LocalBackend, record_store: SQLAlchemyRecordStore
+    temp_dir: Path, local_backend: CASLocalBackend, record_store: SQLAlchemyRecordStore
 ) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance for testing."""
     nx = create_nexus_fs(
@@ -263,7 +263,7 @@ def test_undo_write_new_file(nx: NexusFS) -> None:
 
 
 def test_undo_write_update(
-    nx: NexusFS, local_backend: LocalBackend, record_store: SQLAlchemyRecordStore
+    nx: NexusFS, local_backend: CASLocalBackend, record_store: SQLAlchemyRecordStore
 ) -> None:
     """Test undoing a write operation that updated an existing file."""
     path = "/test.txt"
@@ -296,7 +296,7 @@ def test_undo_write_update(
 
 
 def test_undo_delete(
-    nx: NexusFS, local_backend: LocalBackend, record_store: SQLAlchemyRecordStore
+    nx: NexusFS, local_backend: CASLocalBackend, record_store: SQLAlchemyRecordStore
 ) -> None:
     """Test undoing a delete operation."""
     path = "/test.txt"

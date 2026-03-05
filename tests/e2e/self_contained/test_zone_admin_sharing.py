@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from nexus import LocalBackend, NexusFS
+from nexus import CASLocalBackend, NexusFS
 from nexus.contracts.types import OperationContext
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
@@ -34,7 +34,7 @@ def nx(temp_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[NexusFS, No
     monkeypatch.delenv("DATABASE_URL", raising=False)
 
     nx = create_nexus_fs(
-        backend=LocalBackend(temp_dir),
+        backend=CASLocalBackend(temp_dir),
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
         parsing=ParseConfig(auto_parse=False),

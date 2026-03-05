@@ -373,28 +373,10 @@ registration strings all follow this pattern.
 | `s3_connector.py` | `S3ConnectorBackend` | `"s3_connector"` | `path_s3.py` | `PathS3Backend` | `"path_s3"` |
 | — | — | — | `cas_s3.py` (future) | `CASS3Backend` | `"cas_s3"` |
 
-**Local transport has no thin class files.** `CASBackend(LocalBlobTransport)` and
-`PathBackend(LocalBlobTransport)` are instantiated directly by the factory (no
-cloud-specific constructor params to wrap). They register as `"cas_local"` and
-`"path_local"`.
-
-#### Backward Compatibility
-
-Old registration names (`"gcs"`, `"gcs_connector"`, `"s3_connector"`) must be kept as
-aliases in `ConnectorRegistry` during migration. User configs reference these strings.
-Deprecation timeline: remove aliases after one minor version.
-
-```python
-# In registry.py — alias old names to new
-_CONNECTOR_ALIASES = {
-    "gcs": "cas_gcs",
-    "gcs_connector": "path_gcs",
-    "s3_connector": "path_s3",
-    "local": "cas_local",
-    "passthrough": "path_local",
-    "local_connector": "path_local",
-}
-```
+**Local transport:** `CASLocalBackend` lives in `cas_local.py` (registered as
+`"cas_local"`). It composes `CASBackend(LocalBlobTransport)` + `CDCEngine` +
+`MultipartUpload` with Feature DI (Bloom, cache, stripe lock). A future
+`PathLocalBackend` would register as `"path_local"`.
 
 #### Why This Convention
 

@@ -10,7 +10,7 @@ import pytest
 from nexus.backends.base.backend import Backend
 from nexus.backends.base.cas_blob_store import WriteResult
 from nexus.backends.base.path_backend import PathBackend
-from nexus.backends.storage.local import LocalBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.core.hash_fast import create_hasher, hash_content
 from nexus.core.object_store import WriteResult as ObjectStoreWriteResult
@@ -83,15 +83,15 @@ class TestBackendWriteStreamDefault:
         assert result_hash == hash_content(b"Hello World!")
 
 
-class TestLocalBackendStreaming:
-    """Test LocalBackend streaming methods."""
+class TestCASLocalBackendStreaming:
+    """Test CASLocalBackend streaming methods."""
 
     @pytest.fixture
-    def local_backend(self, tmp_path: Path) -> LocalBackend:
-        """Create a LocalBackend for testing."""
-        return LocalBackend(root_path=tmp_path)
+    def local_backend(self, tmp_path: Path) -> CASLocalBackend:
+        """Create a CASLocalBackend for testing."""
+        return CASLocalBackend(root_path=tmp_path)
 
-    def test_stream_content_yields_chunks(self, local_backend: LocalBackend) -> None:
+    def test_stream_content_yields_chunks(self, local_backend: CASLocalBackend) -> None:
         """Test that stream_content yields file content in chunks."""
         # Write some content first
         content = b"A" * 1000 + b"B" * 1000 + b"C" * 1000
@@ -104,7 +104,7 @@ class TestLocalBackendStreaming:
         assert len(chunks) == 6  # 3000 bytes / 500 = 6 chunks
         assert b"".join(chunks) == content
 
-    def test_stream_content_default_chunk_size(self, local_backend: LocalBackend) -> None:
+    def test_stream_content_default_chunk_size(self, local_backend: CASLocalBackend) -> None:
         """Test stream_content with default chunk size."""
         content = b"test content"
         content_hash = local_backend.write_content(content).content_hash
@@ -113,14 +113,14 @@ class TestLocalBackendStreaming:
 
         assert b"".join(chunks) == content
 
-    def test_stream_content_not_found(self, local_backend: LocalBackend) -> None:
+    def test_stream_content_not_found(self, local_backend: CASLocalBackend) -> None:
         """Test stream_content raises error for missing content."""
         from nexus.contracts.exceptions import NexusFileNotFoundError
 
         with pytest.raises(NexusFileNotFoundError):
             list(local_backend.stream_content("nonexistent_hash"))
 
-    def test_write_stream_basic(self, local_backend: LocalBackend) -> None:
+    def test_write_stream_basic(self, local_backend: CASLocalBackend) -> None:
         """Test basic write_stream functionality."""
 
         def chunks():
@@ -134,7 +134,7 @@ class TestLocalBackendStreaming:
         content = local_backend.read_content(content_hash)
         assert content == b"Hello World!"
 
-    def test_write_stream_hash_matches_write_content(self, local_backend: LocalBackend) -> None:
+    def test_write_stream_hash_matches_write_content(self, local_backend: CASLocalBackend) -> None:
         """Test that write_stream produces same hash as write_content."""
         content = b"Test content for hash comparison"
 
@@ -149,7 +149,7 @@ class TestLocalBackendStreaming:
 
         assert hash1 == hash2
 
-    def test_write_stream_increments_ref_count(self, local_backend: LocalBackend) -> None:
+    def test_write_stream_increments_ref_count(self, local_backend: CASLocalBackend) -> None:
         """Test that write_stream increments ref_count for existing content."""
         content = b"Duplicate content"
 
@@ -167,7 +167,7 @@ class TestLocalBackendStreaming:
         assert hash1 == hash2
         assert ref2 == ref1 + 1
 
-    def test_write_stream_large_content(self, local_backend: LocalBackend) -> None:
+    def test_write_stream_large_content(self, local_backend: CASLocalBackend) -> None:
         """Test write_stream with larger content split into many chunks."""
         chunk_size = 1024
         num_chunks = 100
@@ -185,7 +185,7 @@ class TestLocalBackendStreaming:
         assert len(content) == chunk_size * num_chunks
         assert content == content_per_chunk * num_chunks
 
-    def test_write_stream_empty_chunks(self, local_backend: LocalBackend) -> None:
+    def test_write_stream_empty_chunks(self, local_backend: CASLocalBackend) -> None:
         """Test write_stream with empty iterator."""
 
         def chunks():
@@ -199,7 +199,7 @@ class TestLocalBackendStreaming:
         content = local_backend.read_content(content_hash)
         assert content == b""
 
-    def test_write_stream_returns_size(self, local_backend: LocalBackend) -> None:
+    def test_write_stream_returns_size(self, local_backend: CASLocalBackend) -> None:
         """Test that write_stream returns file size via .size (Issue #1625)."""
         content = b"Size tracking test" * 100
 
@@ -343,7 +343,7 @@ class TestStreamingMemoryEfficiency:
         """
         import tracemalloc
 
-        backend = LocalBackend(root_path=tmp_path)
+        backend = CASLocalBackend(root_path=tmp_path)
 
         total_bytes = 10 * 1024 * 1024  # 10 MB (below 16 MB CDC threshold)
         chunk_size = 65536  # 64 KB chunks
@@ -548,12 +548,12 @@ class TestReadRangeRPC:
 
     def test_read_range_basic(self, tmp_path: Path) -> None:
         """Test basic read_range functionality."""
-        from nexus.backends.storage.local import LocalBackend
+        from nexus.backends.storage.cas_local import CASLocalBackend
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
         nx = create_nexus_fs(
-            backend=LocalBackend(data_dir),
+            backend=CASLocalBackend(data_dir),
             metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             parsing=ParseConfig(auto_parse=False),
@@ -574,12 +574,12 @@ class TestReadRangeRPC:
 
     def test_read_range_validates_parameters(self, tmp_path: Path) -> None:
         """Test read_range validates start/end parameters."""
-        from nexus.backends.storage.local import LocalBackend
+        from nexus.backends.storage.cas_local import CASLocalBackend
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
         nx = create_nexus_fs(
-            backend=LocalBackend(data_dir),
+            backend=CASLocalBackend(data_dir),
             metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             parsing=ParseConfig(auto_parse=False),
@@ -601,12 +601,12 @@ class TestReadRangeRPC:
 
     def test_read_range_empty_range(self, tmp_path: Path) -> None:
         """Test read_range with empty range (start == end)."""
-        from nexus.backends.storage.local import LocalBackend
+        from nexus.backends.storage.cas_local import CASLocalBackend
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
         nx = create_nexus_fs(
-            backend=LocalBackend(data_dir),
+            backend=CASLocalBackend(data_dir),
             metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             parsing=ParseConfig(auto_parse=False),
@@ -623,12 +623,12 @@ class TestReadRangeRPC:
 
     def test_read_range_beyond_file_size(self, tmp_path: Path) -> None:
         """Test read_range when range extends beyond file size."""
-        from nexus.backends.storage.local import LocalBackend
+        from nexus.backends.storage.cas_local import CASLocalBackend
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
         nx = create_nexus_fs(
-            backend=LocalBackend(data_dir),
+            backend=CASLocalBackend(data_dir),
             metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             parsing=ParseConfig(auto_parse=False),
@@ -651,12 +651,12 @@ class TestStatRPC:
 
     def test_stat_returns_metadata_without_content(self, tmp_path: Path) -> None:
         """Test stat() returns file metadata without reading file content."""
-        from nexus.backends.storage.local import LocalBackend
+        from nexus.backends.storage.cas_local import CASLocalBackend
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
         nx = create_nexus_fs(
-            backend=LocalBackend(data_dir),
+            backend=CASLocalBackend(data_dir),
             metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             parsing=ParseConfig(auto_parse=False),
@@ -680,13 +680,13 @@ class TestStatRPC:
 
     def test_stat_file_not_found(self, tmp_path: Path) -> None:
         """Test stat() raises error for non-existent file."""
-        from nexus.backends.storage.local import LocalBackend
+        from nexus.backends.storage.cas_local import CASLocalBackend
         from nexus.contracts.exceptions import NexusFileNotFoundError
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
         nx = create_nexus_fs(
-            backend=LocalBackend(data_dir),
+            backend=CASLocalBackend(data_dir),
             metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             parsing=ParseConfig(auto_parse=False),
@@ -701,12 +701,12 @@ class TestStatRPC:
 
     def test_stat_directory(self, tmp_path: Path) -> None:
         """Test stat() on a directory."""
-        from nexus.backends.storage.local import LocalBackend
+        from nexus.backends.storage.cas_local import CASLocalBackend
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
         nx = create_nexus_fs(
-            backend=LocalBackend(data_dir),
+            backend=CASLocalBackend(data_dir),
             metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             parsing=ParseConfig(auto_parse=False),

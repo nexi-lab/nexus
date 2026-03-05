@@ -59,7 +59,7 @@ def main():
 
     try:
         # ── Setup: Create NexusFS via factory (fully wired services) ─────
-        from nexus.backends.storage.local import LocalBackend
+        from nexus.backends.storage.cas_local import CASLocalBackend
         from nexus.bricks.auth.providers.static_key import StaticAPIKeyAuth
         from nexus.bricks.rebac.namespace_factory import create_namespace_manager
         from nexus.core.config import PermissionConfig
@@ -68,7 +68,7 @@ def main():
         from nexus.storage.raft_metadata_store import RaftMetadataStore
         from nexus.storage.record_store import SQLAlchemyRecordStore
 
-        backend = LocalBackend(root_path=BACKEND_DIR)
+        backend = CASLocalBackend(root_path=BACKEND_DIR)
         metadata_store = RaftMetadataStore.embedded(METADATA_DIR)
         record_store = SQLAlchemyRecordStore(db_path=RECORD_DB)
 
@@ -176,7 +176,7 @@ def main():
         print("\n" + "=" * 70)
         print("Issue #1244 E2E — FastAPI TestClient, Permissions Enabled")
         print("  Stack: HTTP → StaticAPIKeyAuth → PermissionEnforcer")
-        print("         → NamespaceManager (dcache+L3) → ReBAC → LocalBackend")
+        print("         → NamespaceManager (dcache+L3) → ReBAC → CASLocalBackend")
         print("=" * 70)
 
         # ── Test 1: Health ───────────────────────────────────────────────

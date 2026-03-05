@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from nexus.backends.storage.local import LocalBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
 
@@ -32,7 +32,7 @@ def _make_fs(tmp_path: Path, *, enforce_permissions: bool = True) -> NexusFS:
     backend_path.mkdir(exist_ok=True)
     db_path = tmp_path / "metadata"
 
-    backend = LocalBackend(str(backend_path))
+    backend = CASLocalBackend(str(backend_path))
     metadata_store = RaftMetadataStore.embedded(str(db_path))
     record_store = SQLAlchemyRecordStore(db_path=str(tmp_path / "nexus.db"))
 

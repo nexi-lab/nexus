@@ -106,7 +106,7 @@ def app(tmp_path: Any, db_path: Any, record_store: Any) -> Any:
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
-    from nexus.backends.storage.local import LocalBackend
+    from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.factory import create_nexus_fs
     from nexus.server.fastapi_server import create_app
 
@@ -127,7 +127,7 @@ def app(tmp_path: Any, db_path: Any, record_store: Any) -> Any:
         session.commit()
 
     tmpdir = tempfile.mkdtemp(prefix="nexus-signing-e2e-")
-    backend = LocalBackend(root_path=tmpdir)
+    backend = CASLocalBackend(root_path=tmpdir)
     metadata_store = DictMetastore()
 
     nx = create_nexus_fs(

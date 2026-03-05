@@ -306,14 +306,14 @@ class TestBuiltinConnectorRegistration:
         assert "local" in available or len(available) == 0  # May be cleared
 
     def test_local_backend_registered_with_correct_info(self):
-        """Test LocalBackend registration info."""
+        """Test CASLocalBackend registration info."""
         # Re-register local for this test
-        from nexus.backends.storage.local import LocalBackend
+        from nexus.backends.storage.cas_local import CASLocalBackend
 
-        # LocalBackend should be registered via decorator
+        # CASLocalBackend should be registered via decorator
         if ConnectorRegistry.is_registered("local"):
             info = ConnectorRegistry.get_info("local")
-            assert info.connector_class == LocalBackend
+            assert info.connector_class == CASLocalBackend
             assert info.category == "storage"
             assert "local" in info.name.lower() or "Local" in info.description
 
@@ -452,12 +452,12 @@ class TestConnectionArgs:
 
     def test_builtin_connectors_have_connection_args(self):
         """Test that builtin connectors have CONNECTION_ARGS defined."""
-        from nexus.backends.storage.local import LocalBackend
+        from nexus.backends.storage.cas_local import CASLocalBackend
 
-        # LocalBackend should have CONNECTION_ARGS
-        assert hasattr(LocalBackend, "CONNECTION_ARGS")
-        assert "root_path" in LocalBackend.CONNECTION_ARGS
-        assert LocalBackend.CONNECTION_ARGS["root_path"].required is True
+        # CASLocalBackend should have CONNECTION_ARGS
+        assert hasattr(CASLocalBackend, "CONNECTION_ARGS")
+        assert "root_path" in CASLocalBackend.CONNECTION_ARGS
+        assert CASLocalBackend.CONNECTION_ARGS["root_path"].required is True
 
 
 class TestDeriveConfigMapping:
@@ -597,10 +597,10 @@ class TestExhaustiveBackendMappings:
                 )
 
     def test_local_backend_config_key_mapping(self):
-        """Test LocalBackend maps data_dir -> root_path (backward compat)."""
-        from nexus.backends.storage.local import LocalBackend
+        """Test CASLocalBackend maps data_dir -> root_path (backward compat)."""
+        from nexus.backends.storage.cas_local import CASLocalBackend
 
-        ConnectorRegistry.register("local", LocalBackend)
+        ConnectorRegistry.register("local", CASLocalBackend)
         info = ConnectorRegistry.get_info("local")
 
         assert info.config_mapping["data_dir"] == "root_path"

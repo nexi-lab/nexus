@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import pytest
 
-from nexus.backends.storage.local import LocalBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.bricks.memory.service import Memory
 from nexus.bricks.rebac.entity_registry import EntityRegistry
 from tests.helpers.in_memory_record_store import InMemoryRecordStore
@@ -36,7 +36,7 @@ def session(record_store):
 @pytest.fixture
 def backend(tmp_path):
     """Create local backend for content storage."""
-    return LocalBackend(root_path=tmp_path)
+    return CASLocalBackend(root_path=tmp_path)
 
 
 @pytest.fixture

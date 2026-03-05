@@ -22,7 +22,7 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from nexus import LocalBackend
+from nexus import CASLocalBackend
 from nexus.contracts.types import OperationContext
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
@@ -72,7 +72,7 @@ def main() -> None:
     # db_path accepts both PostgreSQL URLs and SQLite file paths
     record_store = SQLAlchemyRecordStore(db_path=db_path)
     nx = create_nexus_fs(
-        backend=LocalBackend(args.backend_path),
+        backend=CASLocalBackend(args.backend_path),
         metadata_store=RaftMetadataStore.embedded(str(Path(args.backend_path) / "raft-metadata")),
         record_store=record_store,
         parsing=ParseConfig(auto_parse=False),

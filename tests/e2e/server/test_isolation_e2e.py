@@ -22,14 +22,14 @@ import httpx
 
 from nexus.bricks.sandbox.isolation import IsolatedBackend, IsolationConfig
 
-# ── Helper: IsolatedBackend wrapping a real LocalBackend ──────────────
+# ── Helper: IsolatedBackend wrapping a real CASLocalBackend ──────────────
 
 
 def _make_isolated_local_backend(storage_dir: str) -> IsolatedBackend:
-    """Create IsolatedBackend wrapping a real LocalBackend."""
+    """Create IsolatedBackend wrapping a real CASLocalBackend."""
     cfg = IsolationConfig(
         backend_module="nexus.backends.storage.local",
-        backend_class="LocalBackend",
+        backend_class="CASLocalBackend",
         backend_kwargs={"root_path": storage_dir},
         pool_size=2,
         call_timeout=30.0,
@@ -68,7 +68,7 @@ def _create_test_app_with_isolated_backend(tmp_path: Path, enforce_permissions: 
     storage_dir = tmp_path / "storage"
     storage_dir.mkdir(parents=True, exist_ok=True)
 
-    # Use IsolatedBackend wrapping LocalBackend — the real deal
+    # Use IsolatedBackend wrapping CASLocalBackend — the real deal
     backend = _make_isolated_local_backend(str(storage_dir))
 
     metadata_store = RaftMetadataStore.embedded(str(tmp_path / "raft-metadata"))

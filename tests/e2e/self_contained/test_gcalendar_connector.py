@@ -24,7 +24,7 @@ from nexus.backends.connectors.calendar.schemas import (
     TimeSlot,
     UpdateEventSchema,
 )
-from nexus.backends.storage.local import LocalBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
@@ -295,7 +295,7 @@ class TestSkillDocGeneration:
     def test_write_skill_docs(self, calendar_backend, isolated_db, tmp_path):
         """Test writing SKILL.md to filesystem."""
         # Create a real NexusFS for writing
-        backend = LocalBackend(root_path=str(tmp_path / "storage"))
+        backend = CASLocalBackend(root_path=str(tmp_path / "storage"))
         nx = create_nexus_fs(
             backend=backend,
             metadata_store=RaftMetadataStore.embedded(str(isolated_db).replace(".db", "-raft")),

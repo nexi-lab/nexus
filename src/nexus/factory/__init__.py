@@ -20,7 +20,7 @@ Usage::
     from nexus.factory import create_nexus_fs
 
     nx = create_nexus_fs(
-        backend=LocalBackend(root_path="./data"),
+        backend=CASLocalBackend(root_path="./data"),
         metadata_store=RaftMetadataStore.embedded("./raft"),
         record_store=SQLAlchemyRecordStore(db_path="./db.sqlite"),
         permissions=PermissionConfig(enforce=False),

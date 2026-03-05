@@ -11,7 +11,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from nexus import LocalBackend
+from nexus import CASLocalBackend
 from nexus.contracts.types import OperationContext
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
@@ -31,7 +31,7 @@ def test_workspace_namespace_operations():
     with tempfile.TemporaryDirectory() as tmpdir:
         nx = create_nexus_fs(
             parsing=ParseConfig(auto_parse=False),
-            backend=LocalBackend(tmpdir),
+            backend=CASLocalBackend(tmpdir),
             metadata_store=RaftMetadataStore.embedded(str(Path(tmpdir) / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=Path(tmpdir) / "metadata.db"),
             permissions=PermissionConfig(
@@ -75,7 +75,7 @@ def test_shared_namespace_operations():
     """Test basic operations in shared namespace with ReBAC."""
     with tempfile.TemporaryDirectory() as tmpdir:
         nx = create_nexus_fs(
-            backend=LocalBackend(tmpdir),
+            backend=CASLocalBackend(tmpdir),
             metadata_store=RaftMetadataStore.embedded(str(Path(tmpdir) / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=Path(tmpdir) / "metadata.db"),
             parsing=ParseConfig(auto_parse=False),
@@ -114,7 +114,7 @@ def test_external_namespace_operations():
     """Test basic operations in external namespace with ReBAC."""
     with tempfile.TemporaryDirectory() as tmpdir:
         nx = create_nexus_fs(
-            backend=LocalBackend(tmpdir),
+            backend=CASLocalBackend(tmpdir),
             metadata_store=RaftMetadataStore.embedded(str(Path(tmpdir) / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=Path(tmpdir) / "metadata.db"),
             parsing=ParseConfig(auto_parse=False),
@@ -152,7 +152,7 @@ def test_multi_namespace_operations_single_zone():
     """Test operations across multiple namespaces for single zone."""
     with tempfile.TemporaryDirectory() as tmpdir:
         nx = create_nexus_fs(
-            backend=LocalBackend(tmpdir),
+            backend=CASLocalBackend(tmpdir),
             metadata_store=RaftMetadataStore.embedded(str(Path(tmpdir) / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=Path(tmpdir) / "metadata.db"),
             parsing=ParseConfig(auto_parse=False),
@@ -186,7 +186,7 @@ def test_namespace_isolation_between_zones():
     """Test that different zones' workspaces are isolated."""
     with tempfile.TemporaryDirectory() as tmpdir:
         nx = create_nexus_fs(
-            backend=LocalBackend(tmpdir),
+            backend=CASLocalBackend(tmpdir),
             metadata_store=RaftMetadataStore.embedded(str(Path(tmpdir) / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=Path(tmpdir) / "metadata.db"),
             parsing=ParseConfig(auto_parse=False),

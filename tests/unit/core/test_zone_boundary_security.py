@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from nexus import LocalBackend, NexusFS
+from nexus import CASLocalBackend, NexusFS
 from nexus.bricks.rebac.permissions_enhanced import AdminCapability
 from nexus.contracts.types import OperationContext
 from nexus.core.config import ParseConfig, PermissionConfig
@@ -31,7 +31,7 @@ def temp_dir() -> Generator[Path, None, None]:
 def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance with permissions enforced."""
     nx = create_nexus_fs(
-        backend=LocalBackend(temp_dir),
+        backend=CASLocalBackend(temp_dir),
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
         parsing=ParseConfig(auto_parse=False),

@@ -199,9 +199,9 @@ class TestConcreteBackendConformance:
     """Verify concrete backends satisfy ConnectorProtocol via isinstance."""
 
     def test_local_backend(self, tmp_path: Any) -> None:
-        from nexus.backends.storage.local import LocalBackend
+        from nexus.backends.storage.cas_local import CASLocalBackend
 
-        backend = LocalBackend(root_path=str(tmp_path / "data"))
+        backend = CASLocalBackend(root_path=str(tmp_path / "data"))
         assert isinstance(backend, ConnectorProtocol)
         assert isinstance(backend, StreamingProtocol)
         assert isinstance(backend, BatchContentProtocol)

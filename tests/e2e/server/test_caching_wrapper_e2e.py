@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from nexus.backends.storage.local import LocalBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.backends.wrappers.caching import (
     CacheStrategy,
     CacheWrapperConfig,
@@ -34,16 +34,16 @@ from tests.helpers.dict_metastore import DictMetastore
 
 
 @pytest.fixture
-def local_backend(tmp_path: Path) -> LocalBackend:
-    """Create a real LocalBackend with temp directory."""
+def local_backend(tmp_path: Path) -> CASLocalBackend:
+    """Create a real CASLocalBackend with temp directory."""
     root = tmp_path / "storage"
     root.mkdir()
-    return LocalBackend(root_path=str(root))
+    return CASLocalBackend(root_path=str(root))
 
 
 @pytest.fixture
-def cached_backend(local_backend: LocalBackend) -> CachingBackendWrapper:
-    """LocalBackend wrapped with CachingBackendWrapper."""
+def cached_backend(local_backend: CASLocalBackend) -> CachingBackendWrapper:
+    """CASLocalBackend wrapped with CachingBackendWrapper."""
     config = CacheWrapperConfig(
         strategy=CacheStrategy.WRITE_AROUND,
         l1_max_size_mb=16,
@@ -54,8 +54,8 @@ def cached_backend(local_backend: LocalBackend) -> CachingBackendWrapper:
 
 
 @pytest.fixture
-def write_through_backend(local_backend: LocalBackend) -> CachingBackendWrapper:
-    """LocalBackend wrapped with write-through strategy."""
+def write_through_backend(local_backend: CASLocalBackend) -> CachingBackendWrapper:
+    """CASLocalBackend wrapped with write-through strategy."""
     config = CacheWrapperConfig(
         strategy=CacheStrategy.WRITE_THROUGH,
         l1_max_size_mb=16,
@@ -79,7 +79,7 @@ class TestDescribeChain:
     def test_cached_backend_name(self, cached_backend: CachingBackendWrapper) -> None:
         assert cached_backend.name == "cached(local)"
 
-    def test_leaf_backend_describe(self, local_backend: LocalBackend) -> None:
+    def test_leaf_backend_describe(self, local_backend: CASLocalBackend) -> None:
         assert local_backend.describe() == "local"
 
 
@@ -92,7 +92,7 @@ class TestCachingCorrectness:
     """Verify cached operations produce identical results to direct backend."""
 
     def test_write_and_read_through_cache(
-        self, local_backend: LocalBackend, cached_backend: CachingBackendWrapper
+        self, local_backend: CASLocalBackend, cached_backend: CachingBackendWrapper
     ):
         """Written content should be readable through cache identically."""
         content = b"E2E test content: " + uuid.uuid4().bytes
@@ -264,7 +264,7 @@ class TestCachingInvalidation:
         assert not read_resp.success
 
     def test_clear_cache_forces_re_read(
-        self, local_backend: LocalBackend, cached_backend: CachingBackendWrapper
+        self, local_backend: CASLocalBackend, cached_backend: CachingBackendWrapper
     ):
         """After clear_cache, reads should go back to the backend."""
         content = b"clear test"
@@ -323,7 +323,7 @@ class TestCachingPermissions:
     the NexusFS layer, so even cached content must pass permission checks.
 
     These tests create a real NexusFS with:
-    - CachingBackendWrapper wrapping LocalBackend
+    - CachingBackendWrapper wrapping CASLocalBackend
     - enforce_permissions=True
     - ReBAC permission tuples granting specific users access
     """
@@ -334,8 +334,8 @@ class TestCachingPermissions:
         storage_path = tmp_path / "storage"
         storage_path.mkdir()
 
-        # Create LocalBackend wrapped with CachingBackendWrapper
-        inner_backend = LocalBackend(root_path=str(storage_path))
+        # Create CASLocalBackend wrapped with CachingBackendWrapper
+        inner_backend = CASLocalBackend(root_path=str(storage_path))
         config = CacheWrapperConfig(
             strategy=CacheStrategy.WRITE_AROUND,
             l1_max_size_mb=16,
@@ -474,7 +474,7 @@ class TestCachingPermissions:
         storage_path = tmp_path / "wt_storage"
         storage_path.mkdir()
 
-        inner_backend = LocalBackend(root_path=str(storage_path))
+        inner_backend = CASLocalBackend(root_path=str(storage_path))
         config = CacheWrapperConfig(
             strategy=CacheStrategy.WRITE_THROUGH,
             l1_max_size_mb=16,
@@ -520,13 +520,13 @@ class TestCachingWithFastAPIServer:
     """E2E tests for CachingBackendWrapper through the full FastAPI HTTP stack.
 
     These tests create a real FastAPI app with:
-    - CachingBackendWrapper wrapping LocalBackend
+    - CachingBackendWrapper wrapping CASLocalBackend
     - enforce_permissions=True
     - ReBAC permission tuples granting specific users access
     - Open access mode (no api_key) — identity from X-Nexus-Subject header
 
     HTTP requests go through the full stack:
-        httpx → FastAPI → auth → OperationContext → NexusFS → CachingBackendWrapper → LocalBackend
+        httpx → FastAPI → auth → OperationContext → NexusFS → CachingBackendWrapper → CASLocalBackend
 
     Validates that:
     1. Authorized users can read/write through the HTTP API with caching
@@ -540,7 +540,7 @@ class TestCachingWithFastAPIServer:
         """Create FastAPI app with CachingBackendWrapper-backed NexusFS.
 
         Sets up:
-        - LocalBackend wrapped with CachingBackendWrapper
+        - CASLocalBackend wrapped with CachingBackendWrapper
         - NexusFS with enforce_permissions=True
         - ReBAC grants for specific users
         - FastAPI app in open access mode (no api_key)
@@ -554,8 +554,8 @@ class TestCachingWithFastAPIServer:
         storage_path = tmp_path / "http_storage"
         storage_path.mkdir()
 
-        # Create CachingBackendWrapper-wrapped LocalBackend
-        inner_backend = LocalBackend(root_path=str(storage_path))
+        # Create CachingBackendWrapper-wrapped CASLocalBackend
+        inner_backend = CASLocalBackend(root_path=str(storage_path))
         config = CacheWrapperConfig(
             strategy=CacheStrategy.WRITE_AROUND,
             l1_max_size_mb=16,

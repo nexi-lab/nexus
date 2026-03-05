@@ -14,7 +14,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from nexus.backends.storage.local import LocalBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.bricks.memory.router import MemoryViewRouter
 from nexus.bricks.memory.service import Memory
 from nexus.bricks.memory.state import MemoryStateManager
@@ -49,7 +49,7 @@ def session(engine):
 @pytest.fixture
 def backend(tmp_path):
     """Create local backend for content storage."""
-    return LocalBackend(root_path=tmp_path)
+    return CASLocalBackend(root_path=tmp_path)
 
 
 @pytest.fixture

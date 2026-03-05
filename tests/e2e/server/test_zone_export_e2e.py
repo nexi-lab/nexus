@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from nexus.backends.storage.local import LocalBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.bricks.portability import (
     BundleReader,
     ZoneExportOptions,
@@ -42,7 +42,7 @@ def nexus_fs(temp_dir):
     data_dir.mkdir()
 
     fs = create_nexus_fs(
-        backend=LocalBackend(data_dir),
+        backend=CASLocalBackend(data_dir),
         metadata_store=RaftMetadataStore.embedded(str(data_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=data_dir / "metadata.db"),
         parsing=ParseConfig(auto_parse=False),

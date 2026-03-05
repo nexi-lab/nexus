@@ -97,7 +97,7 @@ class TestMountConfigModelIOProfile:
         model = MountConfigModel(
             mount_id="test-123",
             mount_point="/data",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config='{"root": "/tmp"}',
             io_profile="balanced",
         )
@@ -122,7 +122,7 @@ class TestMountConfigModelIOProfile:
         model = MountConfigModel(
             mount_id=f"test-{profile}",
             mount_point=f"/{profile}",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config='{"root": "/tmp"}',
             io_profile=profile,
         )

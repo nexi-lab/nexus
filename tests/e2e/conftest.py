@@ -251,11 +251,11 @@ def nexus_fs(isolated_db, tmp_path):
     """
     os.environ["NEXUS_JWT_SECRET"] = "test-secret-key-for-e2e-12345"
 
-    from nexus.backends.storage.local import LocalBackend
+    from nexus.backends.storage.cas_local import CASLocalBackend
 
     storage_path = tmp_path / "storage"
     storage_path.mkdir(exist_ok=True)
-    backend = LocalBackend(root_path=str(storage_path))
+    backend = CASLocalBackend(root_path=str(storage_path))
 
     metadata_store = RaftMetadataStore.embedded(str(isolated_db).replace(".db", ""))
     record_store = SQLAlchemyRecordStore()  # in-memory SQLite for tests

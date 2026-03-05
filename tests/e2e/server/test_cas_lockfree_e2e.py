@@ -2,7 +2,7 @@
 
 Verifies that 50 concurrent write requests through the FastAPI server
 succeed without lock contention errors. Uses the real NexusFS stack:
-FastAPI -> NexusFS -> LocalBackend (CASBlobStore).
+FastAPI -> NexusFS -> CASLocalBackend (CASBlobStore).
 
 Run with:
     pytest tests/e2e/test_cas_lockfree_e2e.py -v --override-ini="addopts="

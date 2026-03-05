@@ -6,7 +6,7 @@ and reference-counted.
 
     CASBackend(transport: BlobTransport)
         ├── GCSBackend      — thin: creates GCSBlobTransport, registered as "gcs"
-        ├── LocalCASBackend  — thin: creates LocalBlobTransport + features
+        ├── CASLocalBackend  — thin: creates LocalBlobTransport + features
         └── (future S3CAS)  — thin: creates S3BlobTransport
 
 The transport is INTERNAL — callers never see BlobTransport.  They see Backend.

@@ -4,7 +4,7 @@ Used in tests to simulate backend failures at specific call counts,
 enabling verification of error handling and partial-failure recovery.
 
 Usage:
-    backend = FailingBackend(LocalBackend(tmp_path), fail_on_nth=3)
+    backend = FailingBackend(CASLocalBackend(tmp_path), fail_on_nth=3)
     # First two calls succeed; third call raises BackendError
     backend.write_content(b"a")  # OK (call 1)
     backend.write_content(b"b")  # OK (call 2)
@@ -12,7 +12,7 @@ Usage:
     backend.write_content(b"d")  # OK (call 4, past the failure point)
 
     # Or fail on specific methods:
-    backend = FailingBackend(LocalBackend(tmp_path), fail_on_methods=["read_content"])
+    backend = FailingBackend(CASLocalBackend(tmp_path), fail_on_methods=["read_content"])
     backend.write_content(b"a")  # OK
     backend.read_content(hash)   # raises BackendError
 """

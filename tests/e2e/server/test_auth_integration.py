@@ -39,13 +39,13 @@ def test_app():
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
 
-    # Create LocalBackend and NexusFS instance
+    # Create CASLocalBackend and NexusFS instance
     import tempfile
 
-    from nexus.backends.storage.local import LocalBackend
+    from nexus.backends.storage.cas_local import CASLocalBackend
 
     auth_tmpdir = tempfile.mkdtemp(prefix="nexus-test-auth-")
-    backend = LocalBackend(root_path=auth_tmpdir)
+    backend = CASLocalBackend(root_path=auth_tmpdir)
     nx = create_nexus_fs(
         backend=backend,
         metadata_store=RaftMetadataStore.embedded(os.path.join(auth_tmpdir, "raft-metadata")),

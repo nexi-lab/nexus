@@ -1586,9 +1586,9 @@ class NexusFS(  # type: ignore[misc]
                             else:
                                 raise
             else:
-                # Try parallel I/O for LocalBackend using nexus_fast
+                # Try parallel I/O for CASLocalBackend using nexus_fast
                 if backend.supports_parallel_mmap_read is True and len(paths_for_backend) > 1:
-                    # Use Rust parallel mmap reads for LocalBackend
+                    # Use Rust parallel mmap reads for CASLocalBackend
                     try:
                         from nexus_fast import read_files_bulk
 
@@ -1604,7 +1604,7 @@ class NexusFS(  # type: ignore[misc]
 
                         # Parallel mmap read
                         logger.info(
-                            f"[READ-BULK] Using parallel mmap for {len(disk_paths)} LocalBackend files"
+                            f"[READ-BULK] Using parallel mmap for {len(disk_paths)} CASLocalBackend files"
                         )
                         disk_contents = read_files_bulk(disk_paths)
 

@@ -24,7 +24,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from starlette.testclient import TestClient
 
-from nexus.backends.storage.local import LocalBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
 from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
@@ -89,7 +89,7 @@ def _create_nexus_fs(
 
     storage_path = tmp_path / f"storage{suffix}"
     storage_path.mkdir(exist_ok=True)
-    backend = LocalBackend(root_path=storage_path)
+    backend = CASLocalBackend(root_path=storage_path)
 
     raft_dir = str(tmp_path / f"raft-metadata{suffix}")
     metadata_store = RaftMetadataStore.embedded(raft_dir)

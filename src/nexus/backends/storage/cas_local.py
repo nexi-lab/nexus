@@ -1,19 +1,19 @@
-"""Full-featured local CAS backend — replaces legacy LocalBackend.
+"""CAS + Local transport backend — full-featured local storage.
 
 Composes CASBackend (addressing) + LocalBlobTransport (I/O) +
 CDCEngine (chunking) + MultipartUpload (resumable uploads)
 using Feature DI for Bloom filter, content cache, and stripe lock.
 
-    LocalCASBackend = CASBackend(LocalBlobTransport)
+    CASLocalBackend = CASBackend(LocalBlobTransport)
                     + CDCEngine           (CDC for large files, composed)
                     + MultipartUpload     (resumable uploads, ABC)
                     + Feature DI          (Bloom, cache, stripe lock)
 
-Same constructor signature as legacy LocalBackend — drop-in replacement.
+Naming convention: {addressing}_{transport} per Section 5.2 of
+docs/architecture/backend-architecture.md.
 
 References:
     - Issue #1323: CAS x Backend orthogonal composition
-    - backends/storage/local.py — legacy implementation (source of patterns)
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Default Bloom filter settings (match legacy LocalBackend)
+# Default Bloom filter settings
 DEFAULT_CAS_BLOOM_CAPACITY = 100_000
 DEFAULT_CAS_BLOOM_FP_RATE = 0.01
 
@@ -77,11 +77,10 @@ def _init_bloom(cas_root: Path, capacity: int, fp_rate: float) -> Any:
     description="Local filesystem with CAS deduplication (new architecture)",
     category="storage",
 )
-class LocalCASBackend(CASBackend, MultipartUpload):
-    """Full-featured local CAS backend.
+class CASLocalBackend(CASBackend, MultipartUpload):
+    """CAS addressing + local filesystem transport.
 
     Uses CDCEngine via composition (not inheritance) for large file chunking.
-    Same constructor signature as legacy LocalBackend for drop-in replacement.
     """
 
     CONNECTION_ARGS: dict[str, ConnectionArg] = {

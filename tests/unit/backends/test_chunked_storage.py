@@ -12,16 +12,16 @@ from nexus.backends.engines.cdc import (
     ChunkedReference,
     ChunkInfo,
 )
-from nexus.backends.storage.local_cas import LocalCASBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 
 
 def _hash_to_path(backend, content_hash: str):
-    """Helper to construct CAS path from hash for LocalCASBackend."""
+    """Helper to construct CAS path from hash for CASLocalBackend."""
     return backend.cas_root / content_hash[:2] / content_hash[2:4] / content_hash
 
 
 def _write_metadata(backend, content_hash: str, metadata: dict):
-    """Helper to write metadata for LocalCASBackend."""
+    """Helper to write metadata for CASLocalBackend."""
     import json
 
     meta_key = backend._meta_key(content_hash)
@@ -126,29 +126,29 @@ class TestChunkedReference:
 
 
 class TestChunkedStorageMixin:
-    """Tests for ChunkedStorageMixin via LocalCASBackend."""
+    """Tests for ChunkedStorageMixin via CASLocalBackend."""
 
     @pytest.fixture
-    def backend(self, tmp_path: Path) -> LocalCASBackend:
-        """Create a LocalCASBackend for testing."""
-        return LocalCASBackend(root_path=tmp_path / "backend")
+    def backend(self, tmp_path: Path) -> CASLocalBackend:
+        """Create a CASLocalBackend for testing."""
+        return CASLocalBackend(root_path=tmp_path / "backend")
 
-    def test_should_chunk_below_threshold(self, backend: LocalCASBackend) -> None:
+    def test_should_chunk_below_threshold(self, backend: CASLocalBackend) -> None:
         """Test that small content is not chunked."""
         small_content = b"x" * (CDC_THRESHOLD_BYTES - 1)
         assert backend._cdc.should_chunk(small_content) is False
 
-    def test_should_chunk_at_threshold(self, backend: LocalCASBackend) -> None:
+    def test_should_chunk_at_threshold(self, backend: CASLocalBackend) -> None:
         """Test that content at threshold is chunked."""
         threshold_content = b"x" * CDC_THRESHOLD_BYTES
         assert backend._cdc.should_chunk(threshold_content) is True
 
-    def test_should_chunk_above_threshold(self, backend: LocalCASBackend) -> None:
+    def test_should_chunk_above_threshold(self, backend: CASLocalBackend) -> None:
         """Test that large content is chunked."""
         large_content = b"x" * (CDC_THRESHOLD_BYTES + 1)
         assert backend._cdc.should_chunk(large_content) is True
 
-    def test_chunk_content_fixed_fallback(self, backend: LocalCASBackend) -> None:
+    def test_chunk_content_fixed_fallback(self, backend: CASLocalBackend) -> None:
         """Test fixed-size chunking fallback."""
         content = b"x" * (3 * CDC_AVG_CHUNK_SIZE)
         chunks = backend._cdc._chunk_fixed(content)
@@ -166,15 +166,15 @@ class TestChunkedStorageMixin:
         assert total_length == len(content)
 
 
-class TestLocalCASBackendChunkedWriteRead:
+class TestCASLocalBackendChunkedWriteRead:
     """Integration tests for chunked write/read operations."""
 
     @pytest.fixture
-    def backend(self, tmp_path: Path) -> LocalCASBackend:
-        """Create a LocalCASBackend for testing."""
-        return LocalCASBackend(root_path=tmp_path / "backend")
+    def backend(self, tmp_path: Path) -> CASLocalBackend:
+        """Create a CASLocalBackend for testing."""
+        return CASLocalBackend(root_path=tmp_path / "backend")
 
-    def test_small_file_not_chunked(self, backend: LocalCASBackend) -> None:
+    def test_small_file_not_chunked(self, backend: CASLocalBackend) -> None:
         """Test that small files use single-blob storage."""
         small_content = b"This is a small file that should not be chunked."
         content_hash = backend.write_content(small_content).content_hash
@@ -185,7 +185,7 @@ class TestLocalCASBackendChunkedWriteRead:
         # Read back
         assert backend.read_content(content_hash) == small_content
 
-    def test_large_file_chunked_write_read(self, backend: LocalCASBackend) -> None:
+    def test_large_file_chunked_write_read(self, backend: CASLocalBackend) -> None:
         """Test that large files are chunked and can be read back."""
         # Create content larger than threshold
         large_content = os.urandom(CDC_THRESHOLD_BYTES + 1024 * 1024)  # ~17MB
@@ -199,7 +199,7 @@ class TestLocalCASBackendChunkedWriteRead:
         # Read back
         assert backend.read_content(content_hash) == large_content
 
-    def test_large_file_chunks_exist(self, backend: LocalCASBackend) -> None:
+    def test_large_file_chunks_exist(self, backend: CASLocalBackend) -> None:
         """Test that individual chunks are created in CAS."""
         large_content = os.urandom(CDC_THRESHOLD_BYTES + 1024 * 1024)
 
@@ -215,7 +215,7 @@ class TestLocalCASBackendChunkedWriteRead:
             assert chunk_path.exists(), f"Chunk {chunk_info.chunk_hash} should exist"
             assert chunk_path.stat().st_size == chunk_info.length
 
-    def test_chunked_deduplication(self, backend: LocalCASBackend) -> None:
+    def test_chunked_deduplication(self, backend: CASLocalBackend) -> None:
         """Test that identical chunks are deduplicated."""
         # Create two large files with identical prefix
         prefix = os.urandom(CDC_THRESHOLD_BYTES)  # Same prefix
@@ -242,7 +242,7 @@ class TestLocalCASBackendChunkedWriteRead:
         # (may not be perfect due to CDC boundaries, but should have some sharing)
         assert len(shared_chunks) > 0, "Similar files should share some chunks"
 
-    def test_chunked_delete_unreferences_chunks(self, backend: LocalCASBackend) -> None:
+    def test_chunked_delete_unreferences_chunks(self, backend: CASLocalBackend) -> None:
         """Test that deleting chunked content unreferences chunks."""
         large_content = os.urandom(CDC_THRESHOLD_BYTES + 1024 * 1024)
 
@@ -267,7 +267,7 @@ class TestLocalCASBackendChunkedWriteRead:
         for ch in chunk_hashes:
             assert not _hash_to_path(backend, ch).exists()
 
-    def test_chunked_delete_preserves_shared_chunks(self, backend: LocalCASBackend) -> None:
+    def test_chunked_delete_preserves_shared_chunks(self, backend: CASLocalBackend) -> None:
         """Test that deleting one file preserves chunks used by another."""
         # Create two identical large files (will share all chunks)
         large_content = os.urandom(CDC_THRESHOLD_BYTES + 1024 * 1024)
@@ -289,7 +289,7 @@ class TestLocalCASBackendChunkedWriteRead:
         # Should still be readable (ref_count was 2, now 1)
         assert backend.read_content(hash2) == large_content
 
-    def test_get_content_size_chunked(self, backend: LocalCASBackend) -> None:
+    def test_get_content_size_chunked(self, backend: CASLocalBackend) -> None:
         """Test that get_content_size returns original size for chunked content."""
         large_content = os.urandom(CDC_THRESHOLD_BYTES + 500_000)
         original_size = len(large_content)
@@ -299,7 +299,7 @@ class TestLocalCASBackendChunkedWriteRead:
         # Get size
         assert backend.get_content_size(content_hash) == original_size
 
-    def test_content_exists_chunked(self, backend: LocalCASBackend) -> None:
+    def test_content_exists_chunked(self, backend: CASLocalBackend) -> None:
         """Test that content_exists works for chunked content."""
         large_content = os.urandom(CDC_THRESHOLD_BYTES + 100_000)
 
@@ -319,11 +319,11 @@ class TestBackwardCompatibility:
     """Tests for backward compatibility with existing single-blob storage."""
 
     @pytest.fixture
-    def backend(self, tmp_path: Path) -> LocalCASBackend:
-        """Create a LocalCASBackend for testing."""
-        return LocalCASBackend(root_path=tmp_path / "backend")
+    def backend(self, tmp_path: Path) -> CASLocalBackend:
+        """Create a CASLocalBackend for testing."""
+        return CASLocalBackend(root_path=tmp_path / "backend")
 
-    def test_read_existing_single_blob(self, backend: LocalCASBackend) -> None:
+    def test_read_existing_single_blob(self, backend: CASLocalBackend) -> None:
         """Test that new code can read existing single-blob files."""
         # Manually create a single-blob file (simulating old storage)
         content = b"This is old single-blob content"
@@ -341,7 +341,7 @@ class TestBackwardCompatibility:
         # Should be readable
         assert backend.read_content(content_hash) == content
 
-    def test_mixed_storage_operations(self, backend: LocalCASBackend) -> None:
+    def test_mixed_storage_operations(self, backend: CASLocalBackend) -> None:
         """Test that mixed chunked and single-blob operations work together."""
         small_content = b"Small file"
         large_content = os.urandom(CDC_THRESHOLD_BYTES + 100_000)
@@ -371,11 +371,11 @@ class TestCDCChunking:
     """Tests specifically for CDC chunking behavior."""
 
     @pytest.fixture
-    def backend(self, tmp_path: Path) -> LocalCASBackend:
-        """Create a LocalCASBackend for testing."""
-        return LocalCASBackend(root_path=tmp_path / "backend")
+    def backend(self, tmp_path: Path) -> CASLocalBackend:
+        """Create a CASLocalBackend for testing."""
+        return CASLocalBackend(root_path=tmp_path / "backend")
 
-    def test_cdc_produces_variable_chunks(self, backend: LocalCASBackend) -> None:
+    def test_cdc_produces_variable_chunks(self, backend: CASLocalBackend) -> None:
         """Test that CDC produces variable-sized chunks (not fixed)."""
         # Create content with some patterns that CDC should detect
         large_content = os.urandom(CDC_THRESHOLD_BYTES * 2)
@@ -399,7 +399,7 @@ class TestCDCChunking:
             )  # Last chunk can be smaller
             assert size <= backend._cdc.max_chunk
 
-    def test_cdc_chunk_offsets_contiguous(self, backend: LocalCASBackend) -> None:
+    def test_cdc_chunk_offsets_contiguous(self, backend: CASLocalBackend) -> None:
         """Test that CDC chunk offsets are contiguous (no gaps/overlaps)."""
         large_content = os.urandom(CDC_THRESHOLD_BYTES + 1024 * 1024)
 

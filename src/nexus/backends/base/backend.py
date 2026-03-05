@@ -167,7 +167,7 @@ class Backend(ObjectStoreABC):
     def has_root_path(self) -> bool:
         """Whether this backend has a local root_path for physical storage.
 
-        Only LocalBackend has a root_path attribute pointing to local
+        Only CASLocalBackend has a root_path attribute pointing to local
         disk storage with CAS and directory subdirectories.
 
         Returns:
@@ -670,7 +670,7 @@ class Backend(ObjectStoreABC):
             ReBAC object type string
 
         Examples:
-            LocalBackend: "file"
+            CASLocalBackend: "file"
             PostgresBackend: "postgres:table" or "postgres:row"
             RedisBackend: "redis:instance" or "redis:key"
 
@@ -697,7 +697,7 @@ class Backend(ObjectStoreABC):
             Object identifier for ReBAC
 
         Examples:
-            LocalBackend: backend_path (full relative path)
+            CASLocalBackend: backend_path (full relative path)
             PostgresBackend: "public/users" (schema/table)
             RedisBackend: "prod-cache" (instance name)
 

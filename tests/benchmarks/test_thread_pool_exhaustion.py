@@ -227,7 +227,7 @@ def test_in_process_thread_exhaustion(
     timeout: float = 60.0,
 ) -> TestResults:
     """Test thread pool exhaustion with in-process NexusFS."""
-    from nexus.backends.storage.local import LocalBackend
+    from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.contracts.types import OperationContext
 
     results = TestResults()
@@ -238,7 +238,7 @@ def test_in_process_thread_exhaustion(
 
         # Initialize NexusFS
         db_path = os.path.join(tmpdir, "nexus.db")
-        backend = LocalBackend(root_path=tmpdir)
+        backend = CASLocalBackend(root_path=tmpdir)
 
         # Create NexusFS without permissions for setup
         nx = create_nexus_fs(
@@ -345,7 +345,7 @@ async def test_async_thread_exhaustion(
     timeout: float = 60.0,
 ) -> TestResults:
     """Test that simulates exact FastAPI server behavior with asyncio.to_thread."""
-    from nexus.backends.storage.local import LocalBackend
+    from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.contracts.types import OperationContext
 
     results = TestResults()
@@ -354,7 +354,7 @@ async def test_async_thread_exhaustion(
         print(f"\nSetting up async test environment in {tmpdir}...")
 
         db_path = os.path.join(tmpdir, "nexus.db")
-        backend = LocalBackend(root_path=tmpdir)
+        backend = CASLocalBackend(root_path=tmpdir)
 
         # Create NexusFS without permissions for setup
         nx = create_nexus_fs(

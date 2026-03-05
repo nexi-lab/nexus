@@ -22,7 +22,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus import LocalBackend, NexusFS
+from nexus import CASLocalBackend, NexusFS
 from nexus.core.config import ParseConfig, PermissionConfig, SystemServices
 from nexus.core.file_events import FileEventType
 from tests.helpers.dict_metastore import DictMetastore
@@ -37,7 +37,7 @@ def temp_dir() -> Generator[Path, None, None]:
 @pytest.fixture
 def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
     metastore = DictMetastore()
-    backend = LocalBackend(str(temp_dir / "data"))
+    backend = CASLocalBackend(str(temp_dir / "data"))
     nx = NexusFS(
         metadata_store=metastore,
         permissions=PermissionConfig(enforce=False),
@@ -254,7 +254,7 @@ class TestVFSObserverCoverage:
     @pytest.fixture
     def nx_with_hook(self, temp_dir: Path, hook: MagicMock) -> Generator[NexusFS, None, None]:
         metastore = DictMetastore()
-        backend = LocalBackend(str(temp_dir / "data"))
+        backend = CASLocalBackend(str(temp_dir / "data"))
         nx = NexusFS(
             metadata_store=metastore,
             permissions=PermissionConfig(enforce=False),

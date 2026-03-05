@@ -1,7 +1,7 @@
 """Full-stack NexusFS integration tests for overlay workspace.
 
 Issue #1264: Tests overlay resolution through the actual NexusFS kernel,
-using real LocalBackend, real SQLAlchemyRecordStore, and real WorkspaceRegistry.
+using real CASLocalBackend, real SQLAlchemyRecordStore, and real WorkspaceRegistry.
 This verifies the overlay hooks in nexus_fs.py (read/delete) work
 correctly when wired through the full dependency injection pipeline.
 
@@ -10,7 +10,7 @@ No Raft required — uses DictMetastore implementing MetastoreABC.
 
 import pytest
 
-from nexus.backends.storage.local import LocalBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.contracts.metadata import FileMetadata
 from nexus.contracts.workspace_manifest import ManifestEntry, WorkspaceManifest
@@ -31,9 +31,9 @@ def storage_dir(tmp_path):
 
 
 @pytest.fixture
-def local_backend(storage_dir) -> LocalBackend:
-    """Real LocalBackend for CAS storage."""
-    return LocalBackend(root_path=str(storage_dir))
+def local_backend(storage_dir) -> CASLocalBackend:
+    """Real CASLocalBackend for CAS storage."""
+    return CASLocalBackend(root_path=str(storage_dir))
 
 
 @pytest.fixture
@@ -54,7 +54,9 @@ def base_content() -> dict[str, bytes]:
 
 
 @pytest.fixture
-def base_manifest(local_backend: LocalBackend, base_content: dict[str, bytes]) -> WorkspaceManifest:
+def base_manifest(
+    local_backend: CASLocalBackend, base_content: dict[str, bytes]
+) -> WorkspaceManifest:
     """Create a real base manifest with content stored in the CAS backend."""
     entries: dict[str, ManifestEntry] = {}
     for rel_path, content in base_content.items():
@@ -69,7 +71,7 @@ def base_manifest(local_backend: LocalBackend, base_content: dict[str, bytes]) -
 
 
 @pytest.fixture
-def stored_manifest_hash(local_backend: LocalBackend, base_manifest: WorkspaceManifest) -> str:
+def stored_manifest_hash(local_backend: CASLocalBackend, base_manifest: WorkspaceManifest) -> str:
     """Store base manifest in CAS and return its hash."""
     manifest_json = base_manifest.to_json()
     result = local_backend.write_content(manifest_json)
@@ -79,7 +81,7 @@ def stored_manifest_hash(local_backend: LocalBackend, base_manifest: WorkspaceMa
 @pytest.fixture
 def overlay_resolver(
     metadata_store: DictMetastore,
-    local_backend: LocalBackend,
+    local_backend: CASLocalBackend,
 ) -> OverlayResolver:
     """Real OverlayResolver wired to real backend and metadata store."""
     return OverlayResolver(metadata=metadata_store, backend=local_backend)
@@ -87,14 +89,14 @@ def overlay_resolver(
 
 @pytest.fixture
 def nexus_fs(
-    local_backend: LocalBackend,
+    local_backend: CASLocalBackend,
     metadata_store: DictMetastore,
     overlay_resolver: OverlayResolver,
     stored_manifest_hash: str,
 ):
     """Full NexusFS kernel with overlay resolver injected.
 
-    Uses create_nexus_fs with real LocalBackend + SQLAlchemyRecordStore,
+    Uses create_nexus_fs with real CASLocalBackend + SQLAlchemyRecordStore,
     then injects overlay_resolver post-construction (since factory doesn't
     propagate it yet — that's Phase 5 RPC wiring).
     """

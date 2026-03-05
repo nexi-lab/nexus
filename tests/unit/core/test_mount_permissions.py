@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
-from nexus import LocalBackend, NexusFS
+from nexus import CASLocalBackend, NexusFS
 from nexus.contracts.types import OperationContext
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
@@ -31,7 +31,7 @@ def temp_dir() -> Generator[Path, None, None]:
 def nx_with_permissions(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance with permissions enabled."""
     nx = create_nexus_fs(
-        backend=LocalBackend(temp_dir),
+        backend=CASLocalBackend(temp_dir),
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
         parsing=ParseConfig(auto_parse=False),
@@ -45,7 +45,7 @@ def nx_with_permissions(temp_dir: Path) -> Generator[NexusFS, None, None]:
 def nx_without_permissions(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance without permissions (backward compatibility)."""
     nx = create_nexus_fs(
-        backend=LocalBackend(temp_dir),
+        backend=CASLocalBackend(temp_dir),
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata-noperm")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
         parsing=ParseConfig(auto_parse=False),
@@ -68,7 +68,7 @@ class TestListMountsPermissionFiltering:
 
         nx_without_permissions._mount_core_service.add_mount(
             mount_point="/mnt/test",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
         )
 
@@ -112,7 +112,7 @@ class TestListMountsPermissionFiltering:
         # Add first mount as Alice (she'll be granted direct_owner)
         nx_with_permissions._mount_core_service.add_mount(
             mount_point="/mnt/alice",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir1)},
             context=context_alice_admin,
         )
@@ -139,7 +139,7 @@ class TestListMountsPermissionFiltering:
         # Add second mount as Bob (he'll be granted direct_owner)
         nx_with_permissions._mount_core_service.add_mount(
             mount_point="/mnt/bob",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir2)},
             context=context_bob_admin,
         )
@@ -183,7 +183,7 @@ class TestListMountsPermissionFiltering:
         # Alice creates a shared mount (using admin to bypass parent permission check)
         nx_with_permissions._mount_core_service.add_mount(
             mount_point="/mnt/shared",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
             context=context_alice_admin,
         )
@@ -237,7 +237,7 @@ class TestListMountsPermissionFiltering:
 
         nx_with_permissions._mount_core_service.add_mount(
             mount_point="/mnt/test",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
             context=context_alice_admin,
         )
@@ -262,7 +262,7 @@ class TestListSavedMountsUserFiltering:
         # Save a mount
         nx_with_permissions._mount_persist_service.save_mount(
             mount_point="/mnt/test",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": "/tmp/test"},
             owner_user_id="user:alice",
             zone_id="zone1",
@@ -281,7 +281,7 @@ class TestListSavedMountsUserFiltering:
         # Save mount for Alice
         nx_with_permissions._mount_persist_service.save_mount(
             mount_point="/mnt/alice",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": "/tmp/alice"},
             owner_user_id="user:alice@example.com",
             zone_id="zone1",
@@ -290,7 +290,7 @@ class TestListSavedMountsUserFiltering:
         # Save mount for Bob
         nx_with_permissions._mount_persist_service.save_mount(
             mount_point="/mnt/bob",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": "/tmp/bob"},
             owner_user_id="user:bob@example.com",
             zone_id="zone1",
@@ -341,7 +341,7 @@ class TestListSavedMountsUserFiltering:
         # Save mount for zone1
         nx_with_permissions._mount_persist_service.save_mount(
             mount_point="/mnt/zone1",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": "/tmp/zone1"},
             owner_user_id="user:alice@example.com",
             zone_id="zone1",
@@ -350,7 +350,7 @@ class TestListSavedMountsUserFiltering:
         # Save mount for zone2
         nx_with_permissions._mount_persist_service.save_mount(
             mount_point="/mnt/zone2",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": "/tmp/zone2"},
             owner_user_id="user:alice@example.com",
             zone_id="zone2",
@@ -382,7 +382,7 @@ class TestListSavedMountsUserFiltering:
         # Save mounts for different users
         nx_with_permissions._mount_persist_service.save_mount(
             mount_point="/mnt/alice",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": "/tmp/alice"},
             owner_user_id="user:alice@example.com",
             zone_id="zone1",
@@ -390,7 +390,7 @@ class TestListSavedMountsUserFiltering:
 
         nx_with_permissions._mount_persist_service.save_mount(
             mount_point="/mnt/bob",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": "/tmp/bob"},
             owner_user_id="user:bob@example.com",
             zone_id="zone1",
@@ -420,7 +420,7 @@ class TestListSavedMountsUserFiltering:
         # Save mount for an agent
         nx_with_permissions._mount_persist_service.save_mount(
             mount_point="/mnt/agent",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": "/tmp/agent"},
             owner_user_id="agent:bot123",
             zone_id="zone1",
@@ -476,7 +476,7 @@ class TestCrossZoneIsolation:
 
         nx_with_permissions._mount_core_service.add_mount(
             mount_point="/mnt/zone1",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": str(mount_dir1)},
             context=context_zone1_admin,
         )
@@ -484,7 +484,7 @@ class TestCrossZoneIsolation:
         # Save mount for zone1
         nx_with_permissions._mount_persist_service.save_mount(
             mount_point="/mnt/zone1_saved",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": str(mount_dir1)},
             owner_user_id="user:alice@example.com",
             zone_id="zone1",
@@ -515,7 +515,7 @@ class TestCrossZoneIsolation:
 
         nx_with_permissions._mount_core_service.add_mount(
             mount_point="/mnt/zone2",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": str(mount_dir2)},
             context=context_zone2_admin,
         )
@@ -523,7 +523,7 @@ class TestCrossZoneIsolation:
         # Save mount for zone2
         nx_with_permissions._mount_persist_service.save_mount(
             mount_point="/mnt/zone2_saved",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": str(mount_dir2)},
             owner_user_id="user:bob@example.com",
             zone_id="zone2",
@@ -580,7 +580,7 @@ class TestSaveMountAutoPopulation:
         # Save mount without explicit owner_user_id
         nx_with_permissions._mount_persist_service.save_mount(
             mount_point="/mnt/auto_owner",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": "/tmp/test"},
             context=context,
         )
@@ -606,7 +606,7 @@ class TestSaveMountAutoPopulation:
         # Save mount without explicit zone_id
         nx_with_permissions._mount_persist_service.save_mount(
             mount_point="/mnt/auto_zone",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": "/tmp/test"},
             context=context,
         )
@@ -632,7 +632,7 @@ class TestSaveMountAutoPopulation:
         # Save mount with explicit owner and zone (different from context)
         nx_with_permissions._mount_persist_service.save_mount(
             mount_point="/mnt/explicit_override",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": "/tmp/test"},
             owner_user_id="user:bob@example.com",
             zone_id="zone2",
@@ -658,7 +658,7 @@ class TestSaveMountAutoPopulation:
         # Save mount with agent context
         nx_with_permissions._mount_persist_service.save_mount(
             mount_point="/mnt/agent_mount",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": "/tmp/agent"},
             context=context,
         )
@@ -683,7 +683,7 @@ class TestSaveMountAutoPopulation:
         )
         nx_with_permissions._mount_persist_service.save_mount(
             mount_point="/mnt/alice_auto",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": "/tmp/alice"},
             context=context_alice,
         )
@@ -698,7 +698,7 @@ class TestSaveMountAutoPopulation:
         )
         nx_with_permissions._mount_persist_service.save_mount(
             mount_point="/mnt/bob_auto",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": "/tmp/bob"},
             context=context_bob,
         )
@@ -726,7 +726,7 @@ class TestSaveMountAutoPopulation:
         # Save mount without context but with explicit parameters
         nx_with_permissions._mount_persist_service.save_mount(
             mount_point="/mnt/no_context",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": "/tmp/test"},
             owner_user_id="user:charlie@example.com",
             zone_id="zone3",

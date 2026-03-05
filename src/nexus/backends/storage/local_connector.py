@@ -1,7 +1,7 @@
 """Local filesystem connector - reference mode without data duplication.
 
 This module provides LocalConnectorBackend, a connector that mounts an external local
-folder into Nexus's virtual filesystem. Unlike LocalBackend (which uses CAS),
+folder into Nexus's virtual filesystem. Unlike CASLocalBackend (which uses CAS),
 LocalConnectorBackend keeps files in their original location (SSOT - Single Source of Truth).
 
 Key features:
@@ -60,7 +60,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
     original location (SSOT) - no content duplication to CAS.
 
     This is different from:
-    - LocalBackend: Uses CAS for deduplication (copies content)
+    - CASLocalBackend: Uses CAS for deduplication (copies content)
     - PassthroughBackend: Uses CAS via pointers (copies content)
 
     LocalConnectorBackend is similar to GDriveConnector but for local filesystem:

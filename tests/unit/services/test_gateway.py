@@ -391,14 +391,14 @@ class TestMountOperations:
         mount_info.mount_point = "/mnt/test"
         mount_info.readonly = False
         mount_info.backend = MagicMock()
-        type(mount_info.backend).__name__ = "LocalBackend"
+        type(mount_info.backend).__name__ = "CASLocalBackend"
         mount_info.conflict_strategy = "latest"
         mock_fs.router.list_mounts.return_value = [mount_info]
 
         result = gateway.list_mounts()
         assert len(result) == 1
         assert result[0]["mount_point"] == "/mnt/test"
-        assert result[0]["backend_type"] == "LocalBackend"
+        assert result[0]["backend_type"] == "CASLocalBackend"
 
     def test_get_mount_for_path_found(self, gateway, mock_fs):
         """get_mount_for_path returns mount info."""

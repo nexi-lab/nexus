@@ -21,7 +21,7 @@ from nexus.backends.cache.models import IMMUTABLE_VERSION, CachedReadResult
 from nexus.backends.cache.service import CacheService
 
 # Core backends (always available)
-from nexus.backends.storage.local import LocalBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.backends.storage.passthrough import PassthroughBackend
 from nexus.backends.wrappers.cache_mixin import CacheConnectorMixin, CacheEntry, SyncResult
 from nexus.core.object_store import ObjectStoreABC, WriteResult
@@ -114,7 +114,7 @@ __all__ = [
     "create_connector",
     "create_connector_from_config",
     # Concrete backends
-    "LocalBackend",
+    "CASLocalBackend",
     "PassthroughBackend",
     "GCSBackend",
     "GoogleDriveConnectorBackend",

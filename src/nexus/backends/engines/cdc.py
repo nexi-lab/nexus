@@ -2,7 +2,7 @@
 
 CDCEngine provides chunking for any CASBackend subclass via composition:
 
-    class LocalCASBackend(CASBackend):
+    class CASLocalBackend(CASBackend):
         def __init__(self, ...):
             super().__init__(transport, ...)
             self._cdc = CDCEngine(self)

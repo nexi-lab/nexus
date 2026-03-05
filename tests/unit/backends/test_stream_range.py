@@ -2,7 +2,7 @@
 
 Tests cover:
 - Default Backend.stream_range() (read+slice fallback)
-- LocalBackend.stream_range() (seek-based efficient streaming)
+- CASLocalBackend.stream_range() (seek-based efficient streaming)
 - Error handling (nonexistent hash)
 - Edge cases (full file, single byte, empty range)
 """
@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from nexus.backends.storage.local import LocalBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.contracts.exceptions import NexusFileNotFoundError
 
 # =============================================================================
@@ -19,11 +19,11 @@ from nexus.contracts.exceptions import NexusFileNotFoundError
 # =============================================================================
 
 
-def _create_local_backend(tmp_path: Path) -> LocalBackend:
-    return LocalBackend(root_path=tmp_path)
+def _create_local_backend(tmp_path: Path) -> CASLocalBackend:
+    return CASLocalBackend(root_path=tmp_path)
 
 
-def _write_content(backend: LocalBackend, data: bytes) -> str:
+def _write_content(backend: CASLocalBackend, data: bytes) -> str:
     result = backend.write_content(data)
     return result.content_hash
 
@@ -42,7 +42,7 @@ class TestDefaultBackendStreamRange:
         content_hash = _write_content(backend, data)
 
         # Use the base class default impl by calling through the method
-        # (LocalBackend overrides, so we test the base default explicitly)
+        # (CASLocalBackend overrides, so we test the base default explicitly)
         from nexus.backends.base.backend import Backend
 
         chunks = list(Backend.stream_range(backend, content_hash, 0, 9))
@@ -73,11 +73,11 @@ class TestDefaultBackendStreamRange:
 
 
 # =============================================================================
-# LocalBackend.stream_range() (seek-based)
+# CASLocalBackend.stream_range() (seek-based)
 # =============================================================================
 
 
-class TestLocalBackendStreamRange:
+class TestCASLocalBackendStreamRange:
     def test_first_10_bytes(self, tmp_path: Path) -> None:
         backend = _create_local_backend(tmp_path)
         data = b"Hello, World! This is a test file for range requests."
@@ -141,55 +141,3 @@ class TestLocalBackendStreamRange:
 
         with pytest.raises(NexusFileNotFoundError):
             list(backend.stream_range("nonexistent_hash_abc123", 0, 10))
-
-
-# =============================================================================
-# AsyncLocalBackend.stream_range()
-# =============================================================================
-
-
-class TestAsyncLocalBackendStreamRange:
-    @pytest.mark.asyncio
-    async def test_first_10_bytes(self, tmp_path: Path) -> None:
-        from nexus.backends.storage.async_local import AsyncLocalBackend
-
-        backend = AsyncLocalBackend(root_path=tmp_path)
-        await backend.initialize()
-
-        data = b"Hello, World! Async range test."
-        resp = await backend.write_content(data)
-        content_hash = resp.content_hash
-
-        chunks = []
-        async for chunk in backend.stream_range(content_hash, 0, 9):
-            chunks.append(chunk)
-        result = b"".join(chunks)
-        assert result == b"Hello, Wor"
-
-    @pytest.mark.asyncio
-    async def test_middle_range(self, tmp_path: Path) -> None:
-        from nexus.backends.storage.async_local import AsyncLocalBackend
-
-        backend = AsyncLocalBackend(root_path=tmp_path)
-        await backend.initialize()
-
-        data = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-        resp = await backend.write_content(data)
-        content_hash = resp.content_hash
-
-        chunks = []
-        async for chunk in backend.stream_range(content_hash, 10, 19):
-            chunks.append(chunk)
-        result = b"".join(chunks)
-        assert result == b"KLMNOPQRST"
-
-    @pytest.mark.asyncio
-    async def test_nonexistent_hash_raises(self, tmp_path: Path) -> None:
-        from nexus.backends.storage.async_local import AsyncLocalBackend
-
-        backend = AsyncLocalBackend(root_path=tmp_path)
-        await backend.initialize()
-
-        with pytest.raises(NexusFileNotFoundError):
-            async for _ in backend.stream_range("nonexistent_hash", 0, 10):
-                pass

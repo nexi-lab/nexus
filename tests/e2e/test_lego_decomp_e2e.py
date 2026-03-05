@@ -79,13 +79,13 @@ def _create_factory_nexus_fs(
     Uses create_nexus_fs() from nexus.factory — the recommended entry
     point that wires ALL services (ReBAC, Permissions, VersionService, etc.).
     """
-    from nexus.backends.storage.local import LocalBackend
+    from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.factory import create_nexus_fs, create_record_store
     from tests.helpers.dict_metastore import DictMetastore
 
     data_dir = tmp_path / "data"
     data_dir.mkdir(exist_ok=True)
-    backend = LocalBackend(root_path=data_dir)
+    backend = CASLocalBackend(root_path=data_dir)
     metadata_store = DictMetastore()
 
     record_store = create_record_store(db_url=PG_URL, create_tables=True)

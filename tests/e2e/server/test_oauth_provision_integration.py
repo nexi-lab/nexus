@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from nexus import LocalBackend
+from nexus import CASLocalBackend
 from nexus.bricks.auth.oauth.crypto import OAuthCrypto
 from nexus.contracts.types import OperationContext
 from nexus.core.config import ParseConfig, PermissionConfig
@@ -34,7 +34,7 @@ def record_store(tmp_path):
 def nx(tmp_path, record_store):
     """Create NexusFS instance for testing."""
     nx_instance = create_nexus_fs(
-        backend=LocalBackend(tmp_path),
+        backend=CASLocalBackend(tmp_path),
         metadata_store=RaftMetadataStore.embedded(str(tmp_path / "raft-metadata")),
         record_store=record_store,
         parsing=ParseConfig(auto_parse=False),

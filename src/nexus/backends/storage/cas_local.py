@@ -221,9 +221,69 @@ class CASLocalBackend(CASBackend, MultipartUpload):
         chunks: "Iterator[bytes]",
         context: "OperationContext | None" = None,
     ) -> WriteResult:
-        # Collect chunks then route through write_content (handles CDC)
-        content = b"".join(chunks)
-        return self.write_content(content, context=context)
+        import os
+        import tempfile
+
+        from nexus.backends.engines.cdc import CDC_THRESHOLD_BYTES
+        from nexus.core.hash_fast import _PYTHON_BLAKE3_AVAILABLE, _python_blake3
+
+        # Stream chunks to temp file while computing hash incrementally.
+        # This avoids buffering entire content in memory (Issue #1625).
+        total_size = 0
+
+        # Use same hash algorithm as hash_content() for consistency
+        if _PYTHON_BLAKE3_AVAILABLE:
+            hasher = _python_blake3.blake3()
+        else:
+            import hashlib
+
+            hasher = hashlib.sha256()
+
+        tmp_fd, tmp_name = tempfile.mkstemp(dir=self.root_path)
+        try:
+            for chunk in chunks:
+                os.write(tmp_fd, chunk)
+                hasher.update(chunk)
+                total_size += len(chunk)
+            os.fsync(tmp_fd)
+        finally:
+            os.close(tmp_fd)
+
+        content_hash: str = hasher.hexdigest()
+
+        # CDC check: if above threshold, fall back to buffered write_content
+        # (CDC needs full content for chunking). Rare path for streaming.
+        if total_size >= CDC_THRESHOLD_BYTES:
+            import contextlib
+
+            try:
+                from pathlib import Path
+
+                content = Path(tmp_name).read_bytes()
+                return self.write_content(content, context=context)
+            finally:
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp_name)
+
+        # Small file: move temp file to CAS location
+        key = self._blob_key(content_hash)
+        dest = self.root_path / key
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(tmp_name, str(dest))
+
+        # Metadata update (ref_count)
+        def _update_meta(meta: dict) -> dict:
+            meta["ref_count"] = meta.get("ref_count", 0) + 1
+            meta["size"] = total_size
+            return meta
+
+        self._meta_update_locked(content_hash, _update_meta)
+
+        # Feature DI: Bloom filter
+        if self._bloom is not None:
+            self._bloom.add(content_hash)
+
+        return WriteResult(content_hash=content_hash, size=total_size)
 
     # === Directory Operations (local FS native, not blob markers) ===
 

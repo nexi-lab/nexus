@@ -1598,7 +1598,7 @@ class NexusFS(  # type: ignore[misc]
                         for path in paths_for_backend:
                             meta, route = path_info[path]
                             assert meta.etag is not None
-                            disk_path = str(backend._hash_to_path(meta.etag))
+                            disk_path = str(backend.root_path / backend._blob_key(meta.etag))
                             disk_to_virtual[disk_path] = (path, meta)
                             disk_paths.append(disk_path)
 

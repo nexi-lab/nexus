@@ -223,12 +223,12 @@ class TestSyncDelegationOverhead:
 
     def test_search_glob_delegation(self, benchmark, mock_nexus_fs, context):
         """Benchmark glob() delegation to SearchService."""
-        benchmark(mock_nexus_fs.glob, "*.py", "/src", context)
+        benchmark(mock_nexus_fs.search_service.glob, "*.py", "/src", context)
 
     def test_search_grep_delegation(self, benchmark, mock_nexus_fs, context):
         """Benchmark grep() delegation to SearchService."""
         benchmark(
-            mock_nexus_fs.grep,
+            mock_nexus_fs.search_service.grep,
             "import os",
             "/src",
             None,

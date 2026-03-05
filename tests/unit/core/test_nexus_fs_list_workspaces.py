@@ -31,8 +31,8 @@ def _make_context(user_id: str | None = None, zone_id: str | None = None) -> Sim
 def nexus_fs():
     """Create a NexusFS instance with a mocked workspace RPC service.
 
-    list_workspaces was extracted from NexusFS to WorkspaceRPCService (Issue #2033).
-    NexusFS.__getattr__ forwards to _workspace_rpc_service.list_workspaces().
+    list_workspaces lives on WorkspaceRPCService (Issue #2033).
+    Tests call nx._workspace_rpc_service.list_workspaces() directly.
     """
     from nexus.system_services.workspace.workspace_rpc_service import WorkspaceRPCService
 

@@ -76,7 +76,6 @@ EXPECTED_SYSTEM_KEYS = frozenset(
         "pipe_manager",
         "scheduler_service",
         "agent_runtime",
-        "event_log",
     }
 )
 
@@ -230,7 +229,7 @@ class TestBootSystemServices:
             "workspace_registry",  # degradable — None with mock session_factory
             "pipe_manager",  # degradable — None if PipeManager unavailable
             "scheduler_service",  # degradable — None if SchedulerService unavailable
-            "event_log",  # degradable — None if EventLog unavailable
+            "agent_runtime",  # degradable — None if AgentRuntime unavailable
         }
         for key, value in result.items():
             if key in _NULLABLE_KEYS:

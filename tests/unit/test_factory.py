@@ -187,8 +187,6 @@ class TestBootSystemServices:
             # DT_PIPE manager (Issue #809)
             "pipe_manager",
             "scheduler_service",
-            # EventLog — WAL-based event persistence (Issue #1397)
-            "event_log",
             # Agent Runtime (AGENT-PROCESS-ARCHITECTURE)
             "agent_runtime",
         }

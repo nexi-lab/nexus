@@ -67,6 +67,11 @@ SERVICE_METHODS: dict[str, str] = {
     "glob": "search_service",
     "grep": "search_service",
     "glob_batch": "search_service",
+    # EventsService — distributed locking + change notification
+    "lock": "events_service",
+    "unlock": "events_service",
+    "extend_lock": "events_service",
+    "wait_for_changes": "events_service",
 }
 
 SERVICE_ALIASES: dict[str, tuple[str, str]] = {

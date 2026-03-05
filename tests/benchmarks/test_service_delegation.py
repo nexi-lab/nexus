@@ -125,11 +125,11 @@ class TestAsyncDelegationOverhead:
         benchmark(run)
 
     def test_rebac_check_delegation(self, benchmark, mock_nexus_fs):
-        """Benchmark arebac_check delegation overhead."""
+        """Benchmark rebac_check via rebac_service (direct service call)."""
 
         def run():
             asyncio.run(
-                mock_nexus_fs.arebac_check(
+                mock_nexus_fs.rebac_service.rebac_check(
                     subject=("user", "alice"),
                     permission="read",
                     object=("file", "/doc.txt"),
@@ -140,11 +140,11 @@ class TestAsyncDelegationOverhead:
         benchmark(run)
 
     def test_rebac_list_tuples_with_param_rename(self, benchmark, mock_nexus_fs):
-        """Benchmark arebac_list_tuples with zone_id→_zone_id transformation."""
+        """Benchmark rebac_list_tuples via rebac_service (direct service call)."""
 
         def run():
             asyncio.run(
-                mock_nexus_fs.arebac_list_tuples(
+                mock_nexus_fs.rebac_service.rebac_list_tuples(
                     subject=("user", "alice"),
                     zone_id="z1",
                     limit=100,

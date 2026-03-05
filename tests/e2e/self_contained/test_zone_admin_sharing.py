@@ -1,6 +1,7 @@
 """Integration tests for zone admin sharing functionality (#819).
 
 Tests that zone admins can share resources within their zone.
+Uses rebac_service sync API after __getattr__ retirement (PR #2774).
 """
 
 import tempfile

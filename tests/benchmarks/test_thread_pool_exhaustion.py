@@ -266,7 +266,7 @@ def test_in_process_thread_exhaustion(
         )
 
         # Grant read permission to test user
-        nx.rebac_create(
+        nx.rebac_service.rebac_create_sync(
             subject=("user", "test_user"),
             relation="reader",
             object=("file", "/"),
@@ -382,7 +382,7 @@ async def test_async_thread_exhaustion(
         )
 
         # Grant test user read permission on root
-        nx.rebac_create(
+        nx.rebac_service.rebac_create_sync(
             subject=("user", "test_user"),
             relation="reader",
             object=("file", "/"),

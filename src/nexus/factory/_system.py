@@ -550,8 +550,6 @@ def _boot_system_services(
         "brick_reconciler": brick_reconciler,
         "eviction_manager": eviction_manager,
         "zone_lifecycle": zone_lifecycle,
-        # EventLog — wired at server lifespan when event_subsystem is available
-        "event_log": None,
         "scheduler_service": scheduler_service,
         "agent_runtime": agent_runtime,
     }

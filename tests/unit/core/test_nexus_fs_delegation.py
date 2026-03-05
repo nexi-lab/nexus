@@ -80,24 +80,6 @@ class TestSearchServiceDelegation:
             cursor=None,
         )
 
-    def test_glob_routed_via_getattr(self, mock_fs):
-        """glob is routed to search_service via SERVICE_METHODS."""
-        mock_fs.__dict__["search_service"] = svc = MagicMock()
-        mock_fs.glob("*.py")
-        svc.glob.assert_called_once_with("*.py")
-
-    def test_glob_batch_routed_via_getattr(self, mock_fs):
-        """glob_batch is routed to search_service via SERVICE_METHODS."""
-        mock_fs.__dict__["search_service"] = svc = MagicMock()
-        mock_fs.glob_batch(["*.py"])
-        svc.glob_batch.assert_called_once_with(["*.py"])
-
-    def test_grep_routed_via_getattr(self, mock_fs):
-        """grep is routed to search_service via SERVICE_METHODS."""
-        mock_fs.__dict__["search_service"] = svc = MagicMock()
-        mock_fs.grep("pattern")
-        svc.grep.assert_called_once_with("pattern")
-
     def test_search_service_glob_direct(self, mock_fs, context):
         """Callers should use search_service.glob() directly."""
         matches = ["/data/test.py"]

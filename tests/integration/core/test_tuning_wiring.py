@@ -74,12 +74,12 @@ class TestDIFlowsToConstructors:
         assert sig.parameters["max_overflow"].default is None
 
     def test_gcs_backend_timeout_from_profile(self) -> None:
-        """GCSBackend accepts operation_timeout/upload_timeout from profile."""
+        """CASGCSBackend accepts operation_timeout/upload_timeout from profile."""
         import inspect
 
-        from nexus.backends.storage.gcs import GCSBackend
+        from nexus.backends.storage.cas_gcs import CASGCSBackend
 
-        sig = inspect.signature(GCSBackend.__init__)
+        sig = inspect.signature(CASGCSBackend.__init__)
         assert "operation_timeout" in sig.parameters
         assert "upload_timeout" in sig.parameters
         # Should have reasonable defaults matching FULL profile

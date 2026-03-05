@@ -29,13 +29,13 @@ from nexus.core.object_store import ObjectStoreABC, WriteResult
 # Optional backends — loaded on first access via __getattr__.
 # Maps attribute name → (module_path, class_name).
 _OPTIONAL_BACKENDS: dict[str, tuple[str, str]] = {
-    "GCSBackend": ("nexus.backends.storage.gcs", "GCSBackend"),
+    "CASGCSBackend": ("nexus.backends.storage.cas_gcs", "CASGCSBackend"),
     "GoogleDriveConnectorBackend": (
         "nexus.backends.connectors.gdrive.connector",
         "GoogleDriveConnectorBackend",
     ),
-    "GCSConnectorBackend": ("nexus.backends.storage.gcs_connector", "GCSConnectorBackend"),
-    "S3ConnectorBackend": ("nexus.backends.storage.s3_connector", "S3ConnectorBackend"),
+    "PathGCSBackend": ("nexus.backends.storage.path_gcs", "PathGCSBackend"),
+    "PathS3Backend": ("nexus.backends.storage.path_s3", "PathS3Backend"),
     "XConnectorBackend": ("nexus.backends.connectors.x.connector", "XConnectorBackend"),
     "HNConnectorBackend": ("nexus.backends.connectors.hn.connector", "HNConnectorBackend"),
     "SlackConnectorBackend": ("nexus.backends.connectors.slack.connector", "SlackConnectorBackend"),
@@ -116,10 +116,10 @@ __all__ = [
     # Concrete backends
     "CASLocalBackend",
     "PassthroughBackend",
-    "GCSBackend",
+    "CASGCSBackend",
     "GoogleDriveConnectorBackend",
-    "GCSConnectorBackend",
-    "S3ConnectorBackend",
+    "PathGCSBackend",
+    "PathS3Backend",
     "XConnectorBackend",
     "HNConnectorBackend",
     "SlackConnectorBackend",

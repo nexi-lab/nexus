@@ -116,7 +116,7 @@ class MountService:
 
         Args:
             mount_point: Virtual path where backend is mounted (e.g., "/personal/alice")
-            backend_type: Backend type - "cas_local", "gcs", "gcs_connector", "google_drive", etc.
+            backend_type: Backend type - "cas_local", "cas_gcs", "path_gcs", "google_drive", etc.
             backend_config: Backend-specific configuration dict
             readonly: Whether mount is read-only (default: False)
             context: Operation context (automatically provided by RPC server)
@@ -132,7 +132,7 @@ class MountService:
             # Add personal GCS mount (CAS-based)
             mount_id = await service.add_mount(
                 mount_point="/personal/alice",
-                backend_type="gcs",
+                backend_type="cas_gcs",
                 backend_config={
                     "bucket": "alice-personal-bucket",
                     "project_id": "my-project"
@@ -142,7 +142,7 @@ class MountService:
             # Add GCS connector mount (direct path mapping for external buckets)
             mount_id = await service.add_mount(
                 mount_point="/workspace/gdrive",
-                backend_type="gcs_connector",
+                backend_type="path_gcs",
                 backend_config={
                     "bucket": "my-external-bucket",
                     "project_id": "my-project",
@@ -634,7 +634,7 @@ class MountService:
 
         Args:
             mount_point: Virtual path where backend is mounted
-            backend_type: Backend type - "cas_local", "gcs", etc.
+            backend_type: Backend type - "cas_local", "cas_gcs", etc.
             backend_config: Backend-specific configuration dict
             readonly: Whether mount is read-only (default: False)
             owner_user_id: User who owns this mount (optional)
@@ -862,7 +862,7 @@ class MountService:
     ) -> dict[str, Any]:
         """Sync metadata and content from connector backend(s) to Nexus database.
 
-        For connector backends (like gcs_connector), this scans the external storage
+        For connector backends (like path_gcs), this scans the external storage
         and updates Nexus's metadata database with any files that were added externally
         or existed before Nexus was configured.
 

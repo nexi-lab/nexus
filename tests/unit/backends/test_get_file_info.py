@@ -2,8 +2,8 @@
 
 Tests delta sync change detection metadata returned by each backend:
 - LocalConnectorBackend: inode:mtime_ns version
-- GCSConnectorBackend: GCS generation number
-- S3ConnectorBackend: S3 version ID or ETag fallback
+- PathGCSBackend: GCS generation number
+- PathS3Backend: S3 version ID or ETag fallback
 """
 
 from datetime import UTC, datetime
@@ -97,12 +97,12 @@ class TestLocalConnectorGetFileInfo:
 
 
 # =============================================================================
-# GCSConnectorBackend.get_file_info()
+# PathGCSBackend.get_file_info()
 # =============================================================================
 
 
 class TestGCSConnectorGetFileInfo:
-    """Test GCSConnectorBackend.get_file_info() with mocked GCS."""
+    """Test PathGCSBackend.get_file_info() with mocked GCS."""
 
     @pytest.fixture()
     def mock_bucket(self):
@@ -111,10 +111,10 @@ class TestGCSConnectorGetFileInfo:
 
     @pytest.fixture()
     def connector(self, mock_bucket):
-        from nexus.backends.storage.gcs_connector import GCSConnectorBackend
+        from nexus.backends.storage.path_gcs import PathGCSBackend
 
-        with patch.object(GCSConnectorBackend, "__init__", lambda self, *a, **kw: None):
-            c = GCSConnectorBackend.__new__(GCSConnectorBackend)
+        with patch.object(PathGCSBackend, "__init__", lambda self, *a, **kw: None):
+            c = PathGCSBackend.__new__(PathGCSBackend)
             c.bucket = mock_bucket
             c.bucket_name = "test-bucket"
             c.prefix = ""
@@ -197,12 +197,12 @@ class TestGCSConnectorGetFileInfo:
 
 
 # =============================================================================
-# S3ConnectorBackend.get_file_info()
+# PathS3Backend.get_file_info()
 # =============================================================================
 
 
 class TestS3ConnectorGetFileInfo:
-    """Test S3ConnectorBackend.get_file_info() with mocked S3."""
+    """Test PathS3Backend.get_file_info() with mocked S3."""
 
     @pytest.fixture()
     def mock_client(self):
@@ -210,10 +210,10 @@ class TestS3ConnectorGetFileInfo:
 
     @pytest.fixture()
     def connector(self, mock_client):
-        from nexus.backends.storage.s3_connector import S3ConnectorBackend
+        from nexus.backends.storage.path_s3 import PathS3Backend
 
-        with patch.object(S3ConnectorBackend, "__init__", lambda self, *a, **kw: None):
-            c = S3ConnectorBackend.__new__(S3ConnectorBackend)
+        with patch.object(PathS3Backend, "__init__", lambda self, *a, **kw: None):
+            c = PathS3Backend.__new__(PathS3Backend)
             c.client = mock_client
             c.bucket_name = "test-bucket"
             c.prefix = ""

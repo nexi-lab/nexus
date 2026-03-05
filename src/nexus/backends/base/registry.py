@@ -612,7 +612,7 @@ def create_connector(name: str, **config: Any) -> "Backend":
 
     Example:
         >>> backend = create_connector(
-        ...     "gcs_connector",
+        ...     "path_gcs",
         ...     bucket_name="my-bucket",
         ...     project_id="my-project"
         ... )
@@ -640,7 +640,7 @@ def create_connector_from_config(name: str, backend_config: dict[str, Any]) -> "
 
     Example:
         >>> backend = create_connector_from_config(
-        ...     "gcs_connector",
+        ...     "path_gcs",
         ...     {"bucket": "my-bucket", "project_id": "my-project"}
         ... )
     """

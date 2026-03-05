@@ -5,7 +5,7 @@ upload operations. Backends that inherit this interface can participate in
 tus.io resumable uploads with optimal performance.
 
 - CASLocalBackend: assembles parts from temp directory
-- S3ConnectorBackend: uses native S3 multipart upload API
+- PathS3Backend: uses native S3 multipart upload API
 """
 
 from abc import ABC, abstractmethod

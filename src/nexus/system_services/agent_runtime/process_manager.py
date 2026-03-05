@@ -3,6 +3,9 @@
 Manages agent processes: spawn, resume, terminate, signal.
 In-memory process table for Phase 1 (single-node).
 
+Accepts AgentVFSProtocol + optional AgentSearchProtocol instead of
+concrete NexusFS, enabling the agent runtime to work over any VFS-like backend.
+
 Design doc: docs/design/AGENT-PROCESS-ARCHITECTURE.md §5.2, §10.
 """
 
@@ -17,6 +20,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from nexus.contracts.agent_runtime_types import AgentNotFoundError
 from nexus.contracts.llm_types import Message
 from nexus.system_services.agent_runtime.loop import agent_loop
 from nexus.system_services.agent_runtime.session_store import SessionStore
@@ -32,9 +36,11 @@ from nexus.system_services.agent_runtime.types import (
 )
 
 if TYPE_CHECKING:
+    from nexus.contracts.agent_types import AgentSpec
+    from nexus.contracts.protocols.agent_registry import AgentRegistryProtocol
+    from nexus.contracts.protocols.agent_vfs import AgentSearchProtocol, AgentVFSProtocol
     from nexus.contracts.protocols.llm_provider import LLMProviderProtocol
     from nexus.contracts.types import OperationContext
-    from nexus.core.nexus_fs import NexusFS
 
 logger = logging.getLogger(__name__)
 
@@ -54,15 +60,17 @@ class ProcessManager:
 
     def __init__(
         self,
-        vfs: NexusFS,
+        vfs: AgentVFSProtocol,
         llm_provider: LLMProviderProtocol,
         *,
-        agent_registry: Any | None = None,
+        search: AgentSearchProtocol | None = None,
+        agent_registry: AgentRegistryProtocol | None = None,
         sandbox: Any | None = None,
         scheduler: Any | None = None,
     ) -> None:
         self._vfs = vfs
         self._llm = llm_provider
+        self._search = search
         self._agent_registry = agent_registry
         self._sandbox = sandbox
         self._scheduler = scheduler
@@ -79,17 +87,37 @@ class ProcessManager:
         owner_id: str,
         zone_id: str,
         *,
-        config: AgentProcessConfig,
+        agent_id: str | None = None,
+        config: AgentProcessConfig | None = None,
         parent_pid: str | None = None,
     ) -> AgentProcess:
         """Create a new agent process.
 
-        1. Generate PID (UUID).
-        2. Create home dir: /{zone_id}/agents/{pid}/.
-        3. Write SYSTEM.md if config.system_prompt.
-        4. Register with AgentRegistry (if available).
-        5. Store in in-memory process table.
+        Supports two spawn paths:
+        1. ``config=...``: inline config (backward compatible).
+        2. ``agent_id=...``: registry lookup (like running an installed binary).
+
+        Steps:
+            1. Resolve config (inline or registry lookup).
+            2. Generate PID (UUID).
+            3. Create home dir: /{zone_id}/agents/{pid}/.
+            4. Write SYSTEM.md if config.system_prompt.
+            5. Register with AgentRegistry (if available).
+            6. Store in in-memory process table.
         """
+        # Registry lookup path
+        if agent_id is not None and config is None:
+            if self._agent_registry is None:
+                raise AgentNotFoundError(agent_id)
+            spec = await self._agent_registry.get_spec(agent_id)
+            if spec is None:
+                raise AgentNotFoundError(agent_id)
+            config = _spec_to_config(spec, name=agent_id)
+
+        if config is None:
+            msg = "Either agent_id or config must be provided"
+            raise ValueError(msg)
+
         pid = str(uuid.uuid4())
         cwd = config.cwd or f"/{zone_id}/agents/{pid}"
         root = f"/{zone_id}"
@@ -243,7 +271,8 @@ class ProcessManager:
         if dispatcher is None:
             dispatcher = ToolDispatcher(
                 self._vfs,
-                self._sandbox,
+                search=self._search,
+                sandbox=self._sandbox,
                 default_cwd=process.cwd,
             )
             self._dispatchers[pid] = dispatcher
@@ -417,6 +446,21 @@ class ProcessManager:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _spec_to_config(spec: AgentSpec, *, name: str) -> AgentProcessConfig:
+    """Convert an AgentSpec (registered binary) to AgentProcessConfig (runtime)."""
+    return AgentProcessConfig(
+        name=name,
+        agent_type=spec.agent_type,
+        model=spec.model,
+        system_prompt=spec.system_prompt,
+        tools=spec.tools,
+        max_turns=spec.max_turns,
+        max_context_tokens=spec.max_context_tokens,
+        sandbox_timeout=spec.sandbox_timeout,
+        qos_class=spec.qos_class,
+    )
 
 
 def _make_system_context(owner_id: str, zone_id: str) -> OperationContext:

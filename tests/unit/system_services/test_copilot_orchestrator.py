@@ -10,23 +10,137 @@ Tests the copilot/worker orchestration layer:
 """
 
 import asyncio
+import fnmatch
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from nexus.bricks.a2a.models import TaskState
 from nexus.bricks.a2a.task_manager import TaskManager
 from nexus.contracts.agent_runtime_types import (
+    AgentProcess,
     DelegationResult,
     DeliveryPolicy,
     ProcessAlreadyRunningError,
     ProcessState,
     WorkerConfig,
 )
-from nexus.system_services.agent_runtime import (
-    CopilotOrchestrator,
-    ProcessManager,
-    ToolDispatcher,
-)
+from nexus.system_services.agent_runtime.copilot_orchestrator import CopilotOrchestrator
+
+# ======================================================================
+# Stub ProcessManager — high-level ProcessManagerProtocol for orchestrator tests
+# ======================================================================
+
+
+class _StubProcessManager:
+    """Stub PM implementing the high-level ProcessManagerProtocol.
+
+    The real ProcessManager was refactored for kernel-level VFS protocol,
+    but CopilotOrchestrator uses the high-level protocol from
+    agent_runtime_types.py: spawn(agent_id, zone_id, *, parent_pid, metadata).
+    """
+
+    def __init__(self) -> None:
+        self._processes: dict[str, AgentProcess] = {}
+        self._agent_to_pid: dict[str, str] = {}
+        self._counter = 0
+
+    async def spawn(
+        self,
+        agent_id: str,
+        zone_id: str,
+        *,
+        parent_pid: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> AgentProcess:
+        if agent_id in self._agent_to_pid:
+            existing = self._processes.get(self._agent_to_pid[agent_id])
+            if existing and existing.state == ProcessState.RUNNING:
+                raise ProcessAlreadyRunningError(agent_id)
+
+        self._counter += 1
+        pid = f"pid-{self._counter}"
+        proc = AgentProcess(
+            pid=pid,
+            agent_id=agent_id,
+            zone_id=zone_id,
+            state=ProcessState.RUNNING,
+            parent_pid=parent_pid,
+            metadata=metadata or {},
+        )
+        self._processes[pid] = proc
+        self._agent_to_pid[agent_id] = pid
+        return proc
+
+    async def get_process(self, pid: str) -> AgentProcess | None:
+        return self._processes.get(pid)
+
+    async def terminate(self, pid: str, *, reason: str = "terminated") -> bool:  # noqa: ARG002
+        proc = self._processes.get(pid)
+        if proc is None:
+            return False
+        self._processes[pid] = AgentProcess(
+            pid=proc.pid,
+            agent_id=proc.agent_id,
+            zone_id=proc.zone_id,
+            state=ProcessState.ZOMBIE,
+            parent_pid=proc.parent_pid,
+            metadata=proc.metadata,
+        )
+        return True
+
+    async def list_processes(
+        self,
+        *,
+        zone_id: str | None = None,
+        state: ProcessState | None = None,
+    ) -> list[AgentProcess]:
+        results = list(self._processes.values())
+        if zone_id is not None:
+            results = [p for p in results if p.zone_id == zone_id]
+        if state is not None:
+            results = [p for p in results if p.state == state]
+        return results
+
+    async def wait(self, pid: str) -> None:
+        proc = self._processes.get(pid)
+        if proc and proc.state == ProcessState.ZOMBIE:
+            for agent_id, p in list(self._agent_to_pid.items()):
+                if p == pid:
+                    del self._agent_to_pid[agent_id]
+
+
+def _make_mock_td() -> MagicMock:
+    """Create a mock ToolDispatcher with manifest-based permission checking."""
+    td = MagicMock()
+    manifests: dict[str, Any] = {}
+    td._manifests = manifests
+
+    def _set_manifest(agent_id: str, manifest: Any) -> None:
+        manifests[agent_id] = manifest
+
+    async def _check_permission(
+        tool_name: str,
+        *,
+        agent_id: str,
+        zone_id: str,  # noqa: ARG001
+    ) -> bool:
+        manifest = manifests.get(agent_id)
+        if manifest is None:
+            return True
+        for entry in manifest.entries:
+            if fnmatch.fnmatch(tool_name, entry.tool_pattern):
+                from nexus.contracts.access_manifest_types import ToolPermission
+
+                return entry.permission == ToolPermission.ALLOW
+        return True
+
+    td.set_manifest = MagicMock(side_effect=_set_manifest)
+    td.check_permission = AsyncMock(side_effect=_check_permission)
+    td.register_handler = MagicMock()
+    return td
+
 
 # ======================================================================
 # Fixtures
@@ -34,8 +148,8 @@ from nexus.system_services.agent_runtime import (
 
 
 @pytest.fixture
-def pm() -> ProcessManager:
-    return ProcessManager()
+def pm() -> _StubProcessManager:
+    return _StubProcessManager()
 
 
 @pytest.fixture
@@ -44,13 +158,13 @@ def tm() -> TaskManager:
 
 
 @pytest.fixture
-def td() -> ToolDispatcher:
-    return ToolDispatcher()
+def td() -> MagicMock:
+    return _make_mock_td()
 
 
 @pytest.fixture
 async def orchestrator(
-    pm: ProcessManager, tm: TaskManager, td: ToolDispatcher
+    pm: _StubProcessManager, tm: TaskManager, td: MagicMock
 ) -> CopilotOrchestrator:
     return CopilotOrchestrator(
         process_manager=pm,
@@ -60,7 +174,7 @@ async def orchestrator(
 
 
 @pytest.fixture
-async def copilot_pid(pm: ProcessManager) -> str:
+async def copilot_pid(pm: _StubProcessManager) -> str:
     proc = await pm.spawn("copilot-1", "zone-1")
     return proc.pid
 
@@ -141,7 +255,7 @@ class TestDelegation:
         self,
         orchestrator: CopilotOrchestrator,
         copilot_pid: str,
-        pm: ProcessManager,
+        pm: _StubProcessManager,
         tm: TaskManager,
     ) -> None:
         """delegate() spawns a worker process and creates an A2A task."""
@@ -168,7 +282,7 @@ class TestDelegation:
         self,
         orchestrator: CopilotOrchestrator,
         copilot_pid: str,
-        pm: ProcessManager,
+        pm: _StubProcessManager,
     ) -> None:
         """Worker metadata includes budget_tokens."""
         result = await orchestrator.delegate(
@@ -211,16 +325,20 @@ class TestDelegation:
         orchestrator: CopilotOrchestrator,
         copilot_pid: str,
     ) -> None:
-        """collect() returns the A2A task with status and artifacts."""
+        """collect() returns the A2A task after completion."""
         result = await orchestrator.delegate(
             copilot_pid,
             "Work",
             WorkerConfig(agent_id="worker-collect", zone_id="zone-1"),
         )
 
+        # Transition through FSM states so collect() unblocks
+        await asyncio.sleep(0)  # let _run_worker transition SUBMITTED→WORKING
+        await orchestrator.complete_task(result.task_id, zone_id="zone-1")
+
         task = await orchestrator.collect(result.task_id, zone_id="zone-1")
         assert task.id == result.task_id
-        assert task.status.state == TaskState.SUBMITTED
+        assert task.status.state == TaskState.COMPLETED
 
 
 # ======================================================================
@@ -235,7 +353,7 @@ class TestPermissionInheritance:
         self,
         orchestrator: CopilotOrchestrator,
         copilot_pid: str,
-        td: ToolDispatcher,
+        td: MagicMock,
     ) -> None:
         """Worker with specific allowlist can only use those tools."""
 
@@ -266,7 +384,7 @@ class TestPermissionInheritance:
         self,
         orchestrator: CopilotOrchestrator,
         copilot_pid: str,
-        td: ToolDispatcher,
+        td: MagicMock,
     ) -> None:
         """Worker with wildcard allowlist can use all tools."""
 
@@ -287,7 +405,7 @@ class TestPermissionInheritance:
         self,
         orchestrator: CopilotOrchestrator,
         copilot_pid: str,
-        td: ToolDispatcher,
+        td: MagicMock,
     ) -> None:
         """AccessManifest tracks the copilot that created the restriction."""
         await orchestrator.delegate(
@@ -309,7 +427,7 @@ class TestPermissionInheritance:
         self,
         orchestrator: CopilotOrchestrator,
         copilot_pid: str,
-        td: ToolDispatcher,
+        td: MagicMock,
     ) -> None:
         """Glob patterns in allowlist work correctly."""
 
@@ -354,7 +472,7 @@ class TestCancellation:
         orchestrator: CopilotOrchestrator,
         copilot_pid: str,
         tm: TaskManager,
-        pm: ProcessManager,
+        pm: _StubProcessManager,
     ) -> None:
         """cancel() cancels the A2A task and terminates the worker."""
         result = await orchestrator.delegate(
@@ -537,7 +655,7 @@ class TestEdgeCases:
         self,
         orchestrator: CopilotOrchestrator,
         copilot_pid: str,
-        pm: ProcessManager,
+        pm: _StubProcessManager,
     ) -> None:
         """Custom metadata is passed through to the worker process."""
         result = await orchestrator.delegate(
@@ -568,7 +686,7 @@ class TestConcurrentOperations:
         self,
         orchestrator: CopilotOrchestrator,
         copilot_pid: str,
-        pm: ProcessManager,
+        pm: _StubProcessManager,
     ) -> None:
         """Concurrent delegations to different agents in the same zone succeed."""
         results = await asyncio.gather(
@@ -648,9 +766,9 @@ class TestConcurrentOperations:
 
     async def test_parent_terminate_while_child_delegating(
         self,
-        pm: ProcessManager,
+        pm: _StubProcessManager,
         tm: TaskManager,
-        td: ToolDispatcher,
+        td: MagicMock,
     ) -> None:
         """Terminating a copilot while workers are being delegated."""
         copilot = await pm.spawn("copilot-terminate", "zone-1")
@@ -716,7 +834,7 @@ class TestConcurrentOperations:
 
     async def test_heartbeat_during_state_transition(
         self,
-        pm: ProcessManager,
+        pm: _StubProcessManager,
     ) -> None:
         """Process state can be queried concurrently during transitions."""
         proc = await pm.spawn("heartbeat-agent", "zone-1")
@@ -744,6 +862,175 @@ class TestConcurrentOperations:
         assert results[2] is True  # Termination succeeded
         # Fourth check: either RUNNING (before termination) or ZOMBIE (after)
         assert results[3] in {ProcessState.RUNNING, ProcessState.ZOMBIE}
+
+
+# ======================================================================
+# LEGO tier validation (Issue #2761, Phase 2)
+# ======================================================================
+
+
+def _make_mock_orchestrator() -> tuple[CopilotOrchestrator, AsyncMock, TaskManager, AsyncMock]:
+    """Build a CopilotOrchestrator with mock PM/TD and real TaskManager."""
+    mock_pm = AsyncMock()
+    # spawn returns a mock AgentProcess
+    mock_pm.spawn = AsyncMock(
+        side_effect=lambda agent_id, zone_id, **kw: AgentProcess(
+            pid=f"pid-{agent_id}",
+            agent_id=agent_id,
+            zone_id=zone_id,
+            state=ProcessState.RUNNING,
+            parent_pid=kw.get("parent_pid"),
+            metadata=kw.get("metadata", {}),
+        )
+    )
+    mock_pm.get_process = AsyncMock(
+        return_value=AgentProcess(
+            pid="pid-copilot",
+            agent_id="copilot-1",
+            zone_id="zone-1",
+            state=ProcessState.RUNNING,
+        )
+    )
+    mock_pm.terminate = AsyncMock()
+
+    tm = TaskManager()
+    mock_td = MagicMock()
+    mock_td.set_manifest = MagicMock()
+
+    orch = CopilotOrchestrator(
+        process_manager=mock_pm,
+        task_manager=tm,
+        tool_dispatcher=mock_td,
+    )
+    return orch, mock_pm, tm, mock_td
+
+
+class TestDeliveryMechanisms:
+    """Test DeliveryPolicy wiring: IMMEDIATE stream, ON_DEMAND collect, cancel unblocking."""
+
+    async def test_delegate_stores_delivery_policy_in_result(self) -> None:
+        """DelegationResult includes the delivery_policy from WorkerConfig."""
+        orch, _, _, _ = _make_mock_orchestrator()
+        result = await orch.delegate(
+            "pid-copilot",
+            "Work",
+            WorkerConfig(
+                agent_id="worker-policy",
+                zone_id="zone-1",
+                delivery_policy=DeliveryPolicy.ON_DEMAND,
+            ),
+        )
+        assert result.delivery_policy == DeliveryPolicy.ON_DEMAND
+
+    async def test_stream_yields_events_for_immediate_policy(self) -> None:
+        """stream() yields pushed events then terminates on sentinel."""
+        orch, _, _, _ = _make_mock_orchestrator()
+        result = await orch.delegate(
+            "pid-copilot",
+            "Stream work",
+            WorkerConfig(
+                agent_id="worker-stream",
+                zone_id="zone-1",
+                delivery_policy=DeliveryPolicy.IMMEDIATE,
+            ),
+        )
+
+        # Push events then signal completion (which pushes sentinel)
+        await orch.push_event(result.task_id, {"step": 1})
+        await orch.push_event(result.task_id, {"step": 2})
+        await orch.complete_task(result.task_id, zone_id="zone-1")
+
+        # stream() should yield the 2 events then stop
+        events = []
+        async for event in orch.stream(result.task_id, zone_id="zone-1"):
+            events.append(event)
+
+        assert events == [{"step": 1}, {"step": 2}]
+
+    async def test_collect_awaits_completion_not_polls(self) -> None:
+        """collect() uses asyncio.Event to wait, not polling."""
+        orch, _, _, _ = _make_mock_orchestrator()
+        result = await orch.delegate(
+            "pid-copilot",
+            "Collect work",
+            WorkerConfig(agent_id="worker-collect-event", zone_id="zone-1"),
+        )
+
+        # Signal completion after a short delay
+        async def _complete_later() -> None:
+            await asyncio.sleep(0.01)
+            await orch.complete_task(result.task_id, zone_id="zone-1")
+
+        asyncio.create_task(_complete_later())
+
+        # collect() should wait for the event, not just return immediately
+        task = await orch.collect(result.task_id, zone_id="zone-1")
+        assert task.status.state == TaskState.COMPLETED
+
+    async def test_stream_raises_for_on_demand_policy(self) -> None:
+        """stream() raises ValueError for ON_DEMAND delivery policy."""
+        orch, _, _, _ = _make_mock_orchestrator()
+        result = await orch.delegate(
+            "pid-copilot",
+            "On-demand work",
+            WorkerConfig(
+                agent_id="worker-on-demand",
+                zone_id="zone-1",
+                delivery_policy=DeliveryPolicy.ON_DEMAND,
+            ),
+        )
+
+        with pytest.raises(ValueError, match="ON_DEMAND"):
+            async for _ in orch.stream(result.task_id, zone_id="zone-1"):
+                pass
+
+    async def test_cancel_unblocks_collect(self) -> None:
+        """cancel() sets the completion event so collect() unblocks."""
+        orch, _, _, _ = _make_mock_orchestrator()
+        result = await orch.delegate(
+            "pid-copilot",
+            "Cancel collect work",
+            WorkerConfig(agent_id="worker-cancel-collect", zone_id="zone-1"),
+        )
+
+        # Cancel after a short delay
+        async def _cancel_later() -> None:
+            await asyncio.sleep(0.01)
+            await orch.cancel(result.task_id, zone_id="zone-1")
+
+        asyncio.create_task(_cancel_later())
+
+        # collect() should return once cancel sets the event
+        task = await orch.collect(result.task_id, zone_id="zone-1")
+        assert task.status.state == TaskState.CANCELED
+
+    async def test_cancel_unblocks_stream(self) -> None:
+        """cancel() pushes sentinel to queue so stream() terminates."""
+        orch, _, _, _ = _make_mock_orchestrator()
+        result = await orch.delegate(
+            "pid-copilot",
+            "Cancel stream work",
+            WorkerConfig(
+                agent_id="worker-cancel-stream",
+                zone_id="zone-1",
+                delivery_policy=DeliveryPolicy.IMMEDIATE,
+            ),
+        )
+
+        # Push one event then cancel
+        await orch.push_event(result.task_id, {"partial": True})
+
+        async def _cancel_later() -> None:
+            await asyncio.sleep(0.01)
+            await orch.cancel(result.task_id, zone_id="zone-1")
+
+        asyncio.create_task(_cancel_later())
+
+        events = []
+        async for event in orch.stream(result.task_id, zone_id="zone-1"):
+            events.append(event)
+
+        assert events == [{"partial": True}]
 
 
 # ======================================================================

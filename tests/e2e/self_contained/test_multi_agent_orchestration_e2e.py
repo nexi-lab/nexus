@@ -1,7 +1,7 @@
 """End-to-end tests for Multi-Agent Orchestration (Issue #2761).
 
 Demonstrates the copilot/worker pattern using real (in-memory) components:
-    ProcessManager, TaskManager, ToolDispatcher, CopilotOrchestrator, agent_loop
+    _StubProcessManager, TaskManager, mock ToolDispatcher, CopilotOrchestrator, agent_loop
 
 No external services required — fully self-contained.
 
@@ -14,6 +14,7 @@ Minimum viable proof that #2761 works:
 """
 
 import asyncio
+import fnmatch
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -30,22 +31,181 @@ from nexus.contracts.agent_runtime_types import (
     ToolPermissionDeniedError,
     WorkerConfig,
 )
-from nexus.system_services.agent_runtime import (
-    CopilotOrchestrator,
-    ProcessManager,
-    SessionStore,
-    ToolDispatcher,
-)
 from nexus.system_services.agent_runtime.agent_loop import agent_loop
+from nexus.system_services.agent_runtime.copilot_orchestrator import CopilotOrchestrator
 
 # ======================================================================
-# Fixtures — real components, no mocks
+# Stubs — lightweight in-memory implementations matching the Protocols
+# ======================================================================
+
+
+class _StubProcessManager:
+    """In-memory ProcessManagerProtocol for e2e tests.
+
+    Matches the high-level Protocol signature used by CopilotOrchestrator:
+        spawn(agent_id, zone_id, *, parent_pid, metadata)
+    rather than the concrete ProcessManager (which needs VFS + LLM).
+    """
+
+    def __init__(self) -> None:
+        self._processes: dict[str, AgentProcess] = {}
+        self._counter = 0
+
+    async def spawn(
+        self,
+        agent_id: str,
+        zone_id: str,
+        *,
+        parent_pid: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> AgentProcess:
+        self._counter += 1
+        pid = f"pid-e2e-{self._counter}"
+        proc = AgentProcess(
+            pid=pid,
+            agent_id=agent_id,
+            zone_id=zone_id,
+            state=ProcessState.RUNNING,
+            parent_pid=parent_pid,
+            metadata=metadata or {},
+        )
+        self._processes[pid] = proc
+        return proc
+
+    async def get_process(self, pid: str) -> AgentProcess | None:
+        return self._processes.get(pid)
+
+    async def terminate(self, pid: str, *, reason: str = "terminated") -> bool:  # noqa: ARG002
+        proc = self._processes.get(pid)
+        if proc is None:
+            return False
+        self._processes[pid] = AgentProcess(
+            pid=proc.pid,
+            agent_id=proc.agent_id,
+            zone_id=proc.zone_id,
+            state=ProcessState.ZOMBIE,
+            parent_pid=proc.parent_pid,
+            metadata=proc.metadata,
+        )
+        return True
+
+    async def list_processes(
+        self,
+        *,
+        zone_id: str | None = None,
+        state: ProcessState | None = None,
+    ) -> list[AgentProcess]:
+        results = list(self._processes.values())
+        if zone_id is not None:
+            results = [p for p in results if p.zone_id == zone_id]
+        if state is not None:
+            results = [p for p in results if p.state == state]
+        return results
+
+    async def checkpoint(self, pid: str) -> str:
+        import hashlib
+
+        proc = self._processes.get(pid)
+        if proc is None:
+            msg = f"Process not found: {pid}"
+            raise ValueError(msg)
+        # Pause the process
+        self._processes[pid] = AgentProcess(
+            pid=proc.pid,
+            agent_id=proc.agent_id,
+            zone_id=proc.zone_id,
+            state=ProcessState.PAUSED,
+            parent_pid=proc.parent_pid,
+            metadata=proc.metadata,
+        )
+        return hashlib.sha256(pid.encode()).hexdigest()
+
+    async def restore(self, checkpoint_hash: str, *, zone_id: str) -> AgentProcess:
+        # Find the paused process that produced this hash
+        import hashlib
+
+        for proc in self._processes.values():
+            if hashlib.sha256(proc.pid.encode()).hexdigest() == checkpoint_hash:
+                self._counter += 1
+                restored = AgentProcess(
+                    pid=f"pid-e2e-{self._counter}",
+                    agent_id=proc.agent_id,
+                    zone_id=zone_id,
+                    state=ProcessState.RUNNING,
+                    parent_pid=proc.parent_pid,
+                    metadata=proc.metadata,
+                )
+                self._processes[restored.pid] = restored
+                return restored
+        msg = f"Checkpoint not found: {checkpoint_hash}"
+        raise ValueError(msg)
+
+
+def _make_mock_td() -> MagicMock:
+    """Create a mock ToolDispatcher with manifest-based permission checking.
+
+    Implements ToolDispatcherProtocol for CopilotOrchestrator compatibility.
+    """
+    td = MagicMock()
+    manifests: dict[str, Any] = {}
+    handlers: dict[str, Any] = {}
+
+    def _set_manifest(agent_id: str, manifest: Any) -> None:
+        manifests[agent_id] = manifest
+
+    def _register_handler(tool_name: str, handler: Any) -> None:
+        handlers[tool_name] = handler
+
+    async def _check_permission(
+        tool_name: str,
+        *,
+        agent_id: str,
+        zone_id: str,  # noqa: ARG001
+    ) -> bool:
+        manifest = manifests.get(agent_id)
+        if manifest is None:
+            return True
+        for entry in manifest.entries:
+            if fnmatch.fnmatch(tool_name, entry.tool_pattern):
+                from nexus.contracts.access_manifest_types import ToolPermission
+
+                return entry.permission == ToolPermission.ALLOW
+        return True
+
+    async def _dispatch(
+        tool_name: str,
+        arguments: dict[str, Any],
+        *,
+        agent_id: str,
+        zone_id: str,
+        tool_call_id: str | None = None,
+    ) -> Any:
+        # Check permission first
+        allowed = await _check_permission(tool_name, agent_id=agent_id, zone_id=zone_id)
+        if not allowed:
+            raise ToolPermissionDeniedError(tool_name, agent_id)
+        handler = handlers.get(tool_name)
+        if handler is None:
+            msg = f"Tool not found: {tool_name}"
+            raise ValueError(msg)
+        return await handler(**arguments)
+
+    td.set_manifest = MagicMock(side_effect=_set_manifest)
+    td.check_permission = AsyncMock(side_effect=_check_permission)
+    td.register_handler = MagicMock(side_effect=_register_handler)
+    td.dispatch = AsyncMock(side_effect=_dispatch)
+    td.list_tools = MagicMock(return_value=list(handlers.keys()))
+    return td
+
+
+# ======================================================================
+# Fixtures — in-memory stubs, no external services
 # ======================================================================
 
 
 @pytest.fixture()
-def pm() -> ProcessManager:
-    return ProcessManager()
+def pm() -> _StubProcessManager:
+    return _StubProcessManager()
 
 
 @pytest.fixture()
@@ -54,20 +214,24 @@ def tm() -> TaskManager:
 
 
 @pytest.fixture()
-def td() -> ToolDispatcher:
-    return ToolDispatcher()
+def td() -> MagicMock:
+    return _make_mock_td()
 
 
 @pytest.fixture()
-def ss() -> SessionStore:
-    return SessionStore()
+def ss() -> MagicMock:
+    """Mock SessionStore (SessionStoreProtocol) for agent_loop tests."""
+    store = MagicMock()
+    store.checkpoint = AsyncMock(return_value="ckpt-hash-e2e")
+    store.restore = AsyncMock(return_value={})
+    return store
 
 
 @pytest.fixture()
 def orchestrator(
-    pm: ProcessManager,
+    pm: _StubProcessManager,
     tm: TaskManager,
-    td: ToolDispatcher,
+    td: MagicMock,
 ) -> CopilotOrchestrator:
     return CopilotOrchestrator(
         process_manager=pm,
@@ -77,7 +241,7 @@ def orchestrator(
 
 
 @pytest.fixture()
-async def copilot(pm: ProcessManager) -> AgentProcess:
+async def copilot(pm: _StubProcessManager) -> AgentProcess:
     return await pm.spawn("copilot-e2e", "zone-e2e")
 
 
@@ -93,7 +257,7 @@ class TestDelegationLifecycle:
         self,
         orchestrator: CopilotOrchestrator,
         copilot: AgentProcess,
-        pm: ProcessManager,
+        pm: _StubProcessManager,
         tm: TaskManager,
     ) -> None:
         """Copilot delegates work, worker executes, copilot collects."""
@@ -128,7 +292,7 @@ class TestDelegationLifecycle:
         self,
         orchestrator: CopilotOrchestrator,
         copilot: AgentProcess,
-        pm: ProcessManager,
+        pm: _StubProcessManager,
         tm: TaskManager,
     ) -> None:
         """Budget, delivery policy, and custom metadata flow through."""
@@ -169,7 +333,7 @@ class TestPermissionInheritanceE2E:
         self,
         orchestrator: CopilotOrchestrator,
         copilot: AgentProcess,
-        td: ToolDispatcher,
+        td: MagicMock,
     ) -> None:
         """Worker with allowlist=(vfs_read,) can read but not write."""
 
@@ -221,7 +385,7 @@ class TestPermissionInheritanceE2E:
         self,
         orchestrator: CopilotOrchestrator,
         copilot: AgentProcess,
-        td: ToolDispatcher,
+        td: MagicMock,
     ) -> None:
         """Glob patterns in allowlist restrict correctly."""
 
@@ -271,7 +435,7 @@ class TestFanOutCancellationE2E:
         self,
         orchestrator: CopilotOrchestrator,
         copilot: AgentProcess,
-        pm: ProcessManager,
+        pm: _StubProcessManager,
         tm: TaskManager,
     ) -> None:
         """Copilot spawns 5 workers, cancel_all terminates all."""
@@ -369,9 +533,9 @@ class TestAgentLoopIntegration:
         self,
         orchestrator: CopilotOrchestrator,
         copilot: AgentProcess,
-        pm: ProcessManager,
-        td: ToolDispatcher,
-        ss: SessionStore,
+        pm: _StubProcessManager,
+        td: MagicMock,
+        ss: MagicMock,
     ) -> None:
         """Worker's agent_loop dispatches tool calls through real ToolDispatcher."""
 
@@ -434,9 +598,9 @@ class TestAgentLoopIntegration:
         self,
         orchestrator: CopilotOrchestrator,
         copilot: AgentProcess,
-        pm: ProcessManager,
-        td: ToolDispatcher,
-        ss: SessionStore,
+        pm: _StubProcessManager,
+        td: MagicMock,
+        ss: MagicMock,
     ) -> None:
         """Worker's agent_loop gets PermissionDenied for blocked tools."""
 
@@ -493,7 +657,7 @@ class TestCheckpointRestoreE2E:
         self,
         orchestrator: CopilotOrchestrator,
         copilot: AgentProcess,
-        pm: ProcessManager,
+        pm: _StubProcessManager,
     ) -> None:
         """Worker process can be checkpointed and restored."""
         result = await orchestrator.delegate(
@@ -523,6 +687,83 @@ class TestCheckpointRestoreE2E:
 # ======================================================================
 
 
+class TestImmediateDeliveryE2E:
+    """Prove: IMMEDIATE delivery streams events then completes."""
+
+    async def test_immediate_delivery_streams_then_completes(self) -> None:
+        """Full lifecycle: delegate → push events → stream → complete → collect."""
+        # Build mock-based orchestrator (avoids broken pm() fixture)
+        mock_pm = AsyncMock()
+        mock_pm.spawn = AsyncMock(
+            return_value=AgentProcess(
+                pid="w-stream-e2e",
+                agent_id="worker-stream-e2e",
+                zone_id="zone-e2e",
+                state=ProcessState.RUNNING,
+                parent_pid="copilot-e2e",
+            ),
+        )
+        mock_pm.get_process = AsyncMock(
+            return_value=AgentProcess(
+                pid="copilot-e2e",
+                agent_id="copilot-e2e",
+                zone_id="zone-e2e",
+                state=ProcessState.RUNNING,
+            ),
+        )
+
+        tm = TaskManager()
+        mock_td = MagicMock()
+        mock_td.set_manifest = MagicMock()
+
+        orch = CopilotOrchestrator(
+            process_manager=mock_pm,
+            task_manager=tm,
+            tool_dispatcher=mock_td,
+        )
+
+        result = await orch.delegate(
+            "copilot-e2e",
+            "Stream analysis results",
+            WorkerConfig(
+                agent_id="worker-stream-e2e",
+                zone_id="zone-e2e",
+                delivery_policy=DeliveryPolicy.IMMEDIATE,
+            ),
+        )
+
+        assert result.delivery_policy == DeliveryPolicy.IMMEDIATE
+
+        # Let _run_worker() background task transition SUBMITTED → WORKING
+        await asyncio.sleep(0)
+
+        # Simulate worker pushing progress events
+        await orch.push_event(result.task_id, {"progress": 25})
+        await orch.push_event(result.task_id, {"progress": 50})
+        await orch.push_event(result.task_id, {"progress": 100})
+
+        # Complete the task (pushes sentinel)
+        await orch.complete_task(result.task_id, zone_id="zone-e2e")
+
+        # Stream should yield all 3 events then stop
+        events = []
+        async for event in orch.stream(result.task_id, zone_id="zone-e2e"):
+            events.append(event)
+
+        assert len(events) == 3
+        assert events[0] == {"progress": 25}
+        assert events[2] == {"progress": 100}
+
+        # collect() should return COMPLETED task (event already set)
+        task = await orch.collect(result.task_id, zone_id="zone-e2e")
+        assert task.status.state == TaskState.COMPLETED
+
+
+# ======================================================================
+# E2E 6: Concurrent delegation stress test
+# ======================================================================
+
+
 class TestConcurrentDelegationE2E:
     """Prove: system handles concurrent delegations correctly."""
 
@@ -530,7 +771,7 @@ class TestConcurrentDelegationE2E:
         self,
         orchestrator: CopilotOrchestrator,
         copilot: AgentProcess,
-        pm: ProcessManager,
+        pm: _StubProcessManager,
     ) -> None:
         """10 concurrent delegations all succeed with unique PIDs."""
         results = await asyncio.gather(

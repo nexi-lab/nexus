@@ -13,12 +13,41 @@ Linux process model mapping:
 See: docs/architecture/AGENT-PROCESS-ARCHITECTURE.md
 """
 
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
 
 from nexus.contracts.exceptions import NexusError
+from nexus.contracts.llm_types import Message
+
+# ======================================================================
+# Exceptions
+# ======================================================================
+
+
+class StepAction(StrEnum):
+    """Outcome of a single agent_step() turn."""
+
+    CONTINUE = "continue"  # More turns needed (tool calls dispatched)
+    DONE = "done"  # Final response produced (no tool calls)
+    ERROR = "error"  # LLM call failed
+
+
+@dataclass(frozen=True, slots=True)
+class StepResult:
+    """Result of a single agent_step() turn.
+
+    Immutable snapshot: the caller (agent_loop or scheduler) decides
+    what to do next based on the action field.
+    """
+
+    action: StepAction
+    messages: tuple[Message, ...]  # Full message list after this turn
+    turn: int  # Current turn number
+    error: str | None = None  # Error message if action == ERROR
+
 
 # ======================================================================
 # Exceptions
@@ -140,6 +169,18 @@ class CheckpointNotFoundError(CheckpointError):
             f"Checkpoint not found: {checkpoint_hash[:16]}...",
             checkpoint_hash=checkpoint_hash,
         )
+
+
+class AgentNotFoundError(ProcessError):
+    """Raised when a registered agent ID does not exist."""
+
+    is_expected = True
+    status_code = 404
+    error_type = "Not Found"
+
+    def __init__(self, agent_id: str):
+        self.agent_id = agent_id
+        super().__init__(f"Agent not registered: {agent_id}")
 
 
 # ======================================================================
@@ -325,11 +366,13 @@ class DelegationResult:
         task_id: A2A task ID for tracking.
         worker_pid: Worker process PID.
         worker_agent_id: Worker agent identifier.
+        delivery_policy: How results are delivered back to the copilot.
     """
 
     task_id: str
     worker_pid: str
     worker_agent_id: str
+    delivery_policy: DeliveryPolicy = DeliveryPolicy.IMMEDIATE
 
 
 @dataclass(frozen=True, slots=True)
@@ -526,6 +569,16 @@ class TaskManagerProtocol(Protocol):
         """Get a task by ID."""
         ...
 
+    async def update_task_state(
+        self,
+        task_id: str,
+        new_state: Any,
+        *,
+        zone_id: str,
+    ) -> Any:
+        """Transition a task to a new state."""
+        ...
+
     async def cancel_task(self, task_id: str, *, zone_id: str) -> None:
         """Cancel a task."""
         ...
@@ -556,11 +609,38 @@ class CopilotOrchestratorProtocol(Protocol):
         """
         ...
 
-    async def collect(self, task_id: str, *, zone_id: str) -> Any:
-        """Collect results from a delegated task.
+    async def stream(
+        self,
+        task_id: str,  # noqa: ARG002
+        *,
+        zone_id: str,  # noqa: ARG002
+    ) -> AsyncIterator[Any]:
+        """Stream results from a delegated task (IMMEDIATE policy).
 
-        Returns the task with its artifacts and status.
+        Yields progress events as they arrive via an asyncio.Queue.
+        Raises ValueError if the task uses ON_DEMAND delivery policy.
         """
+        ...
+        yield  # pragma: no cover — protocol stub
+
+    async def collect(self, task_id: str, *, zone_id: str) -> Any:
+        """Await task completion (non-blocking), then return the task.
+
+        Uses asyncio.Event to wait for completion instead of polling.
+        Falls back to direct get_task() for backward compatibility.
+        """
+        ...
+
+    async def complete_task(self, task_id: str, *, zone_id: str) -> None:
+        """Signal that a delegated worker has finished."""
+        ...
+
+    async def fail_task(self, task_id: str, *, zone_id: str) -> None:
+        """Signal that a delegated worker has failed."""
+        ...
+
+    async def push_event(self, task_id: str, event: Any) -> None:
+        """Push a progress event to the task's result queue."""
         ...
 
     async def cancel(self, task_id: str, *, zone_id: str) -> None:

@@ -98,17 +98,18 @@ async def main():
         api_key=SecretStr("sk-ant-..."),  # your API key
     ))
 
-    # 3. Spawn agent and chat
-    #    Option A: Registry-based (agent_id looks up pre-registered AgentSpec)
-    pm = ProcessManager(vfs=nx, llm_provider=llm, agent_registry=registry)
-    proc = await pm.spawn("user1", "default", agent_id="my-coder")
+    # 3. Configure and spawn agent
+    pm = ProcessManager(vfs=nx, llm_provider=llm)
+    proc = await pm.spawn("user1", "default", config=AgentProcessConfig(
+        name="my-coder",
+        model="claude-haiku-4-5-20251001",
+        system_prompt="You are a helpful coding assistant.",
+        tools=("read_file", "write_file", "grep", "glob"),
+        max_turns=50,
+        max_context_tokens=128_000,
+    ))
 
-    #    Option B: Inline config (backward compatible)
-    # proc = await pm.spawn("user1", "default", config=AgentProcessConfig(
-    #     name="my-agent",
-    #     tools=("read_file", "write_file", "grep", "glob"),
-    # ))
-
+    # 4. Chat — resume() streams events (TextDelta, ToolCallStart, Completed, ...)
     async for event in pm.resume(
         proc.pid,
         Message(role=MessageRole.USER, content="List the files in /default"),
@@ -125,32 +126,64 @@ async def main():
 asyncio.run(main())
 ```
 
-### Copilot/Worker Delegation
+### Registry-Based Spawn (Production)
 
-Spawn restricted workers with budget caps, permission inheritance, and real-time streaming:
+In production, agents are pre-registered with an `AgentSpec` — like installed binaries in `/usr/bin/`. Spawn by name instead of passing inline config:
 
 ```python
-from nexus.system_services.agent_runtime import CopilotOrchestrator
+from nexus.contracts.agent_types import AgentSpec, AgentResources, QoSClass
+
+# Register agent spec once (e.g. at app startup)
+await registry.set_spec("my-coder", AgentSpec(
+    agent_type="coder",
+    capabilities=frozenset({"code", "search"}),
+    resource_requests=AgentResources(),
+    resource_limits=AgentResources(),
+    qos_class=QoSClass.STANDARD,
+    model="claude-sonnet-4-6",
+    system_prompt="You are a senior software engineer.",
+    tools=("read_file", "write_file", "edit_file", "bash", "grep", "glob"),
+    max_turns=100,
+    max_context_tokens=200_000,
+    sandbox_timeout=300,
+))
+
+# Spawn by agent_id — ProcessManager looks up the AgentSpec from registry
+pm = ProcessManager(vfs=nx, llm_provider=llm, agent_registry=registry)
+proc = await pm.spawn("user1", "default", agent_id="my-coder")
+# proc.model == "claude-sonnet-4-6", proc.name == "my-coder", etc.
+```
+
+### Copilot/Worker Delegation
+
+A copilot spawns restricted workers with budget caps, permission inheritance, and real-time streaming:
+
+```python
+from nexus.system_services.agent_runtime.copilot_orchestrator import CopilotOrchestrator
+from nexus.contracts.agent_runtime_types import WorkerConfig, DeliveryPolicy
 
 orchestrator = CopilotOrchestrator(
     process_manager=pm, task_manager=tm, tool_dispatcher=td,
 )
 
-# Stream worker results in real-time (IMMEDIATE delivery policy)
+# Delegate work — worker inherits a SUBSET of copilot's permissions
 result = await orchestrator.delegate(
     copilot_pid=copilot.pid,
     message="Research competitor pricing",
     worker_config=WorkerConfig(
-        agent_id="researcher",
-        zone_id="zone-1",
-        tool_allowlist=("web_search", "read_file"),
-        budget_tokens=50_000,
+        agent_id="researcher",           # registered agent to spawn
+        zone_id="zone-1",                # zone isolation
+        tool_allowlist=("web_search", "read_file"),  # inherit-and-restrict
+        budget_tokens=50_000,            # per-worker budget cap
+        delivery_policy=DeliveryPolicy.IMMEDIATE,
     ),
 )
+
+# Stream worker results in real-time (IMMEDIATE delivery policy)
 async for event in orchestrator.stream(result.task_id, zone_id="zone-1"):
     print(event)  # real-time results, no polling
 
-# Or await completion directly
+# Or await completion directly (ON_DEMAND / DEFERRED policy)
 task = await orchestrator.collect(result.task_id, zone_id="zone-1")
 ```
 

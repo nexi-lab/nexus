@@ -125,7 +125,7 @@ class TestAsyncDelegationOverhead:
         benchmark(run)
 
     def test_rebac_check_delegation(self, benchmark, mock_nexus_fs):
-        """Benchmark rebac_check via rebac_service (direct service call)."""
+        """Benchmark rebac_check via rebac_service direct call."""
 
         def run():
             asyncio.run(
@@ -140,7 +140,7 @@ class TestAsyncDelegationOverhead:
         benchmark(run)
 
     def test_rebac_list_tuples_with_param_rename(self, benchmark, mock_nexus_fs):
-        """Benchmark rebac_list_tuples via rebac_service (direct service call)."""
+        """Benchmark rebac_list_tuples via rebac_service direct call."""
 
         def run():
             asyncio.run(

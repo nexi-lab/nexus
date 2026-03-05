@@ -574,7 +574,7 @@ class TestNamespaceOperations:
             }
         )
 
-        # Verify namespace exists
+        # Verify namespace exists (use sync variant — get_namespace is async)
         ns = nx.rebac_service.get_namespace_sync("document")
         assert ns is not None
         assert ns["object_type"] == "document"

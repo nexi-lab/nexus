@@ -153,6 +153,10 @@ class CASLocalBackend(CASBackend, MultipartUpload):
     def supports_parallel_mmap_read(self) -> bool:
         return True
 
+    def _hash_to_path(self, content_hash: str) -> Path:
+        """Convert content hash to full disk path for parallel mmap reads."""
+        return self.root_path / self._blob_key(content_hash)
+
     # === Content Operations (override CASBackend for CDC routing) ===
 
     def write_content(

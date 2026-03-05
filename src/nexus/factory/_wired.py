@@ -246,7 +246,11 @@ def _boot_wired_services(
         )
         logger.debug("[BOOT:WIRED] SearchService created (kernel-level)")
     except Exception as exc:
-        logger.debug("[BOOT:WIRED] SearchService unavailable: %s", exc)
+        logger.warning(
+            "[BOOT:WIRED] SearchService unavailable (glob/grep will not work): %s",
+            exc,
+            exc_info=True,
+        )
 
     # --- ShareLinkService: Share link operations ---
     share_link_service: Any = None

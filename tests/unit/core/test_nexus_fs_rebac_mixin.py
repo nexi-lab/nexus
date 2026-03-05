@@ -431,7 +431,7 @@ class TestRebacCheckBatch:
     def test_rebac_check_batch_invalid_check_raises_error(self, nx: NexusFS) -> None:
         """Test that invalid check format raises ValueError."""
         with pytest.raises(ValueError, match="Check 0 must be"):
-            nx.rebac_service.rebac_check_batch_sync(["invalid"])  # type: ignore[list-item]
+            nx.rebac_service.rebac_check_batch_sync(["invalid"])
 
 
 class TestRebacListTuples:

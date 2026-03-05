@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
-from nexus.backends.storage.local import LocalBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
 from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -26,7 +26,7 @@ def nexus_fs_local(tmp_path: Path):
     """Create a real NexusFS with RaftMetadataStore."""
     storage_path = tmp_path / "storage"
     storage_path.mkdir()
-    backend = LocalBackend(root_path=storage_path)
+    backend = CASLocalBackend(root_path=storage_path)
     raft_dir = str(tmp_path / "raft-metadata")
     metadata_store = RaftMetadataStore.embedded(raft_dir)
     record_store = SQLAlchemyRecordStore(db_url=f"sqlite:///{tmp_path / 'records.db'}")

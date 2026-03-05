@@ -9,7 +9,7 @@ These tests verify end-to-end pagination behavior including:
 
 import pytest
 
-from nexus.backends import LocalBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.lib.pagination import PaginatedResult
@@ -19,7 +19,7 @@ from nexus.storage.raft_metadata_store import RaftMetadataStore
 @pytest.fixture
 def nexus_fs(tmp_path, isolated_db):
     """Create a NexusFS instance for testing via factory."""
-    backend = LocalBackend(str(tmp_path / "data"))
+    backend = CASLocalBackend(str(tmp_path / "data"))
     metadata_store = RaftMetadataStore.embedded(str(isolated_db).replace(".db", ""))
     nx = create_nexus_fs(
         backend=backend, metadata_store=metadata_store, permissions=PermissionConfig(enforce=False)
@@ -39,7 +39,7 @@ def nexus_fs_with_files(nexus_fs):
 @pytest.fixture
 def nexus_fs_large(tmp_path, isolated_db):
     """Create NexusFS with 1000 test files for scale testing."""
-    backend = LocalBackend(str(tmp_path / "data"))
+    backend = CASLocalBackend(str(tmp_path / "data"))
     metadata_store = RaftMetadataStore.embedded(str(isolated_db).replace(".db", ""))
     nx = create_nexus_fs(
         backend=backend, metadata_store=metadata_store, permissions=PermissionConfig(enforce=False)

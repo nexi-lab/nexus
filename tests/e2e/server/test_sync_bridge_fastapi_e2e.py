@@ -19,7 +19,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from nexus.backends.storage.local import LocalBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.lib.sync_bridge import shutdown_sync_bridge
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
@@ -41,7 +41,7 @@ def _create_test_app(tmp_path: Path, enforce_permissions: bool = True):
     # Create backend and stores
     storage_dir = tmp_path / "storage"
     storage_dir.mkdir(exist_ok=True)
-    backend = LocalBackend(root_path=str(storage_dir))
+    backend = CASLocalBackend(root_path=str(storage_dir))
 
     # Create metadata store (Raft standalone mode — path must be a file, not directory)
     metadata_store = RaftMetadataStore.embedded(str(tmp_path / "raft-metadata"))

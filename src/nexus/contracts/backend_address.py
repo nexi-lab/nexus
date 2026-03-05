@@ -3,10 +3,10 @@
 Tier-neutral value object — safe to import from any layer (kernel, services,
 backends, tests). Zero runtime ``nexus.*`` imports.
 
-The composite format ``"local@10.0.0.5:50051"`` stores both the backend type
+The composite format ``"cas_local@10.0.0.5:50051"`` stores both the backend type
 and the node that owns the CAS content. This enables targeted content fetch
 in federation (no broadcast) while remaining backward-compatible with legacy
-entries that only store the type (e.g., ``"local"``).
+entries that only store the type (e.g., ``"cas_local"``).
 
 Format:
     "{backend_type}"                    — type only (legacy / single-node)
@@ -27,17 +27,17 @@ class BackendAddress:
     """Parsed backend identifier carrying type and optional origin node.
 
     Examples:
-        >>> BackendAddress.parse("local")
-        BackendAddress(backend_type='local', origin=None)
+        >>> BackendAddress.parse("cas_local")
+        BackendAddress(backend_type="cas_local", origin=None)
 
-        >>> BackendAddress.parse("local@10.0.0.5:50051")
-        BackendAddress(backend_type='local', origin='10.0.0.5:50051')
+        >>> BackendAddress.parse("cas_local@10.0.0.5:50051")
+        BackendAddress(backend_type="cas_local", origin='10.0.0.5:50051')
 
         >>> str(BackendAddress("s3", "us-east-1.s3.example.com:443"))
         's3@us-east-1.s3.example.com:443'
 
-        >>> BackendAddress.build("local", "10.0.0.5:50051")
-        BackendAddress(backend_type='local', origin='10.0.0.5:50051')
+        >>> BackendAddress.build("cas_local", "10.0.0.5:50051")
+        BackendAddress(backend_type="cas_local", origin='10.0.0.5:50051')
     """
 
     backend_type: str
@@ -48,7 +48,7 @@ class BackendAddress:
         """Parse a composite backend_name string.
 
         Args:
-            raw: Backend name string, e.g. ``"local"`` or ``"local@10.0.0.5:50051"``.
+            raw: Backend name string, e.g. ``"cas_local"`` or ``"local@10.0.0.5:50051"``.
 
         Returns:
             BackendAddress with parsed type and optional origin.
@@ -68,7 +68,7 @@ class BackendAddress:
         """Construct a BackendAddress from components.
 
         Args:
-            backend_type: Backend type name (e.g., "local", "s3", "gcs").
+            backend_type: Backend type name (e.g., "cas_local", "s3", "gcs").
             origin: Optional node address (e.g., "10.0.0.5:50051").
 
         Returns:

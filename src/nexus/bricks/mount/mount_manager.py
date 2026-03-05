@@ -96,7 +96,7 @@ class MountManager:
 
         Args:
             mount_point: Virtual path where backend is mounted (e.g., "/personal/alice")
-            backend_type: Type of backend (e.g., "google_drive", "gcs", "local")
+            backend_type: Type of backend (e.g., "google_drive", "gcs", "cas_local")
             backend_config: Backend-specific configuration (dict) - will be JSON-encoded
             readonly: Whether mount is read-only
             io_profile: I/O tuning profile (Issue #1413)

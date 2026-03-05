@@ -11,7 +11,7 @@ import time
 import pytest
 from starlette.testclient import TestClient
 
-from nexus.backends.storage.local import LocalBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -32,7 +32,7 @@ def app_and_key(tmp_path):
 
     storage_dir = tmp_path / "storage"
     storage_dir.mkdir(exist_ok=True)
-    backend = LocalBackend(root_path=str(storage_dir))
+    backend = CASLocalBackend(root_path=str(storage_dir))
 
     metadata_store = RaftMetadataStore.embedded(str(tmp_path / "raft-metadata"))
 

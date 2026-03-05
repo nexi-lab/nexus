@@ -22,11 +22,11 @@ from nexus.storage.raft_metadata_store import RaftMetadataStore
 @pytest.fixture
 def nx_with_mount():
     """Create NexusFS instance with mount manager support via factory."""
-    from nexus.backends.storage.local import LocalBackend
+    from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.factory import create_nexus_fs
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        root_backend = LocalBackend(root_path=tmpdir)
+        root_backend = CASLocalBackend(root_path=tmpdir)
         db_file = Path(tmpdir) / "metadata.db"
         metadata_store = RaftMetadataStore.embedded(str(db_file).replace(".db", ""))
 
@@ -175,7 +175,7 @@ def test_sync_mount_ensures_directory_exists(nx_with_mount):
     # Use mount_core_service.add_mount (sync) which properly grants permissions
     mount_point = nx._mount_core_service.add_mount(
         mount_point="/zone/test/old/mount",
-        backend_type="local",
+        backend_type="cas_local",
         backend_config={"data_dir": str(mount_dir)},
         readonly=False,
         context=ctx,
@@ -209,7 +209,7 @@ def test_add_mount_via_api_creates_directory(nx_with_mount):
     # Use mount_core_service.add_mount (sync) instead of removed nx.add_mount
     mount_id = nx._mount_core_service.add_mount(
         mount_point="/api/mount",
-        backend_type="local",
+        backend_type="cas_local",
         backend_config={"data_dir": str(mount_dir)},
         readonly=False,
     )

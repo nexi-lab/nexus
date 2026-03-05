@@ -16,8 +16,8 @@ class TestBackendFactory:
     """Tests for BackendFactory.create()."""
 
     def test_create_local_backend(self, tmp_path: Any) -> None:
-        """Factory creates a valid LocalBackend."""
-        backend = BackendFactory.create("local", {"data_dir": str(tmp_path / "data")})
+        """Factory creates a valid CASLocalBackend."""
+        backend = BackendFactory.create("cas_local", {"data_dir": str(tmp_path / "data")})
         assert isinstance(backend, Backend)
         assert backend.name == "local"
         assert backend.has_root_path is True
@@ -25,7 +25,7 @@ class TestBackendFactory:
     def test_create_local_backend_via_root_path(self, tmp_path: Any) -> None:
         """Config key 'data_dir' maps to constructor param 'root_path'."""
         data_dir = str(tmp_path / "nexus-data")
-        backend = BackendFactory.create("local", {"data_dir": data_dir})
+        backend = BackendFactory.create("cas_local", {"data_dir": data_dir})
         assert backend.name == "local"
 
     def test_create_passthrough_backend(self, tmp_path: Any) -> None:
@@ -44,9 +44,9 @@ class TestBackendFactory:
 
     def test_extra_kwargs_passed_through(self, tmp_path: Any) -> None:
         """Extra kwargs like session_factory are passed to constructor."""
-        # session_factory is accepted by LocalBackend but not required
+        # session_factory is accepted by CASLocalBackend but not required
         backend = BackendFactory.create(
-            "local",
+            "cas_local",
             {"data_dir": str(tmp_path / "data")},
         )
         assert backend is not None
@@ -62,8 +62,8 @@ class TestBackendFactory:
 
     def test_config_mapping_works(self, tmp_path: Any) -> None:
         """Config keys are mapped to constructor params via CONNECTION_ARGS."""
-        # LocalBackend: config_key="data_dir" -> param="root_path"
-        backend = BackendFactory.create("local", {"data_dir": str(tmp_path / "mapped")})
+        # CASLocalBackend: config_key="data_dir" -> param="root_path"
+        backend = BackendFactory.create("cas_local", {"data_dir": str(tmp_path / "mapped")})
         assert backend.has_root_path is True
 
 
@@ -79,7 +79,7 @@ class TestBackendFactoryWrap:
         """wrap("logging") creates a LoggingBackendWrapper."""
         from nexus.backends.wrappers.logging import LoggingBackendWrapper
 
-        base = BackendFactory.create("local", {"data_dir": str(tmp_path / "data")})
+        base = BackendFactory.create("cas_local", {"data_dir": str(tmp_path / "data")})
         wrapped = BackendFactory.wrap(base, "logging")
         assert isinstance(wrapped, LoggingBackendWrapper)
 
@@ -87,7 +87,7 @@ class TestBackendFactoryWrap:
         """wrap("compress") creates a CompressedStorage."""
         from nexus.backends.wrappers.compressed import CompressedStorage
 
-        base = BackendFactory.create("local", {"data_dir": str(tmp_path / "data")})
+        base = BackendFactory.create("cas_local", {"data_dir": str(tmp_path / "data")})
         wrapped = BackendFactory.wrap(base, "compress")
         assert isinstance(wrapped, CompressedStorage)
 
@@ -98,7 +98,7 @@ class TestBackendFactoryWrap:
         from nexus.backends.wrappers.encrypted import EncryptedStorage
 
         key = AESGCMSIV.generate_key(bit_length=256)
-        base = BackendFactory.create("local", {"data_dir": str(tmp_path / "data")})
+        base = BackendFactory.create("cas_local", {"data_dir": str(tmp_path / "data")})
         wrapped = BackendFactory.wrap(base, "encrypt", {"key": key})
         assert isinstance(wrapped, EncryptedStorage)
 
@@ -106,19 +106,19 @@ class TestBackendFactoryWrap:
         """wrap("cache") creates a CachingBackendWrapper."""
         from nexus.backends.wrappers.caching import CachingBackendWrapper
 
-        base = BackendFactory.create("local", {"data_dir": str(tmp_path / "data")})
+        base = BackendFactory.create("cas_local", {"data_dir": str(tmp_path / "data")})
         wrapped = BackendFactory.wrap(base, "cache")
         assert isinstance(wrapped, CachingBackendWrapper)
 
     def test_wrap_unknown_type(self, tmp_path: Any) -> None:
         """wrap() raises ValueError for unknown wrapper types."""
-        base = BackendFactory.create("local", {"data_dir": str(tmp_path / "data")})
+        base = BackendFactory.create("cas_local", {"data_dir": str(tmp_path / "data")})
         with pytest.raises(ValueError, match="Unknown wrapper type"):
             BackendFactory.wrap(base, "nonexistent")
 
     def test_wrap_chain_describe(self, tmp_path: Any) -> None:
         """Successive wrap() calls produce correct describe() output."""
-        base = BackendFactory.create("local", {"data_dir": str(tmp_path / "data")})
+        base = BackendFactory.create("cas_local", {"data_dir": str(tmp_path / "data")})
         logged = BackendFactory.wrap(base, "logging")
         cached = BackendFactory.wrap(logged, "cache")
         assert cached.describe() == "cache → logging → local"

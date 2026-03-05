@@ -8,7 +8,7 @@ Issue #810: Decouple Zoekt on_write_callback sync from ObjectStore write path.
 Issue #808: Follows WorkflowDispatchService DT_PIPE pattern.
 
 Architecture:
-    LocalBackend.write_content() (sync)
+    CASLocalBackend.write_content() (sync)
       -> ZoektPipeConsumer.notify_write(path)
         -> pipe_write_nowait()  # ~5us, replaces lock acquisition + timer cancel
 
@@ -41,7 +41,7 @@ class ZoektPipeConsumer:
     """DT_PIPE consumer for Zoekt index notifications.
 
     Provides ``notify_write(path)`` and ``notify_sync_complete(files_synced)``
-    as sync callbacks for LocalBackend. Events are written into a DT_PIPE
+    as sync callbacks for CASLocalBackend. Events are written into a DT_PIPE
     ring buffer (~5us). A background consumer accumulates paths and triggers
     ``trigger_reindex_async()`` after a debounce window.
 

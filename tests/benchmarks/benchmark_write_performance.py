@@ -82,7 +82,7 @@ def run_benchmark(enable_deferred: bool = False):
     Args:
         enable_deferred: If True, use deferred permission buffer for faster writes
     """
-    from nexus.backends.storage.local import LocalBackend
+    from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.contracts.types import OperationContext
     from nexus.core.nexus_fs import NexusFS
 
@@ -96,7 +96,7 @@ def run_benchmark(enable_deferred: bool = False):
         storage_path.mkdir()
         db_path = Path(tmp_dir) / "nexus.db"
 
-        backend = LocalBackend(str(storage_path))
+        backend = CASLocalBackend(str(storage_path))
 
         # Create NexusFS with permissions ENABLED
         nx = NexusFS(

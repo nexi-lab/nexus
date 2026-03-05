@@ -160,7 +160,7 @@ class LocalTestRunner(TestRunner):
         self.data_dir = data_dir
 
     def run(self) -> bool:
-        from nexus.backends import LocalBackend
+        from nexus.backends.storage.cas_local import CASLocalBackend
         from nexus.core.nexus_fs import NexusFS
 
         print_header("Bulk Operations Test (Local Mode)")
@@ -168,7 +168,7 @@ class LocalTestRunner(TestRunner):
 
         # Use a database in the temp directory to ensure isolation between test runs
         db_path = Path(self.data_dir) / "nexus-test.db"
-        backend = LocalBackend(self.data_dir)
+        backend = CASLocalBackend(self.data_dir)
         # Disable permission enforcement for local testing to avoid permission errors
         nx = NexusFS(backend=backend, db_path=db_path, enforce_permissions=False)
 

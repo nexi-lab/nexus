@@ -81,10 +81,10 @@ def connect_to_nexus(tenant_id: str = "openai-memory-demo", agent_id: str = "mem
         from pathlib import Path
 
         from nexus import NexusFS
-        from nexus.backends.storage.local import LocalBackend
+        from nexus.backends.storage.cas_local import CASLocalBackend
 
         data_dir = Path(f"/tmp/nexus-{tenant_id}")
-        backend = LocalBackend(root_path=data_dir)
+        backend = CASLocalBackend(root_path=data_dir)
         nx = NexusFS(
             backend=backend,
             tenant_id=tenant_id,

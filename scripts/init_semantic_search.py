@@ -26,7 +26,7 @@ script_dir = Path(__file__).parent
 src_dir = script_dir.parent / "src"
 sys.path.insert(0, str(src_dir))
 
-from nexus.backends.storage.local import LocalBackend  # noqa: E402
+from nexus.backends.storage.cas_local import CASLocalBackend  # noqa: E402
 from nexus.core.nexus_fs import NexusFS  # noqa: E402
 from nexus.storage.raft_metadata_store import RaftMetadataStore  # noqa: E402
 
@@ -46,7 +46,7 @@ async def init_semantic_search() -> bool:
             print("ERROR: NEXUS_DATABASE_URL is required", file=sys.stderr)
             return False
 
-        backend = LocalBackend(data_dir)
+        backend = CASLocalBackend(data_dir)
         metadata_store = RaftMetadataStore.embedded(str(database_url).replace(".db", ""))
         nx = NexusFS(backend, metadata_store=metadata_store)
 

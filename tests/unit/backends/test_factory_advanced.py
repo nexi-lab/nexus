@@ -63,9 +63,9 @@ class TestExtraKwargsFiltering:
 
     def test_extra_kwargs_filtered_by_signature(self, tmp_path: Any) -> None:
         """Extra kwargs not in constructor signature are silently dropped."""
-        # LocalBackend.__init__ does NOT accept 'session_factory'
+        # CASLocalBackend.__init__ does NOT accept 'session_factory'
         backend = BackendFactory.create(
-            "local",
+            "cas_local",
             {"data_dir": str(tmp_path / "data")},
             session_factory="should_be_dropped",
         )
@@ -75,9 +75,9 @@ class TestExtraKwargsFiltering:
 
     def test_accepted_extra_kwargs_are_forwarded(self, tmp_path: Any) -> None:
         """Extra kwargs that match constructor params are forwarded."""
-        # 'read_only' is accepted by LocalBackend's constructor
+        # 'read_only' is accepted by CASLocalBackend's constructor
         backend = BackendFactory.create(
-            "local",
+            "cas_local",
             {"data_dir": str(tmp_path / "data")},
             read_only=True,
         )

@@ -4,7 +4,7 @@ Provides an opt-in ABC for backends that support native multipart/chunked
 upload operations. Backends that inherit this interface can participate in
 tus.io resumable uploads with optimal performance.
 
-- LocalCASBackend: assembles parts from temp directory
+- CASLocalBackend: assembles parts from temp directory
 - S3ConnectorBackend: uses native S3 multipart upload API
 """
 

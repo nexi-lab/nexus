@@ -512,7 +512,7 @@ class TestMountConfigModelValidate:
 
         m = MountConfigModel(
             mount_point="/mnt/test",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config="{}",
         )
         m.validate()
@@ -522,7 +522,7 @@ class TestMountConfigModelValidate:
 
         m = MountConfigModel(
             mount_point="mnt/test",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config="{}",
         )
         with pytest.raises(Exception, match="mount_point must start with '/'"):
@@ -533,7 +533,7 @@ class TestMountConfigModelValidate:
 
         m = MountConfigModel(
             mount_point="/mnt/test",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config="not json",
         )
         with pytest.raises(Exception, match="backend_config must be valid JSON"):

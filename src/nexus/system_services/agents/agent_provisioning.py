@@ -175,7 +175,7 @@ def grant_agent_resource_access(
     for resource_type in resource_types:
         folder_path = f"{user_base_path}/{resource_type}"
         try:
-            nx.rebac_create(
+            nx.rebac_service.rebac_create_sync(
                 subject=("agent", agent_id),
                 relation="viewer",  # Read-only access
                 object=("file", folder_path),

@@ -139,7 +139,8 @@ def mock_nx_with_sandbox():
     # Add sandbox support
     nx.sandbox_available = True
 
-    nx.sandbox_create = Mock(
+    nx._sandbox_rpc_service = Mock()
+    nx._sandbox_rpc_service.sandbox_create = Mock(
         return_value={
             "sandbox_id": "test-sandbox-123",
             "name": "test",
@@ -147,10 +148,10 @@ def mock_nx_with_sandbox():
             "status": "running",
         }
     )
-    nx.sandbox_list = Mock(
+    nx._sandbox_rpc_service.sandbox_list = Mock(
         return_value=[{"sandbox_id": "test-sandbox-123", "name": "test", "status": "running"}]
     )
-    nx.sandbox_run = Mock(
+    nx._sandbox_rpc_service.sandbox_run = Mock(
         return_value={
             "stdout": "Hello, World!",
             "stderr": "",
@@ -158,7 +159,7 @@ def mock_nx_with_sandbox():
             "execution_time": 0.123,
         }
     )
-    nx.sandbox_stop = Mock()
+    nx._sandbox_rpc_service.sandbox_stop = Mock()
 
     return nx
 
@@ -209,12 +210,13 @@ def mock_nx_full():
 
     # Sandbox
     nx.sandbox_available = True
-    nx.sandbox_create = Mock(return_value={"sandbox_id": "test-123"})
-    nx.sandbox_list = Mock(return_value=[])
-    nx.sandbox_run = Mock(
+    nx._sandbox_rpc_service = Mock()
+    nx._sandbox_rpc_service.sandbox_create = Mock(return_value={"sandbox_id": "test-123"})
+    nx._sandbox_rpc_service.sandbox_list = Mock(return_value=[])
+    nx._sandbox_rpc_service.sandbox_run = Mock(
         return_value={"stdout": "output", "stderr": "", "exit_code": 0, "execution_time": 0.1}
     )
-    nx.sandbox_stop = Mock()
+    nx._sandbox_rpc_service.sandbox_stop = Mock()
 
     return nx
 
@@ -997,7 +999,7 @@ class TestSandboxTools:
 
     def test_python_execution_success(self, mock_nx_with_sandbox):
         """Test Python code execution successfully."""
-        mock_nx_with_sandbox.sandbox_run.return_value = {
+        mock_nx_with_sandbox._sandbox_rpc_service.sandbox_run.return_value = {
             "stdout": "Hello, World!",
             "stderr": "",
             "exit_code": 0,
@@ -1013,13 +1015,13 @@ class TestSandboxTools:
         assert "Exit code: 0" in result
         assert "Execution time: 0.456s" in result
 
-        mock_nx_with_sandbox.sandbox_run.assert_called_once_with(
+        mock_nx_with_sandbox._sandbox_rpc_service.sandbox_run.assert_called_once_with(
             sandbox_id="test-123", language="python", code='print("Hello, World!")', timeout=300
         )
 
     def test_python_execution_with_error(self, mock_nx_with_sandbox):
         """Test Python execution with stderr output."""
-        mock_nx_with_sandbox.sandbox_run.return_value = {
+        mock_nx_with_sandbox._sandbox_rpc_service.sandbox_run.return_value = {
             "stdout": "",
             "stderr": "NameError: name 'undefined' is not defined",
             "exit_code": 1,
@@ -1036,7 +1038,7 @@ class TestSandboxTools:
 
     def test_python_execution_no_output(self, mock_nx_with_sandbox):
         """Test Python execution with no output."""
-        mock_nx_with_sandbox.sandbox_run.return_value = {
+        mock_nx_with_sandbox._sandbox_rpc_service.sandbox_run.return_value = {
             "stdout": "",
             "stderr": "",
             "exit_code": 0,
@@ -1055,7 +1057,9 @@ class TestSandboxTools:
 
     def test_python_execution_error(self, mock_nx_with_sandbox):
         """Test Python execution error handling."""
-        mock_nx_with_sandbox.sandbox_run.side_effect = RuntimeError("Sandbox not found")
+        mock_nx_with_sandbox._sandbox_rpc_service.sandbox_run.side_effect = RuntimeError(
+            "Sandbox not found"
+        )
         server = create_mcp_server(nx=mock_nx_with_sandbox)
 
         python_tool = get_tool(server, "nexus_python")
@@ -1066,7 +1070,7 @@ class TestSandboxTools:
 
     def test_bash_execution_success(self, mock_nx_with_sandbox):
         """Test bash command execution successfully."""
-        mock_nx_with_sandbox.sandbox_run.return_value = {
+        mock_nx_with_sandbox._sandbox_rpc_service.sandbox_run.return_value = {
             "stdout": "file1.txt\nfile2.txt\n",
             "stderr": "",
             "exit_code": 0,
@@ -1082,13 +1086,13 @@ class TestSandboxTools:
         assert "Exit code: 0" in result
         assert "Execution time: 0.089s" in result
 
-        mock_nx_with_sandbox.sandbox_run.assert_called_once_with(
+        mock_nx_with_sandbox._sandbox_rpc_service.sandbox_run.assert_called_once_with(
             sandbox_id="test-123", language="bash", code="ls -l", timeout=300
         )
 
     def test_bash_execution_with_error(self, mock_nx_with_sandbox):
         """Test bash execution with command error."""
-        mock_nx_with_sandbox.sandbox_run.return_value = {
+        mock_nx_with_sandbox._sandbox_rpc_service.sandbox_run.return_value = {
             "stdout": "",
             "stderr": "bash: invalid_command: command not found",
             "exit_code": 127,
@@ -1105,7 +1109,9 @@ class TestSandboxTools:
 
     def test_bash_execution_error(self, mock_nx_with_sandbox):
         """Test bash execution error handling."""
-        mock_nx_with_sandbox.sandbox_run.side_effect = TimeoutError("Execution timeout")
+        mock_nx_with_sandbox._sandbox_rpc_service.sandbox_run.side_effect = TimeoutError(
+            "Execution timeout"
+        )
         server = create_mcp_server(nx=mock_nx_with_sandbox)
 
         bash_tool = get_tool(server, "nexus_bash")
@@ -1125,7 +1131,7 @@ class TestSandboxTools:
         assert "sandbox_id" in sandbox_info
         assert sandbox_info["sandbox_id"] == "test-sandbox-123"
 
-        mock_nx_with_sandbox.sandbox_create.assert_called_once_with(
+        mock_nx_with_sandbox._sandbox_rpc_service.sandbox_create.assert_called_once_with(
             name="my-sandbox", ttl_minutes=15
         )
 
@@ -1136,12 +1142,14 @@ class TestSandboxTools:
         create_tool = get_tool(server, "nexus_sandbox_create")
         create_tool.fn(name="test")
 
-        call_args = mock_nx_with_sandbox.sandbox_create.call_args
+        call_args = mock_nx_with_sandbox._sandbox_rpc_service.sandbox_create.call_args
         assert call_args.kwargs["ttl_minutes"] == 10
 
     def test_sandbox_create_error(self, mock_nx_with_sandbox):
         """Test sandbox create error handling."""
-        mock_nx_with_sandbox.sandbox_create.side_effect = RuntimeError("No providers available")
+        mock_nx_with_sandbox._sandbox_rpc_service.sandbox_create.side_effect = RuntimeError(
+            "No providers available"
+        )
         server = create_mcp_server(nx=mock_nx_with_sandbox)
 
         create_tool = get_tool(server, "nexus_sandbox_create")
@@ -1159,11 +1167,13 @@ class TestSandboxTools:
 
         sandboxes = json.loads(result)
         assert isinstance(sandboxes, list)
-        mock_nx_with_sandbox.sandbox_list.assert_called_once()
+        mock_nx_with_sandbox._sandbox_rpc_service.sandbox_list.assert_called_once()
 
     def test_sandbox_list_error(self, mock_nx_with_sandbox):
         """Test sandbox list error handling."""
-        mock_nx_with_sandbox.sandbox_list.side_effect = RuntimeError("Connection failed")
+        mock_nx_with_sandbox._sandbox_rpc_service.sandbox_list.side_effect = RuntimeError(
+            "Connection failed"
+        )
         server = create_mcp_server(nx=mock_nx_with_sandbox)
 
         list_tool = get_tool(server, "nexus_sandbox_list")
@@ -1181,11 +1191,13 @@ class TestSandboxTools:
 
         assert "Successfully stopped sandbox" in result
         assert "test-123" in result
-        mock_nx_with_sandbox.sandbox_stop.assert_called_once_with("test-123")
+        mock_nx_with_sandbox._sandbox_rpc_service.sandbox_stop.assert_called_once_with("test-123")
 
     def test_sandbox_stop_error(self, mock_nx_with_sandbox):
         """Test sandbox stop error handling."""
-        mock_nx_with_sandbox.sandbox_stop.side_effect = ValueError("Sandbox not found")
+        mock_nx_with_sandbox._sandbox_rpc_service.sandbox_stop.side_effect = ValueError(
+            "Sandbox not found"
+        )
         server = create_mcp_server(nx=mock_nx_with_sandbox)
 
         stop_tool = get_tool(server, "nexus_sandbox_stop")

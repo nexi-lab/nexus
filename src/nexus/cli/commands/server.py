@@ -898,7 +898,7 @@ def serve(
                                 if mount_point != "/":  # Skip root mount (already has permissions)
                                     try:
                                         # Grant direct_owner to admin for full access
-                                        nx.rebac_create(
+                                        nx.rebac_service.rebac_create_sync(
                                             subject=("user", admin_user),
                                             relation="direct_owner",
                                             object=("file", mount_point),

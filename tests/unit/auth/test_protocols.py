@@ -239,7 +239,10 @@ class TestNexusFSUserProvisioner:
 
     def test_delegates_to_nexusfs(self):
         mock_nx = MagicMock()
-        mock_nx.provision_user.return_value = {"zone_id": "alice", "api_key": "sk-123"}
+        mock_nx._user_provisioning_service.provision_user.return_value = {
+            "zone_id": "alice",
+            "api_key": "sk-123",
+        }
         provisioner = NexusFSUserProvisioner(mock_nx)
 
         result = provisioner.provision_user(
@@ -249,20 +252,20 @@ class TestNexusFSUserProvisioner:
         )
 
         assert result["zone_id"] == "alice"
-        mock_nx.provision_user.assert_called_once()
-        call_kwargs = mock_nx.provision_user.call_args[1]
+        mock_nx._user_provisioning_service.provision_user.assert_called_once()
+        call_kwargs = mock_nx._user_provisioning_service.provision_user.call_args[1]
         assert call_kwargs["user_id"] == "u1"
         assert call_kwargs["email"] == "alice@example.com"
         assert call_kwargs["create_api_key"] is True
 
     def test_creates_operation_context(self):
         mock_nx = MagicMock()
-        mock_nx.provision_user.return_value = {"zone_id": "alice"}
+        mock_nx._user_provisioning_service.provision_user.return_value = {"zone_id": "alice"}
         provisioner = NexusFSUserProvisioner(mock_nx)
 
         provisioner.provision_user(user_id="u1", email="alice@example.com")
 
-        call_kwargs = mock_nx.provision_user.call_args[1]
+        call_kwargs = mock_nx._user_provisioning_service.provision_user.call_args[1]
         context = call_kwargs["context"]
         assert context.user_id == "system"
         assert context.is_admin is True
@@ -270,17 +273,17 @@ class TestNexusFSUserProvisioner:
 
     def test_zone_id_derived_from_email(self):
         mock_nx = MagicMock()
-        mock_nx.provision_user.return_value = {"zone_id": "bob"}
+        mock_nx._user_provisioning_service.provision_user.return_value = {"zone_id": "bob"}
         provisioner = NexusFSUserProvisioner(mock_nx)
 
         provisioner.provision_user(user_id="u2", email="bob@corp.com")
 
-        call_kwargs = mock_nx.provision_user.call_args[1]
+        call_kwargs = mock_nx._user_provisioning_service.provision_user.call_args[1]
         assert call_kwargs["zone_id"] == "bob"
 
     def test_zone_id_override(self):
         mock_nx = MagicMock()
-        mock_nx.provision_user.return_value = {"zone_id": "custom"}
+        mock_nx._user_provisioning_service.provision_user.return_value = {"zone_id": "custom"}
         provisioner = NexusFSUserProvisioner(mock_nx)
 
         provisioner.provision_user(
@@ -289,7 +292,7 @@ class TestNexusFSUserProvisioner:
             zone_id="custom",
         )
 
-        call_kwargs = mock_nx.provision_user.call_args[1]
+        call_kwargs = mock_nx._user_provisioning_service.provision_user.call_args[1]
         assert call_kwargs["zone_id"] == "custom"
 
 

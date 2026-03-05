@@ -18,7 +18,7 @@ Subcommands:
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import click
 from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -474,7 +474,7 @@ def export_zone(
                 sys.exit(1)
 
         # Get filesystem
-        nx = get_filesystem(backend_config)
+        nx: Any = get_filesystem(backend_config)
         if not isinstance(nx, NexusFS):
             console.print("[red]Error:[/red] Zone export requires NexusFS instance")
             nx.close()
@@ -510,7 +510,7 @@ def export_zone(
             def update_progress(current: int, total: int) -> None:
                 progress.update(task, description=f"Exporting... ({current}/{total} files)")
 
-            service = ZoneExportService(nx)
+            service = ZoneExportService(cast(Any, nx))
             manifest = service.export_zone(zone_id, options, update_progress)
 
         nx.close()
@@ -616,7 +616,7 @@ def import_zone(
             path_prefix_remap[old] = new
 
         # Get filesystem
-        nx = get_filesystem(backend_config)
+        nx: Any = get_filesystem(backend_config)
         if not isinstance(nx, NexusFS):
             console.print("[red]Error:[/red] Zone import requires NexusFS instance")
             nx.close()
@@ -653,7 +653,7 @@ def import_zone(
             def update_progress(current: int, total: int, phase: str) -> None:
                 progress.update(task, description=f"Importing {phase}... ({current}/{total})")
 
-            service = ZoneImportService(nx)
+            service = ZoneImportService(cast(Any, nx))
             result = service.import_zone(options, update_progress)
 
         nx.close()

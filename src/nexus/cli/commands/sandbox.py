@@ -75,7 +75,7 @@ def create_sandbox(
     try:
         nx: Any = get_default_filesystem()
 
-        result = nx.sandbox_create(
+        result = nx._sandbox_rpc_service.sandbox_create(
             name=name,
             ttl_minutes=ttl,
             provider=provider,
@@ -175,7 +175,7 @@ def get_or_create_sandbox(
     try:
         nx: Any = get_default_filesystem()
 
-        result = nx.sandbox_get_or_create(
+        result = nx._sandbox_rpc_service.sandbox_get_or_create(
             name=name,
             ttl_minutes=ttl,
             provider=provider,
@@ -284,7 +284,7 @@ def run_code(
 
         nx: Any = get_default_filesystem()
 
-        result = nx.sandbox_run(
+        result = nx._sandbox_rpc_service.sandbox_run(
             sandbox_id=sandbox_id,
             language=language,
             code=code_to_run,
@@ -347,7 +347,7 @@ def pause_sandbox(
     """
     try:
         nx: Any = get_default_filesystem()
-        result = nx.sandbox_pause(sandbox_id=sandbox_id)
+        result = nx._sandbox_rpc_service.sandbox_pause(sandbox_id=sandbox_id)
 
         if json_output:
             click.echo(json.dumps(result, indent=2))
@@ -389,7 +389,7 @@ def resume_sandbox(
     """
     try:
         nx: Any = get_default_filesystem()
-        result = nx.sandbox_resume(sandbox_id=sandbox_id)
+        result = nx._sandbox_rpc_service.sandbox_resume(sandbox_id=sandbox_id)
 
         if json_output:
             click.echo(json.dumps(result, indent=2))
@@ -433,7 +433,7 @@ def stop_sandbox(
     """
     try:
         nx: Any = get_default_filesystem()
-        result = nx.sandbox_stop(sandbox_id=sandbox_id)
+        result = nx._sandbox_rpc_service.sandbox_stop(sandbox_id=sandbox_id)
 
         if json_output:
             click.echo(json.dumps(result, indent=2))
@@ -525,7 +525,7 @@ def list_sandboxes(
         nx: Any = get_default_filesystem()
 
         # Call with filter parameters (not context)
-        result = nx.sandbox_list(
+        result = nx._sandbox_rpc_service.sandbox_list(
             user_id=user_id,
             agent_id=agent_id,
             zone_id=zone_id,
@@ -601,7 +601,7 @@ def sandbox_status(
     """
     try:
         nx: Any = get_default_filesystem()
-        result = nx.sandbox_status(sandbox_id=sandbox_id)
+        result = nx._sandbox_rpc_service.sandbox_status(sandbox_id=sandbox_id)
 
         if json_output:
             click.echo(json.dumps(result, indent=2))
@@ -711,7 +711,7 @@ def connect_sandbox(
     try:
         nx: Any = get_default_filesystem()
 
-        result = nx.sandbox_connect(
+        result = nx._sandbox_rpc_service.sandbox_connect(
             sandbox_id=sandbox_id,
             provider=provider,
             sandbox_api_key=sandbox_api_key,
@@ -800,7 +800,7 @@ def disconnect_sandbox(
     try:
         nx: Any = get_default_filesystem()
 
-        result = nx.sandbox_disconnect(
+        result = nx._sandbox_rpc_service.sandbox_disconnect(
             sandbox_id=sandbox_id,
             provider=provider,
             sandbox_api_key=sandbox_api_key,

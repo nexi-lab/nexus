@@ -11,8 +11,7 @@ Covers:
 - SearchService: 4 sync + 2 async (direct pass-through)
 """
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -54,53 +53,6 @@ def context():
 
 # =============================================================================
 # VersionService Delegation (4 async methods)
-# =============================================================================
-
-
-class TestVersionServiceDelegation:
-    """Tests for NexusFS → VersionService delegation."""
-
-    def test_aget_version_delegates(self, mock_fs, context):
-        """aget_version forwards path, version, context."""
-        mock_fs.version_service.get_version = AsyncMock(return_value=b"v1data")
-        result = asyncio.run(mock_fs.aget_version("/file.txt", 1, context))
-        assert result == b"v1data"
-        mock_fs.version_service.get_version.assert_called_once_with("/file.txt", 1, context)
-
-    def test_alist_versions_delegates(self, mock_fs, context):
-        """alist_versions forwards path and context."""
-        versions = [{"version": 1}, {"version": 2}]
-        mock_fs.version_service.list_versions = AsyncMock(return_value=versions)
-        result = asyncio.run(mock_fs.alist_versions("/file.txt", context))
-        assert result == versions
-        mock_fs.version_service.list_versions.assert_called_once_with("/file.txt", context)
-
-    def test_arollback_delegates(self, mock_fs, context):
-        """arollback forwards path, version, context."""
-        mock_fs.version_service.rollback = AsyncMock(return_value=None)
-        asyncio.run(mock_fs.arollback("/file.txt", 2, context))
-        mock_fs.version_service.rollback.assert_called_once_with("/file.txt", 2, context)
-
-    def test_adiff_versions_delegates(self, mock_fs, context):
-        """adiff_versions forwards path, v1, v2, mode, context."""
-        diff = {"changed": True}
-        mock_fs.version_service.diff_versions = AsyncMock(return_value=diff)
-        result = asyncio.run(mock_fs.adiff_versions("/file.txt", 1, 2, "content", context))
-        assert result == diff
-        mock_fs.version_service.diff_versions.assert_called_once_with(
-            "/file.txt", 1, 2, "content", context
-        )
-
-    def test_adiff_versions_default_mode(self, mock_fs):
-        """adiff_versions forwards to version_service.diff_versions directly."""
-        mock_fs.version_service.diff_versions = AsyncMock(return_value={})
-        asyncio.run(mock_fs.adiff_versions("/file.txt", 1, 2))
-        # __getattr__ alias passes args through; defaults are on the service method
-        mock_fs.version_service.diff_versions.assert_called_once_with("/file.txt", 1, 2)
-
-
-# =============================================================================
-# ReBACService Delegation (8 async methods with parameter renaming)
 # =============================================================================
 
 
@@ -160,26 +112,6 @@ class TestSearchServiceDelegation:
         mock_fs.search_service.grep.assert_called_once_with(
             "import os", path="/src", context=context
         )
-
-    def test_asemantic_search_delegates(self, mock_fs):
-        """asemantic_search forwards all args to search_service.semantic_search."""
-        hits = [{"path": "/doc.txt", "score": 0.95}]
-        mock_fs.search_service.semantic_search = AsyncMock(return_value=hits)
-        result = asyncio.run(mock_fs.asemantic_search("find errors", path="/logs", limit=5))
-        assert result == hits
-        # __getattr__ pass-through: args forwarded as-is, service handles defaults
-        mock_fs.search_service.semantic_search.assert_called_once_with(
-            "find errors",
-            path="/logs",
-            limit=5,
-        )
-
-    def test_asemantic_search_index_delegates(self, mock_fs):
-        """asemantic_search_index forwards path and recursive."""
-        stats = {"indexed": 42}
-        mock_fs.search_service.semantic_search_index = AsyncMock(return_value=stats)
-        result = asyncio.run(mock_fs.asemantic_search_index(path="/data", recursive=False))
-        assert result == stats
 
 
 # =============================================================================

@@ -3992,20 +3992,6 @@ class NexusFS(  # type: ignore[misc]
     # Generated dynamically below via _rebac_delegate().
     # ------------------------------------------------------------------
 
-    # Service forwarding: __getattr__ delegates to factory routing (Issue #1381)
-
-    def __getattr__(self, name: str) -> Any:
-        """Forward service method calls via factory routing tables.
-
-        Routing tables live in nexus.factory.service_routing (Issue #1381).
-        """
-        from nexus.factory.service_routing import resolve_service_attr
-
-        result = resolve_service_attr(self, name)
-        if result is not None:
-            return result
-        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
-
     def _grant_mount_owner_permission(self, mount_point: str, context: Any | None) -> None:
         """Grant direct_owner permission to the user who created the mount."""
         import logging as _logging
@@ -4166,7 +4152,6 @@ class NexusFS(  # type: ignore[misc]
 
         return get_subject_from_context(context)
 
-    # sync_mount, sync_mount_async, cancel_sync_job → SERVICE_ALIASES (Issue #2033)
     async def ainitialize_semantic_search(
         self,
         embedding_provider: str | None = None,

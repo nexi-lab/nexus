@@ -1040,15 +1040,9 @@ def create_mcp_server(
                 Execution result with stdout, stderr, exit_code, and execution time
             """
             nx_instance: Any = _get_nexus_instance(ctx)
-            _sandbox = getattr(nx_instance, "_sandbox_rpc_service", None)
-            if _sandbox is not None:
-                result = _sandbox.sandbox_run(
-                    sandbox_id=sandbox_id, language="python", code=code, timeout=300
-                )
-            else:
-                result = nx_instance.sandbox_run(
-                    sandbox_id=sandbox_id, language="python", code=code, timeout=300
-                )
+            result = nx_instance._sandbox_rpc_service.sandbox_run(
+                sandbox_id=sandbox_id, language="python", code=code, timeout=300
+            )
             return _format_sandbox_result(result)
 
         @mcp.tool()
@@ -1064,15 +1058,9 @@ def create_mcp_server(
                 Execution result with stdout, stderr, exit_code, and execution time
             """
             nx_instance: Any = _get_nexus_instance(ctx)
-            _sandbox = getattr(nx_instance, "_sandbox_rpc_service", None)
-            if _sandbox is not None:
-                result = _sandbox.sandbox_run(
-                    sandbox_id=sandbox_id, language="bash", code=command, timeout=300
-                )
-            else:
-                result = nx_instance.sandbox_run(
-                    sandbox_id=sandbox_id, language="bash", code=command, timeout=300
-                )
+            result = nx_instance._sandbox_rpc_service.sandbox_run(
+                sandbox_id=sandbox_id, language="bash", code=command, timeout=300
+            )
             return _format_sandbox_result(result)
 
         @mcp.tool()
@@ -1090,11 +1078,9 @@ def create_mcp_server(
                 JSON string with sandbox_id and metadata
             """
             nx_instance: Any = _get_nexus_instance(ctx)
-            _sandbox = getattr(nx_instance, "_sandbox_rpc_service", None)
-            if _sandbox is not None:
-                result = _sandbox.sandbox_create(name=name, ttl_minutes=ttl_minutes)
-            else:
-                result = nx_instance.sandbox_create(name=name, ttl_minutes=ttl_minutes)
+            result = nx_instance._sandbox_rpc_service.sandbox_create(
+                name=name, ttl_minutes=ttl_minutes
+            )
             return json.dumps(result, indent=2)
 
         @mcp.tool()
@@ -1106,8 +1092,7 @@ def create_mcp_server(
                 JSON string with list of sandboxes
             """
             nx_instance: Any = _get_nexus_instance(ctx)
-            _sandbox = getattr(nx_instance, "_sandbox_rpc_service", None)
-            result = _sandbox.sandbox_list() if _sandbox is not None else nx_instance.sandbox_list()
+            result = nx_instance._sandbox_rpc_service.sandbox_list()
             return json.dumps(result, indent=2)
 
         @mcp.tool()
@@ -1122,11 +1107,7 @@ def create_mcp_server(
                 Success message or error
             """
             nx_instance: Any = _get_nexus_instance(ctx)
-            _sandbox = getattr(nx_instance, "_sandbox_rpc_service", None)
-            if _sandbox is not None:
-                _sandbox.sandbox_stop(sandbox_id)
-            else:
-                nx_instance.sandbox_stop(sandbox_id)
+            nx_instance._sandbox_rpc_service.sandbox_stop(sandbox_id)
             return f"Successfully stopped sandbox {sandbox_id}"
 
     # =========================================================================

@@ -672,7 +672,7 @@ def register_memory_cmd(
         if ttl:
             ttl_delta = _parse_ttl(ttl)
 
-        result = nx.register_memory(
+        result = nx._workspace_rpc_service.register_memory(
             path=path,
             name=name,
             description=description,
@@ -713,7 +713,7 @@ def list_registered_cmd(
     try:
         nx: Any = get_filesystem(backend_config)
 
-        memories = nx.list_memories()
+        memories = nx._workspace_rpc_service.list_registered_memories()
 
         if not memories:
             console.print("[yellow]No memories registered[/yellow]")
@@ -765,7 +765,7 @@ def unregister_memory_cmd(
         nx: Any = get_filesystem(backend_config)
 
         # Get memory info first
-        info = nx.get_memory_info(path)
+        info = nx._workspace_rpc_service.get_memory_info(path)
         if not info:
             console.print(f"[red]✗[/red] Memory not registered: {path}")
             nx.close()
@@ -788,7 +788,7 @@ def unregister_memory_cmd(
                 return
 
         # Unregister
-        result = nx.unregister_memory(path)
+        result = nx._workspace_rpc_service.unregister_memory(path)
 
         if result:
             console.print(f"[green]✓[/green] Unregistered memory: {path}")
@@ -816,7 +816,7 @@ def memory_info_cmd(
     try:
         nx: Any = get_filesystem(backend_config)
 
-        info = nx.get_memory_info(path)
+        info = nx._workspace_rpc_service.get_memory_info(path)
 
         if not info:
             console.print(f"[red]✗[/red] Memory not registered: {path}")

@@ -157,6 +157,10 @@ class CASLocalBackend(CASBackend, MultipartUpload):
         """Convert content hash to full disk path for parallel mmap reads."""
         return self.root_path / self._blob_key(content_hash)
 
+    def _is_chunked_content(self, content_hash: str) -> bool:
+        """Check if content was stored as CDC chunks."""
+        return self._cdc.is_chunked(content_hash)
+
     # === Content Operations (override CASBackend for CDC routing) ===
 
     def write_content(

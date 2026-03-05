@@ -422,7 +422,7 @@ class TestLoadAllSavedMounts:
         if hasattr(nx, "mount_manager") and nx.mount_manager is not None:
             pytest.skip("Mount manager is available, test N/A")
 
-        result = nx.load_all_saved_mounts()
+        result = nx._mount_persist_service.load_all_mounts()
         assert result == {"loaded": 0, "synced": 0, "failed": 0, "errors": []}
 
     def test_load_all_saved_mounts_empty(self, nx: NexusFS) -> None:
@@ -430,7 +430,7 @@ class TestLoadAllSavedMounts:
         if not hasattr(nx, "mount_manager") or nx.mount_manager is None:
             pytest.skip("Mount manager not available")
 
-        result = nx.load_all_saved_mounts()
+        result = nx._mount_persist_service.load_all_mounts()
         assert "loaded" in result
         assert "synced" in result
         assert "failed" in result

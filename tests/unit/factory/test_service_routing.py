@@ -24,11 +24,11 @@ class TestResolveServiceAttr:
     def test_alias_forwarding(self) -> None:
         """SERVICE_ALIASES: method name differs on service."""
         obj = MagicMock()
-        obj.__dict__["oauth_service"] = svc = MagicMock()
-        svc.list_providers = lambda: ["google"]
+        obj.__dict__["_workspace_rpc_service"] = svc = MagicMock()
+        svc.list_registered_memories = lambda: ["mem1"]
 
-        result = resolve_service_attr(obj, "oauth_list_providers")
-        assert result is svc.list_providers
+        result = resolve_service_attr(obj, "list_memories")
+        assert result is svc.list_registered_memories
 
     def test_unknown_attr_returns_none(self) -> None:
         obj = MagicMock()
@@ -70,7 +70,21 @@ class TestRoutingTableCompleteness:
     """Sanity checks for the routing tables."""
 
     def test_service_methods_non_empty(self) -> None:
-        assert len(SERVICE_METHODS) >= 54
+        assert len(SERVICE_METHODS) >= 45
 
     def test_service_aliases_non_empty(self) -> None:
-        assert len(SERVICE_ALIASES) >= 53
+        assert len(SERVICE_ALIASES) >= 44
+
+    def test_provision_user_not_in_service_methods(self) -> None:
+        """provision_user removed — callers use _user_provisioning_service directly."""
+        assert "provision_user" not in SERVICE_METHODS
+        assert "deprovision_user" not in SERVICE_METHODS
+
+    def test_oauth_not_in_service_aliases(self) -> None:
+        """OAuth entries removed — callers use oauth_service directly."""
+        assert "oauth_list_providers" not in SERVICE_ALIASES
+
+    def test_events_not_in_service_methods(self) -> None:
+        """Events entries removed — callers use events_service directly."""
+        for method in ("wait_for_changes", "lock", "extend_lock", "unlock"):
+            assert method not in SERVICE_METHODS

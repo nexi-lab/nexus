@@ -151,6 +151,7 @@ def resolve_service_attr(obj: object, name: str) -> Any | None:
 
     return None
 
+
 # ---------------------------------------------------------------------------
 # bind_wired_services — moved from NexusFS._bind_wired_services
 # ---------------------------------------------------------------------------

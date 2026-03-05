@@ -1,14 +1,15 @@
-"""Unit tests for NexusFSMountsMixin.
+"""Unit tests for mount management via direct service access.
 
-Tests cover mount management operations:
-- add_mount: Add dynamic backend mount
-- remove_mount: Remove backend mount
-- list_mounts: List all active mounts
-- get_mount: Get mount details
-- has_mount: Check if mount exists
-- save_mount: Persist mount to database
-- load_mount: Load persisted mount
-- sync_mount: Sync metadata from connector backend
+Tests cover mount management operations via _mount_core_service,
+_mount_persist_service, and _sync_service (replacing old __getattr__ routing):
+- add_mount: Add dynamic backend mount (MountCoreService)
+- remove_mount: Remove backend mount (MountCoreService)
+- list_mounts: List all active mounts (MountCoreService)
+- get_mount: Get mount details (MountCoreService)
+- has_mount: Check if mount exists (MountCoreService)
+- save_mount: Persist mount to database (MountPersistService)
+- load_mount: Load persisted mount (MountPersistService)
+- sync_mount: Sync metadata from connector backend (SyncService)
 """
 
 from __future__ import annotations
@@ -365,7 +366,7 @@ class TestListSavedMounts:
         try:
             if not hasattr(nx, "mount_manager") or nx.mount_manager is None:
                 with pytest.raises(RuntimeError, match="Mount manager not available"):
-                    nx.list_saved_mounts()
+                    nx._mount_persist_service.list_saved_mounts()
         finally:
             nx.close()
 
@@ -386,7 +387,7 @@ class TestLoadMount:
         try:
             if not hasattr(nx, "mount_manager") or nx.mount_manager is None:
                 with pytest.raises(RuntimeError, match="Mount manager not available"):
-                    nx.load_mount("/mnt/test")
+                    nx._mount_persist_service.load_mount("/mnt/test")
         finally:
             nx.close()
 
@@ -409,7 +410,7 @@ class TestDeleteSavedMount:
         try:
             if not hasattr(nx, "mount_manager") or nx.mount_manager is None:
                 with pytest.raises(RuntimeError, match="Mount manager not available"):
-                    nx.delete_saved_mount("/mnt/test")
+                    nx._mount_persist_service.delete_saved_mount("/mnt/test")
         finally:
             nx.close()
 
@@ -947,7 +948,7 @@ class TestMountContextUtilsIntegration:
         # The function should resolve the database URL from nx.db_path
         # It may fail due to missing OAuth config, but should not fail due to missing database URL
         try:
-            nx.load_mount(mount_config)
+            nx._mount_persist_service.load_mount(mount_config["mount_point"])
         except RuntimeError as e:
             # Should not fail with "No database path configured" error
             # (may fail for other reasons like missing OAuth config)

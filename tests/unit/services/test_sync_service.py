@@ -541,7 +541,7 @@ class TestSyncAllMounts:
             {
                 "mount_point": "/mnt/connector",
                 "backend": connector_backend,
-                "backend_type": "gcs_connector",
+                "backend_type": "path_gcs",
             },
             {
                 "mount_point": "/mnt/local",
@@ -571,7 +571,7 @@ class TestSyncAllMounts:
             {
                 "mount_point": "/mnt/fail",
                 "backend": connector_backend,
-                "backend_type": "gcs_connector",
+                "backend_type": "path_gcs",
             },
         ]
 

@@ -18,7 +18,7 @@ backend. Chain explicitly::
 Usage:
     >>> from nexus.backends.base.factory import BackendFactory
     >>> backend = BackendFactory.create("cas_local", {"data_dir": "/path"})
-    >>> backend = BackendFactory.create("gcs_connector", config, record_store=rs)
+    >>> backend = BackendFactory.create("path_gcs", config, record_store=rs)
     >>> wrapped = BackendFactory.wrap(backend, "compress")
 """
 
@@ -49,7 +49,7 @@ class BackendFactory:
         only if the constructor accepts them.
 
         Args:
-            backend_type: Backend type identifier (e.g., "cas_local", "gcs_connector")
+            backend_type: Backend type identifier (e.g., "cas_local", "path_gcs")
             config: Backend configuration dict with external config keys
             **extra_kwargs: Additional constructor kwargs not in config
                 (e.g., record_store, metadata_store)

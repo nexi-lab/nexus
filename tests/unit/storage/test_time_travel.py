@@ -317,6 +317,7 @@ class TestTimeTravelDebug:
             subject=("user", "testowner"), relation="direct_owner", object=("file", path)
         )
 
+
         # Write again to create a new version
         nx.sys_write(path, b"Updated content")
 

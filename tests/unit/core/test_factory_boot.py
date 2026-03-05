@@ -229,6 +229,7 @@ class TestBootSystemServices:
             "workspace_registry",  # degradable — None with mock session_factory
             "pipe_manager",  # degradable — None if PipeManager unavailable
             "scheduler_service",  # degradable — None if SchedulerService unavailable
+            "event_log",  # degradable — None if EventLog unavailable
         }
         for key, value in result.items():
             if key in _NULLABLE_KEYS:

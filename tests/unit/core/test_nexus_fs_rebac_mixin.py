@@ -518,7 +518,7 @@ class TestRebacListTuples:
 
 
 class TestRebacOptions:
-    """Tests for ReBAC configuration options."""
+    """Tests for ReBAC configuration options (via rebac_service)."""
 
     def test_set_rebac_option_max_depth(self, nx: NexusFS) -> None:
         """Test setting max_depth option."""

@@ -61,8 +61,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from nexus.backends.base.backend import Backend
+    from nexus.backends.storage.cas_gcs import CASGCSBackend as GCSBackend
     from nexus.backends.storage.cas_local import CASLocalBackend
-    from nexus.backends.storage.gcs import GCSBackend
     from nexus.config import NexusConfig, load_config
     from nexus.contracts.exceptions import (
         BackendError,
@@ -101,7 +101,7 @@ _LAZY_IMPORTS = {
     # Backends
     "Backend": ("nexus.backends.base.backend", "Backend"),
     "CASLocalBackend": ("nexus.backends.storage.cas_local", "CASLocalBackend"),
-    "GCSBackend": ("nexus.backends.storage.gcs", "GCSBackend"),
+    "GCSBackend": ("nexus.backends.storage.cas_gcs", "CASGCSBackend"),
     # Config
     "NexusConfig": ("nexus.config", "NexusConfig"),
     "load_config": ("nexus.config", "load_config"),
@@ -265,14 +265,14 @@ def connect(
     # Create backend based on configuration
     backend: Backend
     if cfg.backend == "gcs":
-        from nexus.backends.storage.gcs import GCSBackend
+        from nexus.backends.storage.cas_gcs import CASGCSBackend
 
         if not cfg.gcs_bucket_name:
             raise ValueError(
                 "gcs_bucket_name is required when backend='gcs'. "
                 "Set gcs_bucket_name in your config or NEXUS_GCS_BUCKET_NAME environment variable."
             )
-        backend = GCSBackend(
+        backend = CASGCSBackend(
             bucket_name=cfg.gcs_bucket_name,
             project_id=cfg.gcs_project_id,
             credentials_path=cfg.gcs_credentials_path,

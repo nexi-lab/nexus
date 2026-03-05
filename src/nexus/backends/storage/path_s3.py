@@ -4,7 +4,7 @@ Thin subclass of PathBackend that:
 - Creates an S3BlobTransport for raw S3 I/O
 - Mixes in CacheConnectorMixin for L1+L2 caching
 - Mixes in MultipartUpload for chunked uploads
-- Registers as "s3_connector" via @register_connector
+- Registers as "path_s3" via @register_connector
 - Adds S3-specific features: presigned URLs, multipart, versioning
 
 References:
@@ -34,13 +34,13 @@ logger = logging.getLogger(__name__)
 
 
 @register_connector(
-    "s3_connector",
+    "path_s3",
     description="AWS S3 with direct path mapping",
     category="storage",
     requires=["boto3"],
     service_name="s3",
 )
-class S3ConnectorBackend(PathBackend, CacheConnectorMixin, MultipartUpload):
+class PathS3Backend(PathBackend, CacheConnectorMixin, MultipartUpload):
     """AWS S3 connector with direct path mapping, caching, and multipart upload."""
 
     _CAPABILITIES = BLOB_CONNECTOR_CAPABILITIES | frozenset(
@@ -131,7 +131,7 @@ class S3ConnectorBackend(PathBackend, CacheConnectorMixin, MultipartUpload):
 
             super().__init__(
                 transport,
-                backend_name="s3_connector",
+                backend_name="path_s3",
                 bucket_name=bucket_name,
                 prefix=prefix,
                 versioning_enabled=versioning_enabled,
@@ -146,7 +146,7 @@ class S3ConnectorBackend(PathBackend, CacheConnectorMixin, MultipartUpload):
         except Exception as e:
             raise BackendError(
                 f"Failed to initialize S3 connector backend: {e}",
-                backend="s3_connector",
+                backend="path_s3",
                 path=bucket_name,
             ) from e
 
@@ -252,7 +252,7 @@ class S3ConnectorBackend(PathBackend, CacheConnectorMixin, MultipartUpload):
         if not context or not context.backend_path:
             raise BackendError(
                 message="S3 connector requires backend_path in OperationContext.",
-                backend="s3_connector",
+                backend="path_s3",
             )
 
         cache_path = self._get_cache_path(context) or context.backend_path
@@ -291,7 +291,7 @@ class S3ConnectorBackend(PathBackend, CacheConnectorMixin, MultipartUpload):
         if not context or not context.backend_path:
             raise BackendError(
                 message="S3 connector requires backend_path in OperationContext.",
-                backend="s3_connector",
+                backend="path_s3",
             )
 
         virtual_path = (

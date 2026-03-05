@@ -15,7 +15,7 @@ Example:
     # Add a mount
     mount_id = mount_service.add_mount(
         mount_point="/mnt/gcs",
-        backend_type="gcs_connector",
+        backend_type="path_gcs",
         backend_config={"bucket": "my-bucket"},
     )
 

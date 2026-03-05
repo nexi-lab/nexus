@@ -40,9 +40,6 @@ SERVICE_METHODS: dict[str, str] = {
     "list_agents": "_agent_rpc_service",
     "get_agent": "_agent_rpc_service",
     "delete_agent": "_agent_rpc_service",
-    # UserProvisioningService
-    "provision_user": "_user_provisioning_service",
-    "deprovision_user": "_user_provisioning_service",
     # SandboxRPCService
     "sandbox_create": "_sandbox_rpc_service",
     "sandbox_run": "_sandbox_rpc_service",
@@ -70,37 +67,13 @@ SERVICE_METHODS: dict[str, str] = {
     "list_saved_mounts": "_mount_persist_service",
     "load_mount": "_mount_persist_service",
     "delete_saved_mount": "_mount_persist_service",
-    # MCPService
-    "mcp_list_mounts": "mcp_service",
-    # LLMService
-    "create_llm_reader": "llm_service",
-    # ReBACService direct methods (no _sync suffix)
-    "set_rebac_option": "rebac_service",
-    "get_rebac_option": "rebac_service",
-    "register_namespace": "rebac_service",
-    # EventsService (Issue #1166)
-    "wait_for_changes": "events_service",
-    "lock": "events_service",
-    "extend_lock": "events_service",
-    "unlock": "events_service",
 }
 
 SERVICE_ALIASES: dict[str, tuple[str, str]] = {
-    # OAuthCredentialService: RPC name → brick method name
-    "oauth_list_providers": ("oauth_service", "list_providers"),
-    "oauth_get_auth_url": ("oauth_service", "get_auth_url"),
-    "oauth_exchange_code": ("oauth_service", "exchange_code"),
-    "oauth_list_credentials": ("oauth_service", "list_credentials"),
-    "oauth_revoke_credential": ("oauth_service", "revoke_credential"),
-    "oauth_test_credential": ("oauth_service", "test_credential"),
     "list_memories": ("_workspace_rpc_service", "list_registered_memories"),
     "sandbox_available": ("_sandbox_rpc_service", "sandbox_available"),
     "get_sync_job": ("_sync_job_service", "get_job"),
     "list_sync_jobs": ("_sync_job_service", "list_jobs"),
-    "load_all_saved_mounts": ("_mount_persist_service", "load_all_mounts"),
-    # Dir visibility cache: NexusFS method names → cache method names
-    "get_dir_visibility_cache_metrics": ("_dir_visibility_cache", "get_metrics"),
-    "clear_dir_visibility_cache": ("_dir_visibility_cache", "clear"),
     # SearchService async methods: a-prefix removed when calling service
     "asemantic_search": ("search_service", "semantic_search"),
     "asemantic_search_index": ("search_service", "semantic_search_index"),

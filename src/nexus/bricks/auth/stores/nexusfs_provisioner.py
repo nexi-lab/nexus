@@ -49,7 +49,7 @@ class NexusFSUserProvisioner:
             is_admin=True,
         )
 
-        result: dict[str, Any] = self._nx.provision_user(
+        result: dict[str, Any] = self._nx._user_provisioning_service.provision_user(
             user_id=user_id,
             email=email,
             display_name=display_name,

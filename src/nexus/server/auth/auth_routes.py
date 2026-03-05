@@ -512,7 +512,7 @@ async def setup_zone(
             )
 
             # Provision user resources with API key (90 days expiry)
-            provision_result = nx.provision_user(
+            provision_result = nx._user_provisioning_service.provision_user(
                 user_id=user_id,
                 email=user.email,
                 display_name=user.display_name,
@@ -1382,7 +1382,7 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
                 )
 
                 # Provision user resources with OAuth-specific API key (90 days expiry)
-                provision_result = nx.provision_user(
+                provision_result = nx._user_provisioning_service.provision_user(
                     user_id=user_id,
                     email=user.email,
                     display_name=user.display_name,

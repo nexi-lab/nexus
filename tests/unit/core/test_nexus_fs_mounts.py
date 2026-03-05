@@ -21,7 +21,7 @@ from unittest.mock import patch
 
 import pytest
 
-from nexus import LocalBackend, NexusFS
+from nexus import CASLocalBackend, NexusFS
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -39,7 +39,7 @@ def temp_dir() -> Generator[Path, None, None]:
 def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance for testing."""
     nx = create_nexus_fs(
-        backend=LocalBackend(temp_dir),
+        backend=CASLocalBackend(temp_dir),
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
         parsing=ParseConfig(auto_parse=False),
@@ -53,7 +53,7 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
 def nx_with_permissions(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance with permissions enabled."""
     nx = create_nexus_fs(
-        backend=LocalBackend(temp_dir),
+        backend=CASLocalBackend(temp_dir),
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata-perms")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
         parsing=ParseConfig(auto_parse=False),
@@ -93,7 +93,7 @@ class TestListMounts:
         # Add a local mount
         mount_id = nx.add_mount(
             mount_point="/mnt/test",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
         )
 
@@ -130,7 +130,7 @@ class TestGetMount:
 
         nx.add_mount(
             mount_point="/mnt/test",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
             readonly=True,
         )
@@ -161,7 +161,7 @@ class TestHasMount:
 
         nx.add_mount(
             mount_point="/mnt/test",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
         )
 
@@ -178,7 +178,7 @@ class TestAddMount:
 
         mount_id = nx.add_mount(
             mount_point="/mnt/local",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
         )
 
@@ -192,7 +192,7 @@ class TestAddMount:
 
         nx.add_mount(
             mount_point="/mnt/fast_read",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
             io_profile="fast_read",
         )
@@ -207,7 +207,7 @@ class TestAddMount:
 
         nx.add_mount(
             mount_point="/mnt/readonly",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
             readonly=True,
         )
@@ -246,7 +246,7 @@ class TestAddMount:
 
         nx_with_permissions.add_mount(
             mount_point="/mnt/alice",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
             context=context,
         )
@@ -264,7 +264,7 @@ class TestRemoveMount:
 
         nx.add_mount(
             mount_point="/mnt/removable",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
         )
 
@@ -287,7 +287,7 @@ class TestRemoveMount:
 
         nx.add_mount(
             mount_point="/mnt/cleanup",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
         )
 
@@ -307,7 +307,7 @@ class TestSaveMount:
         """Test that save_mount raises RuntimeError without mount manager."""
         # Create NexusFS without database (no mount manager)
         nx = create_nexus_fs(
-            backend=LocalBackend(temp_dir),
+            backend=CASLocalBackend(temp_dir),
             metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-test-save-mount")),
             record_store=SQLAlchemyRecordStore(db_path=temp_dir / "test_save_mount.db"),
             parsing=ParseConfig(auto_parse=False),
@@ -320,7 +320,7 @@ class TestSaveMount:
                 with pytest.raises(RuntimeError, match="Mount manager not available"):
                     nx.save_mount(
                         mount_point="/mnt/test",
-                        backend_type="local",
+                        backend_type="cas_local",
                         backend_config={"data_dir": str(temp_dir)},
                     )
         finally:
@@ -336,7 +336,7 @@ class TestSaveMount:
 
         mount_id = nx.save_mount(
             mount_point="/mnt/saved",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
             readonly=False,
             owner_user_id="alice",
@@ -353,7 +353,7 @@ class TestListSavedMounts:
     def test_list_saved_mounts_without_mount_manager_raises_error(self, temp_dir: Path) -> None:
         """Test that list_saved_mounts raises RuntimeError without mount manager."""
         nx = create_nexus_fs(
-            backend=LocalBackend(temp_dir),
+            backend=CASLocalBackend(temp_dir),
             metadata_store=RaftMetadataStore.embedded(
                 str(temp_dir / "raft-test-list-saved-mounts")
             ),
@@ -376,7 +376,7 @@ class TestLoadMount:
     def test_load_mount_without_mount_manager_raises_error(self, temp_dir: Path) -> None:
         """Test that load_mount raises RuntimeError without mount manager."""
         nx = create_nexus_fs(
-            backend=LocalBackend(temp_dir),
+            backend=CASLocalBackend(temp_dir),
             metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-test-load-mount")),
             record_store=SQLAlchemyRecordStore(db_path=temp_dir / "test_load_mount.db"),
             parsing=ParseConfig(auto_parse=False),
@@ -397,7 +397,7 @@ class TestDeleteSavedMount:
     def test_delete_saved_mount_without_mount_manager_raises_error(self, temp_dir: Path) -> None:
         """Test that delete_saved_mount raises RuntimeError without mount manager."""
         nx = create_nexus_fs(
-            backend=LocalBackend(temp_dir),
+            backend=CASLocalBackend(temp_dir),
             metadata_store=RaftMetadataStore.embedded(
                 str(temp_dir / "raft-test-delete-saved-mount")
             ),
@@ -449,7 +449,7 @@ class TestSyncMount:
         self, nx: NexusFS, temp_dir: Path
     ) -> None:
         """Test sync_mount with non-connector backend raises RuntimeError."""
-        # LocalBackend doesn't have list_dir for connector-style operations
+        # CASLocalBackend doesn't have list_dir for connector-style operations
         # (it does have list_dir but not the connector-style behavior)
         # This test verifies the error message is clear
         mount_data_dir = temp_dir / "sync_mount"
@@ -457,11 +457,11 @@ class TestSyncMount:
 
         nx.add_mount(
             mount_point="/mnt/sync",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
         )
 
-        # LocalBackend has list_dir, so it won't raise the "does not support" error
+        # CASLocalBackend has list_dir, so it won't raise the "does not support" error
         # but we can test the sync functionality
         result = nx.sync_mount("/mnt/sync")
         assert "files_scanned" in result
@@ -481,7 +481,7 @@ class TestSyncMount:
 
         nx.add_mount(
             mount_point="/mnt/dryrun",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
         )
 
@@ -506,7 +506,7 @@ class TestSyncMount:
 
         nx.add_mount(
             mount_point="/mnt/recursive",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
         )
 
@@ -517,7 +517,7 @@ class TestSyncMount:
         assert "files_updated" in result
         assert "files_deleted" in result
         assert "errors" in result
-        # LocalBackend uses CAS model, so sync may return 0 if files aren't detected
+        # CASLocalBackend uses CAS model, so sync may return 0 if files aren't detected
         # The important thing is that the sync completes without error
         assert isinstance(result["files_scanned"], int)
 
@@ -531,7 +531,7 @@ class TestSyncMount:
 
         nx.add_mount(
             mount_point="/mnt/context",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
         )
 
@@ -575,7 +575,7 @@ class TestMountPermissionEnforcement:
         with pytest.raises(PermissionError, match="no write permission"):
             nx_with_permissions.add_mount(
                 mount_point="/mnt/bob_mount",
-                backend_type="local",
+                backend_type="cas_local",
                 backend_config={"data_dir": str(mount_data_dir)},
                 context=context,
             )
@@ -600,7 +600,7 @@ class TestMountPermissionEnforcement:
         )
         nx_with_permissions.add_mount(
             mount_point="/mnt/admin_mount",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
             context=admin_context,
         )
@@ -638,7 +638,7 @@ class TestMountPermissionEnforcement:
         )
         nx_with_permissions.add_mount(
             mount_point="/mnt/sync_test",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
             context=admin_context,
         )
@@ -676,7 +676,7 @@ class TestMountPermissionEnforcement:
         )
         nx_with_permissions.add_mount(
             mount_point="/mnt/get_test",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
             context=admin_context,
         )
@@ -704,7 +704,7 @@ class TestMountPermissionEnforcement:
         # Should succeed without context
         mount_id = nx.add_mount(
             mount_point="/mnt/no_ctx",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
             context=None,
         )
@@ -757,7 +757,7 @@ class TestMountIntegration:
 
         nx.add_mount(
             mount_point="/mnt/write",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
         )
 
@@ -775,7 +775,7 @@ class TestMountIntegration:
 
         nx.add_mount(
             mount_point="/mnt/list",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
         )
 
@@ -798,13 +798,13 @@ class TestMountIntegration:
 
         nx.add_mount(
             mount_point="/mnt/one",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": str(mount1_dir)},
         )
 
         nx.add_mount(
             mount_point="/mnt/two",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": str(mount2_dir)},
         )
 
@@ -853,7 +853,7 @@ class TestMountContextUtilsIntegration:
 
             nx_with_permissions.add_mount(
                 mount_point="/mnt/context_test",
-                backend_type="local",
+                backend_type="cas_local",
                 backend_config={"data_dir": str(mount_data_dir)},
                 context=context,
             )
@@ -882,7 +882,7 @@ class TestMountContextUtilsIntegration:
         # Add mount first
         nx_with_permissions.add_mount(
             mount_point="/mnt/remove_test",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
             context=context,
         )
@@ -959,7 +959,7 @@ class TestMountContextUtilsIntegration:
         # This tests that the refactored code works with None context
         nx_with_permissions.add_mount(
             mount_point="/mnt/none_context",
-            backend_type="local",
+            backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
             context=None,
         )

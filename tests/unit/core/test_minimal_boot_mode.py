@@ -89,7 +89,7 @@ class TestMinimalBootViaFactory:
     """Factory creates bare kernel when record_store is None (MINIMAL path)."""
 
     def test_create_nexus_fs_no_record_store(self, tmp_path: "Path") -> None:
-        from nexus.backends.storage.local import LocalBackend
+        from nexus.backends.storage.cas_local import CASLocalBackend
         from nexus.factory.orchestrator import create_nexus_fs
         from tests.helpers.dict_metastore import DictMetastore
 
@@ -97,7 +97,7 @@ class TestMinimalBootViaFactory:
         data_dir.mkdir(exist_ok=True)
 
         nx = create_nexus_fs(
-            backend=LocalBackend(root_path=data_dir),
+            backend=CASLocalBackend(root_path=data_dir),
             metadata_store=DictMetastore(),
             record_store=None,
         )
@@ -108,7 +108,7 @@ class TestMinimalBootViaFactory:
         assert nx._permission_enforcer is None
 
     def test_minimal_mode_nexus_has_router(self, tmp_path: "Path") -> None:
-        from nexus.backends.storage.local import LocalBackend
+        from nexus.backends.storage.cas_local import CASLocalBackend
         from nexus.factory.orchestrator import create_nexus_fs
         from tests.helpers.dict_metastore import DictMetastore
 
@@ -116,7 +116,7 @@ class TestMinimalBootViaFactory:
         data_dir.mkdir(exist_ok=True)
 
         nx = create_nexus_fs(
-            backend=LocalBackend(root_path=data_dir),
+            backend=CASLocalBackend(root_path=data_dir),
             metadata_store=DictMetastore(),
             record_store=None,
         )
@@ -320,7 +320,7 @@ class TestMinimalIntegrationViaConnect:
         self, tmp_path: "Path", monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """connect() with profile=kernel gives a functional NexusFS."""
-        from nexus.backends.storage.local import LocalBackend
+        from nexus.backends.storage.cas_local import CASLocalBackend
         from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_bricks
         from nexus.core.config import PermissionConfig
         from nexus.factory.orchestrator import create_nexus_fs
@@ -336,7 +336,7 @@ class TestMinimalIntegrationViaConnect:
         assert enabled_bricks == frozenset({"storage"})
 
         nx = create_nexus_fs(
-            backend=LocalBackend(root_path=data_dir),
+            backend=CASLocalBackend(root_path=data_dir),
             metadata_store=DictMetastore(),
             record_store=None,
             enabled_bricks=enabled_bricks,
@@ -366,7 +366,7 @@ class TestMinimalIntegrationViaConnect:
 
         monkeypatch.setenv("NEXUS_PROFILE", "minimal")
 
-        from nexus.backends.storage.local import LocalBackend
+        from nexus.backends.storage.cas_local import CASLocalBackend
         from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_bricks
         from nexus.factory.orchestrator import create_nexus_fs
         from tests.helpers.dict_metastore import DictMetastore
@@ -377,7 +377,7 @@ class TestMinimalIntegrationViaConnect:
             # Using record_store triggers create_nexus_services which logs bricks
             # With record_store=None, factory path skips services entirely
             nx = create_nexus_fs(
-                backend=LocalBackend(root_path=data_dir),
+                backend=CASLocalBackend(root_path=data_dir),
                 metadata_store=DictMetastore(),
                 record_store=None,
                 enabled_bricks=enabled_bricks,
@@ -387,7 +387,7 @@ class TestMinimalIntegrationViaConnect:
 
     def test_minimal_profile_dispatch_has_no_observers(self, tmp_path: "Path") -> None:
         """MINIMAL mode has only the late-binding EventBusObserver (no record store to sync)."""
-        from nexus.backends.storage.local import LocalBackend
+        from nexus.backends.storage.cas_local import CASLocalBackend
         from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_bricks
         from nexus.factory.orchestrator import create_nexus_fs
         from tests.helpers.dict_metastore import DictMetastore
@@ -396,7 +396,7 @@ class TestMinimalIntegrationViaConnect:
         data_dir.mkdir(exist_ok=True)
 
         nx = create_nexus_fs(
-            backend=LocalBackend(root_path=data_dir),
+            backend=CASLocalBackend(root_path=data_dir),
             metadata_store=DictMetastore(),
             record_store=None,
             enabled_bricks=resolve_enabled_bricks(DeploymentProfile.MINIMAL),
@@ -409,7 +409,7 @@ class TestMinimalIntegrationViaConnect:
 
     def test_minimal_profile_no_workflow_engine(self, tmp_path: "Path") -> None:
         """MINIMAL mode has no workflow engine."""
-        from nexus.backends.storage.local import LocalBackend
+        from nexus.backends.storage.cas_local import CASLocalBackend
         from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_bricks
         from nexus.factory.orchestrator import create_nexus_fs
         from tests.helpers.dict_metastore import DictMetastore
@@ -418,7 +418,7 @@ class TestMinimalIntegrationViaConnect:
         data_dir.mkdir(exist_ok=True)
 
         nx = create_nexus_fs(
-            backend=LocalBackend(root_path=data_dir),
+            backend=CASLocalBackend(root_path=data_dir),
             metadata_store=DictMetastore(),
             record_store=None,
             enabled_bricks=resolve_enabled_bricks(DeploymentProfile.MINIMAL),

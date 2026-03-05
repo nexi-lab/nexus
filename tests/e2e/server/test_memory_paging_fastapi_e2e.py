@@ -102,14 +102,14 @@ def api_keys(db_session_factory):
 @pytest.fixture
 def app_with_db_auth(tmp_path, db_session_factory, api_keys):
     """Create FastAPI app with DatabaseAPIKeyAuth and paging enabled."""
-    from nexus.backends.storage.local import LocalBackend
+    from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.core.nexus_fs import NexusFS
     from nexus.server.fastapi_server import create_app
     from nexus.storage.record_store import SQLAlchemyRecordStore
 
     tmpdir = tempfile.mkdtemp(prefix="nexus-paging-auth-e2e-")
 
-    backend = LocalBackend(root_path=tmpdir)
+    backend = CASLocalBackend(root_path=tmpdir)
     metadata_store = DictMetastore()
 
     # Use file-backed SQLite for RecordStore to avoid in-memory connection isolation

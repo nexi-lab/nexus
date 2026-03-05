@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from nexus import LocalBackend, NexusFS
+from nexus import CASLocalBackend, NexusFS
 from nexus.contracts.types import SyncContext
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
@@ -31,7 +31,7 @@ def nx_with_hierarchy(temp_dir: Path):
     """Create a NexusFS instance with hierarchy manager enabled."""
 
     nx = create_nexus_fs(
-        backend=LocalBackend(temp_dir),
+        backend=CASLocalBackend(temp_dir),
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
         parsing=ParseConfig(auto_parse=False),
@@ -65,7 +65,7 @@ class TestMountSyncOptimization:
         backend_dir = temp_dir / "mock_backend"
         backend_dir.mkdir()
         nx_with_hierarchy._mount_core_service.add_mount(
-            "/mnt/test", "local", {"data_dir": str(backend_dir)}
+            "/mnt/test", "cas_local", {"data_dir": str(backend_dir)}
         )
 
         # Mock hierarchy manager to track tuple creation calls
@@ -97,7 +97,7 @@ class TestMountSyncOptimization:
         backend_dir = temp_dir / "mock_backend2"
         backend_dir.mkdir()
         nx_with_hierarchy._mount_core_service.add_mount(
-            "/mnt/test", "local", {"data_dir": str(backend_dir)}
+            "/mnt/test", "cas_local", {"data_dir": str(backend_dir)}
         )
 
         # Mock hierarchy manager to track tuple creation
@@ -141,7 +141,7 @@ class TestMountSyncOptimization:
         backend_dir = temp_dir / "mock_backend3"
         backend_dir.mkdir()
         nx_with_hierarchy._mount_core_service.add_mount(
-            "/mnt/test", "local", {"data_dir": str(backend_dir)}
+            "/mnt/test", "cas_local", {"data_dir": str(backend_dir)}
         )
 
         # Track tuple creation calls
@@ -183,7 +183,7 @@ class TestMountDatabaseVsConfig:
     def test_database_mount_overrides_config(self, temp_dir: Path):
         """Test that database-saved mounts take precedence over config."""
         nx = create_nexus_fs(
-            backend=LocalBackend(temp_dir),
+            backend=CASLocalBackend(temp_dir),
             metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
             parsing=ParseConfig(auto_parse=False),
@@ -197,13 +197,13 @@ class TestMountDatabaseVsConfig:
         # Create a mount
         backend1_dir = temp_dir / "backend1"
         backend1_dir.mkdir()
-        nx._mount_core_service.add_mount("/mnt/test", "local", {"data_dir": str(backend1_dir)})
+        nx._mount_core_service.add_mount("/mnt/test", "cas_local", {"data_dir": str(backend1_dir)})
 
         # Save to database
         if hasattr(nx, "mount_manager") and nx.mount_manager:
             nx.mount_manager.save_mount(
                 mount_point="/mnt/test",
-                backend_type="local",
+                backend_type="cas_local",
                 backend_config={"data_dir": str(temp_dir / "backend1")},
                 readonly=False,
             )

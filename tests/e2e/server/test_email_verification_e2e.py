@@ -29,7 +29,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from starlette.testclient import TestClient
 
-from nexus.backends.storage.local import LocalBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
 from nexus.bricks.auth.providers.database_local import DatabaseLocalAuth
 from nexus.bricks.auth.providers.discriminator import DiscriminatingAuthProvider
@@ -60,7 +60,7 @@ def _create_nexus_fs(tmp_path: Path, *, enforce_permissions: bool = False) -> Ne
 
     storage_path = tmp_path / "storage_email_verify"
     storage_path.mkdir(exist_ok=True)
-    backend = LocalBackend(root_path=storage_path)
+    backend = CASLocalBackend(root_path=storage_path)
 
     raft_dir = str(tmp_path / "raft-metadata-email-verify")
     metadata_store = RaftMetadataStore.embedded(raft_dir)

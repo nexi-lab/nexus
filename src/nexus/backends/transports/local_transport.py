@@ -2,7 +2,7 @@
 
 Implements the BlobTransport protocol using atomic temp+replace writes
 with optional fsync for durability. Extracts I/O patterns from legacy
-CASBlobStore and LocalBackend into the orthogonal transport layer.
+CASBlobStore and CASLocalBackend into the orthogonal transport layer.
 
 Storage mapping:
     key "cas/ab/cd/abcd1234…" → root_path / "cas" / "ab" / "cd" / "abcd1234…"

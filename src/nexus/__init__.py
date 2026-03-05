@@ -61,8 +61,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from nexus.backends.base.backend import Backend
+    from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.backends.storage.gcs import GCSBackend
-    from nexus.backends.storage.local import LocalBackend
     from nexus.config import NexusConfig, load_config
     from nexus.contracts.exceptions import (
         BackendError,
@@ -100,7 +100,7 @@ _lazy_imports_cache: dict[str, Any] = {}
 _LAZY_IMPORTS = {
     # Backends
     "Backend": ("nexus.backends.base.backend", "Backend"),
-    "LocalBackend": ("nexus.backends.storage.local", "LocalBackend"),
+    "CASLocalBackend": ("nexus.backends.storage.cas_local", "CASLocalBackend"),
     "GCSBackend": ("nexus.backends.storage.gcs", "GCSBackend"),
     # Config
     "NexusConfig": ("nexus.config", "NexusConfig"),
@@ -191,7 +191,7 @@ def connect(
 
     # Lazy load dependencies
     from nexus.backends.base.backend import Backend
-    from nexus.backends.storage.local import LocalBackend
+    from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.config import NexusConfig, load_config
     from nexus.core.nexus_fs import NexusFS
     from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -289,7 +289,7 @@ def connect(
         # (~/.nexus/data), the parent (~/.nexus) is still used as nexus_root
         # for backward compatibility.
         nexus_root = data_dir if cfg.data_dir is not None else str(Path(data_dir).parent)
-        backend = LocalBackend(root_path=Path(data_dir).resolve())
+        backend = CASLocalBackend(root_path=Path(data_dir).resolve())
 
     # Resolve paths — new fields take precedence, db_path is legacy fallback
     metadata_path = cfg.metastore_path or cfg.db_path or str(Path(nexus_root) / "metastore")
@@ -553,7 +553,7 @@ __all__ = [
     # Filesystem implementation
     "NexusFS",
     # Backends
-    "LocalBackend",
+    "CASLocalBackend",
     "GCSBackend",
     # Exceptions (always loaded - lightweight)
     "NexusError",

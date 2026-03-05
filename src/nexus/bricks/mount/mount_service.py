@@ -116,7 +116,7 @@ class MountService:
 
         Args:
             mount_point: Virtual path where backend is mounted (e.g., "/personal/alice")
-            backend_type: Backend type - "local", "gcs", "gcs_connector", "google_drive", etc.
+            backend_type: Backend type - "cas_local", "gcs", "gcs_connector", "google_drive", etc.
             backend_config: Backend-specific configuration dict
             readonly: Whether mount is read-only (default: False)
             context: Operation context (automatically provided by RPC server)
@@ -634,7 +634,7 @@ class MountService:
 
         Args:
             mount_point: Virtual path where backend is mounted
-            backend_type: Backend type - "local", "gcs", etc.
+            backend_type: Backend type - "cas_local", "gcs", etc.
             backend_config: Backend-specific configuration dict
             readonly: Whether mount is read-only (default: False)
             owner_user_id: User who owns this mount (optional)

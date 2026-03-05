@@ -3,7 +3,7 @@
 Tests the async wrappers against real (non-mocked) kernel implementations:
 1. AsyncAgentRegistry with real AgentRegistry + SQLite DB
 2. AsyncNamespaceManager with real NamespaceManager + ReBAC
-3. AsyncVFSRouter with real PathRouter + LocalBackend
+3. AsyncVFSRouter with real PathRouter + CASLocalBackend
 4. Protocol isinstance conformance for all wrappers
 5. Server factory wiring (import path validation)
 
@@ -55,14 +55,14 @@ def async_registry(sqlite_registry: AgentRegistry) -> AsyncAgentRegistry:
 @pytest.fixture()
 def real_router(tmp_path: Path) -> PathRouter:
     """Real PathRouter with a local backend mount."""
-    from nexus.backends.storage.local import LocalBackend
+    from nexus.backends.storage.cas_local import CASLocalBackend
     from tests.helpers.dict_metastore import DictMetastore
 
     storage = tmp_path / "storage"
     storage.mkdir()
     metastore = DictMetastore()
     router = PathRouter(metastore)
-    backend = LocalBackend(root_path=str(storage))
+    backend = CASLocalBackend(root_path=str(storage))
     router.add_mount("/workspace", backend)
     return router
 
@@ -174,12 +174,12 @@ class TestAsyncAgentRegistryE2E:
 
 
 # ---------------------------------------------------------------------------
-# 3. AsyncVFSRouter with real PathRouter + LocalBackend
+# 3. AsyncVFSRouter with real PathRouter + CASLocalBackend
 # ---------------------------------------------------------------------------
 
 
 class TestAsyncVFSRouterE2E:
-    """Route resolution through AsyncVFSRouter -> real PathRouter -> LocalBackend."""
+    """Route resolution through AsyncVFSRouter -> real PathRouter -> CASLocalBackend."""
 
     @pytest.mark.asyncio()
     async def test_route_resolves(self, async_router: AsyncVFSRouter) -> None:
@@ -332,7 +332,7 @@ class TestServerLifespanWiring:
         """
         from unittest.mock import MagicMock
 
-        from nexus.backends.storage.local import LocalBackend
+        from nexus.backends.storage.cas_local import CASLocalBackend
         from nexus.bricks.rebac.async_namespace_manager import AsyncNamespaceManager
         from nexus.contracts.protocols.namespace_manager import NamespaceManagerProtocol
         from nexus.core.async_router import AsyncVFSRouter
@@ -350,13 +350,13 @@ class TestServerLifespanWiring:
         # 2. NamespaceManager + AsyncNamespaceManager
         async_ns = AsyncNamespaceManager(MagicMock())
 
-        # 3. PathRouter + AsyncVFSRouter (real LocalBackend)
+        # 3. PathRouter + AsyncVFSRouter (real CASLocalBackend)
         storage = tmp_path / "storage"
         storage.mkdir()
         from tests.helpers.dict_metastore import DictMetastore
 
         sync_router = PathRouter(DictMetastore())
-        sync_router.add_mount("/workspace", LocalBackend(root_path=str(storage)))
+        sync_router.add_mount("/workspace", CASLocalBackend(root_path=str(storage)))
         async_router = AsyncVFSRouter(sync_router)
 
         # All satisfy their protocols

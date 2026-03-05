@@ -1,6 +1,6 @@
 """Integration tests for MCP server with real NexusFS instances.
 
-These tests use actual NexusFS instances with LocalBackend to test
+These tests use actual NexusFS instances with CASLocalBackend to test
 end-to-end workflows and real component interactions.
 """
 
@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from nexus.backends.storage.local import LocalBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.bricks.mcp.server import create_mcp_server
 from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
@@ -76,8 +76,8 @@ def extract_items(result: str | list | dict) -> list:
 
 @pytest.fixture
 def nexus_fs(isolated_db, tmp_path):
-    """Create a real NexusFS instance with LocalBackend for testing."""
-    backend = LocalBackend(root_path=str(tmp_path / "storage"))
+    """Create a real NexusFS instance with CASLocalBackend for testing."""
+    backend = CASLocalBackend(root_path=str(tmp_path / "storage"))
     nx = create_nexus_fs(
         backend=backend,
         metadata_store=RaftMetadataStore.embedded(str(isolated_db).replace(".db", "-raft")),
@@ -537,8 +537,8 @@ class TestServerConfiguration:
     """Integration tests for server configuration and setup."""
 
     def test_server_with_local_backend(self, isolated_db, tmp_path):
-        """Test server creation with LocalBackend."""
-        backend = LocalBackend(root_path=str(tmp_path / "storage"))
+        """Test server creation with CASLocalBackend."""
+        backend = CASLocalBackend(root_path=str(tmp_path / "storage"))
         nx = create_nexus_fs(
             backend=backend,
             metadata_store=RaftMetadataStore.embedded(str(isolated_db).replace(".db", "-raft")),

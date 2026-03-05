@@ -101,12 +101,12 @@ class TestWriteBatchWithFailingBackend:
 
     def test_backend_failure_raises_error(self, tmp_path):
         """When backend.write_content() fails, the error should propagate."""
-        from nexus.backends.storage.local import LocalBackend
+        from nexus.backends.storage.cas_local import CASLocalBackend
         from nexus.contracts.exceptions import BackendError
 
         data_dir = tmp_path / "data"
         data_dir.mkdir()
-        real_backend = LocalBackend(root_path=data_dir)
+        real_backend = CASLocalBackend(root_path=data_dir)
         failing = FailingBackend(real_backend, fail_on_nth=2)
 
         nx = make_test_nexus(tmp_path / "nx", backend=failing)

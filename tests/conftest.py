@@ -115,13 +115,13 @@ def make_test_nexus(
     Defaults: permissions off, no auto-parse, no distributed features.
     Avoids heavy I/O (event bus, lock manager, workflows) for fast tests.
 
-    A default LocalBackend is created and mounted at ``/`` (root) unless
+    A default CASLocalBackend is created and mounted at ``/`` (root) unless
     a custom ``backend`` is provided. This mirrors ``create_nexus_fs()``
     in the factory (``router.add_mount("/", backend)``).
 
     Args:
         tmp_path: pytest tmp_path fixture for backend/metadata storage.
-        backend: Backend to mount at ``/``. Default: LocalBackend(tmp_path / "data").
+        backend: Backend to mount at ``/``. Default: CASLocalBackend(tmp_path / "data").
         permissions: PermissionConfig override. Default: enforce=False.
         parsing: ParseConfig override. Default: auto_parse=False.
         cache: CacheConfig override.
@@ -182,11 +182,11 @@ def make_test_nexus(
     if backend is None:
         from pathlib import Path
 
-        from nexus.backends.storage.local import LocalBackend
+        from nexus.backends.storage.cas_local import CASLocalBackend
 
         data_dir = Path(tmp_path) / "data"
         data_dir.mkdir(exist_ok=True)
-        backend = LocalBackend(root_path=str(data_dir))
+        backend = CASLocalBackend(root_path=str(data_dir))
     nx.router.add_mount("/", backend)
 
     # Wire PermissionCheckHook via DI (same as factory/orchestrator.py, Issue #899)

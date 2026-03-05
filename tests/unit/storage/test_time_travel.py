@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from nexus.backends.storage.local import LocalBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.bricks.versioning.time_travel_service import TimeTravelService
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.core.config import PermissionConfig
@@ -39,10 +39,10 @@ class TestTimeTravelDebug:
 
     @pytest.fixture
     def backend(self, temp_dir):
-        """Create LocalBackend for testing."""
+        """Create CASLocalBackend for testing."""
         data_dir = Path(temp_dir) / "nexus-data"
         data_dir.mkdir(parents=True, exist_ok=True)
-        return LocalBackend(root_path=data_dir)
+        return CASLocalBackend(root_path=data_dir)
 
     @pytest.fixture
     def nx(self, temp_dir, record_store, backend):

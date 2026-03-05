@@ -4,7 +4,7 @@ import uuid
 
 import pytest
 
-from nexus.backends.storage.local import LocalBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.core.config import CacheConfig, ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -32,7 +32,7 @@ def benchmark_backend(tmp_path):
     """Create a local backend for benchmarks."""
     storage_path = tmp_path / "storage"
     storage_path.mkdir(parents=True, exist_ok=True)
-    return LocalBackend(str(storage_path))
+    return CASLocalBackend(str(storage_path))
 
 
 @pytest.fixture

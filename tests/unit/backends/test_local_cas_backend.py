@@ -1,4 +1,4 @@
-"""Unit tests for LocalCASBackend — full-featured local CAS backend.
+"""Unit tests for CASLocalBackend — full-featured local CAS backend.
 
 Tests cover:
 - Basic CRUD (inherited from CASBackend)
@@ -17,20 +17,20 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.backends.storage.local_cas import LocalCASBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.contracts.exceptions import BackendError
 from nexus.core.object_store import WriteResult
 
 
 @pytest.fixture
 def backend(tmp_path):
-    return LocalCASBackend(root_path=tmp_path)
+    return CASLocalBackend(root_path=tmp_path)
 
 
 @pytest.fixture
 def backend_with_callback(tmp_path):
     callback = MagicMock()
-    return LocalCASBackend(root_path=tmp_path, on_write_callback=callback)
+    return CASLocalBackend(root_path=tmp_path, on_write_callback=callback)
 
 
 # === Basic CRUD ===
@@ -111,7 +111,7 @@ class TestCDCChunkedStorage:
 
     def test_large_file_chunked_roundtrip(self, backend):
         """Write file above threshold → manifest → read back → verify."""
-        backend.cdc_threshold = 1024  # 1KB threshold for testing
+        backend._cdc.threshold = 1024  # 1KB threshold for testing
 
         content = b"A" * 500 + b"B" * 500 + b"C" * 200  # 1200 bytes
         r = backend.write_content(content)
@@ -119,13 +119,13 @@ class TestCDCChunkedStorage:
         assert data == content
 
     def test_chunked_content_is_detected(self, backend):
-        backend.cdc_threshold = 1024
+        backend._cdc.threshold = 1024
         content = b"x" * 1200
         r = backend.write_content(content)
-        assert backend._is_chunked_content(r.content_hash)
+        assert backend._cdc.is_chunked(r.content_hash)
 
     def test_chunked_delete(self, backend):
-        backend.cdc_threshold = 1024
+        backend._cdc.threshold = 1024
         content = b"z" * 1200
         r = backend.write_content(content)
         backend.delete_content(r.content_hash)
@@ -135,10 +135,10 @@ class TestCDCChunkedStorage:
         """Files below threshold should use single-blob storage."""
         small = b"small file"
         r = backend.write_content(small)
-        assert not backend._is_chunked_content(r.content_hash)
+        assert not backend._cdc.is_chunked(r.content_hash)
 
     def test_chunked_content_size(self, backend):
-        backend.cdc_threshold = 1024
+        backend._cdc.threshold = 1024
         content = b"s" * 1200
         r = backend.write_content(content)
         assert backend.get_content_size(r.content_hash) == 1200
@@ -231,11 +231,11 @@ class TestConcurrentWrites:
 class TestBloomFilter:
     def test_bloom_populated_from_disk(self, tmp_path):
         """Write content, create new backend → Bloom should be populated from disk scan."""
-        b1 = LocalCASBackend(root_path=tmp_path)
+        b1 = CASLocalBackend(root_path=tmp_path)
         r = b1.write_content(b"bloom test")
 
         # Create new backend from same root — Bloom should be populated from disk
-        b2 = LocalCASBackend(root_path=tmp_path)
+        b2 = CASLocalBackend(root_path=tmp_path)
         assert b2.content_exists(r.content_hash)
 
     def test_bloom_fast_miss(self, backend):

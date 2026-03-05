@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.backends.storage.local import LocalBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -144,7 +144,7 @@ class TestVersionHistoryGC:
         """
         data_dir = Path(temp_dir) / "nexus-data"
         data_dir.mkdir(parents=True, exist_ok=True)
-        backend = LocalBackend(root_path=data_dir)
+        backend = CASLocalBackend(root_path=data_dir)
         metadata_store = RaftMetadataStore.embedded(str(data_dir / "raft-metadata"))
         nx = create_nexus_fs(
             backend=backend,
@@ -325,7 +325,7 @@ class TestVersionHistoryGC:
 
         # Create fresh record store and NexusFS without any files
         rs_empty = SQLAlchemyRecordStore(db_path=str(data_dir / "nexus.db"))
-        backend = LocalBackend(root_path=data_dir)
+        backend = CASLocalBackend(root_path=data_dir)
         metadata_store = RaftMetadataStore.embedded(str(data_dir / "metadata"))
         nx_empty = create_nexus_fs(
             backend=backend,

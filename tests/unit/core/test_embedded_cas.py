@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from nexus import LocalBackend, NexusFS
+from nexus import CASLocalBackend, NexusFS
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -24,13 +24,13 @@ def temp_dir() -> Generator[Path, None, None]:
 
 
 @pytest.fixture
-def local_backend(temp_dir: Path) -> LocalBackend:
-    """Create a LocalBackend for direct CAS operations in tests."""
-    return LocalBackend(temp_dir)
+def local_backend(temp_dir: Path) -> CASLocalBackend:
+    """Create a CASLocalBackend for direct CAS operations in tests."""
+    return CASLocalBackend(temp_dir)
 
 
 @pytest.fixture
-def embedded_cas(temp_dir: Path, local_backend: LocalBackend) -> Generator[NexusFS, None, None]:
+def embedded_cas(temp_dir: Path, local_backend: CASLocalBackend) -> Generator[NexusFS, None, None]:
     """Create an Embedded instance (CAS always enabled) with isolated database.
 
     (Environment variable isolation is handled by the global conftest fixture)
@@ -68,7 +68,7 @@ def test_cas_write_and_read(embedded_cas: NexusFS) -> None:
     assert result == content
 
 
-def test_cas_automatic_deduplication(embedded_cas: NexusFS, local_backend: LocalBackend) -> None:
+def test_cas_automatic_deduplication(embedded_cas: NexusFS, local_backend: CASLocalBackend) -> None:
     """Test that identical content is automatically deduplicated."""
     content = b"Duplicate content"
 
@@ -93,7 +93,9 @@ def test_cas_automatic_deduplication(embedded_cas: NexusFS, local_backend: Local
     assert local_backend.get_ref_count(meta1.etag) == 2
 
 
-def test_cas_delete_with_ref_counting(embedded_cas: NexusFS, local_backend: LocalBackend) -> None:
+def test_cas_delete_with_ref_counting(
+    embedded_cas: NexusFS, local_backend: CASLocalBackend
+) -> None:
     """Test that delete properly handles reference counting."""
     content = b"Shared content"
 
@@ -127,7 +129,7 @@ def test_cas_delete_with_ref_counting(embedded_cas: NexusFS, local_backend: Loca
     assert not local_backend.content_exists(content_hash)
 
 
-def test_cas_update_file_content(embedded_cas: NexusFS, local_backend: LocalBackend) -> None:
+def test_cas_update_file_content(embedded_cas: NexusFS, local_backend: CASLocalBackend) -> None:
     """Test updating file content with version tracking (v0.3.5).
 
     With version tracking enabled, old content is preserved in CAS
@@ -162,7 +164,7 @@ def test_cas_update_file_content(embedded_cas: NexusFS, local_backend: LocalBack
     assert local_backend.get_ref_count(hash2) == 1
 
 
-def test_cas_storage_efficiency(embedded_cas: NexusFS, local_backend: LocalBackend) -> None:
+def test_cas_storage_efficiency(embedded_cas: NexusFS, local_backend: CASLocalBackend) -> None:
     """Test storage efficiency with multiple files."""
     content = b"x" * 1000  # 1KB
 
@@ -254,7 +256,9 @@ def test_cas_metadata_stored_correctly(embedded_cas: NexusFS) -> None:
     assert len(meta.etag) == 64  # SHA-256 hash length
 
 
-def test_cas_concurrent_deduplication(embedded_cas: NexusFS, local_backend: LocalBackend) -> None:
+def test_cas_concurrent_deduplication(
+    embedded_cas: NexusFS, local_backend: CASLocalBackend
+) -> None:
     """Test deduplication with multiple writes of same content."""
     content = b"Concurrent content"
 

@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from nexus.backends.storage.local import LocalBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.bricks.memory.memory_with_paging import MemoryWithPaging
 from nexus.storage.models import Base
 
@@ -41,7 +41,7 @@ def session(session_factory):
 def backend():
     """Create temporary backend with cleanup."""
     tmpdir = tempfile.mkdtemp(prefix="nexus-paging-e2e-")
-    yield LocalBackend(tmpdir)
+    yield CASLocalBackend(tmpdir)
     shutil.rmtree(tmpdir, ignore_errors=True)
 
 

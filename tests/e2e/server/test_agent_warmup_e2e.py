@@ -18,7 +18,7 @@ import pytest
 
 def _create_test_app(tmp_path: Path, enforce_permissions: bool = False):
     """Create a FastAPI app with real NexusFS + AgentWarmupService."""
-    from nexus.backends.storage.local import LocalBackend
+    from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.core.config import PermissionConfig
     from nexus.factory import create_nexus_fs
     from nexus.server.fastapi_server import create_app
@@ -28,7 +28,7 @@ def _create_test_app(tmp_path: Path, enforce_permissions: bool = False):
 
     storage_dir = tmp_path / "storage"
     storage_dir.mkdir(exist_ok=True)
-    backend = LocalBackend(root_path=str(storage_dir))
+    backend = CASLocalBackend(root_path=str(storage_dir))
     metadata_store = DictMetastore()
 
     db_url = f"sqlite:///{tmp_path / 'records.db'}"

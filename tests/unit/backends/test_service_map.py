@@ -160,8 +160,8 @@ class TestServiceMapGetServiceName:
         """Test connector lookup for backends with optional deps."""
         # These may not be registered if deps aren't installed
         for connector, expected_service in [
-            ("gcs_connector", "gcs"),
-            ("s3_connector", "s3"),
+            ("path_gcs", "gcs"),
+            ("path_s3", "s3"),
             ("x_connector", "x"),
             ("hn_connector", "hackernews"),
         ]:

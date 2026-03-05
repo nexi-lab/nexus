@@ -19,6 +19,7 @@ import tempfile
 from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -156,7 +157,7 @@ class TestRebacCreate:
         """Test that invalid subject raises ValueError."""
         with pytest.raises(ValueError, match="subject must be"):
             nx.rebac_service.rebac_create_sync(
-                subject="invalid",  # type: ignore[arg-type]
+                subject=cast(Any, "invalid"),
                 relation="viewer-of",
                 object=("file", "/test.txt"),
             )
@@ -167,7 +168,7 @@ class TestRebacCreate:
             nx.rebac_service.rebac_create_sync(
                 subject=("user", "alice"),
                 relation="viewer-of",
-                object="invalid",  # type: ignore[arg-type]
+                object=cast(Any, "invalid"),
             )
 
     def test_rebac_create_group_membership(self, nx: NexusFS) -> None:
@@ -230,7 +231,7 @@ class TestRebacCheck:
         """Test that invalid subject raises ValueError."""
         with pytest.raises(ValueError, match="subject must be"):
             nx.rebac_service.rebac_check_sync(
-                subject="invalid",  # type: ignore[arg-type]
+                subject=cast(Any, "invalid"),
                 permission="read",
                 object=("file", "/test.txt"),
             )
@@ -241,7 +242,7 @@ class TestRebacCheck:
             nx.rebac_service.rebac_check_sync(
                 subject=("user", "alice"),
                 permission="read",
-                object="invalid",  # type: ignore[arg-type]
+                object=cast(Any, "invalid"),
             )
 
     def test_rebac_check_with_zone_isolation(self, nx: NexusFS) -> None:
@@ -316,7 +317,7 @@ class TestRebacExpand:
         with pytest.raises(ValueError, match="object must be"):
             nx.rebac_service.rebac_expand_sync(
                 permission="read",
-                object="invalid",  # type: ignore[arg-type]
+                object=cast(Any, "invalid"),
             )
 
 
@@ -389,7 +390,7 @@ class TestRebacExplain:
         """Test that invalid subject raises ValueError."""
         with pytest.raises(ValueError, match="subject must be"):
             nx.rebac_service.rebac_explain_sync(
-                subject="invalid",  # type: ignore[arg-type]
+                subject=cast(Any, "invalid"),
                 permission="read",
                 object=("file", "/test.txt"),
             )

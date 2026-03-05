@@ -29,13 +29,13 @@ import logging
 import os
 import random
 import tempfile
-import threading
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeVar
 
+from nexus.backends.base.stripe_lock import _StripeLock
 from nexus.contracts.exceptions import BackendError
 
 _T = TypeVar("_T")
@@ -138,46 +138,6 @@ def cas_retry(
                 time.sleep(delay)
     assert last_exc is not None  # noqa: S101 — guaranteed by max_attempts >= 1
     raise last_exc
-
-
-# ---------------------------------------------------------------------------
-# Stripe lock — lightweight in-memory coordination for metadata updates
-# ---------------------------------------------------------------------------
-
-_NUM_STRIPES = 64  # power of 2 for fast modulo
-
-
-class _StripeLock:
-    """Fixed-size array of threading.Lock objects indexed by hash.
-
-    Provides per-hash coordination for metadata read-modify-write cycles
-    without any disk I/O. Much cheaper than FileLock (~μs vs ~ms).
-    """
-
-    __slots__ = ("_contention_count", "_locks")
-
-    def __init__(self, num_stripes: int = _NUM_STRIPES) -> None:
-        self._locks = [threading.Lock() for _ in range(num_stripes)]
-        self._contention_count = 0
-
-    def acquire_for(self, content_hash: str) -> "threading.Lock":
-        """Return the stripe lock for a given content hash (not acquired)."""
-        # Use last 4 hex chars for even distribution
-        idx = int(content_hash[-4:], 16) % len(self._locks)
-        return self._locks[idx]
-
-    @property
-    def contention_count(self) -> int:
-        """Number of times a stripe lock was already held on acquire attempt."""
-        return self._contention_count
-
-    def acquire_with_contention_tracking(self, content_hash: str) -> "threading.Lock":
-        """Acquire stripe lock and track contention (Issue #1752)."""
-        lock = self.acquire_for(content_hash)
-        if not lock.acquire(blocking=False):
-            self._contention_count += 1
-            lock.acquire()
-        return lock
 
 
 # ---------------------------------------------------------------------------

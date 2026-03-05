@@ -23,6 +23,7 @@ import uuid
 from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -117,7 +118,7 @@ class TestRebacCreate:
         """Test that invalid subject raises ValueError."""
         with pytest.raises(ValueError, match="subject must be"):
             nx.rebac_service.rebac_create_sync(
-                subject="invalid",  # type: ignore
+                subject=cast(Any, "invalid"),
                 relation="direct_owner",
                 object=("file", "/doc.txt"),
                 zone_id="root",
@@ -129,7 +130,7 @@ class TestRebacCreate:
             nx.rebac_service.rebac_create_sync(
                 subject=("user", "alice"),
                 relation="direct_owner",
-                object="invalid",  # type: ignore
+                object=cast(Any, "invalid"),
                 zone_id="root",
             )
 
@@ -232,7 +233,7 @@ class TestRebacCheck:
         """Test that invalid subject raises ValueError."""
         with pytest.raises(ValueError, match="subject must be"):
             nx.rebac_service.rebac_check_sync(
-                subject="invalid",  # type: ignore
+                subject=cast(Any, "invalid"),
                 permission="read",
                 object=("file", "/doc.txt"),
                 zone_id="root",
@@ -244,7 +245,7 @@ class TestRebacCheck:
             nx.rebac_service.rebac_check_sync(
                 subject=("user", "alice"),
                 permission="read",
-                object="invalid",  # type: ignore
+                object=cast(Any, "invalid"),
                 zone_id="root",
             )
 

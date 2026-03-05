@@ -262,6 +262,27 @@ class LocalBlobTransport:
                 path=key,
             ) from e
 
+    def put_blob_from_path(self, key: str, src_path: str | Path) -> str | None:
+        """Atomic move: src_path → final blob path (no memory copy).
+
+        Used by CASBackend.write_stream to avoid loading streamed content
+        back into memory after hashing to a temp file.
+        """
+        path = self._resolve(key)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(str(src_path), str(path))
+        except Exception as e:
+            # Cleanup source on failure
+            with contextlib.suppress(OSError):
+                Path(src_path).unlink(missing_ok=True)
+            raise BackendError(
+                f"Failed to move blob to {key}: {e}",
+                backend="local",
+                path=key,
+            ) from e
+        return None
+
     # === Internal Helpers ===
 
     def _cleanup_empty_parents(self, dir_path: Path) -> None:

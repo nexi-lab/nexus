@@ -29,7 +29,7 @@ from nexus.system_services.scheduler.models import ScheduledTask
 # SQL Statements
 # =============================================================================
 
-# DRY: shared column list for all RETURNING / SELECT clauses (Issue #2748)
+# DRY: shared column list for all RETURNING / SELECT clauses (Issue #2747, #2748)
 _TASK_COLUMNS = """\
     id::text, agent_id, executor_id, task_type,
     payload::text, priority_tier, effective_tier,
@@ -57,6 +57,7 @@ SET status = 'running', started_at = now()
 WHERE id = (
     SELECT id FROM scheduled_tasks
     WHERE status = 'queued'
+      AND (deadline IS NULL OR deadline <= now())
     ORDER BY effective_tier ASC, enqueued_at ASC
     FOR UPDATE SKIP LOCKED
     LIMIT 1
@@ -70,6 +71,7 @@ SET status = 'running', started_at = now()
 WHERE id = (
     SELECT id FROM scheduled_tasks
     WHERE status = 'queued' AND executor_id = $1
+      AND (deadline IS NULL OR deadline <= now())
     ORDER BY effective_tier ASC, enqueued_at ASC
     FOR UPDATE SKIP LOCKED
     LIMIT 1
@@ -83,6 +85,7 @@ SET status = 'running', started_at = now()
 WHERE id = (
     SELECT id FROM scheduled_tasks
     WHERE status = 'queued'
+      AND (deadline IS NULL OR deadline <= now())
       AND executor_state IN ('CONNECTED', 'IDLE', 'UNKNOWN')
     ORDER BY
         priority_class ASC,
@@ -101,6 +104,7 @@ SET status = 'running', started_at = now()
 WHERE id = (
     SELECT id FROM scheduled_tasks
     WHERE status = 'queued' AND executor_id = $1
+      AND (deadline IS NULL OR deadline <= now())
       AND executor_state IN ('CONNECTED', 'IDLE', 'UNKNOWN')
     ORDER BY
         priority_class ASC,
@@ -179,6 +183,15 @@ SELECT count(*) FROM updated
 """
 
 _SQL_NOTIFY = "SELECT pg_notify('task_enqueued', $1::text)"
+
+# Timer gate: find the earliest future deadline for cold-start (Issue #2747)
+_SQL_NEAREST_DEADLINE = """
+SELECT MIN(deadline) AS nearest
+FROM scheduled_tasks
+WHERE status = 'queued'
+  AND deadline IS NOT NULL
+  AND deadline > now()
+"""
 
 _SQL_CANCEL_BY_AGENT = """
 UPDATE scheduled_tasks
@@ -342,8 +355,12 @@ class TaskQueue:
             estimated_service_time,
         )
 
-        # Notify dispatcher with JSON payload for per-executor routing (Issue #2748)
-        notify_payload = json.dumps({"task_id": str(task_id), "executor_id": executor_id})
+        # Notify dispatcher with JSON payload for per-executor routing + timer gate
+        # (Issue #2747, #2748)
+        notify_data: dict[str, str] = {"task_id": str(task_id), "executor_id": executor_id}
+        if deadline is not None:
+            notify_data["deadline"] = deadline.isoformat()
+        notify_payload = json.dumps(notify_data)
         await conn.execute(_SQL_NOTIFY, notify_payload)
 
         return str(task_id)
@@ -483,3 +500,12 @@ class TaskQueue:
         else:
             rows = await conn.fetch(_SQL_PENDING_METRICS)
         return [dict(row) for row in rows]
+
+    async def nearest_deadline(self, conn: Any) -> datetime | None:
+        """Return the earliest future deadline among queued tasks.
+
+        Used by the dispatcher to seed the timer gate on startup (Issue #2747).
+        Returns None if no queued tasks have a future deadline.
+        """
+        row = await conn.fetchrow(_SQL_NEAREST_DEADLINE)
+        return row["nearest"] if row and row["nearest"] is not None else None

@@ -13,16 +13,22 @@ Architecture (Issue #2748):
 - Exponential backoff: 1s → 2s → 4s → ... → 60s on repeated errors
 - Reconcile sweep: periodic safety net spawns missing cursors
 
+Timer gate (Issue #2747): Maintains an in-memory timer set to the
+earliest pending deadline. Wakes executor dispatch loops precisely when
+a deadlined task becomes eligible. Re-arms automatically when new
+deadlined tasks are enqueued via pg_notify JSON payload.
+
 Uses asyncio.TaskGroup for structured concurrency on fixed loops,
 and manual task registry for dynamic executor cursors.
 
-Related: Issue #1212, #1274, #2748
+Related: Issue #1212, #1274, #2747, #2748
 """
 
 import asyncio
 import contextlib
 import json
 import logging
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from nexus.system_services.scheduler.constants import (
@@ -83,6 +89,11 @@ class TaskDispatcher:
         # Global fallback event (for tasks without executor routing)
         self._global_event = asyncio.Event()
 
+        # Timer gate state (Issue #2747)
+        self._deadline_event = asyncio.Event()
+        self._next_deadline: datetime | None = None
+        self._deadline_timer: asyncio.TimerHandle | None = None
+
     # =========================================================================
     # Lifecycle
     # =========================================================================
@@ -94,6 +105,9 @@ class TaskDispatcher:
 
         self._running = True
         logger.info("Starting multi-cursor task dispatcher")
+
+        # Seed timer gate from DB (cold-start, Issue #2747)
+        await self._seed_timer_from_db()
 
         # Register for agent state events to auto-spawn/cancel cursors
         if self._scheduler._state_emitter is not None:
@@ -128,6 +142,12 @@ class TaskDispatcher:
 
         # Wake up any sleeping loops
         self._global_event.set()
+        self._deadline_event.set()
+
+        # Cancel any pending deadline timer (Issue #2747)
+        if self._deadline_timer is not None:
+            self._deadline_timer.cancel()
+            self._deadline_timer = None
 
         # Cancel the infrastructure TaskGroup
         if self._task_group_task:
@@ -136,6 +156,52 @@ class TaskDispatcher:
                 await self._task_group_task
 
         logger.info("Multi-cursor task dispatcher stopped")
+
+    # =========================================================================
+    # Timer gate (Issue #2747)
+    # =========================================================================
+
+    def _arm_timer(self, deadline: datetime) -> None:
+        """Arm (or re-arm) the timer gate to fire at the given deadline.
+
+        Only updates if the new deadline is earlier than the current one.
+        """
+        if self._next_deadline is not None and deadline >= self._next_deadline:
+            return  # Current timer is already earlier
+
+        self._next_deadline = deadline
+
+        # Cancel any existing timer
+        if self._deadline_timer is not None:
+            self._deadline_timer.cancel()
+
+        now = datetime.now(UTC)
+        delay = max(0.0, (deadline - now).total_seconds())
+
+        loop = asyncio.get_running_loop()
+        self._deadline_timer = loop.call_later(delay, self._on_deadline_reached)
+        logger.debug("Timer gate armed: %.3fs until deadline %s", delay, deadline)
+
+    def _on_deadline_reached(self) -> None:
+        """Called when the timer gate fires — a deadline has been reached."""
+        self._deadline_event.set()
+        self._next_deadline = None
+        self._deadline_timer = None
+
+    async def _seed_timer_from_db(self) -> None:
+        """Seed the timer gate from the database on startup.
+
+        Queries for the earliest future deadline among queued tasks
+        so that pre-existing deadlined tasks fire on time after a restart.
+        """
+        try:
+            async with self._scheduler.pool.acquire() as conn:
+                nearest = await self._scheduler._queue.nearest_deadline(conn)
+            if nearest is not None:
+                self._arm_timer(nearest)
+                logger.info("Timer gate seeded from DB: next deadline %s", nearest)
+        except Exception:
+            logger.warning("Failed to seed timer gate from DB, falling back to poll")
 
     # =========================================================================
     # Infrastructure loops (fixed, run in TaskGroup)
@@ -252,20 +318,38 @@ class TaskDispatcher:
         _channel: str,
         payload: str,
     ) -> None:
-        """Handle NOTIFY callback — route to per-executor event or global fallback."""
+        """Handle NOTIFY callback — route to per-executor event or global fallback.
+
+        JSON payload format (Issue #2747, #2748):
+            {"task_id": "...", "executor_id": "...", "deadline": "ISO8601"}
+        The deadline field is optional; when present, re-arms the timer gate.
+        """
         try:
             data = json.loads(payload)
             executor_id = data.get("executor_id")
         except (json.JSONDecodeError, TypeError):
+            data = {}
             executor_id = None
 
+        # Route to per-executor event or wake all as fallback
         if executor_id and executor_id in self._executor_events:
             self._executor_events[executor_id].set()
         else:
-            # Wake all cursors as fallback
             self._global_event.set()
             for event in self._executor_events.values():
                 event.set()
+
+        # Parse deadline from JSON payload for timer gate (Issue #2747)
+        deadline_str = data.get("deadline") if isinstance(data, dict) else None
+        if deadline_str:
+            try:
+                deadline = datetime.fromisoformat(deadline_str)
+                # Ensure timezone-aware (assume UTC if naive)
+                if deadline.tzinfo is None:
+                    deadline = deadline.replace(tzinfo=UTC)
+                self._arm_timer(deadline)
+            except (ValueError, TypeError):
+                logger.warning("Failed to parse deadline from notify payload: %s", payload)
 
     # =========================================================================
     # Per-executor cursor management
@@ -348,21 +432,33 @@ class TaskDispatcher:
                     _POLL_IDLE_SECS if consecutive_empty >= _IDLE_THRESHOLD else _POLL_ACTIVE_SECS
                 )
 
-                event.clear()
-                self._global_event.clear()
+                # Create wait tasks BEFORE clearing events to avoid
+                # lost-wakeup race (Issue #2747 review CRITICAL #2).
+                notify_wait = asyncio.create_task(event.wait())
+                global_wait = asyncio.create_task(self._global_event.wait())
+                deadline_wait = asyncio.create_task(self._deadline_event.wait())
 
-                # Wait for either per-executor or global event, or timeout
-                done, _ = await asyncio.wait(
-                    [
-                        asyncio.create_task(event.wait()),
-                        asyncio.create_task(self._global_event.wait()),
-                    ],
+                _, pending = await asyncio.wait(
+                    [notify_wait, global_wait, deadline_wait],
                     timeout=poll_interval,
                     return_when=asyncio.FIRST_COMPLETED,
                 )
+
+                # Clear events AFTER waking, so signals arriving during
+                # the wait are not lost.
+                deadline_fired = self._deadline_event.is_set()
+                event.clear()
+                self._global_event.clear()
+                self._deadline_event.clear()
+
                 # Cancel the remaining waiter tasks
-                for pending_task in _:
+                for pending_task in pending:
                     pending_task.cancel()
+
+                # Re-arm timer for next deadline after a deadline-triggered
+                # wake (Issue #2747 review CRITICAL #1).
+                if deadline_fired:
+                    await self._seed_timer_from_db()
 
             except asyncio.CancelledError:
                 break

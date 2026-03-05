@@ -278,11 +278,10 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
         try:
             _, op_context = await self._auth_and_context(request.auth_token)
             result = await asyncio.to_thread(
-                self._nexus_fs.sys_read,
+                self._nexus_fs.read,
                 request.path,
-                op_context,
-                True,  # return_metadata — we need etag/size
-                False,  # parsed
+                context=op_context,
+                return_metadata=True,
             )
             if isinstance(result, dict):
                 content = result.get("content", b"")

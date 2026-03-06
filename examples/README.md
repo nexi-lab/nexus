@@ -116,21 +116,6 @@ Demonstrates:
 ./examples/cli/directory_operations_demo.sh
 ```
 
-#### Audit Trail Demo
-**File**: [`cli/audit_trail_demo.sh`](cli/audit_trail_demo.sh)
-
-Demonstrates:
-- Operation log (audit trail) for all filesystem operations
-- Events are persisted even in CLI (single-command, no server) mode
-- Filtering operations by type, path, agent, and status
-- Verifying write, delete, mkdir events appear in the log
-
-**Run**:
-```bash
-export NEXUS_DATABASE_URL="postgresql://postgres:nexus@localhost:5432/nexus"
-./examples/cli/audit_trail_demo.sh
-```
-
 #### File Operations Demo
 **File**: [`cli/file_operations_demo.sh`](cli/file_operations_demo.sh)
 
@@ -335,6 +320,30 @@ Both support:
 - ✅ Memory/context retention
 - ✅ Multi-agent collaboration
 - ✅ Production deployment
+
+## Tutorials
+
+Step-by-step tutorials for specific Nexus features.
+
+### Audit Trail
+**Directory**: [`tutorials/audit-trail/`](tutorials/audit-trail/)
+
+Demonstrates the operation log — every write, delete, rename, mkdir, rmdir is recorded and queryable via `nexus ops log`. Events persist even in CLI mode (no server needed).
+
+**Run**:
+```bash
+export NEXUS_DATABASE_URL="postgresql://postgres:nexus@localhost:5432/nexus"
+./examples/tutorials/audit-trail/audit_trail_demo.sh
+```
+
+See [tutorials/audit-trail/README.md](tutorials/audit-trail/README.md) for details.
+
+### Deployment Profiles
+**Directory**: [`tutorials/deployment-profiles/`](tutorials/deployment-profiles/)
+
+Covers Nexus deployment profiles (minimal → cloud), server modes, and verifying operations across configurations.
+
+See [tutorials/deployment-profiles/README.md](tutorials/deployment-profiles/README.md) for details.
 
 ## Next Steps
 

@@ -225,23 +225,27 @@ def connect(
 
         # RemoteBackend + RemoteMetastore — stateless proxies, server is SSOT.
         from nexus.backends.storage.remote import RemoteBackend
-        from nexus.factory import create_nexus_fs as _create_remote_nfs
         from nexus.storage.remote_metastore import RemoteMetastore
 
         remote_backend = RemoteBackend(transport)
         remote_metastore = RemoteMetastore(transport)
 
-        # In REMOTE mode, server enforces permissions — disable client-side.
+        # Build a lightweight NexusFS directly — no factory, no bricks.
+        # Server is SSOT; client just proxies calls via HTTP.
         from nexus.core.config import PermissionConfig as _PermissionConfig
+        from nexus.core.nexus_fs import NexusFS as _RemoteNexusFS
+        from nexus.core.router import PathRouter as _PathRouter
 
-        nfs = _create_remote_nfs(
-            backend=remote_backend,
+        _router = _PathRouter(remote_metastore)
+        _router.add_mount("/", remote_backend)
+
+        from nexus.core.config import KernelServices as _KernelServices
+
+        nfs = _RemoteNexusFS(
             metadata_store=remote_metastore,
-            record_store=None,
             permissions=_PermissionConfig(enforce=False),
-            enabled_bricks=frozenset(),  # REMOTE profile: no local bricks
+            kernel_services=_KernelServices(router=_router),
         )
-        nfs.router.add_mount("/", remote_backend)
 
         # Wire service proxies for REMOTE profile (Issue #1171).
         # Fills all 25+ service slots with RemoteServiceProxy — forwards

@@ -445,7 +445,7 @@ class NexusFS(  # type: ignore[misc]
 
         for parent_dir in reversed(parents_to_create):
             self._create_directory_metadata(parent_dir, context=ctx)
-            if hasattr(self, "_hierarchy_manager"):
+            if hasattr(self, "_hierarchy_manager") and self._hierarchy_manager is not None:
                 try:
                     logger.debug(
                         f"mkdir: Creating parent tuples for intermediate dir: {parent_dir}"
@@ -570,7 +570,7 @@ class NexusFS(  # type: ignore[misc]
 
         ctx = context or self._default_context
 
-        if hasattr(self, "_hierarchy_manager"):
+        if hasattr(self, "_hierarchy_manager") and self._hierarchy_manager is not None:
             try:
                 logger.debug(
                     f"mkdir: Calling ensure_parent_tuples for {path}, zone_id={ctx.zone_id or ROOT_ZONE_ID}"
@@ -2299,7 +2299,7 @@ class NexusFS(  # type: ignore[misc]
                 logger.warning(f"write: Failed to queue deferred permissions for {path}: {e}")
         else:
             # SYNC PATH: Execute permission operations immediately (original behavior)
-            if hasattr(self, "_hierarchy_manager"):
+            if hasattr(self, "_hierarchy_manager") and self._hierarchy_manager is not None:
                 try:
                     logger.info(
                         f"write: Calling ensure_parent_tuples for {path}, zone_id={ctx.zone_id or ROOT_ZONE_ID}"
@@ -2937,8 +2937,10 @@ class NexusFS(  # type: ignore[misc]
         # PERF: Batch hierarchy tuple creation (single transaction instead of N)
         _hierarchy_start = time.perf_counter()
         all_paths = [path for path, _ in validated_files]
-        if hasattr(self, "_hierarchy_manager") and hasattr(
-            self._hierarchy_manager, "ensure_parent_tuples_batch"
+        if (
+            hasattr(self, "_hierarchy_manager")
+            and self._hierarchy_manager is not None
+            and hasattr(self._hierarchy_manager, "ensure_parent_tuples_batch")
         ):
             try:
                 created_count = self._hierarchy_manager.ensure_parent_tuples_batch(
@@ -2961,7 +2963,7 @@ class NexusFS(  # type: ignore[misc]
                         logger.warning(
                             f"write_batch: Failed to create parent tuples for {path}: {e2}"
                         )
-        elif hasattr(self, "_hierarchy_manager"):
+        elif hasattr(self, "_hierarchy_manager") and self._hierarchy_manager is not None:
             # No batch method available, use individual calls
             for path in all_paths:
                 try:

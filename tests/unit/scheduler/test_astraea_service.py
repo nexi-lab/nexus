@@ -16,6 +16,7 @@ from nexus.system_services.scheduler.constants import (
     PriorityTier,
 )
 from nexus.system_services.scheduler.events import AgentStateEmitter, AgentStateEvent
+from nexus.system_services.scheduler.exceptions import CapacityExceeded
 from nexus.system_services.scheduler.models import ScheduledTask
 from nexus.system_services.scheduler.policies.fair_share import FairShareCounter
 from nexus.system_services.scheduler.service import SchedulerService
@@ -189,7 +190,7 @@ class TestFairShareRejection:
             executor_id="exec-1",
             task_type="compute",
         )
-        with pytest.raises(ValueError, match="at capacity"):
+        with pytest.raises(CapacityExceeded, match="at capacity"):
             await svc.submit(req)
 
 

@@ -3630,6 +3630,8 @@ test = [
 dev = [
     { name = "freezegun" },
     { name = "grpcio-tools" },
+    { name = "mypy" },
+    { name = "pytest-asyncio" },
     { name = "pytest-cov" },
     { name = "types-aiofiles" },
     { name = "types-protobuf" },
@@ -3774,6 +3776,8 @@ provides-extras = ["performance", "compression", "monitoring", "mobile", "sandbo
 dev = [
     { name = "freezegun", specifier = ">=1.5.5" },
     { name = "grpcio-tools", specifier = ">=1.76.0" },
+    { name = "mypy", specifier = ">=1.18.2" },
+    { name = "pytest-asyncio", specifier = ">=1.3.0" },
     { name = "pytest-cov", specifier = ">=7.0.0" },
     { name = "types-aiofiles", specifier = ">=25.1.0.20251011" },
     { name = "types-protobuf", specifier = ">=6.32.1.20251210" },

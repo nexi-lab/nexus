@@ -36,7 +36,6 @@ class VirtualViewResolver(VFSPathResolver):
     - path_router: PathRouter (CAS content routing)
     - permission_checker: PermissionChecker (read permission verification)
     - parse_fn: Optional callable for content parsing
-    - viewer_filter_fn: Optional callable for CSV dynamic viewer filtering
     - read_tracker_fn: Optional callable for dependency tracking (#1166)
     """
 
@@ -45,7 +44,6 @@ class VirtualViewResolver(VFSPathResolver):
         "_path_router",
         "_permission_checker",
         "_parse_fn",
-        "_viewer_filter_fn",
         "_read_tracker_fn",
     )
 
@@ -55,14 +53,12 @@ class VirtualViewResolver(VFSPathResolver):
         path_router: Any,
         permission_checker: Any,
         parse_fn: Any = None,
-        viewer_filter_fn: Any = None,
         read_tracker_fn: Any = None,
     ) -> None:
         self._metadata = metadata
         self._path_router = path_router
         self._permission_checker = permission_checker
         self._parse_fn = parse_fn
-        self._viewer_filter_fn = viewer_filter_fn
         self._read_tracker_fn = read_tracker_fn
 
     # ------------------------------------------------------------------
@@ -107,10 +103,6 @@ class VirtualViewResolver(VFSPathResolver):
             read_context = replace(context, backend_path=route.backend_path)
 
         content: bytes = route.backend.read_content(meta.etag, context=read_context)
-
-        # Apply dynamic viewer filter for CSV files (optional, ReBAC-specific)
-        if self._viewer_filter_fn is not None:
-            content = self._viewer_filter_fn(original_path, content, context)
 
         # Parse content to markdown
         content = get_parsed_content(

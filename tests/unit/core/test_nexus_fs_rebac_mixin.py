@@ -70,34 +70,43 @@ def nx_no_permissions(temp_dir: Path) -> Generator[NexusFS, None, None]:
 
 
 class TestGetSubjectFromContext:
-    """Tests for _get_subject_from_context helper."""
+    """Tests for get_subject_from_context (nexus.lib.context_utils)."""
 
-    def test_get_subject_from_none_context(self, nx: NexusFS) -> None:
-        """Test _get_subject_from_context with None context."""
-        result = nx._get_subject_from_context(None)
+    def test_get_subject_from_none_context(self) -> None:
+        """Test get_subject_from_context with None context."""
+        from nexus.lib.context_utils import get_subject_from_context
+
+        result = get_subject_from_context(None)
         assert result is None
 
-    def test_get_subject_from_dict_with_subject_tuple(self, nx: NexusFS) -> None:
-        """Test _get_subject_from_context with dict containing subject tuple."""
+    def test_get_subject_from_dict_with_subject_tuple(self) -> None:
+        """Test get_subject_from_context with dict containing subject tuple."""
+        from nexus.lib.context_utils import get_subject_from_context
+
         context = {"subject": ("user", "alice")}
-        result = nx._get_subject_from_context(context)
+        result = get_subject_from_context(context)
         assert result == ("user", "alice")
 
-    def test_get_subject_from_dict_with_subject_type_and_id(self, nx: NexusFS) -> None:
-        """Test _get_subject_from_context with dict containing subject_type and subject_id."""
+    def test_get_subject_from_dict_with_subject_type_and_id(self) -> None:
+        """Test get_subject_from_context with dict containing subject_type and subject_id."""
+        from nexus.lib.context_utils import get_subject_from_context
+
         context = {"subject_type": "agent", "subject_id": "bot1"}
-        result = nx._get_subject_from_context(context)
+        result = get_subject_from_context(context)
         assert result == ("agent", "bot1")
 
-    def test_get_subject_from_dict_with_user_id(self, nx: NexusFS) -> None:
-        """Test _get_subject_from_context extracts from user_id field."""
+    def test_get_subject_from_dict_with_user_id(self) -> None:
+        """Test get_subject_from_context extracts from user_id field."""
+        from nexus.lib.context_utils import get_subject_from_context
+
         context = {"user_id": "bob"}
-        result = nx._get_subject_from_context(context)
+        result = get_subject_from_context(context)
         assert result == ("user", "bob")
 
-    def test_get_subject_from_operation_context(self, nx: NexusFS) -> None:
-        """Test _get_subject_from_context with OperationContext."""
+    def test_get_subject_from_operation_context(self) -> None:
+        """Test get_subject_from_context with OperationContext."""
         from nexus.contracts.types import OperationContext
+        from nexus.lib.context_utils import get_subject_from_context
 
         context = OperationContext(
             user_id="charlie",
@@ -105,12 +114,14 @@ class TestGetSubjectFromContext:
             subject_type="user",
             subject_id="charlie",
         )
-        result = nx._get_subject_from_context(context)
+        result = get_subject_from_context(context)
         assert result == ("user", "charlie")
 
-    def test_get_subject_from_empty_dict(self, nx: NexusFS) -> None:
-        """Test _get_subject_from_context with empty dict."""
-        result = nx._get_subject_from_context({})
+    def test_get_subject_from_empty_dict(self) -> None:
+        """Test get_subject_from_context with empty dict."""
+        from nexus.lib.context_utils import get_subject_from_context
+
+        result = get_subject_from_context({})
         assert result is None
 
 

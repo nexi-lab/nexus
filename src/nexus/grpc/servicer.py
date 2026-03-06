@@ -333,13 +333,15 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
             kwargs: dict[str, Any] = {"context": op_context}
             if request.etag:
                 kwargs["if_match"] = request.etag
-            await asyncio.to_thread(
+            result = await asyncio.to_thread(
                 self._nexus_fs.sys_write, request.path, request.content, **kwargs
             )
-            # sys_write returns int; look up metadata for etag
-            meta = self._nexus_fs.metadata.get(request.path)
-            etag = meta.etag if meta else ""
-            size = meta.size if meta else len(request.content)
+            etag = result.get("etag", "") if isinstance(result, dict) else ""
+            size = (
+                result.get("size", len(request.content))
+                if isinstance(result, dict)
+                else len(request.content)
+            )
             return vfs_pb2.WriteResponse(etag=etag, size=size)
         except NexusPermissionError as e:
             return vfs_pb2.WriteResponse(

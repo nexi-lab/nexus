@@ -265,6 +265,7 @@ def connect(
             metadata_store=remote_metastore,
             record_store=None,
             permissions=_PermissionConfig(enforce=False),
+            enabled_bricks=frozenset(),  # REMOTE profile: no local bricks
         )
         nfs.router.add_mount("/", remote_backend)
 

@@ -172,7 +172,7 @@ def _startup_agent_registry(app: "FastAPI", svc: "LifespanServices") -> None:
                 perm_enforcer.agent_registry = app.state.agent_registry
 
             # Issue #1440: Create async wrapper for protocol conformance
-            from nexus.system_services.agents.async_agent_registry import AsyncAgentRegistry
+            from nexus.system_services.agents.agent_registry import AsyncAgentRegistry
 
             app.state.async_agent_registry = AsyncAgentRegistry(app.state.agent_registry)
 

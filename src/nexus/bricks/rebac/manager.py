@@ -15,6 +15,7 @@ Usage:
     manager = ReBACManager(engine)
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -4217,3 +4218,197 @@ class ReBACManager:
 
 # Backward-compat alias — many tests and call-sites still reference the old name.
 EnhancedReBACManager = ReBACManager
+
+
+# ── Async wrapper (merged from async_manager.py, Issue #1385) ────────
+
+
+class AsyncReBACManager:
+    """Async facade over the synchronous ReBACManager.
+
+    Wraps all public methods with ``asyncio.to_thread()`` for non-blocking
+    execution in async contexts (FastAPI, etc.).
+    """
+
+    def __init__(self, sync_manager: Any) -> None:
+        self._sync = sync_manager
+
+    # ── Core Zanzibar APIs ──────────────────────────────────────────
+
+    async def rebac_check(
+        self,
+        subject: tuple[str, str],
+        permission: str,
+        object: tuple[str, str],
+        context: dict[str, Any] | None = None,
+        zone_id: str | None = None,
+        consistency: Any | None = None,
+    ) -> bool:
+        return await asyncio.to_thread(
+            self._sync.rebac_check,
+            subject,
+            permission,
+            object,
+            context,
+            zone_id,
+            consistency,
+        )
+
+    async def rebac_write(
+        self,
+        subject: tuple[str, str] | tuple[str, str, str],
+        relation: str,
+        object: tuple[str, str],
+        expires_at: Any | None = None,
+        conditions: dict[str, Any] | None = None,
+        zone_id: str | None = None,
+    ) -> WriteResult:
+        return await asyncio.to_thread(
+            self._sync.rebac_write,
+            subject,
+            relation,
+            object,
+            expires_at,
+            conditions,
+            zone_id,
+        )
+
+    async def rebac_delete(self, tuple_id: str) -> bool:
+        return await asyncio.to_thread(self._sync.rebac_delete, tuple_id)
+
+    async def rebac_expand(
+        self,
+        permission: str,
+        object: tuple[str, str],
+        zone_id: str | None = None,
+    ) -> list[tuple[str, str]]:
+        return await asyncio.to_thread(self._sync.rebac_expand, permission, object, zone_id)
+
+    # ── Bulk APIs ───────────────────────────────────────────────────
+
+    async def rebac_check_bulk(
+        self,
+        checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
+        zone_id: str = ROOT_ZONE_ID,
+    ) -> dict[tuple[tuple[str, str], str, tuple[str, str]], bool]:
+        return await asyncio.to_thread(self._sync.rebac_check_bulk, checks, zone_id)
+
+    async def rebac_list_objects(
+        self,
+        subject: tuple[str, str],
+        permission: str,
+        object_type: str = "file",
+        zone_id: str | None = None,
+        path_prefix: str | None = None,
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> list[tuple[str, str]]:
+        return await asyncio.to_thread(
+            self._sync.rebac_list_objects,
+            subject,
+            permission,
+            object_type,
+            zone_id,
+            path_prefix,
+            limit,
+            offset,
+        )
+
+    async def rebac_write_batch(self, tuples: list[dict[str, Any]]) -> int:
+        return await asyncio.to_thread(self._sync.rebac_write_batch, tuples)
+
+    async def rebac_explain(
+        self,
+        subject: tuple[str, str],
+        permission: str,
+        object: tuple[str, str],
+        zone_id: str | None = None,
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(
+            self._sync.rebac_explain, subject, permission, object, zone_id
+        )
+
+    # ── Namespace APIs ──────────────────────────────────────────────
+
+    async def get_namespace(self, object_type: str) -> Any:
+        return await asyncio.to_thread(self._sync.get_namespace, object_type)
+
+    async def create_namespace(self, namespace: Any) -> None:
+        return await asyncio.to_thread(self._sync.create_namespace, namespace)
+
+    # ── Cache / Leopard / Tiger APIs ────────────────────────────────
+
+    async def get_transitive_groups(
+        self,
+        subject: tuple[str, str],
+        zone_id: str = ROOT_ZONE_ID,
+    ) -> set[tuple[str, str]]:
+        return await asyncio.to_thread(self._sync.get_transitive_groups, subject, zone_id)
+
+    async def invalidate_zone_graph_cache(self, zone_id: str | None = None) -> None:
+        return await asyncio.to_thread(self._sync.invalidate_zone_graph_cache, zone_id)
+
+    async def get_cache_stats(self) -> dict[str, Any]:
+        return await asyncio.to_thread(self._sync.get_cache_stats)
+
+    def get_l1_cache_stats(self) -> dict[str, Any]:
+        return self._sync.get_cache_stats()
+
+    # ── Bridge convenience methods ─────────────────────────────────
+
+    async def write_tuple(
+        self,
+        subject: tuple[str, str],
+        relation: str,
+        object: tuple[str, str],
+        zone_id: str | None = None,
+        subject_relation: str | None = None,  # noqa: ARG002
+    ) -> str:
+        result = await self.rebac_write(
+            subject=subject, relation=relation, object=object, zone_id=zone_id
+        )
+        return result.tuple_id
+
+    async def delete_tuple(
+        self,
+        subject: tuple[str, str],
+        relation: str,
+        object: tuple[str, str],
+        zone_id: str | None = None,
+    ) -> bool:
+        def _delete_by_components() -> bool:
+            from nexus.lib.zone import normalize_zone_id
+
+            nz = normalize_zone_id(zone_id)
+            with self._sync._connection() as conn:
+                cursor = self._sync._create_cursor(conn)
+                cursor.execute(
+                    self._sync._fix_sql_placeholders(
+                        "SELECT tuple_id FROM rebac_tuples "
+                        "WHERE subject_type = ? AND subject_id = ? "
+                        "AND relation = ? AND object_type = ? AND object_id = ? "
+                        "AND zone_id = ?"
+                    ),
+                    (subject[0], subject[1], relation, object[0], object[1], nz),
+                )
+                row = cursor.fetchone()
+            if not row:
+                return False
+            return self._sync.rebac_delete(row[0])
+
+        return await asyncio.to_thread(_delete_by_components)
+
+    # ── Lifecycle ───────────────────────────────────────────────────
+
+    async def close(self) -> None:
+        return await asyncio.to_thread(self._sync.close)
+
+    # ── Passthrough properties ──────────────────────────────────────
+
+    @property
+    def engine(self) -> Any:
+        return self._sync.engine
+
+    @property
+    def enforce_zone_isolation(self) -> bool:
+        return self._sync.enforce_zone_isolation

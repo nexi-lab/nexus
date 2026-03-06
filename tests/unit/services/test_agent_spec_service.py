@@ -21,7 +21,7 @@ from nexus.contracts.agent_types import (
     AgentStatus,
     QoSClass,
 )
-from nexus.system_services.agents.async_agent_registry import AsyncAgentRegistry
+from nexus.system_services.agents.agent_registry import AsyncAgentRegistry
 
 # ---------------------------------------------------------------------------
 # Fixtures

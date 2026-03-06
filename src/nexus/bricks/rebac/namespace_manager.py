@@ -40,6 +40,7 @@ References:
     - Linux VFS dcache: https://docs.kernel.org/filesystems/path-lookup.html
 """
 
+import asyncio
 import bisect
 import hashlib
 import logging
@@ -794,3 +795,62 @@ class NamespaceManager:
         cached_bucket = cached_revision // self._revision_window
         current_bucket = current_revision // self._revision_window
         return cached_bucket == current_bucket
+
+
+# ── Async wrapper (merged from async_namespace_manager.py, Issue #1440) ──
+
+
+def _to_namespace_mount(
+    entry: "MountEntry",
+    subject: tuple[str, str],
+    zone_id: str | None,
+) -> NamespaceMount:
+    """Convert a ``MountEntry`` to the protocol-level ``NamespaceMount``."""
+    return NamespaceMount(
+        virtual_path=entry.virtual_path,
+        subject_type=subject[0],
+        subject_id=subject[1],
+        zone_id=zone_id,
+    )
+
+
+class AsyncNamespaceManager:
+    """Async adapter for ``NamespaceManager`` conforming to ``NamespaceManagerProtocol``.
+
+    ``is_visible`` and ``get_mount_table`` may trigger ReBAC rebuilds (I/O),
+    so they delegate via ``asyncio.to_thread``.  ``invalidate`` also uses
+    ``to_thread`` for consistency (cache operations under lock).
+    """
+
+    def __init__(self, inner: "NamespaceManager") -> None:
+        self._inner = inner
+
+    async def is_visible(
+        self,
+        subject: tuple[str, str],
+        path: str,
+        *,
+        zone_id: str | None = None,
+    ) -> bool:
+        return await asyncio.to_thread(
+            self._inner.is_visible,
+            subject,
+            path,
+            zone_id=zone_id,
+        )
+
+    async def get_mount_table(
+        self,
+        subject: tuple[str, str],
+        *,
+        zone_id: str | None = None,
+    ) -> list[NamespaceMount]:
+        entries = await asyncio.to_thread(
+            self._inner.get_mount_table,
+            subject,
+            zone_id=zone_id,
+        )
+        return [_to_namespace_mount(e, subject, zone_id) for e in entries]
+
+    async def invalidate(self, subject: tuple[str, str]) -> None:
+        await asyncio.to_thread(self._inner.invalidate, subject)

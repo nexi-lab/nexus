@@ -242,35 +242,6 @@ class NexusFS(  # type: ignore[misc]
     # See nexus.factory.service_routing.bind_wired_services().
 
     @property
-    def _service_extras(self) -> dict[str, Any]:
-        """Server layer reads typed service fields as a dict interface."""
-        result: dict[str, Any] = {}
-        # System tier fields
-        for k in ("observability_subsystem", "resiliency_manager", "delivery_worker"):
-            v = getattr(self._system_services, k, None)
-            if v is not None:
-                result[k] = v
-        # Brick tier fields
-        for k in (
-            "chunked_upload_service",
-            "manifest_resolver",
-            "rebac_circuit_breaker",
-            "tool_namespace_middleware",
-        ):
-            v = getattr(self._brick_services, k, None)
-            if v is not None:
-                result[k] = v
-        return result
-
-    @property
-    def namespace_manager(self) -> Any | None:
-        """Public accessor for the NamespaceManager (via PermissionEnforcer)."""
-        enforcer = self._permission_enforcer
-        if enforcer is not None:
-            return getattr(enforcer, "namespace_manager", None)
-        return None
-
-    @property
     def config(self) -> Any | None:
         """Public accessor for the runtime configuration object."""
         return self._config
@@ -281,64 +252,9 @@ class NexusFS(  # type: ignore[misc]
         return getattr(self, "_rebac_manager", None)
 
     @property
-    def semantic_search_engine(self) -> Any | None:
-        """Public accessor for the semantic search engine instance."""
-        return self._semantic_search
-
-    @property
     def memory(self) -> Any:
         """Get Memory API instance (lazy init on first access)."""
         return self._memory_provider.get_or_create()
-
-    def _load_custom_parsers(self, parser_configs: list[dict[str, Any]]) -> None:
-        """
-        Dynamically load and register custom parsers from configuration.
-
-        Args:
-            parser_configs: List of parser configurations, each containing:
-                - module: Python module path (e.g., "my_parsers.csv_parser")
-                - class: Parser class name (e.g., "CSVParser")
-                - priority: Optional priority (default: 50)
-                - enabled: Optional enabled flag (default: True)
-        """
-        import importlib
-
-        for config in parser_configs:
-            # Skip disabled parsers
-            if not config.get("enabled", True):
-                continue
-
-            try:
-                module_path = config.get("module")
-                class_name = config.get("class")
-
-                if not module_path or not class_name:
-                    continue
-
-                # Dynamically import the module
-                module = importlib.import_module(module_path)
-
-                # Get the parser class
-                parser_class = getattr(module, class_name)
-
-                # Get priority (default: 50)
-                priority = config.get("priority", 50)
-
-                # Instantiate the parser with priority
-                parser_instance = parser_class(priority=priority)
-
-                # Register with registry
-                self.parser_registry.register(parser_instance)
-
-            except (ImportError, AttributeError, TypeError, ValueError) as e:
-                # Skip parsers that fail to load due to config or import errors
-                # This prevents config errors from breaking the entire system
-                import logging
-
-                parser_id = (
-                    f"{module_path}.{class_name}" if module_path and class_name else "unknown"
-                )
-                logging.warning(f"Failed to load parser {parser_id}: {e}")
 
     def _get_created_by(self, context: OperationContext | dict | None = None) -> str | None:
         """Get the created_by value for version history tracking."""
@@ -1102,85 +1018,6 @@ class NexusFS(  # type: ignore[misc]
         finally:
             self._vfs_lock_manager.release(handle)
 
-    def _apply_dynamic_viewer_filter_if_needed(
-        self, path: str, content: bytes, context: OperationContext | None
-    ) -> bytes:
-        """Apply dynamic_viewer column-level filtering for CSV files if needed.
-
-        Args:
-            path: File path
-            content: Original file content
-            context: Operation context
-
-        Returns:
-            Filtered content if dynamic_viewer permission exists, otherwise original content
-        """
-        # Only process CSV files
-        if not path.lower().endswith(".csv"):
-            logger.debug(f"_apply_dynamic_viewer_filter: Skipping non-CSV file: {path}")
-            return content
-
-        # Extract subject from context (uses NexusFSReBACMixin method)
-        if not hasattr(self, "_get_subject_from_context"):
-            logger.debug("_apply_dynamic_viewer_filter: No _get_subject_from_context method")
-            return content
-
-        subject = self._get_subject_from_context(context)
-        if not subject:
-            logger.debug(f"_apply_dynamic_viewer_filter: No subject found in context for {path}")
-            return content
-
-        logger.debug(
-            f"_apply_dynamic_viewer_filter: Checking dynamic_viewer for {subject} on {path}"
-        )
-
-        # Check if ReBAC is available
-        if not hasattr(self, "_rebac_manager") or not hasattr(self, "get_dynamic_viewer_config"):
-            logger.debug(
-                "_apply_dynamic_viewer_filter: ReBAC or get_dynamic_viewer_config not available"
-            )
-            return content
-
-        try:
-            # Get dynamic_viewer configuration for this subject + file
-            column_config = self.get_dynamic_viewer_config(subject=subject, file_path=path)  # type: ignore[attr-defined]  # allowed  # allowed
-
-            if not column_config:
-                # No dynamic_viewer permission, return original content
-                logger.debug(
-                    f"_apply_dynamic_viewer_filter: No dynamic_viewer config for {subject} on {path}"
-                )
-                return content
-
-            logger.info(
-                f"_apply_dynamic_viewer_filter: Applying filter for {subject} on {path}: {column_config}"
-            )
-
-            # Apply filtering
-            content_str = content.decode("utf-8") if isinstance(content, bytes) else content
-            result = self.apply_dynamic_viewer_filter(  # type: ignore[attr-defined]  # allowed  # allowed
-                data=content_str, column_config=column_config, file_format="csv"
-            )
-
-            # Return filtered content as bytes
-            filtered_content = result["filtered_data"]
-            logger.info(f"_apply_dynamic_viewer_filter: Successfully filtered {path}")
-            if isinstance(filtered_content, str):
-                return filtered_content.encode("utf-8")
-            elif isinstance(filtered_content, bytes):
-                return filtered_content
-            else:
-                # Fallback: convert to string then bytes
-                return str(filtered_content).encode("utf-8")
-
-        except Exception as e:
-            # Log error but don't fail the read operation
-            logger.warning(f"Failed to apply dynamic_viewer filter for {path}: {e}")
-            import traceback
-
-            logger.warning(traceback.format_exc())
-            return content
-
     @rpc_expose(description="Read file content")
     def sys_read(
         self,
@@ -1310,9 +1147,6 @@ class NexusFS(  # type: ignore[misc]
             content = route.backend.read_content(meta.etag, context=read_context)
 
         # --- Lock released — post-read processing (like Linux inotify after i_rwsem) ---
-
-        # Apply dynamic_viewer filtering for CSV files
-        content = self._apply_dynamic_viewer_filter_if_needed(path, content, context)
 
         # Issue #900: Unified INTERCEPT for read (dynamic viewer, tracking, etc.)
         if self._dispatch.read_hook_count > 0:
@@ -1499,9 +1333,6 @@ class NexusFS(  # type: ignore[misc]
                         entry = cache_entries.get(path)
                         if entry and not entry.stale and entry.content_binary:
                             content = entry.content_binary
-                            content = self._apply_dynamic_viewer_filter_if_needed(
-                                path, content, context
-                            )
                             meta, route = path_info[path]
                             assert meta.etag is not None  # Guaranteed by check above
                             if return_metadata:
@@ -1528,9 +1359,6 @@ class NexusFS(  # type: ignore[misc]
 
                                 read_context = replace(context, backend_path=route.backend_path)
                             content = route.backend.read_content(meta.etag, context=read_context)
-                            content = self._apply_dynamic_viewer_filter_if_needed(
-                                path, content, context
-                            )
                             if return_metadata:
                                 results[path] = {
                                     "content": content,
@@ -1564,9 +1392,6 @@ class NexusFS(  # type: ignore[misc]
 
                                 read_context = replace(context, backend_path=route.backend_path)
                             content = route.backend.read_content(meta.etag, context=read_context)
-                            content = self._apply_dynamic_viewer_filter_if_needed(
-                                path, content, context
-                            )
                             if return_metadata:
                                 results[path] = {
                                     "content": content,
@@ -1612,9 +1437,6 @@ class NexusFS(  # type: ignore[misc]
                         for disk_path, content in disk_contents.items():
                             vpath, meta = disk_to_virtual[disk_path]
                             assert meta is not None  # Guaranteed by check above
-                            content = self._apply_dynamic_viewer_filter_if_needed(
-                                vpath, content, context
-                            )
                             if return_metadata:
                                 results[vpath] = {
                                     "content": content,
@@ -1645,9 +1467,6 @@ class NexusFS(  # type: ignore[misc]
                                 meta, route = path_info[path]
                                 assert meta.etag is not None
                                 content = route.backend.read_content(meta.etag, context=None)
-                                content = self._apply_dynamic_viewer_filter_if_needed(
-                                    path, content, context
-                                )
                                 results[path] = (
                                     content
                                     if not return_metadata
@@ -1679,9 +1498,6 @@ class NexusFS(  # type: ignore[misc]
 
                                 read_context = replace(context, backend_path=route.backend_path)
                             content = route.backend.read_content(meta.etag, context=read_context)
-                            content = self._apply_dynamic_viewer_filter_if_needed(
-                                path, content, context
-                            )
                             if return_metadata:
                                 results[path] = {
                                     "content": content,
@@ -3972,18 +3788,6 @@ class NexusFS(  # type: ignore[misc]
 
         return results
 
-    # ------------------------------------------------------------------
-    # Internal helpers restored for backward compatibility (Issue #2033)
-    # ------------------------------------------------------------------
-
-    @property
-    def _require_rebac(self) -> Any:
-        """Return the ReBAC manager or raise if unavailable."""
-        mgr = self._rebac_manager
-        if mgr is None:
-            raise RuntimeError("ReBAC manager not available")
-        return mgr
-
     def register_observe(self, observer: Any) -> None:
         """Register a mutation observer (OBSERVE phase, Issue #900)."""
         self._dispatch.register_observe(observer)
@@ -3993,39 +3797,6 @@ class NexusFS(  # type: ignore[misc]
     # Previously on NexusFSReBACMixin, now forwarded to rebac_service.
     # Generated dynamically below via _rebac_delegate().
     # ------------------------------------------------------------------
-
-    def _grant_mount_owner_permission(self, mount_point: str, context: Any | None) -> None:
-        """Grant direct_owner permission to the user who created the mount."""
-        import logging as _logging
-
-        _log = _logging.getLogger(__name__)
-        _log.info(f"Setting up mount point: {mount_point}")
-
-        # Create directory entry for the mount point
-        try:
-            self.sys_mkdir(mount_point, parents=True, exist_ok=True)
-        except Exception as e:
-            _log.warning(f"Failed to create directory entry for mount {mount_point}: {e}")
-
-        # Grant direct_owner permission to the creating user
-        if context:
-            from nexus.lib.context_utils import get_user_identity, get_zone_id
-
-            subject_type, subject_id = get_user_identity(context)
-            zone_id = get_zone_id(context)
-
-            if subject_id and hasattr(self, "rebac_service"):
-                try:
-                    self.rebac_service.rebac_create_sync(
-                        subject=(subject_type, subject_id),
-                        relation="direct_owner",
-                        object=("file", mount_point),
-                        zone_id=zone_id,
-                    )
-                except Exception as e:
-                    _log.warning(
-                        f"Failed to grant direct_owner for {mount_point}: {type(e).__name__}: {e}"
-                    )
 
     def _matches_patterns(
         self,
@@ -4147,12 +3918,6 @@ class NexusFS(  # type: ignore[misc]
             dict[str, Any] | str,
             run_sync(self.version_service.diff_versions(path, v1, v2, mode, context)),
         )
-
-    def _get_subject_from_context(self, context: Any) -> tuple[str, str] | None:
-        """Extract subject from operation context."""
-        from nexus.lib.context_utils import get_subject_from_context
-
-        return get_subject_from_context(context)
 
     async def ainitialize_semantic_search(
         self,

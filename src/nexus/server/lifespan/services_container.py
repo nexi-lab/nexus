@@ -95,7 +95,6 @@ class LifespanServices:
         nx = getattr(app.state, "nexus_fs", None)
         _sys = getattr(nx, "_system_services", None) if nx else None
         _brk = getattr(nx, "_brick_services", None) if nx else None
-        _extras = getattr(nx, "_service_extras", None) if nx else None
 
         return cls(
             # Core / kernel
@@ -138,7 +137,7 @@ class LifespanServices:
             namespace_manager=(getattr(nx, "_namespace_manager", None) if nx else None),
             nexus_config=getattr(nx, "config", None) if nx else None,
             observability_subsystem=(
-                _extras.get("observability_subsystem") if isinstance(_extras, dict) else None
+                getattr(_sys, "observability_subsystem", None) if _sys else None
             ),
             # From app.state (set by server init)
             a2a_task_manager=getattr(app.state, "a2a_task_manager", None),

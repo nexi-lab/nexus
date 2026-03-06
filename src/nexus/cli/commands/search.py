@@ -435,7 +435,9 @@ def search_init(
 
             async def init_search() -> None:
                 nxfs = cast("NexusFS", nx)
-                await nxfs.ainitialize_semantic_search(
+                await nxfs.search_service.ainitialize_semantic_search(
+                    nx=nxfs,
+                    record_store_engine=None,
                     embedding_provider=provider,
                     embedding_model=model,
                     api_key=api_key,
@@ -501,7 +503,9 @@ def search_index(
             async def do_index() -> dict[str, int]:
                 # Auto-initialize semantic search if not already initialized (standalone mode)
                 if isinstance(nx, NexusFS):
-                    await nx.ainitialize_semantic_search()
+                    await nx.search_service.ainitialize_semantic_search(
+                        nx=nx, record_store_engine=None
+                    )
                 result: dict[str, int] = await nx.search_service.semantic_search_index(
                     path, recursive=recursive
                 )
@@ -592,8 +596,11 @@ def search_query(
             async def do_search() -> list[dict[str, Any]]:
                 # Auto-initialize semantic search if not already initialized (standalone mode)
                 if isinstance(nx, NexusFS):
-                    await nx.ainitialize_semantic_search(
-                        embedding_provider=provider, api_key=api_key
+                    await nx.search_service.ainitialize_semantic_search(
+                        nx=nx,
+                        record_store_engine=None,
+                        embedding_provider=provider,
+                        api_key=api_key,
                     )
                 result: list[dict[str, Any]] = await nx.search_service.semantic_search(
                     query, path=path, limit=limit, search_mode=mode
@@ -653,7 +660,7 @@ def search_stats(backend_config: BackendConfig) -> None:
         async def get_stats() -> dict[str, Any]:
             # Auto-initialize semantic search if not already initialized (standalone mode)
             if isinstance(nx, NexusFS):
-                await nx.ainitialize_semantic_search()
+                await nx.search_service.ainitialize_semantic_search(nx=nx, record_store_engine=None)
             result: dict[str, Any] = await nx.search_service.semantic_search_stats()
             return result
 

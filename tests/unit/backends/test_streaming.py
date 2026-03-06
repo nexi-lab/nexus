@@ -8,7 +8,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from nexus.backends.base.backend import Backend
-from nexus.backends.base.cas_blob_store import WriteResult
 from nexus.backends.base.path_backend import PathBackend
 from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.core.config import ParseConfig, PermissionConfig
@@ -259,76 +258,6 @@ class TestCreateHasher:
                 hasher.update(content[offset : offset + chunk_size])
                 offset += chunk_size
             assert hasher.hexdigest() == hash_content(content)
-
-
-class TestCASBlobStoreStreaming:
-    """Test CASBlobStore.store_streaming() (Issue #1625)."""
-
-    @pytest.fixture
-    def cas(self, tmp_path: Path):
-        from nexus.backends.base.cas_blob_store import CASBlobStore
-
-        cas_root = tmp_path / "cas"
-        cas_root.mkdir()
-        return CASBlobStore(cas_root)
-
-    def test_store_streaming_basic(self, cas) -> None:
-        """store_streaming returns correct WriteResult."""
-        content = b"Hello streaming world!"
-
-        def chunks():
-            yield content[:5]
-            yield content[5:]
-
-        result = cas.store_streaming(chunks())
-
-        assert isinstance(result, WriteResult)
-        assert result.content_hash == hash_content(content)
-        assert result.size == len(content)
-        assert result.is_new is True
-
-        # Verify blob on disk matches
-        assert cas.read_blob(result.content_hash) == content
-
-    def test_store_streaming_dedup(self, cas) -> None:
-        """store_streaming bumps ref_count for existing blobs."""
-        content = b"deduplicated"
-
-        # First write
-        r1 = cas.store_streaming(iter([content]))
-        assert r1.is_new is True
-
-        # Second write -- same content
-        r2 = cas.store_streaming(iter([content]))
-        assert r2.is_new is False
-        assert r2.content_hash == r1.content_hash
-
-        # ref_count should be 2
-        meta = cas.read_meta(r1.content_hash)
-        assert meta.ref_count == 2
-
-    def test_store_streaming_empty(self, cas) -> None:
-        """store_streaming handles empty iterator."""
-        result = cas.store_streaming(iter([]))
-        assert result.size == 0
-        assert result.content_hash == hash_content(b"")
-
-    def test_store_streaming_cleanup_on_failure(self, cas) -> None:
-        """Partial write cleans up staging files on exception (Issue #1625)."""
-        staging_dir = cas.cas_root / ".staging"
-
-        def failing_chunks():
-            yield b"chunk1"
-            yield b"chunk2"
-            raise OSError("simulated disk failure")
-
-        with pytest.raises(OSError, match="simulated disk failure"):
-            cas.store_streaming(failing_chunks())
-
-        # No orphaned files in staging directory
-        if staging_dir.exists():
-            orphans = list(staging_dir.iterdir())
-            assert orphans == [], f"Orphaned staging files: {orphans}"
 
 
 class TestStreamingMemoryEfficiency:

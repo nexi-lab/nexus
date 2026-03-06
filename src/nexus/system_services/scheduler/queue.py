@@ -51,6 +51,42 @@ ON CONFLICT (idempotency_key) DO UPDATE SET agent_id = EXCLUDED.agent_id
 RETURNING id::text
 """
 
+# --- Overlap policy queries (Issue #2749) ---
+
+_SQL_ENQUEUE_SKIP = """
+WITH existing AS (
+    SELECT id, status FROM scheduled_tasks
+    WHERE idempotency_key = $12
+    FOR UPDATE
+)
+INSERT INTO scheduled_tasks (
+    agent_id, executor_id, task_type, payload,
+    priority_tier, effective_tier, deadline,
+    boost_amount, boost_tiers, boost_reservation_id,
+    zone_id, idempotency_key,
+    request_state, priority_class, estimated_service_time
+)
+SELECT $1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+WHERE NOT EXISTS (SELECT 1 FROM existing WHERE status = 'running')
+ON CONFLICT (idempotency_key) DO UPDATE SET agent_id = EXCLUDED.agent_id
+RETURNING id::text
+"""
+
+_SQL_FIND_BY_IDEMPOTENCY_KEY = f"""
+SELECT {_TASK_COLUMNS}
+FROM scheduled_tasks
+WHERE idempotency_key = $1
+"""
+
+_SQL_CANCEL_RUNNING_BY_IDEMPOTENCY_KEY = """
+UPDATE scheduled_tasks
+SET status = 'cancelled', completed_at = now()
+WHERE idempotency_key = $1 AND status = 'running'
+RETURNING id::text, boost_reservation_id
+"""
+
+# --- Dequeue queries ---
+
 _SQL_DEQUEUE = f"""
 UPDATE scheduled_tasks
 SET status = 'running', started_at = now()
@@ -457,6 +493,92 @@ class TaskQueue:
         """Cancel all queued tasks for an agent. Returns count cancelled."""
         rows = await conn.fetch(_SQL_CANCEL_BY_AGENT, agent_id)
         return len(rows)
+
+    # --- Overlap policy methods (Issue #2749) ---
+
+    async def enqueue_skip(
+        self,
+        conn: Any,
+        *,
+        agent_id: str,
+        executor_id: str,
+        task_type: str,
+        payload: dict[str, Any],
+        priority_tier: int,
+        effective_tier: int,
+        zone_id: str = ROOT_ZONE_ID,
+        deadline: datetime | None = None,
+        boost_amount: Decimal = Decimal("0"),
+        boost_tiers: int = 0,
+        boost_reservation_id: str | None = None,
+        idempotency_key: str,
+        request_state: str = "pending",
+        priority_class: str = "batch",
+        estimated_service_time: float = DEFAULT_EST_SERVICE_TIME_SECS,
+    ) -> str | None:
+        """Atomically enqueue a task with SKIP overlap policy.
+
+        If a task with the same idempotency_key is already running,
+        the INSERT is skipped and None is returned.
+
+        Returns:
+            Task ID string if enqueued, None if skipped.
+        """
+        payload_json = json.dumps(payload)
+
+        task_id = await conn.fetchval(
+            _SQL_ENQUEUE_SKIP,
+            agent_id,
+            executor_id,
+            task_type,
+            payload_json,
+            priority_tier,
+            effective_tier,
+            deadline,
+            boost_amount,
+            boost_tiers,
+            boost_reservation_id,
+            zone_id,
+            idempotency_key,
+            request_state,
+            priority_class,
+            estimated_service_time,
+        )
+
+        if task_id is None:
+            return None
+
+        # Notify dispatcher
+        notify_data = json.dumps({"task_id": str(task_id), "executor_id": executor_id})
+        await conn.execute(_SQL_NOTIFY, notify_data)
+        return str(task_id)
+
+    async def find_by_idempotency_key(
+        self, conn: Any, idempotency_key: str
+    ) -> ScheduledTask | None:
+        """Find a task by its idempotency key.
+
+        Returns:
+            The matching task, or None if not found.
+        """
+        row = await conn.fetchrow(_SQL_FIND_BY_IDEMPOTENCY_KEY, idempotency_key)
+        if row is None:
+            return None
+        return _row_to_task(row)
+
+    async def cancel_running_by_idempotency_key(
+        self, conn: Any, idempotency_key: str
+    ) -> tuple[str | None, str | None]:
+        """Cancel a running task by idempotency key (for CANCEL_PREVIOUS).
+
+        Returns:
+            Tuple of (cancelled_task_id, boost_reservation_id), or (None, None)
+            if no running task was found.
+        """
+        row = await conn.fetchrow(_SQL_CANCEL_RUNNING_BY_IDEMPOTENCY_KEY, idempotency_key)
+        if row is None:
+            return None, None
+        return row["id"], row.get("boost_reservation_id")
 
     # --- Astraea methods (Issue #1274) ---
 

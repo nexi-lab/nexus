@@ -628,6 +628,7 @@ module = [
     "nexus.bricks.rebac.manager",
     "nexus.system_services.event_subsystem.bus.redis",
     "nexus.system_services.scheduler.policies.fair_share",
+    "nexus.system_services.scheduler.policies.rate_limiter",
 ]
 # cachetools returns Any from generic cache
 disable_error_code = ["import-untyped", "no-any-return"]
@@ -970,6 +971,8 @@ unmatched_ignore_imports_alerting = "warn"
 dev = [
     "freezegun>=1.5.5",
     "grpcio-tools>=1.76.0",
+    "mypy>=1.18.2",
+    "pytest-asyncio>=1.3.0",
     "pytest-cov>=7.0.0",
     "types-aiofiles>=25.1.0.20251011",
     "types-protobuf>=6.32.1.20251210",

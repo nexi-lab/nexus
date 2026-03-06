@@ -62,10 +62,12 @@ class KafkaExporter:
         """Publish a single event to Kafka."""
         producer = await self._ensure_producer()
         topic = f"{self._config.topic_prefix}.{event.zone_id or ROOT_ZONE_ID}"
+        # Use zone_id as partition key so all events for a zone land in the
+        # same partition, guaranteeing per-zone ordering (#2755).
         await producer.send_and_wait(
             topic,
             value=event.to_dict(),
-            key=event.event_id,
+            key=event.zone_id or ROOT_ZONE_ID,
         )
 
     async def publish_batch(self, events: list[FileEvent]) -> list[str]:
@@ -79,10 +81,11 @@ class KafkaExporter:
             for event in chunk:
                 topic = f"{self._config.topic_prefix}.{event.zone_id or ROOT_ZONE_ID}"
                 try:
+                    # zone_id as partition key for per-zone ordering (#2755)
                     await producer.send_and_wait(
                         topic,
                         value=event.to_dict(),
-                        key=event.event_id,
+                        key=event.zone_id or ROOT_ZONE_ID,
                     )
                 except Exception:
                     logger.warning(

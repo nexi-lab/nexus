@@ -56,6 +56,7 @@ class FileEvent:
     etag: str | None = None
     agent_id: str | None = None
     vector_clock: str | None = None
+    sequence_number: int | None = None  # Monotonic ordering within a zone (#2755)
 
     # Identity & write-specific context
     user_id: str | None = None
@@ -84,6 +85,8 @@ class FileEvent:
             result["agent_id"] = self.agent_id
         if self.vector_clock is not None:
             result["vector_clock"] = self.vector_clock
+        if self.sequence_number is not None:
+            result["sequence_number"] = self.sequence_number
         if self.user_id is not None:
             result["user_id"] = self.user_id
         if self.version is not None:
@@ -112,6 +115,7 @@ class FileEvent:
             etag=data.get("etag"),
             agent_id=data.get("agent_id"),
             vector_clock=data.get("vector_clock"),
+            sequence_number=data.get("sequence_number"),
             user_id=data.get("user_id"),
             version=data.get("version"),
             is_new=data.get("is_new", False),

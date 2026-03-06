@@ -18,6 +18,7 @@ class KafkaExporterConfig(BaseModel):
     compression: str = "lz4"
     enable_idempotence: bool = True
     batch_size: int = 100
+    send_timeout: float = 10.0
 
 
 class NatsExporterConfig(BaseModel):
@@ -27,6 +28,7 @@ class NatsExporterConfig(BaseModel):
     subject_prefix: str = "nexus.export"
     stream_name: str = "NEXUS_EXPORT"
     max_payload: int = 1_048_576  # 1MB
+    send_timeout: float = 10.0
 
 
 class PubSubExporterConfig(BaseModel):

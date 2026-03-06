@@ -9,6 +9,7 @@ Uses Nats-Msg-Id header for server-side deduplication.
 Optional dependency: ``pip install nexus-ai-fs[nats-export]``
 """
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -78,25 +79,29 @@ class NatsExporter:
         """Publish a single event to NATS JetStream."""
         js = await self._ensure_connection()
         payload = serialize_event(event)
-        await js.publish(
-            self._subject(event),
-            payload,
-            headers={"Nats-Msg-Id": event.event_id},
-        )
+        send_timeout = getattr(self._config, "send_timeout", 10.0)
+        async with asyncio.timeout(send_timeout):
+            await js.publish(
+                self._subject(event),
+                payload,
+                headers={"Nats-Msg-Id": event.event_id},
+            )
 
     async def publish_batch(self, events: list[FileEvent]) -> list[str]:
         """Publish a batch of events to NATS JetStream."""
         js = await self._ensure_connection()
         failed_ids: list[str] = []
+        send_timeout = getattr(self._config, "send_timeout", 10.0)
 
         for event in events:
             try:
                 payload = serialize_event(event)
-                await js.publish(
-                    self._subject(event),
-                    payload,
-                    headers={"Nats-Msg-Id": event.event_id},
-                )
+                async with asyncio.timeout(send_timeout):
+                    await js.publish(
+                        self._subject(event),
+                        payload,
+                        headers={"Nats-Msg-Id": event.event_id},
+                    )
             except Exception:
                 logger.warning(
                     "NATS publish failed for event %s",

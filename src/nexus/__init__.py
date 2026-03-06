@@ -189,12 +189,7 @@ def connect(
     import os
     from pathlib import Path
 
-    # Lazy load dependencies
-    from nexus.backends.base.backend import Backend
-    from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.config import NexusConfig, load_config
-    from nexus.core.nexus_fs import NexusFS
-    from nexus.storage.raft_metadata_store import RaftMetadataStore
 
     # Load configuration
     cfg = load_config(config)
@@ -262,6 +257,11 @@ def connect(
         raise ValueError(
             f"Unknown mode: '{cfg.mode}'. Must be one of: standalone, remote, federation"
         )
+
+    # Heavy imports only needed for standalone/federation
+    from nexus.backends.base.backend import Backend
+    from nexus.backends.storage.cas_local import CASLocalBackend
+    from nexus.core.nexus_fs import NexusFS
 
     # Create backend based on configuration
     backend: Backend
@@ -352,6 +352,8 @@ def connect(
         metadata_store = FederatedMetadataProxy.from_zone_manager(zone_mgr)
     else:
         # standalone: single-node embedded Raft (no peers)
+        from nexus.storage.raft_metadata_store import RaftMetadataStore
+
         metadata_store = RaftMetadataStore.embedded(metadata_path)
 
     # Permission defaults: standalone without explicit config → permissive

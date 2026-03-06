@@ -25,6 +25,7 @@ References:
     - Issue #1589: Extract HeartbeatBuffer from AgentRegistry (SRP)
 """
 
+import asyncio
 import json
 import logging
 import types
@@ -49,6 +50,7 @@ from nexus.contracts.agent_types import (
     is_new_session,
     validate_transition,
 )
+from nexus.contracts.protocols.agent_registry import AgentInfo
 from nexus.contracts.qos import EVICTION_ORDER, AgentQoS
 from nexus.storage.models import AgentRecordModel
 from nexus.system_services.agents.heartbeat_buffer import HeartbeatBuffer
@@ -1072,3 +1074,122 @@ class AgentRegistry:
             context_manifest=tuple(manifest_list),
             qos=agent_qos,
         )
+
+
+# ── Async wrapper (merged from async_agent_registry.py, Issue #1440) ──
+
+
+def _to_agent_info(record: "AgentRecord") -> AgentInfo:
+    """Convert an ``AgentRecord`` to the protocol-level ``AgentInfo``."""
+    return AgentInfo(
+        agent_id=record.agent_id,
+        owner_id=record.owner_id,
+        zone_id=record.zone_id,
+        name=record.name,
+        state=record.state.value,
+        generation=record.generation,
+    )
+
+
+class AsyncAgentRegistry:
+    """Async adapter for ``AgentRegistry`` conforming to ``AgentRegistryProtocol``.
+
+    All methods with DB I/O delegate via ``asyncio.to_thread``.
+    The ``AgentRecord`` → ``AgentInfo`` conversion happens at the boundary.
+    """
+
+    def __init__(
+        self,
+        inner: "AgentRegistry",
+        *,
+        state_emitter: Any | None = None,
+    ) -> None:
+        self._inner = inner
+        self._state_emitter = state_emitter
+
+    async def register(
+        self,
+        agent_id: str,
+        owner_id: str,
+        *,
+        zone_id: str | None = None,
+        name: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> AgentInfo:
+        record = await asyncio.to_thread(
+            self._inner.register,
+            agent_id,
+            owner_id,
+            zone_id=zone_id,
+            name=name,
+            metadata=metadata,
+        )
+        return _to_agent_info(record)
+
+    async def get(self, agent_id: str) -> AgentInfo | None:
+        record = await asyncio.to_thread(self._inner.get, agent_id)
+        if record is None:
+            return None
+        return _to_agent_info(record)
+
+    async def transition(
+        self,
+        agent_id: str,
+        target_state: str,
+        *,
+        expected_generation: int | None = None,
+    ) -> AgentInfo:
+        try:
+            state_enum = AgentState(target_state)
+        except ValueError:
+            valid = [s.value for s in AgentState]
+            raise ValueError(
+                f"Invalid target state {target_state!r}. Valid: {', '.join(valid)}"
+            ) from None
+
+        previous_state: str | None = None
+        if self._state_emitter is not None:
+            before_record = await asyncio.to_thread(self._inner.get, agent_id)
+            if before_record is not None:
+                previous_state = before_record.state.value
+
+        record = await asyncio.to_thread(
+            self._inner.transition,
+            agent_id,
+            state_enum,
+            expected_generation=expected_generation,
+        )
+        info = _to_agent_info(record)
+
+        if self._state_emitter is not None and previous_state is not None:
+            from nexus.system_services.scheduler.events import AgentStateEvent
+
+            event = AgentStateEvent(
+                agent_id=agent_id,
+                previous_state=previous_state,
+                new_state=info.state,
+                generation=info.generation,
+                zone_id=info.zone_id,
+            )
+            await self._state_emitter.emit(event)
+
+        return info
+
+    async def heartbeat(self, agent_id: str) -> None:
+        await asyncio.to_thread(self._inner.heartbeat, agent_id)
+
+    async def list_by_zone(self, zone_id: str) -> list[AgentInfo]:
+        records = await asyncio.to_thread(self._inner.list_by_zone, zone_id)
+        return [_to_agent_info(r) for r in records]
+
+    async def unregister(self, agent_id: str) -> bool:
+        return await asyncio.to_thread(self._inner.unregister, agent_id)
+
+    async def set_spec(self, agent_id: str, spec: "AgentSpec") -> "AgentSpec":
+        return await asyncio.to_thread(self._inner.set_spec, agent_id, spec)
+
+    async def get_spec(self, agent_id: str) -> "AgentSpec | None":
+        return await asyncio.to_thread(self._inner.get_spec, agent_id)
+
+    async def get_status(self, agent_id: str) -> "AgentStatus | None":
+        return await asyncio.to_thread(self._inner.get_status, agent_id)

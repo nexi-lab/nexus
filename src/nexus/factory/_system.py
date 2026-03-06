@@ -263,8 +263,10 @@ def _boot_system_services(
     async_agent_registry: Any = None
     if _on("agent_registry") and ctx.record_store is not None:
         try:
-            from nexus.system_services.agents.agent_registry import AgentRegistry
-            from nexus.system_services.agents.async_agent_registry import AsyncAgentRegistry
+            from nexus.system_services.agents.agent_registry import (
+                AgentRegistry,
+                AsyncAgentRegistry,
+            )
 
             agent_registry = AgentRegistry(
                 record_store=ctx.record_store,
@@ -307,10 +309,10 @@ def _boot_system_services(
         logger.debug("[BOOT:SYSTEM] NamespaceManager disabled by profile")
     else:
         try:
-            from nexus.bricks.rebac.async_namespace_manager import AsyncNamespaceManager
             from nexus.bricks.rebac.namespace_factory import (
                 create_namespace_manager as _create_ns_manager,
             )
+            from nexus.bricks.rebac.namespace_manager import AsyncNamespaceManager
 
             namespace_manager = _create_ns_manager(
                 rebac_manager=rebac_manager,
@@ -324,7 +326,7 @@ def _boot_system_services(
     # --- Async VFS Router (Issue #1502) ---
     async_vfs_router: Any = None
     try:
-        from nexus.core.async_router import AsyncVFSRouter
+        from nexus.core.router import AsyncVFSRouter
 
         async_vfs_router = AsyncVFSRouter(ctx.router)
         logger.debug("[BOOT:SYSTEM] AsyncVFSRouter created")

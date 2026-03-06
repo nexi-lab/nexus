@@ -314,16 +314,20 @@ class TestVFSServicerTypedRPCs:
 
     @pytest.mark.anyio
     async def test_write_success(self, servicer) -> None:
-        """Write returns etag and size from sys_write."""
+        """Write returns etag and size from metadata after sys_write."""
         request = _make_typed_request(
             "WriteRequest", path="/file.txt", content=b"data", auth_token="", etag=""
         )
         context = MagicMock()
 
+        # sys_write returns int; servicer looks up metadata for etag
+        mock_meta = MagicMock(etag="sha256-xyz", size=4)
+        servicer._nexus_fs.metadata.get.return_value = mock_meta
+
         with patch(
             "nexus.grpc.servicer.asyncio.to_thread",
             new_callable=AsyncMock,
-            return_value={"etag": "sha256-xyz", "size": 4},
+            return_value=4,
         ):
             response = await servicer.Write(request, context)
 

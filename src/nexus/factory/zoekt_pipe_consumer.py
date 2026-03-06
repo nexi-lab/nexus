@@ -81,14 +81,14 @@ class ZoektPipeConsumer:
     def notify_write(self, path: str) -> None:
         """Notify that a file was written. Used as on_write_callback."""
         if self._pipe_manager is not None and self._pipe_ready:
-            from nexus.core.pipe import PipeFullError
+            from nexus.core.pipe import PipeClosedError, PipeFullError
 
             try:
                 data = json.dumps({"type": "write", "path": path}).encode()
                 self._pipe_manager.pipe_write_nowait(_ZOEKT_PIPE_PATH, data)
                 return
-            except PipeFullError:
-                logger.warning("Zoekt pipe full, dropping write notification: %s", path)
+            except (PipeClosedError, PipeFullError):
+                logger.warning("Zoekt pipe full/closed, dropping write notification: %s", path)
                 return
 
         # Fallback: direct call (CLI mode or pre-startup)
@@ -97,14 +97,14 @@ class ZoektPipeConsumer:
     def notify_sync_complete(self, files_synced: int = 0) -> None:
         """Notify that a sync completed. Used as on_sync_callback."""
         if self._pipe_manager is not None and self._pipe_ready:
-            from nexus.core.pipe import PipeFullError
+            from nexus.core.pipe import PipeClosedError, PipeFullError
 
             try:
                 data = json.dumps({"type": "sync", "files_synced": files_synced}).encode()
                 self._pipe_manager.pipe_write_nowait(_ZOEKT_PIPE_PATH, data)
                 return
-            except PipeFullError:
-                logger.warning("Zoekt pipe full, dropping sync notification")
+            except (PipeClosedError, PipeFullError):
+                logger.warning("Zoekt pipe full/closed, dropping sync notification")
                 return
 
         # Fallback: direct call
@@ -137,11 +137,21 @@ class ZoektPipeConsumer:
         self._consumer_task = asyncio.create_task(self._consume())
 
     async def stop(self) -> None:
-        """Cancel consumer task."""
+        """Graceful shutdown: signal pipe closed, drain remaining events, then stop."""
         if self._consumer_task is not None and not self._consumer_task.done():
-            self._consumer_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._consumer_task
+            # Signal close — wakes blocked consumer, allows drain of remaining messages
+            if self._pipe_manager is not None and self._pipe_ready:
+                with contextlib.suppress(Exception):
+                    self._pipe_manager.signal_close(_ZOEKT_PIPE_PATH)
+
+            # Let consumer drain naturally, with timeout
+            try:
+                await asyncio.wait_for(asyncio.shield(self._consumer_task), timeout=5.0)
+            except (TimeoutError, asyncio.CancelledError):
+                self._consumer_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._consumer_task
+
             self._consumer_task = None
         self._pipe_ready = False
 

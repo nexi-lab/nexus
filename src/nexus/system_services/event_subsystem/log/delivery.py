@@ -19,6 +19,7 @@ Tracked by: Issue #1241, #1138
 """
 
 import asyncio
+import itertools
 import logging
 import threading
 from collections.abc import Callable
@@ -204,12 +205,13 @@ class EventDeliveryWorker:
         dispatched_ids: list[str] = []
 
         with self._session_factory() as session:
-            # Build SELECT ... WHERE delivered = FALSE ORDER BY created_at
+            # Build SELECT ... WHERE delivered = FALSE ORDER BY sequence_number
             # FOR UPDATE SKIP LOCKED (PG) or plain SELECT (SQLite)
+            # sequence_number enforces causal ordering (#2755).
             stmt = (
                 select(OperationLogModel)
                 .where(OperationLogModel.delivered == False)  # noqa: E712
-                .order_by(OperationLogModel.created_at)
+                .order_by(OperationLogModel.sequence_number)
                 .limit(self._batch_size)
             )
 
@@ -227,16 +229,23 @@ class EventDeliveryWorker:
             for record in rows:
                 events_with_records.append((self._build_file_event(record), record))
 
-            # 1. Dispatch each event to EventBus + webhooks
-            for event, record in events_with_records:
-                try:
-                    self._dispatch_event_internal(event, record)
-                    dispatched_ids.append(record.operation_id)
-                    self._total_dispatched += 1
-                    # Clear retry count on success
-                    self._retry_counts.pop(record.operation_id, None)
-                except Exception as exc:
-                    self._handle_dispatch_failure(session, record, event, exc)
+            # 1. Dispatch events to EventBus + webhooks, ordered per zone (#2755).
+            #    Group by zone_id and dispatch sequentially within each zone
+            #    (parallel across zones is safe — no cross-zone causal deps).
+            def zone_key(pair: tuple[FileEvent, Any]) -> str:
+                return pair[1].zone_id or ROOT_ZONE_ID
+
+            sorted_pairs = sorted(events_with_records, key=zone_key)
+            for _zone_id, zone_group in itertools.groupby(sorted_pairs, key=zone_key):
+                for event, record in zone_group:
+                    try:
+                        self._dispatch_event_internal(event, record)
+                        dispatched_ids.append(record.operation_id)
+                        self._total_dispatched += 1
+                        # Clear retry count on success
+                        self._retry_counts.pop(record.operation_id, None)
+                    except Exception as exc:
+                        self._handle_dispatch_failure(session, record, event, exc)
 
             # 2. Dispatch batch to external exporters (parallel)
             if self._exporter_registry and self._exporter_registry.exporter_names:
@@ -274,6 +283,7 @@ class EventDeliveryWorker:
                             "old_path": event.old_path,
                             "size": event.size,
                             "timestamp": event.timestamp,
+                            "sequence_number": event.sequence_number,
                         },
                         zone_id=event.zone_id or ROOT_ZONE_ID,
                     )
@@ -373,6 +383,7 @@ class EventDeliveryWorker:
             timestamp=record.created_at.isoformat() if record.created_at else "",
             old_path=record.new_path,  # new_path stores old_path for renames
             agent_id=record.agent_id,
+            sequence_number=record.sequence_number,
         )
 
     def _mark_delivered(self, session: "Session", operation_ids: list[str]) -> None:

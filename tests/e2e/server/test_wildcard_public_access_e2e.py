@@ -196,8 +196,7 @@ class TestWildcardDirectDB:
     @pytest.fixture
     def async_manager(self, db_engine, isolated_db):
         """Create AsyncReBACManager for testing."""
-        from nexus.bricks.rebac.async_manager import AsyncReBACManager
-        from nexus.bricks.rebac.manager import ReBACManager
+        from nexus.bricks.rebac.manager import AsyncReBACManager, ReBACManager
 
         # Use the existing sync db_engine directly — avoids MissingGreenlet
         # errors that arise from using async_engine.sync_engine with
@@ -342,8 +341,7 @@ class TestWildcardPerformance:
         """Benchmark wildcard check to ensure no performance regression."""
         import time
 
-        from nexus.bricks.rebac.async_manager import AsyncReBACManager
-        from nexus.bricks.rebac.manager import ReBACManager
+        from nexus.bricks.rebac.manager import AsyncReBACManager, ReBACManager
 
         # Use the existing sync db_engine directly — avoids MissingGreenlet.
         sync_manager = ReBACManager(db_engine, enable_tiger_cache=False)

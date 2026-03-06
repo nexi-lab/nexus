@@ -4,9 +4,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.core.async_router import AsyncVFSRouter, _to_resolved_path
 from nexus.core.protocols.vfs_router import MountInfo, ResolvedPath, VFSRouterProtocol
-from nexus.core.router import PathNotMountedError, RouteResult
+from nexus.core.router import AsyncVFSRouter, PathNotMountedError, RouteResult, _to_resolved_path
 from tests.unit.core.protocols.test_conformance import assert_protocol_conformance
 
 # ---------------------------------------------------------------------------

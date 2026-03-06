@@ -238,10 +238,13 @@ class PipedRecordStoreWriteObserver:
         self._total_enqueued += 1
 
         if self._pipe_manager is not None and self._pipe_ready:
-            from nexus.core.pipe import PipeFullError
+            from nexus.core.pipe import PipeClosedError, PipeFullError
 
             try:
                 self._pipe_manager.pipe_write_nowait(_AUDIT_PIPE_PATH, data)
+            except PipeClosedError:
+                # Pipe closing — buffer for flush_sync() to pick up
+                self._pre_buffer.append(data)
             except PipeFullError:
                 self._total_dropped += 1
                 logger.warning(
@@ -290,13 +293,53 @@ class PipedRecordStoreWriteObserver:
         self._consumer_task = asyncio.create_task(self._consume())
 
     async def stop(self) -> None:
-        """Cancel consumer task for graceful shutdown."""
+        """Graceful shutdown: signal pipe closed, drain remaining events, then stop."""
         if self._consumer_task is not None and not self._consumer_task.done():
-            self._consumer_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._consumer_task
+            # Signal close — wakes blocked consumer, allows drain of remaining messages
+            if self._pipe_manager is not None and self._pipe_ready:
+                with contextlib.suppress(Exception):
+                    self._pipe_manager.signal_close(_AUDIT_PIPE_PATH)
+
+            # Let consumer drain naturally, with timeout
+            try:
+                await asyncio.wait_for(asyncio.shield(self._consumer_task), timeout=5.0)
+            except (TimeoutError, asyncio.CancelledError):
+                self._consumer_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._consumer_task
+
             self._consumer_task = None
         self._pipe_ready = False
+
+        # Drain any residual _pre_buffer events (CLI mode or events that arrived
+        # after pipe closed but before enqueue path switched off)
+        self.flush_sync()
+
+    def flush_sync(self) -> int:
+        """Synchronously drain ``_pre_buffer`` directly to the DB.
+
+        Used by CLI shutdown path (NexusFS.close) where no asyncio loop
+        is running and PipeManager was never injected. Returns count of
+        flushed events.
+        """
+        if not self._pre_buffer:
+            return 0
+
+        events = [json.loads(data) for data in self._pre_buffer]
+        self._pre_buffer.clear()
+
+        try:
+            with self._session_factory() as session:
+                self._process_events_in_session(session, events)
+                session.commit()
+            count = len(events)
+            self._total_flushed += count
+            logger.debug("flush_sync: flushed %d pre-buffer events", count)
+            return count
+        except Exception as e:
+            logger.error("flush_sync failed, %d events lost: %s", len(events), e)
+            self._total_failed += len(events)
+            return 0
 
     # ------------------------------------------------------------------
     # Background consumer
@@ -328,78 +371,86 @@ class PipedRecordStoreWriteObserver:
 
             await self._flush_batch(batch)
 
-    async def _flush_batch(self, events: list[dict[str, Any]], attempt: int = 0) -> None:
-        """Flush a batch of events to RecordStore in a single transaction."""
+    @staticmethod
+    def _process_events_in_session(session: Any, events: list[dict[str, Any]]) -> None:
+        """Dispatch events to OperationLogger + VersionRecorder within a session.
+
+        Shared by ``_flush_batch()`` (async consumer) and ``flush_sync()`` (CLI drain).
+        Caller is responsible for ``session.commit()``.
+        """
         from nexus.storage.operation_logger import OperationLogger
         from nexus.storage.version_recorder import VersionRecorder
 
+        op_logger = OperationLogger(session)
+        recorder = VersionRecorder(session)
+
+        for event in events:
+            op = event["op"]
+            zone_id = event.get("zone_id")
+            agent_id = event.get("agent_id")
+
+            if op == "write":
+                op_logger.log_operation(
+                    operation_type="write",
+                    path=event["path"],
+                    zone_id=zone_id,
+                    agent_id=agent_id,
+                    snapshot_hash=event.get("snapshot_hash"),
+                    metadata_snapshot=event.get("metadata_snapshot"),
+                    status="success",
+                )
+                md = _metadata_from_dict(event["metadata"])
+                recorder.record_write(md, is_new=event["is_new"])
+
+            elif op == "delete":
+                op_logger.log_operation(
+                    operation_type="delete",
+                    path=event["path"],
+                    zone_id=zone_id,
+                    agent_id=agent_id,
+                    snapshot_hash=event.get("snapshot_hash"),
+                    metadata_snapshot=event.get("metadata_snapshot"),
+                    status="success",
+                )
+                recorder.record_delete(event["path"])
+
+            elif op == "rename":
+                op_logger.log_operation(
+                    operation_type="rename",
+                    path=event["path"],
+                    new_path=event.get("new_path"),
+                    zone_id=zone_id,
+                    agent_id=agent_id,
+                    snapshot_hash=event.get("snapshot_hash"),
+                    metadata_snapshot=event.get("metadata_snapshot"),
+                    status="success",
+                )
+
+            elif op == "mkdir":
+                op_logger.log_operation(
+                    operation_type="mkdir",
+                    path=event["path"],
+                    zone_id=zone_id,
+                    agent_id=agent_id,
+                    status="success",
+                )
+
+            elif op == "rmdir":
+                op_type = "rmdir_recursive" if event.get("recursive") else "rmdir"
+                op_logger.log_operation(
+                    operation_type=op_type,
+                    path=event["path"],
+                    zone_id=zone_id,
+                    agent_id=agent_id,
+                    status="success",
+                )
+
+    async def _flush_batch(self, events: list[dict[str, Any]], attempt: int = 0) -> None:
+        """Flush a batch of events to RecordStore in a single transaction."""
         t0 = time.monotonic()
         try:
             with self._session_factory() as session:
-                op_logger = OperationLogger(session)
-                recorder = VersionRecorder(session)
-
-                for event in events:
-                    op = event["op"]
-                    zone_id = event.get("zone_id")
-                    agent_id = event.get("agent_id")
-
-                    if op == "write":
-                        op_logger.log_operation(
-                            operation_type="write",
-                            path=event["path"],
-                            zone_id=zone_id,
-                            agent_id=agent_id,
-                            snapshot_hash=event.get("snapshot_hash"),
-                            metadata_snapshot=event.get("metadata_snapshot"),
-                            status="success",
-                        )
-                        md = _metadata_from_dict(event["metadata"])
-                        recorder.record_write(md, is_new=event["is_new"])
-
-                    elif op == "delete":
-                        op_logger.log_operation(
-                            operation_type="delete",
-                            path=event["path"],
-                            zone_id=zone_id,
-                            agent_id=agent_id,
-                            snapshot_hash=event.get("snapshot_hash"),
-                            metadata_snapshot=event.get("metadata_snapshot"),
-                            status="success",
-                        )
-                        recorder.record_delete(event["path"])
-
-                    elif op == "rename":
-                        op_logger.log_operation(
-                            operation_type="rename",
-                            path=event["path"],
-                            new_path=event.get("new_path"),
-                            zone_id=zone_id,
-                            agent_id=agent_id,
-                            snapshot_hash=event.get("snapshot_hash"),
-                            metadata_snapshot=event.get("metadata_snapshot"),
-                            status="success",
-                        )
-
-                    elif op == "mkdir":
-                        op_logger.log_operation(
-                            operation_type="mkdir",
-                            path=event["path"],
-                            zone_id=zone_id,
-                            agent_id=agent_id,
-                            status="success",
-                        )
-
-                    elif op == "rmdir":
-                        op_type = "rmdir_recursive" if event.get("recursive") else "rmdir"
-                        op_logger.log_operation(
-                            operation_type=op_type,
-                            path=event["path"],
-                            zone_id=zone_id,
-                            agent_id=agent_id,
-                            status="success",
-                        )
-
+                self._process_events_in_session(session, events)
                 session.commit()
 
             duration = time.monotonic() - t0

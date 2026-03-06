@@ -321,6 +321,30 @@ Both support:
 - ✅ Multi-agent collaboration
 - ✅ Production deployment
 
+## Tutorials
+
+Step-by-step tutorials for specific Nexus features.
+
+### Audit Trail
+**Directory**: [`tutorials/audit-trail/`](tutorials/audit-trail/)
+
+Demonstrates the operation log — every write, delete, rename, mkdir, rmdir is recorded and queryable via `nexus ops log`. Events persist even in CLI mode (no server needed).
+
+**Run**:
+```bash
+export NEXUS_DATABASE_URL="postgresql://postgres:nexus@localhost:5432/nexus"
+./examples/tutorials/audit-trail/audit_trail_demo.sh
+```
+
+See [tutorials/audit-trail/README.md](tutorials/audit-trail/README.md) for details.
+
+### Deployment Profiles
+**Directory**: [`tutorials/deployment-profiles/`](tutorials/deployment-profiles/)
+
+Covers Nexus deployment profiles (minimal → cloud), server modes, and verifying operations across configurations.
+
+See [tutorials/deployment-profiles/README.md](tutorials/deployment-profiles/README.md) for details.
+
 ## Next Steps
 
 - **Advanced Usage**: See [`docs/api/advanced-usage.md`](../docs/api/advanced-usage.md)

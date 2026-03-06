@@ -193,11 +193,21 @@ def ops_log(
         if ops_service is None:
             raise click.ClickException("Operation log requires a local NexusFS instance")
 
+        # Support prefix matching: --path /demo/ matches all paths under /demo/
+        # Use path_pattern (SQL LIKE with * → %) when path ends with /
+        # or contains *, otherwise exact match.
+        _path = path
+        _path_pattern = None
+        if path and (path.endswith("/") or "*" in path):
+            _path = None
+            _path_pattern = path.rstrip("/") + "/*" if path.endswith("/") else path
+
         operations = ops_service.list_operations(
             zone_id=zone,
             agent_id=agent,
             operation_type=op_type,
-            path=path,
+            path=_path,
+            path_pattern=_path_pattern,
             status=status,
             limit=limit,
         )

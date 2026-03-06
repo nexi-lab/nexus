@@ -14,95 +14,20 @@ This package contains all CLI commands organized by functionality:
 - workflows: Workflow automation system
 """
 
+import importlib
+
 import click
 
-# Import all command registration functions
-from nexus.cli.commands import (
-    admin,
-    agent,
-    cache,
-    cluster,  # Issue #2694: K3s-style join token for cluster mTLS
-    connectors,
-    context,  # Issue #1315: Context versioning — workspace branching
-    directory,
-    file_ops,
-    llm,
-    mcp,
-    memory,
-    metadata,
-    migrate,
-    mounts,
-    network,
-    oauth,
-    operations,
-    plugins,
-    rebac,
-    sandbox,
-    search,
-    server,
-    tls,
-    versions,
-    work,
-    workflows,
-    workspace,
-)
-from nexus.cli.commands import (
-    zone as zone_mod,  # zone.py (federation + portability CLI commands)
-)
+# ---------------------------------------------------------------------------
+# Lazy command registration — modules whose dependencies are missing (e.g. in
+# the slim remote-only Docker image) are silently skipped so that the CLI
+# still boots with whatever commands *can* load.
+# ---------------------------------------------------------------------------
 
-
-def register_all_commands(cli: click.Group) -> None:
-    """Register all commands from all modules to the main CLI group.
-
-    Args:
-        cli: The main Click group to register commands to
-    """
-    # Register commands from each module
-    file_ops.register_commands(cli)
-    directory.register_commands(cli)
-    search.register_commands(cli)
-    rebac.register_commands(cli)
-    versions.register_commands(cli)
-    workspace.register_commands(cli)
-    metadata.register_commands(cli)
-    work.register_commands(cli)
-    server.register_commands(cli)
-    plugins.register_commands(cli)
-    operations.register_commands(cli)
-    workflows.register_commands(cli)
-    mounts.register_commands(cli)  # Mount management commands
-    connectors.register_commands(cli)  # Issue #528: Connector registry
-    llm.register_commands(cli)  # v0.4.0: LLM document reading commands
-    mcp.register_commands(cli)  # v0.7.0: MCP server commands
-    cache.register_commands(cli)  # Issue #1076: Cache warmup commands
-    cli.add_command(memory.memory)  # v0.4.0: Memory API commands
-    cli.add_command(agent.agent)  # v0.5.0: Agent management commands
-    cli.add_command(admin.admin)  # v0.5.1: Admin API commands for user management
-    cli.add_command(sandbox.sandbox)  # v0.8.0: Sandbox management commands (Issue #372)
-    cli.add_command(oauth.oauth)  # v0.7.0: OAuth credential management (Issue #137)
-    cli.add_command(zone_mod.zone)  # v0.8.0: Zone federation + portability (Issue #1161, #1326)
-    migrate.register_commands(cli)  # v1.0.0: Migration tools (Issue #165)
-    context.register_commands(cli)  # Issue #1315: Context versioning
-    network.register_commands(cli)  # WireGuard mesh network for federation
-    tls.register_commands(cli)  # Issue #1250: TLS cert management for federation
-    cluster.register_commands(cli)  # Issue #2694: K3s-style cluster join
-
-
-__all__ = [
-    "register_all_commands",
-    "admin",
-    "agent",
-    "cache",
-    "connectors",
+# Modules that expose register_commands(cli)
+_REGISTER_COMMANDS = [
     "file_ops",
     "directory",
-    "llm",
-    "mcp",
-    "memory",
-    "migrate",
-    "mounts",
-    "oauth",
-    "sandbox",
     "search",
     "rebac",
     "versions",
@@ -113,9 +38,53 @@ __all__ = [
     "plugins",
     "operations",
     "workflows",
-    "context",  # Issue #1315: Context versioning
-    "network",  # WireGuard mesh network for federation
-    "tls",  # Issue #1250: TLS cert management
-    "cluster",  # Issue #2694: K3s-style cluster join
-    "zone_mod",  # zone.py (federation + portability CLI)
+    "mounts",
+    "connectors",
+    "llm",
+    "mcp",
+    "cache",
+    "migrate",
+    "context",
+    "network",
+    "tls",
+    "cluster",
+]
+
+# Modules that expose a single Click command/group to add via cli.add_command
+_ADD_COMMAND: dict[str, str] = {
+    "memory": "memory",
+    "agent": "agent",
+    "admin": "admin",
+    "sandbox": "sandbox",
+    "oauth": "oauth",
+    "zone": "zone",
+}
+
+
+def register_all_commands(cli: click.Group) -> None:
+    """Register all commands from all modules to the main CLI group.
+
+    Commands whose dependencies are unavailable are silently skipped so the
+    CLI still works in stripped-down environments (e.g. remote-only image).
+
+    Args:
+        cli: The main Click group to register commands to
+    """
+    for name in _REGISTER_COMMANDS:
+        try:
+            mod = importlib.import_module(f"nexus.cli.commands.{name}")
+            mod.register_commands(cli)
+        except (ImportError, Exception):
+            pass
+
+    for mod_name, cmd_name in _ADD_COMMAND.items():
+        try:
+            mod = importlib.import_module(f"nexus.cli.commands.{mod_name}")
+            cli.add_command(getattr(mod, cmd_name))
+        except (ImportError, Exception):
+            pass
+
+
+__all__ = [
+    "register_all_commands",
 ]

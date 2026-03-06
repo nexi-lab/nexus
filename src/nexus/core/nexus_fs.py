@@ -3978,8 +3978,12 @@ class NexusFS(  # type: ignore[misc]
                     logging.getLogger(__name__).debug(
                         "NexusFS.close: flushed %d write observer events", count
                     )
-            except Exception:
-                pass  # best-effort; DB may already be closing
+            except Exception as exc:
+                import logging
+
+                logging.getLogger(__name__).debug(
+                    "NexusFS.close: flush_sync failed (best-effort): %s", exc
+                )
 
         # Close metadata store
         self.metadata.close()

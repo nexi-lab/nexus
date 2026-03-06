@@ -456,7 +456,9 @@ async def handle_semantic_search_index(
     recursive = getattr(params, "recursive", True)
 
     try:
-        await nexus_fs.ainitialize_semantic_search()
+        await nexus_fs.search_service.ainitialize_semantic_search(
+            nx=nexus_fs, record_store_engine=None
+        )
     except Exception as e:
         raise ValueError(
             f"Semantic search is not initialized and could not be auto-initialized: {e}"

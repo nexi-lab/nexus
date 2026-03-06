@@ -6,7 +6,7 @@ import logging
 import time
 from collections.abc import Callable, Generator, Iterator
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any
 
 from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
 from nexus.contracts.constants import ROOT_ZONE_ID
@@ -202,7 +202,6 @@ class NexusFS(  # type: ignore[misc]
 
         # Lazy-init sentinels
         self._token_manager = None
-        self._semantic_search = None
         self._sandbox_manager: Any = None
         self._coordination_client: Any = None
         self._event_client: Any = None
@@ -3873,87 +3872,6 @@ class NexusFS(  # type: ignore[misc]
         """
         created = self.metadata.backfill_directory_index(prefix=prefix, zone_id=zone_id)
         return {"entries_created": created, "prefix": prefix}
-
-    @rpc_expose(description="Get specific file version")
-    def get_version(
-        self, path: str, version: int, context: OperationContext | None = None
-    ) -> bytes:
-        """Get a specific version of a file."""
-        from nexus.lib.sync_bridge import run_sync
-
-        return cast(bytes, run_sync(self.version_service.get_version(path, version, context)))
-
-    @rpc_expose(description="List file versions")
-    def list_versions(
-        self, path: str, context: OperationContext | None = None
-    ) -> builtins.list[dict[str, Any]]:
-        """List all versions of a file."""
-        from nexus.lib.sync_bridge import run_sync
-
-        return cast(
-            builtins.list[dict[str, Any]],
-            run_sync(self.version_service.list_versions(path, context)),
-        )
-
-    @rpc_expose(description="Rollback file to previous version")
-    def rollback(self, path: str, version: int, context: OperationContext | None = None) -> None:
-        """Rollback file to a previous version."""
-        from nexus.lib.sync_bridge import run_sync
-
-        cast(None, run_sync(self.version_service.rollback(path, version, context)))
-
-    @rpc_expose(description="Compare file versions")
-    def diff_versions(
-        self,
-        path: str,
-        v1: int,
-        v2: int,
-        mode: str = "metadata",
-        context: OperationContext | None = None,
-    ) -> dict[str, Any] | str:
-        """Compare two versions of a file."""
-        from nexus.lib.sync_bridge import run_sync
-
-        return cast(
-            dict[str, Any] | str,
-            run_sync(self.version_service.diff_versions(path, v1, v2, mode, context)),
-        )
-
-    async def ainitialize_semantic_search(
-        self,
-        embedding_provider: str | None = None,
-        embedding_model: str | None = None,
-        api_key: str | None = None,
-        chunk_size: int = 1024,
-        chunk_strategy: str = "semantic",
-        async_mode: bool = True,
-        cache_url: str | None = None,
-        embedding_cache_ttl: int = 86400 * 3,
-    ) -> None:
-        """Initialize semantic search engine.
-
-        Delegates to SearchService.ainitialize_semantic_search() (Issue #1287).
-        """
-        if self._record_store is None:
-            raise RuntimeError("Semantic search requires RecordStore (SQL engine)")
-
-        await self.search_service.ainitialize_semantic_search(
-            nx=self,
-            record_store_engine=self._record_store.engine,
-            embedding_provider=embedding_provider,
-            embedding_model=embedding_model,
-            api_key=api_key,
-            chunk_size=chunk_size,
-            chunk_strategy=chunk_strategy,
-            async_mode=async_mode,
-            cache_url=cache_url,
-            embedding_cache_ttl=embedding_cache_ttl,
-        )
-        # Keep backward-compat reference on NexusFS
-        self._semantic_search = self.search_service._semantic_search  # type: ignore[assignment]  # allowed
-        # Wire search engine into LLMService (Issue #684: DI instead of kernel access)
-        if hasattr(self, "llm_service") and self._semantic_search is not None:
-            self.llm_service._semantic_search_engine = self._semantic_search
 
     def close(self) -> None:
         """Close the filesystem and release resources."""

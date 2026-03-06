@@ -1,8 +1,8 @@
 """Local filesystem BlobTransport — raw key→blob I/O on local disk.
 
 Implements the BlobTransport protocol using atomic temp+replace writes
-with optional fsync for durability. Extracts I/O patterns from legacy
-CASBlobStore and CASLocalBackend into the orthogonal transport layer.
+with optional fsync for durability. Extracts I/O patterns from the legacy
+CAS engine into the orthogonal transport layer.
 
 Storage mapping:
     key "cas/ab/cd/abcd1234…" → root_path / "cas" / "ab" / "cd" / "abcd1234…"
@@ -12,7 +12,7 @@ keys to filesystem paths under root_path.
 
 References:
     - Issue #1323: CAS x Backend orthogonal composition
-    - backends/cas_blob_store.py — atomic write patterns (source)
+    - CASBackend — atomic write patterns
     - transports/gcs_transport.py — reference transport implementation
 """
 

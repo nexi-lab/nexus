@@ -17,7 +17,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
-from nexus.system_services.scheduler.constants import TIER_ALIASES, RequestState
+from nexus.system_services.scheduler.constants import TIER_ALIASES, OverlapPolicy, RequestState
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +25,7 @@ router = APIRouter(prefix="/api/v2/scheduler", tags=["scheduler"])
 
 VALID_PRIORITIES = frozenset(TIER_ALIASES.keys())
 VALID_REQUEST_STATES = frozenset(s.value for s in RequestState)
+VALID_OVERLAP_POLICIES = frozenset(p.value for p in OverlapPolicy)
 
 # =============================================================================
 # Pydantic Models
@@ -51,6 +52,10 @@ class SubmitTaskRequest(BaseModel):
     estimated_service_time: float = Field(
         default=30.0, gt=0, description="Estimated execution time in seconds"
     )
+    overlap_policy: str = Field(
+        default="skip",
+        description="Overlap policy for duplicate idempotency_key: allow, skip, cancel",
+    )
 
     @field_validator("priority")
     @classmethod
@@ -66,6 +71,14 @@ class SubmitTaskRequest(BaseModel):
         if v not in VALID_REQUEST_STATES:
             valid = ", ".join(sorted(VALID_REQUEST_STATES))
             raise ValueError(f"Invalid request_state '{v}'. Must be one of: {valid}")
+        return v
+
+    @field_validator("overlap_policy")
+    @classmethod
+    def validate_overlap_policy(cls, v: str) -> str:
+        if v not in VALID_OVERLAP_POLICIES:
+            valid = ", ".join(sorted(VALID_OVERLAP_POLICIES))
+            raise ValueError(f"Invalid overlap_policy '{v}'. Must be one of: {valid}")
         return v
 
 
@@ -171,6 +184,11 @@ async def submit_task(
     Returns the task details with computed effective priority.
     """
     from nexus.contracts.protocols.scheduler import AgentRequest
+    from nexus.system_services.scheduler.exceptions import (
+        CapacityExceeded,
+        RateLimitExceeded,
+        TaskAlreadyRunning,
+    )
 
     agent_id = _extract_agent_id(auth_result)
     tier = TIER_ALIASES[request.priority]
@@ -186,9 +204,18 @@ async def submit_task(
         boost_amount=str(request.boost),
         estimated_service_time=request.estimated_service_time,
         idempotency_key=request.idempotency_key,
+        overlap_policy=request.overlap_policy,
     )
 
-    task_id = await scheduler.submit(agent_request)
+    try:
+        task_id = await scheduler.submit(agent_request)
+    except RateLimitExceeded as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except CapacityExceeded as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except TaskAlreadyRunning as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
     status = await scheduler.get_status(task_id)
     if status is None:
         raise HTTPException(status_code=500, detail="Task creation failed")

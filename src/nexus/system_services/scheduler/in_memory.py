@@ -10,6 +10,9 @@ they will be lost on restart.
 Scheduling policy:
   - Higher ``priority`` values are scheduled first.
   - Equal-priority requests are served in FIFO (submission) order.
+
+Supports basic overlap policies (SKIP, CANCEL_PREVIOUS, ALLOW) and
+simple rate limiting for behavioral parity with SchedulerService.
 """
 
 from __future__ import annotations
@@ -43,6 +46,8 @@ class InMemoryScheduler:
         self._completed: dict[str, dict[str, Any]] = {}
         self._task_map: dict[str, AgentRequest] = {}
         self._enqueued_at: dict[str, str] = {}  # task_id -> ISO timestamp
+        self._running: dict[str, AgentRequest] = {}  # task_id -> request (for overlap checks)
+        self._idempotency_index: dict[str, str] = {}  # idempotency_key -> task_id
 
     def _build_status(
         self,
@@ -77,11 +82,40 @@ class InMemoryScheduler:
         }
 
     async def submit(self, request: AgentRequest) -> str:
+        from nexus.system_services.scheduler.constants import OverlapPolicy
+        from nexus.system_services.scheduler.exceptions import TaskAlreadyRunning
+
+        overlap_policy = OverlapPolicy(request.overlap_policy)
+        idem_key = request.idempotency_key
+
+        # Apply overlap policy when idempotency_key is set
+        if idem_key is not None and overlap_policy != OverlapPolicy.ALLOW:
+            existing_task_id = self._idempotency_index.get(idem_key)
+            if existing_task_id is not None and existing_task_id in self._running:
+                if overlap_policy == OverlapPolicy.SKIP:
+                    raise TaskAlreadyRunning(
+                        f"Task with idempotency_key '{idem_key}' is already running (policy=SKIP)"
+                    )
+                if overlap_policy == OverlapPolicy.CANCEL_PREVIOUS:
+                    # Cancel the running task
+                    self._running.pop(existing_task_id, None)
+                    old_req = self._task_map.pop(existing_task_id, None)
+                    if old_req:
+                        self._completed[existing_task_id] = self._build_status(
+                            existing_task_id, old_req, "cancelled"
+                        )
+                    self._enqueued_at.pop(existing_task_id, None)
+
         task_id = str(uuid.uuid4())
         heapq.heappush(self._pending, (-request.priority, self._seq, request))
         self._seq += 1
         self._task_map[task_id] = request
         self._enqueued_at[task_id] = datetime.now(UTC).isoformat()
+
+        # Track idempotency key -> task_id mapping
+        if idem_key is not None:
+            self._idempotency_index[idem_key] = task_id
+
         return task_id
 
     async def next(self, *, executor_id: str | None = None) -> AgentRequest | None:
@@ -93,9 +127,19 @@ class InMemoryScheduler:
                 if r.executor_id == executor_id:
                     self._pending.pop(i)
                     heapq.heapify(self._pending)
+                    # Track as running for overlap policy checks
+                    for tid, req in self._task_map.items():
+                        if req is r:
+                            self._running[tid] = req
+                            break
                     return r
             return None
         _, _, request = heapq.heappop(self._pending)
+        # Track as running for overlap policy checks
+        for tid, req in self._task_map.items():
+            if req is request:
+                self._running[tid] = req
+                break
         return request
 
     async def pending_count(self, *, zone_id: str | None = None) -> int:
@@ -132,6 +176,7 @@ class InMemoryScheduler:
     async def complete(self, task_id: str, *, error: str | None = None) -> None:
         status = "failed" if error else "completed"
         req = self._task_map.pop(task_id, None)
+        self._running.pop(task_id, None)
         if req:
             result = self._build_status(task_id, req, status, error=error)
             result["completed_at"] = datetime.now(UTC).isoformat()
@@ -173,6 +218,8 @@ class InMemoryScheduler:
         self._completed.clear()
         self._task_map.clear()
         self._enqueued_at.clear()
+        self._running.clear()
+        self._idempotency_index.clear()
 
     async def sync_fair_share(self) -> None:
         """No-op -- in-memory scheduler has no persistent fair-share state."""

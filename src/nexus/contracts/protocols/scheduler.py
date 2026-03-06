@@ -62,6 +62,7 @@ class AgentRequest:
     boost_amount: str = "0"
     estimated_service_time: float = 30.0
     idempotency_key: str | None = None
+    overlap_policy: str = "skip"  # allow | skip | cancel (Issue #2749)
 
 
 @runtime_checkable

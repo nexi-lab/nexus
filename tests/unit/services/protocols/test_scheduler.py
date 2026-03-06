@@ -49,6 +49,8 @@ class TestAgentRequest:
             "boost_amount",
             "estimated_service_time",
             "idempotency_key",
+            # Overlap policy (Issue #2749)
+            "overlap_policy",
         }
 
     def test_defaults(self) -> None:
@@ -64,6 +66,7 @@ class TestAgentRequest:
         assert req.deadline is None
         assert req.boost_amount == "0"
         assert req.estimated_service_time == 30.0
+        assert req.overlap_policy == "skip"
 
     def test_payload_default_factory(self) -> None:
         """Each instance gets its own dict, not a shared one."""

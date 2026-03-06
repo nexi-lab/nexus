@@ -36,11 +36,10 @@ in **Section 5.2**. Rename completed in Phase 5.
 |---|---|---|---|
 | `local.py` | 966 | `LocalBackend` | `CASBackend(LocalBlobTransport)` + feature DI |
 | `passthrough.py` | 527 | `PassthroughBackend` | **Keep** — unique pointer+CAS architecture for inotify watching, not replaceable by CASBackend or PathBackend |
-| `cas_blob_store.py` | 567 | `CASBlobStore`, `CASMeta` | Split into `LocalBlobTransport` (I/O) + `CASBackend` (metadata). `_StripeLock` extracted to `backends/base/stripe_lock.py`. |
 | `chunked_storage.py` | 573 | `ChunkedStorageMixin` | `CDCEngine` (standalone) |
 | `async_local.py` | 755 | `AsyncLocalBackend` | Async wrapper around `CASBackend(LocalBlobTransport)` |
 | `local_connector.py` | 808 | `LocalConnectorBackend` | **Keep** — unique path-based features (symlink safety, inode versioning, L1 cache) |
-| **To delete** | **~2,861** | | (excludes passthrough.py + local_connector.py) |
+| **To delete** | **~2,294** | | (excludes passthrough.py + local_connector.py) |
 
 **Why migrate `async_local.py`:** Async variant of `LocalBackend`, uses `CASBlobStore`
 directly, not registered in `ConnectorRegistry`. Same monolith problem.
@@ -548,15 +547,15 @@ whether to register or keep as internal.
 - ~~Rename thin connector files/classes/reg names per Section 5.2~~ **DONE**
 - Wire factory: `"cas_local"` -> `CASBackend(LocalBlobTransport, ...)`, `"path_local"` -> `PathBackend(LocalBlobTransport)`
 - Add backward-compat aliases for old connector names (Section 5.2)
-- Delete: `local.py`, `cas_blob_store.py`, `chunked_storage.py`,
-  `async_local.py`
+- Delete: `local.py`, `chunked_storage.py`, `async_local.py`
+- `cas_blob_store.py` already deleted
 - **Keep**: `passthrough.py` (unique pointer+CAS inotify architecture), `local_connector.py` (unique path-based features)
 
 ### Phase 6: StripeLock extraction — **DONE**
 
-`_StripeLock` extracted from `cas_blob_store.py` to standalone module at
+`_StripeLock` extracted to standalone module at
 `backends/base/stripe_lock.py`. Now importable independently for CAS metadata
-coordination without pulling in the legacy `CASBlobStore` monolith.
+coordination.
 
 ### Phase 7: WriteWAL hot/cold path (post-V0, #1397)
 
@@ -597,10 +596,10 @@ See Section 5.2 for the full rename table (thin connector files + classes + regi
 | File | Lines | Replaced By |
 |---|---|---|
 | `backends/local.py` | 966 | `CASBackend(LocalBlobTransport)` + feature DI |
-| `backends/cas_blob_store.py` | 567 | `LocalBlobTransport` (I/O) + `CASBackend` (metadata). `_StripeLock` extracted to `backends/base/stripe_lock.py`. |
+| `backends/cas_blob_store.py` | 567 | `LocalBlobTransport` (I/O) + `CASBackend` (metadata). `_StripeLock` → `backends/base/stripe_lock.py` |
 | `backends/chunked_storage.py` | 573 | `CDCEngine` (standalone class) |
 | `backends/async_local.py` | 755 | Async wrapper around `CASBackend(LocalBlobTransport)` |
-| **Total deleted** | **~2,861** | |
+| **Total deleted** | **~2,861** | All deleted |
 
 ### Net Change
 

@@ -26,7 +26,7 @@ Storage layout (in transport key-space):
 
 References:
     - Issue #1323: CAS x Backend orthogonal composition
-    - backends/cas_blob_store.py — local CAS engine (_StripeLock source)
+    - backends/base/stripe_lock.py — _StripeLock for CAS metadata coordination
 """
 
 from __future__ import annotations
@@ -90,7 +90,7 @@ class CASBackend(Backend):
         # Feature DI: None means feature disabled (cloud backends pass nothing)
         self._bloom = bloom_filter  # nexus_fast.BloomFilter
         self._cache = content_cache  # storage.content_cache.ContentCache
-        self._stripe_lock = stripe_lock  # cas_blob_store._StripeLock
+        self._stripe_lock = stripe_lock  # stripe_lock._StripeLock
         self._on_write_callback = on_write_callback
 
     @property

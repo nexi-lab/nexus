@@ -17,18 +17,22 @@ from nexus.backends.base.registry import (
     create_connector_from_config,
     register_connector,
 )
-from nexus.backends.cache.models import IMMUTABLE_VERSION, CachedReadResult
-from nexus.backends.cache.service import CacheService
-
-# Core backends (always available)
-from nexus.backends.storage.cas_local import CASLocalBackend
-from nexus.backends.storage.passthrough import PassthroughBackend
-from nexus.backends.wrappers.cache_mixin import CacheConnectorMixin, CacheEntry, SyncResult
 from nexus.core.object_store import ObjectStoreABC, WriteResult
 
 # Optional backends — loaded on first access via __getattr__.
-# Maps attribute name → (module_path, class_name).
+# Backends whose dependencies may be unavailable in slim images (e.g. remote-only)
+# are loaded lazily to avoid ImportError on startup.
 _OPTIONAL_BACKENDS: dict[str, tuple[str, str]] = {
+    # Cache layer (depends on sqlalchemy)
+    "CachedReadResult": ("nexus.backends.cache.models", "CachedReadResult"),
+    "IMMUTABLE_VERSION": ("nexus.backends.cache.models", "IMMUTABLE_VERSION"),
+    "CacheService": ("nexus.backends.cache.service", "CacheService"),
+    "CacheConnectorMixin": ("nexus.backends.wrappers.cache_mixin", "CacheConnectorMixin"),
+    "CacheEntry": ("nexus.backends.wrappers.cache_mixin", "CacheEntry"),
+    "SyncResult": ("nexus.backends.wrappers.cache_mixin", "SyncResult"),
+    # Storage backends
+    "CASLocalBackend": ("nexus.backends.storage.cas_local", "CASLocalBackend"),
+    "PassthroughBackend": ("nexus.backends.storage.passthrough", "PassthroughBackend"),
     "CASGCSBackend": ("nexus.backends.storage.cas_gcs", "CASGCSBackend"),
     "GoogleDriveConnectorBackend": (
         "nexus.backends.connectors.gdrive.connector",

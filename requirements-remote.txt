@@ -1,0 +1,10 @@
+# Minimal dependencies for NEXUS_PROFILE=remote (SDK/CLI client).
+# Only packages needed by the remote code path (HTTP/JSON-RPC via httpx).
+# No grpcio, no SQLAlchemy, no numpy, no FastAPI.
+httpx[http2]>=0.28.1
+tenacity>=8.2.0
+pydantic[email]>=2.5.0
+pyyaml>=6.0.1
+click>=8.1.7
+rich>=13.7.0
+tqdm>=4.66.0

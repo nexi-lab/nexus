@@ -513,19 +513,18 @@ def _register_vfs_hooks(
         dispatch.register_intercept_rmdir(audit)
 
     # DynamicViewerReadHook (post-read: column-level CSV filtering)
-    rebac_mgr = getattr(nx, "_rebac_manager", None)
     has_viewer = (
-        rebac_mgr is not None
-        and hasattr(nx, "_get_subject_from_context")
+        getattr(nx, "_rebac_manager", None) is not None
         and hasattr(nx, "get_dynamic_viewer_config")
         and hasattr(nx, "apply_dynamic_viewer_filter")
     )
     if has_viewer:
         from nexus.bricks.rebac.dynamic_viewer_hook import DynamicViewerReadHook
+        from nexus.lib.context_utils import get_subject_from_context
 
         dispatch.register_intercept_read(
             DynamicViewerReadHook(
-                get_subject=nx._get_subject_from_context,
+                get_subject=get_subject_from_context,
                 get_viewer_config=nx.get_dynamic_viewer_config,
                 apply_filter=nx.apply_dynamic_viewer_filter,
             )
@@ -554,7 +553,8 @@ def _register_vfs_hooks(
         )
 
     # TigerCacheRenameHook (post-rename: bitmap updates)
-    tiger_cache = getattr(rebac_mgr, "_tiger_cache", None) if rebac_mgr else None
+    _rebac_mgr = getattr(nx, "_rebac_manager", None)
+    tiger_cache = getattr(_rebac_mgr, "_tiger_cache", None) if _rebac_mgr else None
     if tiger_cache is not None:
         from nexus.bricks.rebac.cache.tiger.rename_hook import TigerCacheRenameHook
 
@@ -610,7 +610,6 @@ def _register_vfs_hooks(
             path_router=nx.router,
             permission_checker=permission_checker,
             parse_fn=getattr(nx, "_virtual_view_parse_fn", None),
-            viewer_filter_fn=getattr(nx, "_apply_dynamic_viewer_filter_if_needed", None),
             read_tracker_fn=None,
         )
     )

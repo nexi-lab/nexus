@@ -730,30 +730,6 @@ class TestMountPermissionEnforcement:
         assert result["removed"] is True
 
 
-class TestGrantMountOwnerPermission:
-    """Tests for _grant_mount_owner_permission helper method."""
-
-    def test_grant_mount_owner_permission_no_context(self, nx: NexusFS) -> None:
-        """Test _grant_mount_owner_permission without context does nothing."""
-        # Should not raise, just log a warning
-        nx._grant_mount_owner_permission("/mnt/test", None)
-
-    def test_grant_mount_owner_permission_with_context(self, nx_with_permissions: NexusFS) -> None:
-        """Test _grant_mount_owner_permission with context."""
-        from nexus.contracts.types import OperationContext
-
-        context = OperationContext(
-            user_id="alice",
-            groups=[],
-            zone_id="test_zone",
-            subject_type="user",
-            subject_id="alice",
-        )
-
-        # Should not raise
-        nx_with_permissions._grant_mount_owner_permission("/mnt/test", context)
-
-
 class TestMountIntegration:
     """Integration tests for mount functionality."""
 

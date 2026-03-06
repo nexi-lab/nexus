@@ -191,6 +191,8 @@ def bind_wired_services(target: object, wired: "WiredServices | dict[str, Any]")
         "metadata_export_service": "_metadata_export_service",
         "descendant_checker": "_descendant_checker",
         "memory_provider": "_memory_provider",
+        "time_travel_service": "time_travel_service",
+        "operations_service": "operations_service",
     }
     if isinstance(wired, dict):
         for src_key, target_attr in _SLOT_MAP.items():

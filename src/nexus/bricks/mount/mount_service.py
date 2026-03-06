@@ -550,6 +550,7 @@ class MountService:
                             "mount_point": mount_info.mount_point,
                             "readonly": mount_info.readonly,
                             "admin_only": mount_info.admin_only,
+                            "status": getattr(mount_info, "status", "active"),
                         }
                     )
 

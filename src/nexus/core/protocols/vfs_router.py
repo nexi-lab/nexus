@@ -53,6 +53,7 @@ class MountInfo:
     mount_point: str
     readonly: bool
     admin_only: bool = False
+    status: str = "active"  # "active" or "stale"
 
 
 @runtime_checkable

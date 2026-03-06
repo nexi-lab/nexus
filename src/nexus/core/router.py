@@ -240,26 +240,35 @@ class PathRouter:
         """
         try:
             normalized = self._normalize_path(mount_point)
-            if normalized not in self._backends:
-                return False
-            del self._backends[normalized]
-            self._metastore.delete(normalized)
-            return True
+            if normalized in self._backends:
+                del self._backends[normalized]
+                self._metastore.delete(normalized)
+                return True
+            # Fallback: stale DT_MOUNT in metastore without a loaded backend
+            meta = self._metastore.get(normalized)
+            if meta is not None and meta.is_mount:
+                self._metastore.delete(normalized)
+                return True
+            return False
         except ValueError:
             return False
 
     def list_mounts(self) -> "list[MountInfo]":
-        """List all active mounts as MountInfo protocol objects."""
+        """List all mounts, including stale DT_MOUNT entries without loaded backends."""
         from nexus.core.protocols.vfs_router import MountInfo
 
-        return [
-            MountInfo(
-                mount_point=mp,
-                readonly=entry.readonly,
-                admin_only=entry.admin_only,
-            )
+        active_mps: set[str] = set(self._backends.keys())
+        result: list[MountInfo] = [
+            MountInfo(mount_point=mp, readonly=entry.readonly, admin_only=entry.admin_only)
             for mp, entry in sorted(self._backends.items())
         ]
+
+        # Stale: DT_MOUNT in metastore but no loaded backend
+        for meta in self._metastore.list("/"):
+            if meta.is_mount and meta.path not in active_mps:
+                result.append(MountInfo(mount_point=meta.path, readonly=False, status="stale"))
+
+        return sorted(result, key=lambda m: m.mount_point)
 
     def get_backend_by_name(self, name: str) -> "ObjectStoreABC | None":
         """Look up backend by name.

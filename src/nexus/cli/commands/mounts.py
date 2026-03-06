@@ -255,10 +255,16 @@ def list_mounts(
                 console.print("[yellow]No mounts found[/yellow]")
                 return
 
-            console.print(f"\n[bold cyan]Active Mounts ({len(mounts)} total)[/bold cyan]\n")
+            console.print(f"\n[bold cyan]Mounts ({len(mounts)} total)[/bold cyan]\n")
 
             for mount in mounts:
-                console.print(f"[bold]{mount['mount_point']}[/bold]")
+                status = mount.get("status", "active")
+                if status == "stale":
+                    console.print(
+                        f"[yellow]{mount['mount_point']}[/yellow]  [dim yellow](stale)[/dim yellow]"
+                    )
+                else:
+                    console.print(f"[bold]{mount['mount_point']}[/bold]")
                 console.print(f"  Read-Only: [cyan]{'Yes' if mount['readonly'] else 'No'}[/cyan]")
                 console.print(
                     f"  Admin-Only: [cyan]{'Yes' if mount.get('admin_only') else 'No'}[/cyan]"

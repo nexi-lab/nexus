@@ -295,6 +295,13 @@ class AgentSpec:
     qos_class: QoSClass = QoSClass.STANDARD
     zone_affinity: str | None = None
     spec_generation: int = 1
+    # Runtime definition (the "binary" to execute)
+    model: str = "claude-sonnet-4-6"
+    system_prompt: str | None = None
+    tools: tuple[str, ...] = ("read_file", "write_file", "edit_file", "bash", "grep", "glob")
+    max_turns: int = 100
+    max_context_tokens: int = 200_000
+    sandbox_timeout: int = 300
 
 
 @dataclass(frozen=True, slots=True)

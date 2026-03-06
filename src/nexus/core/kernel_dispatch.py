@@ -45,12 +45,15 @@ from nexus.contracts.operation_result import OperationWarning
 from nexus.contracts.vfs_hooks import (
     DeleteHookContext,
     MkdirHookContext,
+    ProcessSpawnHookContext,
+    ProcessTerminateHookContext,
     ReadHookContext,
     RenameHookContext,
     RmdirHookContext,
     VFSDeleteHook,
     VFSMkdirHook,
     VFSObserver,
+    VFSProcessHook,
     VFSReadHook,
     VFSRenameHook,
     VFSRmdirHook,
@@ -94,6 +97,7 @@ class KernelDispatch:
         "_rename_hooks",
         "_mkdir_hooks",
         "_rmdir_hooks",
+        "_process_hooks",
         "_observers",
     )
 
@@ -109,6 +113,9 @@ class KernelDispatch:
         self._rename_hooks: list[VFSRenameHook] = []
         self._mkdir_hooks: list[VFSMkdirHook] = []
         self._rmdir_hooks: list[VFSRmdirHook] = []
+
+        # INTERCEPT: process lifecycle hooks (Issue #2761)
+        self._process_hooks: list[VFSProcessHook] = []
 
         # OBSERVE: generic mutation observers
         self._observers: list[VFSObserver] = []
@@ -204,6 +211,11 @@ class KernelDispatch:
     def register_intercept_rmdir(self, hook: VFSRmdirHook) -> None:
         self._rmdir_hooks.append(hook)
 
+    # ── register_intercept_process: agent runtime hooks (Issue #2761) ───
+
+    def register_intercept_process(self, hook: VFSProcessHook) -> None:
+        self._process_hooks.append(hook)
+
     # ── register_observe: generic OBSERVE observers ────────────────────
 
     def register_observe(self, obs: VFSObserver) -> None:
@@ -255,6 +267,47 @@ class KernelDispatch:
             pre_fn = getattr(hook, "on_pre_rmdir", None)
             if pre_fn is not None:
                 pre_fn(ctx)
+
+    # ── PROCESS INTERCEPT dispatch (Issue #2761) ────────────────────────
+
+    def intercept_pre_proc_spawn(self, ctx: ProcessSpawnHookContext) -> None:
+        """PRE-INTERCEPT for process spawn — hooks may abort by raising."""
+        for hook in self._process_hooks:
+            pre_fn = getattr(hook, "on_pre_proc_spawn", None)
+            if pre_fn is not None:
+                pre_fn(ctx)
+
+    def intercept_post_proc_spawn(self, ctx: ProcessSpawnHookContext) -> None:
+        """POST-INTERCEPT for process spawn — warnings on failure."""
+        for hook in self._process_hooks:
+            post_fn = getattr(hook, "on_post_proc_spawn", None)
+            if post_fn is not None:
+                try:
+                    post_fn(ctx)
+                except Exception as exc:
+                    ctx.warnings.append(
+                        OperationWarning(
+                            severity="degraded",
+                            component=hook.name,
+                            message=f"post_proc_spawn hook failed: {exc}",
+                        )
+                    )
+
+    def intercept_post_proc_terminate(self, ctx: ProcessTerminateHookContext) -> None:
+        """POST-INTERCEPT for process terminate — warnings on failure."""
+        for hook in self._process_hooks:
+            post_fn = getattr(hook, "on_post_proc_terminate", None)
+            if post_fn is not None:
+                try:
+                    post_fn(ctx)
+                except Exception as exc:
+                    ctx.warnings.append(
+                        OperationWarning(
+                            severity="degraded",
+                            component=hook.name,
+                            message=f"post_proc_terminate hook failed: {exc}",
+                        )
+                    )
 
     # ── POST-INTERCEPT dispatch ────────────────────────────────────────
 
@@ -418,6 +471,10 @@ class KernelDispatch:
     @property
     def rmdir_hook_count(self) -> int:
         return len(self._rmdir_hooks)
+
+    @property
+    def process_hook_count(self) -> int:
+        return len(self._process_hooks)
 
     @property
     def observer_count(self) -> int:

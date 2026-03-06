@@ -17,6 +17,7 @@ import json
 from datetime import UTC, datetime
 from typing import Any, Protocol, runtime_checkable
 
+from nexus.bricks.a2a.exceptions import StaleTaskVersionError
 from nexus.bricks.a2a.models import Task, TaskState
 
 _KEY_PREFIX = "a2a:task"
@@ -66,6 +67,7 @@ class CacheBackedTaskStore:
         *,
         zone_id: str,
         agent_id: str | None = None,
+        expected_version: int | None = None,
     ) -> None:
         k = _key(zone_id, task.id)
         # Preserve created_at from existing record when updating
@@ -73,6 +75,23 @@ class CacheBackedTaskStore:
         if existing_raw is not None:
             existing: dict[str, Any] = json.loads(existing_raw)
             created_at: str = existing.get("created_at", datetime.now(UTC).isoformat())
+
+            # Optimistic locking: reject if stored version differs
+            if expected_version is not None:
+                stored_task = existing.get("task", {})
+                stored_version = stored_task.get("version", 1)
+                if stored_version != expected_version:
+                    raise StaleTaskVersionError(
+                        message=(
+                            f"Task {task.id} version mismatch: "
+                            f"expected {expected_version}, found {stored_version}"
+                        ),
+                        data={
+                            "taskId": task.id,
+                            "expectedVersion": expected_version,
+                            "storedVersion": stored_version,
+                        },
+                    )
         else:
             created_at = datetime.now(UTC).isoformat()
 

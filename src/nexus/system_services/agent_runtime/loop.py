@@ -1,7 +1,8 @@
-"""Agent loop — the core execution cycle (~100 LOC).
+"""Agent loop — the core execution cycle.
 
-Sends messages+tools to LLM, dispatches tool calls, repeats until
-no more tool calls or turn limit reached.
+Provides ``agent_step()`` (single turn) and ``agent_loop()`` (multi-turn
+wrapper).  ``agent_step()`` is the yield point that lets a scheduler
+drain the inbox, honor signals, and do fair scheduling between turns.
 
 Uses LLMProviderProtocol.complete_async() for tool-call turns.
 Emits AgentEvent callbacks for streaming to the API layer.
@@ -17,6 +18,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
+from nexus.contracts.agent_runtime_types import StepAction, StepResult
 from nexus.contracts.llm_types import Message, MessageRole, ToolCall, ToolFunction
 from nexus.system_services.agent_runtime.types import (
     Completed,
@@ -46,6 +48,139 @@ logger = logging.getLogger(__name__)
 _READ_ONLY_TOOLS = frozenset({"read_file", "grep", "glob", "list_dir"})
 
 
+# ======================================================================
+# agent_step — single turn
+# ======================================================================
+
+
+async def agent_step(
+    llm: LLMProviderProtocol,
+    dispatcher: ToolDispatcher,
+    context: AgentContext,
+    config: AgentProcessConfig,
+    ctx: OperationContext,
+    messages: list[Message],
+    turn: int,
+    *,
+    on_event: Callable[[AgentEvent], Awaitable[None]] | None = None,
+    on_checkpoint: Callable[[list[Message]], Awaitable[None]] | None = None,
+    cwd: str | None = None,
+    sandbox_id: str | None = None,
+) -> StepResult:
+    """Execute ONE turn of the agent loop.
+
+    Returns StepResult indicating whether to continue, stop, or report error.
+    The caller (agent_loop or scheduler) decides what to do next.
+
+    Args:
+        llm: LLM provider for inference.
+        dispatcher: Tool call router (maps tool names to VFS/sandbox).
+        context: AgentContext with system prompt and tool schemas.
+        config: Process config with limits (max_turns, etc.).
+        ctx: OperationContext for VFS permission checks.
+        messages: Current conversation messages (mutable, will be appended to).
+        turn: Current turn number (0-based).
+        on_event: Optional async callback for streaming events.
+        on_checkpoint: Optional async callback to save messages after tool dispatch.
+        cwd: Agent's current working directory for path resolution.
+        sandbox_id: Sandbox ID for bash/python tool execution.
+
+    Returns:
+        StepResult with action, updated messages tuple, and turn number.
+    """
+    tools = list(context.tools)
+    system_msg = Message(role=MessageRole.SYSTEM, content=context.system_prompt)
+
+    # Trim context window if over budget
+    llm_messages = _trim_to_budget(llm, system_msg, messages, config.max_context_tokens)
+
+    # Call LLM with tools
+    try:
+        response = await llm.complete_async(
+            llm_messages,
+            tools=tools if tools else None,
+        )
+    except Exception as exc:
+        error_msg = f"LLM call failed: {exc}"
+        logger.error(error_msg)
+        if on_event:
+            await on_event(Error(error=error_msg))
+        return StepResult(
+            action=StepAction.ERROR,
+            messages=tuple(messages),
+            turn=turn,
+            error=error_msg,
+        )
+
+    # Extract tool calls and content from response
+    tool_calls = _extract_tool_calls(response)
+    content = _extract_content(response)
+
+    if tool_calls:
+        # Append assistant message with tool calls
+        assistant_msg = Message(
+            role=MessageRole.ASSISTANT,
+            content=content,
+            tool_calls=tool_calls,
+        )
+        messages.append(assistant_msg)
+
+        # Dispatch tools (parallel for read-only batches, sequential otherwise)
+        results = await _dispatch_tools(
+            dispatcher,
+            ctx,
+            tool_calls,
+            cwd=cwd,
+            sandbox_id=sandbox_id,
+            sandbox_timeout=config.sandbox_timeout,
+        )
+
+        # Emit events and build tool result messages in original order
+        for tc, result in zip(tool_calls, results, strict=True):
+            if on_event:
+                await on_event(ToolCallStart(tool_call=tc))
+                await on_event(ToolCallResult(tool_call=tc, result=result))
+
+            messages.append(
+                Message(
+                    role=MessageRole.TOOL,
+                    name=tc.function.name,
+                    content=result,
+                    tool_call_id=tc.id,
+                )
+            )
+
+        # Checkpoint after each tool dispatch round for crash recovery
+        if on_checkpoint:
+            await on_checkpoint(messages)
+
+        return StepResult(
+            action=StepAction.CONTINUE,
+            messages=tuple(messages),
+            turn=turn + 1,
+        )
+
+    # No tool calls -> final response
+    if content:
+        messages.append(Message(role=MessageRole.ASSISTANT, content=content))
+        if on_event:
+            await on_event(TextDelta(text=content))
+
+    if on_event:
+        await on_event(Completed(message_count=len(messages)))
+
+    return StepResult(
+        action=StepAction.DONE,
+        messages=tuple(messages),
+        turn=turn,
+    )
+
+
+# ======================================================================
+# agent_loop — backward-compatible multi-turn wrapper
+# ======================================================================
+
+
 async def agent_loop(
     llm: LLMProviderProtocol,
     dispatcher: ToolDispatcher,
@@ -59,6 +194,9 @@ async def agent_loop(
     sandbox_id: str | None = None,
 ) -> list[Message]:
     """Run the agent loop until LLM produces a final response or limits hit.
+
+    Backward-compatible wrapper around ``agent_step()``.  All existing
+    callers (ProcessManager.resume(), tests, README examples) keep working.
 
     Args:
         llm: LLM provider for inference.
@@ -76,81 +214,26 @@ async def agent_loop(
         Updated message list (includes all new assistant + tool messages).
     """
     messages = list(context.messages)
-    tools = list(context.tools)
-    system_msg = Message(role=MessageRole.SYSTEM, content=context.system_prompt)
     turn = 0
 
     while turn < config.max_turns:
-        # Trim context window if over budget
-        llm_messages = _trim_to_budget(llm, system_msg, messages, config.max_context_tokens)
-
-        # Call LLM with tools
-        try:
-            response = await llm.complete_async(
-                llm_messages,
-                tools=tools if tools else None,
-            )
-        except Exception as exc:
-            error_msg = f"LLM call failed: {exc}"
-            logger.error(error_msg)
-            if on_event:
-                await on_event(Error(error=error_msg))
+        result = await agent_step(
+            llm,
+            dispatcher,
+            context,
+            config,
+            ctx,
+            messages,
+            turn,
+            on_event=on_event,
+            on_checkpoint=on_checkpoint,
+            cwd=cwd,
+            sandbox_id=sandbox_id,
+        )
+        messages = list(result.messages)
+        if result.action != StepAction.CONTINUE:
             break
-
-        # Extract tool calls and content from response
-        tool_calls = _extract_tool_calls(response)
-        content = _extract_content(response)
-
-        if tool_calls:
-            # Append assistant message with tool calls
-            assistant_msg = Message(
-                role=MessageRole.ASSISTANT,
-                content=content,
-                tool_calls=tool_calls,
-            )
-            messages.append(assistant_msg)
-
-            # Dispatch tools (parallel for read-only batches, sequential otherwise)
-            results = await _dispatch_tools(
-                dispatcher,
-                ctx,
-                tool_calls,
-                cwd=cwd,
-                sandbox_id=sandbox_id,
-                sandbox_timeout=config.sandbox_timeout,
-            )
-
-            # Emit events and build tool result messages in original order
-            for tc, result in zip(tool_calls, results, strict=True):
-                if on_event:
-                    await on_event(ToolCallStart(tool_call=tc))
-                    await on_event(ToolCallResult(tool_call=tc, result=result))
-
-                messages.append(
-                    Message(
-                        role=MessageRole.TOOL,
-                        name=tc.function.name,
-                        content=result,
-                        tool_call_id=tc.id,
-                    )
-                )
-
-            # Checkpoint after each tool dispatch round for crash recovery
-            if on_checkpoint:
-                await on_checkpoint(messages)
-
-            turn += 1
-            continue
-
-        # No tool calls -> final response
-        if content:
-            messages.append(Message(role=MessageRole.ASSISTANT, content=content))
-            if on_event:
-                await on_event(TextDelta(text=content))
-
-        if on_event:
-            await on_event(Completed(message_count=len(messages)))
-        break
+        turn = result.turn
 
     return messages
 

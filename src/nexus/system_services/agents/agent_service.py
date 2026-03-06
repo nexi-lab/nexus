@@ -12,12 +12,12 @@ ARCHITECTURAL DECISION (KERNEL-ARCHITECTURE.md §3):
     existing ``@rpc_expose`` methods continue to work identically.
 """
 
-import contextlib
 import json
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
+from nexus.contracts.agent_utils import compute_agent_path, parse_entity_metadata
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext
 from nexus.lib.rpc_decorator import rpc_expose
@@ -309,8 +309,7 @@ class AgentService:
         zone_id: str,
     ) -> None:
         """Raise ValueError if agent config already exists on the filesystem."""
-        agent_name_part = agent_id.split(",", 1)[1] if "," in agent_id else agent_id
-        agent_dir = f"/zone/{zone_id}/user/{user_id}/agent/{agent_name_part}"
+        agent_dir = compute_agent_path(agent_id, user_id, zone_id)
         config_path = f"{agent_dir}/config.yaml"
         try:
             existing_meta = self._fs.metadata.get(config_path)
@@ -492,8 +491,7 @@ class AgentService:
 
         zone_id = _extract_zone_id(context) or ROOT_ZONE_ID
 
-        agent_name_part = agent_id.split(",", 1)[1] if "," in agent_id else agent_id
-        agent_dir = f"/zone/{zone_id}/user/{user_id}/agent/{agent_name_part}"
+        agent_dir = compute_agent_path(agent_id, user_id, zone_id)
 
         self._check_agent_not_exists(agent_id, user_id, zone_id)
         self._ensure_agent_registry()
@@ -574,8 +572,7 @@ class AgentService:
 
         zone_id = _extract_zone_id(context) or ROOT_ZONE_ID
 
-        agent_name_part = agent_id.split(",", 1)[1] if "," in agent_id else agent_id
-        agent_dir = f"/zone/{zone_id}/user/{user_id}/agent/{agent_name_part}"
+        agent_dir = compute_agent_path(agent_id, user_id, zone_id)
         config_path = f"{agent_dir}/config.yaml"
 
         try:
@@ -667,10 +664,7 @@ class AgentService:
             session.close()
 
         for e in entities:
-            entity_metadata: dict = {}
-            if e.entity_metadata:
-                with contextlib.suppress(json.JSONDecodeError, TypeError):
-                    entity_metadata = json.loads(e.entity_metadata)
+            entity_metadata = parse_entity_metadata(e.entity_metadata)
 
             agent_info: dict[str, Any] = {
                 "agent_id": e.entity_id,
@@ -725,10 +719,7 @@ class AgentService:
         if not entity:
             return None
 
-        entity_metadata: dict = {}
-        if entity.entity_metadata:
-            with contextlib.suppress(json.JSONDecodeError, TypeError):
-                entity_metadata = json.loads(entity.entity_metadata)
+        entity_metadata = parse_entity_metadata(entity.entity_metadata)
 
         agent_info: dict[str, Any] = {
             "agent_id": entity.entity_id,
@@ -833,9 +824,9 @@ class AgentService:
         """Delete a registered agent (v0.5.0)."""
         try:
             if "," in agent_id:
-                user_id, agent_name_part = agent_id.split(",", 1)
+                user_id = agent_id.split(",", 1)[0]
                 zone_id = _extract_zone_id(_context) or ROOT_ZONE_ID
-                agent_dir = f"/zone/{zone_id}/user/{user_id}/agent/{agent_name_part}"
+                agent_dir = compute_agent_path(agent_id, user_id, zone_id)
 
                 try:
                     ctx = _parse_context(_context)

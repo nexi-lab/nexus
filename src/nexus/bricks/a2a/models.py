@@ -160,6 +160,7 @@ class Task(BaseModel):
     artifacts: list[Artifact] = Field(default_factory=list)
     history: list[Message] = Field(default_factory=list)
     metadata: dict[str, Any] | None = None
+    version: int = 1  # Optimistic locking counter (Issue #2761)
 
     model_config = ConfigDict(extra="forbid")
 

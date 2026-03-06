@@ -27,6 +27,7 @@ class TaskStoreProtocol(Protocol):
         *,
         zone_id: str,
         agent_id: str | None = None,
+        expected_version: int | None = None,
     ) -> None:
         """Persist a new task or update an existing one.
 
@@ -39,6 +40,10 @@ class TaskStoreProtocol(Protocol):
             Multi-tenant zone identifier.
         agent_id:
             Optional agent that owns this task.
+        expected_version:
+            When set, the store MUST verify that the currently-stored
+            task has this version before writing.  Raises
+            ``StaleTaskVersionError`` on mismatch (optimistic locking).
         """
         ...
 

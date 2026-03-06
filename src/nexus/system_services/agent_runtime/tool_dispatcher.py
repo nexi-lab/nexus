@@ -15,8 +15,8 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nexus.contracts.llm_types import ToolCall
+    from nexus.contracts.protocols.agent_vfs import AgentSearchProtocol, AgentVFSProtocol
     from nexus.contracts.types import OperationContext
-    from nexus.core.nexus_fs import NexusFS
 
 logger = logging.getLogger(__name__)
 
@@ -221,12 +221,14 @@ class ToolDispatcher:
 
     def __init__(
         self,
-        vfs: NexusFS,
+        vfs: AgentVFSProtocol,
+        search: AgentSearchProtocol | None = None,
         sandbox: Any | None = None,
         *,
         default_cwd: str = "/",
     ) -> None:
         self._vfs = vfs
+        self._search = search
         self._sandbox = sandbox
         self._default_cwd = default_cwd
 
@@ -370,8 +372,11 @@ class ToolDispatcher:
         file_pattern = args.get("file_pattern")
         ignore_case = args.get("ignore_case", False)
 
+        if self._search is None:
+            return "grep unavailable: search service not enabled"
+
         try:
-            results = self._vfs.search_service.grep(
+            results = self._search.grep(
                 pattern=pattern,
                 path=path,
                 file_pattern=file_pattern,
@@ -379,8 +384,7 @@ class ToolDispatcher:
                 max_results=50,
             )
         except Exception:
-            # Fallback: grep not available (search brick disabled)
-            return "grep unavailable: search brick not enabled"
+            return "grep unavailable: search service error"
 
         if not results:
             return f"No matches found for '{pattern}' in {path}"
@@ -403,15 +407,22 @@ class ToolDispatcher:
         path = self._resolve_path(args.get("path"), cwd)
 
         files: list[str]
-        try:
-            files = self._vfs.search_service.glob(pattern, path)
-        except Exception:
-            # Fallback: use sys_readdir if glob not available
+        if self._search is not None:
+            try:
+                files = self._search.glob(pattern, path)
+            except Exception:
+                # Fallback: use sys_readdir if glob not available
+                try:
+                    raw_entries = self._vfs.sys_readdir(path, recursive=True)
+                    files = [str(e) for e in raw_entries]
+                except Exception:
+                    return "glob unavailable: search service not enabled"
+        else:
             try:
                 raw_entries = self._vfs.sys_readdir(path, recursive=True)
                 files = [str(e) for e in raw_entries]
             except Exception:
-                return "glob unavailable: search brick not enabled"
+                return "glob unavailable: search service not enabled"
 
         if not files:
             return f"No files found matching '{pattern}' in {path}"

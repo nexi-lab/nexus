@@ -22,6 +22,7 @@ References:
 
 from nexus.contracts.protocols.adaptive_k import AdaptiveKProtocol
 from nexus.contracts.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
+from nexus.contracts.protocols.agent_vfs import AgentSearchProtocol, AgentVFSProtocol
 from nexus.contracts.protocols.auth import APIKeyCreatorProtocol
 from nexus.contracts.protocols.brick_lifecycle import (
     BrickReconcileOutcome,
@@ -70,6 +71,8 @@ __all__ = [
     "AdaptiveKProtocol",
     "AgentInfo",
     "AgentRegistryProtocol",
+    "AgentSearchProtocol",
+    "AgentVFSProtocol",
     "AgentRequest",
     "BrickReconcileOutcome",
     "ChunkedUploadProtocol",

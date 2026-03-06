@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.bricks.a2a.exceptions import (
     InvalidStateTransitionError,
+    StaleTaskVersionError,
     TaskNotCancelableError,
     TaskNotFoundError,
 )
@@ -201,13 +202,11 @@ class TaskManager:
         Raises ``TaskNotFoundError`` if the task does not exist.
         Raises ``InvalidStateTransitionError`` if the transition is invalid.
         """
-        # TODO(race-condition): update_task_state has a TOCTOU race under
-        # concurrent calls.  Fix requires optimistic locking (version column)
-        # in TaskStoreProtocol.
         task = await self._store.get(task_id, zone_id=zone_id)
         if task is None:
             raise TaskNotFoundError(data={"taskId": task_id})
 
+        current_version = task.version
         current_state = task.status.state
         if not is_valid_transition(current_state, new_state):
             raise InvalidStateTransitionError(
@@ -221,12 +220,31 @@ class TaskManager:
 
         now = datetime.now(UTC)
         new_status = TaskStatus(state=new_state, message=message, timestamp=now)
-        task = task.model_copy(update={"status": new_status})
+        updates: dict[str, Any] = {
+            "status": new_status,
+            "version": current_version + 1,
+        }
 
         if message is not None:
-            task = task.model_copy(update={"history": [*task.history, message]})
+            updates["history"] = [*task.history, message]
 
-        await self._store.save(task, zone_id=zone_id)
+        task = task.model_copy(update=updates)
+
+        try:
+            await self._store.save(task, zone_id=zone_id, expected_version=current_version)
+        except StaleTaskVersionError:
+            raise InvalidStateTransitionError(
+                message=(
+                    f"Concurrent modification detected on task {task_id} "
+                    f"(expected version {current_version})"
+                ),
+                data={
+                    "taskId": task_id,
+                    "currentState": current_state.value,
+                    "requestedState": new_state.value,
+                    "expectedVersion": current_version,
+                },
+            ) from None
 
         # Push status update to active streams
         event = TaskStatusUpdateEvent(
@@ -256,9 +274,23 @@ class TaskManager:
         if task is None:
             raise TaskNotFoundError(data={"taskId": task_id})
 
+        current_version = task.version
         new_artifacts = [*task.artifacts, artifact]
-        task = task.model_copy(update={"artifacts": new_artifacts})
-        await self._store.save(task, zone_id=zone_id)
+        task = task.model_copy(update={"artifacts": new_artifacts, "version": current_version + 1})
+
+        try:
+            await self._store.save(task, zone_id=zone_id, expected_version=current_version)
+        except StaleTaskVersionError:
+            raise InvalidStateTransitionError(
+                message=(
+                    f"Concurrent modification detected on task {task_id} "
+                    f"(expected version {current_version})"
+                ),
+                data={
+                    "taskId": task_id,
+                    "expectedVersion": current_version,
+                },
+            ) from None
 
         event = TaskArtifactUpdateEvent(
             taskId=task_id,

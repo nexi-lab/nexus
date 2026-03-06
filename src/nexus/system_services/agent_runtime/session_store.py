@@ -15,8 +15,8 @@ from typing import TYPE_CHECKING
 from nexus.contracts.llm_types import Message
 
 if TYPE_CHECKING:
+    from nexus.contracts.protocols.agent_vfs import AgentVFSProtocol
     from nexus.contracts.types import OperationContext
-    from nexus.core.nexus_fs import NexusFS
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ class SessionStore:
     (content-addressed storage) automatically.
     """
 
-    def __init__(self, vfs: NexusFS) -> None:
+    def __init__(self, vfs: AgentVFSProtocol) -> None:
         self._vfs = vfs
         self._line_cache: dict[str, list[str]] = {}  # pid → already-serialized lines
 

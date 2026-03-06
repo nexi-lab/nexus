@@ -202,6 +202,9 @@ def create_nexus_services(
         pipe_manager=system_dict.get("pipe_manager"),
         # Scheduler (Issue #2195)
         scheduler_service=system_dict.get("scheduler_service"),
+        # Agent Runtime (Issue #2761)
+        process_manager=system_dict.get("process_manager"),
+        tool_dispatcher=system_dict.get("tool_dispatcher"),
     )
 
     brick_services = _BrickServices(
@@ -577,6 +580,13 @@ def _register_vfs_hooks(
         from nexus.bricks.rebac.cache.tiger.write_hook import TigerCacheWriteHook
 
         dispatch.register_intercept_write(TigerCacheWriteHook(tiger_cache=tiger_cache))
+
+    # ── Process lifecycle audit hook (Issue #2761) ───────────────────
+    _pm = getattr(nx._system_services, "process_manager", None) if nx._system_services else None
+    if _pm is not None:
+        from nexus.system_services.agent_runtime.process_audit_hook import ProcessAuditHook
+
+        dispatch.register_intercept_process(ProcessAuditHook())
 
     # ── PRE-DISPATCH: Pipe resolver for DT_PIPE paths (Issue #1201) ────
     _pipe_mgr = getattr(nx._system_services, "pipe_manager", None) if nx._system_services else None

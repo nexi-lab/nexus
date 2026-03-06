@@ -4,12 +4,14 @@ The SchedulerService is the main entry point for task scheduling. It:
 1. Validates submissions
 2. Computes priority (4-layer model)
 3. Reserves credits for boosts
-4. Enqueues tasks in PostgreSQL
-5. Provides status, cancellation, and aging sweep
-6. Implements SchedulerProtocol (8-method interface, Issue #1274)
-7. Astraea-style classification, HRRN dequeue, and fair-share
+4. Checks admission (rate limit + fair-share)
+5. Applies overlap policy (ALLOW/SKIP/CANCEL_PREVIOUS)
+6. Enqueues tasks in PostgreSQL
+7. Provides status, cancellation, and aging sweep
+8. Implements SchedulerProtocol (8-method interface, Issue #1274)
+9. Astraea-style classification, HRRN dequeue, and fair-share
 
-Related: Issue #1212, #1274
+Related: Issue #1212, #1274, #2749
 """
 
 import logging
@@ -21,16 +23,20 @@ from nexus.system_services.scheduler.constants import (
     STARVATION_PROMOTION_THRESHOLD_SECS,
     TASK_STATUS_COMPLETED,
     TASK_STATUS_FAILED,
+    OverlapPolicy,
     PriorityClass,
     PriorityTier,
 )
+from nexus.system_services.scheduler.exceptions import TaskAlreadyRunning
 from nexus.system_services.scheduler.models import ScheduledTask, TaskSubmission
+from nexus.system_services.scheduler.policies.admission import AdmissionPolicy
 from nexus.system_services.scheduler.policies.classifier import (
     classify_agent_request,
     classify_request,
     parse_request_enums,
 )
 from nexus.system_services.scheduler.policies.fair_share import FairShareCounter
+from nexus.system_services.scheduler.policies.rate_limiter import TokenBucketLimiter
 from nexus.system_services.scheduler.priority import (
     compute_boost_tiers,
     compute_effective_tier,
@@ -70,8 +76,9 @@ class SchedulerService:
     """High-level scheduler service implementing SchedulerProtocol.
 
     Orchestrates priority computation, queue operations, credits
-    integration, Astraea classification, HRRN dequeue, and fair-share
-    admission for the hybrid priority system.
+    integration, Astraea classification, HRRN dequeue, admission
+    policy (rate limit + fair-share), and overlap policies for the
+    hybrid priority system.
     """
 
     def __init__(
@@ -82,14 +89,20 @@ class SchedulerService:
         credits_service: "CreditsReservationProtocol | None" = None,
         state_emitter: "AgentStateEmitter | None" = None,
         fair_share: FairShareCounter | None = None,
+        rate_limiter: TokenBucketLimiter | None = None,
+        admission: AdmissionPolicy | None = None,
         use_hrrn: bool = True,
     ) -> None:
         self._queue = queue or TaskQueue()
         self._pool = db_pool
         self._credits = credits_service
-        self._fair_share = fair_share or FairShareCounter()
         self._use_hrrn = use_hrrn
         self._state_emitter = state_emitter
+
+        # Build admission policy from components or use provided one
+        fs = fair_share or FairShareCounter()
+        rl = rate_limiter or TokenBucketLimiter()
+        self._admission = admission or AdmissionPolicy(fair_share=fs, rate_limiter=rl)
 
         # Two-phase init tracking (Issue #2195):
         # Factory creates with db_pool=None, lifespan calls initialize(pool).
@@ -141,13 +154,19 @@ class SchedulerService:
         1. Converts AgentRequest to internal TaskSubmission
         2. Validates the submission
         3. Auto-classifies priority_class if not set
-        4. Checks fair-share admission
+        4. Checks admission (rate limit + fair-share)
         5. Reserves credits for boost if needed
         6. Computes effective tier
-        7. Enqueues in PostgreSQL
+        7. Applies overlap policy (ALLOW/SKIP/CANCEL_PREVIOUS)
+        8. Enqueues in PostgreSQL
 
         Returns:
             Task ID string.
+
+        Raises:
+            RateLimitExceeded: If the agent exceeds its submission rate.
+            CapacityExceeded: If the agent is at its concurrent task limit.
+            TaskAlreadyRunning: If overlap policy is SKIP and a matching task is running.
         """
         # Map AgentRequest fields to internal types (shared parser — DRY)
         tier, req_state = parse_request_enums(request)
@@ -162,6 +181,9 @@ class SchedulerService:
         deadline = None
         if request.deadline:
             deadline = datetime.fromisoformat(request.deadline)
+
+        # Parse overlap policy (defaults to SKIP)
+        overlap_policy = OverlapPolicy(request.overlap_policy)
 
         submission = TaskSubmission(
             agent_id=request.agent_id,
@@ -181,13 +203,8 @@ class SchedulerService:
 
         now = datetime.now(UTC)
 
-        # Check fair-share admission
-        if not self._fair_share.admit(submission.executor_id):
-            snap = self._fair_share.snapshot(submission.executor_id)
-            raise ValueError(
-                f"Agent {submission.executor_id} is at capacity "
-                f"({snap.running_count}/{snap.max_concurrent})"
-            )
+        # Check admission (rate limit + fair-share)
+        self._admission.check(submission.executor_id)
 
         # Reserve credits for boost if needed
         boost_tiers = compute_boost_tiers(submission.boost_amount)
@@ -203,25 +220,91 @@ class SchedulerService:
         # Compute effective tier
         effective_tier = compute_effective_tier(submission, enqueued_at=now, now=now)
 
-        # Enqueue with Astraea fields
-        async with self.pool.acquire() as conn:
+        # Common enqueue kwargs
+        enqueue_kwargs: dict[str, Any] = {
+            "agent_id": submission.agent_id,
+            "executor_id": submission.executor_id,
+            "task_type": submission.task_type,
+            "payload": submission.payload,
+            "priority_tier": submission.priority.value,
+            "effective_tier": effective_tier,
+            "deadline": submission.deadline,
+            "boost_amount": submission.boost_amount,
+            "boost_tiers": boost_tiers,
+            "boost_reservation_id": boost_reservation_id,
+            "request_state": req_state.value,
+            "priority_class": priority_class.value,
+            "estimated_service_time": submission.estimated_service_time,
+        }
+
+        # Apply overlap policy
+        if submission.idempotency_key is None or overlap_policy == OverlapPolicy.ALLOW:
+            # No idempotency key or ALLOW policy — use standard UPSERT
+            async with self.pool.acquire() as conn:
+                task_id = await self._queue.enqueue(
+                    conn,
+                    idempotency_key=submission.idempotency_key,
+                    **enqueue_kwargs,
+                )
+        elif overlap_policy == OverlapPolicy.SKIP:
+            # Atomic CTE: skip if a running task with same key exists
+            async with self.pool.acquire() as conn:
+                skip_result = await self._queue.enqueue_skip(
+                    conn,
+                    idempotency_key=submission.idempotency_key,
+                    **enqueue_kwargs,
+                )
+            if skip_result is None:
+                # Release the boost reservation since we're not enqueuing
+                if boost_reservation_id and self._credits:
+                    await self._credits.release_reservation(boost_reservation_id)
+                raise TaskAlreadyRunning(
+                    f"Task with idempotency_key '{submission.idempotency_key}' "
+                    f"is already running (policy=SKIP)"
+                )
+            task_id = skip_result
+        elif overlap_policy == OverlapPolicy.CANCEL_PREVIOUS:
+            # Transaction-wrapped: cancel old task, enqueue new one
+            task_id = await self._submit_cancel_previous(
+                submission=submission,
+                enqueue_kwargs=enqueue_kwargs,
+            )
+        else:
+            raise ValueError(f"Unknown overlap policy: {overlap_policy}")
+
+        return str(task_id)
+
+    async def _submit_cancel_previous(
+        self,
+        *,
+        submission: TaskSubmission,
+        enqueue_kwargs: dict[str, Any],
+    ) -> str:
+        """Handle CANCEL_PREVIOUS overlap policy in a single transaction.
+
+        Atomically cancels any running task with the same idempotency_key
+        and enqueues the new task. Credit release happens after commit.
+        """
+        assert submission.idempotency_key is not None  # noqa: S101
+
+        old_reservation_id: str | None = None
+
+        async with self.pool.acquire() as conn, conn.transaction():
+            # Cancel the running task with the same key (if any)
+            _cancelled_id, old_reservation_id = await self._queue.cancel_running_by_idempotency_key(
+                conn, submission.idempotency_key
+            )
+
+            # Enqueue the new task (standard UPSERT for queued/completed)
             task_id = await self._queue.enqueue(
                 conn,
-                agent_id=submission.agent_id,
-                executor_id=submission.executor_id,
-                task_type=submission.task_type,
-                payload=submission.payload,
-                priority_tier=submission.priority.value,
-                effective_tier=effective_tier,
-                deadline=submission.deadline,
-                boost_amount=submission.boost_amount,
-                boost_tiers=boost_tiers,
-                boost_reservation_id=boost_reservation_id,
                 idempotency_key=submission.idempotency_key,
-                request_state=req_state.value,
-                priority_class=priority_class.value,
-                estimated_service_time=submission.estimated_service_time,
+                **enqueue_kwargs,
             )
+
+        # Release the old task's credit reservation after commit
+        if old_reservation_id and self._credits:
+            await self._credits.release_reservation(old_reservation_id)
 
         return str(task_id)
 
@@ -279,7 +362,7 @@ class SchedulerService:
             await self._queue.complete(conn, task_id, status=status, error=error)
 
         if task is not None:
-            self._fair_share.record_complete(task.agent_id)
+            self._admission.fair_share.record_complete(task.agent_id)
 
     async def classify(self, request: "AgentRequest") -> str:
         """Classify an AgentRequest into a PriorityClass."""
@@ -298,7 +381,7 @@ class SchedulerService:
                     "max_concurrent": snap.max_concurrent,
                     "available_slots": snap.available_slots,
                 }
-                for agent_id, snap in self._fair_share.all_snapshots().items()
+                for agent_id, snap in self._admission.fair_share.all_snapshots().items()
             },
             "use_hrrn": self._use_hrrn,
         }
@@ -368,7 +451,7 @@ class SchedulerService:
                 task = await self._queue.dequeue(conn, executor_id=executor_id)
 
         if task is not None:
-            self._fair_share.record_start(task.agent_id)
+            self._admission.fair_share.record_start(task.agent_id)
 
         return task
 
@@ -397,7 +480,7 @@ class SchedulerService:
         """Initialize fair-share counters from database on startup."""
         async with self.pool.acquire() as conn:
             running_counts = await self._queue.count_running_by_agent(conn)
-        self._fair_share.sync_from_db(running_counts)
+        self._admission.fair_share.sync_from_db(running_counts)
         logger.info("Fair-share synced from DB: %d agents", len(running_counts))
 
     async def run_starvation_promotion(

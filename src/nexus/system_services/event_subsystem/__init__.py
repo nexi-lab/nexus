@@ -11,13 +11,21 @@ from nexus.core.file_events import FileEvent, FileEventType
 from nexus.system_services.event_subsystem.bus import (
     EventBusBase,
     EventBusProtocol,
-    NatsEventBus,
     RedisEventBus,
 )
 from nexus.system_services.event_subsystem.log import (
     EventReplayService,
 )
 from nexus.system_services.event_subsystem.subscriptions import ReactiveSubscriptionManager
+
+
+def __getattr__(name: str) -> type:
+    if name == "NatsEventBus":
+        from nexus.system_services.event_subsystem.bus.nats import NatsEventBus
+
+        return NatsEventBus
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "FileEvent",

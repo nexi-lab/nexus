@@ -1,0 +1,76 @@
+# Minimal dependencies for NEXUS_PROFILE=minimal (standalone server).
+# Subset of pyproject.toml for a lightweight Nexus server with storage only.
+# No cloud connectors, no LLM/ML packages, no Zoekt, no sandbox providers.
+
+# CLI
+click>=8.1.7
+rich>=13.7.0
+tqdm>=4.66.0
+
+# Config
+pydantic[email]>=2.5.0
+pyyaml>=6.0.1
+
+# HTTP client (used internally)
+httpx[http2]>=0.28.1
+requests>=2.31.0
+tenacity>=8.2.0
+aiohttp>=3.11.0
+frozenlist>=1.5.0
+
+# gRPC server
+grpcio>=1.68.0
+protobuf>=4.25.0
+
+# HTTP server
+fastapi>=0.124.0
+uvicorn[standard]>=0.38.0
+uvloop>=0.22.1
+watchfiles>=1.0.0
+
+# Database (RecordStore — imports exist even if skipped at runtime)
+sqlalchemy>=2.0.44
+alembic>=1.13.0
+greenlet>=3.0.0
+aiosqlite>=0.20.0
+
+# Caching
+cachetools>=6.2.2
+
+# Auth
+authlib>=1.6.5
+bcrypt>=4.0.0
+cryptography>=41.0.0
+PyJWT>=2.8.0
+
+# Fast JSON
+orjson>=3.10.0
+
+# Content hashing
+blake3>=1.0.0
+bsdiff4>=1.2.0
+fastcdc>=1.5.0
+
+# Fuzzy matching
+rapidfuzz>=3.0.0
+
+# Rate limiting
+slowapi>=0.1.9
+limits>=3.6.0
+
+# BM25 search (built-in)
+bm25s>=0.2.0
+
+# Logging
+structlog>=24.4.0
+
+# LZ4 compression
+lz4>=4.3.0
+
+# Roaring bitmaps
+pyroaring>=1.0.0
+
+# Misc
+aiofiles>=25.1.0
+dotenv>=0.9.9
+networkx>=3.2

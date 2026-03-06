@@ -345,8 +345,8 @@ class TestFairShareE2E:
                 "task_type": "compute",
             },
         )
-        # Service raises ValueError → 500 (or could be wrapped to 429)
-        assert response.status_code == 500
+        # Service raises CapacityExceeded → 429 (Issue #2749)
+        assert response.status_code == 429
 
 
 # =============================================================================

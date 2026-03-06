@@ -3961,6 +3961,26 @@ class NexusFS(  # type: ignore[misc]
         if hasattr(self, "_deferred_permission_buffer") and self._deferred_permission_buffer:
             self._deferred_permission_buffer.stop()
 
+        # Flush write observer pre-buffer (CLI mode: events buffered in memory
+        # because PipeManager was never injected). Must happen before
+        # record_store.close() since flush needs the DB connection.
+        write_observer = (
+            getattr(self._system_services, "write_observer", None)
+            if self._system_services
+            else None
+        )
+        if write_observer is not None and hasattr(write_observer, "flush_sync"):
+            try:
+                count = write_observer.flush_sync()
+                if count:
+                    import logging
+
+                    logging.getLogger(__name__).debug(
+                        "NexusFS.close: flushed %d write observer events", count
+                    )
+            except Exception:
+                pass  # best-effort; DB may already be closing
+
         # Close metadata store
         self.metadata.close()
 

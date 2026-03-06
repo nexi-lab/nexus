@@ -159,11 +159,27 @@ class PipeManager:
         logger.debug("pipe opened (recovered): %s", path)
         return buf
 
-    def close(self, path: str) -> None:
-        """Close a pipe's buffer. Inode stays in MetastoreABC.
+    def signal_close(self, path: str) -> None:
+        """Signal a pipe closed without removing from registry.
 
-        Readers can still drain remaining messages. The inode persists
-        so the pipe can be reopened later.
+        Closes the RingBuffer (wakes blocked readers/writers) but keeps
+        it in ``_buffers`` so ``pipe_read()`` can drain remaining messages.
+        Once the buffer is empty, readers get ``PipeClosedError``.
+
+        Use this for graceful shutdown: signal_close → consumer drains → done.
+        Use ``close()`` for immediate teardown.
+
+        Raises:
+            PipeNotFoundError: No buffer at this path.
+        """
+        buf = self._buffers.get(path)
+        if buf is None:
+            raise PipeNotFoundError(f"no pipe at: {path}")
+        buf.close()
+        logger.debug("pipe signal_close: %s", path)
+
+    def close(self, path: str) -> None:
+        """Close a pipe's buffer and remove from registry. Inode stays in MetastoreABC.
 
         Raises:
             PipeNotFoundError: No buffer at this path.

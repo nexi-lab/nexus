@@ -313,8 +313,9 @@ class TestVFSServicerTypedRPCs:
         assert payload["code"] == -32000
 
     @pytest.mark.anyio
-    async def test_write_success(self, servicer) -> None:
-        """Write returns etag and size from sys_write."""
+    async def test_write_success(self, servicer, mock_nexus_fs) -> None:
+        """Write returns etag and size from write() (Issue #2787)."""
+        mock_nexus_fs.write.return_value = {"etag": "sha256-xyz", "size": 4}
         request = _make_typed_request(
             "WriteRequest", path="/file.txt", content=b"data", auth_token="", etag=""
         )
@@ -330,6 +331,53 @@ class TestVFSServicerTypedRPCs:
         assert response.is_error is False
         assert response.etag == "sha256-xyz"
         assert response.size == 4
+
+    @pytest.mark.anyio
+    async def test_write_calls_write_not_sys_write(self, servicer, mock_nexus_fs) -> None:
+        """Write handler uses write() (returns dict) not sys_write() (returns int).
+
+        Issue #2787: sys_write() returns int (POSIX), so etag was always empty.
+        """
+        request = _make_typed_request(
+            "WriteRequest", path="/file.txt", content=b"data", auth_token="", etag=""
+        )
+        context = MagicMock()
+
+        with patch(
+            "nexus.grpc.servicer.asyncio.to_thread",
+            new_callable=AsyncMock,
+            return_value={"etag": "sha256-xyz", "size": 4},
+        ) as mock_thread:
+            await servicer.Write(request, context)
+
+        # Verify write() was passed (not sys_write)
+        call_args = mock_thread.call_args
+        func = call_args[0][0]
+        assert "write" in str(func)
+        assert "sys_write" not in str(func)
+
+    @pytest.mark.anyio
+    async def test_write_with_occ_etag(self, servicer) -> None:
+        """Write with etag uses occ_write() for compare-and-swap (Issue #2787)."""
+        request = _make_typed_request(
+            "WriteRequest", path="/file.txt", content=b"data", auth_token="", etag="sha256-old"
+        )
+        context = MagicMock()
+
+        with patch(
+            "nexus.grpc.servicer.asyncio.to_thread",
+            new_callable=AsyncMock,
+            return_value={"etag": "sha256-new", "size": 4},
+        ) as mock_thread:
+            response = await servicer.Write(request, context)
+
+        assert response.is_error is False
+        assert response.etag == "sha256-new"
+
+        # Verify occ_write was called (not plain write)
+        call_args = mock_thread.call_args
+        func = call_args[0][0]
+        assert "occ_write" in str(func)
 
     @pytest.mark.anyio
     async def test_write_conflict(self, servicer) -> None:

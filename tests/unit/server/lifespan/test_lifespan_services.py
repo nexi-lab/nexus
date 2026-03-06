@@ -27,7 +27,6 @@ def _make_nexus_fs(**attrs) -> SimpleNamespace:
     defaults = {
         "_system_services": None,
         "_brick_services": None,
-        "_service_extras": {},
         "SessionLocal": None,
         "_sql_engine": None,
         "_entity_registry": None,
@@ -179,19 +178,20 @@ class TestFromAppBrickServices:
 
 
 class TestFromAppObservability:
-    """Test extraction from _service_extras."""
+    """Test extraction of observability_subsystem from _system_services."""
 
     def test_extracts_observability_subsystem(self) -> None:
-        """observability_subsystem extracted from _service_extras dict."""
-        nx = _make_nexus_fs(_service_extras={"observability_subsystem": "obs_sub"})
+        """observability_subsystem extracted from _system_services."""
+        sys_svc = SimpleNamespace(observability_subsystem="obs_sub")
+        nx = _make_nexus_fs(_system_services=sys_svc)
         app = _make_app(nexus_fs=nx)
         svc = LifespanServices.from_app(app)
 
         assert svc.observability_subsystem == "obs_sub"
 
-    def test_non_dict_service_extras_yields_none(self) -> None:
-        """Non-dict _service_extras produces None observability_subsystem."""
-        nx = _make_nexus_fs(_service_extras=None)
+    def test_missing_system_services_yields_none(self) -> None:
+        """When _system_services is None, observability_subsystem is None."""
+        nx = _make_nexus_fs(_system_services=None)
         app = _make_app(nexus_fs=nx)
         svc = LifespanServices.from_app(app)
 
@@ -228,7 +228,7 @@ class TestFromAppEdgeCases:
     def test_nexus_fs_without_optional_attributes(self) -> None:
         """NexusFS missing some private attrs doesn't crash."""
         # Use a SimpleNamespace with only _system_services
-        nx = SimpleNamespace(_system_services=None, _brick_services=None, _service_extras={})
+        nx = SimpleNamespace(_system_services=None, _brick_services=None)
         app = _make_app(nexus_fs=nx)
 
         # Should not raise even though nx has no SessionLocal, etc.

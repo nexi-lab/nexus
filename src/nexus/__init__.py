@@ -189,12 +189,7 @@ def connect(
     import os
     from pathlib import Path
 
-    # Lazy load dependencies
-    from nexus.backends.base.backend import Backend
-    from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.config import NexusConfig, load_config
-    from nexus.core.nexus_fs import NexusFS
-    from nexus.storage.raft_metadata_store import RaftMetadataStore
 
     # Load configuration
     cfg = load_config(config)
@@ -230,23 +225,27 @@ def connect(
 
         # RemoteBackend + RemoteMetastore — stateless proxies, server is SSOT.
         from nexus.backends.storage.remote import RemoteBackend
-        from nexus.factory import create_nexus_fs as _create_remote_nfs
         from nexus.storage.remote_metastore import RemoteMetastore
 
         remote_backend = RemoteBackend(transport)
         remote_metastore = RemoteMetastore(transport)
 
-        # In REMOTE mode, server enforces permissions — disable client-side.
+        # Build a lightweight NexusFS directly — no factory, no bricks.
+        # Server is SSOT; client just proxies calls via HTTP.
         from nexus.core.config import PermissionConfig as _PermissionConfig
+        from nexus.core.nexus_fs import NexusFS as _RemoteNexusFS
+        from nexus.core.router import PathRouter as _PathRouter
 
-        nfs = _create_remote_nfs(
-            backend=remote_backend,
+        _router = _PathRouter(remote_metastore)
+        _router.add_mount("/", remote_backend)
+
+        from nexus.core.config import KernelServices as _KernelServices
+
+        nfs = _RemoteNexusFS(
             metadata_store=remote_metastore,
-            record_store=None,
             permissions=_PermissionConfig(enforce=False),
-            enabled_bricks=frozenset(),  # REMOTE profile: no local bricks
+            kernel_services=_KernelServices(router=_router),
         )
-        nfs.router.add_mount("/", remote_backend)
 
         # Wire service proxies for REMOTE profile (Issue #1171).
         # Fills all 25+ service slots with RemoteServiceProxy — forwards
@@ -262,6 +261,11 @@ def connect(
         raise ValueError(
             f"Unknown mode: '{cfg.mode}'. Must be one of: standalone, remote, federation"
         )
+
+    # Heavy imports only needed for standalone/federation
+    from nexus.backends.base.backend import Backend
+    from nexus.backends.storage.cas_local import CASLocalBackend
+    from nexus.core.nexus_fs import NexusFS
 
     # Create backend based on configuration
     backend: Backend
@@ -352,6 +356,8 @@ def connect(
         metadata_store = FederatedMetadataProxy.from_zone_manager(zone_mgr)
     else:
         # standalone: single-node embedded Raft (no peers)
+        from nexus.storage.raft_metadata_store import RaftMetadataStore
+
         metadata_store = RaftMetadataStore.embedded(metadata_path)
 
     # Permission defaults: standalone without explicit config → permissive

@@ -327,21 +327,37 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
         request: "vfs_pb2.WriteRequest",
         _context: grpc.aio.ServicerContext,
     ) -> "vfs_pb2.WriteResponse":
-        """Typed write — accepts raw bytes, no JSON/base64 overhead."""
+        """Typed write — accepts raw bytes, no JSON/base64 overhead.
+
+        Uses write() (Tier 2) instead of sys_write() to get metadata back
+        (etag, version, size).  OCC is handled via occ_write() when the
+        client sends an etag — matching the JSON RPC handler pattern.
+
+        Issue #2787: sys_write() returns int (POSIX), not dict.
+        """
         try:
             _, op_context = await self._auth_and_context(request.auth_token)
-            kwargs: dict[str, Any] = {"context": op_context}
+            content = bytes(request.content)
+
             if request.etag:
-                kwargs["if_match"] = request.etag
-            result = await asyncio.to_thread(
-                self._nexus_fs.sys_write, request.path, request.content, **kwargs
-            )
+                # OCC: compare-and-swap via lib helper (Issue #1323)
+                from nexus.lib.occ import occ_write
+
+                result = await asyncio.to_thread(
+                    occ_write,
+                    self._nexus_fs,
+                    request.path,
+                    content,
+                    context=op_context,
+                    if_match=request.etag,
+                )
+            else:
+                result = await asyncio.to_thread(
+                    self._nexus_fs.write, request.path, content, context=op_context
+                )
+
             etag = result.get("etag", "") if isinstance(result, dict) else ""
-            size = (
-                result.get("size", len(request.content))
-                if isinstance(result, dict)
-                else len(request.content)
-            )
+            size = result.get("size", len(content)) if isinstance(result, dict) else len(content)
             return vfs_pb2.WriteResponse(etag=etag, size=size)
         except NexusPermissionError as e:
             return vfs_pb2.WriteResponse(

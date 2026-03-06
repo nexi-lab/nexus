@@ -51,7 +51,7 @@ async def _startup_async_rebac(app: "FastAPI", svc: "LifespanServices") -> None:
         return
 
     try:
-        from nexus.bricks.rebac.async_manager import AsyncReBACManager
+        from nexus.bricks.rebac.manager import AsyncReBACManager
 
         # Reuse the sync ReBACManager from NexusFS (avoids creating standalone engine)
         sync_rebac = svc.rebac_manager

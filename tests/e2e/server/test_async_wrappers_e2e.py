@@ -21,14 +21,16 @@ from pathlib import Path
 
 import pytest
 
-from nexus.bricks.rebac.async_namespace_manager import AsyncNamespaceManager
+from nexus.bricks.rebac.namespace_manager import AsyncNamespaceManager
 from nexus.contracts.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
 from nexus.contracts.protocols.namespace_manager import NamespaceManagerProtocol
-from nexus.core.async_router import AsyncVFSRouter
-from nexus.core.router import PathNotMountedError, PathRouter
+from nexus.core.router import AsyncVFSRouter, PathNotMountedError, PathRouter
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.system_services.agents.agent_registry import AgentRegistry, InvalidTransitionError
-from nexus.system_services.agents.async_agent_registry import AsyncAgentRegistry
+from nexus.system_services.agents.agent_registry import (
+    AgentRegistry,
+    AsyncAgentRegistry,
+    InvalidTransitionError,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures: real implementations, not mocks
@@ -243,17 +245,17 @@ class TestServerWiring:
 
     def test_async_agent_registry_import(self) -> None:
         """AsyncAgentRegistry can be imported from the expected path."""
-        from nexus.system_services.agents.async_agent_registry import AsyncAgentRegistry
+        from nexus.system_services.agents.agent_registry import AsyncAgentRegistry
 
         assert AsyncAgentRegistry is not None
 
     def test_async_namespace_manager_import(self) -> None:
-        from nexus.bricks.rebac.async_namespace_manager import AsyncNamespaceManager
+        from nexus.bricks.rebac.namespace_manager import AsyncNamespaceManager
 
         assert AsyncNamespaceManager is not None
 
     def test_async_router_import(self) -> None:
-        from nexus.core.async_router import AsyncVFSRouter
+        from nexus.core.router import AsyncVFSRouter
 
         assert AsyncVFSRouter is not None
 
@@ -274,8 +276,7 @@ class TestServerLifespanWiring:
     @pytest.mark.asyncio()
     async def test_lifespan_wiring_with_real_db(self, tmp_path: Path) -> None:
         """Simulate server lifespan: AgentRegistry + AsyncAgentRegistry wiring."""
-        from nexus.system_services.agents.agent_registry import AgentRegistry
-        from nexus.system_services.agents.async_agent_registry import AsyncAgentRegistry
+        from nexus.system_services.agents.agent_registry import AgentRegistry, AsyncAgentRegistry
 
         # Create real SQLite-backed AgentRegistry (same as server lifespan does)
         db_path = tmp_path / f"lifespan_{uuid.uuid4().hex[:8]}.db"
@@ -333,13 +334,11 @@ class TestServerLifespanWiring:
         from unittest.mock import MagicMock
 
         from nexus.backends.storage.cas_local import CASLocalBackend
-        from nexus.bricks.rebac.async_namespace_manager import AsyncNamespaceManager
+        from nexus.bricks.rebac.namespace_manager import AsyncNamespaceManager
         from nexus.contracts.protocols.namespace_manager import NamespaceManagerProtocol
-        from nexus.core.async_router import AsyncVFSRouter
         from nexus.core.protocols.vfs_router import VFSRouterProtocol
-        from nexus.core.router import PathRouter
-        from nexus.system_services.agents.agent_registry import AgentRegistry
-        from nexus.system_services.agents.async_agent_registry import AsyncAgentRegistry
+        from nexus.core.router import AsyncVFSRouter, PathRouter
+        from nexus.system_services.agents.agent_registry import AgentRegistry, AsyncAgentRegistry
 
         # 1. AgentRegistry + AsyncAgentRegistry (SQLite)
         db_path = tmp_path / f"all3_{uuid.uuid4().hex[:8]}.db"
@@ -385,8 +384,7 @@ class TestServerLifespanWiring:
         agent info. This test verifies the async wrapper provides correct data
         for permission decisions.
         """
-        from nexus.system_services.agents.agent_registry import AgentRegistry
-        from nexus.system_services.agents.async_agent_registry import AsyncAgentRegistry
+        from nexus.system_services.agents.agent_registry import AgentRegistry, AsyncAgentRegistry
 
         db_path = tmp_path / f"perm_{uuid.uuid4().hex[:8]}.db"
         record_store = SQLAlchemyRecordStore(db_url=f"sqlite:///{db_path}", create_tables=True)

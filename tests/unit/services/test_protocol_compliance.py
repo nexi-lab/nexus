@@ -199,13 +199,13 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
     (
         "AgentRegistryProtocol",
         "nexus.contracts.protocols.agent_registry",
-        "nexus.system_services.agents.async_agent_registry.AsyncAgentRegistry",
+        "nexus.system_services.agents.agent_registry.AsyncAgentRegistry",
         True,
     ),
     (
         "NamespaceManagerProtocol",
         "nexus.contracts.protocols.namespace_manager",
-        "nexus.bricks.rebac.async_namespace_manager.AsyncNamespaceManager",
+        "nexus.bricks.rebac.namespace_manager.AsyncNamespaceManager",
         True,
     ),
     # ── Service-layer protocols ───────────────────────────────────────

@@ -814,6 +814,7 @@ class NexusFS(  # type: ignore[misc]
         return {
             "path": file_meta.path,
             "size": file_meta.size or 0,
+            "etag": file_meta.etag,
             "mime_type": file_meta.mime_type or "application/octet-stream",
             "created_at": file_meta.created_at.isoformat() if file_meta.created_at else None,
             "modified_at": file_meta.modified_at.isoformat() if file_meta.modified_at else None,
@@ -821,6 +822,8 @@ class NexusFS(  # type: ignore[misc]
             "owner": ctx.user_id,
             "group": ctx.user_id,
             "mode": 0o644,  # -rw-r--r--
+            "version": file_meta.version,
+            "zone_id": file_meta.zone_id,
         }
 
     @rpc_expose(description="Update file metadata attributes")

@@ -18,6 +18,7 @@ Used by NexusFS for:
 
 import asyncio
 import logging
+import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
@@ -187,6 +188,7 @@ class FileWatcher:
     _loop: asyncio.AbstractEventLoop | None = field(default=None, init=False, repr=False)
     _watches: dict[str, _WatchInfo] = field(default_factory=dict, init=False, repr=False)
     _stop_event: asyncio.Event = field(default_factory=asyncio.Event, init=False, repr=False)
+    _force_polling: bool = field(default=False, init=False, repr=False)
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -204,6 +206,11 @@ class FileWatcher:
 
         self._loop = loop or asyncio.get_running_loop()
         self._stop_event.clear()
+        self._force_polling = os.environ.get("NEXUS_FILE_WATCHER_POLL", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
         self._started = True
         logger.info("FileWatcher started")
 
@@ -316,6 +323,7 @@ class FileWatcher:
                     recursive=True,
                     step=50,  # 50 ms debounce for responsive one-shot
                     stop_event=stop,
+                    force_polling=self._force_polling,
                 ):
                     file_changes = _RenameDetector.process(changes)
                     if file_changes:
@@ -346,6 +354,7 @@ class FileWatcher:
                 recursive=recursive,
                 step=100,  # 100 ms debounce for persistent watches
                 stop_event=self._stop_event,
+                force_polling=self._force_polling,
             ):
                 file_changes = _RenameDetector.process(changes)
                 for fc in file_changes:

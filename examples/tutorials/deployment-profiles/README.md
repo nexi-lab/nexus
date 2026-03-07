@@ -1,6 +1,6 @@
-# Deployment Profiles & Modes Tutorial
+# Deployment Profiles Tutorial
 
-This tutorial covers Nexus deployment profiles, server modes, and how to verify
+This tutorial covers Nexus deployment profiles and how to verify
 that core filesystem operations work across all configurations.
 
 ## Concepts
@@ -23,17 +23,11 @@ Profile hierarchy: `minimal` ⊂ `embedded` ⊂ `lite` ⊂ `full` ⊂ `cloud`. `
 
 Core filesystem operations (write, read, stat, list, glob, grep) live in the **kernel** (`NexusFS`), not in bricks, so they work across all profiles.
 
-### Modes (NEXUS_MODE)
+### Topology
 
-Modes control the **deployment topology** and are orthogonal to profiles:
-
-| Mode | Description |
-|------|-------------|
-| `standalone` | Single-node, local redb storage (default) |
-| `federation` | Multi-zone Raft consensus via ZoneManager |
-| `remote` | Client-side thin proxy (SDK/CLI only, not for servers) |
-
-You can combine any profile with `standalone` or `federation` mode.
+The `cloud` profile enables federation (multi-zone Raft consensus).
+The `remote` profile creates a thin client proxy (SDK/CLI only, not for servers).
+All other profiles run as single-node local storage by default.
 
 ## Prerequisites
 
@@ -41,7 +35,7 @@ You can combine any profile with `standalone` or `federation` mode.
 pip install -e .  # Install nexus-ai-fs from source
 ```
 
-For federation mode, you also need the Rust extension built with full features:
+For the `cloud` profile (federation), you also need the Rust extension built with full features:
 
 ```bash
 # Requires protobuf 3.x (brew install protobuf@21)
@@ -87,7 +81,7 @@ The SDK can connect directly (no server needed) for local testing:
 ```python
 import nexus
 
-nx = nexus.connect(config={"mode": "standalone", "data_dir": "/tmp/nexus-tutorial/sdk"})
+nx = nexus.connect(config={"profile": "full", "data_dir": "/tmp/nexus-tutorial/sdk"})
 
 # Write
 nx.sys_write("/project/main.py", b'print("Hello, Nexus!")\n')
@@ -163,14 +157,13 @@ Run the automated test across all profiles:
 python3 examples/tutorials/deployment-profiles/test_profiles_cli.py
 ```
 
-## Tutorial 4: Federation Mode
+## Tutorial 4: Cloud Profile (Federation)
 
-Federation mode uses Raft consensus for multi-zone metadata replication.
-It works with any profile:
+The `cloud` profile enables Raft consensus for multi-zone metadata replication:
 
 ```bash
-# Start with federation mode + lite profile
-NEXUS_MODE=federation nexus serve --profile lite --port 3030 \
+# Start with cloud profile (federation enabled)
+nexus serve --profile cloud --port 3030 \
   --data-dir /tmp/nexus-tutorial/federation
 ```
 
@@ -180,9 +173,9 @@ Run the automated test:
 python3 examples/tutorials/deployment-profiles/test_profiles_federation.py
 ```
 
-## Tutorial 5: Remote Client Mode (Python SDK)
+## Tutorial 5: Remote Client Profile (Python SDK)
 
-Remote mode creates a thin gRPC proxy to a running server.
+The `remote` profile creates a thin gRPC proxy to a running server.
 
 ### Step 1: Start a server with gRPC enabled
 
@@ -199,7 +192,7 @@ import os, nexus
 os.environ["NEXUS_GRPC_PORT"] = "3051"
 
 nx = nexus.connect(config={
-    "mode": "remote",
+    "profile": "remote",
     "url": "http://localhost:3050",
 })
 
@@ -234,15 +227,7 @@ verified across the following dimensions:
 | `remote`   | OK                      | —                   | OK         | OK             |
 | `auto`     | OK                      | —                   | OK         | OK             |
 
-### By Mode
-
-| Mode          | Server startup | Python SDK | CLI   |
-|---------------|:--------------:|:----------:|:-----:|
-| `standalone`  | 7/7 profiles   | 7/7        | 7/7   |
-| `federation`  | 7/7 profiles   | —          | —     |
-| `remote`      | n/a (client)   | OK         | OK    |
-
-Note: remote mode tested against a `minimal` server. The gRPC transport
+Note: `remote` profile tested against a `minimal` server. The gRPC transport
 is profile-agnostic so one server profile is sufficient.
 
 ### By Operation × Interface

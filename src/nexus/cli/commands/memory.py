@@ -9,6 +9,7 @@ import click
 from rich.console import Console
 from rich.table import Table
 
+from nexus.bricks.memory.memory_provider import get_memory_api
 from nexus.cli.utils import (
     BackendConfig,
     add_backend_options,
@@ -61,7 +62,7 @@ def store(
     nx = get_default_filesystem()
 
     try:
-        memory_id = nx.memory.store(  # type: ignore[attr-defined]
+        memory_id = get_memory_api(nx).store(
             content=content,
             scope=scope,
             memory_type=memory_type,
@@ -126,7 +127,7 @@ def query(
 
     try:
         # Note: user_id and agent_id filtering not supported in remote mode yet
-        results = nx.memory.query(  # type: ignore[attr-defined]
+        results = get_memory_api(nx).query(
             scope=scope,
             memory_type=memory_type,
             state=state,
@@ -257,7 +258,7 @@ def search(
             )
             search_mode = "keyword"
 
-        results = nx.memory.search(  # type: ignore[attr-defined]
+        results = get_memory_api(nx).search(
             query=query_text,
             scope=scope,
             memory_type=memory_type,
@@ -351,7 +352,7 @@ def list(
     nx = get_default_filesystem()
 
     try:
-        results = nx.memory.list(  # type: ignore[attr-defined]
+        results = get_memory_api(nx).list(
             scope=scope,
             memory_type=memory_type,
             namespace=namespace,
@@ -407,8 +408,7 @@ def get(memory_id: str, output_json: bool) -> None:
     nx = get_default_filesystem()
 
     try:
-        result = nx.memory.get(memory_id)  # type: ignore[attr-defined]
-
+        result = get_memory_api(nx).get(memory_id)
         if not result:
             click.echo(f"Memory not found: {memory_id}", err=True)
             raise click.Abort()
@@ -446,8 +446,7 @@ def retrieve(path: str, output_json: bool) -> None:
     nx = get_default_filesystem()
 
     try:
-        result = nx.memory.retrieve(path=path)  # type: ignore[attr-defined]
-
+        result = get_memory_api(nx).retrieve(path=path)
         if not result:
             click.echo(f"Memory not found at path: {path}", err=True)
             raise click.Abort()
@@ -485,7 +484,7 @@ def delete(memory_id: str) -> None:
     nx = get_default_filesystem()
 
     try:
-        if nx.memory.delete(memory_id):  # type: ignore[attr-defined]
+        if get_memory_api(nx).delete(memory_id):
             click.echo(f"Memory deleted: {memory_id}")
         else:
             click.echo(f"Memory not found or no permission: {memory_id}", err=True)
@@ -508,7 +507,7 @@ def approve(memory_id: str) -> None:
     nx = get_default_filesystem()
 
     try:
-        if nx.memory.approve(memory_id):  # type: ignore[attr-defined]
+        if get_memory_api(nx).approve(memory_id):
             click.echo(f"Memory approved: {memory_id}")
         else:
             click.echo(f"Memory not found or no permission: {memory_id}", err=True)
@@ -531,7 +530,7 @@ def deactivate(memory_id: str) -> None:
     nx = get_default_filesystem()
 
     try:
-        if nx.memory.deactivate(memory_id):  # type: ignore[attr-defined]
+        if get_memory_api(nx).deactivate(memory_id):
             click.echo(f"Memory deactivated: {memory_id}")
         else:
             click.echo(f"Memory not found or no permission: {memory_id}", err=True)
@@ -556,8 +555,7 @@ def approve_batch(memory_ids: tuple[str, ...], output_json: bool) -> None:
     nx = get_default_filesystem()
 
     try:
-        result = nx.memory.approve_batch(list(memory_ids))  # type: ignore[attr-defined]
-
+        result = get_memory_api(nx).approve_batch(list(memory_ids))
         if output_json:
             click.echo(json.dumps(result, indent=2))
         else:
@@ -585,8 +583,7 @@ def deactivate_batch(memory_ids: tuple[str, ...], output_json: bool) -> None:
     nx = get_default_filesystem()
 
     try:
-        result = nx.memory.deactivate_batch(list(memory_ids))  # type: ignore[attr-defined]
-
+        result = get_memory_api(nx).deactivate_batch(list(memory_ids))
         if output_json:
             click.echo(json.dumps(result, indent=2))
         else:
@@ -614,8 +611,7 @@ def delete_batch(memory_ids: tuple[str, ...], output_json: bool) -> None:
     nx = get_default_filesystem()
 
     try:
-        result = nx.memory.delete_batch(list(memory_ids))  # type: ignore[attr-defined]
-
+        result = get_memory_api(nx).delete_batch(list(memory_ids))
         if output_json:
             click.echo(json.dumps(result, indent=2))
         else:

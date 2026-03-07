@@ -245,16 +245,6 @@ class NexusFS(  # type: ignore[misc]
         """Public accessor for the runtime configuration object."""
         return self._config
 
-    @property
-    def rebac_manager(self) -> Any | None:
-        """Public accessor for the ReBACManager instance."""
-        return getattr(self, "_rebac_manager", None)
-
-    @property
-    def memory(self) -> Any:
-        """Get Memory API instance (lazy init on first access)."""
-        return self._memory_provider.get_or_create()
-
     def _get_created_by(self, context: OperationContext | dict | None = None) -> str | None:
         """Get the created_by value for version history tracking."""
         from nexus.lib.context_utils import get_created_by

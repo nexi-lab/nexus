@@ -5,7 +5,7 @@ Enables team-based permissions, hierarchical access, and dynamic inheritance.
 """
 
 import sys
-from typing import Any
+from typing import Any, cast
 
 import click
 from rich.table import Table
@@ -769,7 +769,7 @@ def rebac_check_batch_cmd(
         console.print(
             f"[cyan]Checking {len(checks)} permissions (Rust acceleration enabled)...[/cyan]"
         )
-        results = nx.rebac_manager.rebac_check_batch_fast(checks)  # type: ignore[attr-defined]
+        results = cast(Any, nx).rebac_service.rebac_check_batch_sync(checks)
         nx.close()
 
         # Output results

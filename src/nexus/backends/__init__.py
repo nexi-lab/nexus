@@ -32,6 +32,7 @@ _OPTIONAL_BACKENDS: dict[str, tuple[str, str]] = {
     "SyncResult": ("nexus.backends.wrappers.cache_mixin", "SyncResult"),
     # Storage backends
     "CASLocalBackend": ("nexus.backends.storage.cas_local", "CASLocalBackend"),
+    "PathLocalBackend": ("nexus.backends.storage.path_local", "PathLocalBackend"),
     "PassthroughBackend": ("nexus.backends.storage.passthrough", "PassthroughBackend"),
     "CASGCSBackend": ("nexus.backends.storage.cas_gcs", "CASGCSBackend"),
     "GoogleDriveConnectorBackend": (
@@ -119,6 +120,7 @@ __all__ = [
     "create_connector_from_config",
     # Concrete backends
     "CASLocalBackend",
+    "PathLocalBackend",
     "PassthroughBackend",
     "CASGCSBackend",
     "GoogleDriveConnectorBackend",

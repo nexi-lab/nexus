@@ -56,21 +56,21 @@ class TestRenameDirectoryWithChildren:
     def test_rename_implicit_directory(self, nx):
         """Implicit directories (created by writing children) should be renameable.
 
-        Note: rename() on an implicit directory only renames the directory entry
-        in metadata. The DictMetastore.rename_path() does NOT recursively
-        rename children. Children remain at old paths, so the old implicit
-        directory still 'exists' due to those children.
+        Recursive rename in DictMetastore and PathLocalBackend ensures children
+        are moved to the new path.
         """
         nx.sys_write("/files/folder/a.txt", b"a")
         nx.sys_write("/files/folder/b.txt", b"b")
         # /files/folder/ is an implicit directory
-        # rename_path for implicit dirs creates the new path entry
-        # but children still exist under old path in DictMetastore
         nx.sys_rename("/files/folder", "/files/renamed")
-        # The rename succeeded without error — that's the key assertion
-        # Children are still under /files/folder/ in this implementation
-        assert nx.sys_access("/files/folder/a.txt")
-        assert nx.sys_access("/files/folder/b.txt")
+
+        # Children should now be at the new path
+        assert not nx.sys_access("/files/folder/a.txt")
+        assert not nx.sys_access("/files/folder/b.txt")
+        assert nx.sys_access("/files/renamed/a.txt")
+        assert nx.sys_access("/files/renamed/b.txt")
+        assert nx.sys_read("/files/renamed/a.txt") == b"a"
+        assert nx.sys_read("/files/renamed/b.txt") == b"b"
 
 
 class TestRenameErrorPaths:

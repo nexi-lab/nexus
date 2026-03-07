@@ -226,7 +226,7 @@ def get_filesystem(
             # Client mode: use remote server connection via nexus.connect()
             return nexus.connect(
                 config={
-                    "profile": "remote",
+                    "mode": "remote",
                     "url": backend_config.remote_url,
                     "api_key": backend_config.remote_api_key,
                 }

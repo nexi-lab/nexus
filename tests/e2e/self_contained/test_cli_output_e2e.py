@@ -394,32 +394,32 @@ class TestJsonEnvelopeConsistency:
 # =========================================================================
 
 
+def _seed_via_server(server_info: dict[str, str]) -> None:
+    """Seed test data by writing through the running server (avoids redb lock)."""
+    files = {
+        "/workspace/src/main.py": '# TODO: implement\nprint("hello")\n',
+        "/workspace/src/utils.py": "def helper():\n    return 42\n",
+        "/workspace/docs/README.md": "# Project\nThis is a test project.\n",
+        "/workspace/data.txt": "line one\nline two\nline three\n",
+    }
+    for path, content in files.items():
+        result = _run_nexus_remote(["write", path, content], server_info)
+        assert result.returncode == 0, (
+            f"Failed to seed {path}: stdout={result.stdout[:200]} stderr={result.stderr[:200]}"
+        )
+
+
 @pytest.fixture(scope="module")
-def remote_server(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
-    """Start a nexus serve daemon and yield connection info.
+def remote_server(tmp_path_factory: pytest.TempPathFactory):  # noqa: ANN201
+    """Start a nexus serve daemon, seed data, and yield connection info.
 
     The server is started once per module and shared across all remote tests.
-    This simulates production usage where the server is always running.
+    Data is seeded through the running server to avoid redb lock conflicts.
     """
-    import gc
-
     data_dir = str(tmp_path_factory.mktemp("remote-nexus-data"))
     http_port = _find_free_port()
     grpc_port = _find_free_port()
     url = f"http://127.0.0.1:{http_port}"
-
-    # Seed data into the data dir
-    nx = nexus.connect(config={"data_dir": data_dir})
-    nx.sys_mkdir("/workspace", exist_ok=True)
-    nx.sys_mkdir("/workspace/src", exist_ok=True)
-    nx.sys_mkdir("/workspace/docs", exist_ok=True)
-    nx.sys_write("/workspace/src/main.py", b'# TODO: implement\nprint("hello")\n')
-    nx.sys_write("/workspace/src/utils.py", b"def helper():\n    return 42\n")
-    nx.sys_write("/workspace/docs/README.md", b"# Project\nThis is a test project.\n")
-    nx.sys_write("/workspace/data.txt", b"line one\nline two\nline three\n")
-    nx.close()
-    del nx
-    gc.collect()
 
     # Server env: enable gRPC on the chosen port
     server_env = {**_SUBPROCESS_ENV, "NEXUS_GRPC_PORT": str(grpc_port)}
@@ -464,12 +464,17 @@ def remote_server(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
         server_proc.wait(timeout=5)
         pytest.skip("Server did not become ready within 30s")
 
-    yield {
+    info = {
         "url": url,
         "data_dir": data_dir,
         "http_port": str(http_port),
         "grpc_port": str(grpc_port),
     }
+
+    # Seed test data through the running server
+    _seed_via_server(info)
+
+    yield info
 
     # Teardown: stop server
     server_proc.send_signal(signal.SIGINT)

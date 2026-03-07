@@ -50,7 +50,9 @@ use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use raft::eraftpb::{ConfChange, ConfChangeType, ConfState, Entry, EntryType, Message, Snapshot};
+use raft::eraftpb::{
+    ConfChange, ConfChangeType, ConfChangeV2, ConfState, Entry, EntryType, Message, Snapshot,
+};
 use raft::{Config, RawNode, Storage};
 use slog::{o, Logger};
 use tokio::sync::{mpsc, oneshot, RwLock};
@@ -894,7 +896,7 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
                         let _ = proposal.tx.send(Ok(result));
                     }
                 }
-                EntryType::EntryConfChange | EntryType::EntryConfChangeV2 => {
+                EntryType::EntryConfChange => {
                     let cc: ConfChange = protobuf::Message::parse_from_bytes(&entry.data)
                         .map_err(|e| RaftError::Serialization(e.to_string()))?;
 
@@ -992,6 +994,102 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
                     // Notify waiting JoinZone caller (if any)
                     if let Some(tx) = self.pending_conf_changes.remove(&cc.node_id) {
                         let _ = tx.send(Ok(cs));
+                    }
+                }
+                EntryType::EntryConfChangeV2 => {
+                    let cc: ConfChangeV2 = protobuf::Message::parse_from_bytes(&entry.data)
+                        .map_err(|e| RaftError::Serialization(e.to_string()))?;
+
+                    let cs = self
+                        .raw_node
+                        .apply_conf_change(&cc)
+                        .map_err(|e| RaftError::Raft(e.to_string()))?;
+
+                    self.raw_node
+                        .mut_store()
+                        .set_conf_state(&cs)
+                        .map_err(|e| RaftError::Storage(e.to_string()))?;
+
+                    let mut has_add = false;
+
+                    #[cfg(all(feature = "grpc", has_protos))]
+                    if let Some(ref peer_map) = self.peer_map {
+                        for single in &cc.changes {
+                            match single.get_change_type() {
+                                ConfChangeType::AddNode | ConfChangeType::AddLearnerNode => {
+                                    has_add = true;
+                                    if !cc.context.is_empty() {
+                                        let address =
+                                            String::from_utf8_lossy(&cc.context).to_string();
+                                        let endpoint = if address.starts_with("http") {
+                                            address.clone()
+                                        } else {
+                                            format!("http://{}", address)
+                                        };
+                                        peer_map.write().unwrap().insert(
+                                            single.node_id,
+                                            NodeAddress::new(single.node_id, endpoint),
+                                        );
+                                    }
+                                }
+                                ConfChangeType::RemoveNode => {
+                                    peer_map.write().unwrap().remove(&single.node_id);
+                                }
+                            }
+                        }
+                    }
+
+                    // Without grpc feature, still detect AddNode for snapshot creation
+                    #[cfg(not(all(feature = "grpc", has_protos)))]
+                    {
+                        for single in &cc.changes {
+                            if matches!(
+                                single.get_change_type(),
+                                ConfChangeType::AddNode | ConfChangeType::AddLearnerNode
+                            ) {
+                                has_add = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    tracing::info!(
+                        index = entry.index,
+                        num_changes = cc.changes.len(),
+                        voters = ?cs.voters,
+                        "raft.conf_change_v2.applied",
+                    );
+
+                    if has_add {
+                        let sm_data = sm.snapshot().map_err(|e| {
+                            RaftError::Storage(format!("snapshot for new voter: {e}"))
+                        })?;
+                        let mut snapshot = Snapshot::new();
+                        {
+                            let meta = snapshot.mut_metadata();
+                            meta.index = entry.index;
+                            meta.term = entry.term;
+                            *meta.mut_conf_state() = cs.clone();
+                        }
+                        snapshot.data = sm_data.into();
+
+                        self.raw_node
+                            .mut_store()
+                            .store_snapshot(&snapshot)
+                            .map_err(|e| RaftError::Storage(format!("store snapshot: {e}")))?;
+                        self.raw_node
+                            .mut_store()
+                            .compact(entry.index)
+                            .map_err(|e| {
+                                RaftError::Storage(format!("compact after AddNode v2: {e}"))
+                            })?;
+                    }
+
+                    // Notify waiting JoinZone callers for each added node
+                    for single in &cc.changes {
+                        if let Some(tx) = self.pending_conf_changes.remove(&single.node_id) {
+                            let _ = tx.send(Ok(cs.clone()));
+                        }
                     }
                 }
             }

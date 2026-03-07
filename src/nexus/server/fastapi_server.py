@@ -353,6 +353,10 @@ def create_app(
             _brick_sources.append(_meta_export_svc)
     except Exception as _exc:
         logger.debug("MetadataExportService unavailable: %s", _exc)
+    # Issue #1410: VersionService @rpc_expose methods (moved from NexusFS)
+    _version_svc = getattr(nexus_fs, "version_service", None)
+    if _version_svc is not None:
+        _brick_sources.append(_version_svc)
     app.state.exposed_methods = _discover_exposed_methods(nexus_fs, *_brick_sources)
 
     # Defaults for optional services are set by init_app_state() above (Issue #2135)

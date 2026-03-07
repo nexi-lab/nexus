@@ -71,7 +71,9 @@ def test_basic_operations():
             nx.sys_write(test_path, new_content.encode("utf-8"))
             print(f"   ✓ Wrote version {i + 1}")
 
-        versions = nx.list_versions(test_path)
+        from nexus.lib.sync_bridge import run_sync
+
+        versions = run_sync(nx.version_service.list_versions(test_path))
         print(f"   ✓ File has {len(versions)} versions")
         assert len(versions) >= 4, f"Expected at least 4 versions, got {len(versions)}"
 

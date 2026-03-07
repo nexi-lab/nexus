@@ -361,51 +361,33 @@ class TestVersionDelegation:
         """list_versions should return version history after writes."""
         path = f"/ver-{uuid.uuid4().hex[:8]}.txt"
         nx.sys_write(path, b"v1")
-        versions = nx.list_versions(path)
+        from nexus.lib.sync_bridge import run_sync
+
+        versions = run_sync(nx.version_service.list_versions(path))
         assert isinstance(versions, list)
         assert len(versions) >= 1
 
     def test_get_version_returns_content(self, nx):
         """get_version should retrieve specific version content."""
+        from nexus.lib.sync_bridge import run_sync
+
         path = f"/ver2-{uuid.uuid4().hex[:8]}.txt"
         nx.sys_write(path, b"version-one")
-        versions = nx.list_versions(path)
+        versions = run_sync(nx.version_service.list_versions(path))
         assert len(versions) >= 1
         ver_num = versions[0].get("version", 1)
-        content = nx.get_version(path, ver_num)
+        content = run_sync(nx.version_service.get_version(path, ver_num))
         assert isinstance(content, bytes)
 
     def test_multiple_versions(self, nx):
         """Multiple writes should produce multiple versions."""
+        from nexus.lib.sync_bridge import run_sync
+
         path = f"/multi-ver-{uuid.uuid4().hex[:8]}.txt"
         nx.sys_write(path, b"v1")
         nx.sys_write(path, b"v2")
-        versions = nx.list_versions(path)
+        versions = run_sync(nx.version_service.list_versions(path))
         assert len(versions) >= 2
-
-    def test_aget_version_is_coroutine(self, nx):
-        """aget_version should be a coroutine function (via __getattr__)."""
-        import inspect
-
-        assert inspect.iscoroutinefunction(nx.aget_version)
-
-    def test_alist_versions_is_coroutine(self, nx):
-        """alist_versions should be a coroutine function (via __getattr__)."""
-        import inspect
-
-        assert inspect.iscoroutinefunction(nx.alist_versions)
-
-    def test_arollback_is_coroutine(self, nx):
-        """arollback should be a coroutine function (via __getattr__)."""
-        import inspect
-
-        assert inspect.iscoroutinefunction(nx.arollback)
-
-    def test_adiff_versions_is_coroutine(self, nx):
-        """adiff_versions should be a coroutine function (via __getattr__)."""
-        import inspect
-
-        assert inspect.iscoroutinefunction(nx.adiff_versions)
 
 
 # ---------------------------------------------------------------------------
@@ -507,7 +489,9 @@ class TestPermissionEnforcement:
         )
         path = f"/perm-ver-{uuid.uuid4().hex[:8]}.txt"
         nx_perms.sys_write(path, b"version with perms", context=ctx)
-        versions = nx_perms.list_versions(path, context=ctx)
+        from nexus.lib.sync_bridge import run_sync
+
+        versions = run_sync(nx_perms.version_service.list_versions(path, ctx))
         assert isinstance(versions, list)
         assert len(versions) >= 1
 

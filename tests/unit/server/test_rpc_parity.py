@@ -50,6 +50,11 @@ def get_all_rpc_exposed_methods():
     """
     exposed = get_rpc_exposed_methods(NexusFS)
 
+    # Issue #1410: Version methods moved from NexusFS to VersionService
+    from nexus.bricks.versioning.version_service import VersionService
+
+    exposed.update(get_rpc_exposed_methods(VersionService))
+
     return exposed
 
 
@@ -121,11 +126,8 @@ def test_all_public_methods_are_exposed_or_excluded():
         # Phase 2 Service Composition - Async delegation methods (Issue #988)
         # These are internal async methods that delegate to services. The original
         # sync mixin methods (without "a" prefix) already have @rpc_expose decorators.
-        # VersionService delegation (4 methods)
-        "aget_version",  # Delegates to version_service.get_version()
-        "alist_versions",  # Delegates to version_service.list_versions()
-        "arollback",  # Delegates to version_service.rollback()
-        "adiff_versions",  # Delegates to version_service.diff_versions()
+        # VersionService delegation (removed: sync wrappers moved to VersionService,
+        # async __getattr__ magic deleted in PR #2782)
         # ReBACService delegation (8 methods)
         "arebac_create",  # Delegates to rebac_service.rebac_create()
         "arebac_delete",  # Delegates to rebac_service.rebac_delete()
@@ -160,7 +162,7 @@ def test_all_public_methods_are_exposed_or_excluded():
         "asemantic_search",  # Delegates to search_service.semantic_search()
         "asemantic_search_index",  # Delegates to search_service.semantic_search_index()
         "asemantic_search_stats",  # Delegates to search_service.semantic_search_stats()
-        "ainitialize_semantic_search",  # Delegates to search_service.initialize_semantic_search()
+        # ainitialize_semantic_search — deleted from NexusFS, callers use search_service directly
         # Distributed Lock methods - async context managers require special handling
         # Tracked in Issue #1141
         "atomic_update",  # Async - read-modify-write with distributed lock

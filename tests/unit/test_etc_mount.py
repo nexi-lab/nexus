@@ -1,4 +1,4 @@
-"""Tests for /etc VFS mount functionality."""
+"""Tests for /etc VFS write functionality."""
 
 from __future__ import annotations
 
@@ -14,79 +14,59 @@ def state_dir(tmp_path: Path) -> Path:
     etc.mkdir(parents=True)
     (etc / "mounts").write_text("auto_sync = true\n")
     (etc / "cache").write_text('backend = "dragonfly"\n')
-    # Also need data dir and metastore for connect()
-    (tmp_path / "data").mkdir()
     return tmp_path
 
 
 class TestMountEtc:
     """Test _mount_etc() function."""
 
-    def test_mount_etc_creates_readonly_mount(self, state_dir: Path) -> None:
+    def test_writes_etc_files_to_vfs(self, state_dir: Path) -> None:
         from nexus.__init__ import _mount_etc
 
-        # Create a minimal NexusFS-like object with a router
-        from nexus.backends.storage.path_local import PathLocalBackend
-        from nexus.core.router import PathRouter
-        from nexus.storage.raft_metadata_store import RaftMetadataStore
+        writes: dict[str, bytes] = {}
 
-        meta = RaftMetadataStore.embedded(str(state_dir / "metastore"))
-        router = PathRouter(meta)
-        data_backend = PathLocalBackend(root_path=state_dir / "data")
-        router.add_mount("/", data_backend)
-
-        # Create a mock nx_fs with the router
         class MockNexusFS:
-            pass
+            def sys_write(self, path: str, content: bytes) -> int:
+                writes[path] = content
+                return len(content)
 
         nx_fs = MockNexusFS()
-        nx_fs.router = router
-
         _mount_etc(nx_fs, str(state_dir))
 
-        # Verify /etc is mounted
-        assert router.has_mount("/etc")
+        assert "/etc/conf.d/mounts" in writes
+        assert b"auto_sync = true" in writes["/etc/conf.d/mounts"]
+        assert "/etc/conf.d/cache" in writes
+        assert b'backend = "dragonfly"' in writes["/etc/conf.d/cache"]
 
-        # Verify /etc is readonly
-        route = router.route("/etc/conf.d/mounts", is_admin=True)
-        assert route.readonly is True
-
-    def test_mount_etc_skips_when_no_etc_dir(self, tmp_path: Path) -> None:
+    def test_skips_when_no_etc_dir(self, tmp_path: Path) -> None:
         from nexus.__init__ import _mount_etc
 
         class MockNexusFS:
-            pass
+            def sys_write(self, path: str, content: bytes) -> int:
+                raise AssertionError("should not write when etc/ is missing")
 
         nx_fs = MockNexusFS()
-        nx_fs.router = None  # Should not be accessed
+        _mount_etc(nx_fs, str(tmp_path))  # No error
 
-        # No error when etc/ doesn't exist
-        _mount_etc(nx_fs, str(tmp_path))
-
-    def test_etc_files_routable(self, state_dir: Path) -> None:
+    def test_ignores_directories(self, state_dir: Path) -> None:
         from nexus.__init__ import _mount_etc
-        from nexus.backends.storage.path_local import PathLocalBackend
-        from nexus.core.router import PathRouter
-        from nexus.storage.raft_metadata_store import RaftMetadataStore
 
-        meta = RaftMetadataStore.embedded(str(state_dir / "metastore"))
-        router = PathRouter(meta)
-        data_backend = PathLocalBackend(root_path=state_dir / "data")
-        router.add_mount("/", data_backend)
+        # Add a subdirectory (not a file)
+        (state_dir / "etc" / "conf.d" / "subdir").mkdir()
+
+        writes: dict[str, bytes] = {}
 
         class MockNexusFS:
-            pass
+            def sys_write(self, path: str, content: bytes) -> int:
+                writes[path] = content
+                return len(content)
 
         nx_fs = MockNexusFS()
-        nx_fs.router = router
-
         _mount_etc(nx_fs, str(state_dir))
 
-        # Route resolves to the /etc mount with correct backend path
-        route = router.route("/etc/conf.d/mounts", is_admin=True)
-        assert route.mount_point == "/etc"
-        assert route.backend_path == "conf.d/mounts"
-        assert isinstance(route.backend, PathLocalBackend)
+        # Only files are written, not directories
+        assert all("subdir" not in p for p in writes)
+        assert len(writes) == 2  # mounts + cache
 
 
 class TestRestoreMountsWithConfd:

@@ -522,11 +522,11 @@ def _register_federation_resolver(nx_fs: "NexusFS", zone_mgr: Any) -> None:
 
 
 def _mount_etc(nx_fs: "NexusFS", state_dir: str) -> None:
-    """Mount ``$STATE_DIR/etc`` as ``/etc`` in VFS (readonly).
+    """Write ``$STATE_DIR/etc`` files into ``/etc`` in VFS.
 
-    Makes host-side config files visible through the Nexus filesystem,
-    mirroring how Linux mounts a disk at ``/etc``.  The mount is
-    readonly so agents cannot modify config through the VFS.
+    Reads host-side config files and writes them into the Nexus
+    filesystem via ``sys_write``, giving each file a proper metastore
+    entry.  The kernel boots without ``/etc``; this runs post-boot.
     """
     from pathlib import Path
 
@@ -534,11 +534,18 @@ def _mount_etc(nx_fs: "NexusFS", state_dir: str) -> None:
     if not etc_path.is_dir():
         return
 
-    from nexus.backends.storage.path_local import PathLocalBackend
+    count = 0
+    for host_file in etc_path.rglob("*"):
+        if not host_file.is_file():
+            continue
+        rel = host_file.relative_to(etc_path)
+        vfs_path = "/etc/" + str(rel)
+        content = host_file.read_bytes()
+        nx_fs.sys_write(vfs_path, content)
+        count += 1
 
-    etc_backend = PathLocalBackend(root_path=etc_path, fsync=False)
-    nx_fs.router.add_mount("/etc", etc_backend, readonly=True)
-    logger.info("Mounted %s as /etc (readonly)", etc_path)
+    if count:
+        logger.info("Wrote %d config file(s) from %s into /etc", count, etc_path)
 
 
 def _restore_mounts(nx_fs: "NexusFS") -> None:

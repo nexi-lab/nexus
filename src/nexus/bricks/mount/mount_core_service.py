@@ -403,9 +403,13 @@ class MountCoreService:
     ) -> None:
         """Grant direct_owner permission to mount creator.
 
-        Raises on failure so that ``add_mount`` can roll back the router
-        registration — a mount must never be active without permissions
-        (Issue #2754).
+        Raises on genuine ReBAC failures so that ``add_mount`` can roll
+        back the router registration — a mount must never be active
+        without permissions (Issue #2754).
+
+        If ReBAC is not configured (record_store missing), logs a warning
+        and returns gracefully — this allows mounts to work in minimal
+        deployments without permission enforcement.
 
         Args:
             mount_point: Virtual path
@@ -422,12 +426,21 @@ class MountCoreService:
             logger.warning("[MOUNT-PERM] No subject_id, skipping permission grant")
             return
 
-        tuple_id = self._gw.rebac_create(
-            subject=(subject_type, subject_id),
-            relation="direct_owner",
-            object=("file", mount_point),
-            zone_id=zone_id,
-        )
+        try:
+            tuple_id = self._gw.rebac_create(
+                subject=(subject_type, subject_id),
+                relation="direct_owner",
+                object=("file", mount_point),
+                zone_id=zone_id,
+            )
+        except RuntimeError as exc:
+            if "not available" in str(exc):
+                logger.warning(
+                    "[MOUNT-PERM] ReBAC not available, skipping permission grant: %s",
+                    exc,
+                )
+                return
+            raise
 
         logger.info(
             "Granted direct_owner to %s:%s for %s (tuple_id=%s)",

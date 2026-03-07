@@ -161,6 +161,33 @@ class TestGrantOwnerPermission:
         service._grant_owner_permission("/mnt/test", None)
         gw.rebac_create.assert_not_called()
 
+    def test_rebac_not_available_skips_gracefully(self) -> None:
+        """ReBAC not configured (no record_store) is non-fatal."""
+        service, gw = _build_service()
+        gw.rebac_create.side_effect = RuntimeError(
+            "ReBAC manager not available (record_store not configured)"
+        )
+
+        # Should NOT raise — just logs a warning and returns
+        service._grant_owner_permission("/mnt/test", _op_context())
+        gw.rebac_create.assert_called_once()
+
+    def test_rebac_not_available_no_rollback(self) -> None:
+        """ReBAC not available during add_mount does not trigger rollback."""
+        service, gw = _build_service()
+        gw.rebac_create.side_effect = RuntimeError(
+            "ReBAC manager not available (record_store not configured)"
+        )
+
+        result = service.add_mount(
+            mount_point="/mnt/test",
+            backend_type="cas_local",
+            backend_config={"data_dir": "/tmp"},
+            context=_op_context(),
+        )
+        assert result == "/mnt/test"
+        gw.router.remove_mount.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # remove_mount error collection tests
@@ -198,7 +225,7 @@ class TestRemoveMountErrorCollection:
 
     def test_successful_remove_has_no_errors(self) -> None:
         """Clean removal returns zero errors."""
-        service, gw = _build_service()
+        service, _gw = _build_service()
         result = service.remove_mount("/mnt/test")
         assert result["removed"] is True
         assert result["errors"] == []

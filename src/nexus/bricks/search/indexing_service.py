@@ -120,16 +120,11 @@ class IndexingService:
         # --- Step 2: Read document content ---------------------------------
         content = self._read_content(path)
 
-        # --- Step 3: Delete stale chunks -----------------------------------
-        with self._get_session() as session:
-            session.execute(
-                delete(DocumentChunkModel).where(
-                    DocumentChunkModel.path_id == path_id,
-                ),
-            )
-            session.commit()
-
-        # --- Step 4: Delegate to pipeline ----------------------------------
+        # --- Step 3: Delegate to pipeline (atomic delete+insert) -----------
+        # The pipeline's _bulk_insert handles DELETE old chunks + INSERT new
+        # chunks in a single transaction.  We do NOT delete chunks beforehand
+        # because a pipeline failure (e.g. embedding API timeout) would leave
+        # the document with zero chunks — an incomplete index (Issue #2753).
         try:
             result: IndexResult = await self._pipeline.index_document(
                 path,

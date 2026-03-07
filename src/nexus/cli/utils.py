@@ -177,26 +177,14 @@ def add_backend_options(func: Any) -> Any:
     return wrapper
 
 
-def _apply_common_config(
-    config: dict[str, Any],
-    *,
-    enforce_permissions: bool | None,
-    allow_admin_bypass: bool | None,
-    enforce_zone_isolation: bool | None,
-    enable_memory_paging: bool,
-    memory_main_capacity: int,
-    memory_recall_max_age_hours: float,
-) -> None:
+def _apply_common_config(config: dict[str, Any], **kwargs: Any) -> None:
     """Apply common configuration options to a config dict (mutates in place)."""
-    if enforce_permissions is not None:
-        config["enforce_permissions"] = enforce_permissions
-    if allow_admin_bypass is not None:
-        config["allow_admin_bypass"] = allow_admin_bypass
-    if enforce_zone_isolation is not None:
-        config["enforce_zone_isolation"] = enforce_zone_isolation
-    config["enable_memory_paging"] = enable_memory_paging
-    config["memory_main_capacity"] = memory_main_capacity
-    config["memory_recall_max_age_hours"] = memory_recall_max_age_hours
+    for key in ("enforce_permissions", "allow_admin_bypass", "enforce_zone_isolation"):
+        if kwargs.get(key) is not None:
+            config[key] = kwargs[key]
+    for key in ("enable_memory_paging", "memory_main_capacity", "memory_recall_max_age_hours"):
+        if key in kwargs:
+            config[key] = kwargs[key]
 
 
 def get_filesystem(
@@ -590,7 +578,7 @@ def resolve_content(content: str | None, input_file: Any) -> bytes:
         SystemExit: If no content source is provided.
     """
     if input_file:
-        return input_file.read()
+        return bytes(input_file.read())
     if content == "-":
         return sys.stdin.buffer.read()
     if content:

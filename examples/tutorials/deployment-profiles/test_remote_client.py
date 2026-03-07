@@ -51,7 +51,7 @@ def main() -> int:
     env = os.environ.copy()
     env["NEXUS_GRPC_PORT"] = str(GRPC_PORT)
     env["NEXUS_DATA_DIR"] = f"{BASE_DIR}/server"
-    for k in ["NEXUS_URL", "NEXUS_DATABASE_URL", "NEXUS_MODE"]:
+    for k in ["NEXUS_URL", "NEXUS_DATABASE_URL", "NEXUS_MODE", "NEXUS_PROFILE"]:
         env.pop(k, None)
 
     server = subprocess.Popen(
@@ -97,7 +97,7 @@ def main() -> int:
 
     nx = nexus.connect(
         config={
-            "mode": "remote",
+            "profile": "remote",
             "url": f"http://localhost:{HTTP_PORT}",
         }
     )

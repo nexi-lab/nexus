@@ -16,7 +16,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "add_retry_count_oplog"
-down_revision: Union[str, Sequence[str], None] = "add_delivered_col_oplog"
+down_revision: Union[str, Sequence[str], None] = "add_credentials_and_manifests"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

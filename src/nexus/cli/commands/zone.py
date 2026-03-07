@@ -24,6 +24,8 @@ import click
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
+from nexus.cli.output import OutputOptions, add_output_options, render_error, render_output
+from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
     BackendConfig,
     add_backend_options,
@@ -227,35 +229,53 @@ def join_zone_cmd(
     show_default=True,
     help="gRPC bind address",
 )
+@add_output_options
 def list_zones_cmd(
     node_id: int,
     data_dir: str,
     bind: str,
+    output_opts: OutputOptions,
 ) -> None:
     """List all local zones on this node.
 
     Examples:
         nexus zone list
-
+        nexus zone list --json
         nexus zone list --data-dir /var/lib/nexus/zones
     """
-    try:
-        mgr = _get_zone_manager(node_id, data_dir, bind)
-        zones = mgr.list_zones()
+    timing = CommandTiming()
 
-        if not zones:
-            console.print("[dim]No zones found[/dim]")
-        else:
+    try:
+        with timing.phase("server"):
+            mgr = _get_zone_manager(node_id, data_dir, bind)
+            zones = mgr.list_zones()
+            mgr.shutdown()
+
+        data = [{"zone_id": z} for z in sorted(zones)] if zones else []
+
+        def _print_human(entries: list[dict[str, Any]]) -> None:
+            if not entries:
+                console.print("[dim]No zones found[/dim]")
+                return
             table = Table(title=f"Zones (node {node_id})")
             table.add_column("Zone ID", style="cyan")
             console.print()
-            for z in sorted(zones):
-                table.add_row(z)
+            for entry in entries:
+                table.add_row(entry["zone_id"])
             console.print(table)
 
-        mgr.shutdown()
+        render_output(
+            data=data, output_opts=output_opts, timing=timing, human_formatter=_print_human
+        )
     except Exception as e:
-        handle_error(e)
+        if output_opts.json_output:
+            from nexus.cli.exit_codes import ExitCode
+
+            render_error(
+                error=e, output_opts=output_opts, exit_code=ExitCode.GENERAL_ERROR, timing=timing
+            )
+        else:
+            handle_error(e)
 
 
 @zone.command(name="mount")

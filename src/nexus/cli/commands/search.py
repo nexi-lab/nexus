@@ -1,16 +1,20 @@
 """Search and discovery commands - glob, grep, find-duplicates."""
 
 import sys
+from collections import defaultdict
 from typing import Any, cast
 
 import click
 
+from nexus.cli.output import OutputOptions, add_output_options, render_error, render_output
+from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
     BackendConfig,
     add_backend_options,
     console,
     get_filesystem,
     handle_error,
+    open_filesystem,
 )
 
 
@@ -29,12 +33,14 @@ def register_commands(cli: click.Group) -> None:
 @click.option(
     "-t", "--type", type=click.Choice(["f", "d"]), help="Filter by type: f=files, d=directories"
 )
+@add_output_options
 @add_backend_options
 def glob(
     pattern: str,
     path: str,
     long: bool,
     type: str | None,
+    output_opts: OutputOptions,
     backend_config: BackendConfig,
 ) -> None:
     """Find files matching a glob pattern.
@@ -46,74 +52,97 @@ def glob(
     - [...] (character classes)
 
     Examples:
-        # Basic patterns
         nexus glob "**/*.py"
         nexus glob "*.txt" /workspace
-
-        # With details (like ls -l)
         nexus glob -l "**/*.py"
-
-        # Filter by type
-        nexus glob -t f "**/*"          # Only files
-        nexus glob -t d "/workspace/*"  # Only directories
+        nexus glob "**/*.py" --json
+        nexus glob -t f "**/*"
     """
+    timing = CommandTiming()
+
     try:
-        nx = get_filesystem(backend_config)
-        result = nx.glob(pattern, path)
-        # Remote mode may return {"matches": [...]} instead of a plain list
-        matches = result["matches"] if isinstance(result, dict) and "matches" in result else result
-
-        if not matches:
-            console.print(f"[yellow]No files match pattern:[/yellow] {pattern}")
-            nx.close()
-            return
-
-        # Filter by type if specified
-        if type:
-            filtered_matches = []
-            for match in matches:
-                is_dir = (
-                    nx.sys_is_directory(match)
-                    if hasattr(nx, "is_directory")
-                    else match.endswith("/")
+        with timing.phase("connect"), open_filesystem(backend_config) as nx:
+            with timing.phase("server"):
+                result = nx.search_service.glob(pattern, path)
+                matches = (
+                    result["matches"]
+                    if isinstance(result, dict) and "matches" in result
+                    else result
                 )
-                if (type == "d" and is_dir) or (type == "f" and not is_dir):
-                    filtered_matches.append(match)
-            matches = filtered_matches
 
-        # Get metadata if needed for long format
-        match_data = []
-        if long:
-            for match in matches:
+            if not matches:
+                render_output(
+                    data=[],
+                    output_opts=output_opts,
+                    timing=timing,
+                    message=f"No files match pattern: {pattern}",
+                )
+                return
+
+            # Filter by type if specified
+            if type:
+                filtered = []
+                for match in matches:
+                    is_dir = (
+                        nx.sys_is_directory(match)
+                        if hasattr(nx, "is_directory")
+                        else match.endswith("/")
+                    )
+                    if (type == "d" and is_dir) or (type == "f" and not is_dir):
+                        filtered.append(match)
+                matches = filtered
+
+            # For --long, use batch metadata instead of N+1 reads
+            match_data: list[dict[str, Any]]
+            if long and matches:
+                # Try batch metadata via sys_readdir on parent paths
+                metadata_map: dict[str, dict[str, Any]] = {}
                 try:
-                    metadata = nx.read(match, return_metadata=True)
-                    if isinstance(metadata, dict):
-                        match_data.append(
-                            {
-                                "path": match,
-                                "size": metadata.get("size", 0),
-                                "mtime": metadata.get("modified_at", ""),
-                            }
-                        )
-                    else:
-                        match_data.append({"path": match, "size": 0, "mtime": ""})
+                    parent_path = path if path != "/" else "/"
+                    all_details = nx.sys_readdir(parent_path, recursive=True, details=True)
+                    details_list = cast(list[dict[str, Any]], all_details)
+                    metadata_map = {d["path"]: d for d in details_list}
                 except Exception:
-                    match_data.append({"path": match, "size": 0, "mtime": ""})
+                    pass
 
-        nx.close()
+                match_data = []
+                for m in matches:
+                    meta = metadata_map.get(m, {})
+                    match_data.append(
+                        {
+                            "path": m,
+                            "size": meta.get("size", 0),
+                            "modified_at": meta.get("modified_at", ""),
+                        }
+                    )
+            else:
+                match_data = [{"path": m} for m in matches]
 
-        console.print(f"[green]Found {len(matches)} files matching[/green] [cyan]{pattern}[/cyan]:")
+        def _print_human(entries: list[dict[str, Any]]) -> None:
+            console.print(
+                f"[green]Found {len(entries)} files matching[/green] [cyan]{pattern}[/cyan]:"
+            )
+            if long:
+                for entry in entries:
+                    console.print(
+                        f"  {entry.get('size', 0):>10}  {entry.get('modified_at', '')}  {entry['path']}"
+                    )
+            else:
+                for entry in entries:
+                    console.print(f"  {entry['path']}")
 
-        if long:
-            # Show detailed listing
-            for data in match_data:
-                console.print(f"  {data['size']:>10}  {data['mtime']}  {data['path']}")
-        else:
-            # Simple listing
-            for match in matches:
-                console.print(f"  {match}")
+        render_output(
+            data=match_data, output_opts=output_opts, timing=timing, human_formatter=_print_human
+        )
     except Exception as e:
-        handle_error(e)
+        if output_opts.json_output:
+            from nexus.cli.exit_codes import ExitCode
+
+            render_error(
+                error=e, output_opts=output_opts, exit_code=ExitCode.GENERAL_ERROR, timing=timing
+            )
+        else:
+            handle_error(e)
 
 
 @click.command()
@@ -124,7 +153,7 @@ def glob(
 @click.option("-n", "--line-number", is_flag=True, help="Show line numbers (like grep -n)")
 @click.option("-l", "--files-with-matches", is_flag=True, help="Show only filenames with matches")
 @click.option("-c", "--count", is_flag=True, help="Show count of matches per file")
-@click.option("-v", "--invert-match", is_flag=True, help="Invert match (show non-matching lines)")
+@click.option("--invert-match", is_flag=True, help="Invert match (show non-matching lines)")
 @click.option("-A", "--after-context", type=int, default=0, help="Show N lines after match")
 @click.option("-B", "--before-context", type=int, default=0, help="Show N lines before match")
 @click.option("-C", "--context", type=int, default=0, help="Show N lines before and after match")
@@ -136,6 +165,7 @@ def glob(
     help="Search mode: auto (try parsed, fallback to raw), parsed (only parsed), raw (only raw)",
     show_default=True,
 )
+@add_output_options
 @add_backend_options
 def grep(
     pattern: str,
@@ -151,48 +181,35 @@ def grep(
     context: int,  # noqa: ARG001 - not yet wired to core grep
     max_results: int,
     search_mode: str,
+    output_opts: OutputOptions,
     backend_config: BackendConfig,
 ) -> None:
     """Search file contents using regex patterns.
 
-    Search Modes:
-    - auto: Try parsed text first, fallback to raw (default)
-    - parsed: Only search parsed text (great for PDFs/docs)
-    - raw: Only search raw file content (skip parsing)
-
     Examples:
-        # Basic search
         nexus grep "TODO"
+        nexus grep -n "error" /workspace
+        nexus grep "TODO" --json
+        nexus grep -l "TODO" .
+        nexus grep -i "error" --json --fields file,line
 
-        # Linux-style with common flags
-        nexus grep -n "error" /workspace          # Show line numbers
-        nexus grep -l "TODO" .                    # Only filenames
-        nexus grep -c "import" **/*.py            # Count matches
-        nexus grep -A 3 -B 3 "def main"           # Context lines
-        nexus grep -C 5 "class"                   # 5 lines context
-        nexus grep -v "test" file.txt             # Invert match
-        nexus grep -i "error"                     # Case insensitive
-
-        # Nexus-specific
+    \b
         nexus grep "revenue" -f "**/*.pdf" --search-mode=parsed
     """
+    timing = CommandTiming()
+
     try:
-        nx = get_filesystem(backend_config)
+        with timing.phase("connect"), open_filesystem(backend_config) as nx, timing.phase("server"):
+            result = nx.search_service.grep(
+                pattern,
+                path=path,
+                file_pattern=file_pattern,
+                ignore_case=ignore_case,
+                max_results=max_results,
+                search_mode=search_mode,
+            )
 
-        # Context lines (after_context, before_context, context) are accepted
-        # by the CLI but not yet wired to core grep() — see arg suppression above
-
-        result = nx.grep(
-            pattern,
-            path=path,
-            file_pattern=file_pattern,
-            ignore_case=ignore_case,
-            max_results=max_results,
-            search_mode=search_mode,
-        )
-        nx.close()
-
-        # Remote mode may return {"results": [...]} instead of a plain list
+        # Normalize result format
         if isinstance(result, dict) and "results" in result:
             matches = result["results"]
         elif isinstance(result, dict) and "matches" in result:
@@ -201,49 +218,67 @@ def grep(
             matches = result
 
         if not matches:
-            console.print(f"[yellow]No matches found for:[/yellow] {pattern}")
+            render_output(
+                data=[],
+                output_opts=output_opts,
+                timing=timing,
+                message=f"No matches found for: {pattern}",
+            )
             return
 
-        # Group matches by file for counting and context
-        from collections import defaultdict
-
-        matches_by_file = defaultdict(list)
+        # Group by file
+        matches_by_file: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for match in matches:
             matches_by_file[match["file"]].append(match)
 
-        # Handle -l (files with matches only)
-        if files_with_matches:
-            for filename in sorted(matches_by_file.keys()):
-                console.print(filename)
-            return
+        # Structure data for JSON output
+        data = {
+            "pattern": pattern,
+            "total_matches": len(matches),
+            "files_matched": len(matches_by_file),
+            "matches": matches,
+        }
 
-        # Handle -c (count only)
-        if count:
-            for filename in sorted(matches_by_file.keys()):
-                count_val = len(matches_by_file[filename])
-                console.print(f"{filename}:{count_val}")
-            return
+        def _print_human(d: dict[str, Any]) -> None:
+            m_list = d["matches"]
+            by_file: dict[str, list[dict[str, Any]]] = defaultdict(list)
+            for m in m_list:
+                by_file[m["file"]].append(m)
 
-        # Regular output with optional enhancements
-        console.print(f"[green]Found {len(matches)} matches[/green] for [cyan]{pattern}[/cyan]")
-        if search_mode != "auto":
-            console.print(f"[dim]Search mode: {search_mode}[/dim]")
-        console.print()
+            if files_with_matches:
+                for filename in sorted(by_file.keys()):
+                    console.print(filename)
+                return
 
-        for filename in sorted(matches_by_file.keys()):
-            file_matches = matches_by_file[filename]
-            console.print(f"[bold cyan]{filename}[/bold cyan]")
+            if count:
+                for filename in sorted(by_file.keys()):
+                    console.print(f"{filename}:{len(by_file[filename])}")
+                return
 
-            for match in file_matches:
-                # Format line number if requested
-                line_num_str = f"{match['line']}:" if line_number else ""
-
-                console.print(f"  [yellow]{line_num_str}[/yellow] {match['content']}")
-
+            console.print(f"[green]Found {len(m_list)} matches[/green] for [cyan]{pattern}[/cyan]")
+            if search_mode != "auto":
+                console.print(f"[dim]Search mode: {search_mode}[/dim]")
             console.print()
 
+            for filename in sorted(by_file.keys()):
+                console.print(f"[bold cyan]{filename}[/bold cyan]")
+                for m in by_file[filename]:
+                    ln = f"{m['line']}:" if line_number else ""
+                    console.print(f"  [yellow]{ln}[/yellow] {m['content']}")
+                console.print()
+
+        render_output(
+            data=data, output_opts=output_opts, timing=timing, human_formatter=_print_human
+        )
     except Exception as e:
-        handle_error(e)
+        if output_opts.json_output:
+            from nexus.cli.exit_codes import ExitCode
+
+            render_error(
+                error=e, output_opts=output_opts, exit_code=ExitCode.GENERAL_ERROR, timing=timing
+            )
+        else:
+            handle_error(e)
 
 
 @click.command(name="find-duplicates")

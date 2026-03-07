@@ -798,9 +798,8 @@ class TestMemoryTools:
 
     def test_store_memory_not_available(self, mock_nx_basic):
         """Test storing memory when system not available."""
-        # Remove memory attribute
-        if hasattr(mock_nx_basic, "memory"):
-            delattr(mock_nx_basic, "memory")
+        # Implementation checks _memory_provider, not .memory
+        mock_nx_basic._memory_provider = None
 
         server = create_mcp_server(nx=mock_nx_basic)
 
@@ -834,9 +833,8 @@ class TestMemoryTools:
 
     def test_query_memory_not_available(self, mock_nx_basic):
         """Test querying memory when system not available."""
-        # Remove memory attribute
-        if hasattr(mock_nx_basic, "memory"):
-            delattr(mock_nx_basic, "memory")
+        # Implementation checks _memory_provider, not .memory
+        mock_nx_basic._memory_provider = None
 
         server = create_mcp_server(nx=mock_nx_basic)
 

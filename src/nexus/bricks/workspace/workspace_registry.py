@@ -14,7 +14,7 @@ Key Concepts:
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -266,8 +266,6 @@ class WorkspaceRegistry:
         # Calculate expiry
         expires_at = None
         if ttl:
-            from datetime import UTC
-
             expires_at = datetime.now(UTC) + ttl
 
         # Create config
@@ -285,7 +283,7 @@ class WorkspaceRegistry:
             path=path,
             name=name,
             description=description,
-            created_at=datetime.now(),
+            created_at=datetime.now(UTC),
             created_by=created_by or user_id,
             metadata=ws_metadata,
         )
@@ -533,8 +531,6 @@ class WorkspaceRegistry:
         # Calculate expiry
         expires_at = None
         if ttl:
-            from datetime import UTC
-
             expires_at = datetime.now(UTC) + ttl
 
         # Create config
@@ -542,7 +538,7 @@ class WorkspaceRegistry:
             path=path,
             name=name,
             description=description,
-            created_at=datetime.now(),
+            created_at=datetime.now(UTC),
             created_by=created_by or user_id,
             metadata=metadata or {},
         )
@@ -655,7 +651,7 @@ class WorkspaceRegistry:
                 path=config.path,
                 name=config.name,
                 description=config.description,
-                created_at=config.created_at or datetime.now(),
+                created_at=config.created_at or datetime.now(UTC),
                 created_by=config.created_by,
                 user_id=user_id,  # v0.5.0
                 agent_id=agent_id,  # v0.5.0
@@ -698,7 +694,7 @@ class WorkspaceRegistry:
                 path=config.path,
                 name=config.name,
                 description=config.description,
-                created_at=config.created_at or datetime.now(),
+                created_at=config.created_at or datetime.now(UTC),
                 created_by=config.created_by,
                 user_id=user_id,  # v0.5.0
                 agent_id=agent_id,  # v0.5.0

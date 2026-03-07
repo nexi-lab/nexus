@@ -149,11 +149,21 @@ impl TaskStore {
             }
         }
 
-        // Normal path: grab the first key in pending_idx (highest priority, earliest time)
+        // Normal path: scan pending_idx for the first due task, skipping future-scheduled ones.
+        // The index is sorted by (priority, run_at, task_id), so within a priority band
+        // run_at increases monotonically — but a lower-priority band may have due tasks.
         if target_key.is_none() {
-            if let Some(guard) = self.pending_idx.first_key_value() {
-                if let Ok((key, _)) = guard.into_inner() {
-                    target_key = Some(key.as_ref().to_vec());
+            for guard in self.pending_idx.iter() {
+                match guard.into_inner() {
+                    Ok((key, _)) => {
+                        if let Some((_, run_at, _)) = decode_pending_key(key.as_ref()) {
+                            if run_at <= now {
+                                target_key = Some(key.as_ref().to_vec());
+                                break;
+                            }
+                        }
+                    }
+                    Err(_) => continue,
                 }
             }
         }

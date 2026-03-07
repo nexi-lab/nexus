@@ -176,6 +176,7 @@ class TestKafkaExporterPartitionKey:
 
         config = Mock()
         config.topic_prefix = "nexus.events"
+        config.send_timeout = 10.0
 
         exporter = KafkaExporter(config)
         mock_producer = AsyncMock()
@@ -205,6 +206,7 @@ class TestKafkaExporterPartitionKey:
         config = Mock()
         config.topic_prefix = "nexus.events"
         config.batch_size = 100
+        config.send_timeout = 10.0
 
         exporter = KafkaExporter(config)
         mock_producer = AsyncMock()

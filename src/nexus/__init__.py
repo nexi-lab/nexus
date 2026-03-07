@@ -522,11 +522,12 @@ def _register_federation_resolver(nx_fs: "NexusFS", zone_mgr: Any) -> None:
 
 
 def _mount_etc(nx_fs: "NexusFS", state_dir: str) -> None:
-    """Write ``$STATE_DIR/etc`` files into ``/etc`` in VFS.
+    """Mount ``$STATE_DIR/etc`` as ``/etc`` via PathLocalBackend.
 
-    Reads host-side config files and writes them into the Nexus
-    filesystem via ``sys_write``, giving each file a proper metastore
-    entry.  The kernel boots without ``/etc``; this runs post-boot.
+    Files live on the real filesystem at ``$STATE_DIR/etc/``.  After
+    mounting, each file is ``sys_write``-ed to create metastore entries
+    so that ``sys_read``/``sys_stat``/``sys_readdir`` work.  Writes
+    through the VFS go to the actual disk path (not CAS).
 
     On first boot (no ``$STATE_DIR/etc/`` yet), copies default config
     files from the repo's ``etc/conf.d/`` directory.
@@ -542,6 +543,14 @@ def _mount_etc(nx_fs: "NexusFS", state_dir: str) -> None:
     if not etc_path.is_dir():
         return
 
+    # Mount PathLocalBackend so reads/writes go to actual disk paths
+    from nexus.backends.storage.path_local import PathLocalBackend
+
+    etc_backend = PathLocalBackend(root_path=etc_path, fsync=False)
+    nx_fs.router.add_mount("/etc", etc_backend)
+
+    # sys_write each file to create metastore entries (content already
+    # on disk, so the PathLocalBackend write is effectively a no-op)
     count = 0
     for host_file in etc_path.rglob("*"):
         if not host_file.is_file():
@@ -553,7 +562,7 @@ def _mount_etc(nx_fs: "NexusFS", state_dir: str) -> None:
         count += 1
 
     if count:
-        logger.info("Wrote %d config file(s) from %s into /etc", count, etc_path)
+        logger.info("Mounted %s as /etc (%d file(s))", etc_path, count)
 
 
 def _seed_etc_defaults(etc_path: "Path") -> None:

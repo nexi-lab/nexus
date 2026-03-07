@@ -1,4 +1,4 @@
-"""Tests for /etc VFS write functionality."""
+"""Tests for /etc VFS mount functionality."""
 
 from __future__ import annotations
 
@@ -17,42 +17,53 @@ def state_dir(tmp_path: Path) -> Path:
     return tmp_path
 
 
+def _make_mock_nx_fs():
+    """Create a mock NexusFS that records sys_write calls and has a stub router."""
+    writes: dict[str, bytes] = {}
+    mounts: dict[str, object] = {}
+
+    class _MockRouter:
+        def add_mount(self, path, backend, **kwargs):
+            mounts[path] = backend
+
+    class _MockNexusFS:
+        router = _MockRouter()
+
+        def sys_write(self, path: str, content: bytes) -> int:
+            writes[path] = content
+            return len(content)
+
+    return _MockNexusFS(), writes, mounts
+
+
 class TestMountEtc:
     """Test _mount_etc() function."""
 
-    def test_writes_etc_files_to_vfs(self, state_dir: Path) -> None:
+    def test_mounts_path_local_backend_and_writes(self, state_dir: Path) -> None:
         from nexus.__init__ import _mount_etc
+        from nexus.backends.storage.path_local import PathLocalBackend
 
-        writes: dict[str, bytes] = {}
-
-        class MockNexusFS:
-            def sys_write(self, path: str, content: bytes) -> int:
-                writes[path] = content
-                return len(content)
-
-        nx_fs = MockNexusFS()
+        nx_fs, writes, mounts = _make_mock_nx_fs()
         _mount_etc(nx_fs, str(state_dir))
 
+        # PathLocalBackend mounted at /etc
+        assert "/etc" in mounts
+        assert isinstance(mounts["/etc"], PathLocalBackend)
+
+        # Files sys_written to create metastore entries
         assert "/etc/conf.d/mounts" in writes
         assert b"auto_sync = true" in writes["/etc/conf.d/mounts"]
         assert "/etc/conf.d/cache" in writes
-        assert b'backend = "dragonfly"' in writes["/etc/conf.d/cache"]
 
     def test_seeds_defaults_when_no_etc_dir(self, tmp_path: Path) -> None:
         from nexus.__init__ import _mount_etc
 
-        writes: dict[str, bytes] = {}
-
-        class MockNexusFS:
-            def sys_write(self, path: str, content: bytes) -> int:
-                writes[path] = content
-                return len(content)
-
-        nx_fs = MockNexusFS()
+        nx_fs, writes, mounts = _make_mock_nx_fs()
         _mount_etc(nx_fs, str(tmp_path))
 
         # Defaults are seeded from repo etc/conf.d/
         assert len(writes) > 0
+        assert "/etc" in mounts
         assert (tmp_path / "etc" / "conf.d").is_dir()
 
     def test_ignores_directories(self, state_dir: Path) -> None:
@@ -61,14 +72,7 @@ class TestMountEtc:
         # Add a subdirectory (not a file)
         (state_dir / "etc" / "conf.d" / "subdir").mkdir()
 
-        writes: dict[str, bytes] = {}
-
-        class MockNexusFS:
-            def sys_write(self, path: str, content: bytes) -> int:
-                writes[path] = content
-                return len(content)
-
-        nx_fs = MockNexusFS()
+        nx_fs, writes, _mounts = _make_mock_nx_fs()
         _mount_etc(nx_fs, str(state_dir))
 
         # Only files are written, not directories

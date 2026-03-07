@@ -142,3 +142,24 @@ class MemoryProvider:
             EntityRegistry = _rebac.EntityRegistry
             self._entity_registry = EntityRegistry(self._session_factory)
         return self._entity_registry
+
+
+def get_memory_api(nx: Any) -> Any:
+    """Get Memory API from a NexusFS instance.
+
+    Replaces the deleted ``NexusFS.memory`` property (Issue #1410 Phase 5).
+    Accesses the ``_memory_provider`` (wired via ``bind_wired_services``).
+
+    Args:
+        nx: NexusFS instance with ``_memory_provider`` attribute.
+
+    Returns:
+        Memory or MemoryWithPaging instance.
+
+    Raises:
+        AttributeError: If ``_memory_provider`` is not configured.
+    """
+    provider = getattr(nx, "_memory_provider", None)
+    if provider is None:
+        raise AttributeError("Memory provider not configured on NexusFS")
+    return provider.get_or_create()

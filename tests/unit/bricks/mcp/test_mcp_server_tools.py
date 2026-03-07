@@ -81,15 +81,19 @@ def mock_nx_with_memory():
     nx.sys_read = Mock(return_value=b"test")
     nx.sys_write = Mock()
 
-    # Add memory system
-    nx.memory = Mock()
-    nx.memory.store = Mock()
-    nx.memory.search = Mock(
+    # Add memory system via _memory_provider (get_memory_api() reads this)
+    mock_memory = Mock()
+    mock_memory.store = Mock()
+    mock_memory.search = Mock(
         return_value=[{"content": "test memory", "importance": 0.8, "type": "technical"}]
     )
-    nx.memory.session = Mock()
-    nx.memory.session.commit = Mock()
-    nx.memory.session.rollback = Mock()
+    mock_memory.session = Mock()
+    mock_memory.session.commit = Mock()
+    mock_memory.session.rollback = Mock()
+    mock_provider = Mock()
+    mock_provider.get_or_create.return_value = mock_memory
+    nx._memory_provider = mock_provider
+    nx.memory = mock_memory  # alias for assertions
 
     return nx
 
@@ -192,13 +196,17 @@ def mock_nx_full():
     nx.sys_mkdir = Mock()
     nx.sys_rmdir = Mock()
 
-    # Memory system
-    nx.memory = Mock()
-    nx.memory.store = Mock()
-    nx.memory.search = Mock(return_value=[])
-    nx.memory.session = Mock()
-    nx.memory.session.commit = Mock()
-    nx.memory.session.rollback = Mock()
+    # Memory system via _memory_provider (get_memory_api() reads this)
+    mock_memory = Mock()
+    mock_memory.store = Mock()
+    mock_memory.search = Mock(return_value=[])
+    mock_memory.session = Mock()
+    mock_memory.session.commit = Mock()
+    mock_memory.session.rollback = Mock()
+    mock_provider = Mock()
+    mock_provider.get_or_create.return_value = mock_memory
+    nx._memory_provider = mock_provider
+    nx.memory = mock_memory  # alias for assertions
 
     # Workflow system
     nx.workflows = Mock()

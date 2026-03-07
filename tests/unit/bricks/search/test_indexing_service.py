@@ -2,9 +2,10 @@
 
 Tests the unified indexing service that wraps IndexingPipeline + FileReaderProtocol.
 Validates content-hash skip logic, delegation to pipeline, directory indexing,
-delete operations, and stats retrieval.
+delete operations, stats retrieval, and atomic reindex safety (Issue #2753).
 """
 
+import asyncio
 from contextlib import contextmanager
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
@@ -329,6 +330,96 @@ class TestDeleteDocumentIndex:
         # Verify session.execute was called with a delete statement
         session.execute.assert_called()
         session.commit.assert_called()
+
+
+class TestAtomicReindex:
+    """Tests for atomic reindex safety (Issue #2753).
+
+    Verifies that pipeline failure does NOT leave the index in an incomplete
+    state — old chunks must remain until new chunks are fully committed.
+    """
+
+    def test_pipeline_failure_does_not_delete_old_chunks(self) -> None:
+        """When pipeline.index_document raises, no DELETE is executed on the session."""
+        file_model = _mock_file_model(
+            path_id="pid-1",
+            content_hash="new_hash",
+            indexed_content_hash="old_hash",
+        )
+        pipeline = _mock_pipeline()
+        pipeline.index_document.side_effect = ConnectionError("embedding API timeout")
+
+        service, _, session, _ = _build_service(
+            pipeline=pipeline,
+            file_model=file_model,
+            content="updated content",
+        )
+
+        async def run():
+            with pytest.raises(ConnectionError, match="embedding API timeout"):
+                await service.index_document("test.py")
+
+        asyncio.run(run())
+
+        # The service should NOT have called session.execute with a DELETE
+        # (the old premature delete was removed in Issue #2753).
+        for call in session.execute.call_args_list:
+            stmt = call[0][0]
+            stmt_str = str(stmt)
+            assert "DELETE" not in stmt_str.upper() or "document_chunks" not in stmt_str
+
+    def test_successful_reindex_delegates_delete_to_pipeline(self) -> None:
+        """On success, pipeline handles delete+insert atomically (no service-level delete)."""
+        file_model = _mock_file_model(
+            path_id="pid-1",
+            content_hash="new_hash",
+            indexed_content_hash="old_hash",
+        )
+        pipeline = _mock_pipeline()
+        pipeline.index_document.return_value = IndexResult(path="test.py", chunks_indexed=10)
+
+        service, _, session, _ = _build_service(
+            pipeline=pipeline,
+            file_model=file_model,
+            content="new content",
+        )
+
+        async def run():
+            return await service.index_document("test.py")
+
+        result = asyncio.run(run())
+
+        assert result == 10
+        pipeline.index_document.assert_awaited_once_with("test.py", "new content", "pid-1")
+        # No DELETE from the service layer — pipeline owns the atomic swap
+        for call in session.execute.call_args_list:
+            stmt = call[0][0]
+            stmt_str = str(stmt)
+            assert "DELETE" not in stmt_str.upper() or "document_chunks" not in stmt_str
+
+    def test_hash_not_updated_on_pipeline_failure(self) -> None:
+        """When pipeline fails, indexed_content_hash must NOT be updated."""
+        file_model = _mock_file_model(
+            path_id="pid-1",
+            content_hash="new_hash",
+            indexed_content_hash="old_hash",
+        )
+        pipeline = _mock_pipeline()
+        pipeline.index_document.side_effect = RuntimeError("chunking error")
+
+        service, _, _, _ = _build_service(
+            pipeline=pipeline,
+            file_model=file_model,
+        )
+
+        async def run():
+            with pytest.raises(RuntimeError, match="chunking error"):
+                await service.index_document("test.py")
+
+        asyncio.run(run())
+
+        # indexed_content_hash should remain unchanged
+        assert file_model.indexed_content_hash == "old_hash"
 
 
 class TestGetIndexStats:

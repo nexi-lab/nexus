@@ -69,14 +69,14 @@ def test_profile(profile: str) -> dict[str, str]:
     data_dir = f"{BASE_DIR}/{profile}"
     os.makedirs(data_dir, exist_ok=True)
 
-    for k in ["NEXUS_URL", "NEXUS_DATABASE_URL", "NEXUS_MODE"]:
+    for k in ["NEXUS_URL", "NEXUS_DATABASE_URL", "NEXUS_MODE", "NEXUS_PROFILE"]:
         os.environ.pop(k, None)
     os.environ["NEXUS_PROFILE"] = profile
 
     row: dict[str, str] = {}
 
     try:
-        nx = nexus.connect(config={"mode": "standalone", "data_dir": data_dir})
+        nx = nexus.connect(config={"profile": "full", "data_dir": data_dir})
     except Exception as e:
         print(f"  CONNECT FAILED: {e}")
         return dict.fromkeys(OPS, "FAIL")

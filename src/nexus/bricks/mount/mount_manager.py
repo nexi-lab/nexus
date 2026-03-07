@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from nexus.storage.models import MountConfigModel
 
@@ -125,14 +126,8 @@ class MountManager:
             ... )
         """
         with self._session_factory() as session:
-            # Check if mount already exists
-            stmt = select(MountConfigModel).where(MountConfigModel.mount_point == mount_point)
-            existing = session.execute(stmt).scalar_one_or_none()
-
-            if existing:
-                raise ValueError(f"Mount already exists at {mount_point}")
-
-            # Create new mount config
+            # Create new mount config — rely on DB UNIQUE constraint on
+            # mount_point to prevent duplicates race-free (Issue #2754).
             mount_model = MountConfigModel(
                 mount_id=str(uuid.uuid4()),
                 mount_point=mount_point,
@@ -150,9 +145,12 @@ class MountManager:
             # Validate before saving
             mount_model.validate()
 
-            # Save to database
             session.add(mount_model)
-            session.commit()
+            try:
+                session.commit()
+            except IntegrityError as exc:
+                session.rollback()
+                raise ValueError(f"Mount already exists at {mount_point}") from exc
 
             return mount_model.mount_id
 

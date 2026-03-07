@@ -294,7 +294,12 @@ def connect(
         # (~/.nexus/data), the parent (~/.nexus) is still used as nexus_root
         # for backward compatibility.
         nexus_root = data_dir if cfg.data_dir is not None else str(Path(data_dir).parent)
-        backend = CASLocalBackend(root_path=Path(data_dir).resolve())
+        if cfg.backend == "path_local":
+            from nexus.backends.storage.path_local import PathLocalBackend
+
+            backend = PathLocalBackend(root_path=Path(data_dir).resolve())
+        else:
+            backend = CASLocalBackend(root_path=Path(data_dir).resolve())
 
     # Resolve paths — new fields take precedence, db_path is legacy fallback
     metadata_path = cfg.metastore_path or cfg.db_path or str(Path(nexus_root) / "metastore")

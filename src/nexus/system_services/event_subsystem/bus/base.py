@@ -273,12 +273,12 @@ class EventBusBase(ABC):
             # First run: use default lookback
             # Use naive datetime to match database (TIMESTAMP WITHOUT TIME ZONE)
             checkpoint = _utcnow_naive() - timedelta(hours=default_lookback_hours)
-            logger.info(f"No checkpoint found, using default lookback: {default_lookback_hours}h")
+            logger.info("No checkpoint found, using default lookback: %dh", default_lookback_hours)
         elif checkpoint.tzinfo is not None:
             # Convert to naive if checkpoint has timezone info
             checkpoint = checkpoint.replace(tzinfo=None)
 
-        logger.info(f"Starting sync from checkpoint: {checkpoint.isoformat()}")
+        logger.info("Starting sync from checkpoint: %s", checkpoint.isoformat())
 
         # Query operations since checkpoint
         with self._session_factory() as session:
@@ -296,7 +296,7 @@ class EventBusBase(ABC):
                 await self._update_checkpoint(_utcnow_naive())
                 return 0
 
-            logger.info(f"Found {len(operations)} missed events to sync")
+            logger.info("Found %d missed events to sync", len(operations))
 
             # Convert all operations to events
             events = [
@@ -310,31 +310,53 @@ class EventBusBase(ABC):
                 for op in operations
             ]
 
-            # Process ALL events concurrently (bounded by semaphore) - 10x speedup
+            # Process events sequentially to preserve ordering guarantees.
+            # On first failure we stop — remaining events will be retried on
+            # next startup because the checkpoint only advances to the last
+            # successfully processed event (Issue #2752).
+            synced_count = 0
+            failed_count = 0
+
             if event_handler:
-                semaphore = asyncio.Semaphore(50)  # Max 50 concurrent
-
-                async def _handle_with_limit(event: FileEvent) -> bool:
-                    async with semaphore:
-                        try:
-                            await event_handler(event)
-                            return True  # Success
-                        except Exception as e:
-                            logger.error(f"Failed to handle event {event.event_id}: {e}")
-                            return False  # Failure
-
-                tasks = [_handle_with_limit(event) for event in events]
-                results = await asyncio.gather(*tasks)
-                synced_count: int = sum(results)
+                for i, event in enumerate(events):
+                    try:
+                        await event_handler(event)
+                        synced_count += 1
+                    except Exception as e:
+                        logger.error("Failed to handle event %s: %s", event.event_id, e)
+                        failed_count += 1
+                        skipped = len(events) - i - 1
+                        if skipped > 0:
+                            logger.warning(
+                                "Stopping startup sync: %d events skipped after failure",
+                                skipped,
+                            )
+                        break
             else:
                 synced_count = len(events)
                 for event in events:
-                    logger.debug(f"Synced event: {event.type} on {event.path}")
+                    logger.debug("Synced event: %s on %s", event.type, event.path)
 
-            # Update checkpoint to latest operation timestamp
-            latest_timestamp = max(op.created_at for op in operations)
-            await self._update_checkpoint(latest_timestamp)
-            logger.info(f"Startup sync complete: {synced_count}/{len(events)} events processed")
+            # Only advance checkpoint to the last *successfully* processed
+            # event.  If nothing succeeded, leave checkpoint unchanged so the
+            # entire batch is retried on next startup (Issue #2752).
+            if synced_count > 0:
+                safe_timestamp = operations[synced_count - 1].created_at
+                await self._update_checkpoint(safe_timestamp)
+
+            if len(operations) == self._max_sync_events and failed_count == 0:
+                logger.warning(
+                    "Startup sync hit max_sync_events limit (%d). "
+                    "More events may exist beyond this batch.",
+                    self._max_sync_events,
+                )
+
+            logger.info(
+                "Startup sync complete: synced=%d, failed=%d, total=%d",
+                synced_count,
+                failed_count,
+                len(events),
+            )
 
             return synced_count
 

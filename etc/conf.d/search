@@ -1,7 +1,0 @@
-# Search brick configuration.
-#
-# zoekt_url = ""                    # Zoekt code search URL
-# index_dir = ""                    # Search index directory
-# embedding_model = ""              # Embedding model name
-# embedding_provider = ""           # Embedding provider
-# enable_predicate_pushdown = true  # Query optimization

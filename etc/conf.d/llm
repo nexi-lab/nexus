@@ -1,5 +1,0 @@
-# LLM brick configuration.
-#
-# api_key = ""            # LLM provider API key
-# model = ""              # Model name (e.g. "claude-sonnet-4-6")
-# provider = "anthropic"  # Provider: anthropic, openai, openrouter

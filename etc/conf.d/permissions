@@ -1,5 +1,0 @@
-# Permission enforcement configuration.
-#
-# enforce = true            # Enable permission enforcement
-# allow_admin_bypass = true # Allow admin keys to bypass checks
-# enforce_zone_isolation = true

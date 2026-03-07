@@ -8,6 +8,8 @@ import click
 from rich.syntax import Syntax
 
 import nexus
+from nexus.cli.output import OutputOptions, add_output_options, render_error, render_output
+from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
     BackendConfig,
     add_backend_options,
@@ -15,6 +17,8 @@ from nexus.cli.utils import (
     console,
     get_filesystem,
     handle_error,
+    open_filesystem,
+    resolve_content,
 )
 
 
@@ -84,137 +88,187 @@ def init(path: str) -> None:
     type=str,
     help="Read file content at a historical operation point (time-travel debugging)",
 )
+@add_output_options
 @add_backend_options
 @add_context_options
 def cat(
     path: str,
     metadata: bool,
     at_operation: str | None,
+    output_opts: OutputOptions,
     backend_config: BackendConfig,
     operation_context: dict[str, Any],
 ) -> None:
     """Display file contents.
 
     Examples:
-        # Display file content
         nexus cat /workspace/data.txt
-
-        # Display with syntax highlighting
         nexus cat /workspace/code.py
-
-        # Show metadata (etag, version) for OCC
         nexus cat /workspace/data.txt --metadata
-
-        # Time-travel: Read file at historical operation point
+        nexus cat /workspace/data.txt --json
         nexus cat /workspace/data.txt --at-operation op_abc123
     """
-    try:
-        nx = get_filesystem(backend_config)
+    timing = CommandTiming()
 
-        if at_operation:
-            # Time-travel: Read file at historical operation point
-            time_travel = getattr(nx, "time_travel_service", None)
-            if time_travel is None:
-                console.print("[red]Error:[/red] Time-travel is only supported with local NexusFS")
-                nx.close()
+    try:
+        with timing.phase("connect"), open_filesystem(backend_config) as nx:
+            if at_operation:
+                _cat_time_travel(nx, path, at_operation, metadata, output_opts, timing)
                 return
 
-            state = time_travel.get_file_at_operation(path, at_operation)
-            nx.close()
+            with timing.phase("server"):
+                if metadata:
+                    read_result = nx.read(
+                        path, context=cast(Any, operation_context), return_metadata=True
+                    )
+                    assert isinstance(read_result, dict), "Expected dict when return_metadata=True"
+                    content = read_result["content"]
+                    meta_data = {
+                        "path": path,
+                        "etag": read_result["etag"],
+                        "version": read_result["version"],
+                        "size": read_result["size"],
+                        "modified_at": str(read_result["modified_at"]),
+                    }
+                else:
+                    # Check file size to decide between read() and stream()
+                    STREAM_THRESHOLD = 10 * 1024 * 1024  # 10MB
+                    file_size = 0
+                    if hasattr(nx, "metadata"):
+                        try:
+                            file_meta = nx.metadata.get(path)
+                            file_size = file_meta.size if file_meta else 0
+                        except Exception:
+                            file_size = 0
 
-            # Display time-travel info
-            console.print("[bold cyan]Time-Travel Mode[/bold cyan]")
-            console.print(f"[dim]Operation ID:[/dim]  {state['operation_id']}")
-            console.print(f"[dim]Operation Time:[/dim] {state['operation_time']}")
-            console.print()
+                    if file_size > STREAM_THRESHOLD:
+                        console.print(f"[dim]Streaming large file ({file_size:,} bytes)...[/dim]")
+                        for chunk in nx.stream(  # type: ignore[attr-defined]
+                            path, chunk_size=65536, context=operation_context
+                        ):
+                            sys.stdout.buffer.write(chunk)
+                        sys.stdout.buffer.flush()
+                        return
 
-            if metadata:
-                console.print("[bold]Metadata:[/bold]")
-                console.print(f"[dim]Path:[/dim]     {path}")
-                console.print(f"[dim]Size:[/dim]     {state['metadata'].get('size', 0)} bytes")
-                console.print(f"[dim]Owner:[/dim]    {state['metadata'].get('owner', '-')}")
-                console.print(f"[dim]Group:[/dim]    {state['metadata'].get('group', '-')}")
-                console.print(f"[dim]Mode:[/dim]     {state['metadata'].get('mode', '-')}")
-                console.print(f"[dim]Modified:[/dim] {state['metadata'].get('modified_at', '-')}")
-                console.print()
-                console.print("[bold]Content:[/bold]")
+                    content = nx.sys_read(path, context=cast(Any, operation_context))
+                    meta_data = None
 
-            content = state["content"]
-        elif metadata:
-            # Read with metadata for OCC
-            data = nx.read(path, context=cast(Any, operation_context), return_metadata=True)
-            nx.close()
+        # JSON mode: return structured data
+        if output_opts.json_output:
+            try:
+                text = content.decode("utf-8")
+            except UnicodeDecodeError:
+                text = None
 
-            # Type narrowing: when return_metadata=True, result is always dict
-            assert isinstance(data, dict), "Expected dict when return_metadata=True"
+            data: dict[str, Any] = {
+                "path": path,
+                "size": len(content),
+                "content": text,
+                "binary": text is None,
+            }
+            if meta_data:
+                data["metadata"] = meta_data
 
-            # Display metadata first
+            render_output(data=data, output_opts=output_opts, timing=timing)
+            return
+
+        # Human mode
+        if metadata and meta_data:
             console.print("[bold]Metadata:[/bold]")
-            console.print(f"[dim]Path:[/dim]     {path}")
-            console.print(f"[dim]ETag:[/dim]     {data['etag']}")
-            console.print(f"[dim]Version:[/dim]  {data['version']}")
-            console.print(f"[dim]Size:[/dim]     {data['size']} bytes")
-            console.print(f"[dim]Modified:[/dim] {data['modified_at']}")
+            console.print(f"[dim]Path:[/dim]     {meta_data['path']}")
+            console.print(f"[dim]ETag:[/dim]     {meta_data['etag']}")
+            console.print(f"[dim]Version:[/dim]  {meta_data['version']}")
+            console.print(f"[dim]Size:[/dim]     {meta_data['size']} bytes")
+            console.print(f"[dim]Modified:[/dim] {meta_data['modified_at']}")
             console.print()
             console.print("[bold]Content:[/bold]")
-            content = data["content"]
+
+        _print_content(path, content)
+
+    except Exception as e:
+        if output_opts.json_output:
+            from nexus.cli.exit_codes import ExitCode
+
+            render_error(
+                error=e, output_opts=output_opts, exit_code=ExitCode.GENERAL_ERROR, timing=timing
+            )
         else:
-            # Check file size to decide between read() and stream()
-            # Stream large files (>10MB) to avoid memory exhaustion
-            STREAM_THRESHOLD = 10 * 1024 * 1024  # 10MB
-            file_size = 0
+            handle_error(e)
 
-            # Try to get file size for local filesystems
-            if hasattr(nx, "metadata"):
-                try:
-                    meta = nx.metadata.get(path)
-                    file_size = meta.size if meta else 0
-                except Exception:
-                    # Fall back to reading without size check
-                    file_size = 0
 
-            if file_size > STREAM_THRESHOLD:
-                # Stream large file in chunks (memory-efficient)
-                import sys
+def _cat_time_travel(
+    nx: Any,
+    path: str,
+    at_operation: str,
+    metadata: bool,
+    output_opts: OutputOptions,
+    timing: CommandTiming,
+) -> None:
+    """Handle time-travel cat (--at-operation)."""
+    time_travel = getattr(nx, "time_travel_service", None)
+    if time_travel is None:
+        console.print("[red]Error:[/red] Time-travel is only supported with local NexusFS")
+        return
 
-                console.print(f"[dim]Streaming large file ({file_size:,} bytes)...[/dim]")
-                try:
-                    for chunk in nx.stream(  # type: ignore[attr-defined]
-                        path, chunk_size=65536, context=operation_context
-                    ):  # 64KB chunks
-                        sys.stdout.buffer.write(chunk)
-                    sys.stdout.buffer.flush()
-                    nx.close()
-                    return
-                except Exception as e:
-                    nx.close()
-                    raise e
-            else:
-                # Read normally for small files
-                content = nx.sys_read(path, context=cast(Any, operation_context))
-                nx.close()
+    with timing.phase("server"):
+        state = time_travel.get_file_at_operation(path, at_operation)
 
-        # Try to detect file type for syntax highlighting
+    content = state["content"]
+
+    if output_opts.json_output:
         try:
             text = content.decode("utf-8")
-
-            # Simple syntax highlighting based on extension
-            if path.endswith(".py"):
-                syntax = Syntax(text, "python", theme="monokai", line_numbers=True)
-                console.print(syntax)
-            elif path.endswith(".json"):
-                syntax = Syntax(text, "json", theme="monokai", line_numbers=True)
-                console.print(syntax)
-            elif path.endswith((".md", ".markdown")):
-                syntax = Syntax(text, "markdown", theme="monokai")
-                console.print(syntax)
-            else:
-                console.print(text)
         except UnicodeDecodeError:
-            console.print(f"[yellow]Binary file ({len(content)} bytes)[/yellow]")
-            console.print(f"[dim]{content[:100]!r}...[/dim]")
-    except Exception as e:
-        handle_error(e)
+            text = None
+
+        data: dict[str, Any] = {
+            "path": path,
+            "operation_id": state["operation_id"],
+            "operation_time": str(state["operation_time"]),
+            "content": text,
+            "binary": text is None,
+            "metadata": state.get("metadata"),
+        }
+        render_output(data=data, output_opts=output_opts, timing=timing)
+        return
+
+    console.print("[bold cyan]Time-Travel Mode[/bold cyan]")
+    console.print(f"[dim]Operation ID:[/dim]  {state['operation_id']}")
+    console.print(f"[dim]Operation Time:[/dim] {state['operation_time']}")
+    console.print()
+
+    if metadata:
+        console.print("[bold]Metadata:[/bold]")
+        console.print(f"[dim]Path:[/dim]     {path}")
+        console.print(f"[dim]Size:[/dim]     {state['metadata'].get('size', 0)} bytes")
+        console.print(f"[dim]Owner:[/dim]    {state['metadata'].get('owner', '-')}")
+        console.print(f"[dim]Group:[/dim]    {state['metadata'].get('group', '-')}")
+        console.print(f"[dim]Mode:[/dim]     {state['metadata'].get('mode', '-')}")
+        console.print(f"[dim]Modified:[/dim] {state['metadata'].get('modified_at', '-')}")
+        console.print()
+        console.print("[bold]Content:[/bold]")
+
+    _print_content(path, content)
+
+
+def _print_content(path: str, content: bytes) -> None:
+    """Print file content with syntax highlighting where applicable."""
+    try:
+        text = content.decode("utf-8")
+        if path.endswith(".py"):
+            syntax = Syntax(text, "python", theme="monokai", line_numbers=True)
+            console.print(syntax)
+        elif path.endswith(".json"):
+            syntax = Syntax(text, "json", theme="monokai", line_numbers=True)
+            console.print(syntax)
+        elif path.endswith((".md", ".markdown")):
+            syntax = Syntax(text, "markdown", theme="monokai")
+            console.print(syntax)
+        else:
+            console.print(text)
+    except UnicodeDecodeError:
+        console.print(f"[yellow]Binary file ({len(content)} bytes)[/yellow]")
+        console.print(f"[dim]{content[:100]!r}...[/dim]")
 
 
 @click.command()
@@ -276,36 +330,24 @@ def write(
         nexus write /doc.txt "Content" --show-metadata
     """
     try:
-        nx = get_filesystem(backend_config)
+        file_content = resolve_content(content, input_file)
 
-        # Determine content source
-        if input_file:
-            file_content = input_file.read()
-        elif content == "-":
-            # Read from stdin
-            file_content = sys.stdin.buffer.read()
-        elif content:
-            file_content = content.encode("utf-8")
-        else:
-            console.print("[red]Error:[/red] Must provide content or use --input")
-            sys.exit(1)
+        with open_filesystem(backend_config) as nx:
+            # OCC: use lib/occ helper if CAS params present (Issue #1323).
+            ctx = cast(Any, operation_context)
+            if (if_match or if_none_match) and not force:
+                from nexus.lib.occ import occ_write
 
-        # OCC: use lib/occ helper if CAS params present (Issue #1323).
-        ctx = cast(Any, operation_context)
-        if (if_match or if_none_match) and not force:
-            from nexus.lib.occ import occ_write
-
-            result = occ_write(
-                nx,
-                path,
-                file_content,
-                context=ctx,
-                if_match=if_match,
-                if_none_match=if_none_match,
-            )
-        else:
-            result = nx.write(path, file_content, context=ctx)
-        nx.close()
+                result = occ_write(
+                    nx,
+                    path,
+                    file_content,
+                    context=ctx,
+                    if_match=if_match,
+                    if_none_match=if_none_match,
+                )
+            else:
+                result = nx.write(path, file_content, context=ctx)
 
         console.print(f"[green]✓[/green] Wrote {len(file_content)} bytes to [cyan]{path}[/cyan]")
 
@@ -355,49 +397,25 @@ def append(
     append-only data structures without reading the entire file first.
 
     Examples:
-        # Append to a log file
         nexus append /workspace/app.log "New log entry\\n"
-
-        # Append from stdin (useful for streaming)
         echo "New line" | nexus append /workspace/data.txt --input -
-
-        # Append from file
         nexus append /workspace/output.txt --input input.txt
-
-        # Build JSONL file incrementally
-        echo '{"event": "login", "user": "alice"}' | nexus append /logs/events.jsonl --input -
-
-        # Optimistic concurrency control (prevent concurrent modifications)
         nexus append /doc.txt "New content" --if-match abc123...
-
-        # Show metadata after appending
         nexus append /log.txt "Entry\\n" --show-metadata
     """
     try:
-        nx = get_filesystem(backend_config)
+        file_content = resolve_content(content, input_file)
 
-        # Determine content source
-        if input_file:
-            file_content = input_file.read()
-        elif content == "-":
-            # Read from stdin
-            file_content = sys.stdin.buffer.read()
-        elif content:
-            file_content = content.encode("utf-8")
-        else:
-            console.print("[red]Error:[/red] Must provide content or use --input")
-            sys.exit(1)
-
-        # Append with OCC parameters and context.
-        # CAS params (if_match, force) are NexusFS-specific (transitional, see #1323).
-        result = cast(Any, nx).append(
-            path,
-            file_content,
-            context=operation_context,
-            if_match=if_match,
-            force=force,
-        )
-        nx.close()
+        with open_filesystem(backend_config) as nx:
+            # Append with OCC parameters and context.
+            # CAS params (if_match, force) are NexusFS-specific (transitional, see #1323).
+            result = cast(Any, nx).append(
+                path,
+                file_content,
+                context=operation_context,
+                if_match=if_match,
+                force=force,
+            )
 
         console.print(f"[green]✓[/green] Appended {len(file_content)} bytes to [cyan]{path}[/cyan]")
 

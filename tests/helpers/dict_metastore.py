@@ -80,13 +80,26 @@ class DictMetastore(MetastoreABC):
         return {p: (m.etag if (m := self._store.get(p)) else None) for p in paths}
 
     def rename_path(self, old_path: str, new_path: str) -> None:
+        """Atomically rename a path (and its children) in metadata."""
+        from dataclasses import replace
+
+        # 1. Rename the item itself
         meta = self._store.pop(old_path, None)
         if meta is not None:
-            from dataclasses import replace
-
             self._store[new_path] = replace(meta, path=new_path)
             if old_path in self._file_metadata:
                 self._file_metadata[new_path] = self._file_metadata.pop(old_path)
+
+        # 2. Rename all children recursively
+        # (This is a simplified mock implementation for tests)
+        prefix = old_path + "/"
+        child_paths = [p for p in self._store if p.startswith(prefix)]
+        for p in sorted(child_paths):  # Sorted to handle depths correctly if needed
+            child_meta = self._store.pop(p)
+            new_child_path = new_path + p[len(old_path) :]
+            self._store[new_child_path] = replace(child_meta, path=new_child_path)
+            if p in self._file_metadata:
+                self._file_metadata[new_child_path] = self._file_metadata.pop(p)
 
     def set_file_metadata(self, path: str, key: str, value: Any) -> None:
         if path not in self._file_metadata:

@@ -238,6 +238,24 @@ class LocalBlobTransport:
                 path=key,
             ) from e
 
+    def move_blob(self, src_key: str, dst_key: str) -> None:
+        """Atomic move (rename) of a blob or directory."""
+        src_path = self._resolve(src_key)
+        if not src_path.exists():
+            raise NexusFileNotFoundError(src_key)
+        dst_path = self._resolve(dst_key)
+        try:
+            dst_path.parent.mkdir(parents=True, exist_ok=True)
+            os.rename(str(src_path), str(dst_path))
+            # Clean up empty parent dirs of source
+            self._cleanup_empty_parents(src_path.parent)
+        except OSError as e:
+            raise BackendError(
+                f"Failed to move blob from {src_key} to {dst_key}: {e}",
+                backend="local",
+                path=src_key,
+            ) from e
+
     def stream_blob(
         self,
         key: str,

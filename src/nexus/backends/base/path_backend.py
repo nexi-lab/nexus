@@ -478,14 +478,24 @@ class PathBackend(Backend):
             old_blob_path = self._get_blob_path(old_path)
             new_blob_path = self._get_blob_path(new_path)
 
-            if not self._transport.blob_exists(old_blob_path):
-                raise FileNotFoundError(f"Source file not found: {old_path}")
+            # Check existence for both files and directories
+            old_exists = self._transport.blob_exists(old_blob_path) or self._transport.blob_exists(
+                old_blob_path + "/"
+            )
+            if not old_exists:
+                raise FileNotFoundError(f"Source not found: {old_path}")
 
-            if self._transport.blob_exists(new_blob_path):
+            new_exists = self._transport.blob_exists(new_blob_path) or self._transport.blob_exists(
+                new_blob_path + "/"
+            )
+            if new_exists:
                 raise FileExistsError(f"Destination already exists: {new_path}")
 
-            self._transport.copy_blob(old_blob_path, new_blob_path)
-            self._transport.delete_blob(old_blob_path)
+            if hasattr(self._transport, "move_blob"):
+                self._transport.move_blob(old_blob_path, new_blob_path)
+            else:
+                self._transport.copy_blob(old_blob_path, new_blob_path)
+                self._transport.delete_blob(old_blob_path)
 
         except (FileNotFoundError, FileExistsError):
             raise

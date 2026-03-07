@@ -5,6 +5,7 @@ import contextlib
 import logging
 import time
 from collections.abc import Callable, Generator, Iterator
+from dataclasses import replace as _dc_replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -634,7 +635,16 @@ class NexusFS(  # type: ignore[misc]
             for file_meta in files_in_dir:
                 if file_meta.etag:
                     try:
-                        route.backend.delete_content(file_meta.etag)
+                        _file_route = self.router.route(file_meta.path)
+                        if ctx:
+                            _del_ctx = _dc_replace(ctx, backend_path=_file_route.backend_path)
+                        else:
+                            _del_ctx = OperationContext(
+                                user_id="anonymous",
+                                groups=[],
+                                backend_path=_file_route.backend_path,
+                            )
+                        _file_route.backend.delete_content(file_meta.etag, context=_del_ctx)
                     except Exception as e:
                         if len(_errors) < 100:
                             _errors.append(f"{file_meta.path}: {e}")
@@ -2667,10 +2677,21 @@ class NexusFS(  # type: ignore[misc]
         metadata_list: list[FileMetadata] = []
         results: list[dict[str, Any]] = []
 
-        # Write all content to backend CAS (deduplicated automatically)
+        # Write all content to backend (deduplicated automatically for CAS)
         for (path, content), route in zip(validated_files, routes, strict=False):
-            # Write to backend - returns content hash
-            content_hash = route.backend.write_content(content, context=context).content_hash
+            # Add backend_path to context for path-based backends
+            if context:
+                _write_ctx = _dc_replace(
+                    context, backend_path=route.backend_path, virtual_path=path
+                )
+            else:
+                _write_ctx = OperationContext(
+                    user_id="anonymous",
+                    groups=[],
+                    backend_path=route.backend_path,
+                    virtual_path=path,
+                )
+            content_hash = route.backend.write_content(content, context=_write_ctx).content_hash
 
             # Get existing metadata for this file
             meta = existing_metadata.get(path)
@@ -2947,7 +2968,14 @@ class NexusFS(  # type: ignore[misc]
             # Content is only physically deleted when ref_count reaches 0
             # Skip content deletion for directories (no CAS entry)
             if meta.etag and meta.mime_type != "inode/directory":
-                route.backend.delete_content(meta.etag, context=context)
+                # Add backend_path to context for path-based backends
+                if context:
+                    _del_ctx = _dc_replace(context, backend_path=route.backend_path)
+                else:
+                    _del_ctx = OperationContext(
+                        user_id="anonymous", groups=[], backend_path=route.backend_path
+                    )
+                route.backend.delete_content(meta.etag, context=_del_ctx)
 
             # Remove from metadata
             self.metadata.delete(path)
@@ -3101,7 +3129,8 @@ class NexusFS(  # type: ignore[misc]
         try:
             _h2 = self._vfs_acquire(_second, "write") if _first != _second else 0
             try:
-                # For path-based connector backends, move actual file in storage
+                # For path-based connector backends, move actual file/directory in storage
+                # CAS backends have supports_rename = False
                 if old_route.backend.supports_rename is True:
                     try:
                         old_route.backend.rename_file(
@@ -3111,11 +3140,11 @@ class NexusFS(  # type: ignore[misc]
                         raise
                     except Exception as e:
                         raise BackendError(
-                            f"Failed to rename file in backend: {e}",
+                            f"Failed to rename in backend: {e}",
                             backend=old_route.backend.name,
                         ) from e
 
-                # Perform metadata rename
+                # Perform metadata rename (recursively for directories)
                 self.metadata.rename_path(old_path, new_path)
             finally:
                 if _h2:
@@ -3718,7 +3747,16 @@ class NexusFS(  # type: ignore[misc]
             for file_meta in files_in_dir:
                 if file_meta.etag and file_meta.mime_type != "inode/directory":
                     try:
-                        route.backend.delete_content(file_meta.etag)
+                        _file_route = self.router.route(file_meta.path)
+                        if context:
+                            _del_ctx = _dc_replace(context, backend_path=_file_route.backend_path)
+                        else:
+                            _del_ctx = OperationContext(
+                                user_id="anonymous",
+                                groups=[],
+                                backend_path=_file_route.backend_path,
+                            )
+                        _file_route.backend.delete_content(file_meta.etag, context=_del_ctx)
                     except Exception as e:
                         if len(_errors) < 100:
                             _errors.append(f"{file_meta.path}: {e}")

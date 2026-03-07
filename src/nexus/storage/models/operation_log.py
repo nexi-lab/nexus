@@ -65,6 +65,12 @@ class OperationLogModel(Base):
     # Nullable for backfill of existing rows; new rows auto-populated via trigger/app.
     sequence_number: Mapped[int | None] = mapped_column(BigInteger, nullable=True, default=None)
 
+    # Persistent retry count for delivery worker (Issue #2751).
+    # Survives worker restarts; prevents over-retry and DLQ bypass.
+    retry_count: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
+
     # Indexes
     __table_args__ = (
         Index("idx_operation_log_type", "operation_type"),

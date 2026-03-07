@@ -675,8 +675,11 @@ def get_nexus_tools() -> list[BaseTool]:
         try:
             nx = _get_nexus_client(config)
 
-            # Query active memories using RemoteMemory API
-            memories = nx.memory.query(state="active", limit=100)
+            # Query active memories via _memory_provider (Issue #1410)
+            _provider = getattr(nx, "_memory_provider", None)
+            if _provider is None:
+                return "Memory system not available"
+            memories = _provider.get_or_create().query(state="active", limit=100)
 
             if not memories:
                 return "No memories found"

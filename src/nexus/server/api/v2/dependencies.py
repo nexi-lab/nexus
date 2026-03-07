@@ -80,21 +80,27 @@ async def get_memory_api(
     nexus_fs: Any = Depends(get_nexus_fs),
 ) -> Any:
     """Get Memory API instance from NexusFS."""
-    return nexus_fs.memory
+    from nexus.bricks.memory.memory_provider import get_memory_api as _get_mem
+
+    return _get_mem(nexus_fs)
 
 
 async def get_db_session(
     nexus_fs: Any = Depends(get_nexus_fs),
 ) -> Any:
     """Get database session from NexusFS."""
-    return nexus_fs.memory.session
+    from nexus.bricks.memory.memory_provider import get_memory_api as _get_mem
+
+    return _get_mem(nexus_fs).session
 
 
 async def get_backend(
     nexus_fs: Any = Depends(get_nexus_fs),
 ) -> Any:
     """Get storage backend from NexusFS."""
-    return nexus_fs.memory.backend
+    from nexus.bricks.memory.memory_provider import get_memory_api as _get_mem
+
+    return _get_mem(nexus_fs).backend
 
 
 async def get_llm_provider(

@@ -857,23 +857,25 @@ def create_mcp_server(
             Success message or error
         """
         nx_instance = _get_nexus_instance(ctx)
-        if not hasattr(nx_instance, "memory"):
+        _provider = getattr(nx_instance, "_memory_provider", None)
+        if _provider is None:
             return tool_error("unavailable", "Memory system not available (requires NexusFS).")
+        mem = _provider.get_or_create()
 
         try:
-            nx_instance.memory.store(
+            mem.store(
                 content,
                 scope="user",
                 memory_type=memory_type,
                 importance=importance,
             )
-            if hasattr(nx_instance.memory, "session"):
-                nx_instance.memory.session.commit()
+            if hasattr(mem, "session"):
+                mem.session.commit()
             return f"Successfully stored memory: {content[:80]}..."
         except Exception as e:
-            if hasattr(nx_instance.memory, "session"):
+            if hasattr(mem, "session"):
                 try:
-                    nx_instance.memory.session.rollback()
+                    mem.session.rollback()
                 except Exception as rb_err:
                     logger.debug("Failed to rollback memory session: %s", rb_err)
             return tool_error("internal", f"Error storing memory: {e}", str(e))
@@ -904,10 +906,12 @@ def create_mcp_server(
             JSON string with matching memories
         """
         nx_instance = _get_nexus_instance(ctx)
-        if not hasattr(nx_instance, "memory"):
+        _provider = getattr(nx_instance, "_memory_provider", None)
+        if _provider is None:
             return tool_error("unavailable", "Memory system not available (requires NexusFS).")
+        mem = _provider.get_or_create()
 
-        memories = nx_instance.memory.search(
+        memories = mem.search(
             query,
             scope="user",
             memory_type=memory_type,

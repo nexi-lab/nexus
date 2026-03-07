@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """
-Test nexus serve with NEXUS_MODE=federation across all deployment profiles.
+Test nexus serve with profile=cloud (federation) across all deployment profiles.
 
-Federation mode uses Raft consensus for multi-zone metadata replication.
-It is orthogonal to profiles — any profile can run in federation mode.
+The cloud profile enables Raft consensus for multi-zone metadata replication.
 
 Prerequisites:
     pip install -e .
@@ -49,10 +48,11 @@ def main() -> int:
         os.makedirs(data_dir, exist_ok=True)
 
         env = os.environ.copy()
-        env["NEXUS_MODE"] = "federation"
+        env["NEXUS_PROFILE"] = "cloud"
         env["NEXUS_DATA_DIR"] = data_dir
-        for k in ["NEXUS_URL", "NEXUS_DATABASE_URL"]:
+        for k in ["NEXUS_URL", "NEXUS_DATABASE_URL", "NEXUS_MODE"]:
             env.pop(k, None)
+        # Note: NEXUS_PROFILE is set to "cloud" above, don't clear it
 
         proc = subprocess.Popen(
             [
@@ -89,10 +89,10 @@ def main() -> int:
                 pass
 
         if started:
-            print(f"  {profile} + federation: OK (port {port}, {_attempt + 1}s)")
+            print(f"  {profile} + cloud: OK (port {port}, {_attempt + 1}s)")
             results[profile] = "OK"
         else:
-            print(f"  {profile} + federation: FAILED")
+            print(f"  {profile} + cloud: FAILED")
             results[profile] = "FAILED"
 
         proc.terminate()
@@ -103,7 +103,7 @@ def main() -> int:
         time.sleep(0.5)
 
     # Summary
-    print(f"\n{'Profile':<12} {'federation mode'}")
+    print(f"\n{'Profile':<12} {'cloud (federation)'}")
     print("-" * 30)
     for profile in PROFILES:
         print(f"{profile:<12} {results[profile]}")
@@ -114,7 +114,7 @@ def main() -> int:
     if failed:
         print(f"\n{failed} profile(s) failed.")
         return 1
-    print("\nAll profiles work with federation mode.")
+    print("\nAll profiles work with cloud (federation) profile.")
     return 0
 
 

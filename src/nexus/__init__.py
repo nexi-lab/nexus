@@ -527,10 +527,18 @@ def _mount_etc(nx_fs: "NexusFS", state_dir: str) -> None:
     Reads host-side config files and writes them into the Nexus
     filesystem via ``sys_write``, giving each file a proper metastore
     entry.  The kernel boots without ``/etc``; this runs post-boot.
+
+    On first boot (no ``$STATE_DIR/etc/`` yet), copies default config
+    files from the repo's ``etc/conf.d/`` directory.
     """
     from pathlib import Path
 
     etc_path = Path(state_dir) / "etc"
+
+    # First boot: seed $STATE_DIR/etc/conf.d/ from repo defaults
+    if not etc_path.is_dir():
+        _seed_etc_defaults(etc_path)
+
     if not etc_path.is_dir():
         return
 
@@ -546,6 +554,24 @@ def _mount_etc(nx_fs: "NexusFS", state_dir: str) -> None:
 
     if count:
         logger.info("Wrote %d config file(s) from %s into /etc", count, etc_path)
+
+
+def _seed_etc_defaults(etc_path: "Path") -> None:
+    """Copy default conf.d files from repo into ``$STATE_DIR/etc/``."""
+    import shutil
+    from pathlib import Path
+
+    # Locate repo etc/conf.d/ (4 levels up from src/nexus/__init__.py)
+    repo_confd = Path(__file__).resolve().parents[2] / "etc" / "conf.d"
+    if not repo_confd.is_dir():
+        return
+
+    target = etc_path / "conf.d"
+    target.mkdir(parents=True, exist_ok=True)
+    for src in repo_confd.iterdir():
+        if src.is_file() and not src.name.startswith("."):
+            shutil.copy2(src, target / src.name)
+    logger.info("Seeded default config in %s", target)
 
 
 def _restore_mounts(nx_fs: "NexusFS") -> None:

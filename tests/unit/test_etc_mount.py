@@ -38,15 +38,22 @@ class TestMountEtc:
         assert "/etc/conf.d/cache" in writes
         assert b'backend = "dragonfly"' in writes["/etc/conf.d/cache"]
 
-    def test_skips_when_no_etc_dir(self, tmp_path: Path) -> None:
+    def test_seeds_defaults_when_no_etc_dir(self, tmp_path: Path) -> None:
         from nexus.__init__ import _mount_etc
+
+        writes: dict[str, bytes] = {}
 
         class MockNexusFS:
             def sys_write(self, path: str, content: bytes) -> int:
-                raise AssertionError("should not write when etc/ is missing")
+                writes[path] = content
+                return len(content)
 
         nx_fs = MockNexusFS()
-        _mount_etc(nx_fs, str(tmp_path))  # No error
+        _mount_etc(nx_fs, str(tmp_path))
+
+        # Defaults are seeded from repo etc/conf.d/
+        assert len(writes) > 0
+        assert (tmp_path / "etc" / "conf.d").is_dir()
 
     def test_ignores_directories(self, state_dir: Path) -> None:
         from nexus.__init__ import _mount_etc

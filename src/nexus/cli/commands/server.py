@@ -590,7 +590,7 @@ def serve(
 
         # Connect from Python
         import nexus
-        nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": "<admin-key>"})
+        nx = nexus.connect(config={"profile": "remote", "url": "http://localhost:2026", "api_key": "<admin-key>"})
         nx.sys_write("/workspace/file.txt", b"Hello, World!")
 
         # Mount with FUSE
@@ -784,30 +784,45 @@ def serve(
             # Default: enable zone isolation for security
             enforce_zone_isolation = True
 
-        # Determine server deployment mode from NEXUS_MODE env var
-        # Server always runs local NexusFS (never REMOTE profile)
-        raw_server_mode = os.getenv("NEXUS_MODE", "standalone")
+        # Determine server deployment profile
+        # Priority: 1. CLI --profile, 2. NEXUS_PROFILE env, 3. NEXUS_MODE (deprecated)
+        server_profile = os.getenv("NEXUS_PROFILE")
+        if not server_profile:
+            raw_mode = os.getenv("NEXUS_MODE")
+            if raw_mode:
+                import logging as _logging
 
-        if raw_server_mode == "remote":
+                _logging.getLogger(__name__).warning(
+                    "NEXUS_MODE is deprecated and will be removed in v1.0. "
+                    "Use NEXUS_PROFILE instead (standalone -> full, remote -> remote, federation -> cloud)."
+                )
+                _mode_to_profile = {
+                    "standalone": "full",
+                    "federation": "cloud",
+                    "remote": "remote",
+                }
+                server_profile = _mode_to_profile.get(raw_mode)
+                if not server_profile:
+                    console.print(f"[red]Error:[/red] Unknown NEXUS_MODE: '{raw_mode}'")
+                    console.print("[yellow]Allowed values:[/yellow] standalone, federation, remote")
+                    sys.exit(1)
+            else:
+                server_profile = "full"
+
+        # Server cannot run in remote profile (would be a thin client of another server)
+        if server_profile == "remote":
             console.print(
-                "[red]Error:[/red] Server cannot run in mode='remote' "
+                "[red]Error:[/red] Server cannot run in profile='remote' "
                 "(a server cannot be a thin client of another server)"
             )
             sys.exit(1)
 
-        if raw_server_mode not in ("standalone", "federation"):
-            console.print(f"[red]Error:[/red] Unknown NEXUS_MODE: '{raw_server_mode}'")
-            console.print("[yellow]Allowed values:[/yellow] standalone, federation")
-            sys.exit(1)
-
-        console.print(f"  Mode: [cyan]{raw_server_mode}[/cyan]")
-        _active_profile = os.getenv("NEXUS_PROFILE", "full")
-        console.print(f"  Profile: [cyan]{_active_profile}[/cyan]")
+        console.print(f"  Profile: [cyan]{server_profile}[/cyan]")
 
         nx = get_filesystem(
             backend_config,
             enforce_permissions=enforce_permissions,
-            server_mode=raw_server_mode,
+            server_profile=server_profile,
             allow_admin_bypass=allow_admin_bypass,
             enforce_zone_isolation=enforce_zone_isolation,
             enable_memory_paging=enable_memory_paging,
@@ -1413,11 +1428,11 @@ def serve(
         console.print("  import nexus")
         if api_key or auth_provider:
             console.print(
-                f'  nx = nexus.connect(config={{"mode": "remote", "url": "http://{host}:{port}", "api_key": "<your-key>"}})'
+                f'  nx = nexus.connect(config={{"profile": "remote", "url": "http://{host}:{port}", "api_key": "<your-key>"}})'
             )
         else:
             console.print(
-                f'  nx = nexus.connect(config={{"mode": "remote", "url": "http://{host}:{port}"}})'
+                f'  nx = nexus.connect(config={{"profile": "remote", "url": "http://{host}:{port}"}})'
             )
         console.print("  nx.sys_write('/workspace/file.txt', b'Hello!')")
         console.print()

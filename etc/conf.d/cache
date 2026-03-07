@@ -1,0 +1,10 @@
+# Cache brick configuration.
+#
+# backend = "auto"        # auto | dragonfly | postgres | null
+# url = ""                # Cache backend URL (e.g. "redis://localhost:6379")
+# permission_ttl = 300    # Permission cache TTL in seconds
+# denial_ttl = 60         # Denial cache TTL in seconds
+# path_size = 512         # Path cache max entries
+# list_size = 1024        # List cache max entries
+# kv_size = 256           # KV cache max entries
+# exists_size = 1024      # Exists cache max entries

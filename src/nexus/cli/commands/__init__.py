@@ -43,6 +43,7 @@ _REGISTER_COMMANDS = [
     "llm",
     "mcp",
     "cache",
+    "config_cmd",
     "migrate",
     "context",
     "network",

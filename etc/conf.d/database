@@ -1,0 +1,5 @@
+# Record store (database) configuration.
+#
+# url = ""                # Database URL (e.g. "postgresql://localhost:5432/nexus")
+# pool_size = 10          # Connection pool size
+# read_replica_url = ""   # Read replica URL (optional)

@@ -1,0 +1,5 @@
+# Mount restoration settings.
+#
+# Controls how saved mounts are restored when Nexus starts.
+#
+# auto_sync = false       # Sync mount contents on startup (slower boot)

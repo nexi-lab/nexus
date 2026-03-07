@@ -89,7 +89,8 @@ from nexus.contracts.exceptions import (
 )
 
 # All mutable state (data, metastore, record store, etc.) lives under this directory.
-NEXUS_STATE_DIR = _os.path.expanduser("~/.nexus")
+# NEXUS_STATE_DIR is the ONE bootstrap env var — everything else derives from it.
+NEXUS_STATE_DIR = _os.path.expanduser(_os.environ.get("NEXUS_STATE_DIR", "~/.nexus"))
 
 logger = logging.getLogger(__name__)
 
@@ -491,6 +492,9 @@ def connect(
         # Registered LAST so Pipe/Memory/VirtualView resolvers get priority.
         _register_federation_resolver(nx_fs, zone_mgr)
 
+    # Mount $STATE_DIR/etc as /etc (readonly) — config self-hosting
+    _mount_etc(nx_fs, NEXUS_STATE_DIR)
+
     # Restore saved mounts (application-layer startup I/O)
     _restore_mounts(nx_fs)
 
@@ -517,6 +521,26 @@ def _register_federation_resolver(nx_fs: "NexusFS", zone_mgr: Any) -> None:
     logger.info("Federation content resolver registered (self=%s)", zone_mgr.advertise_addr)
 
 
+def _mount_etc(nx_fs: "NexusFS", state_dir: str) -> None:
+    """Mount ``$STATE_DIR/etc`` as ``/etc`` in VFS (readonly).
+
+    Makes host-side config files visible through the Nexus filesystem,
+    mirroring how Linux mounts a disk at ``/etc``.  The mount is
+    readonly so agents cannot modify config through the VFS.
+    """
+    from pathlib import Path
+
+    etc_path = Path(state_dir) / "etc"
+    if not etc_path.is_dir():
+        return
+
+    from nexus.backends.storage.path_local import PathLocalBackend
+
+    etc_backend = PathLocalBackend(root_path=etc_path, fsync=False)
+    nx_fs.router.add_mount("/etc", etc_backend, readonly=True)
+    logger.info("Mounted %s as /etc (readonly)", etc_path)
+
+
 def _restore_mounts(nx_fs: "NexusFS") -> None:
     """Restore saved mounts from database at application startup.
 
@@ -526,12 +550,20 @@ def _restore_mounts(nx_fs: "NexusFS") -> None:
     """
     import os
 
+    from nexus.etc import get_brick_config
+
+    _mount_cfg = get_brick_config("mounts")
+
     try:
-        auto_sync = os.getenv("NEXUS_AUTO_SYNC_MOUNTS", "false").lower() in (
-            "true",
-            "1",
-            "yes",
-        )
+        # conf.d/mounts "auto_sync" takes precedence; env var is fallback
+        auto_sync = _mount_cfg.get("auto_sync", None)
+        if auto_sync is None:
+            auto_sync = os.getenv("NEXUS_AUTO_SYNC_MOUNTS", "false").lower() in (
+                "true",
+                "1",
+                "yes",
+            )
+
         mount_result = nx_fs._mount_persist_service.load_all_mounts(auto_sync=auto_sync)
         if mount_result["loaded"] > 0 or mount_result["failed"] > 0:
             sync_msg = f", {mount_result['synced']} synced" if mount_result["synced"] > 0 else ""
@@ -544,7 +576,8 @@ def _restore_mounts(nx_fs: "NexusFS") -> None:
             if not auto_sync and mount_result["loaded"] > 0:
                 logger.info(
                     "Auto-sync disabled for fast startup. "
-                    "Use sync_mount() or set NEXUS_AUTO_SYNC_MOUNTS=true"
+                    "Use sync_mount() or set NEXUS_AUTO_SYNC_MOUNTS=true "
+                    "or add 'auto_sync = true' to /etc/conf.d/mounts"
                 )
             for error in mount_result.get("errors", []):
                 logger.error("  Mount error: %s", error)

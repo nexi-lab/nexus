@@ -182,11 +182,11 @@ def make_test_nexus(
     if backend is None:
         from pathlib import Path
 
-        from nexus.backends.storage.cas_local import CASLocalBackend
+        from nexus.backends.storage.path_local import PathLocalBackend
 
         data_dir = Path(tmp_path) / "data"
         data_dir.mkdir(exist_ok=True)
-        backend = CASLocalBackend(root_path=str(data_dir))
+        backend = PathLocalBackend(root_path=str(data_dir))
     nx.router.add_mount("/", backend)
 
     # Wire PermissionCheckHook via DI (same as factory/orchestrator.py, Issue #899)

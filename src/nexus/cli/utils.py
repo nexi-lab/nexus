@@ -181,7 +181,7 @@ def add_backend_options(func: Any) -> Any:
 def get_filesystem(
     backend_config: BackendConfig,
     enforce_permissions: bool | None = None,
-    server_mode: str | None = None,
+    server_profile: str | None = None,
     allow_admin_bypass: bool | None = None,
     enforce_zone_isolation: bool | None = None,
     enable_memory_paging: bool = True,
@@ -193,7 +193,7 @@ def get_filesystem(
     Args:
         backend_config: Backend configuration
         enforce_permissions: Whether to enforce permissions (None = use environment/config default)
-        server_mode: Explicit mode for server use ("standalone" or "federation").
+        server_profile: Deployment profile for server use (e.g. "full", "cloud").
             When set, forces a local NexusFS (never remote) to prevent
             circular dependency when the server itself has NEXUS_URL set.
         allow_admin_bypass: Whether admin keys can bypass permission checks (None = use default False)
@@ -203,23 +203,23 @@ def get_filesystem(
         NexusFilesystem instance
     """
     try:
-        # If server_mode is set, the caller is a server — always use local NexusFS
-        if not server_mode and backend_config.remote_url:
+        # If server_profile is set, the caller is a server — always use local NexusFS
+        if not server_profile and backend_config.remote_url:
             # Client mode: use remote server connection via nexus.connect()
             return nexus.connect(
                 config={
-                    "mode": "remote",
+                    "profile": "remote",
                     "url": backend_config.remote_url,
                     "api_key": backend_config.remote_api_key,
                 }
             )
         elif backend_config.config_path:
             # Use explicit config file
-            if server_mode:
-                # Server mode: override mode to prevent remote NexusFS
+            if server_profile:
+                # Server profile: override to prevent remote NexusFS
                 config_obj = load_config(Path(backend_config.config_path))
                 config_dict: dict[str, Any] = {
-                    "mode": server_mode,
+                    "profile": server_profile,
                     "data_dir": config_obj.data_dir,
                     "backend": config_obj.backend,
                 }
@@ -248,7 +248,7 @@ def get_filesystem(
                 console.print("[red]Error:[/red] --gcs-bucket is required when using --backend=gcs")
                 sys.exit(1)
             config: dict[str, Any] = {
-                "mode": server_mode or "standalone",
+                "profile": server_profile or "full",
                 "backend": "gcs",
                 "gcs_bucket_name": backend_config.gcs_bucket,
                 "gcs_project_id": backend_config.gcs_project,
@@ -269,7 +269,7 @@ def get_filesystem(
         else:
             # Use local backend (default)
             config = {
-                "mode": server_mode or "standalone",
+                "profile": server_profile or "full",
                 "data_dir": backend_config.data_dir,
             }
             if enforce_permissions is not None:
@@ -323,10 +323,10 @@ def get_default_filesystem() -> NexusFilesystem:
     """Get Nexus filesystem instance with default configuration.
 
     Used by commands that don't accept backend options (e.g., memory commands).
-    Supports both local and remote modes via environment variables:
-    - NEXUS_URL: Remote server URL (if set, uses remote mode)
+    Supports both local and remote profiles via environment variables:
+    - NEXUS_URL: Remote server URL (if set, uses remote profile)
     - NEXUS_API_KEY: API key for remote authentication
-    - NEXUS_DATA_DIR: Data directory for local mode (default: ~/.nexus)
+    - NEXUS_DATA_DIR: Data directory for local profile (default: ~/.nexus)
 
     Returns:
         NexusFilesystem instance (remote if NEXUS_URL is set, otherwise local)
@@ -340,7 +340,7 @@ def get_default_filesystem() -> NexusFilesystem:
             # Use remote server connection via nexus.connect()
             return nexus.connect(
                 config={
-                    "mode": "remote",
+                    "profile": "remote",
                     "url": remote_url,
                     "api_key": os.environ.get("NEXUS_API_KEY"),
                 }

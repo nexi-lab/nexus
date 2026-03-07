@@ -114,9 +114,6 @@ class EventDeliveryWorker:
         self._stop_event = threading.Event()
         self._consecutive_empty = 0
 
-        # In-memory retry tracking: operation_id -> retry count
-        self._retry_counts: dict[str, int] = {}
-
         # Metrics
         self._total_dispatched = 0
         self._total_failed = 0
@@ -242,8 +239,6 @@ class EventDeliveryWorker:
                         self._dispatch_event_internal(event, record)
                         dispatched_ids.append(record.operation_id)
                         self._total_dispatched += 1
-                        # Clear retry count on success
-                        self._retry_counts.pop(record.operation_id, None)
                     except Exception as exc:
                         self._handle_dispatch_failure(session, record, event, exc)
 
@@ -300,13 +295,17 @@ class EventDeliveryWorker:
     def _handle_dispatch_failure(
         self, session: "Session", record: Any, event: FileEvent, exc: Exception
     ) -> None:
-        """Handle a failed dispatch: track retries or route to DLQ."""
+        """Handle a failed dispatch: increment persistent retry_count or route to DLQ.
+
+        Uses ``record.retry_count`` (persisted in DB) instead of an in-memory
+        dict so retry state survives worker restarts (Issue #2751).
+        """
         op_id = record.operation_id
-        self._retry_counts[op_id] = self._retry_counts.get(op_id, 0) + 1
-        retries = self._retry_counts[op_id]
+        record.retry_count = record.retry_count + 1
+        retries = record.retry_count
 
         if retries >= self._max_retries:
-            # Route to DLQ
+            # Route to DLQ and mark delivered to stop re-polling
             try:
                 from nexus.system_services.event_subsystem.log.dead_letter import DeadLetterHandler
 
@@ -319,8 +318,8 @@ class EventDeliveryWorker:
                     event=event,
                     retry_count=retries,
                 )
+                record.delivered = True
                 self._total_dlq += 1
-                self._retry_counts.pop(op_id, None)
             except Exception:
                 logger.exception("Failed to route event %s to DLQ", op_id)
         else:

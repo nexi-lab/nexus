@@ -10,77 +10,106 @@ import click
 from rich.table import Table
 
 import nexus
+from nexus.cli.formatters import format_timestamp
+from nexus.cli.output import OutputOptions, add_output_options, render_error, render_output
+from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
     BackendConfig,
     add_backend_options,
     console,
     get_filesystem,
     handle_error,
+    open_filesystem,
 )
 
 
 @click.command()
 @click.argument("path", type=str)
+@add_output_options
 @add_backend_options
 def info(
     path: str,
+    output_opts: OutputOptions,
     backend_config: BackendConfig,
 ) -> None:
     """Show detailed file information.
 
     Examples:
         nexus info /workspace/data.txt
+        nexus info /workspace/data.txt --json
+        nexus info /workspace/data.txt --json --fields path,size,etag
     """
+    timing = CommandTiming()
+
     try:
         from nexus.core.nexus_fs import NexusFS
 
-        nx = get_filesystem(backend_config)
+        with timing.phase("connect"), open_filesystem(backend_config) as nx:
+            # Check if file exists first
+            if not nx.sys_access(path):
+                render_output(
+                    data=None,
+                    output_opts=output_opts,
+                    timing=timing,
+                    message=f"File not found: {path}",
+                )
+                sys.exit(1)
 
-        # Check if file exists first
-        if not nx.sys_access(path):
-            console.print(f"[yellow]File not found:[/yellow] {path}")
-            nx.close()
-            sys.exit(1)
+            # Note: Only NexusFS mode has direct metadata access
+            if not isinstance(nx, NexusFS):
+                render_output(
+                    data=None,
+                    output_opts=output_opts,
+                    timing=timing,
+                    message="File info is only available for NexusFS instances",
+                )
+                return
 
-        # Get file metadata from metadata store
-        # Note: Only NexusFS mode has direct metadata access
-        if not isinstance(nx, NexusFS):
-            console.print("[red]Error:[/red] File info is only available for NexusFS instances")
-            nx.close()
-            return
-
-        file_meta = nx.metadata.get(path)
-        nx.close()
+            with timing.phase("server"):
+                file_meta = nx.metadata.get(path)
 
         if not file_meta:
-            console.print(f"[yellow]File not found:[/yellow] {path}")
+            render_output(
+                data=None, output_opts=output_opts, timing=timing, message=f"File not found: {path}"
+            )
             sys.exit(1)
 
-        table = Table(title=f"File Information: {path}")
-        table.add_column("Property", style="cyan")
-        table.add_column("Value", style="green")
+        created_str = format_timestamp(file_meta.created_at)
+        modified_str = format_timestamp(file_meta.modified_at)
 
-        created_str = (
-            file_meta.created_at.strftime("%Y-%m-%d %H:%M:%S") if file_meta.created_at else "N/A"
+        data = {
+            "path": file_meta.path,
+            "size": file_meta.size,
+            "created_at": created_str,
+            "modified_at": modified_str,
+            "etag": file_meta.etag or None,
+            "mime_type": file_meta.mime_type or None,
+        }
+
+        def _print_human(d: dict[str, Any]) -> None:
+            table = Table(title=f"File Information: {path}")
+            table.add_column("Property", style="cyan")
+            table.add_column("Value", style="green")
+            table.add_row("Path", d["path"])
+            table.add_row("Size", f"{d['size']:,} bytes")
+            table.add_row("Created", d["created_at"])
+            table.add_row("Modified", d["modified_at"])
+            table.add_row("ETag", d["etag"] or "N/A")
+            table.add_row("MIME Type", d["mime_type"] or "N/A")
+            console.print(table)
+
+        render_output(
+            data=data, output_opts=output_opts, timing=timing, human_formatter=_print_human
         )
-        modified_str = (
-            file_meta.modified_at.strftime("%Y-%m-%d %H:%M:%S") if file_meta.modified_at else "N/A"
-        )
-
-        table.add_row("Path", file_meta.path)
-        table.add_row("Size", f"{file_meta.size:,} bytes")
-        table.add_row("Created", created_str)
-        table.add_row("Modified", modified_str)
-        table.add_row("ETag", file_meta.etag or "N/A")
-        table.add_row("MIME Type", file_meta.mime_type or "N/A")
-
-        # Note: As of v0.6.0, UNIX-style permissions have been removed.
-        # All permissions are now managed through ReBAC relationships.
-        # Use `nexus rebac expand read file <path>` to see who has access.
-
-        console.print(table)
     except Exception as e:
-        handle_error(e)
+        if output_opts.json_output:
+            from nexus.cli.exit_codes import ExitCode
+
+            render_error(
+                error=e, output_opts=output_opts, exit_code=ExitCode.GENERAL_ERROR, timing=timing
+            )
+        else:
+            handle_error(e)
 
 
 @click.command()

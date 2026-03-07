@@ -1,17 +1,26 @@
 """CLI utilities - Common helpers for Nexus CLI commands."""
 
+from __future__ import annotations
+
 import os
 import sys
+from collections.abc import Generator
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import click
 from rich.console import Console
 
 import nexus
 from nexus import NexusFilesystem
+from nexus.cli.exit_codes import ExitCode
 from nexus.config import load_config
 from nexus.contracts.exceptions import NexusError, NexusFileNotFoundError, ValidationError
+
+if TYPE_CHECKING:
+    pass
 
 console = Console()
 
@@ -114,28 +123,18 @@ ADMIN_CAPABILITIES_OPTION = click.option(
 )
 
 
+@dataclass(frozen=True)
 class BackendConfig:
-    """Configuration for backend connection."""
+    """Immutable configuration for backend connection."""
 
-    def __init__(
-        self,
-        backend: str = "local",
-        data_dir: str = str(Path(nexus.NEXUS_STATE_DIR) / "data"),
-        config_path: str | None = None,
-        gcs_bucket: str | None = None,
-        gcs_project: str | None = None,
-        gcs_credentials: str | None = None,
-        remote_url: str | None = None,
-        remote_api_key: str | None = None,
-    ):
-        self.backend = backend
-        self.data_dir = data_dir
-        self.config_path = config_path
-        self.gcs_bucket = gcs_bucket
-        self.gcs_project = gcs_project
-        self.gcs_credentials = gcs_credentials
-        self.remote_url = remote_url
-        self.remote_api_key = remote_api_key
+    backend: str = "local"
+    data_dir: str = field(default_factory=lambda: str(Path(nexus.NEXUS_STATE_DIR) / "data"))
+    config_path: str | None = None
+    gcs_bucket: str | None = None
+    gcs_project: str | None = None
+    gcs_credentials: str | None = None
+    remote_url: str | None = None
+    remote_api_key: str | None = None
 
 
 def add_backend_options(func: Any) -> Any:
@@ -178,6 +177,16 @@ def add_backend_options(func: Any) -> Any:
     return wrapper
 
 
+def _apply_common_config(config: dict[str, Any], **kwargs: Any) -> None:
+    """Apply common configuration options to a config dict (mutates in place)."""
+    for key in ("enforce_permissions", "allow_admin_bypass", "enforce_zone_isolation"):
+        if kwargs.get(key) is not None:
+            config[key] = kwargs[key]
+    for key in ("enable_memory_paging", "memory_main_capacity", "memory_recall_max_age_hours"):
+        if key in kwargs:
+            config[key] = kwargs[key]
+
+
 def get_filesystem(
     backend_config: BackendConfig,
     enforce_permissions: bool | None = None,
@@ -202,13 +211,22 @@ def get_filesystem(
     Returns:
         NexusFilesystem instance
     """
+    common_kwargs = {
+        "enforce_permissions": enforce_permissions,
+        "allow_admin_bypass": allow_admin_bypass,
+        "enforce_zone_isolation": enforce_zone_isolation,
+        "enable_memory_paging": enable_memory_paging,
+        "memory_main_capacity": memory_main_capacity,
+        "memory_recall_max_age_hours": memory_recall_max_age_hours,
+    }
+
     try:
         # If server_profile is set, the caller is a server — always use local NexusFS
         if not server_profile and backend_config.remote_url:
             # Client mode: use remote server connection via nexus.connect()
             return nexus.connect(
                 config={
-                    "profile": "remote",
+                    "mode": "remote",
                     "url": backend_config.remote_url,
                     "api_key": backend_config.remote_api_key,
                 }
@@ -223,15 +241,7 @@ def get_filesystem(
                     "data_dir": config_obj.data_dir,
                     "backend": config_obj.backend,
                 }
-                if enforce_permissions is not None:
-                    config_dict["enforce_permissions"] = enforce_permissions
-                if allow_admin_bypass is not None:
-                    config_dict["allow_admin_bypass"] = allow_admin_bypass
-                if enforce_zone_isolation is not None:
-                    config_dict["enforce_zone_isolation"] = enforce_zone_isolation
-                config_dict["enable_memory_paging"] = enable_memory_paging
-                config_dict["memory_main_capacity"] = memory_main_capacity
-                config_dict["memory_recall_max_age_hours"] = memory_recall_max_age_hours
+                _apply_common_config(config_dict, **common_kwargs)
                 nx_fs = nexus.connect(config=config_dict)
                 # Store full config object for OAuth factory access
                 if hasattr(nx_fs, "_config") or hasattr(nx_fs, "__dict__"):
@@ -255,34 +265,16 @@ def get_filesystem(
                 "gcs_credentials_path": backend_config.gcs_credentials,
                 "db_path": str(Path(backend_config.data_dir) / "nexus-gcs-metadata.db"),
             }
-            if enforce_permissions is not None:
-                config["enforce_permissions"] = enforce_permissions
-            if allow_admin_bypass is not None:
-                config["allow_admin_bypass"] = allow_admin_bypass
-            if enforce_zone_isolation is not None:
-                config["enforce_zone_isolation"] = enforce_zone_isolation
-            config["enable_memory_paging"] = enable_memory_paging
-            config["memory_main_capacity"] = memory_main_capacity
-            config["memory_recall_max_age_hours"] = memory_recall_max_age_hours
-            nx_fs = nexus.connect(config=config)
-            return nx_fs
+            _apply_common_config(config, **common_kwargs)
+            return nexus.connect(config=config)
         else:
             # Use local backend (default)
             config = {
                 "profile": server_profile or "full",
                 "data_dir": backend_config.data_dir,
             }
-            if enforce_permissions is not None:
-                config["enforce_permissions"] = enforce_permissions
-            if allow_admin_bypass is not None:
-                config["allow_admin_bypass"] = allow_admin_bypass
-            if enforce_zone_isolation is not None:
-                config["enforce_zone_isolation"] = enforce_zone_isolation
-            config["enable_memory_paging"] = enable_memory_paging
-            config["memory_main_capacity"] = memory_main_capacity
-            config["memory_recall_max_age_hours"] = memory_recall_max_age_hours
-            nx_fs = nexus.connect(config=config)
-            return nx_fs
+            _apply_common_config(config, **common_kwargs)
+            return nexus.connect(config=config)
     except Exception as e:
         console.print(f"[red]Error connecting to Nexus:[/red] {e}")
         sys.exit(1)
@@ -536,30 +528,79 @@ def get_subject(subject_option: str | None) -> tuple[str, str] | None:
 
 
 def handle_error(e: Exception) -> None:
-    """Handle errors with beautiful output and proper exit codes.
+    """Handle errors with beautiful output and semantic exit codes.
 
-    Exit codes follow Unix conventions:
-    - 0: Success (not used here)
-    - 1: General error
-    - 2: File/resource not found
-    - 3: Permission denied
+    Exit codes follow sysexits.h (POSIX) conventions:
+    - 0:  Success (not used here)
+    - 64: Usage error (bad input / validation)
+    - 66: Not found (file / resource)
+    - 69: Unavailable (connection error)
+    - 70: Internal error (unexpected)
+    - 75: Temporary failure (timeout)
+    - 77: Permission denied
     """
-    # Import exception types here to avoid circular imports
     from nexus.contracts.exceptions import AccessDeniedError, NexusPermissionError
 
     if isinstance(e, PermissionError | AccessDeniedError | NexusPermissionError):
         console.print(f"[red]Permission Denied:[/red] {e}")
-        sys.exit(3)  # Exit code 3 for permission errors
+        sys.exit(ExitCode.PERMISSION_DENIED)
     elif isinstance(e, NexusFileNotFoundError):
-        # Don't add "File not found:" prefix - the exception message already contains it
         console.print(f"[red]Error:[/red] {e}")
-        sys.exit(2)  # Exit code 2 for not found errors
+        sys.exit(ExitCode.NOT_FOUND)
     elif isinstance(e, ValidationError):
         console.print(f"[red]Validation Error:[/red] {e}")
-        sys.exit(1)
+        sys.exit(ExitCode.USAGE_ERROR)
+    elif isinstance(e, TimeoutError):
+        console.print(f"[red]Timeout:[/red] {e}")
+        sys.exit(ExitCode.TEMPFAIL)
+    elif isinstance(e, ConnectionError | OSError):
+        console.print(f"[red]Connection Error:[/red] {e}")
+        sys.exit(ExitCode.UNAVAILABLE)
     elif isinstance(e, NexusError):
         console.print(f"[red]Nexus Error:[/red] {e}")
-        sys.exit(1)
+        sys.exit(ExitCode.GENERAL_ERROR)
     else:
         console.print(f"[red]Unexpected error:[/red] {e}")
-        sys.exit(1)
+        sys.exit(ExitCode.INTERNAL_ERROR)
+
+
+def resolve_content(content: str | None, input_file: Any) -> bytes:
+    """Resolve content from CLI argument, file, or stdin.
+
+    Args:
+        content: Content string from CLI argument, or "-" for stdin.
+        input_file: File object from ``--input`` option.
+
+    Returns:
+        Content as bytes.
+
+    Raises:
+        SystemExit: If no content source is provided.
+    """
+    if input_file:
+        return bytes(input_file.read())
+    if content == "-":
+        return sys.stdin.buffer.read()
+    if content:
+        return content.encode("utf-8")
+    console.print("[red]Error:[/red] Must provide content or use --input")
+    sys.exit(ExitCode.USAGE_ERROR)
+
+
+@contextmanager
+def open_filesystem(
+    backend_config: BackendConfig, **kwargs: Any
+) -> Generator[NexusFilesystem, None, None]:
+    """Context manager that opens and auto-closes a NexusFilesystem.
+
+    Usage::
+
+        with open_filesystem(backend_config) as nx:
+            result = nx.sys_readdir(path)
+        # nx.close() is called automatically, even on exception.
+    """
+    nx = get_filesystem(backend_config, **kwargs)
+    try:
+        yield nx
+    finally:
+        nx.close()

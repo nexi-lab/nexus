@@ -126,16 +126,24 @@ class MountCoreService:
         # Create backend instance
         backend = self._create_backend(backend_type, config)
 
-        # Add to router (priority removed — router no longer supports it)
+        # Add to router, then setup — rollback on failure (Issue #2754).
+        # If _setup_mount_point fails after the mount is active in the router,
+        # the mount would be accessible without proper permissions configured.
         self._gw.router.add_mount(
             mount_point=mount_point,
             backend=backend,
             readonly=readonly,
             io_profile=io_profile,
         )
-
-        # Setup mount point (directory, permissions)
-        self._setup_mount_point(mount_point, context)
+        try:
+            self._setup_mount_point(mount_point, context)
+        except Exception:
+            logger.error(
+                "Mount setup failed for %s, rolling back router registration",
+                mount_point,
+            )
+            self._gw.router.remove_mount(mount_point)
+            raise
 
         return mount_point
 
@@ -395,6 +403,10 @@ class MountCoreService:
     ) -> None:
         """Grant direct_owner permission to mount creator.
 
+        Raises on failure so that ``add_mount`` can roll back the router
+        registration — a mount must never be active without permissions
+        (Issue #2754).
+
         Args:
             mount_point: Virtual path
             context: Operation context
@@ -403,27 +415,27 @@ class MountCoreService:
             logger.warning("[MOUNT-PERM] No context, skipping permission grant")
             return
 
-        try:
-            zone_id = get_zone_id(context)
-            subject_type, subject_id = get_user_identity(context)
+        zone_id = get_zone_id(context)
+        subject_type, subject_id = get_user_identity(context)
 
-            if not subject_id:
-                logger.warning("[MOUNT-PERM] No subject_id, skipping permission grant")
-                return
+        if not subject_id:
+            logger.warning("[MOUNT-PERM] No subject_id, skipping permission grant")
+            return
 
-            tuple_id = self._gw.rebac_create(
-                subject=(subject_type, subject_id),
-                relation="direct_owner",
-                object=("file", mount_point),
-                zone_id=zone_id,
-            )
+        tuple_id = self._gw.rebac_create(
+            subject=(subject_type, subject_id),
+            relation="direct_owner",
+            object=("file", mount_point),
+            zone_id=zone_id,
+        )
 
-            logger.info(
-                f"Granted direct_owner to {subject_type}:{subject_id} "
-                f"for {mount_point} (tuple_id={tuple_id})"
-            )
-        except Exception as e:
-            logger.warning(f"Failed to grant permission for {mount_point}: {e}")
+        logger.info(
+            "Granted direct_owner to %s:%s for %s (tuple_id=%s)",
+            subject_type,
+            subject_id,
+            mount_point,
+            tuple_id,
+        )
 
     def _check_permission(
         self,

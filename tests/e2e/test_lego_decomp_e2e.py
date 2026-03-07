@@ -25,6 +25,7 @@ from typing import Any
 
 import pytest
 
+from nexus.bricks.memory.memory_provider import get_memory_api
 from nexus.contracts.types import OperationContext
 from nexus.core.config import (
     DistributedConfig,
@@ -257,8 +258,8 @@ class TestMemoryDelegation:
     """Verify memory property and helpers delegate correctly with PG backend."""
 
     def test_memory_property_returns_memory_api(self, nx):
-        """memory property should return a Memory instance via MemoryProvider."""
-        mem = nx.memory
+        """get_memory_api() should return a Memory instance via MemoryProvider."""
+        mem = get_memory_api(nx)
         assert mem is not None
         assert hasattr(mem, "store")
         assert hasattr(mem, "query")
@@ -267,13 +268,13 @@ class TestMemoryDelegation:
 
     def test_memory_property_is_singleton(self, nx):
         """Same Memory instance should be returned on repeated access."""
-        mem1 = nx.memory
-        mem2 = nx.memory
+        mem1 = get_memory_api(nx)
+        mem2 = get_memory_api(nx)
         assert mem1 is mem2
 
     def test_memory_store_and_query(self, nx):
-        """End-to-end memory store + query through delegated property with PG."""
-        mem = nx.memory
+        """End-to-end memory store + query through get_memory_api() with PG."""
+        mem = get_memory_api(nx)
         mid = mem.store(
             content="Test memory from E2E with PostgreSQL",
             scope="user",
@@ -577,9 +578,9 @@ class TestFastAPIIntegration:
         assert isinstance(result.get("result"), list)
 
     def test_memory_store_via_server(self, client):
-        """Memory store should work via the memory property delegation with PG."""
+        """Memory store should work via get_memory_api() delegation with PG."""
         nx = client["nx"]
-        mem = nx.memory
+        mem = get_memory_api(nx)
         mid = mem.store(
             content="E2E memory test via FastAPI + PostgreSQL",
             scope="user",
@@ -709,7 +710,7 @@ class TestFastAPIWithPermissions:
     def test_memory_with_perms(self, client_perms):
         """Memory store should work with permissions enabled."""
         nx = client_perms["nx"]
-        mem = nx.memory
+        mem = get_memory_api(nx)
         mid = mem.store(
             content="E2E memory with permissions + PG",
             scope="user",

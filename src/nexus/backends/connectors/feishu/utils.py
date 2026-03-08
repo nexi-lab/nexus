@@ -279,6 +279,108 @@ def send_message(
     }
 
 
+def send_p2p_message(
+    client: Any,
+    open_id: str,
+    msg_type: str,
+    content: str,
+) -> dict[str, Any]:
+    """Send a P2P message to a user by open_id.
+
+    Creates or reuses a P2P chat between the bot and the user.
+
+    Args:
+        client: lark_oapi.Client instance
+        open_id: Target user's open_id (e.g., "ou_xxx")
+        msg_type: Message type ("text", "interactive", etc.)
+        content: Message content as JSON string
+
+    Returns:
+        Sent message info dict with message_id and chat_id
+    """
+    import json as _json
+
+    from lark_oapi.api.im.v1 import CreateMessageRequest, CreateMessageRequestBody
+
+    if isinstance(content, dict):
+        content = _json.dumps(content, ensure_ascii=False)
+
+    request = (
+        CreateMessageRequest.builder()
+        .receive_id_type("open_id")
+        .request_body(
+            CreateMessageRequestBody.builder()
+            .receive_id(open_id)
+            .msg_type(msg_type)
+            .content(content)
+            .build()
+        )
+        .build()
+    )
+
+    response = client.im.v1.message.create(request)
+
+    if not response.success():
+        error_msg = getattr(response, "msg", "unknown")
+        code = getattr(response, "code", -1)
+        raise Exception(f"Feishu send P2P message failed (code={code}): {error_msg}")
+
+    result = response.data
+    return {
+        "message_id": result.message_id,
+        "chat_id": getattr(result, "chat_id", None),
+        "msg_type": getattr(result, "msg_type", msg_type),
+        "create_time": getattr(result, "create_time", None),
+    }
+
+
+def get_chat_members(
+    client: Any,
+    chat_id: str,
+) -> list[dict[str, Any]]:
+    """Get members of a Feishu chat.
+
+    Uses the Feishu IM Get Chat Members API.
+
+    Args:
+        client: lark_oapi.Client instance
+        chat_id: Chat ID to look up members for
+
+    Returns:
+        List of member info dicts with name, member_id, member_id_type
+    """
+    from lark_oapi.api.im.v1 import GetChatMembersRequest
+
+    try:
+        request = GetChatMembersRequest.builder().chat_id(chat_id).page_size(50).build()
+        response = client.im.v1.chat_members.get(request)
+
+        if not response.success():
+            logger.warning(
+                "[GET-CHAT-MEMBERS] Failed for chat %s: code=%s msg=%s",
+                chat_id,
+                getattr(response, "code", -1),
+                getattr(response, "msg", "unknown"),
+            )
+            return []
+
+        members = []
+        for item in response.data.items or []:
+            members.append(
+                {
+                    "name": getattr(item, "name", "Unknown"),
+                    "member_id": getattr(item, "member_id", None),
+                    "member_id_type": getattr(item, "member_id_type", None),
+                    "tenant_key": getattr(item, "tenant_key", None),
+                }
+            )
+        return members
+
+    except Exception as e:
+        logger.warning("[GET-CHAT-MEMBERS] Error for chat %s: %s", chat_id, e)
+        return []
+
+
 def get_chat_info(
     client: Any,
     chat_id: str,
@@ -312,8 +414,9 @@ def get_chat_info(
         item = response.data
         return {
             "chat_id": chat_id,
-            "name": getattr(item, "name", chat_id),
+            "name": getattr(item, "name", None) or chat_id,
             "chat_type": getattr(item, "chat_type", "group"),
+            "chat_mode": getattr(item, "chat_mode", "group"),
             "owner_id": getattr(item, "owner_id", None),
             "description": getattr(item, "description", ""),
         }

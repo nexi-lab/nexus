@@ -29,18 +29,20 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
-from nexus.backends.base.backend import Backend
-from nexus.backends.base.registry import register_connector
+from nexus.backends.backend import Backend
+from nexus.backends.cache_mixin import IMMUTABLE_VERSION, CacheConnectorMixin
 from nexus.backends.connectors.feishu.utils import (
+    get_chat_info,
+    get_chat_members,
     list_chats,
     list_messages_from_chat,
     send_message,
 )
-from nexus.backends.connectors.oauth import OAuthConnectorMixin
-from nexus.backends.wrappers.cache_mixin import IMMUTABLE_VERSION, CacheConnectorMixin
-from nexus.contracts.capabilities import OAUTH_CONNECTOR_CAPABILITIES, ConnectorCapability
+from nexus.backends.oauth_mixin import OAuthConnectorMixin
+from nexus.backends.registry import register_connector
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.object_store import WriteResult
+from nexus.core.protocols.capabilities import OAUTH_CONNECTOR_CAPABILITIES, ConnectorCapability
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
@@ -122,6 +124,10 @@ class FeishuConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
         # Cache for chats: chat_id -> chat_info
         self._chat_cache: dict[str, dict[str, Any]] = {}
 
+        # P2P chat registry: chat_id -> {"name": ..., "chat_id": ...}
+        # Populated from webhook events since list_chats API doesn't return P2P chats
+        self._p2p_registry: dict[str, dict[str, Any]] = {}
+
         # VFS mount prefix for matching inbound events
         self._mount_prefix = "/chat/feishu/"
 
@@ -179,11 +185,11 @@ class FeishuConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
             logger.debug("Feishu webhook router not available; cache invalidation disabled")
 
     def handle_event(self, file_event: Any) -> None:
-        """Handle an inbound FileEvent by invalidating the corresponding cache entry.
+        """Handle an inbound FileEvent by registering P2P chats and invalidating cache.
 
         Called by the webhook router when a Feishu event (e.g. new message) arrives.
-        Invalidates the cached YAML so the next read_content() fetches fresh data
-        from the Feishu API.
+        For P2P events, registers the chat in the P2P registry.
+        For all events, invalidates cached YAML so next read_content() fetches fresh data.
 
         Args:
             file_event: FileEvent from the webhook router
@@ -192,8 +198,20 @@ class FeishuConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
         if not path.startswith(self._mount_prefix):
             return
 
-        # Extract the backend-relative path (e.g. "groups/oc_xxx.yaml")
+        # Extract the backend-relative path (e.g. "groups/oc_xxx.yaml" or "p2p/oc_xxx.yaml")
         backend_path = path[len(self._mount_prefix) :]
+
+        # Detect P2P events and register the chat
+        if backend_path.startswith("p2p/"):
+            parts = backend_path.split("/")
+            if len(parts) >= 2:
+                filename = parts[1]
+                chat_id = self._parse_chat_id_from_filename(filename)
+                if not chat_id:
+                    # Webhook uses bare chat_id as filename (e.g. "p2p/oc_xxx.yaml")
+                    chat_id = filename.removesuffix(".yaml")
+                if chat_id and chat_id not in self._p2p_registry:
+                    self._discover_p2p_chat(chat_id)
 
         if not self._has_caching():
             return
@@ -203,6 +221,54 @@ class FeishuConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
             logger.info("Cache invalidated for %s (event: %s)", backend_path, file_event.type)
         except Exception as e:
             logger.warning("Failed to invalidate cache for %s: %s", backend_path, e)
+
+    def _discover_p2p_chat(self, chat_id: str) -> None:
+        """Discover and register a P2P chat by fetching its info and member names.
+
+        Called when a P2P event is received from the webhook. Since P2P chats
+        have name=None from the API, we resolve the peer name from chat members.
+
+        Args:
+            chat_id: P2P chat ID to discover
+        """
+        try:
+            client = self._app_client
+            info = get_chat_info(client, chat_id)
+            if not info:
+                # Still register with fallback name
+                self._p2p_registry[chat_id] = {
+                    "chat_id": chat_id,
+                    "name": chat_id,
+                    "chat_mode": "p2p",
+                }
+                return
+
+            # For P2P chats, resolve the peer (non-bot) member name
+            name = info.get("name") or None
+            if not name or name == chat_id:
+                members = get_chat_members(client, chat_id)
+                # Filter out bot members (bot IDs start with "cli_")
+                human_members = [
+                    m
+                    for m in members
+                    if m.get("member_id") and not m["member_id"].startswith("cli_")
+                ]
+                name = human_members[0].get("name", chat_id) if human_members else chat_id
+
+            self._p2p_registry[chat_id] = {
+                "chat_id": chat_id,
+                "name": name,
+                "chat_mode": "p2p",
+            }
+            logger.info("Discovered P2P chat: %s (%s)", name, chat_id)
+
+        except Exception as e:
+            logger.warning("Failed to discover P2P chat %s: %s", chat_id, e)
+            self._p2p_registry[chat_id] = {
+                "chat_id": chat_id,
+                "name": chat_id,
+                "chat_mode": "p2p",
+            }
 
     def _get_feishu_client(self, context: "OperationContext | None" = None) -> Any:
         """Get Feishu client configured for the appropriate auth mode.
@@ -604,6 +670,17 @@ class FeishuConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
                 if folder_type not in self.FOLDER_TYPES:
                     raise FileNotFoundError(f"Directory not found: {path}")
 
+                if folder_type == "p2p":
+                    # P2P chats are not returned by list_chats API.
+                    # Return chats discovered from webhook events.
+                    return [
+                        self._format_hybrid_filename(
+                            info.get("name", info["chat_id"]), info["chat_id"]
+                        )
+                        for info in self._p2p_registry.values()
+                    ]
+
+                # Group chats — use list_chats API
                 client = self._get_feishu_client(context)
                 chats = list_chats(client, silent=True)
 
@@ -611,13 +688,9 @@ class FeishuConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
                 for chat in chats:
                     self._chat_cache[chat["chat_id"]] = chat
 
-                # Filter by chat type
-                target_type = "p2p" if folder_type == "p2p" else "group"
-                filtered = [c for c in chats if c.get("chat_type") == target_type]
-
                 return [
                     self._format_hybrid_filename(chat.get("name", chat["chat_id"]), chat["chat_id"])
-                    for chat in filtered
+                    for chat in chats
                 ]
 
             raise FileNotFoundError(f"Directory not found: {path}")

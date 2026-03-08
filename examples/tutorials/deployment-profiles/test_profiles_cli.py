@@ -36,7 +36,7 @@ FILES = {
 _CLEAN_ENV = {
     k: v
     for k, v in os.environ.items()
-    if k not in ("NEXUS_URL", "NEXUS_DATABASE_URL", "NEXUS_MODE", "NEXUS_PROFILE")
+    if k not in ("NEXUS_URL", "NEXUS_DATABASE_URL", "NEXUS_PROFILE")
 }
 
 

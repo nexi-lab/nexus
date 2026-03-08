@@ -146,7 +146,7 @@ def create_mcp_server(
     # Connection pool for per-request API keys (bounded LRU, cached by API key)
     _connection_cache: LRUCache[str, NexusFilesystemABC] = LRUCache(maxsize=256)
 
-    def _get_nexus_instance(ctx: Context | None = None) -> NexusFilesystemABC:
+    def _get_nexus_instance(_ctx: Context | None = None) -> NexusFilesystemABC:
         """Get Nexus instance for current request using context API key.
 
         This function checks if infrastructure has set a per-request API key
@@ -163,17 +163,11 @@ def create_mcp_server(
             Per-request API keys are only supported when remote_url is configured.
             For local connections, the default connection is always used.
         """
-        # Try to get API key from FastMCP context state first (if Context is available)
-        request_api_key = None
-        if ctx and hasattr(ctx, "get_state"):
-            try:
-                request_api_key = ctx.get_state("api_key")
-            except Exception as e:
-                logger.debug("Failed to get API key from context state: %s", e)
-
-        # Fallback to context variable (set by Starlette middleware)
-        if not request_api_key:
-            request_api_key = _request_api_key.get()
+        # Get API key from context variable (set by Starlette middleware or
+        # APIKeyExtractionMiddleware). Context.get_state() is async in fastmcp
+        # 3.x and cannot be called from sync tool functions, so we rely solely
+        # on the sync contextvars path.
+        request_api_key: str | None = _request_api_key.get()
 
         # If no API key in context, use default connection
         if not request_api_key:
@@ -244,8 +238,8 @@ def create_mcp_server(
             # Store in FastMCP's context state so tools can access it via Context.get_state()
             if api_key and context.fastmcp_context:
                 try:
-                    context.fastmcp_context.set_state("api_key", api_key)
-                    # Also set in context variable for backward compatibility
+                    await context.fastmcp_context.set_state("api_key", api_key)
+                    # Also set in context variable (sync path for tool functions)
                     _request_api_key.set(api_key)
                 except Exception:
                     # If set_state fails, continue anyway

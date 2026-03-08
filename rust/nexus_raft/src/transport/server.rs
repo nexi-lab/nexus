@@ -798,6 +798,28 @@ impl ZoneApiService for ZoneApiServiceImpl {
             .await
         {
             Ok(conf_state) => {
+                // Increment zone's i_links_count (Raft-replicated via SetMetadata).
+                // This runs on the leader, so the follower's join() can skip
+                // _increment_links() and avoid a Raft leader-only-write violation.
+                let current_count: u64 = node
+                    .with_state_machine(|sm| sm.get_metadata("__i_links_count__"))
+                    .await
+                    .ok()
+                    .flatten()
+                    .and_then(|bytes| <[u8; 8]>::try_from(bytes.as_slice()).ok())
+                    .map(u64::from_be_bytes)
+                    .unwrap_or(0);
+
+                if let Err(e) = node
+                    .propose(Command::SetMetadata {
+                        key: "__i_links_count__".to_string(),
+                        value: (current_count + 1).to_be_bytes().to_vec(),
+                    })
+                    .await
+                {
+                    tracing::warn!(zone = req.zone_id, "Failed to increment i_links_count: {e}");
+                }
+
                 // Build ClusterConfig from the resulting ConfState + peer map
                 let peers = self.registry.get_peers(&req.zone_id).unwrap_or_default();
                 let voters: Vec<ProtoNodeInfo> = conf_state

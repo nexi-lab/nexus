@@ -180,8 +180,8 @@ class NexusFederation:
             node_address=getattr(self._mgr, "advertise_addr", peer_addr),
         )
 
-        # Step 4: Mount in root zone
-        self._mgr.mount(root_zone, local_path, zone_id)
+        # Step 4: Mount in root zone (JoinZone handler already incremented i_links_count)
+        self._mgr.mount(root_zone, local_path, zone_id, increment_links=False)
 
         logger.info("Zone '%s' mounted at '%s' — federation complete", zone_id, local_path)
         return zone_id

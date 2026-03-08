@@ -111,24 +111,18 @@ def start(
         # ============================================
         os.environ["NEXUS_GRPC_PORT"] = str(grpc_port)
 
-        # Try federation mode first; fall back to standalone if Rust extensions
-        # are not available (pure pip install without maturin develop).
+        # Detect federation capability (Rust extensions) for user-facing messages.
+        # connect() auto-detects at runtime — no env var needed.
         enforce_permissions = bool(auth_type or api_key)
         try:
             from nexus.raft.zone_manager import _get_py_zone_manager
 
             if _get_py_zone_manager() is None:
                 raise ImportError("PyO3 ZoneManager not available")
-            os.environ["NEXUS_MODE"] = "federation"
             console.print(f"  gRPC: [cyan]port {grpc_port}[/cyan]")
         except (ImportError, RuntimeError):
-            os.environ["NEXUS_MODE"] = "standalone"
-            console.print(
-                "  [yellow]Federation mode unavailable (Rust extensions not built).[/yellow]"
-            )
-            console.print(
-                "  [yellow]Falling back to standalone mode (in-memory metastore).[/yellow]"
-            )
+            console.print("  [yellow]Federation unavailable (Rust extensions not built).[/yellow]")
+            console.print("  [yellow]Running with in-memory metastore.[/yellow]")
 
         # ============================================
         # Step 3: Create filesystem

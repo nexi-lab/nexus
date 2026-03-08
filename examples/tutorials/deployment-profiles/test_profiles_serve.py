@@ -38,7 +38,7 @@ def main() -> int:
 
         env = os.environ.copy()
         env["NEXUS_DATA_DIR"] = data_dir
-        for k in ["NEXUS_URL", "NEXUS_DATABASE_URL", "NEXUS_MODE", "NEXUS_PROFILE"]:
+        for k in ["NEXUS_URL", "NEXUS_DATABASE_URL", "NEXUS_PROFILE"]:
             env.pop(k, None)
 
         proc = subprocess.Popen(

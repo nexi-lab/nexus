@@ -3,12 +3,15 @@ Nexus: AI-Native Distributed Filesystem Architecture
 
 Nexus is a complete AI agent infrastructure platform that combines distributed
 unified filesystem, self-evolving agent memory, intelligent document processing,
-and seamless deployment across three modes.
+and seamless deployment across deployment profiles.
 
-Three Deployment Modes, One Codebase:
-- Standalone: Single-node redb, no Raft (like SQLite) — default mode
-- Remote: NexusFS with RemoteBackend + RemoteServiceProxy (thin HTTP client)
-- Federation: ZoneManager + Raft consensus for multi-node clusters
+Deployment profiles control which bricks are enabled:
+- kernel: Bare VFS, storage only
+- embedded: Storage + eventlog
+- lite: Core services
+- full: All bricks (default)
+- cloud: All bricks + federation
+- remote: Thin gRPC client (RemoteBackend + RemoteServiceProxy)
 
 SDK vs CLI:
 -----------
@@ -146,11 +149,11 @@ def connect(
     Connect to Nexus filesystem.
 
     This is the main entry point for using Nexus. It dispatches based on the
-    deployment mode in configuration:
+    deployment profile in configuration:
 
-    - **standalone** (default): Single-node redb, no Raft. Like SQLite.
-    - **remote**: NexusFS with RemoteBackend + RemoteServiceProxy (thin HTTP client).
-    - **federation**: ZoneManager + Raft consensus for multi-node clusters.
+    - **profile="remote"**: Thin gRPC client (RemoteBackend + RemoteServiceProxy).
+    - **All other profiles**: Local NexusFS. Federation (Raft + ZoneManager) is
+      auto-detected based on whether the Rust extensions are importable.
 
     Args:
         config: Configuration source:
@@ -160,31 +163,27 @@ def connect(
             - NexusConfig: Already loaded config
 
     Returns:
-        NexusFilesystem instance (mode-dependent):
-            - remote: Returns NexusFS with RemoteBackend + RemoteServiceProxy
-            - standalone/federation: Returns NexusFS with local backend
-
-        All modes implement the NexusFilesystem interface, ensuring consistent
-        API across deployment modes.
+        NexusFilesystem instance. All profiles implement the NexusFilesystem
+        interface, ensuring consistent API.
 
     Raises:
-        ValueError: If configuration is invalid or mode is unknown
+        ValueError: If configuration is invalid
 
     Examples:
-        Remote mode (production client):
+        Remote profile (production client):
             >>> nx = nexus.connect(config={
-            ...     "mode": "remote",
+            ...     "profile": "remote",
             ...     "url": "http://localhost:2026",
             ...     "api_key": "your-api-key"
             ... })
 
-        Standalone mode (development/testing):
+        Default (development/testing):
             >>> nx = nexus.connect()
             >>> nx.sys_write("/workspace/file.txt", b"Hello World")
 
-        Federation mode (multi-node cluster):
+        Federation (auto-detected when Rust extensions available):
             >>> # Requires NEXUS_NODE_ID, NEXUS_BIND_ADDR env vars
-            >>> nx = nexus.connect(config={"mode": "federation"})
+            >>> nx = nexus.connect(config={"profile": "cloud"})
     """
     import os
     from pathlib import Path
@@ -194,14 +193,14 @@ def connect(
     # Load configuration
     cfg = load_config(config)
 
-    # ── Mode: remote ─────────────────────────────────────────────────
-    if cfg.mode == "remote":
+    # ── Profile: remote ──────────────────────────────────────────────
+    if cfg.profile == "remote":
         from urllib.parse import urlparse
 
         server_url = cfg.url or os.getenv("NEXUS_URL")
         if not server_url:
             raise ValueError(
-                "mode='remote' requires a server URL. "
+                "profile='remote' requires a server URL. "
                 "Set 'url' in config or NEXUS_URL environment variable."
             )
         api_key = cfg.api_key or os.getenv("NEXUS_API_KEY")
@@ -256,13 +255,8 @@ def connect(
 
         return nfs
 
-    # ── Modes: standalone / federation ───────────────────────────────
-    if cfg.mode not in ("standalone", "federation"):
-        raise ValueError(
-            f"Unknown mode: '{cfg.mode}'. Must be one of: standalone, remote, federation"
-        )
-
-    # Heavy imports only needed for standalone/federation
+    # ── Local node (single-node or federated, auto-detected) ────────
+    # Heavy imports for local profiles
     from nexus.backends.base.backend import Backend
     from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.core.nexus_fs import NexusFS
@@ -305,18 +299,14 @@ def connect(
     metadata_path = cfg.metastore_path or cfg.db_path or str(Path(nexus_root) / "metastore")
     record_store_path = cfg.record_store_path or None
 
-    # Create metadata store based on mode
+    # Create metadata store — auto-detect federation capability
     metadata_store: MetastoreABC
-    if cfg.mode == "federation":
-        try:
-            from nexus.contracts.constants import DEFAULT_GRPC_BIND_ADDR
-            from nexus.raft import FederatedMetadataProxy
-            from nexus.raft.zone_manager import ZoneManager
-        except ImportError as err:
-            raise ImportError(
-                "mode='federation' requires the Rust Raft extension built with --features full. "
-                "Build with: maturin develop -m rust/nexus_raft/Cargo.toml --features full"
-            ) from err
+    zone_mgr = None
+
+    try:
+        from nexus.contracts.constants import DEFAULT_GRPC_BIND_ADDR
+        from nexus.raft import FederatedMetadataProxy
+        from nexus.raft.zone_manager import ZoneManager
 
         node_id = int(os.environ.get("NEXUS_NODE_ID", "1"))
         bind_addr = os.environ.get("NEXUS_BIND_ADDR", DEFAULT_GRPC_BIND_ADDR)
@@ -359,8 +349,8 @@ def connect(
             zone_mgr.bootstrap_static(zones=zones, peers=peers, mounts=mounts)
 
         metadata_store = FederatedMetadataProxy.from_zone_manager(zone_mgr)
-    else:
-        # standalone: single-node embedded Raft (no peers), with fallback
+    except ImportError:
+        # Raft extensions not available — single-node embedded Raft, with fallback
         try:
             from nexus.storage.raft_metadata_store import RaftMetadataStore
 
@@ -494,7 +484,7 @@ def connect(
     nx_fs._config = cfg
 
     # Store zone manager for federation topology initialization (health check)
-    if cfg.mode == "federation":
+    if zone_mgr is not None:
         nx_fs._zone_mgr = zone_mgr
 
         # Register federation content resolver (PRE-DISPATCH, Issue #163)

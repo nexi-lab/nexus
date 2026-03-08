@@ -73,7 +73,7 @@ services:
       NEXUS_HOST: 0.0.0.0
       NEXUS_PORT: 2026
       NEXUS_DATA_DIR: /app/data
-      NEXUS_MODE: standalone
+      NEXUS_PROFILE: full
 
       # Database configuration (PostgreSQL)
       NEXUS_DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}

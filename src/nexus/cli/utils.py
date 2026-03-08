@@ -97,7 +97,8 @@ ZONE_ID_OPTION = click.option(
     "--zone-id",
     type=str,
     default=None,
-    help="Zone ID for multi-zone isolation (e.g., 'org_acme'). Can also be set via NEXUS_ZONE_ID env var.",
+    envvar="NEXUS_ZONE_ID",
+    help="Zone ID for multi-zone isolation (e.g., 'org_acme').",
 )
 
 IS_ADMIN_OPTION = click.option(
@@ -199,6 +200,9 @@ def get_filesystem(
 ) -> NexusFilesystem:
     """Get Nexus filesystem instance from backend configuration.
 
+    Uses resolve_connection() to determine the effective connection target
+    when no explicit --remote-url, --config, or --backend=gcs is provided.
+
     Args:
         backend_config: Backend configuration
         enforce_permissions: Whether to enforce permissions (None = use environment/config default)
@@ -223,12 +227,13 @@ def get_filesystem(
     try:
         # If server_profile is set, the caller is a server — always use local NexusFS
         if not server_profile and backend_config.remote_url:
-            # Client mode: use remote server connection via nexus.connect()
+            # Client mode: explicit --remote-url flag takes highest priority
+            resolved = _resolve_backend_url(backend_config)
             return nexus.connect(
                 config={
                     "profile": "remote",
-                    "url": backend_config.remote_url,
-                    "api_key": backend_config.remote_api_key,
+                    "url": resolved.url,
+                    "api_key": resolved.api_key,
                 }
             )
         elif backend_config.config_path:
@@ -243,7 +248,6 @@ def get_filesystem(
                 }
                 _apply_common_config(config_dict, **common_kwargs)
                 nx_fs = nexus.connect(config=config_dict)
-                # Store full config object for OAuth factory access
                 if hasattr(nx_fs, "_config") or hasattr(nx_fs, "__dict__"):
                     nx_fs._config = config_obj
                 return nx_fs
@@ -268,7 +272,17 @@ def get_filesystem(
             _apply_common_config(config, **common_kwargs)
             return nexus.connect(config=config)
         else:
-            # Use local backend (default)
+            # No explicit flags — resolve via profiles
+            resolved = _resolve_backend_url(backend_config)
+            if resolved.is_remote:
+                return nexus.connect(
+                    config={
+                        "profile": "remote",
+                        "url": resolved.url,
+                        "api_key": resolved.api_key,
+                    }
+                )
+            # Local backend (default)
             config = {
                 "profile": server_profile or "full",
                 "data_dir": backend_config.data_dir,
@@ -278,6 +292,26 @@ def get_filesystem(
     except Exception as e:
         console.print(f"[red]Error connecting to Nexus:[/red] {e}")
         sys.exit(1)
+
+
+def _resolve_backend_url(backend_config: BackendConfig) -> Any:
+    """Resolve connection using profile config when backend_config has a URL or needs profile lookup."""
+    from nexus.cli.config import resolve_connection
+
+    # Get profile name from Click context if available
+    profile_name = None
+    try:
+        ctx = click.get_current_context(silent=True)
+        if ctx and ctx.obj:
+            profile_name = ctx.obj.get("profile")
+    except RuntimeError:
+        pass
+
+    return resolve_connection(
+        remote_url=backend_config.remote_url,
+        remote_api_key=backend_config.remote_api_key,
+        profile_name=profile_name,
+    )
 
 
 def create_backend_from_config(
@@ -315,30 +349,29 @@ def get_default_filesystem() -> NexusFilesystem:
     """Get Nexus filesystem instance with default configuration.
 
     Used by commands that don't accept backend options (e.g., memory commands).
-    Supports both local and remote profiles via environment variables:
-    - NEXUS_URL: Remote server URL (if set, uses remote profile)
-    - NEXUS_API_KEY: API key for remote authentication
-    - NEXUS_DATA_DIR: Data directory for local profile (default: ~/.nexus)
+    Resolves connection via the standard precedence chain:
+    NEXUS_URL env > active profile > local default.
 
     Returns:
-        NexusFilesystem instance (remote if NEXUS_URL is set, otherwise local)
+        NexusFilesystem instance (remote if NEXUS_URL is set or profile is active, otherwise local)
     """
     try:
-        import os
+        from nexus.cli.config import resolve_connection
 
-        # Check for remote URL first (priority over local)
-        remote_url = os.environ.get("NEXUS_URL")
-        if remote_url:
-            # Use remote server connection via nexus.connect()
+        resolved = resolve_connection(
+            remote_url=os.environ.get("NEXUS_URL"),
+            remote_api_key=os.environ.get("NEXUS_API_KEY"),
+        )
+
+        if resolved.is_remote:
             return nexus.connect(
                 config={
                     "profile": "remote",
-                    "url": remote_url,
-                    "api_key": os.environ.get("NEXUS_API_KEY"),
+                    "url": resolved.url,
+                    "api_key": resolved.api_key,
                 }
             )
 
-        # Fall back to local mode
         data_dir = os.environ.get("NEXUS_DATA_DIR", str(Path.home() / ".nexus"))
         return nexus.connect(config={"data_dir": data_dir})
     except Exception as e:
@@ -408,14 +441,12 @@ def get_zone_id(zone_id: str | None) -> str | None:
     """Get zone ID from parameter or environment.
 
     Args:
-        zone_id: Zone ID from CLI parameter
+        zone_id: Zone ID from CLI parameter (or NEXUS_ZONE_ID via Click envvar)
 
     Returns:
         Zone ID or None
     """
-    if zone_id:
-        return zone_id
-    return os.getenv("NEXUS_ZONE_ID")
+    return zone_id or None
 
 
 def create_operation_context(

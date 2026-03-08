@@ -54,6 +54,10 @@ _REGISTER_COMMANDS = [
     "status",  # status [--watch] [--json]
     "doctor",  # doctor [--json] [--fix]
     "start",  # start (federation-ready)
+    # Issue #2809: Profile management
+    "profile",  # profile list/add/use/delete/show/rename
+    "connect_cmd",  # Interactive connection setup
+    "config_cmd",  # Config show/set/get/reset
 ]
 
 # Modules that expose a single Click command/group to add via cli.add_command

@@ -146,10 +146,11 @@ class ChunkedUploadService:
         await self._lazy_cleanup()
 
         # Acquire semaphore (non-blocking — return 429 if full)
-        if not self._semaphore._value:  # noqa: SLF001
+        if not self._semaphore.locked():
+            await self._semaphore.acquire()
+        else:
+            # Semaphore value is 0 — all permits taken
             raise RuntimeError("Too many concurrent uploads")
-
-        await self._semaphore.acquire()
 
         try:
             upload_id = str(uuid.uuid4())
@@ -347,6 +348,9 @@ class ChunkedUploadService:
         """
         session = await self._load_session(upload_id)
 
+        # Only release semaphore for sessions that actually hold a permit
+        should_release = session.status in (UploadStatus.CREATED, UploadStatus.IN_PROGRESS)
+
         # Abort backend multipart if active
         if session.backend_upload_id and self._supports_multipart():
             try:
@@ -382,7 +386,8 @@ class ChunkedUploadService:
         # Clean up
         self._parts_registry.pop(upload_id, None)
         self._session_locks.pop(upload_id, None)
-        self._semaphore.release()
+        if should_release:
+            self._semaphore.release()
 
         logger.info("Upload session terminated: %s", upload_id)
 

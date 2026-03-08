@@ -85,10 +85,29 @@ class OAuthUserAuth:
         self,
         provider_name: str,
         code: str,
-        _state: str | None = None,
+        state: str | None = None,
         redirect_uri: str | None = None,
+        expected_state: str | None = None,
     ) -> tuple[UserModel, str]:
-        """Handle OAuth callback for any provider."""
+        """Handle OAuth callback for any provider.
+
+        Args:
+            provider_name: OAuth provider name.
+            code: Authorization code from provider.
+            state: State parameter returned in the callback.
+            redirect_uri: Redirect URI used in the original request.
+            expected_state: The state value originally sent in the auth URL.
+                Must match ``state`` when provided (CSRF protection).
+
+        Raises:
+            ValueError: If state validation fails.
+        """
+        # Validate OAuth state for CSRF protection
+        if expected_state is not None and (
+            state is None or not secrets.compare_digest(state, expected_state)
+        ):
+            raise ValueError("OAuth state mismatch — possible CSRF attack")
+
         provider = self._get_provider(provider_name)
 
         try:
@@ -159,9 +178,19 @@ class OAuthUserAuth:
 
     # Keep backward-compat convenience method
     async def handle_google_callback(
-        self, code: str, _state: str | None = None, redirect_uri: str | None = None
+        self,
+        code: str,
+        state: str | None = None,
+        redirect_uri: str | None = None,
+        expected_state: str | None = None,
     ) -> tuple[UserModel, str]:
-        return await self.handle_callback("google", code, _state=_state, redirect_uri=redirect_uri)
+        return await self.handle_callback(
+            "google",
+            code,
+            state=state,
+            redirect_uri=redirect_uri,
+            expected_state=expected_state,
+        )
 
     async def _extract_user_info(self, provider_name: str, access_token: str) -> dict[str, Any]:
         """Fetch user info from provider's userinfo endpoint."""

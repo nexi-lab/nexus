@@ -19,7 +19,6 @@ from typing import Any, cast
 import click
 
 from nexus.cli.utils import (
-    BackendConfig,
     add_backend_options,
     console,
     get_filesystem,
@@ -89,7 +88,8 @@ def add_mount(
     io_profile: str,
     owner: str | None,
     zone: str | None,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Add a new backend mount.
 
@@ -121,7 +121,7 @@ def add_mount(
             sys.exit(1)
 
         # Get filesystem (works with both local and remote)
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
 
         # Call add_mount via mount_service (async) with sync bridge
         console.print("[yellow]Adding mount...[/yellow]")
@@ -165,7 +165,7 @@ def add_mount(
 @mounts_group.command(name="remove")
 @click.argument("mount_point", type=str)
 @add_backend_options
-def remove_mount(mount_point: str, backend_config: BackendConfig) -> None:
+def remove_mount(mount_point: str, remote_url: str | None, remote_api_key: str | None) -> None:
     """Remove a backend mount.
 
     Removes mount configuration from database. The mount will be unmounted
@@ -177,7 +177,7 @@ def remove_mount(mount_point: str, backend_config: BackendConfig) -> None:
     """
     try:
         # Get filesystem (works with both local and remote)
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
 
         # Call remove_mount via mount_service (async) with sync bridge
         console.print(f"[yellow]Removing mount at {mount_point}...[/yellow]")
@@ -205,7 +205,11 @@ def remove_mount(mount_point: str, backend_config: BackendConfig) -> None:
 @click.option("--json", "output_json", is_flag=True, help="Output as JSON")
 @add_backend_options
 def list_mounts(
-    owner: str | None, zone: str | None, output_json: bool, backend_config: BackendConfig
+    owner: str | None,
+    zone: str | None,
+    output_json: bool,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """List all persisted mounts.
 
@@ -227,7 +231,7 @@ def list_mounts(
     """
     try:
         # Get filesystem (works with both local and remote)
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
 
         # Call list_mounts via mount_service (async) with sync bridge
         try:
@@ -281,7 +285,9 @@ def list_mounts(
     "--show-config", is_flag=True, help="Show backend configuration (may contain secrets)"
 )
 @add_backend_options
-def mount_info(mount_point: str, show_config: bool, backend_config: BackendConfig) -> None:
+def mount_info(
+    mount_point: str, show_config: bool, remote_url: str | None, remote_api_key: str | None
+) -> None:
     """Show detailed information about a mount.
 
     Examples:
@@ -290,7 +296,7 @@ def mount_info(mount_point: str, show_config: bool, backend_config: BackendConfi
     """
     try:
         # Get filesystem (works with both local and remote)
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
 
         # Call get_mount via mount_service (async) with sync bridge
         try:
@@ -354,7 +360,8 @@ def sync_mount(
     dry_run: bool,
     run_async: bool,
     output_json: bool,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Sync metadata and content from connector backend(s).
 
@@ -391,7 +398,7 @@ def sync_mount(
     """
     try:
         # Get filesystem (works with both local and remote)
-        nx: Any = get_filesystem(backend_config)
+        nx: Any = get_filesystem(remote_url, remote_api_key)
 
         # Convert tuples to lists for include/exclude
         include_patterns = list(include) if include else None
@@ -533,7 +540,8 @@ def sync_status(
     job_id: str | None,
     watch: bool,
     output_json: bool,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Show sync job status and progress.
 
@@ -553,7 +561,7 @@ def sync_status(
     import time
 
     try:
-        nx: Any = get_filesystem(backend_config)
+        nx: Any = get_filesystem(remote_url, remote_api_key)
 
         if job_id:
             # Show specific job
@@ -680,7 +688,8 @@ def _display_job_status(job: dict) -> None:
 def sync_cancel(
     job_id: str,
     output_json: bool,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Cancel a running sync job.
 
@@ -688,7 +697,7 @@ def sync_cancel(
         nexus mounts sync-cancel abc123
     """
     try:
-        nx: Any = get_filesystem(backend_config)
+        nx: Any = get_filesystem(remote_url, remote_api_key)
 
         try:
             result = nx._sync_job_service.cancel_sync_job(job_id)
@@ -728,7 +737,8 @@ def sync_jobs(
     status: str | None,
     limit: int,
     output_json: bool,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """List sync jobs.
 
@@ -743,7 +753,7 @@ def sync_jobs(
         nexus mounts sync-jobs --status failed
     """
     try:
-        nx: Any = get_filesystem(backend_config)
+        nx: Any = get_filesystem(remote_url, remote_api_key)
 
         try:
             jobs = nx._sync_job_service.list_jobs(mount_point=mount, status=status, limit=limit)

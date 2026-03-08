@@ -8,7 +8,6 @@ import click
 from rich.table import Table
 
 from nexus.cli.utils import (
-    BackendConfig,
     add_backend_options,
     console,
     get_filesystem,
@@ -51,7 +50,8 @@ def ops_diff(
     operation_1: str,
     operation_2: str,
     show_content: bool,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Compare file state between two operation points.
 
@@ -63,7 +63,7 @@ def ops_diff(
         nexus ops diff /workspace/code.py op_abc123 op_def456 --show-content
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
 
         time_travel = getattr(nx, "time_travel_service", None)
         if time_travel is None:
@@ -174,7 +174,8 @@ def ops_log(
     path: str | None,
     status: str | None,
     limit: int,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Show operation log with optional filters.
 
@@ -187,7 +188,7 @@ def ops_log(
         nexus ops log --status failure
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
 
         ops_service = getattr(nx, "operations_service", None)
         if ops_service is None:
@@ -260,7 +261,7 @@ def ops_log(
 @click.option("--agent", "-a", help="Filter by agent ID (undo last operation by this agent)")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
 @add_backend_options
-def undo(agent: str | None, yes: bool, backend_config: BackendConfig) -> None:
+def undo(agent: str | None, yes: bool, remote_url: str | None, remote_api_key: str | None) -> None:
     """Undo the last successful operation.
 
     Reverts the most recent filesystem operation.
@@ -271,7 +272,7 @@ def undo(agent: str | None, yes: bool, backend_config: BackendConfig) -> None:
         nexus undo --yes
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
 
         ops_service = getattr(nx, "operations_service", None)
         if ops_service is None:

@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any, cast
 import click
 
 from nexus.cli.utils import (
-    BackendConfig,
     add_backend_options,
     console,
     get_filesystem,
@@ -178,7 +177,8 @@ def serve(
     host: str,
     port: int,
     api_key: str | None,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Start Nexus MCP server.
 
@@ -222,9 +222,6 @@ def serve(
         nexus mcp serve --url http://localhost:2026 --api-key YOUR_KEY
         # Or via environment:
         NEXUS_URL=http://localhost:2026 NEXUS_API_KEY=YOUR_KEY nexus mcp serve
-
-        # Use with local backend
-        nexus mcp serve --data-dir ./my-data
     """
     try:
         # Check if fastmcp is installed
@@ -255,21 +252,10 @@ def serve(
         # Get filesystem instance
         log_msg("Initializing Nexus MCP server...")
 
-        # Check if using remote URL
-        if backend_config.remote_url:
-            log_msg(f"  Remote URL: {backend_config.remote_url}")
-            if api_key:
-                log_msg(f"  API Key: {'*' * 8}")
-            nx = None
-            remote_url = backend_config.remote_url
-        else:
-            log_msg(f"  Backend: {backend_config.backend}")
-            if backend_config.backend == "gcs":
-                log_msg(f"  GCS Bucket: {backend_config.gcs_bucket}")
-            else:
-                log_msg(f"  Data Dir: {backend_config.data_dir}")
-            nx = get_filesystem(backend_config)
-            remote_url = None
+        log_msg(f"  Remote URL: {remote_url}")
+        if api_key:
+            log_msg(f"  API Key: {'*' * 8}")
+        nx = get_filesystem(remote_url, remote_api_key)
 
         log_msg(f"  Transport: {transport}")
 

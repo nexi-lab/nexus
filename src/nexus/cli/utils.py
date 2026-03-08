@@ -6,8 +6,6 @@ import os
 import sys
 from collections.abc import Generator
 from contextlib import contextmanager
-from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import click
@@ -16,7 +14,6 @@ from rich.console import Console
 import nexus
 from nexus import NexusFilesystem
 from nexus.cli.exit_codes import ExitCode
-from nexus.config import load_config
 from nexus.contracts.exceptions import NexusError, NexusFileNotFoundError, ValidationError
 
 if TYPE_CHECKING:
@@ -25,43 +22,6 @@ if TYPE_CHECKING:
 console = Console()
 
 # Global options
-BACKEND_OPTION = click.option(
-    "--backend",
-    type=click.Choice(["local", "gcs"]),
-    default="local",
-    help="Backend type: local (default) or gcs (Google Cloud Storage)",
-    show_default=True,
-)
-
-DATA_DIR_OPTION = click.option(
-    "--data-dir",
-    type=click.Path(),
-    default=lambda: os.getenv("NEXUS_DATA_DIR", str(Path(nexus.NEXUS_STATE_DIR) / "data")),
-    help="Path to Nexus data directory (for local backend and metadata DB). Can also be set via NEXUS_DATA_DIR environment variable.",
-    show_default=True,
-)
-
-GCS_BUCKET_OPTION = click.option(
-    "--gcs-bucket",
-    type=str,
-    default=None,
-    help="GCS bucket name (required when backend=gcs)",
-)
-
-GCS_PROJECT_OPTION = click.option(
-    "--gcs-project",
-    type=str,
-    default=None,
-    help="GCP project ID (optional for GCS backend)",
-)
-
-GCS_CREDENTIALS_OPTION = click.option(
-    "--gcs-credentials",
-    type=click.Path(exists=True),
-    default=None,
-    help="Path to GCS service account credentials JSON file",
-)
-
 REMOTE_URL_OPTION = click.option(
     "--remote-url",
     type=str,
@@ -76,13 +36,6 @@ REMOTE_API_KEY_OPTION = click.option(
     default=None,
     envvar="NEXUS_API_KEY",
     help="API key for remote authentication. Can also use NEXUS_API_KEY env var.",
-)
-
-CONFIG_OPTION = click.option(
-    "--config",
-    type=click.Path(exists=True),
-    default=None,
-    help="Path to Nexus config file (nexus.yaml)",
 )
 
 # P0 Enhanced Context Options
@@ -124,236 +77,85 @@ ADMIN_CAPABILITIES_OPTION = click.option(
 )
 
 
-@dataclass(frozen=True)
-class BackendConfig:
-    """Immutable configuration for backend connection."""
-
-    backend: str = "local"
-    data_dir: str = field(default_factory=lambda: str(Path(nexus.NEXUS_STATE_DIR) / "data"))
-    config_path: str | None = None
-    gcs_bucket: str | None = None
-    gcs_project: str | None = None
-    gcs_credentials: str | None = None
-    remote_url: str | None = None
-    remote_api_key: str | None = None
-
-
 def add_backend_options(func: Any) -> Any:
-    """Decorator to add all backend-related options to a command and pass them via context."""
+    """Decorator to add remote connection options to a CLI command.
+
+    Injects ``--remote-url`` and ``--remote-api-key`` and passes them as
+    keyword arguments to the wrapped function.
+    """
     import functools
 
-    @CONFIG_OPTION
-    @BACKEND_OPTION
-    @DATA_DIR_OPTION
-    @GCS_BUCKET_OPTION
-    @GCS_PROJECT_OPTION
-    @GCS_CREDENTIALS_OPTION
     @REMOTE_URL_OPTION
     @REMOTE_API_KEY_OPTION
     @functools.wraps(func)
     def wrapper(
-        config: str | None,
-        backend: str,
-        data_dir: str,
-        gcs_bucket: str | None,
-        gcs_project: str | None,
-        gcs_credentials: str | None,
         remote_url: str | None,
         remote_api_key: str | None,
         **kwargs: Any,
     ) -> Any:
-        # Create backend config and pass to function
-        backend_config = BackendConfig(
-            backend=backend,
-            data_dir=data_dir,
-            config_path=config,
-            remote_url=remote_url,
-            remote_api_key=remote_api_key,
-            gcs_bucket=gcs_bucket,
-            gcs_project=gcs_project,
-            gcs_credentials=gcs_credentials,
-        )
-        return func(backend_config=backend_config, **kwargs)
+        return func(remote_url=remote_url, remote_api_key=remote_api_key, **kwargs)
 
     return wrapper
 
 
-def _apply_common_config(config: dict[str, Any], **kwargs: Any) -> None:
-    """Apply common configuration options to a config dict (mutates in place)."""
-    for key in ("enforce_permissions", "allow_admin_bypass", "enforce_zone_isolation"):
-        if kwargs.get(key) is not None:
-            config[key] = kwargs[key]
-    for key in ("enable_memory_paging", "memory_main_capacity", "memory_recall_max_age_hours"):
-        if key in kwargs:
-            config[key] = kwargs[key]
-
-
 def get_filesystem(
-    backend_config: BackendConfig,
-    enforce_permissions: bool | None = None,
-    server_profile: str | None = None,
-    allow_admin_bypass: bool | None = None,
-    enforce_zone_isolation: bool | None = None,
-    enable_memory_paging: bool = True,
-    memory_main_capacity: int = 100,
-    memory_recall_max_age_hours: float = 24.0,
+    remote_url: str | None = None,
+    remote_api_key: str | None = None,
 ) -> NexusFilesystem:
-    """Get Nexus filesystem instance from backend configuration.
+    """Get a remote NexusFilesystem instance.
 
     Uses resolve_connection() to determine the effective connection target
     when no explicit --remote-url, --config, or --backend=gcs is provided.
 
     Args:
-        backend_config: Backend configuration
-        enforce_permissions: Whether to enforce permissions (None = use environment/config default)
-        server_profile: Deployment profile for server use (e.g. "full", "cloud").
-            When set, forces a local NexusFS (never remote) to prevent
-            circular dependency when the server itself has NEXUS_URL set.
-        allow_admin_bypass: Whether admin keys can bypass permission checks (None = use default False)
-        enforce_zone_isolation: Whether to enforce zone isolation (None = use default True)
+        remote_url: Nexus server URL (falls back to NEXUS_URL env var).
+        remote_api_key: API key (falls back to NEXUS_API_KEY env var).
 
     Returns:
-        NexusFilesystem instance
+        NexusFilesystem instance connected to the remote server.
     """
-    common_kwargs = {
-        "enforce_permissions": enforce_permissions,
-        "allow_admin_bypass": allow_admin_bypass,
-        "enforce_zone_isolation": enforce_zone_isolation,
-        "enable_memory_paging": enable_memory_paging,
-        "memory_main_capacity": memory_main_capacity,
-        "memory_recall_max_age_hours": memory_recall_max_age_hours,
-    }
-
     try:
-        # If server_profile is set, the caller is a server — always use local NexusFS
-        if not server_profile and backend_config.remote_url:
-            # Client mode: explicit --remote-url flag takes highest priority
-            resolved = _resolve_backend_url(backend_config)
-            return nexus.connect(
-                config={
-                    "profile": "remote",
-                    "url": resolved.url,
-                    "api_key": resolved.api_key,
-                }
+        from nexus.cli.config import resolve_connection
+
+        # Get profile name from Click context if available
+        profile_name = None
+        try:
+            ctx = click.get_current_context(silent=True)
+            if ctx and ctx.obj:
+                profile_name = ctx.obj.get("profile")
+        except RuntimeError:
+            pass
+
+        resolved = resolve_connection(
+            remote_url=remote_url,
+            remote_api_key=remote_api_key,
+            profile_name=profile_name,
+        )
+
+        if not resolved.is_remote:
+            console.print("[red]Error:[/red] NEXUS_URL or --remote-url is required")
+            console.print(
+                "[yellow]Hint:[/yellow] export NEXUS_URL=http://your-nexus-server:2026"
+                " or use `nexus profile add`"
             )
-        elif backend_config.config_path:
-            # Use explicit config file
-            if server_profile:
-                # Server profile: override to prevent remote NexusFS
-                config_obj = load_config(Path(backend_config.config_path))
-                config_dict: dict[str, Any] = {
-                    "profile": server_profile,
-                    "data_dir": config_obj.data_dir,
-                    "backend": config_obj.backend,
-                }
-                _apply_common_config(config_dict, **common_kwargs)
-                nx_fs = nexus.connect(config=config_dict)
-                if hasattr(nx_fs, "_config") or hasattr(nx_fs, "__dict__"):
-                    nx_fs._config = config_obj
-                return nx_fs
-            else:
-                config_obj = load_config(Path(backend_config.config_path))
-                nx_fs = nexus.connect(config=config_obj)
-                if hasattr(nx_fs, "_config") or hasattr(nx_fs, "__dict__"):
-                    nx_fs._config = config_obj
-                return nx_fs
-        elif backend_config.backend == "gcs":
-            if not backend_config.gcs_bucket:
-                console.print("[red]Error:[/red] --gcs-bucket is required when using --backend=gcs")
-                sys.exit(1)
-            config: dict[str, Any] = {
-                "profile": server_profile or "full",
-                "backend": "gcs",
-                "gcs_bucket_name": backend_config.gcs_bucket,
-                "gcs_project_id": backend_config.gcs_project,
-                "gcs_credentials_path": backend_config.gcs_credentials,
-                "db_path": str(Path(backend_config.data_dir) / "nexus-gcs-metadata.db"),
-            }
-            _apply_common_config(config, **common_kwargs)
-            return nexus.connect(config=config)
-        else:
-            # No explicit flags — resolve via profiles
-            resolved = _resolve_backend_url(backend_config)
-            if resolved.is_remote:
-                return nexus.connect(
-                    config={
-                        "profile": "remote",
-                        "url": resolved.url,
-                        "api_key": resolved.api_key,
-                    }
-                )
-            # Local backend (default)
-            config = {
-                "profile": server_profile or "full",
-                "data_dir": backend_config.data_dir,
-            }
-            _apply_common_config(config, **common_kwargs)
-            return nexus.connect(config=config)
+            sys.exit(1)
+
+        return nexus.connect(
+            config={"profile": "remote", "url": resolved.url, "api_key": resolved.api_key}
+        )
     except Exception as e:
         console.print(f"[red]Error connecting to Nexus:[/red] {e}")
         sys.exit(1)
 
 
-def _resolve_backend_url(backend_config: BackendConfig) -> Any:
-    """Resolve connection using profile config when backend_config has a URL or needs profile lookup."""
-    from nexus.cli.config import resolve_connection
-
-    # Get profile name from Click context if available
-    profile_name = None
-    try:
-        ctx = click.get_current_context(silent=True)
-        if ctx and ctx.obj:
-            profile_name = ctx.obj.get("profile")
-    except RuntimeError:
-        pass
-
-    return resolve_connection(
-        remote_url=backend_config.remote_url,
-        remote_api_key=backend_config.remote_api_key,
-        profile_name=profile_name,
-    )
-
-
-def create_backend_from_config(
-    backend_type: str,
-    config: dict[str, Any],
-    record_store: Any = None,
-) -> Any:
-    """Create backend instance from type and config dict.
-
-    Delegates to BackendFactory which uses ConnectorRegistry for all backends.
-
-    Args:
-        backend_type: Backend type (local, gcs, s3, gdrive, etc.)
-        config: Backend-specific configuration dictionary
-        record_store: Optional RecordStoreABC for caching support.
-            Required for connector backends (gcs_connector, s3_connector) to enable
-            content caching.
-
-    Returns:
-        Backend instance
-
-    Raises:
-        KeyError: If backend type is unknown or not registered
-
-    Example:
-        >>> backend = create_backend_from_config("local", {"root_path": "./data"})
-        >>> backend = create_backend_from_config("gcs", {"bucket": "my-bucket"})
-    """
-    from nexus.backends.base.factory import BackendFactory
-
-    return BackendFactory.create(backend_type, config, record_store=record_store)
-
-
 def get_default_filesystem() -> NexusFilesystem:
-    """Get Nexus filesystem instance with default configuration.
+    """Get a remote NexusFilesystem using environment variables.
 
     Used by commands that don't accept backend options (e.g., memory commands).
-    Resolves connection via the standard precedence chain:
-    NEXUS_URL env > active profile > local default.
+    Resolves connection via: NEXUS_URL env > active profile. No local fallback.
 
     Returns:
-        NexusFilesystem instance (remote if NEXUS_URL is set or profile is active, otherwise local)
+        NexusFilesystem instance connected to the remote server.
     """
     try:
         from nexus.cli.config import resolve_connection
@@ -363,17 +165,21 @@ def get_default_filesystem() -> NexusFilesystem:
             remote_api_key=os.environ.get("NEXUS_API_KEY"),
         )
 
-        if resolved.is_remote:
-            return nexus.connect(
-                config={
-                    "profile": "remote",
-                    "url": resolved.url,
-                    "api_key": resolved.api_key,
-                }
+        if not resolved.is_remote:
+            console.print("[red]Error:[/red] NEXUS_URL environment variable is required")
+            console.print(
+                "[yellow]Hint:[/yellow] export NEXUS_URL=http://your-nexus-server:2026"
+                " or use `nexus profile add`"
             )
+            sys.exit(1)
 
-        data_dir = os.environ.get("NEXUS_DATA_DIR", str(Path.home() / ".nexus"))
-        return nexus.connect(config={"data_dir": data_dir})
+        return nexus.connect(
+            config={
+                "profile": "remote",
+                "url": resolved.url,
+                "api_key": resolved.api_key,
+            }
+        )
     except Exception as e:
         console.print(f"[red]Error connecting to Nexus:[/red] {e}")
         sys.exit(1)
@@ -620,17 +426,18 @@ def resolve_content(content: str | None, input_file: Any) -> bytes:
 
 @contextmanager
 def open_filesystem(
-    backend_config: BackendConfig, **kwargs: Any
+    remote_url: str | None = None,
+    remote_api_key: str | None = None,
 ) -> Generator[NexusFilesystem, None, None]:
     """Context manager that opens and auto-closes a NexusFilesystem.
 
     Usage::
 
-        with open_filesystem(backend_config) as nx:
+        with open_filesystem(remote_url, remote_api_key) as nx:
             result = nx.sys_readdir(path)
         # nx.close() is called automatically, even on exception.
     """
-    nx = get_filesystem(backend_config, **kwargs)
+    nx = get_filesystem(remote_url, remote_api_key)
     try:
         yield nx
     finally:

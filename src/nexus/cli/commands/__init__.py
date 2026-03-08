@@ -7,9 +7,8 @@ This package contains all CLI commands organized by functionality:
 - permissions: Permission management (chmod, chown, chgrp, getfacl, setfacl)
 - rebac: Relationship-based access control
 - versions: Version tracking and rollback
-- metadata: Metadata operations (info, version, export, import, size)
-- work: Work queue management
-- server: Server operations (serve, mount, unmount)
+- inspect: File inspection (info, version, size)
+- mounts: Connector mount management
 - plugins: Plugin management
 - workflows: Workflow automation system
 """
@@ -32,9 +31,7 @@ _REGISTER_COMMANDS = [
     "rebac",
     "versions",
     "workspace",
-    "metadata",
-    "work",
-    "server",
+    "inspect",
     "plugins",
     "operations",
     "workflows",
@@ -53,7 +50,6 @@ _REGISTER_COMMANDS = [
     "infra",  # up, down, logs
     "status",  # status [--watch] [--json]
     "doctor",  # doctor [--json] [--fix]
-    "start",  # start (federation-ready)
     # Issue #2809: Profile management
     "profile",  # profile list/add/use/delete/show/rename
     "connect_cmd",  # Interactive connection setup

@@ -543,6 +543,12 @@ def _register_vfs_hooks(
 
     dispatch.register_observe(EventBusObserver(bus_provider=nx))
 
+    # EventsService observer: receives FileEvents for wait_for_changes() internal path.
+    # Registered as VFSObserver so dispatch.notify() delivers events directly.
+    if nx.events_service is not None:
+        dispatch.register_observe(nx.events_service)
+        nx.events_service._observe_registered = True
+
     # RevisionTrackingObserver: feeds RevisionNotifier on versioned mutations.
     # Replaces the old kernel-internal _increment_vfs_revision() (Issue #1382).
     from nexus.lib.revision_notifier import RevisionNotifier

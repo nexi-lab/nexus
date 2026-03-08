@@ -5,7 +5,6 @@ FileEvent is the single kernel-defined I/O event type, analogous to Linux
 
 - KernelDispatch OBSERVE phase (local, fire-and-forget)
 - EventBus (distributed delivery via Dragonfly/NATS)
-- Layer 1 inotify/FSEvents (OS-native, via ``from_file_change()``)
 
 Per NEXUS-LEGO-ARCHITECTURE, data types can be defined in lower tiers and used
 by higher tiers. FileEvent is a kernel data type consumed by all layers.
@@ -42,8 +41,7 @@ class FileEvent:
     Analogous to Linux ``fsnotify_event``. Carries all context that consumers
     might need; each consumer extracts what it requires and ignores the rest.
 
-    Used by KernelDispatch OBSERVE phase, EventBus distributed delivery,
-    and Layer 1 inotify/FSEvents (via ``from_file_change()``).
+    Used by KernelDispatch OBSERVE phase and EventBus distributed delivery.
     """
 
     type: FileEventType | str
@@ -128,46 +126,6 @@ class FileEvent:
         if isinstance(json_str, bytes):
             json_str = json_str.decode("utf-8")
         return cls.from_dict(json.loads(json_str))
-
-    @classmethod
-    def from_file_change(
-        cls,
-        change: Any,  # FileChange from services/watch/file_watcher.py (avoid circular import)
-        zone_id: str | None = None,
-    ) -> "FileEvent":
-        """Create FileEvent from Layer 1 FileChange.
-
-        Maps ChangeType to FileEventType:
-        - CREATED → FILE_WRITE (new file created)
-        - MODIFIED → FILE_WRITE (file content changed)
-        - DELETED → FILE_DELETE
-        - RENAMED → FILE_RENAME
-
-        Args:
-            change: FileChange from services/watch/file_watcher.py
-            zone_id: Optional zone ID to associate
-
-        Returns:
-            FileEvent with unified format
-        """
-        # Map ChangeType string values to FileEventType
-        change_type = change.type.value if hasattr(change.type, "value") else change.type
-
-        type_mapping = {
-            "created": FileEventType.FILE_WRITE,
-            "modified": FileEventType.FILE_WRITE,
-            "deleted": FileEventType.FILE_DELETE,
-            "renamed": FileEventType.FILE_RENAME,
-        }
-
-        event_type = type_mapping.get(change_type, change_type)
-
-        return cls(
-            type=event_type,
-            path=change.path,
-            zone_id=zone_id,
-            old_path=getattr(change, "old_path", None),
-        )
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, FileEvent):

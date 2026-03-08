@@ -7,7 +7,7 @@ LocalConnectorBackend keeps files in their original location (SSOT - Single Sour
 Key features:
 - Zero data duplication (reference mode)
 - Full indexing support (semantic search via sync_mount)
-- OS-native file watching for change detection (via FileWatcher)
+- Change detection via kernel OBSERVE (KernelDispatch)
 - Direct read/write to original files
 - L1-only caching (no L2 PostgreSQL needed since source is local)
 
@@ -209,7 +209,6 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
         """Get the physical path for file watching and L1 cache.
 
         This method is called by:
-        - FileWatcher to get the OS path that should be watched for changes
         - CacheConnectorMixin to get disk_path for L1 cache in l1_only mode
 
         Args:

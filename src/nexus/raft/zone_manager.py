@@ -234,8 +234,8 @@ class ZoneManager:
 
         Only creates the Raft group + redb database. Does NOT create a
         root "/" entry — that's the responsibility of:
-        - Node bootstrap (root zone, i_links_count=1)
-        - mount() via _increment_links (lazy-creates "/" on first mount)
+        - Node bootstrap (root zone)
+        - share_subtree() / _apply_topology() for non-root zones
 
         Args:
             zone_id: Unique zone identifier.
@@ -325,10 +325,10 @@ class ZoneManager:
         if not force:
             store = self.get_store(zone_id)
             if store is not None:
-                root = store.get("/")
-                if root is not None and root.i_links_count > 0:
+                count = store.get_zone_links_count()
+                if count > 0:
                     raise ValueError(
-                        f"Zone '{zone_id}' still has {root.i_links_count} reference(s) "
+                        f"Zone '{zone_id}' still has {count} reference(s) "
                         f"(i_links_count > 0). Unmount all references first, "
                         f"or use force=True."
                     )
@@ -351,6 +351,8 @@ class ZoneManager:
         parent_zone_id: str,
         mount_path: str,
         target_zone_id: str,
+        *,
+        increment_links: bool = True,
     ) -> None:
         """Mount a zone at a path in another zone (NFS-style, strict).
 
@@ -370,6 +372,9 @@ class ZoneManager:
             mount_path: Path in parent zone where target is mounted.
                 Must already exist as DT_DIR.
             target_zone_id: Zone to mount.
+            increment_links: If True (default), increment i_links_count on
+                target zone. Set to False when the caller (e.g. JoinZone RPC
+                handler) has already incremented on the leader side.
 
         Raises:
             ValueError: If mount_path doesn't exist, is not DT_DIR, or
@@ -416,16 +421,8 @@ class ZoneManager:
         parent_store.put(mount_entry)
 
         # Increment target zone's i_links_count (POSIX: link() → nlink++)
-        # Best-effort: only succeeds if this node is the leader of the target
-        # zone. For federation join (node is a follower), the leader handles
-        # the increment via ensure_topology() health check cycle.
-        try:
-            self._increment_links(target_store, target_zone_id)
-        except RuntimeError:
-            logger.debug(
-                "Skipped i_links_count increment for zone '%s' (not leader)",
-                target_zone_id,
-            )
+        if increment_links:
+            self._increment_links(target_store)
 
         logger.info(
             "Mounted zone '%s' at '%s' in zone '%s'",
@@ -490,60 +487,36 @@ class ZoneManager:
     # =========================================================================
 
     @staticmethod
-    def _increment_links(store: "RaftMetadataStore", zone_id: str) -> int:
-        """Increment a zone's i_links_count on its root "/" entry.
+    def _increment_links(store: "RaftMetadataStore") -> int:
+        """Increment a zone's i_links_count via reserved key.
 
         Returns the new count.
         """
-        from dataclasses import replace
-
-        root = store.get("/")
-        if root is None:
-            # Zone has no root entry yet — create one
-            root = FileMetadata(
-                path="/",
-                backend_name="virtual",
-                physical_path="",
-                size=0,
-                entry_type=DT_DIR,
-                zone_id=zone_id,
-                i_links_count=1,
-            )
-            store.put(root)
-            return 1
-
-        new_count = root.i_links_count + 1
-        store.put(replace(root, i_links_count=new_count))
+        current = store.get_zone_links_count()
+        new_count = current + 1
+        store.set_zone_links_count(new_count)
         return new_count
 
     @staticmethod
     def _decrement_links(store: "RaftMetadataStore") -> int:
-        """Decrement a zone's i_links_count on its root "/" entry.
+        """Decrement a zone's i_links_count via reserved key.
 
         Returns the new count. Never goes below 0.
         """
-        from dataclasses import replace
-
-        root = store.get("/")
-        if root is None:
-            return 0
-
-        new_count = max(0, root.i_links_count - 1)
-        store.put(replace(root, i_links_count=new_count))
+        current = store.get_zone_links_count()
+        new_count = max(0, current - 1)
+        store.set_zone_links_count(new_count)
         return new_count
 
     def get_links_count(self, zone_id: str) -> int:
         """Get a zone's current i_links_count.
 
-        Returns 0 if zone or root entry doesn't exist.
+        Returns 0 if zone or store doesn't exist.
         """
         store = self.get_store(zone_id)
         if store is None:
             return 0
-        root = store.get("/")
-        if root is None:
-            return 0
-        return root.i_links_count
+        return store.get_zone_links_count()
 
     def share_subtree(
         self,
@@ -607,7 +580,6 @@ class ZoneManager:
                     path="/",
                     zone_id=new_zone_id,
                     entry_type=DT_DIR,
-                    i_links_count=1,
                 )
             else:
                 # Rebase: /usr/alice/projectA/foo → /foo
@@ -626,7 +598,6 @@ class ZoneManager:
                 size=0,
                 entry_type=DT_DIR,
                 zone_id=new_zone_id,
-                i_links_count=1,
             )
             new_store.put(root_entry)
 
@@ -768,8 +739,7 @@ class ZoneManager:
             target_store = self.get_store(target_zone_id)
             if target_store is None:
                 return False
-            target_root = target_store.get("/")
-            if target_root is None or target_root.i_links_count < 1:
+            if target_store.get_zone_links_count() < 1:
                 return False
         return True
 
@@ -819,7 +789,6 @@ class ZoneManager:
                     size=0,
                     entry_type=DT_DIR,
                     zone_id=self._root_zone_id,
-                    i_links_count=1,
                 )
                 root_store.put(root_entry)
                 logger.info(
@@ -906,14 +875,13 @@ class ZoneManager:
                     continue
 
             # --- Phase B: i_links_count in target zone ---
-            target_root = target_store.get("/")
-            if target_root is None or target_root.i_links_count < 1:
+            if target_store.get_zone_links_count() < 1:
                 if not self._is_zone_leader(target_store):
                     remaining[global_path] = target_zone_id
                     active_mounts[global_path] = target_zone_id
                     continue
                 try:
-                    self._increment_links(target_store, target_zone_id)
+                    self._increment_links(target_store)
                     logger.debug("Phase B done: i_links_count for zone '%s'", target_zone_id)
                 except RuntimeError:
                     remaining[global_path] = target_zone_id

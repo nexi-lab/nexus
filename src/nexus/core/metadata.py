@@ -51,7 +51,6 @@ class FileMetadata:
     owner_id: str | None = None
     entry_type: int = 0
     target_zone_id: str | None = None
-    i_links_count: int = 0
 
     @property
     def is_reg(self) -> bool:

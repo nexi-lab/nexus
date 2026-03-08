@@ -13,44 +13,16 @@ Issue #1133: Unified gRPC transport.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.metadata import FileMetadata
 from nexus.core.metastore import MetastoreABC
+from nexus.storage._metadata_mapper_generated import MetadataMapper
 
 if TYPE_CHECKING:
     from nexus.remote.rpc_transport import RPCTransport
 
 logger = logging.getLogger(__name__)
-
-
-def _dict_to_file_metadata(d: dict[str, Any]) -> FileMetadata:
-    """Convert a server response dict to a FileMetadata dataclass."""
-    created_at = d.get("created_at")
-    if isinstance(created_at, str):
-        created_at = datetime.fromisoformat(created_at)
-    modified_at = d.get("modified_at")
-    if isinstance(modified_at, str):
-        modified_at = datetime.fromisoformat(modified_at)
-
-    return FileMetadata(
-        path=d.get("path", ""),
-        backend_name=d.get("backend_name", ""),
-        physical_path=d.get("physical_path", ""),
-        size=d.get("size", 0),
-        etag=d.get("etag"),
-        mime_type=d.get("mime_type"),
-        created_at=created_at if isinstance(created_at, datetime) else None,
-        modified_at=modified_at if isinstance(modified_at, datetime) else None,
-        version=d.get("version", 1),
-        zone_id=d.get("zone_id"),
-        created_by=d.get("created_by"),
-        owner_id=d.get("owner_id"),
-        entry_type=d.get("entry_type", 0),
-        target_zone_id=d.get("target_zone_id"),
-        i_links_count=d.get("i_links_count", 0),
-    )
 
 
 class RemoteMetastore(MetastoreABC):
@@ -87,7 +59,7 @@ class RemoteMetastore(MetastoreABC):
             # Server wraps response as {"metadata": {...}} — unwrap it.
             meta_dict = result.get("metadata", result)
             if isinstance(meta_dict, dict):
-                return _dict_to_file_metadata(meta_dict)
+                return MetadataMapper.from_json(meta_dict)
         return None
 
     def put(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:
@@ -138,7 +110,7 @@ class RemoteMetastore(MetastoreABC):
         metadata_list: list[FileMetadata] = []
         for item in items:
             if isinstance(item, dict) and "path" in item:
-                metadata_list.append(_dict_to_file_metadata(item))
+                metadata_list.append(MetadataMapper.from_json(item))
             elif isinstance(item, str):
                 metadata_list.append(
                     FileMetadata(

@@ -80,7 +80,6 @@ NULLABLE_STRING_FIELDS: set[str] = {
 FIELD_DEFAULTS: dict[str, str] = {
     "version": "1",
     "entry_type": "0",
-    "i_links_count": "0",
 }
 
 # String fields that get interned in CompactFileMetadata
@@ -119,7 +118,6 @@ DIRECT_COMPACT_FIELDS: dict[str, str] = {
     "size": "int",
     "version": "int",
     "entry_type": "int",
-    "i_links_count": "int",
 }
 
 
@@ -699,6 +697,9 @@ def generate_mapper_py(fields: list[dict[str, str]]) -> str:
             to_json_lines.append(f'            "{name}": metadata.{name},')
     to_json_block = "\n".join(to_json_lines)
 
+    # --- Build known field names set ---
+    known_fields = ", ".join(f'"{f["name"]}"' for f in fields)
+
     return f'''\
 """Auto-generated from proto/nexus/core/metadata.proto - DO NOT EDIT.
 
@@ -717,6 +718,10 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
+
+# Known FileMetadata field names (generated from proto).
+# Used by from_json() to strip unknown keys from external dicts.
+_KNOWN_FIELDS: frozenset[str] = frozenset({{{known_fields}}})
 
 if TYPE_CHECKING:
     from nexus.contracts.metadata import FileMetadata
@@ -757,7 +762,6 @@ PROTO_TO_SQL: dict[str, str | None] = {{
     "entry_type": None,  # TODO(#1246): Add to FilePathModel
     "target_zone_id": None,  # TODO(#1246): Add to FilePathModel
     "owner_id": "posix_uid",
-    "i_links_count": None,  # Metastore-only (mount ref count), not in SQL
 }}
 
 
@@ -809,6 +813,9 @@ class MetadataMapper:
             is_dir = obj.pop("is_directory")
             if "entry_type" not in obj:
                 obj["entry_type"] = 1 if is_dir else 0
+
+        # Strip unknown keys (forward compatibility with older/newer proto versions)
+        obj = {{k: v for k, v in obj.items() if k in _KNOWN_FIELDS}}
 
         if obj.get("created_at"):
             obj["created_at"] = datetime.fromisoformat(obj["created_at"])

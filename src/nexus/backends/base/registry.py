@@ -61,7 +61,6 @@ def get_capability_protocols() -> dict[ConnectorCapability, type]:
         BatchContentProtocol,
         DirectoryListingProtocol,
         OAuthCapableProtocol,
-        PassthroughProtocol,
         StreamingProtocol,
     )
 
@@ -70,7 +69,6 @@ def get_capability_protocols() -> dict[ConnectorCapability, type]:
         ConnectorCapability.BATCH_CONTENT: BatchContentProtocol,
         ConnectorCapability.DIRECTORY_LISTING: DirectoryListingProtocol,
         ConnectorCapability.OAUTH: OAuthCapableProtocol,
-        ConnectorCapability.PASSTHROUGH: PassthroughProtocol,
     }
 
 
@@ -101,7 +99,6 @@ _CONNECTOR_PROTOCOL_MEMBERS: frozenset[str] = frozenset(
         # ConnectorProtocol (capability flags)
         "user_scoped",
         "is_connected",
-        "is_passthrough",
         "has_root_path",
         "has_token_manager",
         # CapabilityAwareProtocol (Issue #2069)

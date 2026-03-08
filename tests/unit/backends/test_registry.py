@@ -604,12 +604,3 @@ class TestExhaustiveBackendMappings:
         info = ConnectorRegistry.get_info("local")
 
         assert info.config_mapping["data_dir"] == "root_path"
-
-    def test_passthrough_backend_config_key_mapping(self):
-        """Test PassthroughBackend maps data_dir -> base_path (backward compat)."""
-        from nexus.backends.storage.passthrough import PassthroughBackend
-
-        ConnectorRegistry.register("passthrough", PassthroughBackend)
-        info = ConnectorRegistry.get_info("passthrough")
-
-        assert info.config_mapping["data_dir"] == "base_path"

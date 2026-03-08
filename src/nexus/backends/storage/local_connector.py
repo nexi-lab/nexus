@@ -61,7 +61,6 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
 
     This is different from:
     - CASLocalBackend: Uses CAS for deduplication (copies content)
-    - PassthroughBackend: Uses CAS via pointers (copies content)
 
     LocalConnectorBackend is similar to GDriveConnector but for local filesystem:
     - Both use backend_path (not content_hash) for path-based access

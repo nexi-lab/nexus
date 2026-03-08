@@ -10,7 +10,7 @@ in real-world usage patterns:
 
 Requirements:
 - Redis or Dragonfly running at localhost:6379 (or NEXUS_REDIS_URL) for events
-- Tests use PassthroughBackend for file operations
+- Tests use CASLocalBackend for file operations
 
 Architecture Notes (Raft Zone Migration):
 - Metadata is stored in sled (RaftMetadataStore) - each instance has its own database
@@ -107,9 +107,9 @@ async def redis_client():
 @pytest.fixture
 async def nexus_fs(temp_nexus_dir, db_path_agent1, shared_event_bus):
     """Create a NexusFS instance with event bus and Raft-based locks."""
-    from nexus.backends.storage.passthrough import PassthroughBackend
+    from nexus.backends.storage.cas_local import CASLocalBackend
 
-    backend = PassthroughBackend(base_path=temp_nexus_dir)
+    backend = CASLocalBackend(root_path=str(temp_nexus_dir))
     # Each agent gets its own sled database (sled uses exclusive file locks)
     import warnings
 
@@ -147,9 +147,9 @@ async def second_nexus_fs(temp_nexus_dir, db_path_agent2, shared_event_bus):
     shared between instances without a Raft cluster. For shared lock tests,
     see test_raft_distributed.py (Docker-based).
     """
-    from nexus.backends.storage.passthrough import PassthroughBackend
+    from nexus.backends.storage.cas_local import CASLocalBackend
 
-    backend = PassthroughBackend(base_path=temp_nexus_dir)
+    backend = CASLocalBackend(root_path=str(temp_nexus_dir))
     # Each agent gets its own sled database (sled uses exclusive file locks)
     import warnings
 

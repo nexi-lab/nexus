@@ -85,10 +85,6 @@ class IsolatedBackend(Backend):
         return bool(self._cached_prop("has_data_dir"))
 
     @property
-    def is_passthrough(self) -> bool:
-        return bool(self._cached_prop("is_passthrough"))
-
-    @property
     def supports_parallel_mmap_read(self) -> bool:
         return bool(self._cached_prop("supports_parallel_mmap_read"))
 

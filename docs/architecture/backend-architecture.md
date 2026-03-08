@@ -3,7 +3,7 @@
 **Task**: #1323 (CAS x Backend orthogonal composition)
 **Depends on**: #1318 (sys_read/sys_write POSIX alignment — merged)
 **Blocks**: #1396 (ObjectStoreABC addressing-agnostic refactor), #1397 (Hot/cold WAL write path)
-**Status**: V0 design complete. #1323 merged. Phase 5 (naming cleanup) and Phase 6 (StripeLock extraction) done. passthrough.py and local_connector.py kept.
+**Status**: V0 design complete. #1323 merged. Phases 1–6 done. passthrough.py deleted (#1447 — kernel OBSERVE replaces pointer/inotify layer). local_connector.py kept.
 
 ---
 
@@ -35,18 +35,14 @@ in **Section 5.2**. Rename completed in Phase 5.
 | File | Lines | Class | Status / Replaced By |
 |---|---|---|---|
 | `local.py` | 966 | `LocalBackend` | `CASBackend(LocalBlobTransport)` + feature DI |
-| `passthrough.py` | 527 | `PassthroughBackend` | **Keep** — unique pointer+CAS architecture for inotify watching, not replaceable by CASBackend or PathBackend |
+| ~~`passthrough.py`~~ | ~~527~~ | ~~`PassthroughBackend`~~ | **Deleted** (#1447) — kernel OBSERVE replaces pointer/inotify layer |
 | `chunked_storage.py` | 573 | `ChunkedStorageMixin` | `CDCEngine` (standalone) |
 | `async_local.py` | 755 | `AsyncLocalBackend` | Async wrapper around `CASBackend(LocalBlobTransport)` |
 | `local_connector.py` | 808 | `LocalConnectorBackend` | **Keep** — unique path-based features (symlink safety, inode versioning, L1 cache) |
-| **To delete** | **~2,294** | | (excludes passthrough.py + local_connector.py) |
+| **To delete** | **~2,294** | | (excludes local_connector.py) |
 
 **Why migrate `async_local.py`:** Async variant of `LocalBackend`, uses `CASBlobStore`
 directly, not registered in `ConnectorRegistry`. Same monolith problem.
-
-**Why keep `passthrough.py`:** Unique pointer+CAS architecture for inotify watching.
-Not replaceable by `CASBackend` or `PathBackend` — neither can replicate its dual
-addressing model where files are tracked by path but content-addressed for CAS benefits.
 
 **Why keep `local_connector.py`:** Unique path-based features including symlink safety,
 inode versioning, and L1 cache. These are tightly coupled to local filesystem semantics
@@ -92,7 +88,7 @@ Addressing  CAS   | CASBackend    | CASBackend    | CASBackend    |
 | CAS + Local | `"local"` | **To migrate** — currently `LocalBackend` monolith |
 | CAS + GCS | `"cas_gcs"` | **Done** — thin class exists |
 | CAS + S3 | — | **Future** — `S3BlobTransport` exists but no CAS wiring yet |
-| Path + Local | `"passthrough"`, `"local_connector"` | **Keep** — unique architectures, not replaceable by PathBackend |
+| Path + Local | `"local_connector"` | **Keep** — unique architecture, not replaceable by PathBackend |
 | Path + GCS | `"path_gcs"` | **Done** — thin class exists |
 | Path + S3 | `"path_s3"` | **Done** — thin class exists |
 
@@ -193,7 +189,7 @@ Full local optimization stack: Bloom, StripeLock, CDC, ContentCache.
 
 No Bloom, no StripeLock (cloud ops are server-side atomic), no CDC, no local cache.
 
-### 3.3 Path + LocalBlobTransport (replaces PassthroughBackend + LocalConnectorBackend)
+### 3.3 Path + LocalBlobTransport (replaces LocalConnectorBackend)
 
 | Op | Behavior |
 |---|---|
@@ -526,15 +522,11 @@ Enhance `CASBackend.__init__()` with optional DI params:
 
 Test: CAS + Local with all features enabled matches `LocalBackend` behavior.
 
-### Phase 3: PathBackend + LocalBlobTransport verification — **REVISED**
+### Phase 3: PathBackend + LocalBlobTransport verification — **DONE**
 
-Originally planned to replace `passthrough.py` and `local_connector.py` with
-`PathBackend(LocalBlobTransport)`. After analysis, both are **kept**:
-- `passthrough.py` — unique pointer+CAS architecture for inotify watching
-- `local_connector.py` — unique path-based features (symlink safety, inode versioning, L1 cache)
-
-Neither is replaceable by the generic `PathBackend` composition. `PathBackend(LocalBlobTransport)`
-remains available for future use cases that need simple path-addressed local storage.
+`passthrough.py` deleted in #1447 (kernel OBSERVE replaces pointer/inotify layer).
+`local_connector.py` kept — unique path-based features (symlink safety, inode versioning, L1 cache).
+`PathBackend(LocalBlobTransport)` remains available for future use cases.
 
 ### Phase 4: AsyncLocalBackend migration
 
@@ -549,7 +541,8 @@ whether to register or keep as internal.
 - Add backward-compat aliases for old connector names (Section 5.2)
 - Delete: `local.py`, `chunked_storage.py`, `async_local.py`
 - `cas_blob_store.py` already deleted
-- **Keep**: `passthrough.py` (unique pointer+CAS inotify architecture), `local_connector.py` (unique path-based features)
+- **Keep**: `local_connector.py` (unique path-based features)
+- ~~`passthrough.py`~~ — deleted in #1447
 
 ### Phase 6: StripeLock extraction — **DONE**
 
@@ -587,7 +580,7 @@ See Section 5.2 for the full rename table (thin connector files + classes + regi
 | File | Change |
 |---|---|
 | `backends/cas_backend.py` (427L) | Add optional `bloom_filter`, `cdc_engine`, `content_cache`, `use_stripe_lock` DI params |
-| `backends/factory.py` (177L) | Rewire `"local"`, `"passthrough"`, `"local_connector"` connector creation |
+| `backends/factory.py` (177L) | Rewire `"local"`, `"local_connector"` connector creation |
 | `backends/registry.py` (650L) | Update connector registration + add old-name aliases (Section 5.2) |
 | `backends/__init__.py` (130L) | Update exports: remove old, add `LocalBlobTransport`, `CDCEngine` |
 
@@ -633,8 +626,10 @@ See Section 5.2 for the full rename table (thin connector files + classes + regi
 - `AsyncLocalBackend` (755L) — replaced by async `CASBackend` wrapper
 
 **Kept (not deleted):**
-- `PassthroughBackend` (527L) — unique pointer+CAS architecture for inotify watching, not replaceable by CASBackend or PathBackend
 - `LocalConnectorBackend` (808L) — unique path-based features (symlink safety, inode versioning, L1 cache)
+
+**Deleted later:**
+- ~~`PassthroughBackend`~~ (527L) — deleted in #1447 (kernel OBSERVE replaces pointer/inotify layer)
 
 ---
 

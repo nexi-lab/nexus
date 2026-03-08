@@ -315,9 +315,7 @@ class TestServiceInstantiation:
         """Benchmark EventsService construction."""
         from nexus.system_services.lifecycle.events_service import EventsService
 
-        mock_backend = MagicMock()
-        mock_backend.is_passthrough = False
-        benchmark(EventsService, backend=mock_backend)
+        benchmark(EventsService)
 
     def test_version_service_construction(self, benchmark):
         """Benchmark VersionService construction."""

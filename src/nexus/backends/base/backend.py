@@ -128,8 +128,8 @@ class Backend(ObjectStoreABC):
     #
     # Capability flags that ARE on ObjectStoreABC (user_scoped,
     # has_token_manager, supports_rename,
-    # supports_parallel_mmap_read, is_passthrough) are inherited with
-    # default False.  Subclasses override as needed.
+    # supports_parallel_mmap_read) are inherited with default False.
+    # Subclasses override as needed.
     # ------------------------------------------------------------------
 
     # === Service-level properties (not on ObjectStoreABC) ===

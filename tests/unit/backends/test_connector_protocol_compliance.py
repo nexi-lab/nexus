@@ -1,6 +1,6 @@
 """Protocol compliance tests for CASLocalBackend against connector sub-protocols.
 
-Verifies that ``CASLocalBackend`` satisfies all 8 sub-protocols defined in
+Verifies that ``CASLocalBackend`` satisfies all 7 sub-protocols defined in
 ``nexus.core.protocols.connector`` using the reusable ``assert_protocol_compliance``
 helper from ``tests.unit.services.test_protocol_compliance``.
 
@@ -8,11 +8,10 @@ Protocols tested:
     1. ContentStoreProtocol   -- Minimal CAS interface
     2. DirectoryOpsProtocol   -- Directory operations
     3. ConnectorProtocol      -- Full connector interface (CAS + dirs + lifecycle)
-    4. PassthroughProtocol    -- Same-box locking / physical paths
-    5. OAuthCapableProtocol   -- OAuth token management
-    6. StreamingProtocol      -- Streaming reads / writes
-    7. BatchContentProtocol   -- Bulk content read
-    8. DirectoryListingProtocol -- Directory listing + file metadata
+    4. OAuthCapableProtocol   -- OAuth token management
+    5. StreamingProtocol      -- Streaming reads / writes
+    6. BatchContentProtocol   -- Bulk content read
+    7. DirectoryListingProtocol -- Directory listing + file metadata
 
 References:
     - Issue #1601: ConnectorProtocol + Storage Brick Extraction
@@ -30,7 +29,6 @@ from nexus.core.protocols.connector import (
     DirectoryListingProtocol,
     DirectoryOpsProtocol,
     OAuthCapableProtocol,
-    PassthroughProtocol,
     StreamingProtocol,
 )
 from tests.unit.services.test_protocol_compliance import assert_protocol_compliance
@@ -48,11 +46,6 @@ _EXPECTED_PROTOCOLS: list[type] = [
     DirectoryListingProtocol,
 ]
 
-# Protocols that CASLocalBackend is NOT expected to satisfy (have callable methods)
-_UNSUPPORTED_METHOD_PROTOCOLS: list[type] = [
-    PassthroughProtocol,
-]
-
 # Protocols that CASLocalBackend is NOT expected to satisfy (attribute-only)
 # OAuthCapableProtocol defines only attributes (token_manager, provider, etc.),
 # not callable methods, so assert_protocol_compliance cannot detect non-compliance.
@@ -61,10 +54,10 @@ _UNSUPPORTED_ATTR_PROTOCOLS: list[type] = [
     OAuthCapableProtocol,
 ]
 
-_ALL_UNSUPPORTED_PROTOCOLS: list[type] = _UNSUPPORTED_METHOD_PROTOCOLS + _UNSUPPORTED_ATTR_PROTOCOLS
+_ALL_UNSUPPORTED_PROTOCOLS: list[type] = _UNSUPPORTED_ATTR_PROTOCOLS
 
 # ---------------------------------------------------------------------------
-# Parametrized: CASLocalBackend vs all 8 connector sub-protocols
+# Parametrized: CASLocalBackend vs all 7 connector sub-protocols
 # ---------------------------------------------------------------------------
 
 
@@ -76,17 +69,6 @@ _ALL_UNSUPPORTED_PROTOCOLS: list[type] = _UNSUPPORTED_METHOD_PROTOCOLS + _UNSUPP
 def test_local_backend_protocol_compliance(protocol: type) -> None:
     """CASLocalBackend satisfies the expected connector sub-protocols."""
     assert_protocol_compliance(CASLocalBackend, protocol, strict_params=False)
-
-
-@pytest.mark.parametrize(
-    "protocol",
-    _UNSUPPORTED_METHOD_PROTOCOLS,
-    ids=[p.__name__ for p in _UNSUPPORTED_METHOD_PROTOCOLS],
-)
-def test_local_backend_fails_compliance_for_method_protocols(protocol: type) -> None:
-    """CASLocalBackend does NOT satisfy PassthroughProtocol (missing methods)."""
-    with pytest.raises(AssertionError):
-        assert_protocol_compliance(CASLocalBackend, protocol, strict_params=False)
 
 
 def test_local_backend_not_oauth_capable(tmp_path: object) -> None:
@@ -151,7 +133,6 @@ class TestConnectorProtocolMethods:
     _CAPABILITY_PROPERTIES = [
         "user_scoped",
         "is_connected",
-        "is_passthrough",
         "has_root_path",
         "has_token_manager",
     ]

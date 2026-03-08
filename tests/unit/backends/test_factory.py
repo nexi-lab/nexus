@@ -28,15 +28,6 @@ class TestBackendFactory:
         backend = BackendFactory.create("cas_local", {"data_dir": data_dir})
         assert backend.name == "local"
 
-    def test_create_passthrough_backend(self, tmp_path: Any) -> None:
-        """Factory creates a valid PassthroughBackend."""
-        base = tmp_path / "base"
-        base.mkdir()
-        backend = BackendFactory.create("passthrough", {"base_path": str(base)})
-        assert isinstance(backend, Backend)
-        assert backend.name == "passthrough"
-        assert backend.is_passthrough is True
-
     def test_unknown_backend_type_raises(self) -> None:
         """Unknown backend type raises RuntimeError."""
         with pytest.raises(RuntimeError, match="Unsupported backend type"):

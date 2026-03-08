@@ -114,6 +114,7 @@ class PluginRegistry(BaseRegistry[NexusPlugin]):
             plugin = plugin_class(self._nexus_fs)
 
             config = self._load_plugin_config(info.name)
+            config = self._resolve_secrets_in_config(config)
             await plugin.initialize(config)
 
             loaded_plugin: NexusPlugin = plugin
@@ -292,6 +293,48 @@ class PluginRegistry(BaseRegistry[NexusPlugin]):
         except Exception as e:
             logger.error("Failed to load config for %s: %s", plugin_name, e)
             return {}
+
+    def _resolve_secrets_in_config(self, config: dict[str, Any]) -> dict[str, Any]:
+        """Resolve nexus-secret:NAME patterns in plugin config.
+
+        Requires a NexusFS instance with a user_secrets_service available.
+        Falls back silently if secrets service is unavailable.
+        """
+        if not config:
+            return config
+
+        try:
+            import os
+
+            from nexus.bricks.auth.secrets.resolver import SecretResolver
+
+            # Get secrets service from NexusFS app state
+            nx = self._nexus_fs
+            if nx is None:
+                return config
+
+            secrets_service = getattr(nx, "_user_secrets_service", None)
+            if secrets_service is None:
+                return config
+
+            user_id = os.environ.get("NEXUS_USER_ID", os.environ.get("USER", "default"))
+            resolver = SecretResolver(
+                secrets_service=secrets_service,
+                user_id=user_id,
+            )
+
+            if not resolver.has_secrets(config):
+                return config
+
+            resolved = resolver.resolve_config(config)
+            logger.debug("Resolved secrets in plugin config")
+            return cast(dict[str, Any], resolved)
+
+        except ImportError:
+            return config
+        except Exception:
+            logger.debug("Secret resolution failed, using raw config", exc_info=True)
+            return config
 
     def save_plugin_config(self, plugin_name: str, config: dict[str, Any]) -> None:
         """Save configuration for a plugin.

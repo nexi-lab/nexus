@@ -344,6 +344,47 @@ class ZoneModel(Base):
         )
 
 
+class UserSecretModel(Base):
+    """User-managed secrets with Fernet encryption.
+
+    Stores encrypted secret values scoped to (user_id, zone_id, name).
+    Encryption/decryption is handled by SecretsCrypto at the service layer.
+    """
+
+    __tablename__ = "user_secrets"
+
+    secret_id: Mapped[str] = uuid_pk()
+
+    user_id: Mapped[str] = mapped_column(
+        String(255),
+        ForeignKey("users.user_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default=ROOT_ZONE_ID)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    encrypted_value: Mapped[str] = mapped_column(Text, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "zone_id", "name", name="uq_user_secret"),
+        Index("idx_user_secrets_user", "user_id"),
+        Index("idx_user_secrets_zone", "zone_id"),
+        Index("idx_user_secrets_user_zone", "user_id", "zone_id"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<UserSecretModel(secret_id={self.secret_id}, user_id={self.user_id}, name={self.name})>"
+
+
 class ExternalUserServiceModel(Base):
     """Configuration for external user management services."""
 

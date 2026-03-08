@@ -37,6 +37,7 @@ async def startup_services(app: "FastAPI", svc: "LifespanServices") -> list[asyn
     _startup_sandbox_auth(app, svc)
     _startup_transactional_snapshot(app, svc)
     _startup_rlm_service(app, svc)
+    _startup_user_secrets_service(app, svc)
 
     # Agent background tasks depend on agent_registry
     agent_tasks = _startup_agent_tasks(app, svc)
@@ -495,6 +496,39 @@ def _startup_rlm_service(app: "FastAPI", svc: "LifespanServices") -> None:
         logger.info("[RLM] RLMInferenceService initialized (max_concurrent=%d)", max_concurrent)
     except Exception as e:
         logger.warning("[RLM] Failed to initialize RLMInferenceService: %s", e, exc_info=True)
+
+
+def _startup_user_secrets_service(app: "FastAPI", svc: "LifespanServices") -> None:
+    """Initialize UserSecretsService for encrypted user secret storage."""
+    if svc.record_store is None:
+        app.state.user_secrets_service = None
+        return
+
+    try:
+        from nexus.bricks.auth.secrets.crypto import SecretsCrypto
+        from nexus.bricks.auth.secrets.service import UserSecretsService
+        from nexus.storage.secrets_audit_logger import SecretsAuditLogger
+
+        crypto = SecretsCrypto(record_store=svc.record_store)
+        audit_logger = SecretsAuditLogger(record_store=svc.record_store)
+
+        # Ensure user_secrets table exists
+        from sqlalchemy import Table
+
+        from nexus.storage.models.auth import UserSecretModel
+
+        if svc.sql_engine is not None:
+            cast(Table, UserSecretModel.__table__).create(svc.sql_engine, checkfirst=True)
+
+        app.state.user_secrets_service = UserSecretsService(
+            record_store=svc.record_store,
+            crypto=crypto,
+            audit_logger=audit_logger,
+        )
+        logger.info("[Secrets] UserSecretsService initialized")
+    except Exception as e:
+        logger.warning("[Secrets] Failed to initialize UserSecretsService: %s", e, exc_info=True)
+        app.state.user_secrets_service = None
 
 
 def _startup_agent_tasks(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.Task]:

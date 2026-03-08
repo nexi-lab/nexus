@@ -386,6 +386,14 @@ def build_v2_registry(
     except ImportError as e:
         logger.warning("Failed to import Cache routes: %s", e)
 
+    # ---- User secrets router ----
+    try:
+        from nexus.server.api.v2.routers.secrets import router as secrets_router
+
+        registry.add(RouterEntry(router=secrets_router, name="secrets", endpoint_count=3))
+    except ImportError as e:
+        logger.warning("Failed to import Secrets routes: %s", e)
+
     # ---- x402 protocol router (Issue #1206) ----
     try:
         from nexus.server.api.v2.routers.x402 import router as x402_router

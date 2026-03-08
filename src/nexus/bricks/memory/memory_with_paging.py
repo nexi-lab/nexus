@@ -23,7 +23,7 @@ from nexus.contracts.constants import ROOT_ZONE_ID
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
-    from nexus.backends.base import Backend
+    from nexus.backends.backend import Backend
     from nexus.storage.models import MemoryModel
 
 logger = logging.getLogger(__name__)

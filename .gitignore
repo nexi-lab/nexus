@@ -151,6 +151,8 @@ config.yml
 *.local.yaml
 *.local.yml
 secrets/
+!src/**/secrets/
+!tests/**/secrets/
 *.encrypted
 
 # Data directories

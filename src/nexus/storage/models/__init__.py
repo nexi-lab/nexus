@@ -62,6 +62,7 @@ from nexus.storage.models.auth import OAuthAPIKeyModel as OAuthAPIKeyModel
 from nexus.storage.models.auth import OAuthCredentialModel as OAuthCredentialModel
 from nexus.storage.models.auth import UserModel as UserModel
 from nexus.storage.models.auth import UserOAuthAccountModel as UserOAuthAccountModel
+from nexus.storage.models.auth import UserSecretModel as UserSecretModel
 from nexus.storage.models.auth import ZoneModel as ZoneModel
 
 # Domain: Context Branching (Issue #1315)

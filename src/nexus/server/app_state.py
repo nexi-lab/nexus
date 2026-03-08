@@ -87,6 +87,7 @@ class NexusAppState:
     agent_event_log: Any = None
     transactional_snapshot_service: Any = None
     memory_service: Any = None
+    user_secrets_service: Any = None
 
     # === Realtime ===
     subscription_manager: Any = None

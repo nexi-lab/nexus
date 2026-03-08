@@ -112,11 +112,17 @@ class FeishuConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
         # Cache for chats: chat_id -> chat_info
         self._chat_cache: dict[str, dict[str, Any]] = {}
 
+        # VFS mount prefix for matching inbound events
+        self._mount_prefix = "/mnt/feishu/"
+
         # Initialize app-level lark client
         self._app_client = self._build_app_client()
 
         # Register OAuth provider
         self._register_oauth_provider()
+
+        # Register for webhook cache invalidation
+        self._register_cache_invalidation()
 
     def _build_app_client(self) -> Any:
         """Build lark_oapi.Client with app credentials (tenant_access_token)."""
@@ -152,6 +158,41 @@ class FeishuConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
                 )
         except Exception as e:
             logger.error("Failed to register Feishu OAuth provider: %s", e)
+
+    def _register_cache_invalidation(self) -> None:
+        """Register with the Feishu webhook for cache invalidation on inbound events."""
+        try:
+            from nexus.server.api.v2.routers.feishu_webhook import register_cache_invalidator
+
+            register_cache_invalidator(self.handle_event)
+        except ImportError:
+            logger.debug("Feishu webhook router not available; cache invalidation disabled")
+
+    def handle_event(self, file_event: Any) -> None:
+        """Handle an inbound FileEvent by invalidating the corresponding cache entry.
+
+        Called by the webhook router when a Feishu event (e.g. new message) arrives.
+        Invalidates the cached YAML so the next read_content() fetches fresh data
+        from the Feishu API.
+
+        Args:
+            file_event: FileEvent from the webhook router
+        """
+        path = file_event.path
+        if not path.startswith(self._mount_prefix):
+            return
+
+        # Extract the backend-relative path (e.g. "groups/oc_xxx.yaml")
+        backend_path = path[len(self._mount_prefix) :]
+
+        if not self._has_caching():
+            return
+
+        try:
+            self._invalidate_cache(path=backend_path)
+            logger.info("Cache invalidated for %s (event: %s)", backend_path, file_event.type)
+        except Exception as e:
+            logger.warning("Failed to invalidate cache for %s: %s", backend_path, e)
 
     def _get_feishu_client(self, context: "OperationContext | None" = None) -> Any:
         """Get Feishu client configured for the appropriate auth mode.

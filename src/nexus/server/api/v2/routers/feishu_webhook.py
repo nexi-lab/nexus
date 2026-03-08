@@ -33,6 +33,9 @@ _event_bus: Any = None
 _verification_token: str | None = None
 _encrypt_key: str | None = None
 
+# Cache invalidation callbacks: list of callables that accept a FileEvent
+_cache_invalidators: list[Any] = []
+
 
 def configure_feishu_webhook(
     event_bus: Any,
@@ -53,6 +56,19 @@ def configure_feishu_webhook(
     _verification_token = verification_token
     _encrypt_key = encrypt_key
     logger.info("Feishu webhook configured (verification=%s)", bool(verification_token))
+
+
+def register_cache_invalidator(callback: Any) -> None:
+    """Register a callback for cache invalidation on inbound events.
+
+    The callback receives a FileEvent and should invalidate any cached
+    content for the affected path.
+
+    Args:
+        callback: Callable that accepts a FileEvent
+    """
+    _cache_invalidators.append(callback)
+    logger.info("Feishu webhook cache invalidator registered")
 
 
 def _verify_signature(timestamp: str, nonce: str, body: str, signature: str) -> bool:
@@ -157,11 +173,22 @@ async def feishu_webhook(request: Request) -> JSONResponse:
 
     # Map to FileEvent and publish
     file_event = _map_event_to_file_event(event_type, event)
-    if file_event and _event_bus:
-        try:
-            await _event_bus.publish(file_event)
-            logger.info("Published FileEvent: type=%s path=%s", file_event.type, file_event.path)
-        except Exception as e:
-            logger.error("Failed to publish Feishu event to EventBus: %s", e)
+    if file_event:
+        # Publish to EventBus
+        if _event_bus:
+            try:
+                await _event_bus.publish(file_event)
+                logger.info(
+                    "Published FileEvent: type=%s path=%s", file_event.type, file_event.path
+                )
+            except Exception as e:
+                logger.error("Failed to publish Feishu event to EventBus: %s", e)
+
+        # Invalidate caches so next read fetches fresh data from API
+        for invalidator in _cache_invalidators:
+            try:
+                invalidator(file_event)
+            except Exception as e:
+                logger.error("Cache invalidation failed: %s", e)
 
     return JSONResponse(content={"code": 0, "msg": "ok"})

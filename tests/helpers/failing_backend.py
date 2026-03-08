@@ -228,10 +228,6 @@ class FailingBackend(Backend):
         return self._inner.has_data_dir
 
     @property
-    def is_passthrough(self) -> bool:
-        return self._inner.is_passthrough
-
-    @property
     def supports_parallel_mmap_read(self) -> bool:
         return self._inner.supports_parallel_mmap_read
 

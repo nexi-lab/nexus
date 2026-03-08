@@ -45,8 +45,8 @@ class TestConnectorCapabilityEnum:
         assert len(values) == len(set(values))
 
     def test_expected_member_count(self) -> None:
-        """We have exactly 19 capabilities defined."""
-        assert len(ConnectorCapability) == 19
+        """We have exactly 18 capabilities defined."""
+        assert len(ConnectorCapability) == 18
 
     def test_str_enum_identity(self) -> None:
         """StrEnum values can be compared with plain strings."""
@@ -198,10 +198,6 @@ class TestRegistryCapabilities:
                 return False
 
             @property
-            def is_passthrough(self) -> bool:
-                return False
-
-            @property
             def has_root_path(self) -> bool:
                 return False
 
@@ -323,4 +319,3 @@ class TestCapabilityProtocolMapping:
         assert ConnectorCapability.BATCH_CONTENT in mapping
         assert ConnectorCapability.DIRECTORY_LISTING in mapping
         assert ConnectorCapability.OAUTH in mapping
-        assert ConnectorCapability.PASSTHROUGH in mapping

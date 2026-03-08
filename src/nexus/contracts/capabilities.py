@@ -49,9 +49,6 @@ class ConnectorCapability(StrEnum):
     DATA_DIR = "data_dir"
     """Backend has a data_dir for ancillary data storage."""
 
-    PASSTHROUGH = "passthrough"
-    """Backend is a PassthroughBackend for same-box mode."""
-
     PARALLEL_MMAP = "parallel_mmap"
     """Backend supports Rust-accelerated parallel mmap reads."""
 

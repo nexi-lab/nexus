@@ -416,7 +416,16 @@ class ZoneManager:
         parent_store.put(mount_entry)
 
         # Increment target zone's i_links_count (POSIX: link() → nlink++)
-        self._increment_links(target_store, target_zone_id)
+        # Best-effort: only succeeds if this node is the leader of the target
+        # zone. For federation join (node is a follower), the leader handles
+        # the increment via ensure_topology() health check cycle.
+        try:
+            self._increment_links(target_store, target_zone_id)
+        except RuntimeError:
+            logger.debug(
+                "Skipped i_links_count increment for zone '%s' (not leader)",
+                target_zone_id,
+            )
 
         logger.info(
             "Mounted zone '%s' at '%s' in zone '%s'",

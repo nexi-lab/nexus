@@ -163,7 +163,7 @@ class GovernanceGraphService:
         cache_key = (zone_id, from_agent, to_agent)
         now = time.monotonic()
 
-        # Check cache
+        # Check cache — exact pair
         cached = self._cache.get(cache_key)
         if cached is not None:
             if cached[1] > now:
@@ -171,13 +171,22 @@ class GovernanceGraphService:
             # Expired — evict zombie entry before DB lookup
             self._cache.pop(cache_key, None)
 
+        # Check cache — wildcard (from_agent, "*")
+        wildcard_key = (zone_id, from_agent, "*")
+        cached_wc = self._cache.get(wildcard_key)
+        if cached_wc is not None:
+            if cached_wc[1] > now and not cached_wc[0].allowed:
+                return cached_wc[0]
+            if cached_wc[1] <= now:
+                self._cache.pop(wildcard_key, None)
+
         # Periodic sweep of expired entries
         self._lookup_count += 1
         if self._lookup_count >= _SWEEP_INTERVAL:
             self._sweep_expired(now)
             self._lookup_count = 0
 
-        # DB lookup
+        # DB lookup (checks both exact and wildcard to_node)
         result = await self._lookup_constraint(from_agent, to_agent, zone_id)
 
         # Cache result (LRU eviction when full — Issue #2129 §14A)
@@ -264,8 +273,12 @@ class GovernanceGraphService:
         to_agent: str,
         zone_id: str,
     ) -> ConstraintCheckResult:
-        """Look up constraint from database."""
-        from sqlalchemy import select
+        """Look up constraint from database.
+
+        Checks both the exact (from_agent, to_agent) pair and any
+        wildcard constraint where to_node="*" (global blocks/rate-limits).
+        """
+        from sqlalchemy import or_, select
 
         from nexus.bricks.governance.db_models import GovernanceEdgeModel
 
@@ -273,7 +286,10 @@ class GovernanceGraphService:
             stmt = select(GovernanceEdgeModel).where(
                 GovernanceEdgeModel.zone_id == zone_id,
                 GovernanceEdgeModel.from_node == from_agent,
-                GovernanceEdgeModel.to_node == to_agent,
+                or_(
+                    GovernanceEdgeModel.to_node == to_agent,
+                    GovernanceEdgeModel.to_node == "*",
+                ),
                 GovernanceEdgeModel.edge_type == EdgeType.CONSTRAINT,
             )
             result = await session.execute(stmt)

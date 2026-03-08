@@ -13,12 +13,22 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterator, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from nexus.contracts.metadata import FileMetadata
-from nexus.core.metastore import CasResult, MetastoreABC, PaginatedResult
+from nexus.core.metastore import MetastoreABC
+from nexus.lib.pagination import PaginatedResult
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _CasResult:
+    """Compare-and-swap result for put_if_version."""
+
+    success: bool
+    current_version: int
 
 
 class DictMetastore(MetastoreABC):
@@ -48,14 +58,14 @@ class DictMetastore(MetastoreABC):
         expected_version: int,
         *,
         consistency: str = "sc",
-    ) -> CasResult:
+    ) -> _CasResult:
         del consistency
         current = self._store.get(metadata.path)
         current_ver = current.version if current else 0
         if current_ver != expected_version:
-            return CasResult(success=False, current_version=current_ver)
+            return _CasResult(success=False, current_version=current_ver)
         self._store[metadata.path] = metadata
-        return CasResult(success=True, current_version=metadata.version)
+        return _CasResult(success=True, current_version=metadata.version)
 
     def delete(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
         del consistency

@@ -114,7 +114,6 @@ def start(
         # Try federation mode first; fall back to standalone if Rust extensions
         # are not available (pure pip install without maturin develop).
         enforce_permissions = bool(auth_type or api_key)
-        server_mode = "federation"
         try:
             from nexus.raft.zone_manager import _get_py_zone_manager
 
@@ -123,7 +122,6 @@ def start(
             os.environ["NEXUS_MODE"] = "federation"
             console.print(f"  gRPC: [cyan]port {grpc_port}[/cyan]")
         except (ImportError, RuntimeError):
-            server_mode = "standalone"
             os.environ["NEXUS_MODE"] = "standalone"
             console.print(
                 "  [yellow]Federation mode unavailable (Rust extensions not built).[/yellow]"
@@ -138,7 +136,6 @@ def start(
         nx = get_filesystem(
             backend_config,
             enforce_permissions=enforce_permissions,
-            server_mode=server_mode,
             enforce_zone_isolation=True,
         )
 

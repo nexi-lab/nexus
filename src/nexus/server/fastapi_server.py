@@ -683,31 +683,6 @@ def _register_routes(app: FastAPI) -> None:
     except ImportError as e:
         logger.debug(f"IPC router unavailable: {e}")
 
-    # Feishu webhook endpoint (Task #83)
-    try:
-        from nexus.server.api.v2.routers.feishu_webhook import (
-            configure_feishu_webhook,
-        )
-        from nexus.server.api.v2.routers.feishu_webhook import (
-            router as feishu_webhook_router,
-        )
-
-        app.include_router(feishu_webhook_router)
-
-        # Configure with EventBus if available
-        event_bus = getattr(app.state, "event_bus", None)
-        feishu_verification_token = os.environ.get("FEISHU_VERIFICATION_TOKEN")
-        feishu_encrypt_key = os.environ.get("FEISHU_ENCRYPT_KEY")
-        if event_bus or feishu_verification_token:
-            configure_feishu_webhook(
-                event_bus=event_bus,
-                verification_token=feishu_verification_token,
-                encrypt_key=feishu_encrypt_key,
-            )
-        logger.info("Feishu webhook endpoint registered (/api/v2/webhooks/feishu)")
-    except ImportError as e:
-        logger.debug(f"Feishu webhook router unavailable: {e}")
-
     # Secrets audit log endpoints (Issue #997)
     try:
         from nexus.server.api.v2.routers.secrets_audit import (

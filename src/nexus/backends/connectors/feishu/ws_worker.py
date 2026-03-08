@@ -29,7 +29,7 @@ from nexus.backends.connectors.feishu.events import translate_feishu_event
 logger = logging.getLogger(__name__)
 
 
-# Module-level callbacks for cache invalidation (shared with webhook router)
+# Module-level callbacks for cache invalidation
 _cache_invalidators: list[Any] = []
 
 

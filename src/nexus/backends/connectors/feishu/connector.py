@@ -125,7 +125,7 @@ class FeishuConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
         self._chat_cache: dict[str, dict[str, Any]] = {}
 
         # P2P chat registry: chat_id -> {"name": ..., "chat_id": ...}
-        # Populated from webhook events since list_chats API doesn't return P2P chats
+        # Populated from inbound events since list_chats API doesn't return P2P chats
         self._p2p_registry: dict[str, dict[str, Any]] = {}
 
         # VFS mount prefix for matching inbound events
@@ -137,7 +137,7 @@ class FeishuConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
         # Register OAuth provider
         self._register_oauth_provider()
 
-        # Register for webhook cache invalidation
+        # Register for cache invalidation on inbound events
         self._register_cache_invalidation()
 
     def _build_app_client(self) -> Any:
@@ -176,23 +176,23 @@ class FeishuConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
             logger.error("Failed to register Feishu OAuth provider: %s", e)
 
     def _register_cache_invalidation(self) -> None:
-        """Register with the Feishu webhook for cache invalidation on inbound events."""
+        """Register with the Feishu WS worker for cache invalidation on inbound events."""
         try:
-            from nexus.server.api.v2.routers.feishu_webhook import register_cache_invalidator
+            from nexus.backends.connectors.feishu.ws_worker import register_cache_invalidator
 
             register_cache_invalidator(self.handle_event)
         except ImportError:
-            logger.debug("Feishu webhook router not available; cache invalidation disabled")
+            logger.debug("Feishu WS worker not available; cache invalidation disabled")
 
     def handle_event(self, file_event: Any) -> None:
         """Handle an inbound FileEvent by registering P2P chats and invalidating cache.
 
-        Called by the webhook router when a Feishu event (e.g. new message) arrives.
+        Called by the WS worker when a Feishu event (e.g. new message) arrives.
         For P2P events, registers the chat in the P2P registry.
         For all events, invalidates cached YAML so next read_content() fetches fresh data.
 
         Args:
-            file_event: FileEvent from the webhook router
+            file_event: FileEvent from the WS worker
         """
         path = file_event.path
         if not path.startswith(self._mount_prefix):
@@ -225,7 +225,7 @@ class FeishuConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
     def _discover_p2p_chat(self, chat_id: str) -> None:
         """Discover and register a P2P chat by fetching its info and member names.
 
-        Called when a P2P event is received from the webhook. Since P2P chats
+        Called when a P2P event is received via WebSocket. Since P2P chats
         have name=None from the API, we resolve the peer name from chat members.
 
         Args:
@@ -672,7 +672,7 @@ class FeishuConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
 
                 if folder_type == "p2p":
                     # P2P chats are not returned by list_chats API.
-                    # Return chats discovered from webhook events.
+                    # Return chats discovered from inbound events.
                     return [
                         self._format_hybrid_filename(
                             info.get("name", info["chat_id"]), info["chat_id"]

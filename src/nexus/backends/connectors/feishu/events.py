@@ -1,7 +1,7 @@
 """Shared Feishu-to-FileEvent translator.
 
-Used by both the WebSocket worker and the webhook router to ensure
-identical event mapping regardless of the ingress method.
+Used by the WebSocket worker to map inbound Feishu events to Nexus
+FileEvents for downstream processing.
 
 Event mapping:
     im.message.receive_v1      -> FILE_WRITE  /chat/feishu/{groups|p2p}/{chat_id}.yaml
@@ -28,7 +28,6 @@ def translate_feishu_event(
     """Map a Feishu event to a Nexus FileEvent.
 
     This is the single source of truth for event-to-path mapping.
-    Both the webhook router and the WebSocket worker call this function.
 
     Args:
         event_type: Feishu event type string (e.g. "im.message.receive_v1")

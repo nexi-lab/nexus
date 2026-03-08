@@ -19,6 +19,7 @@ Usage::
     worker.stop()    # Graceful shutdown
 """
 
+import json
 import logging
 import threading
 from typing import Any
@@ -51,12 +52,16 @@ class FeishuWebSocketWorker:
         app_id: str,
         app_secret: str,
         event_bus: Any = None,
+        *,
+        debug_echo: bool = False,
     ) -> None:
         self.app_id = app_id
         self.app_secret = app_secret
         self._event_bus = event_bus
+        self._debug_echo = debug_echo
         self._thread: threading.Thread | None = None
         self._ws_client: Any = None
+        self._lark_client: Any = None
         self._stopped = threading.Event()
 
     def _on_message_receive(self, data: Any) -> None:
@@ -80,6 +85,8 @@ class FeishuWebSocketWorker:
             file_event = translate_feishu_event("im.message.receive_v1", event_dict)
             if file_event:
                 self._publish_and_invalidate(file_event)
+                if self._debug_echo:
+                    self._echo_reply(msg.chat_id, file_event.path)
 
         except Exception as e:
             logger.error("Error handling message event: %s", e, exc_info=True)
@@ -117,6 +124,32 @@ class FeishuWebSocketWorker:
 
         except Exception as e:
             logger.error("Error handling bot-deleted event: %s", e, exc_info=True)
+
+    def _echo_reply(self, chat_id: str, vfs_path: str) -> None:
+        """Send a debug echo reply with the VFS path the event was mapped to."""
+        if not self._lark_client:
+            return
+        try:
+            from lark_oapi.api.im.v1 import (
+                CreateMessageRequest,
+                CreateMessageRequestBody,
+            )
+
+            body = (
+                CreateMessageRequestBody.builder()
+                .receive_id(chat_id)
+                .msg_type("text")
+                .content(json.dumps({"text": f"[nexus-echo] {vfs_path}"}))
+                .build()
+            )
+            req = (
+                CreateMessageRequest.builder().receive_id_type("chat_id").request_body(body).build()
+            )
+            resp = self._lark_client.im.v1.message.create(req)
+            if not resp.success():
+                logger.warning("Echo reply failed: %s %s", resp.code, resp.msg)
+        except Exception as e:
+            logger.warning("Echo reply error: %s", e)
 
     def _publish_and_invalidate(self, file_event: Any) -> None:
         """Publish a FileEvent to EventBus and run cache invalidators."""
@@ -167,6 +200,11 @@ class FeishuWebSocketWorker:
         """Thread target: connect and block on the WebSocket."""
         try:
             import lark_oapi as lark
+
+            if self._debug_echo:
+                self._lark_client = (
+                    lark.Client.builder().app_id(self.app_id).app_secret(self.app_secret).build()
+                )
 
             handler = self._build_event_handler()
 

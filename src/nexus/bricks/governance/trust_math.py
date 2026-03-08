@@ -12,6 +12,8 @@ Algorithm:
         Convergence when ||t(k+1) - t(k)||_1 < epsilon
 """
 
+from typing import cast
+
 import numpy as np
 from scipy import sparse
 
@@ -61,7 +63,7 @@ def eigentrust(
     t = p.copy()
 
     # Power iteration — transpose once
-    ct = c.T.tocsr() if sparse.issparse(c) else c.T
+    ct = cast("sparse.spmatrix", c).T.tocsr() if sparse.issparse(c) else c.T
 
     for _ in range(max_iter):
         t_new = (1 - alpha) * (ct @ t) + alpha * p
@@ -147,7 +149,7 @@ def detect_sybil_cluster(
 def _row_normalize(matrix: np.ndarray | sparse.spmatrix) -> np.ndarray | sparse.spmatrix:
     """Row-normalize a matrix (each row sums to 1, or 0 if all zeros)."""
     if sparse.issparse(matrix):
-        mat = matrix.tocsr().astype(np.float64, copy=True)
+        mat = cast("sparse.spmatrix", matrix).tocsr().astype(np.float64, copy=True)
         row_sums = np.asarray(mat.sum(axis=1)).flatten()
         nonzero = row_sums > 0
         # Scale rows in-place

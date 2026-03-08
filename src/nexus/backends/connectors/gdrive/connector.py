@@ -607,6 +607,48 @@ class GoogleDriveConnectorBackend(Backend):
                 f"Failed to get/create folder '{path}': {e}", backend="gdrive"
             ) from e
 
+    def _find_folder(
+        self,
+        service: "Resource",
+        name: str,
+        parent_id: str,
+    ) -> str | None:
+        """Find an existing folder by name under a parent (read-only, never creates).
+
+        Args:
+            service: Google Drive service
+            name: Folder name to find
+            parent_id: Parent folder ID
+
+        Returns:
+            Folder ID if found, None if not found
+        """
+        query = (
+            f"name='{name}' and '{parent_id}' in parents "
+            f"and mimeType='application/vnd.google-apps.folder' and trashed=false"
+        )
+        if self.use_shared_drives:
+            results = (
+                service.files()
+                .list(
+                    q=query,
+                    spaces="drive",
+                    fields="files(id, name)",
+                    includeItemsFromAllDrives=True,
+                    supportsAllDrives=True,
+                )
+                .execute()
+            )
+        else:
+            results = (
+                service.files().list(q=query, spaces="drive", fields="files(id, name)").execute()
+            )
+
+        files = results.get("files", [])
+        if files:
+            return str(files[0]["id"])
+        return None
+
     def _resolve_path_to_folder_id(
         self, service: "Resource", backend_path: str, context: "OperationContext | str | None"
     ) -> tuple[str, str]:
@@ -1105,10 +1147,17 @@ class GoogleDriveConnectorBackend(Backend):
         service = self._get_drive_service(None)
         root_folder_id = self._get_or_create_root_folder(service, None)
 
-        # Resolve path to folder ID
-        folder_id = self._resolve_path_to_folder_id(service, path, root_folder_id)
-        if not folder_id:
-            raise NexusFileNotFoundError(path)
+        # Navigate path to resolve the target folder ID (read-only)
+        parts = path.split("/")
+        current_id = root_folder_id
+        for part in parts:
+            if not part:
+                continue
+            found_id = self._find_folder(service, part, current_id)
+            if found_id is None:
+                raise NexusFileNotFoundError(path)
+            current_id = found_id
+        folder_id = current_id
 
         if not recursive:
             # Check if directory is empty
@@ -1226,7 +1275,7 @@ class GoogleDriveConnectorBackend(Backend):
             service = self._get_drive_service(context)
             root_folder_id = self._get_or_create_root_folder(service, context)
 
-            # Navigate to target folder
+            # Navigate to target folder (read-only — never create missing folders)
             if path:
                 # Split path and navigate
                 parts = path.split("/")
@@ -1234,9 +1283,10 @@ class GoogleDriveConnectorBackend(Backend):
                 for part in parts:
                     if not part:
                         continue
-                    current_folder_id = self._get_or_create_folder(
-                        service, part, current_folder_id, context
-                    )
+                    found_id = self._find_folder(service, part, current_folder_id)
+                    if found_id is None:
+                        raise FileNotFoundError(f"Directory not found: {path}")
+                    current_folder_id = found_id
                 folder_id = current_folder_id
             else:
                 # List root folder

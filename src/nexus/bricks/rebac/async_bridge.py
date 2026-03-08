@@ -98,8 +98,8 @@ class AsyncReBACBridge:
             self._thread = threading.Thread(target=self._run_loop, daemon=True)
             self._thread.start()
 
-            # Initialize async manager in the loop
-            future = self._run_coro(self._init_manager())
+            # Initialize async manager in the loop (allow before _started is set)
+            future = self._run_coro(self._init_manager(), _allow_startup=True)
             future.result(timeout=30)  # Wait for initialization
 
             self._started = True
@@ -135,16 +135,19 @@ class AsyncReBACBridge:
         finally:
             self._loop.close()
 
-    def _run_coro(self, coro: Any) -> Future[Any]:
+    def _run_coro(self, coro: Any, *, _allow_startup: bool = False) -> Future[Any]:
         """Run a coroutine in the background loop and return a Future.
 
         Args:
             coro: Coroutine to run
+            _allow_startup: Internal flag — skip the ``_started`` check during
+                ``start()`` so that ``_init_manager()`` can run before the flag
+                is set.
 
         Returns:
             concurrent.futures.Future that will contain the result
         """
-        if not self._loop or not self._started:
+        if not self._loop or (not self._started and not _allow_startup):
             raise RuntimeError("AsyncReBACBridge not started")
 
         return asyncio.run_coroutine_threadsafe(coro, self._loop)

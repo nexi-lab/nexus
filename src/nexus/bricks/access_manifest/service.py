@@ -175,7 +175,29 @@ class AccessManifestService:
         now = _utcnow_naive()
         valid_until = now + timedelta(hours=valid_hours)
 
-        # Generate ReBAC tuples for ALLOW entries
+        # Persist manifest FIRST, then generate ReBAC tuples.
+        # This ensures we never have orphan ReBAC permissions without a
+        # manifest record to revoke them from (Issue #7).
+        model = AccessManifestModel(
+            manifest_id=manifest_id,
+            agent_id=agent_id,
+            zone_id=zone_id,
+            name=name,
+            entries_json=_entries_to_json(entries),
+            status=_STATUS_ACTIVE,
+            valid_from=now,
+            valid_until=valid_until,
+            credential_id=credential_id,
+            created_by=created_by,
+            created_at=now,
+            tuple_ids_json=None,
+        )
+
+        with self._get_session() as session:
+            session.add(model)
+            session.flush()
+
+        # Generate ReBAC tuples for ALLOW entries (after manifest is persisted)
         tuple_ids: list[str] = []
         for entry in entries:
             if entry.permission == ToolPermission.ALLOW and not _is_glob_pattern(
@@ -191,25 +213,14 @@ class AccessManifestService:
                 if hasattr(result, "tuple_id") and result.tuple_id:
                     tuple_ids.append(result.tuple_id)
 
-        # Persist
-        model = AccessManifestModel(
-            manifest_id=manifest_id,
-            agent_id=agent_id,
-            zone_id=zone_id,
-            name=name,
-            entries_json=_entries_to_json(entries),
-            status=_STATUS_ACTIVE,
-            valid_from=now,
-            valid_until=valid_until,
-            credential_id=credential_id,
-            created_by=created_by,
-            created_at=now,
-            tuple_ids_json=json.dumps(tuple_ids) if tuple_ids else None,
-        )
-
-        with self._get_session() as session:
-            session.add(model)
-            session.flush()
+        # Update manifest with tuple IDs
+        if tuple_ids:
+            with self._get_session() as session:
+                session.execute(
+                    update(AccessManifestModel)
+                    .where(AccessManifestModel.manifest_id == manifest_id)
+                    .values(tuple_ids_json=json.dumps(tuple_ids))
+                )
 
         # Invalidate cache
         self._cache.invalidate((agent_id, zone_id))
@@ -369,25 +380,36 @@ class AccessManifestService:
     # --- Private helpers ---
 
     def _get_entries_cached(self, agent_id: str, zone_id: str) -> tuple[ManifestEntry, ...] | None:
-        """Get entries from cache or DB."""
+        """Get entries from cache or DB.
+
+        Only returns entries from manifests whose valid_from/valid_until
+        window covers the current time (Issue #6 — temporal enforcement).
+        """
         cache_key = (agent_id, zone_id)
         cached = self._cache.get(cache_key)
         if cached is not None:
             return cached
 
+        now = _utcnow_naive()
+
         with self._get_session() as session:
-            models = list(
-                session.execute(
-                    select(AccessManifestModel)
-                    .where(AccessManifestModel.agent_id == agent_id)
-                    .where(AccessManifestModel.zone_id == zone_id)
-                    .where(AccessManifestModel.status == _STATUS_ACTIVE)
-                    .order_by(AccessManifestModel.created_at.desc())
-                    .limit(1)
-                )
-                .scalars()
-                .all()
+            query = (
+                select(AccessManifestModel)
+                .where(AccessManifestModel.agent_id == agent_id)
+                .where(AccessManifestModel.zone_id == zone_id)
+                .where(AccessManifestModel.status == _STATUS_ACTIVE)
             )
+            # Enforce temporal validity
+            query = query.where(
+                (AccessManifestModel.valid_from.is_(None)) | (AccessManifestModel.valid_from <= now)
+            )
+            query = query.where(
+                (AccessManifestModel.valid_until.is_(None))
+                | (AccessManifestModel.valid_until > now)
+            )
+            query = query.order_by(AccessManifestModel.created_at.desc()).limit(1)
+
+            models = list(session.execute(query).scalars().all())
 
         if not models:
             return None

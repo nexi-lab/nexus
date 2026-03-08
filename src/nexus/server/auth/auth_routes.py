@@ -1068,7 +1068,7 @@ async def oauth_check(
                 # Email verified on both sides - auto-link and login
                 # Note: Existing users will go through frontend zone creation flow
                 user, token = await oauth_provider.handle_google_callback(
-                    code=request.code, _state=request.state, redirect_uri=request.redirect_uri
+                    code=request.code, state=request.state, redirect_uri=request.redirect_uri
                 )
                 if not user.email:
                     raise ValueError("OAuth user must have an email")
@@ -1501,7 +1501,7 @@ async def oauth_callback(request: OAuthCallbackRequest) -> OAuthCallbackResponse
 
     try:
         user, token = await oauth_provider.handle_google_callback(
-            code=request.code, _state=request.state, redirect_uri=request.redirect_uri
+            code=request.code, state=request.state, redirect_uri=request.redirect_uri
         )
 
         # Ensure user has email (required for OAuth)

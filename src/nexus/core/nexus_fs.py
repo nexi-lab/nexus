@@ -238,8 +238,88 @@ class NexusFS(  # type: ignore[misc]
 
         self._dispatch: KernelDispatch = KernelDispatch()
 
+        # Lifecycle state — set by link() / initialize() / bootstrap()
+        self._linked: bool = False
+        self._initialized: bool = False
+        self._bootstrapped: bool = False
+        self._bootstrap_callbacks: list[Callable[[], Any]] = []
+        self._permission_checker: Any = None  # set by link()
+        # Factory-injected lifecycle implementations.
+        # Keeps nexus.core free of nexus.factory / nexus.bricks imports.
+        self._link_fn: Callable[..., None] | None = None
+        self._initialize_fn: Callable[..., None] | None = None
+
+    # =====================================================================
+    # Lifecycle methods: link() → initialize() → bootstrap()
+    # =====================================================================
+
+    def link(
+        self,
+        *,
+        enabled_bricks: "frozenset[str] | None" = None,
+        parsing: Any = None,
+        workflow_engine: Any = None,
+    ) -> None:
+        """Phase 1: Wire service topology.  Pure memory — NO I/O.
+
+        Implementation is injected via ``_link_fn`` by the factory layer,
+        keeping the kernel free of factory/bricks imports.
+
+        Idempotent — guarded by ``_linked`` flag.
+        """
+        if self._linked:
+            return
+        if self._link_fn is not None:
+            self._link_fn(
+                self,
+                enabled_bricks=enabled_bricks,
+                parsing=parsing,
+                workflow_engine=workflow_engine,
+            )
+        self._linked = True
+
+    def initialize(self) -> None:
+        """Phase 2: One-time side effects.  NO background threads.
+
+        Implementation is injected via ``_initialize_fn`` by the factory layer.
+
+        Idempotent — guarded by ``_initialized`` flag.
+        """
+        if self._initialized:
+            return
+        if not self._linked:
+            self.link()
+        if self._initialize_fn is not None:
+            self._initialize_fn(self)
+        self._initialized = True
+
+    async def bootstrap(self) -> None:
+        """Phase 3: Start async tasks.  Server/Worker only.
+
+        Executes registered bootstrap callbacks.  Reserved for future
+        server-specific active components (Feishu WS, EventBus consumers,
+        background sync workers, etc.).
+
+        Idempotent — guarded by ``_bootstrapped`` flag.
+        """
+        if self._bootstrapped:
+            return
+        if not self._initialized:
+            self.initialize()
+        for cb in self._bootstrap_callbacks:
+            await cb()
+        self._bootstrapped = True
+
     # Services wired by factory via bind_wired_services() (Issue #1381).
     # See nexus.factory.service_routing.bind_wired_services().
+
+    @property
+    def namespace_manager(self) -> Any | None:
+        """Public accessor for the NamespaceManager (via PermissionEnforcer)."""
+        enforcer = self._permission_enforcer
+        if enforcer is not None:
+            return getattr(enforcer, "namespace_manager", None)
+        return None
 
     @property
     def config(self) -> Any | None:

@@ -176,15 +176,17 @@ class CacheConnectorMixin:
         """Get path_ids for multiple virtual paths in a single query."""
         return self._cache_service.get_path_ids_bulk(paths, session)
 
-    def _read_from_cache(self, path: str, original: bool = False) -> CacheEntry | None:
+    def _read_from_cache(
+        self, path: str, original: bool = False, zone_id: str | None = None
+    ) -> CacheEntry | None:
         """Read content from cache (L1 then L2)."""
-        return self._cache_service.read_from_cache(path, original)
+        return self._cache_service.read_from_cache(path, original, zone_id=zone_id)
 
     def _read_bulk_from_cache(
-        self, paths: list[str], original: bool = False
+        self, paths: list[str], original: bool = False, zone_id: str | None = None
     ) -> dict[str, CacheEntry]:
         """Read multiple entries from cache in bulk (L1 + L2)."""
-        return self._cache_service.read_bulk_from_cache(paths, original)
+        return self._cache_service.read_bulk_from_cache(paths, original, zone_id=zone_id)
 
     def read_content_bulk(
         self, paths: list[str], context: OperationContext | None = None
@@ -236,9 +238,10 @@ class CacheConnectorMixin:
         path: str | None = None,
         mount_prefix: str | None = None,
         delete: bool = False,
+        zone_id: str | None = None,
     ) -> int:
         """Invalidate cache entries (L1 memory + L2 disk)."""
-        return self._cache_service.invalidate_cache(path, mount_prefix, delete)
+        return self._cache_service.invalidate_cache(path, mount_prefix, delete, zone_id=zone_id)
 
     def _check_version(
         self,

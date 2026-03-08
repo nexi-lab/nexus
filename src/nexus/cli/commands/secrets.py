@@ -62,8 +62,11 @@ def _get_service(db_path: str | None = None) -> "UserSecretsService":
     record_store = SQLAlchemyRecordStore(db_url=db_url)
     Base.metadata.create_all(record_store.engine, checkfirst=True)
 
+    from nexus.storage.secrets_audit_logger import SecretsAuditLogger
+
     crypto = SecretsCrypto(record_store=record_store)
-    return UserSecretsService(record_store=record_store, crypto=crypto)
+    audit_logger = SecretsAuditLogger(record_store=record_store)
+    return UserSecretsService(record_store=record_store, crypto=crypto, audit_logger=audit_logger)
 
 
 def _get_user_id() -> str:

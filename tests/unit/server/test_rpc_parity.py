@@ -107,6 +107,9 @@ def test_all_public_methods_are_exposed_or_excluded():
     INTERNAL_ONLY_METHODS = {
         # Lifecycle/infrastructure methods
         "close",  # Connection management - handled differently for remote
+        "link",  # Boot phase 1 - pure memory wiring, not an RPC operation
+        "initialize",  # Boot phase 2 - one-time side effects, not an RPC operation
+        "bootstrap",  # Boot phase 3 - async task startup, server-only
         "load_all_saved_mounts",  # Internal initialization method - called automatically on startup
         # Server-side only methods (clients get this via HTTP headers)
         "get_etag",  # Returns ETag for early 304 check - clients receive ETags via HTTP headers on read

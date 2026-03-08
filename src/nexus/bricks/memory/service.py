@@ -961,7 +961,10 @@ class Memory:
         from nexus.storage.models import MemoryModel
 
         with self.session as session:
-            stmt = select(MemoryModel).where(MemoryModel.embedding.isnot(None))
+            stmt = select(MemoryModel).where(
+                MemoryModel.embedding.isnot(None),
+                MemoryModel.state == "active",
+            )
 
             if scope:
                 stmt = stmt.where(MemoryModel.scope == scope)

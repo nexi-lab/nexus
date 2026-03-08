@@ -1,107 +1,17 @@
-"""Tests for nexus.cli.utils — BackendConfig, get_zone_id, parse_subject, handle_error."""
+"""Tests for nexus.cli.utils — get_zone_id, parse_subject, handle_error."""
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any
-
 import pytest
 
-import nexus
 from nexus.cli.exit_codes import ExitCode
 from nexus.cli.utils import (
-    BackendConfig,
-    _apply_common_config,
     create_operation_context,
     get_zone_id,
     handle_error,
     parse_subject,
     resolve_content,
 )
-
-# ---------------------------------------------------------------------------
-# BackendConfig
-# ---------------------------------------------------------------------------
-
-
-class TestBackendConfig:
-    """BackendConfig is a frozen dataclass."""
-
-    def test_defaults(self) -> None:
-        config = BackendConfig()
-        assert config.backend == "local"
-        assert config.data_dir == str(Path(nexus.NEXUS_STATE_DIR) / "data")
-        assert config.config_path is None
-        assert config.remote_url is None
-        assert config.remote_api_key is None
-        assert config.gcs_bucket is None
-
-    def test_frozen(self) -> None:
-        config = BackendConfig()
-        with pytest.raises(AttributeError):
-            config.backend = "gcs"
-
-    def test_all_params(self) -> None:
-        config = BackendConfig(
-            backend="gcs",
-            data_dir="/custom",
-            config_path="/etc/nexus.yaml",
-            gcs_bucket="my-bucket",
-            gcs_project="my-project",
-            gcs_credentials="/creds.json",
-            remote_url="http://localhost:2026",
-            remote_api_key="nx_test_key",
-        )
-        assert config.backend == "gcs"
-        assert config.data_dir == "/custom"
-        assert config.config_path == "/etc/nexus.yaml"
-        assert config.gcs_bucket == "my-bucket"
-        assert config.gcs_project == "my-project"
-        assert config.gcs_credentials == "/creds.json"
-        assert config.remote_url == "http://localhost:2026"
-        assert config.remote_api_key == "nx_test_key"
-
-    def test_none_vs_empty_string(self) -> None:
-        config = BackendConfig(remote_url="", remote_api_key=None)
-        assert config.remote_url == ""
-        assert config.remote_api_key is None
-
-
-# ---------------------------------------------------------------------------
-# _apply_common_config
-# ---------------------------------------------------------------------------
-
-
-class TestApplyCommonConfig:
-    def test_applies_optional_params_when_set(self) -> None:
-        d: dict[str, Any] = {}
-        _apply_common_config(
-            d,
-            enforce_permissions=True,
-            allow_admin_bypass=False,
-            enforce_zone_isolation=True,
-        )
-        assert d["enforce_permissions"] is True
-        assert d["allow_admin_bypass"] is False
-        assert d["enforce_zone_isolation"] is True
-
-    def test_skips_unset_optional_params(self) -> None:
-        d: dict[str, Any] = {}
-        _apply_common_config(d)
-        assert "enforce_permissions" not in d
-        assert "allow_admin_bypass" not in d
-        assert "enforce_zone_isolation" not in d
-
-    def test_mutates_input_dict(self) -> None:
-        d: dict[str, Any] = {"profile": "standalone"}
-        _apply_common_config(d)
-        assert d["profile"] == "standalone"  # Original key preserved
-
-    def test_custom_memory_settings(self) -> None:
-        d: dict[str, Any] = {}
-        _apply_common_config(d, memory_main_capacity=50, memory_recall_max_age_hours=12.0)
-        assert d["memory_main_capacity"] == 50
-        assert d["memory_recall_max_age_hours"] == 12.0
 
 
 # ---------------------------------------------------------------------------

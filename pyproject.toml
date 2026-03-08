@@ -493,10 +493,6 @@ module = "nexus.backends.gdrive_connector"
 # HandlerResponse.error() returns HandlerResponse[None] but functions return HandlerResponse[T]
 disable_error_code = ["return-value"]
 
-[[tool.mypy.overrides]]
-module = "nexus.backends.passthrough"
-# HandlerResponse.error() returns HandlerResponse[None] but functions return HandlerResponse[T]
-disable_error_code = ["return-value"]
 
 [[tool.mypy.overrides]]
 module = "nexus.bricks.watch.file_watcher"
@@ -702,7 +698,6 @@ ignore_errors = true
 [[tool.mypy.overrides]]
 module = [
     "nexus",
-    "nexus.cli.commands.work",
     "nexus.cli.commands.search",
     "nexus.core.nexus_fs",
     "nexus.core.nexus_fs_search",

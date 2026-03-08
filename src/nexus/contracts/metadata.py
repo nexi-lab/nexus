@@ -53,7 +53,6 @@ class FileMetadata:
     owner_id: str | None = None
     entry_type: int = 0
     target_zone_id: str | None = None
-    i_links_count: int = 0
 
     @property
     def is_reg(self) -> bool:
@@ -109,7 +108,6 @@ class FileMetadata:
             "owner_id": self.owner_id,
             "entry_type": self.entry_type,
             "target_zone_id": self.target_zone_id,
-            "i_links_count": self.i_links_count,
         }
 
     def validate(self) -> None:

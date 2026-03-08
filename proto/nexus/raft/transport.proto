@@ -116,8 +116,6 @@ message GetClusterInfoResponse {
   ClusterConfig config = 4;
   bool is_leader = 5;
   optional string leader_address = 6;
-  // Last log index applied to the state machine (available via StateMachine trait).
-  uint64 applied_index = 7;
 }
 
 // JoinZoneRequest is sent by a new node to an existing zone member.

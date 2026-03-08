@@ -6,7 +6,6 @@ from typing import Any
 import click
 
 from nexus.cli.utils import (
-    BackendConfig,
     add_backend_options,
     console,
     get_filesystem,
@@ -54,7 +53,8 @@ def warmup(
     user: str | None,
     hours: int,
     zone_id: str,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Pre-populate cache for faster access.
 
@@ -78,7 +78,7 @@ def warmup(
         nexus cache warmup /workspace --metadata-only --max-files 10000
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
 
         # Import here to avoid circular imports
         from nexus.server.cache_warmer import (
@@ -152,7 +152,8 @@ def warmup(
 @add_backend_options
 def stats(
     as_json: bool,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Show cache statistics.
 
@@ -163,7 +164,7 @@ def stats(
         nexus cache stats --json
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
 
         # Collect stats from various cache layers
         cache_stats: dict[str, Any] = {}
@@ -238,7 +239,8 @@ def clear(
     permissions: bool,
     clear_all: bool,
     yes: bool,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Clear cache entries.
 
@@ -273,7 +275,7 @@ def clear(
             return
 
     try:
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
         cleared: list[str] = []
 
         # Clear content cache

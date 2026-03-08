@@ -11,7 +11,6 @@ import click
 from rich.table import Table
 
 from nexus.cli.utils import (
-    BackendConfig,
     add_backend_options,
     console,
     get_filesystem,
@@ -48,7 +47,9 @@ def version_group() -> None:
 @click.argument("path")
 @click.option("--limit", type=int, default=None, help="Limit number of versions shown")
 @add_backend_options
-def version_history(path: str, limit: int | None, backend_config: BackendConfig) -> None:
+def version_history(
+    path: str, limit: int | None, remote_url: str | None, remote_api_key: str | None
+) -> None:
     """Show version history for a file.
 
     Displays all versions of a file with metadata.
@@ -68,7 +69,7 @@ def version_history(path: str, limit: int | None, backend_config: BackendConfig)
         return f"{size_float:.1f} PB"
 
     try:
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
         _nx: Any = nx
         versions = _nx.version_service.list_versions(path)
 
@@ -116,7 +117,9 @@ def version_history(path: str, limit: int | None, backend_config: BackendConfig)
 @click.option("--version", "-v", type=int, required=True, help="Version number to retrieve")
 @click.option("--output", "-o", help="Output file path (default: stdout)")
 @add_backend_options
-def version_get(path: str, version: int, output: str | None, backend_config: BackendConfig) -> None:
+def version_get(
+    path: str, version: int, output: str | None, remote_url: str | None, remote_api_key: str | None
+) -> None:
     """Get a specific version of a file.
 
     Retrieves content from a specific version.
@@ -126,7 +129,7 @@ def version_get(path: str, version: int, output: str | None, backend_config: Bac
         nexus version get /workspace/file.txt -v 1 -o old_version.txt
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
         _nx: Any = nx
         content = _nx.version_service.get_version(path, version)
 
@@ -156,7 +159,9 @@ def version_get(path: str, version: int, output: str | None, backend_config: Bac
     "--mode", type=click.Choice(["metadata", "content"]), default="content", help="Diff mode"
 )
 @add_backend_options
-def version_diff(path: str, v1: int, v2: int, mode: str, backend_config: BackendConfig) -> None:
+def version_diff(
+    path: str, v1: int, v2: int, mode: str, remote_url: str | None, remote_api_key: str | None
+) -> None:
     """Compare two versions of a file.
 
     Shows differences between two versions.
@@ -176,7 +181,7 @@ def version_diff(path: str, v1: int, v2: int, mode: str, backend_config: Backend
         return f"{size_float:.1f} PB"
 
     try:
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
         _nx: Any = nx
         diff = _nx.version_service.diff_versions(path, v1, v2, mode=mode)
 
@@ -238,7 +243,9 @@ def version_diff(path: str, v1: int, v2: int, mode: str, backend_config: Backend
 @click.option("--version", "-v", type=int, required=True, help="Version to rollback to")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
 @add_backend_options
-def version_rollback(path: str, version: int, yes: bool, backend_config: BackendConfig) -> None:
+def version_rollback(
+    path: str, version: int, yes: bool, remote_url: str | None, remote_api_key: str | None
+) -> None:
     """Rollback file to a previous version.
 
     Reverts file content to an older version.
@@ -248,7 +255,7 @@ def version_rollback(path: str, version: int, yes: bool, backend_config: Backend
         nexus version rollback /workspace/file.txt -v 1 --yes
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
         _nx: Any = nx
 
         # Get current version for confirmation

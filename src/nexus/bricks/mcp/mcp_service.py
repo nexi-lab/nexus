@@ -266,8 +266,8 @@ class MCPService:
         env: dict[str, str] | None = None,
         headers: dict[str, str] | None = None,
         description: str | None = None,
-        tier: str = "system",
-        context: "OperationContext | None" = None,
+        tier: str = "system",  # noqa: ARG002
+        context: "OperationContext | None" = None,  # noqa: ARG002
     ) -> dict[str, Any]:
         """Mount an MCP server.
 
@@ -366,7 +366,7 @@ class MCPService:
         manager = self._get_mcp_mount_manager()
 
         # Mount the server (async operation)
-        await manager.mount(mount_config, tier=tier, context=context)
+        await manager.mount(mount_config)
 
         # Sync tools (async operation)
         tool_count = await manager.sync_tools(name)

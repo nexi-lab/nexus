@@ -77,6 +77,8 @@ class TaskManager:
             self._stream_registry = _SR()
 
         self._artifact_observers = artifact_observers or []
+        # Per-task locks to prevent TOCTOU races in state transitions
+        self._task_locks: dict[str, "asyncio.Lock"] = {}
 
     @property
     def stream_registry(self) -> "StreamRegistry":
@@ -201,32 +203,36 @@ class TaskManager:
         Raises ``TaskNotFoundError`` if the task does not exist.
         Raises ``InvalidStateTransitionError`` if the transition is invalid.
         """
-        # TODO(race-condition): update_task_state has a TOCTOU race under
-        # concurrent calls.  Fix requires optimistic locking (version column)
-        # in TaskStoreProtocol.
-        task = await self._store.get(task_id, zone_id=zone_id)
-        if task is None:
-            raise TaskNotFoundError(data={"taskId": task_id})
+        import asyncio
 
-        current_state = task.status.state
-        if not is_valid_transition(current_state, new_state):
-            raise InvalidStateTransitionError(
-                message=f"Cannot transition from {current_state.value} to {new_state.value}",
-                data={
-                    "taskId": task_id,
-                    "currentState": current_state.value,
-                    "requestedState": new_state.value,
-                },
-            )
+        # Per-task lock prevents TOCTOU race on concurrent transitions.
+        if task_id not in self._task_locks:
+            self._task_locks[task_id] = asyncio.Lock()
 
-        now = datetime.now(UTC)
-        new_status = TaskStatus(state=new_state, message=message, timestamp=now)
-        task = task.model_copy(update={"status": new_status})
+        async with self._task_locks[task_id]:
+            task = await self._store.get(task_id, zone_id=zone_id)
+            if task is None:
+                raise TaskNotFoundError(data={"taskId": task_id})
 
-        if message is not None:
-            task = task.model_copy(update={"history": [*task.history, message]})
+            current_state = task.status.state
+            if not is_valid_transition(current_state, new_state):
+                raise InvalidStateTransitionError(
+                    message=f"Cannot transition from {current_state.value} to {new_state.value}",
+                    data={
+                        "taskId": task_id,
+                        "currentState": current_state.value,
+                        "requestedState": new_state.value,
+                    },
+                )
 
-        await self._store.save(task, zone_id=zone_id)
+            now = datetime.now(UTC)
+            new_status = TaskStatus(state=new_state, message=message, timestamp=now)
+            task = task.model_copy(update={"status": new_status})
+
+            if message is not None:
+                task = task.model_copy(update={"history": [*task.history, message]})
+
+            await self._store.save(task, zone_id=zone_id)
 
         # Push status update to active streams
         event = TaskStatusUpdateEvent(

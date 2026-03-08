@@ -5,7 +5,6 @@ Defines the Storage Brick boundary as composable protocols:
 - ``ContentStoreProtocol`` — Minimal CAS interface (most consumers need only this)
 - ``DirectoryOpsProtocol`` — Directory operations (VFS Router, mount services)
 - ``ConnectorProtocol`` — Full connector interface (Storage Brick boundary)
-- ``PassthroughProtocol`` — Same-box operations (locking, physical paths)
 - ``OAuthCapableProtocol`` — OAuth token management capability
 - ``StreamingProtocol`` — Memory-efficient large file I/O (stream/range)
 - ``BatchContentProtocol`` — Bulk content read optimization
@@ -24,7 +23,6 @@ References:
     - Issue #1703: Make backends implement ConnectorProtocol
 """
 
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -179,29 +177,10 @@ class ConnectorProtocol(
     def is_connected(self) -> bool: ...
 
     @property
-    def is_passthrough(self) -> bool: ...
-
-    @property
     def has_root_path(self) -> bool: ...
 
     @property
     def has_token_manager(self) -> bool: ...
-
-@runtime_checkable
-class PassthroughProtocol(Protocol):
-    """Same-box operations — physical path access, file watching.
-
-    Only PassthroughBackend implements this. Used by events/watch code
-    to safely narrow the backend type instead of using ``cast()``.
-
-    Advisory locking removed — use LockManagerBase (LocalLockManager
-    or RaftLockManager) via factory DI instead.
-    """
-
-    @property
-    def base_path(self) -> Path: ...
-
-    def get_physical_path(self, virtual_path: str) -> Path: ...
 
 @runtime_checkable
 class OAuthCapableProtocol(Protocol):

@@ -72,11 +72,11 @@ async def redis_client():
 @pytest.fixture
 async def nx_with_lock(temp_dir, redis_client, isolated_db):
     """Create a NexusFS instance with distributed lock manager configured."""
-    from nexus.backends.storage.passthrough import PassthroughBackend
+    from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.core.nexus_fs import NexusFS
     from nexus.lib.distributed_lock import RedisLockManager
 
-    backend = PassthroughBackend(base_path=temp_dir)
+    backend = CASLocalBackend(root_path=str(temp_dir))
     # Disable permission enforcement for tests
     metadata_store = RaftMetadataStore.embedded(str(isolated_db).replace(".db", ""))
     nx = NexusFS(
@@ -100,12 +100,12 @@ async def nx_pair_with_lock(temp_dir, redis_client, isolated_db, tmp_path):
     This simulates two agents accessing the same NexusFS through a shared database
     (like Postgres in production). The lock manager is also shared via Redis.
     """
-    from nexus.backends.storage.passthrough import PassthroughBackend
+    from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.core.nexus_fs import NexusFS
     from nexus.lib.distributed_lock import RedisLockManager
 
     # Both instances use the same backend (shared storage)
-    backend = PassthroughBackend(base_path=temp_dir)
+    backend = CASLocalBackend(root_path=str(temp_dir))
 
     # Both instances share the same database (simulating shared Postgres)
     # This allows nx2 to see files created by nx1
@@ -142,7 +142,7 @@ def nx_sync_with_lock(temp_dir, isolated_db):
     Actual connections are created per-operation by _acquire_lock_sync.
     This fixture is suitable for testing write(lock=True) in pure sync context.
     """
-    from nexus.backends.storage.passthrough import PassthroughBackend
+    from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.cache.dragonfly import DragonflyClient
     from nexus.core.nexus_fs import NexusFS
     from nexus.lib.distributed_lock import RedisLockManager
@@ -158,7 +158,7 @@ def nx_sync_with_lock(temp_dir, isolated_db):
     # Don't connect - just set up the lock manager with URL info
     lock_manager = RedisLockManager(stub_client)
 
-    backend = PassthroughBackend(base_path=temp_dir)
+    backend = CASLocalBackend(root_path=str(temp_dir))
     metadata_store = RaftMetadataStore.embedded(str(isolated_db).replace(".db", ""))
     nx = NexusFS(
         backend=backend, metadata_store=metadata_store, permissions=PermissionConfig(enforce=False)
@@ -388,7 +388,7 @@ class TestWriteWithLock:
         import threading
         import time
 
-        from nexus.backends.storage.passthrough import PassthroughBackend
+        from nexus.backends.storage.cas_local import CASLocalBackend
         from nexus.cache.dragonfly import DragonflyClient
         from nexus.core.nexus_fs import NexusFS
         from nexus.lib.distributed_lock import RedisLockManager
@@ -399,7 +399,7 @@ class TestWriteWithLock:
         )
 
         # Create shared storage backend and database
-        backend = PassthroughBackend(base_path=temp_dir)
+        backend = CASLocalBackend(root_path=str(temp_dir))
         shared_db = tmp_path / "shared.db"
 
         def create_nx():
@@ -669,10 +669,10 @@ class TestEdgeCases:
 
     def test_write_lock_no_lock_manager_warns(self, temp_dir, isolated_db):
         """Test write(lock=True) without lock manager logs warning and proceeds."""
-        from nexus.backends.storage.passthrough import PassthroughBackend
+        from nexus.backends.storage.cas_local import CASLocalBackend
         from nexus.core.nexus_fs import NexusFS
 
-        backend = PassthroughBackend(base_path=temp_dir)
+        backend = CASLocalBackend(root_path=str(temp_dir))
         # Disable permission enforcement and don't inject lock manager
         metadata_store = RaftMetadataStore.embedded(str(isolated_db).replace(".db", ""))
         nx = NexusFS(
@@ -791,7 +791,7 @@ class TestMultiThreadingContention:
         """
         import threading
 
-        from nexus.backends.storage.passthrough import PassthroughBackend
+        from nexus.backends.storage.cas_local import CASLocalBackend
         from nexus.cache.dragonfly import DragonflyClient
         from nexus.core.nexus_fs import NexusFS
         from nexus.lib.distributed_lock import RedisLockManager
@@ -801,7 +801,7 @@ class TestMultiThreadingContention:
             os.environ.get("NEXUS_REDIS_URL", "redis://localhost:6380"),
         )
 
-        backend = PassthroughBackend(base_path=temp_dir)
+        backend = CASLocalBackend(root_path=str(temp_dir))
         counter_file = temp_dir / "counter.json"
         counter_file.write_text('{"count": 0}')
 
@@ -1174,7 +1174,7 @@ class TestLockIsolation:
 
         Zone A's lock on /file.txt should NOT block Zone B's lock on /file.txt.
         """
-        from nexus.backends.storage.passthrough import PassthroughBackend
+        from nexus.backends.storage.cas_local import CASLocalBackend
         from nexus.cache.dragonfly import DragonflyClient
         from nexus.contracts.types import OperationContext
         from nexus.core.nexus_fs import NexusFS
@@ -1190,7 +1190,7 @@ class TestLockIsolation:
         await client.connect()
 
         try:
-            backend = PassthroughBackend(base_path=temp_dir)
+            backend = CASLocalBackend(root_path=str(temp_dir))
             metadata_store = RaftMetadataStore.embedded(str(isolated_db).replace(".db", ""))
             nx = NexusFS(
                 backend=backend,

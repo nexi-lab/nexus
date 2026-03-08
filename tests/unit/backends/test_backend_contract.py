@@ -213,7 +213,6 @@ class TestBackendContract:
     def test_capability_flags_are_booleans(self, backend: Backend) -> None:
         assert isinstance(backend.user_scoped, bool)
         assert isinstance(backend.is_connected, bool)
-        assert isinstance(backend.is_passthrough, bool)
         assert isinstance(backend.has_root_path, bool)
         assert isinstance(backend.has_token_manager, bool)
 

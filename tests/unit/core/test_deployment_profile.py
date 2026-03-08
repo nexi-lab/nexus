@@ -241,9 +241,12 @@ class TestNexusConfigProfile:
     def test_valid_profiles(self) -> None:
         from nexus.config import NexusConfig
 
-        for p in ["minimal", "embedded", "lite", "full", "cloud", "remote"]:
+        for p in ["minimal", "embedded", "lite", "full", "cloud"]:
             cfg = NexusConfig(profile=p)
             assert cfg.profile == p
+        # "remote" requires url
+        cfg = NexusConfig(profile="remote", url="grpc://localhost:50051")
+        assert cfg.profile == "remote"
 
     def test_invalid_profile_raises(self) -> None:
         from nexus.config import NexusConfig

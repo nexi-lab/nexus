@@ -355,17 +355,10 @@ class TokenManager:
                 if credential.is_expired() and credential.refresh_token:
                     # Rate limit: skip if refreshed recently
                     if self._is_refresh_rate_limited(model):
-                        logger.debug(
-                            f"Refresh rate limited for {provider}:{user_email}, "
-                            f"returning current token"
+                        raise AuthenticationError(
+                            f"Token expired for {provider}:{user_email} and "
+                            f"refresh is rate-limited (cooldown {_REFRESH_COOLDOWN_SECONDS}s)"
                         )
-                        if self._cache_store is not None:
-                            await self._cache_store.set(
-                                cache_key_str,
-                                credential.access_token.encode(),
-                                ttl=self._cache_ttl,
-                            )
-                        return credential.access_token
 
                     logger.info(f"Token expired for {provider}:{user_email}, refreshing...")
 
@@ -515,6 +508,11 @@ class TokenManager:
                         details={"rotation_counter": audit_rotation_counter},
                         ip_address=ip_address,
                     )
+
+            if credential.is_expired():
+                raise AuthenticationError(
+                    f"Token expired for {provider}:{user_email} and no refresh token available"
+                )
 
             return credential.access_token
         finally:

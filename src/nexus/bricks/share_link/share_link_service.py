@@ -180,7 +180,13 @@ class ShareLinkService:
             zone_id, created_by, _ = self._extract_context_info(context)
 
             # Check write permission to create share link
-            if self._enforce_permissions and context:
+            if self._enforce_permissions:
+                if not context:
+                    return HandlerResponse.error(
+                        "Permission denied: authentication required to create share links",
+                        code=403,
+                        is_expected=True,
+                    )
                 has_perm = self._gw.rebac_check(
                     subject=("user", created_by),
                     permission="write",
@@ -578,16 +584,6 @@ class ShareLinkService:
                             "Share link has expired", code=410, is_expected=True
                         )
 
-                    if (
-                        link.max_access_count is not None
-                        and link.access_count >= link.max_access_count
-                    ):
-                        log_access(False, "limit_exceeded")
-                        session.commit()
-                        return HandlerResponse.error(
-                            "Share link access limit exceeded", code=429, is_expected=True
-                        )
-
                     if link.password_hash is not None:
                         if not password:
                             log_access(False, "password_required")
@@ -604,10 +600,40 @@ class ShareLinkService:
                                 "Incorrect password", code=401, is_expected=True
                             )
 
-                    link.access_count += 1
-                    link.last_accessed_at = now
-                    log_access(True)
-                    session.commit()
+                    # Atomic access-count increment with row-level guard
+                    # to prevent races from exceeding max_access_count.
+                    if link.max_access_count is not None:
+                        from sqlalchemy import update as sa_update
+
+                        from nexus.storage.models import ShareLinkModel as SLM
+
+                        result = session.execute(
+                            sa_update(SLM)
+                            .where(SLM.link_id == link_id)
+                            .where(
+                                (SLM.max_access_count.is_(None))
+                                | (SLM.access_count < SLM.max_access_count)
+                            )
+                            .values(
+                                access_count=SLM.access_count + 1,
+                                last_accessed_at=now,
+                            )
+                        )
+                        if getattr(result, "rowcount", 0) == 0:
+                            log_access(False, "limit_exceeded")
+                            session.commit()
+                            return HandlerResponse.error(
+                                "Share link access limit exceeded", code=429, is_expected=True
+                            )
+                        log_access(True)
+                        session.commit()
+                        # Refresh to get updated values
+                        session.refresh(link)
+                    else:
+                        link.access_count += 1
+                        link.last_accessed_at = now
+                        log_access(True)
+                        session.commit()
 
                     return HandlerResponse.ok(
                         {

@@ -1355,7 +1355,7 @@ class SearchDaemon:
             batch = docs_to_embed[batch_start : batch_start + batch_size]
             try:
                 await self._indexing_pipeline.index_documents(
-                    [(path_id, vpath, content) for vpath, content, path_id in batch]
+                    [(vpath, content, path_id) for vpath, content, path_id in batch]
                 )
                 embedded += len(batch)
                 if batch_start % (batch_size * 5) == 0:

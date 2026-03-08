@@ -250,16 +250,16 @@ def _boot_wired_services(
         logger.debug("[BOOT:WIRED] ShareLinkService disabled by profile")
 
     # --- EventsService: File watching + advisory locking ---
+    # EventsService is a VFSObserver — receives FileEvents via kernel OBSERVE.
+    # Factory registers it on dispatch in orchestrator.py after construction.
     events_service: Any = None
     if _on("ipc"):
         try:
             from nexus.system_services.lifecycle.events_service import EventsService
 
             events_service = EventsService(
-                backend=_root_backend,
                 event_bus=brick_services.event_bus,
                 lock_manager=brick_services.lock_manager,
-                zone_id=None,
             )
             logger.debug("[BOOT:WIRED] EventsService created")
         except Exception as exc:

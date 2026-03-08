@@ -20,10 +20,12 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+from nexus.remote.rpc_proxy import RPCProxyBase
+
 logger = logging.getLogger(__name__)
 
 
-class RemoteServiceProxy:
+class RemoteServiceProxy(RPCProxyBase):
     """Universal RPC proxy injected as every service attribute in REMOTE mode.
 
     A single instance fills all 25+ service slots on NexusFS. The proxy
@@ -41,7 +43,7 @@ class RemoteServiceProxy:
         service_name: Optional label for debug logging (e.g. "universal").
     """
 
-    __slots__ = ("_call_rpc", "_service_name")
+    __slots__ = ("_call_rpc_cb", "_service_name")
 
     def __init__(
         self,
@@ -49,10 +51,21 @@ class RemoteServiceProxy:
         service_name: str = "",
     ) -> None:
         # Use object.__setattr__ to avoid triggering our __getattr__
-        object.__setattr__(self, "_call_rpc", call_rpc)
+        object.__setattr__(self, "_call_rpc_cb", call_rpc)
         object.__setattr__(self, "_service_name", service_name)
 
-    def __getattr__(self, name: str) -> Callable[..., Any]:
+    def _call_rpc(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        read_timeout: float | None = None,
+    ) -> Any:
+        """Call RPC callback. Satisfies RPCProxyBase interface."""
+        # Use object.__getattribute__ to avoid __getattr__ loops
+        call_rpc = object.__getattribute__(self, "_call_rpc_cb")
+        return call_rpc(method, params, read_timeout=read_timeout)
+
+    def __getattr__(self, name: str) -> Any:
         """Return an RPC forwarder for any public method access.
 
         Private/dunder attributes raise AttributeError immediately so
@@ -62,33 +75,28 @@ class RemoteServiceProxy:
         if name.startswith("_"):
             raise AttributeError(name)
 
-        # Lazy import to avoid circular dependency at module load
-        from nexus.remote.rpc_proxy import RPCProxyBase
+        from nexus.remote.method_registry import METHOD_REGISTRY
 
-        def rpc_forwarder(*args: Any, **kwargs: Any) -> Any:
-            # Server exposes async @rpc_expose methods; client-side sync
-            # wrappers append "_sync" — strip suffix for RPC dispatch.
-            rpc_name = name
-            if rpc_name.endswith("_sync"):
-                rpc_name = rpc_name[:-5]
+        spec = METHOD_REGISTRY.get(name)
 
-            # Map positional args to keyword args using ABC signature
-            if args:
-                param_names = RPCProxyBase._get_param_names(rpc_name)
-                for i, val in enumerate(args):
-                    if i < len(param_names):
-                        kwargs[param_names[i]] = val
+        # Server exposes async @rpc_expose methods; client-side sync
+        # wrappers append "_sync" — strip suffix for RPC dispatch.
+        rpc_name = name
+        if rpc_name.endswith("_sync"):
+            rpc_name = rpc_name[:-5]
+            # Update spec if it was found under the original name
+            if spec:
+                from dataclasses import replace
 
-            # Strip context params (handled server-side via auth headers)
-            kwargs.pop("context", None)
-            kwargs.pop("_context", None)
+                spec = replace(spec, rpc_name=rpc_name)
 
-            return self._call_rpc(rpc_name, kwargs or None)
+        def _proxy(*args: Any, **kwargs: Any) -> Any:
+            return self._dispatch_rpc(name, spec, args, kwargs)
 
         # Preserve method name for debugging
-        rpc_forwarder.__name__ = name
-        rpc_forwarder.__qualname__ = f"RemoteServiceProxy.{name}"
-        return rpc_forwarder
+        _proxy.__name__ = name
+        _proxy.__qualname__ = f"RemoteServiceProxy.{name}"
+        return _proxy
 
     def __repr__(self) -> str:
         name = object.__getattribute__(self, "_service_name")

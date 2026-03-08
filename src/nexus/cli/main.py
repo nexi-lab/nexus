@@ -23,7 +23,14 @@ setup_uvloop()
 
 @click.group()
 @click.version_option(version=nexus.__version__, prog_name="nexus")
-def main() -> None:
+@click.option(
+    "--profile",
+    type=str,
+    default=None,
+    help="Use named connection profile from ~/.nexus/config.yaml.",
+)
+@click.pass_context
+def main(ctx: click.Context, profile: str | None) -> None:
     """Nexus - AI-Native Distributed Filesystem.
 
     Beautiful command-line interface for file operations, discovery, and management.
@@ -55,10 +62,15 @@ def main() -> None:
         nexus serve --host 0.0.0.0 --port 2026
         nexus mount /mnt/nexus
 
+        # Profile management
+        nexus profile list
+        nexus --profile staging ls /
+
     For more information on specific commands, use:
         nexus <command> --help
     """
-    pass
+    ctx.ensure_object(dict)
+    ctx.obj["profile"] = profile
 
 
 # Register all commands from the modular structure

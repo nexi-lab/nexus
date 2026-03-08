@@ -22,6 +22,8 @@ from nexus.cli.commands import (
     admin,
     agent,
     cache,
+    config_cmd,  # Issue #2809: Config show/set/get/reset
+    connect_cmd,  # Issue #2809: Interactive connection setup
     connectors,
     context,  # Issue #1315: Context versioning — workspace branching
     directory,
@@ -36,6 +38,7 @@ from nexus.cli.commands import (
     oauth,
     operations,
     plugins,
+    profile,  # Issue #2809: Profile management
     rebac,
     sandbox,
     search,
@@ -87,6 +90,9 @@ def register_all_commands(cli: click.Group) -> None:
     context.register_commands(cli)  # Issue #1315: Context versioning
     network.register_commands(cli)  # WireGuard mesh network for federation
     tls.register_commands(cli)  # Issue #1250: TLS cert management for federation
+    profile.register_commands(cli)  # Issue #2809: Profile management
+    connect_cmd.register_commands(cli)  # Issue #2809: Interactive connection setup
+    config_cmd.register_commands(cli)  # Issue #2809: Config show/set/get/reset
 
 
 __all__ = [
@@ -119,4 +125,7 @@ __all__ = [
     "network",  # WireGuard mesh network for federation
     "tls",  # Issue #1250: TLS cert management
     "zone_mod",  # zone.py (federation + portability CLI)
+    "profile",  # Issue #2809: Profile management
+    "connect_cmd",  # Issue #2809: Interactive connection setup
+    "config_cmd",  # Issue #2809: Config show/set/get/reset
 ]

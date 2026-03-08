@@ -50,7 +50,7 @@ from nexus.backends.connectors.slack.utils import (
     list_channels,
     list_messages_from_channel,
 )
-from nexus.backends.wrappers.cache_mixin import IMMUTABLE_VERSION, CacheConnectorMixin
+from nexus.backends.wrappers.cache_mixin import CacheConnectorMixin
 from nexus.contracts.capabilities import OAUTH_CONNECTOR_CAPABILITIES, ConnectorCapability
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.object_store import WriteResult
@@ -525,14 +525,17 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
         # Format as YAML
         content = self._format_messages_as_yaml(messages)
 
-        # Cache the result
+        # Cache the result with a timestamp-based version so sync_pipeline
+        # will refresh when the channel is re-synced. Slack channels contain
+        # live message history that can change (new messages, edits, deletes).
         if self._has_caching():
             try:
                 zone_id = getattr(context, "zone_id", None)
+                version = str(int(datetime.now(UTC).timestamp()))
                 self._write_to_cache(
                     path=cache_path,
                     content=content,
-                    backend_version=IMMUTABLE_VERSION,  # Messages are immutable
+                    backend_version=version,
                     zone_id=zone_id,
                 )
             except Exception as e:
@@ -623,17 +626,18 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
         context: "OperationContext | None" = None,
     ) -> str | None:
         """
-        Get version for a Slack message file.
+        Get version for a Slack channel snapshot file.
 
-        Slack messages are immutable (read-only) - once sent, they never change.
-        Therefore, we return a fixed version "immutable" for all message files.
+        Slack channel snapshots are mutable (messages can be added/edited/deleted),
+        so we return a timestamp-based version that allows sync_pipeline to detect
+        changes and refresh the cache.
 
         Args:
             path: Virtual file path (or backend_path from context)
             context: Operation context with optional backend_path
 
         Returns:
-            "immutable" for message files, None for directories/non-files
+            Timestamp-based version for .yaml files, None for directories
         """
         try:
             # Get backend path
@@ -642,12 +646,12 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
             else:
                 backend_path = path.lstrip("/")
 
-            # Check if this is a message file (ends with .json)
-            if not backend_path.endswith(".json"):
+            # Check if this is a channel snapshot file (exposed as .yaml)
+            if not backend_path.endswith(".yaml"):
                 return None  # Not a file (likely a directory)
 
-            # Return fixed version for immutable Slack messages
-            return IMMUTABLE_VERSION
+            # Return timestamp-based version so sync_pipeline can detect staleness
+            return str(int(datetime.now(UTC).timestamp()))
 
         except Exception as e:
             logger.debug("Slack version check failed: %s", e)

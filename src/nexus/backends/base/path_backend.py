@@ -100,8 +100,25 @@ class PathBackend(Backend):
         return content_type
 
     def _get_blob_path(self, backend_path: str) -> str:
-        """Convert backend-relative path to full blob path."""
+        """Convert backend-relative path to full blob path.
+
+        Raises:
+            BackendError: If path contains traversal components (e.g., "..").
+        """
+        import posixpath
+
         backend_path = backend_path.lstrip("/")
+
+        # Security: reject path traversal attempts (e.g., "../../etc/passwd")
+        normalized = posixpath.normpath(backend_path) if backend_path else ""
+        if normalized == ".." or normalized.startswith("../"):
+            raise BackendError(
+                f"Path traversal detected: {backend_path}",
+                backend=getattr(self, "name", "blob"),
+                path=backend_path,
+            )
+        backend_path = normalized
+
         if self.prefix:
             if backend_path:
                 return f"{self.prefix}/{backend_path}"

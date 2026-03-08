@@ -311,11 +311,6 @@ class ObjectStoreABC(ABC):
         """Whether this backend supports Rust-accelerated parallel mmap reads."""
         return False
 
-    @property
-    def is_passthrough(self) -> bool:
-        """Whether this backend is a PassthroughBackend for same-box mode."""
-        return False
-
     # === Lifecycle ===
 
     def close(self) -> None:  # noqa: B027

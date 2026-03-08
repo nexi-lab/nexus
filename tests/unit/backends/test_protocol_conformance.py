@@ -26,7 +26,6 @@ from nexus.core.protocols.connector import (
     DirectoryListingProtocol,
     DirectoryOpsProtocol,
     OAuthCapableProtocol,
-    PassthroughProtocol,
     StreamingProtocol,
 )
 
@@ -205,13 +204,6 @@ class TestConcreteBackendConformance:
         assert isinstance(backend, ConnectorProtocol)
         assert isinstance(backend, StreamingProtocol)
         assert isinstance(backend, BatchContentProtocol)
-
-    def test_passthrough_backend(self, tmp_path: Any) -> None:
-        from nexus.backends.storage.passthrough import PassthroughBackend
-
-        backend = PassthroughBackend(base_path=str(tmp_path / "pt"))
-        assert isinstance(backend, ConnectorProtocol)
-        assert isinstance(backend, PassthroughProtocol)
 
 
 # ---------------------------------------------------------------------------

@@ -362,6 +362,8 @@ def connect(
     else:
         # standalone: single-node embedded Raft (no peers), with fallback
         try:
+            from nexus.storage.raft_metadata_store import RaftMetadataStore
+
             metadata_store = RaftMetadataStore.embedded(metadata_path)
         except (RuntimeError, ImportError):
             from nexus.storage.dict_metastore import DictMetastore

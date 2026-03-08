@@ -40,6 +40,14 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         config = DaemonConfig(
             database_url=svc.database_url,
             query_timeout_seconds=float(os.environ.get("NEXUS_QUERY_TIMEOUT", "10.0")),
+            # txtai backend config (Issue #2663)
+            txtai_model=os.environ.get(
+                "NEXUS_TXTAI_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
+            ),
+            txtai_reranker=os.environ.get("NEXUS_TXTAI_RERANKER") or None,
+            txtai_sparse=os.environ.get("NEXUS_TXTAI_SPARSE", "").lower() in ("true", "1", "yes"),
+            txtai_graph=os.environ.get("NEXUS_TXTAI_GRAPH", "true").lower()
+            not in ("false", "0", "no"),
         )
 
         # Inject async_session_factory from RecordStoreABC when available
@@ -74,21 +82,8 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
             cache_brick=_cache_brick,
         )
 
-        # Wire embedding provider so semantic search works (pre-existing gap:
-        # _embedding_provider was always None, causing silent fallback failures)
-        if _search_cfg is not None:
-            with contextlib.suppress(ImportError, ValueError):
-                from nexus.bricks.search.embeddings import create_embedding_provider
-
-                app.state.search_daemon._embedding_provider = create_embedding_provider(
-                    provider=_search_cfg.embedding_provider,
-                    model=_search_cfg.embedding_model,
-                )
-                logger.info(
-                    "Embedding provider wired: %s/%s",
-                    _search_cfg.embedding_provider,
-                    _search_cfg.embedding_model or "default",
-                )
+        # Embeddings are now handled by txtai backend (Issue #2663).
+        # The old nexus.bricks.search.embeddings module has been deleted.
 
         await app.state.search_daemon.startup()
         app.state.search_daemon_enabled = True

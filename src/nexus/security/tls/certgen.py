@@ -22,6 +22,7 @@ import base64
 import datetime
 import ipaddress
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 from cryptography import x509
@@ -170,3 +171,63 @@ def load_pem_key(path: Path) -> ec.EllipticCurvePrivateKey:
     if not isinstance(key, ec.EllipticCurvePrivateKey):
         raise TypeError(f"Expected EC private key, got {type(key).__name__}")
     return key
+
+
+# ---------------------------------------------------------------------------
+# Certificate expiry checking (Issue #2808)
+# ---------------------------------------------------------------------------
+
+CERT_EXPIRY_CRITICAL_DAYS = 7
+CERT_EXPIRY_WARN_DAYS = 30
+
+
+@dataclass(frozen=True)
+class CertStatus:
+    """Certificate expiry status."""
+
+    days_remaining: int
+    level: str  # "OK", "WARN", "CRITICAL", "EXPIRED"
+
+    @property
+    def is_healthy(self) -> bool:
+        return self.level == "OK"
+
+
+def check_cert_expiry(cert_path: str | Path) -> CertStatus:
+    """Check how many days until a PEM certificate expires.
+
+    Args:
+        cert_path: Path to a PEM-encoded X.509 certificate.
+
+    Returns:
+        CertStatus with days_remaining and severity level.
+
+    Raises:
+        FileNotFoundError: If cert_path does not exist.
+        ValueError: If the file is not a valid PEM certificate.
+    """
+    path = Path(cert_path)
+    try:
+        data = path.read_bytes()
+    except FileNotFoundError:
+        raise
+    except OSError as exc:
+        raise ValueError(f"Cannot read certificate at {path}: {exc}") from exc
+    try:
+        cert = x509.load_pem_x509_certificate(data)
+    except Exception as exc:
+        raise ValueError(f"Cannot parse certificate at {path}: {exc}") from exc
+
+    now = datetime.datetime.now(datetime.UTC)
+    days_remaining = (cert.not_valid_after_utc - now).days
+
+    if days_remaining < 0:
+        level = "EXPIRED"
+    elif days_remaining < CERT_EXPIRY_CRITICAL_DAYS:
+        level = "CRITICAL"
+    elif days_remaining < CERT_EXPIRY_WARN_DAYS:
+        level = "WARN"
+    else:
+        level = "OK"
+
+    return CertStatus(days_remaining=days_remaining, level=level)

@@ -733,13 +733,12 @@ send_notifications: true
         calendar_id = parts[0]
         event_id = parts[1].replace(".yaml", "")
 
-        # For delete, we need to read the delete request content
-        # This should be passed through context or as a separate call
-        # For now, require explicit confirmation via a different mechanism
-        data = {"agent_intent": "Delete requested", "confirm": True}
-
-        # Validate traits (requires confirm: true)
-        self.validate_traits("delete_event", data)
+        # delete_content is a backend-level interface method. Agent-facing
+        # deletes must go through write_content() with YAML containing
+        # "# agent_intent: ..." and "# confirm: true" — trait validation
+        # is enforced in that path. Do NOT fabricate confirmation data here
+        # as that would bypass the explicit-confirmation safety contract.
+        logger.info("delete_content called for event %s in calendar %s", event_id, calendar_id)
 
         service = self._get_calendar_service(context)
 

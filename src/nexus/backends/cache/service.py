@@ -237,8 +237,17 @@ class CacheService:
         self,
         path: str,
         original: bool = False,
+        zone_id: str | None = None,
     ) -> CacheEntry | None:
-        """Read content from cache (L1 Rust metadata cache, then L2 disk)."""
+        """Read content from cache (L1 Rust metadata cache, then L2 disk).
+
+        Args:
+            path: Cache key path.
+            original: If True, also read binary content from disk.
+            zone_id: Explicit zone override. When provided, L2 disk reads use
+                     this zone instead of the connector's default zone. This
+                     ensures multi-zone isolation on shared connectors.
+        """
         l1_cache = self._l1_cache
 
         # L1: Check Rust metadata cache first
@@ -268,7 +277,7 @@ class CacheService:
             return None
 
         file_cache = self.file_cache
-        cache_zone = self._get_cache_zone()
+        cache_zone = zone_id or self._get_cache_zone()
         meta = file_cache.read_meta(cache_zone, path)
 
         if not meta:
@@ -307,8 +316,16 @@ class CacheService:
         self,
         paths: list[str],
         original: bool = False,
+        zone_id: str | None = None,
     ) -> dict[str, CacheEntry]:
-        """Read multiple entries from cache in bulk (L1 + L2)."""
+        """Read multiple entries from cache in bulk (L1 + L2).
+
+        Args:
+            paths: List of cache key paths.
+            original: If True, also read binary content from disk.
+            zone_id: Explicit zone override for L2 disk reads. Ensures
+                     multi-zone isolation on shared connectors.
+        """
         if not paths:
             return {}
 
@@ -349,7 +366,7 @@ class CacheService:
 
         # L2: Disk-based lookup for remaining paths
         file_cache = self.file_cache
-        cache_zone = self._get_cache_zone()
+        cache_zone = zone_id or self._get_cache_zone()
 
         meta_entries = file_cache.read_meta_bulk(cache_zone, paths_needing_l2)
 
@@ -706,15 +723,24 @@ class CacheService:
         path: str | None = None,
         mount_prefix: str | None = None,
         delete: bool = False,
+        zone_id: str | None = None,
     ) -> int:
         """Invalidate cache entries (L1 memory + L2 disk).
+
+        Args:
+            path: Specific path to invalidate.
+            mount_prefix: Invalidate all paths under this mount prefix.
+            delete: Whether this is a delete operation.
+            zone_id: Explicit zone override. Ensures invalidation targets the
+                     correct zone on shared connectors instead of defaulting
+                     to the connector's zone_id.
 
         Bug fix: L1 removal now uses bare `path` key (matches stored key)
         instead of `f"cache_entry:{path}"` which never matched.
         """
         memory_cache = self._l1_cache
         file_cache = self.file_cache
-        cache_zone = self._get_cache_zone()
+        cache_zone = zone_id or self._get_cache_zone()
 
         if path:
             # FIX: Use bare path (matches the key used in l1_cache.put)
@@ -818,9 +844,9 @@ class CacheService:
         path = self.get_cache_path(context) or context.backend_path
         zone_id = getattr(context, "zone_id", None)
 
-        # Step 1: Check cache
+        # Step 1: Check cache (pass zone_id for multi-zone isolation)
         if self.has_caching():
-            cached = self.read_from_cache(path, original=True)
+            cached = self.read_from_cache(path, original=True, zone_id=zone_id)
             if cached and not cached.stale and cached.content_binary:
                 logger.debug("[CACHE] HIT: %s", path)
                 return CachedReadResult(

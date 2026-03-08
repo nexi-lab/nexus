@@ -360,10 +360,20 @@ def connect(
 
         metadata_store = FederatedMetadataProxy.from_zone_manager(zone_mgr)
     else:
-        # standalone: single-node embedded Raft (no peers)
-        from nexus.storage.raft_metadata_store import RaftMetadataStore
+        # standalone: single-node embedded Raft (no peers), with fallback
+        try:
+            from nexus.storage.raft_metadata_store import RaftMetadataStore
 
-        metadata_store = RaftMetadataStore.embedded(metadata_path)
+            metadata_store = RaftMetadataStore.embedded(metadata_path)
+        except (RuntimeError, ImportError):
+            from nexus.storage.dict_metastore import DictMetastore
+
+            logger.warning(
+                "Rust metastore not available — using in-memory DictMetastore. "
+                "Data will not persist across restarts. "
+                "For durable storage, build with: maturin develop -m rust/nexus_raft/Cargo.toml"
+            )
+            metadata_store = DictMetastore()
 
     # Permission defaults: standalone without explicit config → permissive
     enforce_permissions = cfg.enforce_permissions

@@ -785,29 +785,7 @@ def serve(
             enforce_zone_isolation = True
 
         # Determine server deployment profile
-        # Priority: 1. CLI --profile, 2. NEXUS_PROFILE env, 3. NEXUS_MODE (deprecated)
-        server_profile = os.getenv("NEXUS_PROFILE")
-        if not server_profile:
-            raw_mode = os.getenv("NEXUS_MODE")
-            if raw_mode:
-                import logging as _logging
-
-                _logging.getLogger(__name__).warning(
-                    "NEXUS_MODE is deprecated and will be removed in v1.0. "
-                    "Use NEXUS_PROFILE instead (standalone -> full, remote -> remote, federation -> cloud)."
-                )
-                _mode_to_profile = {
-                    "standalone": "full",
-                    "federation": "cloud",
-                    "remote": "remote",
-                }
-                server_profile = _mode_to_profile.get(raw_mode)
-                if not server_profile:
-                    console.print(f"[red]Error:[/red] Unknown NEXUS_MODE: '{raw_mode}'")
-                    console.print("[yellow]Allowed values:[/yellow] standalone, federation, remote")
-                    sys.exit(1)
-            else:
-                server_profile = "full"
+        server_profile = os.getenv("NEXUS_PROFILE", "full")
 
         # Server cannot run in remote profile (would be a thin client of another server)
         if server_profile == "remote":

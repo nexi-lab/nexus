@@ -131,7 +131,7 @@ def create_mcp_server(
         if remote_url:
             import nexus as _nexus
 
-            nx = _nexus.connect(config={"mode": "remote", "url": remote_url, "api_key": api_key})
+            nx = _nexus.connect(config={"profile": "remote", "url": remote_url, "api_key": api_key})
         else:
             import importlib as _il
 
@@ -191,7 +191,7 @@ def create_mcp_server(
         import nexus as _nexus
 
         new_nx = _nexus.connect(
-            config={"mode": "remote", "url": _remote_url, "api_key": request_api_key}
+            config={"profile": "remote", "url": _remote_url, "api_key": request_api_key}
         )
         _connection_cache[request_api_key] = new_nx
         return new_nx

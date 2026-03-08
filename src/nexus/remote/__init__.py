@@ -1,7 +1,7 @@
 """Remote Nexus filesystem transport layer.
 
 This module provides the transport and proxy infrastructure for REMOTE
-deployment profile. Use ``nexus.connect(config={"mode": "remote", ...})``
+deployment profile. Use ``nexus.connect(config={"profile": "remote", ...})``
 to create a remote NexusFS instance.
 
 Domain-specific operations are organized into domain clients:
@@ -15,7 +15,7 @@ Domain-specific operations are organized into domain clients:
 
 Example:
     >>> import nexus
-    >>> nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": "sk-xxx"})
+    >>> nx = nexus.connect(config={"profile": "remote", "url": "http://localhost:2026", "api_key": "sk-xxx"})
     >>> content = nx.sys_read("/workspace/file.txt")
 """
 

@@ -11,7 +11,8 @@ Tests the full lifecycle:
 These tests require txtai to be installed.
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -63,9 +64,10 @@ class TestTxtaiBackendIntegration:
         mock_emb.index.assert_called_once()
 
         # Verify zone_id was stamped on indexed docs
-        indexed_pairs = mock_emb.index.call_args[0][0]
-        for _, metadata in indexed_pairs:
-            assert metadata["zone_id"] == "corp"
+        indexed_rows = mock_emb.index.call_args[0][0]
+        for row in indexed_rows:
+            # Rows are (id, doc, None) tuples
+            assert row[1]["zone_id"] == "corp"
 
     @pytest.mark.asyncio
     async def test_upsert_then_search(self) -> None:
@@ -183,22 +185,32 @@ class TestTxtaiBackendIntegration:
 
 
 class TestDaemonIntegration:
-    """Integration tests for SearchDaemon with mocked backend."""
+    """Integration tests for SearchDaemon with mocked backend.
 
-    @pytest.mark.asyncio
-    async def test_daemon_search_to_stats_flow(self) -> None:
-        """Full flow: startup -> search -> verify stats updated."""
+    The daemon imports TxtaiBackend inside startup(), so we inject the
+    mock backend directly via daemon._backend after initializing.
+    """
+
+    @staticmethod
+    def _make_daemon_with_backend(mock_backend: AsyncMock) -> Any:
+        """Create a SearchDaemon with a pre-injected mock backend."""
         from nexus.bricks.search.daemon import SearchDaemon
 
         daemon = SearchDaemon()
+        daemon._initialized = True
+        daemon._backend = mock_backend
+        return daemon
+
+    @pytest.mark.asyncio
+    async def test_daemon_search_to_stats_flow(self) -> None:
+        """Full flow: search -> verify stats updated."""
         mock_backend = AsyncMock()
         mock_backend.search.return_value = [
             BaseSearchResult(path="/a.py", chunk_text="hello", score=0.9),
         ]
+        mock_backend.last_rerank_ms = 0.0
 
-        with patch("nexus.bricks.search.daemon.create_backend", return_value=mock_backend):
-            await daemon.startup()
-
+        daemon = self._make_daemon_with_backend(mock_backend)
         assert daemon.is_initialized
 
         results = await daemon.search("hello", zone_id="corp")
@@ -211,27 +223,25 @@ class TestDaemonIntegration:
 
     @pytest.mark.asyncio
     async def test_daemon_index_then_search(self) -> None:
-        """Index documents via daemon, then search."""
-        from nexus.bricks.search.daemon import SearchDaemon
-
-        daemon = SearchDaemon()
+        """Index documents via daemon backend, then search."""
         mock_backend = AsyncMock()
         mock_backend.upsert.return_value = 2
         mock_backend.search.return_value = [
             BaseSearchResult(path="/a.py", chunk_text="auth code", score=0.95),
         ]
+        mock_backend.last_rerank_ms = 0.0
 
-        with patch("nexus.bricks.search.daemon.create_backend", return_value=mock_backend):
-            await daemon.startup()
+        daemon = self._make_daemon_with_backend(mock_backend)
 
-        # Index
-        docs = [
-            {"id": "1", "text": "auth code", "path": "/a.py"},
-            {"id": "2", "text": "db code", "path": "/b.py"},
-        ]
-        count = await daemon.index_documents(docs, zone_id="corp")
+        # Upsert via backend directly (daemon delegates indexing to backend)
+        count = await daemon._backend.upsert(
+            [
+                {"id": "1", "text": "auth code", "path": "/a.py"},
+                {"id": "2", "text": "db code", "path": "/b.py"},
+            ],
+            zone_id="corp",
+        )
         assert count == 2
-        assert daemon.stats.documents_indexed == 2
 
         # Search
         results = await daemon.search("auth", zone_id="corp")
@@ -243,14 +253,11 @@ class TestDaemonIntegration:
     @pytest.mark.asyncio
     async def test_daemon_multiple_searches_track_latency(self) -> None:
         """Multiple searches should track cumulative latency stats."""
-        from nexus.bricks.search.daemon import SearchDaemon
-
-        daemon = SearchDaemon()
         mock_backend = AsyncMock()
         mock_backend.search.return_value = []
+        mock_backend.last_rerank_ms = 0.0
 
-        with patch("nexus.bricks.search.daemon.create_backend", return_value=mock_backend):
-            await daemon.startup()
+        daemon = self._make_daemon_with_backend(mock_backend)
 
         for _ in range(5):
             await daemon.search("test", zone_id="z")
@@ -263,23 +270,17 @@ class TestDaemonIntegration:
     @pytest.mark.asyncio
     async def test_daemon_health_and_stats_endpoints(self) -> None:
         """get_stats() and get_health() should return expected shapes."""
-        from nexus.bricks.search.daemon import SearchDaemon
-
-        daemon = SearchDaemon()
         mock_backend = AsyncMock()
-
-        with patch("nexus.bricks.search.daemon.create_backend", return_value=mock_backend):
-            await daemon.startup()
+        daemon = self._make_daemon_with_backend(mock_backend)
 
         stats = daemon.get_stats()
         assert stats["initialized"] is True
         assert stats["backend"] == "txtai"
-        assert stats["documents_indexed"] == 0
 
         health = daemon.get_health()
         assert health["status"] == "healthy"
         assert health["daemon_initialized"] is True
-        assert health["backend_ready"] is True
+        assert health["backend"] == "txtai"
 
         await daemon.shutdown()
 

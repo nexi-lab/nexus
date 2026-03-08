@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any, Protocol, cast, runtime_checkable
 
 from nexus.bricks.search.results import BaseSearchResult
@@ -98,12 +99,18 @@ class TxtaiBackend:
         model: str = "sentence-transformers/all-MiniLM-L6-v2",
         hybrid: bool = True,
         graph: bool = True,
+        reranker_model: str | None = None,
+        sparse: bool | str = False,
     ) -> None:
         self._database_url = database_url
         self._model = model
         self._hybrid = hybrid
         self._graph = graph
+        self._reranker_model = reranker_model
+        self._sparse = sparse
         self._embeddings: Any = None
+        self._reranker: Any = None
+        self.last_rerank_ms: float = 0.0
 
     async def startup(self) -> None:
         """Initialize txtai Embeddings with pgvector backend (with fallback).
@@ -116,12 +123,33 @@ class TxtaiBackend:
         """
         from txtai import Embeddings
 
+        # Auto-detect GPU: MPS (Apple Silicon) > CUDA > CPU
+        gpu_device: str | bool = False
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                gpu_device = True  # txtai default CUDA
+                logger.info("GPU detected: CUDA")
+            elif torch.backends.mps.is_available():
+                gpu_device = "mps"
+                logger.info("GPU detected: MPS (Apple Silicon)")
+        except Exception:
+            pass
+
         config: dict[str, Any] = {
             "path": self._model,
             "content": True,
             "hybrid": self._hybrid,
             "objects": True,
         }
+
+        if gpu_device:
+            config["gpu"] = gpu_device
+
+        # Enable SPLADE learned sparse retrieval
+        if self._sparse:
+            config["sparse"] = self._sparse
 
         use_pgvector = False
         if self._database_url:
@@ -175,17 +203,37 @@ class TxtaiBackend:
                 )
                 self._embeddings = None
 
+        # Initialize cross-encoder reranker if configured
+        if self._reranker_model and self._embeddings is not None:
+            try:
+                from txtai.pipeline import Similarity
+
+                self._reranker = await asyncio.to_thread(
+                    lambda: Similarity(path=self._reranker_model, crossencode=True)
+                )
+                logger.info("Reranker initialized: %s", self._reranker_model)
+            except Exception:
+                logger.warning(
+                    "Reranker init failed (model=%s). Continuing without reranking.",
+                    self._reranker_model,
+                    exc_info=True,
+                )
+
         logger.info(
-            "txtai backend started: model=%s, hybrid=%s, graph=%s, pgvector=%s, degraded=%s",
+            "txtai backend started: model=%s, hybrid=%s, graph=%s, pgvector=%s, "
+            "reranker=%s, sparse=%s, degraded=%s",
             self._model,
             self._hybrid,
             self._graph,
             use_pgvector,
+            self._reranker_model if self._reranker else None,
+            bool(self._sparse),
             self._embeddings is None,
         )
 
     async def shutdown(self) -> None:
         """Release txtai resources."""
+        self._reranker = None
         if self._embeddings is not None:
             await asyncio.to_thread(self._embeddings.close)
             self._embeddings = None
@@ -246,7 +294,13 @@ class TxtaiBackend:
         if not self._embeddings:
             return []
 
-        sql = _build_search_sql(query, zone_id=zone_id, path_filter=path_filter, limit=limit)
+        self.last_rerank_ms = 0.0
+
+        # Over-fetch when reranker is available so it has enough candidates.
+        # 2x balances rerank quality vs CPU latency (~10ms per candidate).
+        fetch_limit = limit * 2 if self._reranker else limit
+
+        sql = _build_search_sql(query, zone_id=zone_id, path_filter=path_filter, limit=fetch_limit)
         raw: list[dict[str, Any]] = await asyncio.to_thread(self._embeddings.search, sql)
 
         results: list[BaseSearchResult] = []
@@ -257,9 +311,6 @@ class TxtaiBackend:
                 chunk_text=r.get("text", ""),
                 score=score,
             )
-            # Populate per-method score fields based on search_type.
-            # txtai returns a unified score; split by search mode so tests
-            # can assert on keyword_score / vector_score individually.
             if search_type == "keyword":
                 result.keyword_score = score
             elif search_type == "semantic":
@@ -268,7 +319,41 @@ class TxtaiBackend:
                 result.keyword_score = score
                 result.vector_score = score
             results.append(result)
+
+        # Cross-encoder reranking
+        if self._reranker and results:
+            results = await self._rerank_results(query, results, limit)
+        else:
+            results = results[:limit]
+
         return results
+
+    async def _rerank_results(
+        self,
+        query: str,
+        results: list[BaseSearchResult],
+        limit: int,
+    ) -> list[BaseSearchResult]:
+        """Rerank results using cross-encoder model."""
+        start = time.perf_counter()
+
+        texts = [r.chunk_text for r in results if r.chunk_text]
+        if not texts:
+            return results[:limit]
+
+        # txtai Similarity returns [(index, score), ...] sorted by score desc
+        scored: list[tuple[int, float]] = await asyncio.to_thread(self._reranker, query, texts)
+
+        reranked: list[BaseSearchResult] = []
+        for idx, score in scored:
+            if idx < len(results):
+                result = results[idx]
+                result.reranker_score = float(score)
+                reranked.append(result)
+
+        self.last_rerank_ms = (time.perf_counter() - start) * 1000
+        logger.debug("Reranked %d results in %.1fms", len(reranked), self.last_rerank_ms)
+        return reranked[:limit]
 
     # ----- Graph search -------------------------------------------------------
 

@@ -109,6 +109,12 @@ class DaemonConfig:
     entropy_threshold: float = 0.35  # SimpleMem's τ_redundant
     entropy_alpha: float = 0.5  # Balance entity vs semantic novelty
 
+    # txtai backend config (Issue #2663)
+    txtai_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    txtai_reranker: str | None = None  # e.g. "cross-encoder/ms-marco-MiniLM-L-2-v2"
+    txtai_sparse: bool = False  # Enable SPLADE learned sparse retrieval
+    txtai_graph: bool = True  # Enable semantic graph
+
 
 class SearchDaemon:
     """Long-running search service with pre-warmed indexes.
@@ -187,6 +193,10 @@ class SearchDaemon:
         # SPLADE learned sparse retrieval (optional, initialized in startup)
         self._splade: Any = None
 
+        # txtai backend (Issue #2663) — used for semantic/hybrid search + graph
+        self._backend: Any = None
+        self.last_search_timing: dict[str, float] = {}
+
         # Latency tracking (circular buffer)
         self._latencies: list[float] = []
         self._max_latency_samples = 1000
@@ -223,6 +233,26 @@ class SearchDaemon:
         # Check optional components
         await self._check_zoekt()
         await self._check_embedding_cache()
+
+        # Initialize txtai backend for semantic/hybrid/graph search (Issue #2663)
+        try:
+            from nexus.bricks.search.txtai_backend import TxtaiBackend
+
+            self._backend = TxtaiBackend(
+                database_url=self.config.database_url,
+                model=self.config.txtai_model,
+                hybrid=True,
+                graph=self.config.txtai_graph,
+                reranker_model=self.config.txtai_reranker,
+                sparse=self.config.txtai_sparse,
+            )
+            await self._backend.startup()
+            logger.info("txtai backend initialized successfully")
+        except Exception:
+            logger.warning(
+                "txtai backend init failed, falling back to legacy search", exc_info=True
+            )
+            self._backend = None
 
         # Initialize entropy-aware chunker if enabled (Issue #1024)
         if self.config.entropy_filtering:
@@ -303,6 +333,14 @@ class SearchDaemon:
             self._refresh_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._refresh_task
+
+        # Shutdown txtai backend (Issue #2663)
+        if self._backend is not None:
+            try:
+                await self._backend.shutdown()
+            except Exception as e:
+                logger.debug("txtai backend shutdown error: %s", e)
+            self._backend = None
 
         # Close database connections (only if we created them)
         if self._owns_engine:
@@ -514,9 +552,64 @@ class SearchDaemon:
                     query[:50],
                 )
 
+        from nexus.contracts.constants import ROOT_ZONE_ID
+
+        effective_zone_id = zone_id or ROOT_ZONE_ID
         start = time.perf_counter()
+        self.last_search_timing = {}
 
         try:
+            # For keyword search: Zoekt first (code search), then txtai BM25
+            if search_type == "keyword" and self.stats.zoekt_available:
+                zoekt_results = await self._search_zoekt(query, limit, path_filter)
+                if zoekt_results:
+                    latency_ms = (time.perf_counter() - start) * 1000
+                    self._track_latency(latency_ms)
+                    self.last_search_timing["backend_ms"] = latency_ms
+                    return zoekt_results
+
+            # Delegate to txtai backend for all search types (Issue #2663)
+            if self._backend is not None:
+                backend_start = time.perf_counter()
+                backend_results = await self._backend.search(
+                    query,
+                    limit=limit,
+                    zone_id=effective_zone_id,
+                    search_type=search_type,
+                    path_filter=path_filter,
+                )
+                backend_ms = (time.perf_counter() - backend_start) * 1000
+                rerank_ms = getattr(self._backend, "last_rerank_ms", 0.0)
+                self.last_search_timing = {
+                    "backend_ms": backend_ms,
+                    "rerank_ms": rerank_ms,
+                }
+
+                if backend_results:
+                    results = [
+                        SearchResult(
+                            path=r.path,
+                            chunk_index=r.chunk_index,
+                            chunk_text=r.chunk_text,
+                            score=r.score,
+                            start_offset=r.start_offset,
+                            end_offset=r.end_offset,
+                            line_start=r.line_start,
+                            line_end=r.line_end,
+                            keyword_score=r.keyword_score,
+                            vector_score=r.vector_score,
+                            reranker_score=r.reranker_score,
+                            search_type=search_type,
+                        )
+                        for r in backend_results
+                    ]
+
+                    latency_ms = (time.perf_counter() - start) * 1000
+                    self._track_latency(latency_ms)
+                    return results
+                # txtai returned empty — fall through to legacy search
+
+            # Legacy fallback (txtai backend not available or returned no results)
             if search_type == "keyword":
                 results = await self._keyword_search(query, limit, path_filter, zone_id=zone_id)
             elif search_type == "semantic":
@@ -879,21 +972,17 @@ class SearchDaemon:
             return []
 
     async def _get_query_embedding(self, query: str) -> list[float] | None:
-        """Get embedding for query text."""
+        """Get embedding for query text (legacy fallback path).
+
+        Note: With txtai backend active, this method is only called
+        by the legacy _semantic_search path which is bypassed.
+        """
         if self._embedding_provider:
             result = await self._embedding_provider.embed_text(query)
             return list(result) if result else None
 
-        # Try to get from environment/default provider
-        try:
-            from nexus.bricks.search.embeddings import create_embedding_provider
-
-            provider = create_embedding_provider()
-            embedding = await provider.embed_text(query)
-            return list(embedding) if embedding else None
-        except Exception as e:
-            logger.debug(f"Could not get query embedding: {e}")
-            return None
+        logger.debug("No embedding provider available for legacy search path")
+        return None
 
     # =========================================================================
     # Index Refresh
@@ -1019,6 +1108,8 @@ class SearchDaemon:
             return
 
         indexed_count = 0
+        # Collect documents for batched txtai upsert (Issue #2663)
+        _txtai_batch: dict[str, list[dict]] = {}  # zone_id -> docs
 
         for path in paths:
             try:
@@ -1096,6 +1187,16 @@ class SearchDaemon:
 
                 indexed_count += 1
 
+                # Collect for batched txtai upsert (Issue #2663)
+                if self._backend is not None:
+                    import re as _re
+
+                    _zm = _re.match(r"^/zone/([^/]+)/", path)
+                    _zone = _zm.group(1) if _zm else "root"
+                    _txtai_batch.setdefault(_zone, []).append(
+                        {"id": path_id, "text": content, "path": virtual_path, "zone_id": _zone}
+                    )
+
                 # Also run indexing pipeline for chunk + embedding storage
                 if self._indexing_pipeline and self._embedding_provider:
                     try:
@@ -1105,6 +1206,15 @@ class SearchDaemon:
 
             except Exception as e:
                 logger.warning("Failed to refresh index for %s: %s", path, e)
+
+        # Batched txtai upsert — one call per zone with all docs (Issue #2663)
+        if self._backend is not None and _txtai_batch:
+            for zone_id, docs in _txtai_batch.items():
+                try:
+                    await self._backend.upsert(docs, zone_id=zone_id)
+                    logger.debug("txtai batch upsert: %d docs for zone %s", len(docs), zone_id)
+                except Exception as te:
+                    logger.warning("txtai batch upsert failed for zone %s: %s", zone_id, te)
 
         if indexed_count > 0:
             logger.info("[DAEMON] Indexed %d/%d files", indexed_count, len(paths))
@@ -1303,6 +1413,11 @@ class SearchDaemon:
                 "threshold": self.config.entropy_threshold,
                 "alpha": self.config.entropy_alpha,
             },
+            # Issue #2663: txtai backend
+            "backend": "txtai" if self._backend is not None else "legacy",
+            "txtai_model": self.config.txtai_model,
+            "txtai_reranker": self.config.txtai_reranker,
+            "txtai_graph": self.config.txtai_graph,
         }
 
     def get_health(self) -> dict[str, Any]:
@@ -1320,6 +1435,7 @@ class SearchDaemon:
         return {
             "status": "healthy" if self._initialized else "starting",
             "daemon_initialized": self._initialized,
+            "backend": "txtai" if self._backend is not None else "legacy",
             "bm25_index_loaded": keyword_ready,
             "db_pool_ready": self._async_engine is not None,
             "zoekt_available": self.stats.zoekt_available,

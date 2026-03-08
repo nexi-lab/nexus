@@ -11,18 +11,18 @@ This guide explains how to set up the Nexus RPC server as an "Always-On" backgro
 
 1. **Copy the template:**
    ```bash
-   cp deployment/macos/io.nexi.nexus.server.plist ~/Library/LaunchAgents/
+   cp deployment/macos/ai.nexus.server.plist ~/Library/LaunchAgents/
    ```
 
 2. **Configure the plist:**
-   Open `~/Library/LaunchAgents/io.nexi.nexus.server.plist` in an editor and replace the following placeholders:
+   Open `~/Library/LaunchAgents/ai.nexus.server.plist` in an editor and replace the following placeholders:
    - `{{NEXUS_PATH}}`: The output of `which nexus` (e.g., `/usr/local/bin/nexus`).
    - `{{USER}}`: Your macOS username.
    - `{{PYTHONPATH}}`: Absolute path to your project `src` directory and site-packages (e.g., `/path/to/nexus/src:/path/to/nexus/.venv/lib/python3.13/site-packages`).
 
 3. **Load the service:**
    ```bash
-   launchctl load ~/Library/LaunchAgents/io.nexi.nexus.server.plist
+   launchctl load ~/Library/LaunchAgents/ai.nexus.server.plist
    ```
 
 ## Management Commands
@@ -33,7 +33,7 @@ This guide explains how to set up the Nexus RPC server as an "Always-On" backgro
   ```
 - **Stop Service:**
   ```bash
-  launchctl unload ~/Library/LaunchAgents/io.nexi.nexus.server.plist
+  launchctl unload ~/Library/LaunchAgents/ai.nexus.server.plist
   ```
 - **View Logs:**
   ```bash

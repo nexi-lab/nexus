@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>io.nexi.nexus.server</string>
+    <string>ai.nexus.server</string>
     <key>ProgramArguments</key>
     <array>
         <string>{{NEXUS_PATH}}</string> <!-- Path to nexus CLI, e.g., /usr/local/bin/nexus -->

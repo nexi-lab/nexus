@@ -41,6 +41,7 @@ class MethodSpec:
 METHOD_REGISTRY: dict[str, MethodSpec] = {
     # --- Discovery (response_key extraction) ---
     "sys_readdir": MethodSpec(response_key="files"),
+    "list": MethodSpec(response_key="files"),
     "glob": MethodSpec(response_key="matches"),
     "grep": MethodSpec(response_key="results"),
     # --- Boolean result extraction ---

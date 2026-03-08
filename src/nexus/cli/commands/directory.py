@@ -119,9 +119,14 @@ def list_files(
 
                 for entry in entries:
                     is_dir = entry["type"] == "directory"
+                    # Prevent double-slash for root or already-trailed paths
+                    display_path = entry["path"]
+                    if is_dir and not display_path.endswith("/"):
+                        display_path = f"{display_path}/"
+
                     table.add_row(
                         "dir" if is_dir else "file",
-                        f"{entry['path']}/" if is_dir else entry["path"],
+                        display_path,
                         f"{entry['size']:,} bytes" if entry["size"] is not None else "-",
                         format_timestamp(entry.get("modified_at"))
                         if entry.get("modified_at")
@@ -131,7 +136,10 @@ def list_files(
             else:
                 for entry in entries:
                     if entry["type"] == "directory":
-                        console.print(f"  [bold cyan]{entry['path']}/[/bold cyan]")
+                        display_path = entry["path"]
+                        if not display_path.endswith("/"):
+                            display_path = f"{display_path}/"
+                        console.print(f"  [bold cyan]{display_path}[/bold cyan]")
                     else:
                         console.print(f"  {entry['path']}")
 

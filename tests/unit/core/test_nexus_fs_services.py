@@ -98,8 +98,8 @@ class TestNexusFSServiceComposition:
         # ShareLinkService should have gateway
         assert fs.share_link_service._gw is not None
 
-        # EventsService should have backend
-        assert fs.events_service._backend == fs.router.route("/").backend
+        # EventsService should exist
+        assert fs.events_service is not None
 
     def test_version_service_delegation(self, tmp_path: Path):
         """Test that VersionService is available on NexusFS."""

@@ -1223,19 +1223,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nexus_wal"
-version = "0.1.0"
-dependencies = [
- "crc32fast",
- "criterion",
- "parking_lot",
- "pyo3",
- "serde",
- "tempfile",
- "thiserror 2.0.18",
-]
-
-[[package]]
 name = "nu-ansi-term"
 version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

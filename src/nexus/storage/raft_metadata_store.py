@@ -458,6 +458,39 @@ class RaftMetadataStore(MetastoreABC):
             self._engine.flush()
 
     # =========================================================================
+    # Zone-level reserved keys (federation ref counting)
+    # =========================================================================
+
+    _KEY_LINKS_COUNT = "__i_links_count__"
+
+    def get_zone_links_count(self) -> int:
+        """Get the zone's i_links_count (number of DT_MOUNT references).
+
+        Uses the __i_links_count__ reserved key in Raft metadata,
+        same SetMetadata command as regular metadata — no Rust changes needed.
+
+        Returns:
+            Current link count (0 if not set).
+        """
+        data = self._engine.get_metadata(self._KEY_LINKS_COUNT)
+        if data is None:
+            return 0
+        if isinstance(data, list):
+            data = bytes(data)
+        return int.from_bytes(data, "big")
+
+    def set_zone_links_count(self, count: int) -> None:
+        """Set the zone's i_links_count (Raft-replicated).
+
+        Must be called on the leader node. Uses the same SetMetadata
+        Raft command as regular file metadata.
+
+        Args:
+            count: New link count value.
+        """
+        self._engine.set_metadata(self._KEY_LINKS_COUNT, count.to_bytes(8, "big"))
+
+    # =========================================================================
     # Revision Counter (Issue #1330 Phase 4.2)
     # =========================================================================
 

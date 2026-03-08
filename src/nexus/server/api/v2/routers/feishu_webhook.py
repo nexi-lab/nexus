@@ -110,7 +110,7 @@ def _map_event_to_file_event(event_type: str, event: dict[str, Any]) -> FileEven
         folder = "p2p" if chat_type == "p2p" else "groups"
         return FileEvent(
             type=FileEventType.FILE_WRITE,
-            path=f"/mnt/feishu/{folder}/{chat_id}.yaml",
+            path=f"/chat/feishu/{folder}/{chat_id}.yaml",
             size=len(json.dumps(message)),
         )
 
@@ -118,14 +118,14 @@ def _map_event_to_file_event(event_type: str, event: dict[str, Any]) -> FileEven
         chat_id = event.get("chat_id", "unknown")
         return FileEvent(
             type=FileEventType.DIR_CREATE,
-            path=f"/mnt/feishu/groups/{chat_id}/",
+            path=f"/chat/feishu/groups/{chat_id}/",
         )
 
     if event_type == "im.chat.member.bot.deleted_v1":
         chat_id = event.get("chat_id", "unknown")
         return FileEvent(
             type=FileEventType.DIR_DELETE,
-            path=f"/mnt/feishu/groups/{chat_id}/",
+            path=f"/chat/feishu/groups/{chat_id}/",
         )
 
     logger.debug("Unmapped Feishu event type: %s", event_type)

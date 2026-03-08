@@ -3,13 +3,20 @@
 Provides read-write access to Feishu workspace messages, organized by
 group chats and P2P conversations.
 
+Mount prefix: /chat/feishu/
+
 Storage structure (2-level hierarchy):
     /
-    ├── groups/                   # Group chats
-    │   ├── {chat_name}.yaml      # Messages as YAML
+    ├── groups/                                  # Group chats
+    │   ├── {Name} [{chat_id}].yaml              # Hybrid naming for stability
     │   └── ...
-    └── p2p/                      # 1-on-1 chats
-        └── {user_name}.yaml
+    └── p2p/                                     # 1-on-1 chats
+        └── {Name} [{chat_id}].yaml
+
+Hybrid naming:
+    Filenames use "{Name} [{chat_id}].yaml" so that links remain stable
+    even if the chat is renamed. The chat_id in brackets is the persistent
+    identifier used for API resolution.
 
 Authentication:
     Dual auth model:
@@ -19,6 +26,7 @@ Authentication:
 
 import json
 import logging
+import re
 from typing import TYPE_CHECKING, Any
 
 from nexus.backends.base.backend import Backend
@@ -54,12 +62,14 @@ class FeishuConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
     Supports both pure bot mode (tenant_access_token) and copilot mode
     (user_access_token via OAuthConnectorMixin).
 
-    Folder Structure (2-level hierarchy):
+    Mount prefix: /chat/feishu/
+
+    Folder Structure (2-level hierarchy with hybrid naming):
     - / - Root directory
     - /groups/ - Group chats
-      - /groups/{chat_name}.yaml - Chat messages
+      - /groups/{Name} [{chat_id}].yaml - Chat messages
     - /p2p/ - Direct messages
-      - /p2p/{user_name}.yaml - DM messages
+      - /p2p/{Name} [{chat_id}].yaml - DM messages
     """
 
     _CAPABILITIES = OAUTH_CONNECTOR_CAPABILITIES | frozenset(
@@ -113,7 +123,7 @@ class FeishuConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
         self._chat_cache: dict[str, dict[str, Any]] = {}
 
         # VFS mount prefix for matching inbound events
-        self._mount_prefix = "/mnt/feishu/"
+        self._mount_prefix = "/chat/feishu/"
 
         # Initialize app-level lark client
         self._app_client = self._build_app_client()
@@ -257,45 +267,37 @@ class FeishuConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
     def has_token_manager(self) -> bool:
         return True
 
-    def _get_chat_by_name(
-        self,
-        chat_name: str,
-        chat_type: str | None = None,
-        context: "OperationContext | None" = None,
-    ) -> dict[str, Any] | None:
-        """Get chat info by name.
+    # --- Hybrid naming helpers ---
+
+    # Pattern: "Name [oc_xxx].yaml" -> captures chat_id from brackets
+    _HYBRID_RE = re.compile(r"^.+\[([^\]]+)\]\.yaml$")
+
+    @staticmethod
+    def _format_hybrid_filename(name: str, chat_id: str) -> str:
+        """Build hybrid filename: '{Name} [{chat_id}].yaml'."""
+        return f"{name} [{chat_id}].yaml"
+
+    @classmethod
+    def _parse_chat_id_from_filename(cls, filename: str) -> str | None:
+        """Extract chat_id from hybrid filename.
 
         Args:
-            chat_name: Chat name to look up
-            chat_type: Optional filter ("group" or "p2p")
-            context: Operation context
+            filename: e.g. 'General [oc_123].yaml'
 
         Returns:
-            Chat dict or None if not found
+            chat_id (e.g. 'oc_123') or None if pattern doesn't match
         """
-        # Check cache first
-        for _chat_id, chat in self._chat_cache.items():
-            if chat.get("name") == chat_name and (
-                chat_type is None or chat.get("chat_type") == chat_type
-            ):
-                return chat
+        m = cls._HYBRID_RE.match(filename)
+        return m.group(1) if m else None
 
-        # Fetch from API
+    def _ensure_chat_cache(self, context: "OperationContext | None" = None) -> None:
+        """Ensure chat cache is populated."""
+        if self._chat_cache:
+            return
         client = self._get_feishu_client(context)
         chats = list_chats(client, silent=True)
-
-        # Update cache
         for chat in chats:
             self._chat_cache[chat["chat_id"]] = chat
-
-        # Find matching chat
-        for chat in chats:
-            if chat.get("name") == chat_name and (
-                chat_type is None or chat.get("chat_type") == chat_type
-            ):
-                return chat
-
-        return None
 
     def _format_messages_as_yaml(self, messages: list[dict[str, Any]]) -> bytes:
         """Format messages as YAML bytes."""
@@ -354,11 +356,12 @@ class FeishuConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
             if isinstance(msg_content, dict):
                 msg_content = json.dumps(msg_content, ensure_ascii=False)
 
-            # Resolve chat_id from backend_path
+            # Resolve chat_id from hybrid filename: "groups/Name [oc_xxx].yaml"
             path_parts = context.backend_path.strip("/").split("/")
             if len(path_parts) != 2:
                 raise BackendError(
-                    f"Invalid write path: {context.backend_path}. Expected: groups/name.yaml or p2p/name.yaml",
+                    f"Invalid write path: {context.backend_path}. "
+                    "Expected: groups/Name [id].yaml or p2p/Name [id].yaml",
                     backend="feishu",
                 )
 
@@ -369,17 +372,13 @@ class FeishuConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
                     backend="feishu",
                 )
 
-            chat_name = filename.replace(".yaml", "")
-            chat_type_filter = "p2p" if folder_type == "p2p" else "group"
-
-            chat = self._get_chat_by_name(chat_name, chat_type=chat_type_filter, context=context)
-            if not chat:
+            chat_id = self._parse_chat_id_from_filename(filename)
+            if not chat_id:
                 raise BackendError(
-                    f"Chat not found: {chat_name} (type={chat_type_filter})",
+                    f"Cannot resolve chat_id from filename: {filename}. "
+                    "Expected format: 'Name [chat_id].yaml'",
                     backend="feishu",
                 )
-
-            chat_id = chat["chat_id"]
 
             # Send message
             client = self._get_feishu_client(context)
@@ -433,7 +432,10 @@ class FeishuConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
         if not filename.endswith(".yaml"):
             raise NexusFileNotFoundError(backend_path)
 
-        chat_name = filename.replace(".yaml", "")
+        # Extract chat_id from hybrid filename: "Name [oc_xxx].yaml"
+        chat_id = self._parse_chat_id_from_filename(filename)
+        if not chat_id:
+            raise NexusFileNotFoundError(backend_path)
 
         # Check cache first
         cache_path = self._get_cache_path(context) or backend_path
@@ -441,14 +443,6 @@ class FeishuConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
             cached = self._read_from_cache(cache_path, original=True)
             if cached and not cached.stale and cached.content_binary:
                 return cached.content_binary
-
-        # Resolve chat
-        chat_type_filter = "p2p" if folder_type == "p2p" else "group"
-        chat = self._get_chat_by_name(chat_name, chat_type=chat_type_filter, context=context)
-        if not chat:
-            raise NexusFileNotFoundError(backend_path)
-
-        chat_id = chat["chat_id"]
 
         # Fetch messages
         client = self._get_feishu_client(context)
@@ -464,9 +458,8 @@ class FeishuConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
                 {
                     "_metadata": {
                         "chat_id": chat_id,
-                        "chat_name": chat_name,
                         "status": "no_messages",
-                        "message": f"No messages found in chat '{chat_name}'.",
+                        "message": f"No messages found in chat '{chat_id}'.",
                     }
                 }
             ]
@@ -622,7 +615,10 @@ class FeishuConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
                 target_type = "p2p" if folder_type == "p2p" else "group"
                 filtered = [c for c in chats if c.get("chat_type") == target_type]
 
-                return [f"{chat.get('name', chat['chat_id'])}.yaml" for chat in filtered]
+                return [
+                    self._format_hybrid_filename(chat.get("name", chat["chat_id"]), chat["chat_id"])
+                    for chat in filtered
+                ]
 
             raise FileNotFoundError(f"Directory not found: {path}")
 

@@ -69,7 +69,7 @@ def test_profile(profile: str) -> dict[str, str]:
     data_dir = f"{BASE_DIR}/{profile}"
     os.makedirs(data_dir, exist_ok=True)
 
-    for k in ["NEXUS_URL", "NEXUS_DATABASE_URL", "NEXUS_MODE", "NEXUS_PROFILE"]:
+    for k in ["NEXUS_URL", "NEXUS_DATABASE_URL", "NEXUS_PROFILE"]:
         os.environ.pop(k, None)
     os.environ["NEXUS_PROFILE"] = profile
 

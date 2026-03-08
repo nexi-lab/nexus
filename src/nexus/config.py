@@ -120,12 +120,6 @@ class NexusConfig(BaseModel):
         ),
     )
 
-    # Deployment mode
-    mode: str = Field(
-        default="standalone",
-        description="Deployment mode: standalone (single-node redb), remote (thin HTTP client), or federation (ZoneManager + Raft)",
-    )
-
     # Backend selection
     backend: str = Field(
         default="local",
@@ -352,18 +346,6 @@ class NexusConfig(BaseModel):
             raise ValueError(f"profile must be one of {allowed}, got '{v}'")
         return v
 
-    @field_validator("mode")
-    @classmethod
-    def validate_mode(cls, v: str) -> str:
-        """Validate deployment mode.
-
-        Valid modes: standalone, remote, federation
-        """
-        allowed = ["standalone", "remote", "federation"]
-        if v not in allowed:
-            raise ValueError(f"mode must be one of {allowed}, got '{v}'")
-        return v
-
     @field_validator("backend")
     @classmethod
     def validate_backend(cls, v: str) -> str:
@@ -388,13 +370,13 @@ class NexusConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_url_for_remote(self) -> "NexusConfig":
-        """Validate URL is required for remote mode."""
-        if self.mode == "remote" and not self.url:
+        """Validate URL is required for remote profile."""
+        if self.profile == "remote" and not self.url:
             env_url = os.getenv("NEXUS_URL")
             if env_url:
                 self.url = env_url
             else:
-                raise ValueError("url is required for mode='remote'")
+                raise ValueError("url is required for profile='remote'")
         return self
 
     model_config = ConfigDict(
@@ -475,7 +457,6 @@ def _load_from_environment() -> NexusConfig:
     # Map environment variables to config fields
     env_mapping = {
         "NEXUS_PROFILE": "profile",
-        "NEXUS_MODE": "mode",
         "NEXUS_BACKEND": "backend",
         "NEXUS_DATA_DIR": "data_dir",
         "NEXUS_GCS_BUCKET_NAME": "gcs_bucket_name",

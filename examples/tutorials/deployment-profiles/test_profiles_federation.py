@@ -50,7 +50,7 @@ def main() -> int:
         env = os.environ.copy()
         env["NEXUS_PROFILE"] = "cloud"
         env["NEXUS_DATA_DIR"] = data_dir
-        for k in ["NEXUS_URL", "NEXUS_DATABASE_URL", "NEXUS_MODE"]:
+        for k in ["NEXUS_URL", "NEXUS_DATABASE_URL"]:
             env.pop(k, None)
         # Note: NEXUS_PROFILE is set to "cloud" above, don't clear it
 

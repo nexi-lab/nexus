@@ -339,9 +339,9 @@ class TestTokenRotation:
         mock_provider.refresh_token = AsyncMock()
         manager.register_provider("google", mock_provider)
 
-        # Should return the current (expired) token due to rate limit
-        token = await manager.get_valid_token("google", "alice@example.com")
-        assert token is not None
+        # Should raise AuthenticationError instead of returning expired token
+        with pytest.raises(AuthenticationError, match="rate-limited"):
+            await manager.get_valid_token("google", "alice@example.com")
         mock_provider.refresh_token.assert_not_called()
 
     @pytest.mark.asyncio

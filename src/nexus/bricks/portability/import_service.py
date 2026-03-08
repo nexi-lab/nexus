@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _create_import_context() -> "OperationContext":
+def _create_import_context(zone_id: str | None = None) -> "OperationContext":
     """Create a system context for import operations.
 
     Import is a privileged system operation that bypasses normal permission checks.
@@ -47,6 +47,7 @@ def _create_import_context() -> "OperationContext":
         groups=[],
         is_admin=True,
         is_system=True,  # System operations bypass all checks
+        zone_id=zone_id,
     )
 
 
@@ -257,8 +258,8 @@ class ZoneImportService:
         if remapped_path != original_path:
             result.paths_remapped += 1
 
-        # Determine target zone (used for logging/tracking)
-        _ = options.target_zone_id or record.zone_id
+        # Determine target zone for write context
+        target_zone_id = options.target_zone_id or record.zone_id
 
         # Check if file already exists
         existing = self.nexus_fs.metadata.get(remapped_path)
@@ -297,10 +298,12 @@ class ZoneImportService:
 
         # Import content blob if needed
         content: bytes | None = None
+        content_ref_valid = False  # True when content_hash exists in CAS/backend
         if options.content_mode == ContentMode.INCLUDE and record.content_hash:
             # Check if we already imported this content (deduplication)
             if record.content_hash in content_hashes_imported:
                 result.content_blobs_skipped += 1
+                content_ref_valid = True  # Already in CAS from a prior file
             else:
                 content = reader.read_content_blob(record.content_hash)
                 if content is not None:
@@ -322,6 +325,8 @@ class ZoneImportService:
                     result.add_warning(
                         f"Referenced content not found: {record.content_hash} for {remapped_path}"
                     )
+                else:
+                    content_ref_valid = True  # Verified in backend
             except Exception as e:
                 result.add_warning(
                     f"Failed to verify content reference: {record.content_hash}: {e}"
@@ -331,7 +336,7 @@ class ZoneImportService:
         if content is not None:
             try:
                 # Use system context for import (privileged operation)
-                import_context = _create_import_context()
+                import_context = _create_import_context(zone_id=target_zone_id)
                 # force=True (skip OCC) → just call write() directly.
                 # Issue #1323: OCC extracted to lib/occ.py, write() is now OCC-free.
                 write_result = self.nexus_fs.write(
@@ -364,8 +369,10 @@ class ZoneImportService:
                 )
                 result.files_failed += 1
 
-        elif options.content_mode == ContentMode.SKIP:
-            # Metadata-only import
+        elif content_ref_valid or options.content_mode == ContentMode.SKIP:
+            # Content already in CAS (dedup) / verified in backend (reference) /
+            # metadata-only import (SKIP) — create metadata entry pointing to
+            # the existing content_hash.
             self._import_metadata_only(
                 path=remapped_path,
                 record=record,

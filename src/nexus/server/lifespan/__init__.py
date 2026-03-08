@@ -159,7 +159,12 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
         if tracker is not None:
             tracker.complete(phase)
 
-    # --- Startup (order matters: observability first, then core, then services) ---
+    # --- Startup (order matters: bootstrap first, then observability, then services) ---
+
+    # NexusFS lifecycle Phase 3: start async tasks owned by NexusFS
+    nx = getattr(app.state, "nexus_fs", None)
+    if nx is not None and hasattr(nx, "bootstrap"):
+        await nx.bootstrap()
 
     await startup_observability(app, svc)
     # Re-extract observability_registry after startup_observability writes it

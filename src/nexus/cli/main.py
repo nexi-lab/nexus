@@ -14,6 +14,10 @@ from nexus.core import setup_uvloop
 
 # Suppress pydub warning about missing ffmpeg/avconv
 warnings.filterwarnings("ignore", message="Couldn't find ffmpeg or avconv", category=RuntimeWarning)
+# Suppress runpy warning when running via python -m (Issue #2103)
+warnings.filterwarnings(
+    "ignore", message=".*found in sys.modules after import of package.*", category=RuntimeWarning
+)
 
 # Install uvloop early for better async performance in all CLI commands
 # This affects all asyncio.run() calls throughout the CLI

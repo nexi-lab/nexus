@@ -177,12 +177,14 @@ Map **data requiring properties** ↔ **storage providing properties**.
 | **UserModel** | Med | Low | SC | Relational (JOIN on zone_id, email lookup) | Small | Med | Persistent | System | Core user accounts with soft delete | SQLAlchemy with soft delete | **Keep SQLAlchemy** (relational queries) | ✅ KEEP |
 | **UserOAuthAccountModel** | Med | Low | SC | Relational (FK to user_id, unique constraint on provider+provider_user_id) | Small | Med | Persistent | System | OAuth provider accounts for SSO login | SQLAlchemy | **Keep SQLAlchemy** (FK, unique constraints) | ✅ KEEP |
 | **OAuthCredentialModel** | Med | Low | SC | Relational (FK to user_id, zone_id, encrypted tokens) | Small | Med | Persistent | Zone | OAuth tokens for backend integrations (Google Drive, OneDrive) | SQLAlchemy with encryption | **Keep SQLAlchemy** (FK, encryption) | ✅ KEEP |
+| **UserSecretModel** | Med | Low | SC | Relational (FK to user_id, unique constraint on user_id+zone_id+name, Fernet-encrypted value) | Small | Med | Persistent | Zone | User-managed encrypted secrets (API keys, tokens) referenced via `nexus-secret:NAME` in plugin/agent configs | SQLAlchemy with encryption | **Keep SQLAlchemy** (FK, encryption, unique constraint) | ✅ KEEP |
 | **UserSessionModel** | High | Med | EC | KV (by session_id) | Tiny | High | Session | System | Active user sessions | SQLAlchemy | **CacheStore** (Dragonfly / In-Memory) | ✅ DECIDED: CacheStore |
 
 **Analysis (Step 1+3 DECIDED):**
 - **No merges or abstractions needed** — well-designed, minimal redundancy:
   - **UserOAuthAccountModel** vs **OAuthCredentialModel**: Intentionally separate — *login auth* (ID token only) vs *backend integration* (access/refresh tokens). Different security flows.
-  - User/OAuth models: ✅ KEEP RecordStore — relational queries, FK, encryption
+  - **UserSecretModel**: User-managed encrypted key-value secrets. Distinct from OAuthCredentialModel (system-managed OAuth tokens) — different lifecycle, different crypto (standalone Fernet key vs OAuth encryption key). Scoped by (user_id, zone_id, name). Accessed via `SecretResolver` for `nexus-secret:NAME` pattern injection in plugin/agent configs. Audit trail via SecretsAuditLogModel (Part 20).
+  - User/OAuth/Secrets models: ✅ KEEP RecordStore — relational queries, FK, encryption
 - **UserSessionModel affinity (Step 3)**:
   - Required: KV by session_id, TTL expiry, high read freq, EC sufficient
   - Relational ACID (RecordStore): ✅ works, but ❌ no native TTL, ❌ overkill (no JOINs/FK needed)
@@ -351,7 +353,7 @@ individual rationale, and the Quartet section below for complete data type → p
 ### ✅ Confirmed NO-MERGE (architecture is correct):
 
 5. **ReBAC 4 types** — Zanzibar-correct: SSOT (Tuple, Namespace), Derived (GroupClosure), Audit (Changelog)
-6. **User/Auth 4 types** — Clean separation: identity (User), login auth (OAuthAccount), backend integration (OAuthCredential), sessions (UserSession)
+6. **User/Auth 5 types** — Clean separation: identity (User), login auth (OAuthAccount), backend integration (OAuthCredential), user-managed secrets (UserSecret), sessions (UserSession)
 7. **Events 3 types** — Different lifecycles: ephemeral (FileEvent), persistent config (Subscription), audit (Delivery)
 8. **CompactFileMetadata** — Cache-tier projection of FileMetadata (auto-generated from proto)
 9. **FileMetadataModel (custom KV)** — Arbitrary user-defined pairs, fundamentally different from fixed-schema FileMetadata
@@ -511,10 +513,10 @@ Data classes (`FileMetadata`, `PaginatedResult`) live in `contracts/metadata.py`
 | ReBACNamespaceModel | SQLAlchemy | Part 5 | Permission config, KV by namespace_id |
 | SystemSettingsModel | SQLAlchemy | Part 13 | System config, KV by key |
 
-**RecordStore** (Relational — PostgreSQL/SQLite) — 49 types:
+**RecordStore** (Relational — PostgreSQL/SQLite) — 50 types:
 | Category | Data Types | From Part | Rationale |
 |----------|-----------|-----------|-----------|
-| **Users & Auth** | UserModel, UserOAuthAccountModel, OAuthCredentialModel | Part 6 | FK, unique constraints, encryption |
+| **Users & Auth** | UserModel, UserOAuthAccountModel, OAuthCredentialModel, UserSecretModel | Part 6 | FK, unique constraints, encryption |
 | **ReBAC** | ReBACTupleModel, ReBACGroupClosureModel, ReBACChangelogModel | Part 5 | Composite indexes (SSOT), materialized view, append-only BRIN |
 | **Memory System** | MemoryModel, **MemoryConfig**, TrajectoryModel, TrajectoryFeedbackModel, PlaybookModel | Part 4 | Vector search (pgvector), relational FK; MemoryConfig co-exists with MemoryModel |
 | **Versioning** | VersionHistoryModel, WorkspaceSnapshotModel | Part 3 | Parent FK, BRIN time-series |

@@ -169,6 +169,16 @@ SERVICE_REGISTRY: dict[str, ServiceInfo] = {
         capabilities=["read", "write", "list"],
         description="X timeline, posts, users",
     ),
+    # Messaging platforms
+    "feishu": ServiceInfo(
+        name="feishu",
+        display_name="Feishu/Lark",
+        connector=None,  # auto-derived: feishu_connector
+        klavis_mcp=None,
+        oauth_provider="feishu",
+        capabilities=["read", "write", "list"],
+        description="Feishu/Lark messages, group chats, P2P conversations",
+    ),
     # Read-only services
     "hackernews": ServiceInfo(
         name="hackernews",

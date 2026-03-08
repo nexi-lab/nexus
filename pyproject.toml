@@ -82,6 +82,7 @@ dependencies = [
     "google-auth-httplib2>=0.2.1", # Google auth HTTP adapter
     "google-auth-oauthlib>=1.2.0", # Google OAuth flow
     "slack-sdk>=3.39.0", # Slack API for Slack connector
+    "lark-oapi>=1.3.0", # Feishu/Lark API for Feishu connector
     # LLM Provider Abstraction
     "litellm>=1.8.10", # Multi-provider LLM support
     "tiktoken>=0.12", # Token counting for OpenAI models and chunking
@@ -509,6 +510,11 @@ disable_error_code = ["override", "return-value", "arg-type", "no-any-return"]
 module = "nexus.backends.slack_connector_utils"
 # Slack API utilities
 disable_error_code = ["no-any-return"]
+
+[[tool.mypy.overrides]]
+module = "nexus.backends.connectors.feishu.connector"
+# Feishu connector: yaml stubs, CacheConnectorMixin returns Any
+disable_error_code = ["import-untyped", "no-any-return"]
 
 [[tool.mypy.overrides]]
 module = [

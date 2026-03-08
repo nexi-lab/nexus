@@ -44,6 +44,10 @@ _OPTIONAL_BACKENDS: dict[str, tuple[str, str]] = {
         "nexus.backends.gcalendar_connector",
         "GoogleCalendarConnectorBackend",
     ),
+    "FeishuConnectorBackend": (
+        "nexus.backends.connectors.feishu.connector",
+        "FeishuConnectorBackend",
+    ),
 }
 
 _optional_backends_registered = False
@@ -124,4 +128,5 @@ __all__ = [
     "LocalConnectorBackend",
     "GmailConnectorBackend",
     "GoogleCalendarConnectorBackend",
+    "FeishuConnectorBackend",
 ]

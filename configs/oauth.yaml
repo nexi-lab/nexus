@@ -127,3 +127,18 @@ providers:
     requires_pkce: false
     icon_url: https://a.slack-edge.com/80588/marketing/img/icons/icon_slack_hash_colored.png
     # redirect_uri: Optional - uses global redirect_uri if not specified
+
+  # Feishu/Lark OAuth
+  - name: feishu
+    display_name: Feishu/Lark
+    provider_class: nexus.server.auth.feishu_oauth.FeishuOAuthProvider
+    scopes:
+      - im:chat:readonly
+      - im:message
+      - im:message:send_as_bot
+      - contact:user.base:readonly
+    client_id_env: FEISHU_APP_ID
+    client_secret_env: FEISHU_APP_SECRET
+    requires_pkce: false
+    icon_url: https://sf3-cn.feishucdn.com/obj/feishu-static/lark/passport/img/logo-feishu.svg
+    # redirect_uri: Optional - uses global redirect_uri if not specified

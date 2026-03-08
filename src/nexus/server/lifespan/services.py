@@ -49,12 +49,16 @@ async def startup_services(app: "FastAPI", svc: "LifespanServices") -> list[asyn
 
     await _startup_workflow_engine(app, svc)
     await _startup_pipe_consumers(app, svc)
+    _startup_feishu_ws_worker(app, svc)
 
     return bg_tasks
 
 
 async def shutdown_services(app: "FastAPI", svc: "LifespanServices") -> None:
     """Shutdown services in reverse order."""
+    # Stop Feishu WS worker (daemon thread)
+    _shutdown_feishu_ws_worker(app)
+
     # Issue #809/#810: Stop DT_PIPE consumers
     await _shutdown_pipe_consumers(app)
 
@@ -767,3 +771,71 @@ async def _shutdown_pipe_consumers(app: "FastAPI") -> None:
             logger.info("[PIPE] ZoektPipeConsumer stopped")
         except Exception as e:
             logger.warning("[PIPE] Error stopping ZoektPipeConsumer: %s", e, exc_info=True)
+
+
+def _startup_feishu_ws_worker(app: "FastAPI", svc: "LifespanServices") -> None:
+    """Start Feishu WebSocket (long connection) worker if credentials are available.
+
+    Credentials are resolved in order:
+    1. UserSecretsService (nexus-secret:FEISHU_APP_ID)
+    2. Environment variables (FEISHU_APP_ID, FEISHU_APP_SECRET)
+
+    The worker runs in a daemon thread and auto-reconnects.
+    """
+    app.state.feishu_ws_worker = None
+
+    # Resolve credentials
+    app_id: str | None = None
+    app_secret: str | None = None
+
+    # Try UserSecretsService first
+    secrets_svc = getattr(app.state, "user_secrets_service", None)
+    if secrets_svc is not None:
+        try:
+            app_id = secrets_svc.get_secret_value(
+                user_id="system", name="FEISHU_APP_ID", zone_id="root"
+            )
+            app_secret = secrets_svc.get_secret_value(
+                user_id="system", name="FEISHU_APP_SECRET", zone_id="root"
+            )
+        except Exception as e:
+            logger.debug("[FEISHU-WS] UserSecretsService lookup failed: %s", e)
+
+    # Fallback to environment variables
+    if not app_id:
+        app_id = os.environ.get("FEISHU_APP_ID")
+    if not app_secret:
+        app_secret = os.environ.get("FEISHU_APP_SECRET")
+
+    if not app_id or not app_secret:
+        logger.debug("[FEISHU-WS] No credentials found, WebSocket worker not started")
+        return
+
+    try:
+        from nexus.backends.connectors.feishu.ws_worker import FeishuWebSocketWorker
+
+        event_bus = getattr(svc, "event_bus", None) or getattr(app.state, "event_bus", None)
+        worker = FeishuWebSocketWorker(
+            app_id=app_id,
+            app_secret=app_secret,
+            event_bus=event_bus,
+        )
+        worker.start()
+        app.state.feishu_ws_worker = worker
+        logger.info("[FEISHU-WS] WebSocket worker started (app_id=%s)", app_id)
+    except ImportError as e:
+        logger.debug("[FEISHU-WS] lark-oapi not available: %s", e)
+    except Exception as e:
+        logger.warning("[FEISHU-WS] Failed to start WebSocket worker: %s", e, exc_info=True)
+
+
+def _shutdown_feishu_ws_worker(app: "FastAPI") -> None:
+    """Stop Feishu WebSocket worker."""
+    worker = getattr(app.state, "feishu_ws_worker", None)
+    if worker is not None:
+        try:
+            worker.stop()
+            logger.info("[FEISHU-WS] WebSocket worker stopped")
+        except Exception as e:
+            logger.warning("[FEISHU-WS] Error stopping WebSocket worker: %s", e, exc_info=True)
+    app.state.feishu_ws_worker = None

@@ -1,17 +1,15 @@
-"""Feishu webhook event ingestion router (Task #83).
+"""Feishu webhook event ingestion router.
 
 Handles inbound Feishu webhook events and publishes them to the EventBus
 as FileEvents for downstream processing.
 
 Endpoint: POST /api/v2/webhooks/feishu
 
-Supports:
-- URL verification challenge (Feishu setup handshake)
-- Event signature verification
-- Event mapping to FileEvent types:
-  - im.message.receive_v1 -> FILE_WRITE
-  - im.chat.member.bot.added_v1 -> DIR_CREATE
-  - im.chat.member.bot.deleted_v1 -> DIR_DELETE
+This is the HTTP-push ingress. For the recommended WebSocket (long connection)
+ingress, see ``nexus.backends.connectors.feishu.ws_worker``.
+
+Both ingress methods use the shared ``FeishuEventTranslator`` in
+``nexus.backends.connectors.feishu.events`` for identical mapping.
 """
 
 import hashlib
@@ -22,7 +20,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from nexus.core.file_events import FileEvent, FileEventType
+from nexus.backends.connectors.feishu.events import translate_feishu_event
 
 logger = logging.getLogger(__name__)
 
@@ -93,45 +91,6 @@ def _verify_signature(timestamp: str, nonce: str, body: str, signature: str) -> 
     return expected == signature
 
 
-def _map_event_to_file_event(event_type: str, event: dict[str, Any]) -> FileEvent | None:
-    """Map a Feishu event to a FileEvent.
-
-    Args:
-        event_type: Feishu event type string
-        event: Event payload dict
-
-    Returns:
-        FileEvent or None if event type is not mapped
-    """
-    if event_type == "im.message.receive_v1":
-        message = event.get("message", {})
-        chat_id = message.get("chat_id", "unknown")
-        chat_type = message.get("chat_type", "group")
-        folder = "p2p" if chat_type == "p2p" else "groups"
-        return FileEvent(
-            type=FileEventType.FILE_WRITE,
-            path=f"/chat/feishu/{folder}/{chat_id}.yaml",
-            size=len(json.dumps(message)),
-        )
-
-    if event_type == "im.chat.member.bot.added_v1":
-        chat_id = event.get("chat_id", "unknown")
-        return FileEvent(
-            type=FileEventType.DIR_CREATE,
-            path=f"/chat/feishu/groups/{chat_id}/",
-        )
-
-    if event_type == "im.chat.member.bot.deleted_v1":
-        chat_id = event.get("chat_id", "unknown")
-        return FileEvent(
-            type=FileEventType.DIR_DELETE,
-            path=f"/chat/feishu/groups/{chat_id}/",
-        )
-
-    logger.debug("Unmapped Feishu event type: %s", event_type)
-    return None
-
-
 @router.post("/feishu")
 async def feishu_webhook(request: Request) -> JSONResponse:
     """Handle inbound Feishu webhook events.
@@ -171,8 +130,8 @@ async def feishu_webhook(request: Request) -> JSONResponse:
 
     logger.info("Feishu webhook event: type=%s", event_type)
 
-    # Map to FileEvent and publish
-    file_event = _map_event_to_file_event(event_type, event)
+    # Map to FileEvent via shared translator and publish
+    file_event = translate_feishu_event(event_type, event)
     if file_event:
         # Publish to EventBus
         if _event_bus:

@@ -50,10 +50,10 @@ _REGISTER_COMMANDS = [
     "cluster",
     "skills",
     # Issue #2807: Infrastructure lifecycle commands
-    "infra",      # up, down, logs
-    "status",     # status [--watch] [--json]
-    "doctor",     # doctor [--json] [--fix]
-    "start",      # start (federation-ready)
+    "infra",  # up, down, logs
+    "status",  # status [--watch] [--json]
+    "doctor",  # doctor [--json] [--fix]
+    "start",  # start (federation-ready)
 ]
 
 # Modules that expose a single Click command/group to add via cli.add_command

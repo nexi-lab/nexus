@@ -6,6 +6,7 @@ Nexus functionality to AI agents and tools using the fastmcp framework.
 
 import contextlib
 import contextvars
+import inspect
 import json
 import logging
 from typing import Any, cast
@@ -238,7 +239,9 @@ def create_mcp_server(
             # Store in FastMCP's context state so tools can access it via Context.get_state()
             if api_key and context.fastmcp_context:
                 try:
-                    await context.fastmcp_context.set_state("api_key", api_key)
+                    _result = cast(Any, context.fastmcp_context.set_state)("api_key", api_key)
+                    if inspect.isawaitable(_result):
+                        await _result
                     # Also set in context variable (sync path for tool functions)
                     _request_api_key.set(api_key)
                 except Exception:

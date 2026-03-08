@@ -196,7 +196,7 @@ jobs:
       - name: Run self-contained e2e tests
         run: |
           uv run pytest tests/e2e/self_contained/ -v --timeout=120 -o "addopts="
-        timeout-minutes: 15
+        timeout-minutes: 20
 
   e2e-postgres:
     name: E2E Tests (PostgreSQL)

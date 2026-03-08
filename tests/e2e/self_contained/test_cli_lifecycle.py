@@ -194,9 +194,9 @@ class TestStartE2E:
 
         try:
             # Wait for the server to be reachable
-            reachable = _wait_for_port(port, timeout=60)
+            reachable = _wait_for_port(port, timeout=30)
             assert reachable, (
-                f"nexus start did not bind to port {port} within 60s\n"
+                f"nexus start did not bind to port {port} within 30s\n"
                 f"output: {''.join(output_lines[-20:])}"
             )
 
@@ -253,7 +253,7 @@ class TestStartE2E:
         drain.start()
 
         try:
-            _wait_for_port(port, timeout=60)
+            _wait_for_port(port, timeout=30)
             proc.send_signal(signal.SIGINT)
             returncode = proc.wait(timeout=15)
             # Exit 0 = clean shutdown, exit 1 = acceptable (uvicorn behavior)

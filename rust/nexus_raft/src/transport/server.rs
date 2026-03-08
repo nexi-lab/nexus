@@ -25,8 +25,8 @@ use super::proto::nexus::raft::{
 };
 use super::{NodeAddress, Result, TransportError};
 use crate::raft::{
-    Command, CommandResult, FullStateMachine, RaftError, WitnessStateMachine, ZoneConsensus,
-    ZoneRaftRegistry,
+    Command, CommandResult, FullStateMachine, RaftError, StateMachine, WitnessStateMachine,
+    ZoneConsensus, ZoneRaftRegistry,
 };
 use crate::storage::RedbStore;
 use bincode;
@@ -745,6 +745,8 @@ impl ZoneApiService for ZoneApiServiceImpl {
             });
         }
 
+        let applied_index = node.with_state_machine(|sm| sm.last_applied_index()).await;
+
         Ok(Response::new(GetClusterInfoResponse {
             node_id,
             leader_id,
@@ -756,6 +758,7 @@ impl ZoneApiService for ZoneApiServiceImpl {
             }),
             is_leader,
             leader_address: leader_addr,
+            applied_index,
         }))
     }
 

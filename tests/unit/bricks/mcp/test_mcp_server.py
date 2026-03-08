@@ -39,7 +39,7 @@ class TestCreateMCPServer:
             server = create_mcp_server(remote_url="http://localhost:2026")
 
             mock_connect.assert_called_once_with(
-                config={"mode": "remote", "url": "http://localhost:2026", "api_key": None}
+                config={"profile": "remote", "url": "http://localhost:2026", "api_key": None}
             )
             assert server is not None
 

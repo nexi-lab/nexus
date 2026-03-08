@@ -385,7 +385,7 @@ See `federation-memo.md` §7j for design rationale.
 |----------|-------|
 | Event types | `FILE_WRITE`, `FILE_DELETE`, `FILE_RENAME`, `METADATA_CHANGE`, `DIR_CREATE`, `DIR_DELETE`, `SYNC_*`, `CONFLICT_*` |
 | Structure | Frozen dataclass: path, etag, size, version, zone_id, agent_id, user_id, vector_clock |
-| Consumer paths | KernelDispatch OBSERVE (local), EventBus (distributed), Layer 1 inotify/FSEvents |
+| Consumer paths | KernelDispatch OBSERVE (local), EventBus (distributed) |
 | Emission point | Always AFTER lock release |
 
 

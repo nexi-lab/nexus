@@ -624,11 +624,26 @@ class ChunkedUploadService:
                     content = await asyncio.to_thread(self._backend.read_content, part_hash)
                     assembled.extend(content)
 
-            # Write assembled content
+            # Write assembled content to CAS
             content = bytes(assembled)
             _write = self._backend.write_content
             result = await asyncio.to_thread(_write, content)
             content_hash = result.content_hash
+
+            # Link content to target_path via metadata store so the file is
+            # reachable (multipart backends do this inside complete_multipart).
+            if self._metadata_store is not None:
+                from nexus.contracts.metadata import FileMetadata
+
+                backend_name = getattr(self._backend, "name", "default")
+                metadata = FileMetadata(
+                    path=session.target_path,
+                    backend_name=backend_name,
+                    physical_path=content_hash,
+                    size=len(content),
+                    etag=content_hash,
+                )
+                await asyncio.to_thread(self._metadata_store.put, metadata)
 
         # Update session to completed
         completed = UploadSession(

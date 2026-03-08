@@ -64,7 +64,6 @@ _ADD_COMMAND: dict[str, str] = {
     "sandbox": "sandbox",
     "oauth": "oauth",
     "zone": "zone",
-    "federation": "federation",  # Issue #2808: Federation visibility + orchestration
 }
 
 

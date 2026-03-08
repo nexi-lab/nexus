@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nexus.backends.base.backend import Backend
@@ -86,7 +86,6 @@ def create_nexus_services(
     from nexus.core.config import KernelServices as _KernelServices
     from nexus.core.config import PermissionConfig as _PermissionConfig
     from nexus.core.config import SystemServices as _SystemServices
-    from nexus.factory._background import _start_background_services
     from nexus.factory._boot_context import _BootContext
     from nexus.factory._bricks import _boot_dependent_bricks, _boot_independent_bricks
     from nexus.factory._helpers import _register_factory_bricks
@@ -160,8 +159,7 @@ def create_nexus_services(
     # --- Tier 2b: DEPENDENT BRICK (Issue #1861: artifact auto-indexing) ---
     _boot_dependent_bricks(ctx, system_dict, brick_dict)
 
-    # --- Start background threads post-construction ---
-    _start_background_services(system_dict)
+    # --- Background threads deferred to NexusFS.initialize() ---
 
     # --- Register factory-created bricks with lifecycle manager (Issue #1704) ---
     _blm = system_dict.get("brick_lifecycle_manager")
@@ -298,7 +296,6 @@ def create_nexus_fs(
     from nexus.core.config import SystemServices as _SystemServices
     from nexus.core.nexus_fs import NexusFS
     from nexus.core.router import PathRouter
-    from nexus.factory._wired import _boot_wired_services
 
     # Create and configure router
     router = PathRouter(metadata_store)
@@ -357,49 +354,7 @@ def create_nexus_fs(
     if brick_services is None:
         brick_services = _BrickServices()
 
-    from dataclasses import replace as _dc_replace
-
-    # Create ParsersBrick — owns both registries (Issue #1523)
-    from nexus.bricks.parsers.brick import ParsersBrick
-
-    parsers_brick = ParsersBrick(parsing_config=parsing)
-    _parse_fn = parsers_brick.create_parse_fn()
-
-    # Create CacheBrick — owns all cache domain services (Issue #1524)
-    from nexus.cache.brick import CacheBrick
-
-    _cache_brick = CacheBrick(
-        cache_store=cache_store,
-        record_store=record_store,
-    )
-
-    # Create content cache (Issue #657)
-    _content_cache = None
-    if cache is None:
-        from nexus.core.config import CacheConfig as _CC
-
-        _cache_for_cc = _CC()
-    else:
-        _cache_for_cc = cache
-    if _cache_for_cc.enable_content_cache and backend.has_root_path is True:
-        from nexus.storage.content_cache import ContentCache
-
-        _content_cache = ContentCache(max_size_mb=_cache_for_cc.content_cache_size_mb)
-
-    # NOTE: VFSLockManager is now kernel-internal (NexusFS.__init__ creates it).
-    # No longer injected via BrickServices. See write-path-extraction-design.md.
-
-    # Pack factory-created bricks into BrickServices container (Issue #2134)
-    _brick_updates: dict[str, Any] = {
-        "cache_brick": _cache_brick,
-        "parse_fn": _parse_fn,
-        "content_cache": _content_cache,
-        "parser_registry": parsers_brick.parser_registry,
-        "provider_registry": parsers_brick.provider_registry,
-    }
-    if workflow_engine is not None:
-        _brick_updates["workflow_engine"] = workflow_engine
-    brick_services = _dc_replace(brick_services, **_brick_updates)
+    from nexus.factory._lifecycle import _do_initialize, _do_link
 
     nx = NexusFS(
         metadata_store=metadata_store,
@@ -415,50 +370,14 @@ def create_nexus_fs(
         system_services=system_services,
         brick_services=brick_services,
     )
-
-    # --- Phase 2: Wire services needing NexusFS reference (Issue #643) ---
-    # Resolve enabled_bricks for brick gating (same pattern as create_nexus_services)
-    from nexus.contracts.deployment_profile import DeploymentProfile as _DP
-
-    _resolved_bricks = enabled_bricks
-    if _resolved_bricks is None:
-        _resolved_bricks = _DP.FULL.default_bricks()
-
-    def _brick_on(name: str) -> bool:
-        return name in _resolved_bricks
-
-    _wired = _boot_wired_services(nx, kernel_services, system_services, brick_services, _brick_on)
-    from nexus.factory.service_routing import bind_wired_services
-
-    bind_wired_services(nx, _wired)
-    _mds = getattr(_wired, "metadata_export_service", None)
-    if _mds is not None:
-        cast(Any, nx)._metadata_export_service = _mds
-
-    # Create PermissionChecker (services layer) — Issue #899
-    # Not stored on NexusFS; passed to hook registration below.
-    from nexus.bricks.rebac.checker import PermissionChecker as _PC
-
-    _permission_checker = _PC(
-        permission_enforcer=nx._permission_enforcer,
-        metadata_store=nx.metadata,
-        default_context=nx._default_context,
-        enforce_permissions=nx._enforce_permissions,
+    nx._link_fn = _do_link
+    nx._initialize_fn = _do_initialize
+    nx.link(
+        enabled_bricks=enabled_bricks,
+        parsing=parsing,
+        workflow_engine=workflow_engine,
     )
-
-    # Register bricks created in create_nexus_fs with lifecycle manager (Issue #1704)
-    _blm = getattr(system_services, "brick_lifecycle_manager", None)
-    if _blm is not None:
-        _blm.register("parsers", parsers_brick, protocol_name="ParsersProtocol")
-        _blm.register("cache", _cache_brick, protocol_name="CacheProtocol")
-
-    # --- Register INTERCEPT hooks on KernelDispatch (Issue #900) ---
-    _register_vfs_hooks(
-        nx,
-        permission_checker=_permission_checker,
-        auto_parse=parsing.auto_parse if parsing else True,
-    )
-
+    nx.initialize()
     return nx
 
 

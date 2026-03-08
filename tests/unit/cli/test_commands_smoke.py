@@ -35,7 +35,7 @@ def _patch_open_filesystem(nx: MagicMock):
     from contextlib import contextmanager
 
     @contextmanager
-    def _mock_open(backend_config, **kwargs):
+    def _mock_open(remote_url=None, remote_api_key=None, **kwargs):
         yield nx
 
     return patch("nexus.cli.commands.directory.open_filesystem", _mock_open)
@@ -46,7 +46,7 @@ def _patch_search_open_filesystem(nx: MagicMock):
     from contextlib import contextmanager
 
     @contextmanager
-    def _mock_open(backend_config, **kwargs):
+    def _mock_open(remote_url=None, remote_api_key=None, **kwargs):
         yield nx
 
     return patch("nexus.cli.commands.search.open_filesystem", _mock_open)

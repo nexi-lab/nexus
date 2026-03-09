@@ -6,13 +6,13 @@ Issue #2811.
 
 import click
 
+from nexus.cli.output import OutputOptions, add_output_options, render_output
+from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
-    JSON_OUTPUT_OPTION,
     REMOTE_API_KEY_OPTION,
     REMOTE_URL_OPTION,
     console,
     get_service_client,
-    output_result,
 )
 
 
@@ -42,13 +42,13 @@ def snapshot() -> None:
     help="Time-to-live in seconds (60-86400)",
     show_default=True,
 )
-@JSON_OUTPUT_OPTION
+@add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
 def snapshot_create(
     description: str | None,
     ttl: int,
-    json_output: bool,
+    output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
@@ -61,7 +61,8 @@ def snapshot_create(
         nexus snapshot create --ttl 7200 --json
     """
     try:
-        with get_service_client(remote_url, remote_api_key) as client:
+        timing = CommandTiming()
+        with timing.phase("server"), get_service_client(remote_url, remote_api_key) as client:
             data = client.snapshot_create(description=description, ttl_seconds=ttl)
 
         def _render(d: dict) -> None:
@@ -72,18 +73,23 @@ def snapshot_create(
             if d.get("description"):
                 console.print(f"  Description:    {d['description']}")
 
-        output_result(data, json_output, _render)
+        render_output(
+            data=data,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(1) from None
 
 
 @snapshot.command("list")
-@JSON_OUTPUT_OPTION
+@add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
 def snapshot_list(
-    json_output: bool,
+    output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
@@ -95,7 +101,8 @@ def snapshot_list(
         nexus snapshot list --json
     """
     try:
-        with get_service_client(remote_url, remote_api_key) as client:
+        timing = CommandTiming()
+        with timing.phase("server"), get_service_client(remote_url, remote_api_key) as client:
             data = client.snapshot_list()
 
         def _render(d: dict) -> None:
@@ -131,7 +138,12 @@ def snapshot_list(
                 )
             console.print(table)
 
-        output_result(data, json_output, _render)
+        render_output(
+            data=data,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(1) from None
@@ -139,12 +151,12 @@ def snapshot_list(
 
 @snapshot.command("restore")
 @click.argument("txn_id")
-@JSON_OUTPUT_OPTION
+@add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
 def snapshot_restore(
     txn_id: str,
-    json_output: bool,
+    output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
@@ -156,7 +168,8 @@ def snapshot_restore(
         nexus snapshot restore abc123 --json
     """
     try:
-        with get_service_client(remote_url, remote_api_key) as client:
+        timing = CommandTiming()
+        with timing.phase("server"), get_service_client(remote_url, remote_api_key) as client:
             data = client.snapshot_restore(txn_id)
 
         def _render(d: dict) -> None:
@@ -164,7 +177,12 @@ def snapshot_restore(
             if d:
                 console.print(f"  Status: {d.get('status', 'rolled_back')}")
 
-        output_result(data, json_output, _render)
+        render_output(
+            data=data,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(1) from None

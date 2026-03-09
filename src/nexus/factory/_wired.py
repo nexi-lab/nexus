@@ -386,21 +386,24 @@ def _boot_wired_services(
         logger.debug("[BOOT:WIRED] DescendantAccessChecker unavailable: %s", exc)
 
     memory_provider: Any = None
-    try:
-        from nexus.bricks.memory.memory_provider import MemoryProvider
+    if not _on("memory"):
+        logger.debug("[BOOT:WIRED] MemoryProvider disabled by profile")
+    else:
+        try:
+            from nexus.bricks.memory.memory_provider import MemoryProvider
 
-        memory_provider = MemoryProvider(
-            session_factory=_nx_session_factory,
-            backend=_root_backend,
-            entity_registry=system_services.entity_registry,
-            enable_paging=getattr(nx, "_enable_memory_paging", True),
-            main_capacity=getattr(nx, "_memory_main_capacity", 100),
-            recall_max_age_hours=getattr(nx, "_memory_recall_max_age_hours", 24.0),
-            memory_config=_nx_memory_config,
-        )
-        logger.debug("[BOOT:WIRED] MemoryProvider created")
-    except Exception as exc:
-        logger.debug("[BOOT:WIRED] MemoryProvider unavailable: %s", exc)
+            memory_provider = MemoryProvider(
+                session_factory=_nx_session_factory,
+                backend=_root_backend,
+                entity_registry=system_services.entity_registry,
+                enable_paging=getattr(nx, "_enable_memory_paging", True),
+                main_capacity=getattr(nx, "_memory_main_capacity", 100),
+                recall_max_age_hours=getattr(nx, "_memory_recall_max_age_hours", 24.0),
+                memory_config=_nx_memory_config,
+            )
+            logger.debug("[BOOT:WIRED] MemoryProvider created")
+        except Exception as exc:
+            logger.debug("[BOOT:WIRED] MemoryProvider unavailable: %s", exc)
 
     # --- TimeTravelService: historical operation-point queries (Issue #882) ---
     time_travel_service: Any = None

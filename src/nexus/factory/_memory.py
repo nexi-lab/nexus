@@ -41,6 +41,13 @@ def create_memory_service(nx: Any) -> Any:
         MemoryService instance, or None if dependencies are unavailable.
     """
     try:
+        # NexusFS no longer exposes .backend — resolve from router (Issue #2034).
+        _root_backend: Any = None
+        try:
+            _root_backend = nx.router.route("/").backend
+        except Exception:
+            logger.debug("[FACTORY] No root backend mounted — MemoryService will degrade")
+
         memory_cfg = getattr(nx, "_memory_config_obj", None)
         _paging = getattr(memory_cfg, "enable_paging", False) if memory_cfg else False
         _main_cap = getattr(memory_cfg, "main_capacity", 1000) if memory_cfg else 1000
@@ -67,7 +74,7 @@ def create_memory_service(nx: Any) -> Any:
                 vector_db = _resolve_vector_db(engine)
                 return MemoryWithPaging(
                     session=session,
-                    backend=nx.backend,
+                    backend=_root_backend,
                     zone_id=zone_id,
                     user_id=user_id,
                     agent_id=agent_id,
@@ -84,7 +91,7 @@ def create_memory_service(nx: Any) -> Any:
 
                 return Memory(
                     session=session,
-                    backend=nx.backend,
+                    backend=_root_backend,
                     zone_id=zone_id,
                     user_id=user_id,
                     agent_id=agent_id,
@@ -109,7 +116,7 @@ def create_memory_service(nx: Any) -> Any:
         svc = MemoryService(
             memory_factory=_create_memory,
             session_factory=nx.SessionLocal,
-            backend=nx.backend,
+            backend=_root_backend,
             default_context=default_ctx,
             memory_config=memory_config,
         )

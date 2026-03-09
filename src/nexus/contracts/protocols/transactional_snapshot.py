@@ -20,13 +20,7 @@ References:
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
-
-from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.contracts.types import SnapshotId
-
-if TYPE_CHECKING:
-    from nexus.contracts.types import OperationContext
+from typing import Any, Protocol, runtime_checkable
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -193,108 +187,87 @@ class TransactionalSnapshotProtocol(Protocol):
 
     async def begin(
         self,
-        agent_id: str,
-        paths: list[str],
-        *,
-        zone_id: str = ROOT_ZONE_ID,
-        context: "OperationContext | None" = None,
-    ) -> SnapshotId:
-        """Create a COW snapshot of specified paths.
+        zone_id: str,
+        agent_id: str | None = None,
+        description: str | None = None,
+        ttl_seconds: int = 3600,
+    ) -> TransactionInfo:
+        """Begin a new transaction.
 
-        Records current metadata + content hashes for each path.
-        Paths that don't exist are recorded as absent (rollback = delete).
+        Creates a snapshot record with status ACTIVE and registers
+        the transaction in the in-memory registry.
 
         Args:
-            agent_id: Agent initiating the transaction.
-            paths: Virtual paths to snapshot (must be non-empty).
             zone_id: Zone scope for the transaction.
-            context: Operation context for permission checks.
+            agent_id: Agent initiating the transaction (optional).
+            description: Human-readable description (optional).
+            ttl_seconds: Time-to-live before auto-expiry.
 
         Returns:
-            Opaque snapshot ID for commit/rollback.
+            TransactionInfo with the new transaction's metadata.
 
         Raises:
-            ValueError: If paths is empty or exceeds max_paths_per_transaction.
             OverlappingTransactionError: If agent has active transaction on any path.
-            PermissionError: If agent lacks permission on any path.
         """
         ...
 
     async def commit(
         self,
-        snapshot_id: SnapshotId,
-        *,
-        context: "OperationContext | None" = None,
-    ) -> None:
+        transaction_id: str,
+    ) -> TransactionInfo:
         """Release snapshot — changes are permanent.
 
+        Checks each entry's new_hash against the current file state.
         Transitions transaction from ACTIVE to COMMITTED.
 
         Args:
-            snapshot_id: Transaction to commit.
-            context: Operation context for permission checks.
+            transaction_id: Transaction to commit.
+
+        Returns:
+            TransactionInfo with updated status.
 
         Raises:
-            TransactionNotFoundError: If snapshot doesn't exist.
+            TransactionNotFoundError: If transaction doesn't exist.
             InvalidTransactionStateError: If not in ACTIVE state.
         """
         ...
 
     async def rollback(
         self,
-        snapshot_id: SnapshotId,
-        *,
-        context: "OperationContext | None" = None,
-    ) -> TransactionResult:
-        """Restore all paths to pre-snapshot state.
+        transaction_id: str,
+    ) -> TransactionInfo:
+        """Restore all paths to pre-transaction state.
 
-        Uses optimistic concurrency: if another agent modified a path
-        since begin(), it's reported as a conflict and NOT reverted.
+        Processes entries in reverse order (LIFO) to handle dependent
+        operations.  Uses optimistic concurrency: if another agent modified
+        a path since begin(), it's reported as a conflict and NOT reverted.
 
         Args:
-            snapshot_id: Transaction to rollback.
-            context: Operation context for permission checks.
+            transaction_id: Transaction to rollback.
 
         Returns:
-            TransactionResult with reverted paths, conflicts, and stats.
+            TransactionInfo with updated status.
 
         Raises:
-            TransactionNotFoundError: If snapshot doesn't exist.
+            TransactionNotFoundError: If transaction doesn't exist.
             InvalidTransactionStateError: If not in ACTIVE state.
         """
         ...
 
     async def get_transaction(
         self,
-        snapshot_id: SnapshotId,
+        transaction_id: str,
     ) -> TransactionInfo:
         """Get transaction details (read-only).
 
         Args:
-            snapshot_id: Transaction to look up.
+            transaction_id: Transaction to look up.
 
         Returns:
             TransactionInfo with current state and metadata.
 
         Raises:
-            TransactionNotFoundError: If snapshot doesn't exist.
-        """
-        ...
-
-    async def list_active(
-        self,
-        agent_id: str,
-        *,
-        zone_id: str = ROOT_ZONE_ID,
-    ) -> list[TransactionInfo]:
-        """List all ACTIVE transactions for an agent.
-
-        Args:
-            agent_id: Agent to query.
-            zone_id: Zone scope.
-
-        Returns:
-            List of active TransactionInfo, ordered by created_at DESC.
+            TransactionNotFoundError: If transaction doesn't exist.
         """
         ...
 

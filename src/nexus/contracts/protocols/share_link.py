@@ -24,6 +24,12 @@ class ShareLinkProtocol(Protocol):
     - Optional password protection
     - Time-limited access with download limits
     - Revocation and access logging
+
+    Note: The canonical implementation (ShareLinkService) returns
+    ``HandlerResponse`` from ``nexus.lib.response``.  This protocol uses
+    ``dict[str, Any]`` because the contracts tier cannot import from lib.
+    ``HandlerResponse`` is dict-like, so callers that treat the return
+    value as a dict will work in practice.
     """
 
     async def create_share_link(

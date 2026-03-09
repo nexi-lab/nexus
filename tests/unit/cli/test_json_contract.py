@@ -61,6 +61,21 @@ _UNIFIED_MODULES = [
     ("nexus.cli.commands.zone", "zone_list"),
     ("nexus.cli.commands.status", "status"),
     ("nexus.cli.commands.doctor", "doctor"),
+    # Q1 sweep — newly migrated modules
+    ("nexus.cli.commands.sandbox", "list_sandboxes"),
+    ("nexus.cli.commands.mounts", "list_mounts"),
+    ("nexus.cli.commands.memory", "query"),
+    ("nexus.cli.commands.cache", "stats"),
+    ("nexus.cli.commands.admin", "list_users"),
+    ("nexus.cli.commands.snapshots", "snapshot_list"),
+    ("nexus.cli.commands.pay", "pay_balance"),
+    ("nexus.cli.commands.locks", "lock_list"),
+    ("nexus.cli.commands.governance_cli", "governance_status"),
+    ("nexus.cli.commands.events_cli", "events_replay"),
+    ("nexus.cli.commands.exchange", "exchange_list"),
+    ("nexus.cli.commands.audit", "audit_list"),
+    ("nexus.cli.commands.connectors", "list_connectors"),
+    ("nexus.cli.commands.config_cmd", "show_cmd"),
 ]
 
 
@@ -154,17 +169,10 @@ def test_document_adhoc_json_commands() -> None:
     """
     adhoc_commands: list[str] = []
 
-    # Modules with known ad-hoc --json
-    adhoc_modules = [
-        "nexus.cli.commands.status",
-        "nexus.cli.commands.doctor",
-        "nexus.cli.commands.mounts",
-        "nexus.cli.commands.memory",
-        "nexus.cli.commands.cache",
-        "nexus.cli.commands.connectors",
-        "nexus.cli.commands.config_cmd",
-        "nexus.cli.commands.sandbox",
-    ]
+    # All previously ad-hoc modules have been migrated to add_output_options.
+    # This list is intentionally empty — any future ad-hoc additions will
+    # be caught here.
+    adhoc_modules: list[str] = []
 
     for mod_path in adhoc_modules:
         try:

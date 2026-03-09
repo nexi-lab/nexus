@@ -1,6 +1,6 @@
 """Conftest for self-contained E2E tests.
 
-Provides a lightweight ``nexus_server`` fixture that spins up ``nexus serve``
+Provides a lightweight ``nexus_server`` fixture that spins up ``nexusd``
 with a temp SQLite database. No external infrastructure required.
 """
 
@@ -41,7 +41,7 @@ def _drain_pipe(pipe, lines: list[str], ready: threading.Event | None = None) ->
 
 @pytest.fixture(scope="function")
 def nexus_server(tmp_path: Path):
-    """Start a lightweight ``nexus serve`` process for E2E testing.
+    """Start a lightweight ``nexusd`` process for E2E testing.
 
     Uses SQLite (no PostgreSQL required). Yields a dict with 'port' and 'base_url'.
     """
@@ -49,7 +49,7 @@ def nexus_server(tmp_path: Path):
     base_url = f"http://127.0.0.1:{port}"
 
     # Use the console_scripts entry point from the same venv
-    nexus_bin = str(Path(sys.executable).parent / "nexus")
+    nexusd_bin = str(Path(sys.executable).parent / "nexusd")
 
     env = os.environ.copy()
     env["NEXUS_DATABASE_URL"] = f"sqlite:///{tmp_path / 'test.db'}"
@@ -59,8 +59,7 @@ def nexus_server(tmp_path: Path):
 
     process = subprocess.Popen(
         [
-            nexus_bin,
-            "serve",
+            nexusd_bin,
             "--host",
             "127.0.0.1",
             "--port",

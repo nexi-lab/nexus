@@ -101,8 +101,8 @@ def audit_server(tmp_path_factory):
             sys.executable,
             "-c",
             (
-                f"from nexus.cli import main; "
-                f"main(['serve', '--host', '127.0.0.1', '--port', '{port}', "
+                f"from nexus.daemon.main import main; "
+                f"main(['--host', '127.0.0.1', '--port', '{port}', "
                 f"'--data-dir', '{tmp_path}', "
                 f"'--auth-type', 'database', '--init'])"
             ),

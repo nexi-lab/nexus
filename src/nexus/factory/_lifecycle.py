@@ -29,7 +29,7 @@ def _do_link(
 
     from nexus.contracts.deployment_profile import DeploymentProfile as _DP
     from nexus.factory._wired import _boot_wired_services
-    from nexus.factory.service_routing import bind_wired_services
+    from nexus.factory.service_routing import bind_wired_services, populate_service_registry
 
     _parsing = parsing if parsing is not None else nx._parse_config
 
@@ -96,6 +96,7 @@ def _do_link(
         _brick_on,
     )
     bind_wired_services(nx, _wired)
+    populate_service_registry(nx._service_registry, _wired)
 
     # MetadataExportService lives outside the slot map
     _mds = getattr(_wired, "metadata_export_service", None)

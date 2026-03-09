@@ -110,6 +110,7 @@ def test_all_public_methods_are_exposed_or_excluded():
         "link",  # Boot phase 1 - pure memory wiring, not an RPC operation
         "initialize",  # Boot phase 2 - one-time side effects, not an RPC operation
         "bootstrap",  # Boot phase 3 - async task startup, server-only
+        "service",  # ServiceRegistry lookup — local kernel API, not an RPC operation (Issue #1452)
         "load_all_saved_mounts",  # Internal initialization method - called automatically on startup
         # Server-side only methods (clients get this via HTTP headers)
         "get_etag",  # Returns ETag for early 304 check - clients receive ETags via HTTP headers on read

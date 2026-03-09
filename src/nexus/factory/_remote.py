@@ -71,10 +71,11 @@ def _boot_remote_services(nfs: "NexusFS", call_rpc: Callable[..., Any]) -> None:
     proxy = RemoteServiceProxy(call_rpc, service_name="universal")
 
     # Fill all wired service slots via bind_wired_services (dict path)
-    from nexus.factory.service_routing import bind_wired_services
+    from nexus.factory.service_routing import bind_wired_services, populate_service_registry
 
     wired_dict: dict[str, Any] = dict.fromkeys(_WIRED_FIELDS, proxy)
     bind_wired_services(nfs, wired_dict)
+    populate_service_registry(nfs._service_registry, wired_dict, is_remote=True)
 
     # BrickServices field not covered by WiredServices
     nfs.version_service = proxy

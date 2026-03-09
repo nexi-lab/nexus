@@ -189,11 +189,13 @@ def federation_info(
     default=None,
     help="Explicit zone ID for the shared subtree (auto-generated if omitted).",
 )
+@add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
 def federation_share(
     path: str,
     zone_id: str | None,
+    output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
@@ -206,13 +208,17 @@ def federation_share(
         nexus federation share /data/shared
         nexus federation share /data/shared --zone-id my-shared-zone
     """
+    timing = CommandTiming()
     try:
-        with get_service_client(remote_url, remote_api_key) as client:
+        with get_service_client(remote_url, remote_api_key) as client, timing.phase("server"):
             data = client.federation_share(path, zone_id=zone_id)
 
-        new_zone = data.get("zone_id", "unknown")
-        console.print(f"[green]Shared '{path}' as federation zone[/green]")
-        console.print(f"  Zone ID: [cyan]{new_zone}[/cyan]")
+        def _render(_d: dict[str, Any]) -> None:  # noqa: ARG001
+            new_zone = data.get("zone_id", "unknown")
+            console.print(f"[green]Shared '{path}' as federation zone[/green]")
+            console.print(f"  Zone ID: [cyan]{new_zone}[/cyan]")
+
+        render_output(data=data, output_opts=output_opts, timing=timing, human_formatter=_render)
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(1) from None
@@ -222,12 +228,14 @@ def federation_share(
 @click.argument("peer_addr", type=str)
 @click.argument("remote_path", type=str)
 @click.argument("local_path", type=str)
+@add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
 def federation_join(
     peer_addr: str,
     remote_path: str,
     local_path: str,
+    output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
@@ -240,15 +248,19 @@ def federation_join(
         nexus federation join peer1:2126 /shared /local/shared
         nexus federation join 10.0.0.5:2126 /data /mnt/data
     """
+    timing = CommandTiming()
     try:
-        with get_service_client(remote_url, remote_api_key) as client:
+        with get_service_client(remote_url, remote_api_key) as client, timing.phase("server"):
             data = client.federation_join(peer_addr, remote_path, local_path)
 
-        joined_zone = data.get("zone_id", "unknown")
-        console.print(f"[green]Joined federation zone from {peer_addr}[/green]")
-        console.print(f"  Zone ID:     [cyan]{joined_zone}[/cyan]")
-        console.print(f"  Remote path: {remote_path}")
-        console.print(f"  Local path:  {local_path}")
+        def _render(_d: dict[str, Any]) -> None:  # noqa: ARG001
+            joined_zone = data.get("zone_id", "unknown")
+            console.print(f"[green]Joined federation zone from {peer_addr}[/green]")
+            console.print(f"  Zone ID:     [cyan]{joined_zone}[/cyan]")
+            console.print(f"  Remote path: {remote_path}")
+            console.print(f"  Local path:  {local_path}")
+
+        render_output(data=data, output_opts=output_opts, timing=timing, human_formatter=_render)
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(1) from None
@@ -273,12 +285,14 @@ def federation_join(
     required=True,
     help="Zone to mount at the given path.",
 )
+@add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
 def federation_mount(
     parent_zone: str,
     path: str,
     target_zone: str,
+    output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
@@ -292,13 +306,17 @@ def federation_mount(
         nexus federation mount --parent-zone root --path /shared --target-zone team
         nexus federation mount --parent-zone default --path /projects --target-zone proj
     """
+    timing = CommandTiming()
     try:
-        with get_service_client(remote_url, remote_api_key) as client:
-            client.federation_mount(parent_zone, path, target_zone)
+        with get_service_client(remote_url, remote_api_key) as client, timing.phase("server"):
+            data = client.federation_mount(parent_zone, path, target_zone)
 
-        console.print(
-            f"[green]Mounted zone '{target_zone}' at '{path}' in zone '{parent_zone}'[/green]"
-        )
+        def _render(_d: dict[str, Any]) -> None:  # noqa: ARG001
+            console.print(
+                f"[green]Mounted zone '{target_zone}' at '{path}' in zone '{parent_zone}'[/green]"
+            )
+
+        render_output(data=data, output_opts=output_opts, timing=timing, human_formatter=_render)
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(1) from None
@@ -317,11 +335,13 @@ def federation_mount(
     required=True,
     help="Path of the mount point to remove.",
 )
+@add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
 def federation_unmount(
     parent_zone: str,
     path: str,
+    output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
@@ -332,11 +352,15 @@ def federation_unmount(
         nexus federation unmount --parent-zone root --path /shared
         nexus federation unmount --parent-zone default --path /projects
     """
+    timing = CommandTiming()
     try:
-        with get_service_client(remote_url, remote_api_key) as client:
-            client.federation_unmount(parent_zone, path)
+        with get_service_client(remote_url, remote_api_key) as client, timing.phase("server"):
+            data = client.federation_unmount(parent_zone, path)
 
-        console.print(f"[green]Unmounted '{path}' from zone '{parent_zone}'[/green]")
+        def _render(_d: dict[str, Any]) -> None:  # noqa: ARG001
+            console.print(f"[green]Unmounted '{path}' from zone '{parent_zone}'[/green]")
+
+        render_output(data=data, output_opts=output_opts, timing=timing, human_formatter=_render)
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(1) from None

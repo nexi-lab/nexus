@@ -400,16 +400,19 @@ class TestVFSServicerTypedRPCs:
 
     @pytest.mark.anyio
     async def test_delete_success(self, servicer) -> None:
-        """Delete returns success=True on sys_unlink."""
+        """Delete returns success=True on sys_unlink for files."""
         request = _make_typed_request(
             "DeleteRequest", path="/file.txt", auth_token="", recursive=False
         )
         context = MagicMock()
 
+        # First to_thread call: metadata.get (returns file-like meta)
+        # Second to_thread call: sys_unlink (returns None)
+        file_meta = MagicMock(mime_type="application/octet-stream")
         with patch(
             "nexus.grpc.servicer.asyncio.to_thread",
             new_callable=AsyncMock,
-            return_value=None,
+            side_effect=[file_meta, None],
         ):
             response = await servicer.Delete(request, context)
 
@@ -418,20 +421,23 @@ class TestVFSServicerTypedRPCs:
 
     @pytest.mark.anyio
     async def test_delete_recursive(self, servicer) -> None:
-        """Delete with recursive=True calls sys_rmdir."""
+        """Delete with recursive=True calls sys_rmdir for directories."""
         request = _make_typed_request("DeleteRequest", path="/dir", auth_token="", recursive=True)
         context = MagicMock()
 
+        # First to_thread call: metadata.get (returns directory meta)
+        # Second to_thread call: sys_rmdir (returns None)
+        dir_meta = MagicMock(mime_type="inode/directory")
         with patch(
             "nexus.grpc.servicer.asyncio.to_thread",
             new_callable=AsyncMock,
-            return_value=None,
+            side_effect=[dir_meta, None],
         ) as mock_thread:
             response = await servicer.Delete(request, context)
 
         assert response.success is True
-        # Verify sys_rmdir was called (not sys_unlink) — check mock name
-        call_args = mock_thread.call_args
+        # Verify sys_rmdir was called (not sys_unlink) — check the second call
+        call_args = mock_thread.call_args_list[1]
         func = call_args[0][0]
         assert "sys_rmdir" in str(func)
 

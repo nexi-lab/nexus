@@ -214,12 +214,16 @@ def connect(
 
         # Single shared RPCTransport (gRPC channel) for all remote proxies.
         from nexus.remote.rpc_transport import RPCTransport
+        from nexus.security.tls.config import ZoneTlsConfig
+
+        tls_config = ZoneTlsConfig.from_env()
 
         transport = RPCTransport(
             server_address=grpc_address,
             auth_token=api_key,
             timeout=float(timeout),
             connect_timeout=float(connect_timeout),
+            tls_config=tls_config,
         )
 
         # RemoteBackend + RemoteMetastore — stateless proxies, server is SSOT.

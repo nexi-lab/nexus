@@ -51,7 +51,8 @@ dependencies = [
     # Python 3.14 compatibility - pin transitive deps with wheels
     "aiohttp>=3.11.0",
     "frozenlist>=1.5.0",
-    "grpcio>=1.68.0",
+    "protobuf>=6.31.1",
+    "grpcio>=1.76.0",
     # HTTP server (FastAPI + ASGI)
     "fastapi>=0.124.0",
     "uvicorn[standard]>=0.38.0", # ASGI server

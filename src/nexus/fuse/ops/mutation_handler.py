@@ -11,6 +11,7 @@ from nexus.fuse.filters import is_os_metadata_file
 from nexus.fuse.ops._shared import (
     FUSESharedContext,
     check_namespace_visible,
+    invalidate_dir_cache,
     parse_virtual_path_for_fuse,
     try_rust,
 )
@@ -55,6 +56,7 @@ class MutationHandler:
         ctx.cache.invalidate_path(original_path)
         if path != original_path:
             ctx.cache.invalidate_path(path)
+        invalidate_dir_cache(ctx, original_path)
 
         # Generate file descriptor
         with ctx.files_lock:
@@ -83,13 +85,14 @@ class MutationHandler:
 
         check_namespace_visible(ctx, original_path)
 
-        ok, _ = try_rust(ctx, "UNLINK", "delete", original_path)
+        ok, _ = try_rust(ctx, "UNLINK", "sys_unlink", original_path)
         if not ok:
-            ctx.nexus_fs.sys_unlink(original_path)
+            ctx.nexus_fs.sys_unlink(original_path, context=ctx.context)
 
         ctx.cache.invalidate_path(original_path)
         if path != original_path:
             ctx.cache.invalidate_path(path)
+        invalidate_dir_cache(ctx, original_path)
 
         if HAS_EVENT_BUS and FileEventType is not None:
             ctx.events.fire(FileEventType.FILE_DELETE, original_path)
@@ -103,9 +106,11 @@ class MutationHandler:
 
         check_namespace_visible(ctx, path)
 
-        ok, _ = try_rust(ctx, "MKDIR", "mkdir", path)
+        ok, _ = try_rust(ctx, "MKDIR", "sys_mkdir", path)
         if not ok:
-            ctx.nexus_fs.sys_mkdir(path, parents=True, exist_ok=True)
+            ctx.nexus_fs.sys_mkdir(path, parents=True, exist_ok=True, context=ctx.context)
+
+        invalidate_dir_cache(ctx, path)
 
         if HAS_EVENT_BUS and FileEventType is not None:
             ctx.events.fire(FileEventType.DIR_CREATE, path)
@@ -119,7 +124,9 @@ class MutationHandler:
 
         check_namespace_visible(ctx, path)
 
-        ctx.nexus_fs.sys_rmdir(path, recursive=False)
+        ctx.nexus_fs.sys_rmdir(path, recursive=False, context=ctx.context)
+
+        invalidate_dir_cache(ctx, path)
 
         if HAS_EVENT_BUS and FileEventType is not None:
             ctx.events.fire(FileEventType.DIR_DELETE, path)
@@ -152,6 +159,8 @@ class MutationHandler:
         # Invalidate caches for both paths
         ctx.cache.invalidate_path(old_path)
         ctx.cache.invalidate_path(new_path)
+        invalidate_dir_cache(ctx, old_path)
+        invalidate_dir_cache(ctx, new_path)
 
         old_parent = old_path.rsplit("/", 1)[0] or "/"
         new_parent = new_path.rsplit("/", 1)[0] or "/"
@@ -174,9 +183,9 @@ class MutationHandler:
         ctx = self._ctx
         logger.debug(f"Renaming file {old_path} to {new_path}")
 
-        ok, _ = try_rust(ctx, "RENAME", "rename", old_path, new_path)
+        ok, _ = try_rust(ctx, "RENAME", "sys_rename", old_path, new_path)
         if not ok:
-            ctx.nexus_fs.sys_rename(old_path, new_path)
+            ctx.nexus_fs.sys_rename(old_path, new_path, context=ctx.context)
 
     def _rename_directory(self, old_path: str, new_path: str) -> None:
         """Recursive directory rename: list + move files + rmdir source."""
@@ -184,7 +193,7 @@ class MutationHandler:
         logger.debug(f"Renaming directory {old_path} to {new_path}")
 
         try:
-            ctx.nexus_fs.sys_mkdir(new_path, parents=True, exist_ok=True)
+            ctx.nexus_fs.sys_mkdir(new_path, parents=True, exist_ok=True, context=ctx.context)
         except Exception as e:
             logger.debug(f"mkdir {new_path} failed (may already exist): {e}")
 
@@ -199,7 +208,7 @@ class MutationHandler:
                 src_file = file_info["path"]
                 dest_file = src_file.replace(old_path, new_path, 1)
                 logger.debug(f"  Moving file {src_file} to {dest_file}")
-                ctx.nexus_fs.sys_rename(src_file, dest_file)
+                ctx.nexus_fs.sys_rename(src_file, dest_file, context=ctx.context)
 
         logger.debug(f"Removing source directory {old_path}")
-        ctx.nexus_fs.sys_rmdir(old_path, recursive=True)
+        ctx.nexus_fs.sys_rmdir(old_path, recursive=True, context=ctx.context)

@@ -597,6 +597,9 @@ class ReadaheadManager:
         self._sessions: dict[int, ReadSession] = {}
         self._sessions_lock = threading.RLock()
 
+        # File handles where readahead was explicitly disabled by IOProfile
+        self._disabled_fhs: set[int] = set()
+
         # Prefetch buffer pool
         self._buffer_pool = PrefetchBufferPool(config.buffer_pool_mb * 1024 * 1024)
 
@@ -649,6 +652,7 @@ class ReadaheadManager:
                         If provided and disables readahead, skips session creation.
         """
         # Issue #1413: If an io_profile is given and it disables readahead, skip entirely
+        # and record the fh so on_read() doesn't re-create a default session
         if io_profile is not None:
             profile_cfg = io_profile.config()
             if not profile_cfg.readahead_enabled:
@@ -656,6 +660,7 @@ class ReadaheadManager:
                     f"[READAHEAD] Skipping on_open for {path} "
                     f"(io_profile={io_profile} disables readahead)"
                 )
+                self._disabled_fhs.add(fh)
                 return
 
         if not self._config.enabled or not self._config.prefetch_on_open or self._shutdown:
@@ -734,6 +739,10 @@ class ReadaheadManager:
         if not self._config.enabled or self._shutdown:
             return None
 
+        # Respect IOProfile disabling readahead for this file handle
+        if fh in self._disabled_fhs:
+            return None
+
         # Get or create session
         session = self._get_or_create_session(fh, path)
 
@@ -786,6 +795,8 @@ class ReadaheadManager:
         Args:
             fh: File handle being released
         """
+        self._disabled_fhs.discard(fh)
+
         with self._sessions_lock:
             session = self._sessions.pop(fh, None)
 

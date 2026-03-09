@@ -32,6 +32,8 @@ try:
     import redis.asyncio as redis
     from redis.asyncio import BlockingConnectionPool
     from redis.backoff import ExponentialBackoff
+    from redis.exceptions import ConnectionError as RedisConnectionError
+    from redis.exceptions import TimeoutError as RedisTimeoutError
     from redis.retry import Retry
 
     REDIS_AVAILABLE = True
@@ -147,7 +149,7 @@ class DragonflyClient:
             # Exponential backoff retry: 3 retries with backoff
             retry = Retry(ExponentialBackoff(), retries=3)
             client_kwargs["retry"] = retry
-            client_kwargs["retry_on_error"] = [ConnectionError, TimeoutError]
+            client_kwargs["retry_on_error"] = [RedisConnectionError, RedisTimeoutError]
 
         self._client = redis.Redis(**client_kwargs)
 

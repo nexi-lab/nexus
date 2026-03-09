@@ -33,7 +33,7 @@ class TestServiceInfo:
     def test_frozen(self) -> None:
         info = ServiceInfo(name="x", instance=object())
         with pytest.raises(AttributeError):
-            object.__setattr__(info, "name", "y")
+            info.name = "y"
 
     def test_defaults(self) -> None:
         svc = object()

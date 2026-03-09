@@ -216,5 +216,8 @@ docs/plans/
 NUL
 NUL
 
+# Deployment configs (environment-specific)
+deploy/
+
 # Build tools (binary)
 tools/

@@ -34,6 +34,12 @@ import pytest
 
 import nexus
 
+# After PR #2842, CLI commands are remote-only (require --remote-url).
+# Local-mode CLI tests that seed a data dir and run CLI directly no longer work.
+_cli_local_skip = pytest.mark.skip(
+    reason="CLI is remote-only after PR #2842; local-mode CLI tests disabled"
+)
+
 # Ensure subprocess uses the worktree source (not the venv-installed package)
 _WORKTREE_SRC = str(Path(__file__).resolve().parents[3] / "src")
 _SUBPROCESS_ENV = {
@@ -119,6 +125,7 @@ def _parse_json(result: subprocess.CompletedProcess[str]) -> dict:
 # =========================================================================
 
 
+@_cli_local_skip
 class TestLsE2E:
     """nexus ls against real NexusFS."""
 
@@ -187,6 +194,7 @@ class TestLsE2E:
 # =========================================================================
 
 
+@_cli_local_skip
 class TestTreeE2E:
     """nexus tree against real NexusFS."""
 
@@ -214,6 +222,7 @@ class TestTreeE2E:
 # =========================================================================
 
 
+@_cli_local_skip
 class TestCatE2E:
     """nexus cat against real NexusFS."""
 
@@ -259,6 +268,7 @@ class TestCatE2E:
 # =========================================================================
 
 
+@_cli_local_skip
 class TestGlobE2E:
     """nexus glob against real NexusFS."""
 
@@ -291,6 +301,7 @@ class TestGlobE2E:
 # =========================================================================
 
 
+@_cli_local_skip
 class TestGrepE2E:
     """nexus grep against real NexusFS."""
 
@@ -335,6 +346,7 @@ class TestGrepE2E:
 # =========================================================================
 
 
+@_cli_local_skip
 class TestInfoE2E:
     """nexus info against real NexusFS."""
 
@@ -363,6 +375,7 @@ class TestInfoE2E:
 # =========================================================================
 
 
+@_cli_local_skip
 class TestJsonEnvelopeConsistency:
     """All P0 commands should produce the same JSON envelope shape."""
 

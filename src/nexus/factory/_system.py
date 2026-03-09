@@ -73,92 +73,103 @@ def _boot_system_services(
 
     # =====================================================================
     # CRITICAL SECTION (BootError on failure) — Issue #2193
+    # Gated by "permissions" brick — MINIMAL/EMBEDDED profiles skip this.
     # =====================================================================
     from nexus.contracts.exceptions import BootError
 
-    try:
-        # Config-time dialect flag (KERNEL-ARCHITECTURE §7)
-        _is_pg = not ctx.db_url.startswith("sqlite")
+    rebac_manager: Any = None
+    audit_store: Any = None
+    entity_registry: Any = None
+    permission_enforcer: Any = None
+    write_observer: Any = None
 
-        # --- ReBAC Manager ---
-        from nexus.bricks.rebac.manager import ReBACManager
-
-        rebac_manager = ReBACManager(
-            engine=ctx.engine,
-            cache_ttl_seconds=ctx.cache_ttl_seconds or 300,
-            max_depth=10,
-            enforce_zone_isolation=ctx.perm.enforce_zone_isolation,
-            enable_graph_limits=True,
-            enable_tiger_cache=ctx.perm.enable_tiger_cache,
-            read_engine=ctx.read_engine,
-            is_postgresql=_is_pg,
-        )
-
-        # --- Audit Store ---
-        from nexus.bricks.rebac.permissions_enhanced import AuditStore
-
-        audit_store = AuditStore(engine=ctx.engine, is_postgresql=_is_pg)
-
-        # --- Entity Registry ---
-        from nexus.bricks.rebac.entity_registry import EntityRegistry
-
-        entity_registry = EntityRegistry(ctx.record_store)
-
-        # --- Permission Enforcer ---
-        from nexus.bricks.rebac.enforcer import PermissionEnforcer
-
-        permission_enforcer = PermissionEnforcer(
-            metadata_store=ctx.metadata_store,
-            rebac_manager=rebac_manager,
-            allow_admin_bypass=ctx.perm.allow_admin_bypass,
-            allow_system_bypass=True,
-            audit_store=audit_store,
-            admin_bypass_paths=[],
-            router=ctx.router,
-            entity_registry=entity_registry,
-        )
-
-        # --- RecordStore Syncer (constructed, NOT started) ---
-        import os
-
-        write_observer: Any = None
-        use_buffer = ctx.enable_write_buffer
-        if use_buffer is None:
-            env_val = os.environ.get("NEXUS_ENABLE_WRITE_BUFFER", "").lower()
-            if env_val in ("true", "1", "yes"):
-                use_buffer = True
-            elif env_val in ("false", "0", "no"):
-                use_buffer = False
-            else:
-                use_buffer = ctx.db_url.startswith(("postgres", "postgresql"))
-
-        if use_buffer:
-            from nexus.storage.piped_record_store_write_observer import (
-                PipedRecordStoreWriteObserver,
-            )
-
-            write_observer = PipedRecordStoreWriteObserver(
-                ctx.record_store,
-                strict_mode=ctx.audit.strict_mode,
-            )
-        else:
-            from nexus.storage.record_store_write_observer import RecordStoreWriteObserver
-
-            write_observer = RecordStoreWriteObserver(
-                ctx.record_store,
-                strict_mode=ctx.audit.strict_mode,
-            )
-
+    if not _on("permissions"):
         logger.debug(
-            "[BOOT:SYSTEM] Critical services created: rebac_manager, audit_store, "
-            "entity_registry, permission_enforcer, write_observer"
+            "[BOOT:SYSTEM] Permissions brick disabled by profile — skipping critical section"
         )
+    else:
+        try:
+            # Config-time dialect flag (KERNEL-ARCHITECTURE §7)
+            _is_pg = not ctx.db_url.startswith("sqlite")
 
-    except BootError:
-        raise
-    except Exception as exc:
-        logger.critical("[BOOT:SYSTEM] Critical service failure: %s", exc)
-        raise BootError(str(exc), tier="system-critical") from exc
+            # --- ReBAC Manager ---
+            from nexus.bricks.rebac.manager import ReBACManager
+
+            rebac_manager = ReBACManager(
+                engine=ctx.engine,
+                cache_ttl_seconds=ctx.cache_ttl_seconds or 300,
+                max_depth=10,
+                enforce_zone_isolation=ctx.perm.enforce_zone_isolation,
+                enable_graph_limits=True,
+                enable_tiger_cache=ctx.perm.enable_tiger_cache,
+                read_engine=ctx.read_engine,
+                is_postgresql=_is_pg,
+            )
+
+            # --- Audit Store ---
+            from nexus.bricks.rebac.permissions_enhanced import AuditStore
+
+            audit_store = AuditStore(engine=ctx.engine, is_postgresql=_is_pg)
+
+            # --- Entity Registry ---
+            from nexus.bricks.rebac.entity_registry import EntityRegistry
+
+            entity_registry = EntityRegistry(ctx.record_store)
+
+            # --- Permission Enforcer ---
+            from nexus.bricks.rebac.enforcer import PermissionEnforcer
+
+            permission_enforcer = PermissionEnforcer(
+                metadata_store=ctx.metadata_store,
+                rebac_manager=rebac_manager,
+                allow_admin_bypass=ctx.perm.allow_admin_bypass,
+                allow_system_bypass=True,
+                audit_store=audit_store,
+                admin_bypass_paths=[],
+                router=ctx.router,
+                entity_registry=entity_registry,
+            )
+
+            # --- RecordStore Syncer (constructed, NOT started) ---
+            import os
+
+            use_buffer = ctx.enable_write_buffer
+            if use_buffer is None:
+                env_val = os.environ.get("NEXUS_ENABLE_WRITE_BUFFER", "").lower()
+                if env_val in ("true", "1", "yes"):
+                    use_buffer = True
+                elif env_val in ("false", "0", "no"):
+                    use_buffer = False
+                else:
+                    use_buffer = ctx.db_url.startswith(("postgres", "postgresql"))
+
+            if use_buffer:
+                from nexus.storage.piped_record_store_write_observer import (
+                    PipedRecordStoreWriteObserver,
+                )
+
+                write_observer = PipedRecordStoreWriteObserver(
+                    ctx.record_store,
+                    strict_mode=ctx.audit.strict_mode,
+                )
+            else:
+                from nexus.storage.record_store_write_observer import RecordStoreWriteObserver
+
+                write_observer = RecordStoreWriteObserver(
+                    ctx.record_store,
+                    strict_mode=ctx.audit.strict_mode,
+                )
+
+            logger.debug(
+                "[BOOT:SYSTEM] Critical services created: rebac_manager, audit_store, "
+                "entity_registry, permission_enforcer, write_observer"
+            )
+
+        except BootError:
+            raise
+        except Exception as exc:
+            logger.critical("[BOOT:SYSTEM] Critical service failure: %s", exc)
+            raise BootError(str(exc), tier="system-critical") from exc
 
     # =====================================================================
     # DEGRADABLE FORMER-KERNEL SECTION (WARNING + None) — Issue #2193

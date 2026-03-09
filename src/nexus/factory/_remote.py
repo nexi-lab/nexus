@@ -51,6 +51,9 @@ _WIRED_FIELDS: list[str] = [
     "metadata_export_service",
     "descendant_checker",
     "memory_provider",
+    # Versioning services (Issue #882)
+    "time_travel_service",
+    "operations_service",
 ]
 
 

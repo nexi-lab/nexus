@@ -44,7 +44,7 @@ def _create_distributed_infra(
                 )
 
         # Initialize event bus
-        if dist.event_bus_backend == "nats":
+        if dist.event_bus_backend == "nats" and dist.enable_events:
             from nexus.system_services.event_subsystem.bus.factory import create_event_bus
 
             event_bus = create_event_bus(

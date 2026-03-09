@@ -88,10 +88,9 @@ class ZoektPipeConsumer:
                 self._pipe_manager.pipe_write_nowait(_ZOEKT_PIPE_PATH, data)
                 return
             except (PipeClosedError, PipeFullError):
-                logger.warning("Zoekt pipe full/closed, dropping write notification: %s", path)
-                return
+                logger.warning("Zoekt pipe full/closed, falling back to direct call: %s", path)
 
-        # Fallback: direct call (CLI mode or pre-startup)
+        # Fallback: direct call (CLI mode, pre-startup, or pipe error)
         self._zoekt.notify_write(path)
 
     def notify_sync_complete(self, files_synced: int = 0) -> None:
@@ -104,10 +103,9 @@ class ZoektPipeConsumer:
                 self._pipe_manager.pipe_write_nowait(_ZOEKT_PIPE_PATH, data)
                 return
             except (PipeClosedError, PipeFullError):
-                logger.warning("Zoekt pipe full/closed, dropping sync notification")
-                return
+                logger.warning("Zoekt pipe full/closed, falling back to direct sync call")
 
-        # Fallback: direct call
+        # Fallback: direct call (CLI mode, pre-startup, or pipe error)
         self._zoekt.notify_sync_complete(files_synced)
 
     # ------------------------------------------------------------------

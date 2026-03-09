@@ -27,7 +27,6 @@ from rich.table import Table
 from nexus.cli.output import OutputOptions, add_output_options, render_error, render_output
 from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
-    BackendConfig,
     add_backend_options,
     console,
     get_filesystem,
@@ -460,7 +459,8 @@ def export_zone(
     path_prefix: str | None,
     after: str | None,
     compression: int,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Export zone data to a portable .nexus bundle.
 
@@ -479,7 +479,6 @@ def export_zone(
     """
     try:
         from nexus.bricks.portability import ZoneExportOptions, ZoneExportService
-        from nexus.core.nexus_fs import NexusFS
 
         # Parse after time if provided
         after_time = None
@@ -494,11 +493,7 @@ def export_zone(
                 sys.exit(1)
 
         # Get filesystem
-        nx: Any = get_filesystem(backend_config)
-        if not isinstance(nx, NexusFS):
-            console.print("[red]Error:[/red] Zone export requires NexusFS instance")
-            nx.close()
-            sys.exit(1)
+        nx: Any = get_filesystem(remote_url, remote_api_key)
 
         # Configure export options
         output_path = Path(output)
@@ -601,7 +596,8 @@ def import_zone(
     dry_run: bool,
     import_permissions: bool,
     path_remap: tuple[str, ...],
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Import zone data from a .nexus bundle.
 
@@ -623,7 +619,6 @@ def import_zone(
     """
     try:
         from nexus.bricks.portability import ConflictMode, ZoneImportOptions, ZoneImportService
-        from nexus.core.nexus_fs import NexusFS
 
         # Parse path remappings
         path_prefix_remap: dict[str, str] = {}
@@ -636,11 +631,7 @@ def import_zone(
             path_prefix_remap[old] = new
 
         # Get filesystem
-        nx: Any = get_filesystem(backend_config)
-        if not isinstance(nx, NexusFS):
-            console.print("[red]Error:[/red] Zone import requires NexusFS instance")
-            nx.close()
-            sys.exit(1)
+        nx: Any = get_filesystem(remote_url, remote_api_key)
 
         # Configure import options
         conflict_mode = ConflictMode(conflict)

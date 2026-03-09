@@ -11,7 +11,6 @@ import nexus
 from nexus.cli.output import OutputOptions, add_output_options, render_error, render_output
 from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
-    BackendConfig,
     add_backend_options,
     add_context_options,
     console,
@@ -96,7 +95,8 @@ def cat(
     metadata: bool,
     at_operation: str | None,
     output_opts: OutputOptions,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
     operation_context: dict[str, Any],
 ) -> None:
     """Display file contents.
@@ -111,7 +111,7 @@ def cat(
     timing = CommandTiming()
 
     try:
-        with timing.phase("connect"), open_filesystem(backend_config) as nx:
+        with timing.phase("connect"), open_filesystem(remote_url, remote_api_key) as nx:
             if at_operation:
                 _cat_time_travel(nx, path, at_operation, metadata, output_opts, timing)
                 return
@@ -305,7 +305,8 @@ def write(
     if_none_match: bool,
     force: bool,
     show_metadata: bool,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
     operation_context: dict[str, Any],
 ) -> None:
     """Write content to a file with optional optimistic concurrency control.
@@ -332,7 +333,7 @@ def write(
     try:
         file_content = resolve_content(content, input_file)
 
-        with open_filesystem(backend_config) as nx:
+        with open_filesystem(remote_url, remote_api_key) as nx:
             # OCC: use lib/occ helper if CAS params present (Issue #1323).
             ctx = cast(Any, operation_context)
             if (if_match or if_none_match) and not force:
@@ -388,7 +389,8 @@ def append(
     if_match: str | None,
     force: bool,
     show_metadata: bool,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
     operation_context: dict[str, Any],
 ) -> None:
     """Append content to a file (creates file if it doesn't exist).
@@ -406,7 +408,7 @@ def append(
     try:
         file_content = resolve_content(content, input_file)
 
-        with open_filesystem(backend_config) as nx:
+        with open_filesystem(remote_url, remote_api_key) as nx:
             # Append with OCC parameters and context.
             # CAS params (if_match, force) are NexusFS-specific (transitional, see #1323).
             result = cast(Any, nx).append(
@@ -468,7 +470,8 @@ def write_batch(
     exclude: tuple[str, ...],
     show_progress: bool,
     batch_size: int,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Write multiple files to Nexus in batches for improved performance.
 
@@ -503,7 +506,7 @@ def write_batch(
             TimeElapsedColumn,
         )
 
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
         source_path = Path(source_dir)
 
         # Ensure dest_prefix starts with /
@@ -603,7 +606,8 @@ def write_batch(
 def cp(
     source: str,
     dest: str,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Copy a file (simple copy - for recursive copy use 'copy' command).
 
@@ -611,7 +615,7 @@ def cp(
         nexus cp /workspace/source.txt /workspace/dest.txt
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
 
         # Read source
         content = nx.sys_read(source)
@@ -642,7 +646,8 @@ def copy_cmd(
     recursive: bool,
     checksum: bool,
     no_checksum: bool,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Smart copy with deduplication.
 
@@ -669,7 +674,7 @@ def copy_cmd(
     try:
         from nexus.sync import copy_file, copy_recursive, is_local_path
 
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
 
         # Handle --no-checksum flag
         use_checksum = checksum and not no_checksum
@@ -723,7 +728,8 @@ def move_cmd(
     source: str,
     dest: str,
     force: bool,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Move files or directories.
 
@@ -737,7 +743,7 @@ def move_cmd(
     try:
         from nexus.sync import move_file
 
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
 
         # Confirm unless --force
         if not force and not click.confirm(f"Move {source} to {dest}?"):
@@ -773,7 +779,8 @@ def sync_cmd(
     delete: bool,
     dry_run: bool,
     no_checksum: bool,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """One-way sync from source to destination.
 
@@ -798,7 +805,7 @@ def sync_cmd(
     try:
         from nexus.sync import sync_directories
 
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
 
         use_checksum = not no_checksum
 
@@ -851,7 +858,8 @@ def sync_cmd(
 def rm(
     path: str,
     force: bool,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Delete a file.
 
@@ -860,7 +868,7 @@ def rm(
         nexus rm /workspace/data.txt --force
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
 
         # Check if file exists
         if not nx.sys_access(path):

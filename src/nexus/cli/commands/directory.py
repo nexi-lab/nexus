@@ -8,7 +8,6 @@ from nexus.cli.formatters import format_timestamp
 from nexus.cli.output import OutputOptions, add_output_options, render_error, render_output
 from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
-    BackendConfig,
     add_backend_options,
     console,
     handle_error,
@@ -69,7 +68,8 @@ def list_files(
     long: bool,
     at_operation: str | None,
     output_opts: OutputOptions,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """List files in a directory.
 
@@ -87,7 +87,7 @@ def list_files(
     timing = CommandTiming()
 
     try:
-        with timing.phase("connect"), open_filesystem(backend_config) as nx:
+        with timing.phase("connect"), open_filesystem(remote_url, remote_api_key) as nx:
             if at_operation:
                 _ls_time_travel(nx, path, at_operation, recursive, long, output_opts, timing)
                 return
@@ -207,7 +207,8 @@ def _ls_time_travel(
 def mkdir(
     path: str,
     parents: bool,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Create a directory.
 
@@ -216,7 +217,7 @@ def mkdir(
         nexus mkdir /workspace/deep/nested/dir --parents
     """
     try:
-        with open_filesystem(backend_config) as nx:
+        with open_filesystem(remote_url, remote_api_key) as nx:
             nx.sys_mkdir(path, parents=parents, exist_ok=True)
         console.print(f"[green]✓[/green] Created directory [cyan]{path}[/cyan]")
     except Exception as e:
@@ -232,7 +233,8 @@ def rmdir(
     path: str,
     recursive: bool,
     force: bool,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Remove a directory.
 
@@ -241,7 +243,7 @@ def rmdir(
         nexus rmdir /workspace/data --recursive --force
     """
     try:
-        with open_filesystem(backend_config) as nx:
+        with open_filesystem(remote_url, remote_api_key) as nx:
             if not force and not click.confirm(f"Remove directory {path}?"):
                 console.print("[yellow]Cancelled[/yellow]")
                 return
@@ -262,7 +264,8 @@ def tree(
     level: int | None,
     show_size: bool,
     output_opts: OutputOptions,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Display directory tree structure.
 
@@ -275,7 +278,11 @@ def tree(
     timing = CommandTiming()
 
     try:
-        with timing.phase("connect"), open_filesystem(backend_config) as nx, timing.phase("server"):
+        with (
+            timing.phase("connect"),
+            open_filesystem(remote_url, remote_api_key) as nx,
+            timing.phase("server"),
+        ):
             files_raw = nx.sys_readdir(path, recursive=True, details=True)
 
         files = _normalize_readdir(files_raw)

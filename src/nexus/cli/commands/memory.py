@@ -11,7 +11,6 @@ from rich.table import Table
 
 from nexus.bricks.memory.memory_provider import get_memory_api
 from nexus.cli.utils import (
-    BackendConfig,
     add_backend_options,
     get_default_filesystem,
     get_filesystem,
@@ -647,7 +646,8 @@ def register_memory_cmd(
     created_by: str | None,
     session_id: str | None,
     ttl: str | None,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Register a directory as a memory.
 
@@ -661,7 +661,7 @@ def register_memory_cmd(
         nexus memory register /tmp/agent-context --session-id abc123 --ttl 2h
     """
     try:
-        nx: Any = get_filesystem(backend_config)
+        nx: Any = get_filesystem(remote_url, remote_api_key)
 
         # v0.5.0: Parse TTL string to timedelta
         ttl_delta = None
@@ -699,7 +699,8 @@ def register_memory_cmd(
 @memory.command(name="list-registered")
 @add_backend_options
 def list_registered_cmd(
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """List all registered memories.
 
@@ -707,7 +708,7 @@ def list_registered_cmd(
         nexus memory list-registered
     """
     try:
-        nx: Any = get_filesystem(backend_config)
+        nx: Any = get_filesystem(remote_url, remote_api_key)
 
         memories = nx._workspace_rpc_service.list_registered_memories()
 
@@ -747,7 +748,8 @@ def list_registered_cmd(
 def unregister_memory_cmd(
     path: str,
     yes: bool,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Unregister a memory (does NOT delete files).
 
@@ -758,7 +760,7 @@ def unregister_memory_cmd(
         nexus memory unregister /my-memory --yes
     """
     try:
-        nx: Any = get_filesystem(backend_config)
+        nx: Any = get_filesystem(remote_url, remote_api_key)
 
         # Get memory info first
         info = nx._workspace_rpc_service.get_memory_info(path)
@@ -802,7 +804,8 @@ def unregister_memory_cmd(
 @add_backend_options
 def memory_info_cmd(
     path: str,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Show information about a registered memory.
 
@@ -810,7 +813,7 @@ def memory_info_cmd(
         nexus memory info /my-memory
     """
     try:
-        nx: Any = get_filesystem(backend_config)
+        nx: Any = get_filesystem(remote_url, remote_api_key)
 
         info = nx._workspace_rpc_service.get_memory_info(path)
 

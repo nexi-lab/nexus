@@ -4,7 +4,7 @@ Commands for discovering and inspecting available connectors:
 - nexus connectors list - List all registered connectors
 - nexus connectors info - Show connector details
 
-Works with both local and remote Nexus instances.
+Connects to a remote Nexus instance via RPC.
 """
 
 import json
@@ -15,7 +15,6 @@ import click
 from rich.table import Table
 
 from nexus.cli.utils import (
-    BackendConfig,
     add_backend_options,
     console,
     get_filesystem,
@@ -31,16 +30,9 @@ def connectors_group() -> None:
     Use these commands to see what connectors are available
     and their configuration requirements.
 
-    Works with both local and remote Nexus instances:
-        # Local (direct registry access)
-        nexus connectors list
-
-        # Remote (via RPC to server)
-        nexus connectors list --remote-url http://localhost:2026
-
     Examples:
         # List all connectors
-        nexus connectors list
+        nexus connectors list --remote-url http://localhost:2026
 
         # List only storage connectors
         nexus connectors list --category storage
@@ -49,27 +41,6 @@ def connectors_group() -> None:
         nexus connectors info gcs_connector
     """
     pass
-
-
-def _list_connectors_local(category: str | None) -> list[dict]:
-    """List connectors from local registry."""
-    from nexus.backends import ConnectorRegistry
-
-    if category:
-        connectors = ConnectorRegistry.list_by_category(category)
-    else:
-        connectors = ConnectorRegistry.list_all()
-
-    return [
-        {
-            "name": c.name,
-            "description": c.description,
-            "category": c.category,
-            "requires": c.requires,
-            "user_scoped": c.user_scoped,
-        }
-        for c in connectors
-    ]
 
 
 def _list_connectors_remote(nx: Any, category: str | None) -> list[dict[str, Any]]:
@@ -88,15 +59,17 @@ def _list_connectors_remote(nx: Any, category: str | None) -> list[dict[str, Any
 )
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 @add_backend_options
-def list_connectors(category: str | None, as_json: bool, backend_config: BackendConfig) -> None:
+def list_connectors(
+    category: str | None,
+    as_json: bool,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     """List all registered connectors.
 
     Shows all available connector types that can be used with 'nexus mounts add'.
 
     Examples:
-        # List all connectors (local)
-        nexus connectors list
-
         # List connectors from remote server
         nexus connectors list --remote-url http://localhost:2026
 
@@ -107,18 +80,13 @@ def list_connectors(category: str | None, as_json: bool, backend_config: Backend
         nexus connectors list --json
     """
     try:
-        # Check if we're connecting to a remote server
-        if backend_config.remote_url:
-            nx: Any = get_filesystem(backend_config)
-            try:
-                connectors = _list_connectors_remote(nx, category)
-            except AttributeError:
-                console.print("[red]Error:[/red] Server doesn't support list_connectors")
-                console.print("[yellow]Hint:[/yellow] Update server to latest Nexus version")
-                sys.exit(1)
-        else:
-            # Local mode - use registry directly
-            connectors = _list_connectors_local(category)
+        nx: Any = get_filesystem(remote_url, remote_api_key)
+        try:
+            connectors = _list_connectors_remote(nx, category)
+        except AttributeError:
+            console.print("[red]Error:[/red] Server doesn't support list_connectors")
+            console.print("[yellow]Hint:[/yellow] Update server to latest Nexus version")
+            sys.exit(1)
 
         if not connectors:
             if category:
@@ -157,52 +125,31 @@ def list_connectors(category: str | None, as_json: bool, backend_config: Backend
 @connectors_group.command(name="info")
 @click.argument("connector_name", type=str)
 @add_backend_options
-def connector_info(connector_name: str, backend_config: BackendConfig) -> None:
+def connector_info(
+    connector_name: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     """Show details for a specific connector.
 
     CONNECTOR_NAME: The connector identifier (e.g., gcs_connector, s3_connector)
 
     Examples:
-        # Local
-        nexus connectors info gcs_connector
-
-        # Remote
         nexus connectors info gcs_connector --remote-url http://localhost:2026
     """
     try:
-        # Get connector info
-        if backend_config.remote_url:
-            nx: Any = get_filesystem(backend_config)
-            try:
-                connectors = _list_connectors_remote(nx, None)
-                info = next((c for c in connectors if c["name"] == connector_name), None)
-                if not info:
-                    available = ", ".join(c["name"] for c in connectors)
-                    console.print(f"[red]Unknown connector: {connector_name}[/red]")
-                    console.print(f"[dim]Available: {available}[/dim]")
-                    sys.exit(1)
-            except AttributeError:
-                console.print("[red]Error:[/red] Server doesn't support list_connectors")
-                sys.exit(1)
-        else:
-            # Local mode
-            from nexus.backends import ConnectorRegistry
-
-            try:
-                c = ConnectorRegistry.get_info(connector_name)
-                info = {
-                    "name": c.name,
-                    "description": c.description,
-                    "category": c.category,
-                    "requires": c.requires,
-                    "user_scoped": c.user_scoped,
-                    "class": f"{c.connector_class.__module__}.{c.connector_class.__name__}",
-                }
-            except KeyError:
-                available = ", ".join(ConnectorRegistry.list_available())
+        nx: Any = get_filesystem(remote_url, remote_api_key)
+        try:
+            connectors = _list_connectors_remote(nx, None)
+            info = next((c for c in connectors if c["name"] == connector_name), None)
+            if not info:
+                available = ", ".join(c["name"] for c in connectors)
                 console.print(f"[red]Unknown connector: {connector_name}[/red]")
                 console.print(f"[dim]Available: {available}[/dim]")
                 sys.exit(1)
+        except AttributeError:
+            console.print("[red]Error:[/red] Server doesn't support list_connectors")
+            sys.exit(1)
 
         console.print(f"\n[bold cyan]{info['name']}[/bold cyan]")
         console.print(f"  [dim]Description:[/dim] {info.get('description') or 'No description'}")
@@ -217,35 +164,6 @@ def connector_info(connector_name: str, backend_config: BackendConfig) -> None:
 
         if "class" in info:
             console.print(f"  [dim]Class:[/dim] {info['class']}")
-
-        # Show connection arguments (local mode only)
-        if not backend_config.remote_url:
-            from nexus.backends import ConnectorRegistry
-
-            connection_args = ConnectorRegistry.get_connection_args(connector_name)
-            if connection_args:
-                console.print("\n  [bold]Connection Arguments:[/bold]")
-
-                # Create table for args
-                args_table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
-                args_table.add_column("Name", style="green")
-                args_table.add_column("Type", style="yellow")
-                args_table.add_column("Required", style="cyan")
-                args_table.add_column("Description")
-
-                for arg_name, arg in connection_args.items():
-                    required_str = "[red]Yes[/red]" if arg.required else "No"
-                    type_str = arg.type.value
-                    if arg.secret:
-                        type_str += " [dim](secret)[/dim]"
-                    desc = arg.description
-                    if arg.default is not None:
-                        desc += f" [dim](default: {arg.default})[/dim]"
-                    if arg.env_var:
-                        desc += f" [dim](env: {arg.env_var})[/dim]"
-                    args_table.add_row(arg_name, type_str, required_str, desc)
-
-                console.print(args_table)
 
         console.print()
 

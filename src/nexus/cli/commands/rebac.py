@@ -11,7 +11,6 @@ import click
 from rich.table import Table
 
 from nexus.cli.utils import (
-    BackendConfig,
     add_backend_options,
     add_context_options,
     console,
@@ -73,7 +72,8 @@ def rebac_create(
     subject_relation: str | None,
     wildcard: bool,
     column_config: str | None,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
     operation_context: dict[str, Any],
 ) -> None:
     """Create a relationship tuple.
@@ -106,7 +106,7 @@ def rebac_create(
         nexus rebac create agent alice dynamic_viewer file /data/users.csv --column-config '{"hidden_columns":["password"],"aggregations":{"age":"mean"},"visible_columns":["name","email"]}'
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
 
         # Parse expiration time if provided
         expires_at = None
@@ -223,7 +223,8 @@ def rebac_list_cmd(
     relation: str | None,
     output_format: str,
     limit: int | None,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """List relationship tuples with optional filters.
 
@@ -249,7 +250,7 @@ def rebac_list_cmd(
     try:
         import json
 
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
 
         # Build filters
         subject = None
@@ -329,7 +330,8 @@ def rebac_list_cmd(
 @add_backend_options
 def rebac_delete_cmd(
     tuple_id: str,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Delete a relationship tuple.
 
@@ -337,7 +339,7 @@ def rebac_delete_cmd(
         nexus rebac delete 550e8400-e29b-41d4-a716-446655440000
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
 
         deleted = nx.rebac_service.rebac_delete_sync(tuple_id)  # type: ignore[attr-defined]
 
@@ -366,7 +368,8 @@ def rebac_check_cmd(
     permission: str,
     object_type: str,
     object_id: str,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
     operation_context: dict[str, Any],
 ) -> None:
     """Check if subject has permission on object.
@@ -384,7 +387,7 @@ def rebac_check_cmd(
         nexus rebac check group eng-team owner file project-folder
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
 
         # Check permission (pass zone_id from --zone-id or NEXUS_ZONE_ID)
         zone = operation_context.get("zone")
@@ -423,7 +426,8 @@ def rebac_expand_cmd(
     permission: str,
     object_type: str,
     object_id: str,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
     operation_context: dict[str, Any],
 ) -> None:
     """Find all subjects with a given permission on an object.
@@ -441,7 +445,7 @@ def rebac_expand_cmd(
         nexus rebac expand owner file project-folder
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
 
         # Expand permission (pass zone_id from --zone-id or NEXUS_ZONE_ID)
         zone = operation_context.get("zone")
@@ -493,7 +497,8 @@ def rebac_explain_cmd(
     object_type: str,
     object_id: str,
     verbose: bool,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Explain why a subject has or doesn't have permission on an object.
 
@@ -513,7 +518,7 @@ def rebac_explain_cmd(
     try:
         import json
 
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
 
         # Get explanation
         explanation = nx.rebac_service.rebac_explain_sync(  # type: ignore[attr-defined]
@@ -709,7 +714,8 @@ def _display_proof_tree(path: dict, depth: int = 0, step_number: list[int] | Non
 def rebac_check_batch_cmd(
     checks_file: str,
     output_format: str,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Batch permission checks from a JSON file.
 
@@ -741,7 +747,7 @@ def rebac_check_batch_cmd(
     try:
         import json
 
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
 
         # Load checks from file
         with open(checks_file) as f:
@@ -851,7 +857,8 @@ def namespace_create(
     config_file: str | None,
     relations: tuple[str, ...],
     permission: tuple[str, ...],
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Create or update a namespace configuration.
 
@@ -884,7 +891,7 @@ def namespace_create(
 
         import yaml
 
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
 
         config = {}
 
@@ -936,7 +943,8 @@ def namespace_create(
 @add_backend_options
 def namespace_list(
     output_format: str,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """List all registered namespace configurations.
 
@@ -948,7 +956,7 @@ def namespace_list(
         nexus rebac namespace-list --format json
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
 
         namespaces = nx.rebac_service.namespace_list_sync()  # type: ignore[attr-defined]
 
@@ -1002,7 +1010,8 @@ def namespace_list(
 def namespace_get(
     object_type: str,
     output_format: str,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Get namespace configuration for an object type.
 
@@ -1018,7 +1027,7 @@ def namespace_get(
 
         import yaml
 
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
 
         ns = nx.rebac_service.get_namespace_sync(object_type)  # type: ignore[attr-defined]
 
@@ -1042,7 +1051,8 @@ def namespace_get(
 def namespace_delete(
     object_type: str,
     yes: bool,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Delete a namespace configuration.
 
@@ -1062,7 +1072,7 @@ def namespace_delete(
                 console.print("[yellow]Cancelled[/yellow]")
                 return
 
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
 
         deleted = nx.rebac_service.namespace_delete_sync(object_type)  # type: ignore[attr-defined]
 

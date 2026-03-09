@@ -1,10 +1,10 @@
 """E2E tests for CLI infrastructure lifecycle commands (Issue #2807).
 
-Tests ``nexus doctor``, ``nexus status``, ``nexus start``, ``nexus up``,
+Tests ``nexus doctor``, ``nexus status``, ``nexus up``,
 ``nexus down``, and ``nexus logs`` as real subprocess invocations.
 
 Split into two groups:
-- **Local tests** — no Docker required (doctor, status, start)
+- **Local tests** — no Docker required (doctor, status)
 - **Docker tests** — require Docker daemon (up, down, logs)
 """
 
@@ -12,17 +12,14 @@ from __future__ import annotations
 
 import json
 import os
-import signal
 import socket
 import subprocess
 import sys
-import threading
 import time
 from contextlib import closing
 from pathlib import Path
 from typing import IO
 
-import httpx
 import pytest
 
 # ---------------------------------------------------------------------------
@@ -148,120 +145,6 @@ class TestStatusE2E:
         result = _run_nexus("status", "--url", nexus_server["base_url"])
         assert result.returncode == 0
         assert "Nexus Service Status" in result.stdout
-
-
-class TestStartE2E:
-    """Run ``nexus start`` as a real subprocess (ephemeral, with --skip-tls-init)."""
-
-    def test_start_and_health_check(self, tmp_path: Path) -> None:
-        """Start a nexus node, verify it responds to /health, then stop it."""
-        port = _find_free_port()
-        grpc_port = _find_free_port()
-        data_dir = tmp_path / "nexus-data"
-        data_dir.mkdir()
-
-        env = {
-            **os.environ,
-            "NEXUS_DATA_DIR": str(data_dir),
-            "NEXUS_GRPC_PORT": str(grpc_port),
-            "NEXUS_DATABASE_URL": f"sqlite:///{tmp_path / 'test.db'}",
-            "NEXUS_RECORD_STORE_PATH": str(tmp_path / "record_store.db"),
-        }
-
-        proc = subprocess.Popen(
-            [
-                _NEXUS_BIN,
-                "start",
-                "--skip-tls-init",
-                "--host",
-                "127.0.0.1",
-                "--port",
-                str(port),
-                "--grpc-port",
-                str(grpc_port),
-                "--data-dir",
-                str(data_dir),
-            ],
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-        )
-
-        # Drain stdout in background to prevent buffer deadlock
-        output_lines: list[str] = []
-        drain = threading.Thread(target=_drain_pipe, args=(proc.stdout, output_lines), daemon=True)
-        drain.start()
-
-        try:
-            # Wait for the server to be reachable
-            reachable = _wait_for_port(port, timeout=30)
-            assert reachable, (
-                f"nexus start did not bind to port {port} within 30s\n"
-                f"output: {''.join(output_lines[-20:])}"
-            )
-
-            # Verify health endpoint
-            with httpx.Client(timeout=10) as client:
-                resp = client.get(f"http://127.0.0.1:{port}/health")
-                assert resp.status_code == 200
-        finally:
-            # Graceful shutdown
-            proc.send_signal(signal.SIGINT)
-            try:
-                proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait()
-
-    def test_start_ctrl_c_graceful_shutdown(self, tmp_path: Path) -> None:
-        """SIGINT should stop the server gracefully (exit code 0 or 1)."""
-        port = _find_free_port()
-        grpc_port = _find_free_port()
-        data_dir = tmp_path / "nexus-data"
-        data_dir.mkdir()
-
-        env = {
-            **os.environ,
-            "NEXUS_DATA_DIR": str(data_dir),
-            "NEXUS_GRPC_PORT": str(grpc_port),
-            "NEXUS_DATABASE_URL": f"sqlite:///{tmp_path / 'test.db'}",
-            "NEXUS_RECORD_STORE_PATH": str(tmp_path / "record_store.db"),
-        }
-
-        proc = subprocess.Popen(
-            [
-                _NEXUS_BIN,
-                "start",
-                "--skip-tls-init",
-                "--host",
-                "127.0.0.1",
-                "--port",
-                str(port),
-                "--grpc-port",
-                str(grpc_port),
-                "--data-dir",
-                str(data_dir),
-            ],
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-        )
-
-        # Drain stdout in background to prevent buffer deadlock
-        output_lines: list[str] = []
-        drain = threading.Thread(target=_drain_pipe, args=(proc.stdout, output_lines), daemon=True)
-        drain.start()
-
-        try:
-            _wait_for_port(port, timeout=30)
-            proc.send_signal(signal.SIGINT)
-            returncode = proc.wait(timeout=15)
-            # Exit 0 = clean shutdown, exit 1 = acceptable (uvicorn behavior)
-            assert returncode in (0, 1), f"Expected exit 0 or 1 after SIGINT, got {returncode}"
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
-            pytest.fail("Server did not stop within 15s after SIGINT")
 
 
 # ============================================================================

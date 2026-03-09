@@ -112,7 +112,7 @@ class IOHandler:
 
         # Rust delegation for raw reads
         if view_type is None:
-            ok, content = try_rust(ctx, "READ", "read", original_path)
+            ok, content = try_rust(ctx, "READ", "sys_read", original_path)
             if ok:
                 return bytes(content)[offset : offset + size]
 
@@ -125,8 +125,6 @@ class IOHandler:
                 )
                 return cast("bytes", prefetched)
 
-        skip_auth = file_info.get("auth_verified", False)
-
         cache_priority = 0
         io_profile_str = file_info.get("io_profile", "balanced")
         try:
@@ -136,9 +134,7 @@ class IOHandler:
         except (ImportError, ValueError):
             pass
 
-        content = get_file_content(
-            ctx, original_path, view_type, skip_auth=skip_auth, cache_priority=cache_priority
-        )
+        content = get_file_content(ctx, original_path, view_type, cache_priority=cache_priority)
 
         return content[offset : offset + size]
 
@@ -166,12 +162,10 @@ class IOHandler:
             logger.debug(f"Blocked write to OS metadata file: {original_path}")
             raise FuseOSError(errno.EPERM)
 
-        write_ctx = None if file_info.get("auth_verified") else ctx.context
-
         # Read existing content
         existing_content = b""
         if ctx.nexus_fs.sys_access(original_path):
-            raw_content = ctx.nexus_fs.sys_read(original_path, context=write_ctx)
+            raw_content = ctx.nexus_fs.sys_read(original_path, context=ctx.context)
             assert isinstance(raw_content, bytes), "Expected bytes from read()"
             existing_content = raw_content
 
@@ -182,12 +176,9 @@ class IOHandler:
         new_content = existing_content[:offset] + data + existing_content[offset + len(data) :]
 
         # Write via Rust or Python
-        if not write_ctx:
-            ok, _ = try_rust(ctx, "WRITE", "write", original_path, new_content)
-            if not ok:
-                ctx.nexus_fs.sys_write(original_path, new_content, context=write_ctx)
-        else:
-            ctx.nexus_fs.sys_write(original_path, new_content, context=write_ctx)
+        ok, _ = try_rust(ctx, "WRITE", "sys_write", original_path, new_content)
+        if not ok:
+            ctx.nexus_fs.sys_write(original_path, new_content, context=ctx.context)
 
         # Invalidate caches
         ctx.cache.invalidate_path(original_path)

@@ -10,6 +10,7 @@ import json
 import os
 import socket
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -84,6 +85,7 @@ class RustFUSEClient:
         self.sock: socket.socket | None = None
         self.request_id = 0
         self._restart_count = 0
+        self._lock = threading.Lock()
 
         self._start_daemon()
         self._connect()
@@ -240,6 +242,9 @@ class RustFUSEClient:
     def _send_request(self, method: str, params: dict) -> dict:
         """Send JSON-RPC request to Rust daemon.
 
+        Thread-safe: serializes all requests through a lock so concurrent
+        FUSE threads cannot interleave sendall()/recv() on the shared socket.
+
         Issue 2A: Automatically reconnects if daemon has died.
         Issue 3B: Uses 64KB recv buffer for better large-file performance.
 
@@ -253,66 +258,67 @@ class RustFUSEClient:
         Raises:
             RuntimeError: If request fails after reconnect attempts
         """
-        # Issue 2A: Check daemon health before sending
-        if not self._is_daemon_alive():
-            self._reconnect()
+        with self._lock:
+            # Issue 2A: Check daemon health before sending
+            if not self._is_daemon_alive():
+                self._reconnect()
 
-        self.request_id += 1
-        request = {
-            "jsonrpc": "2.0",
-            "id": self.request_id,
-            "method": method,
-            "params": params,
-        }
+            self.request_id += 1
+            request = {
+                "jsonrpc": "2.0",
+                "id": self.request_id,
+                "method": method,
+                "params": params,
+            }
 
-        request_json = json.dumps(request) + "\n"
-        if not self.sock:
-            raise RuntimeError("Not connected to daemon")
-
-        try:
-            self.sock.sendall(request_json.encode())
-
-            # Issue 3B: Receive response with larger buffer (64KB vs old 4KB)
-            response_data = b""
-            while True:
-                chunk = self.sock.recv(_RECV_BUFFER_SIZE)
-                if not chunk:
-                    raise RuntimeError("Connection closed by daemon")
-                response_data += chunk
-                if b"\n" in response_data:
-                    break
-        except (ConnectionError, BrokenPipeError, OSError) as e:
-            # Issue 2A: Connection lost — try reconnecting and retrying once
-            logger.warning(f"Daemon connection lost during {method}: {e}")
-            self._reconnect()
-
-            # Retry the request on the new connection
+            request_json = json.dumps(request) + "\n"
             if not self.sock:
-                raise RuntimeError("Reconnection failed") from e
-            self.sock.sendall(request_json.encode())
+                raise RuntimeError("Not connected to daemon")
 
-            response_data = b""
-            while True:
-                chunk = self.sock.recv(_RECV_BUFFER_SIZE)
-                if not chunk:
-                    raise RuntimeError("Connection closed after reconnect") from None
-                response_data += chunk
-                if b"\n" in response_data:
-                    break
+            try:
+                self.sock.sendall(request_json.encode())
 
-        response = json.loads(response_data.decode())
+                # Issue 3B: Receive response with larger buffer (64KB vs old 4KB)
+                response_data = b""
+                while True:
+                    chunk = self.sock.recv(_RECV_BUFFER_SIZE)
+                    if not chunk:
+                        raise RuntimeError("Connection closed by daemon")
+                    response_data += chunk
+                    if b"\n" in response_data:
+                        break
+            except (ConnectionError, BrokenPipeError, OSError) as e:
+                # Issue 2A: Connection lost — try reconnecting and retrying once
+                logger.warning(f"Daemon connection lost during {method}: {e}")
+                self._reconnect()
 
-        # Reset restart counter on successful request
-        self._restart_count = 0
+                # Retry the request on the new connection
+                if not self.sock:
+                    raise RuntimeError("Reconnection failed") from e
+                self.sock.sendall(request_json.encode())
 
-        # Check for errors
-        if "error" in response:
-            error = response["error"]
-            error_errno = error.get("data", {}).get("errno", 5)  # Default to EIO
-            raise OSError(error_errno, error["message"])
+                response_data = b""
+                while True:
+                    chunk = self.sock.recv(_RECV_BUFFER_SIZE)
+                    if not chunk:
+                        raise RuntimeError("Connection closed after reconnect") from None
+                    response_data += chunk
+                    if b"\n" in response_data:
+                        break
 
-        result: dict[Any, Any] = response.get("result", {})
-        return result
+            response = json.loads(response_data.decode())
+
+            # Reset restart counter on successful request
+            self._restart_count = 0
+
+            # Check for errors
+            if "error" in response:
+                error = response["error"]
+                error_errno = error.get("data", {}).get("errno", 5)  # Default to EIO
+                raise OSError(error_errno, error["message"])
+
+            result: dict[Any, Any] = response.get("result", {})
+            return result
 
     def sys_read(self, path: str) -> bytes:
         """Read file contents.

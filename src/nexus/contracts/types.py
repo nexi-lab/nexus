@@ -272,6 +272,11 @@ def parse_operation_context(context: OperationContext | dict | None = None) -> O
         agent_id=context.get("agent_id"),
         is_admin=context.get("is_admin", False),
         is_system=context.get("is_system", False),
+        subject_type=context.get("subject_type", "user"),
+        subject_id=context.get("subject_id"),
+        admin_capabilities=set(context.get("admin_capabilities", ())),
+        backend_path=context.get("backend_path"),
+        virtual_path=context.get("virtual_path"),
     )
 
 

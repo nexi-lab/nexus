@@ -54,6 +54,7 @@ class SearchBrickProtocol(Protocol):
         alpha: float = 0.5,
         fusion_method: str = "rrf",
         adaptive_k: bool = False,
+        zone_id: str | None = None,
     ) -> builtins.list[Any]: ...
 
     def get_stats(self) -> dict[str, Any]: ...

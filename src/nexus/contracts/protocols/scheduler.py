@@ -36,7 +36,7 @@ class AgentRequest:
     Attributes:
         agent_id: Target agent identifier.
         zone_id: Zone/organization ID for multi-zone isolation.
-        priority: Scheduling priority (higher = more urgent).  Default 0.
+        priority: Scheduling priority (lower = more urgent, matches PriorityTier).  Default 0.
         submitted_at: ISO-8601 timestamp of submission.
         payload: Arbitrary request-specific data.
         executor_id: Target executor agent (Astraea).

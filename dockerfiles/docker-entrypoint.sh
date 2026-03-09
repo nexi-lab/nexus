@@ -278,14 +278,9 @@ start_zoekt_if_enabled() {
 
 build_serve_cmd() {
     if [ -f "$CONFIG_FILE" ]; then
-        echo "nexus serve --config $CONFIG_FILE --auth-type database"
+        echo "nexusd --config $CONFIG_FILE --auth-type database"
     else
-        local cmd="nexus serve --host ${NEXUS_HOST:-0.0.0.0} --port ${NEXUS_PORT:-2026} --auth-type database"
-        if [ "${NEXUS_BACKEND:-}" = "gcs" ]; then
-            cmd="$cmd --backend gcs --gcs-bucket ${NEXUS_GCS_BUCKET:-}"
-            [ -n "${NEXUS_GCS_PROJECT:-}" ] && cmd="$cmd --gcs-project ${NEXUS_GCS_PROJECT}"
-        fi
-        echo "$cmd"
+        echo "nexusd --host ${NEXUS_HOST:-0.0.0.0} --port ${NEXUS_PORT:-2026} --auth-type database"
     fi
 }
 

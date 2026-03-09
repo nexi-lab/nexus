@@ -14,7 +14,7 @@ The SDK interface is stable and semantic-versioned separately from CLI changes.
 Quick Start (Server Mode - Recommended):
     >>> from nexus.sdk import connect
     >>>
-    >>> # Start server first: nexus serve --host 0.0.0.0 --port 2026
+    >>> # Start server first: nexusd --host 0.0.0.0 --port 2026
     >>> # Set environment: export NEXUS_URL=http://localhost:2026
     >>>
     >>> # Connect to Nexus server (thin HTTP client)

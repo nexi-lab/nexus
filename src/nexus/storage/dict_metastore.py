@@ -1,8 +1,8 @@
 """Dict-backed MetastoreABC for environments without Rust extensions.
 
 Lightweight in-memory metastore used as automatic fallback when the Raft
-metastore (Rust/PyO3) is not available.  This enables ``nexus serve`` and
-``nexus start`` to work out of the box after a plain ``pip install nexus``
+metastore (Rust/PyO3) is not available.  This enables ``nexusd``
+to work out of the box after a plain ``pip install nexus``
 without requiring ``maturin develop``.
 
 All data is stored in-memory and lost on process exit.  For durable storage,

@@ -17,7 +17,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# Default profiles activated by ``nexus up`` when none are specified.
+# Default profiles activated when none are specified.
 DEFAULT_PROFILES: tuple[str, ...] = ("server", "cache", "events")
 
 # All valid profile names (must match docker-compose.yml service profiles).

@@ -1,11 +1,6 @@
 """E2E tests for CLI infrastructure lifecycle commands (Issue #2807).
 
-Tests ``nexus doctor``, ``nexus status``, ``nexus up``,
-``nexus down``, and ``nexus logs`` as real subprocess invocations.
-
-Split into two groups:
-- **Local tests** — no Docker required (doctor, status)
-- **Docker tests** — require Docker daemon (up, down, logs)
+Tests ``nexus doctor`` and ``nexus status`` as real subprocess invocations.
 """
 
 from __future__ import annotations
@@ -15,12 +10,8 @@ import os
 import socket
 import subprocess
 import sys
-import time
 from contextlib import closing
 from pathlib import Path
-from typing import IO
-
-import pytest
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -49,29 +40,6 @@ def _find_free_port() -> int:
         s.bind(("", 0))
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         return s.getsockname()[1]
-
-
-def _drain_pipe(pipe: IO[bytes], lines: list[str]) -> None:
-    """Read lines from a pipe into *lines* list until EOF."""
-    try:
-        for raw in iter(pipe.readline, b""):
-            lines.append(raw.decode(errors="replace") if isinstance(raw, bytes) else raw)
-    except ValueError:
-        pass
-    finally:
-        pipe.close()
-
-
-def _wait_for_port(port: int, host: str = "127.0.0.1", timeout: float = 30) -> bool:
-    """Block until *port* accepts connections or *timeout* elapses."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            with closing(socket.create_connection((host, port), timeout=1)):
-                return True
-        except OSError:
-            time.sleep(0.3)
-    return False
 
 
 # ============================================================================
@@ -145,84 +113,3 @@ class TestStatusE2E:
         result = _run_nexus("status", "--url", nexus_server["base_url"])
         assert result.returncode == 0
         assert "Nexus Service Status" in result.stdout
-
-
-# ============================================================================
-# DOCKER TESTS — require Docker daemon running
-# ============================================================================
-
-_docker_available = False
-try:
-    _docker_result = subprocess.run(["docker", "info"], capture_output=True, timeout=10)
-    _docker_available = _docker_result.returncode == 0
-except (FileNotFoundError, subprocess.TimeoutExpired):
-    pass
-
-docker_required = pytest.mark.skipif(
-    not _docker_available,
-    reason="Docker daemon not available",
-)
-
-
-@docker_required
-class TestUpDownE2E:
-    """Test ``nexus up`` and ``nexus down`` against real Docker.
-
-    These tests use ``--profile cache`` (lightest service) to avoid
-    conflicting with any existing running stack.
-    """
-
-    @pytest.fixture(autouse=True)
-    def _ensure_down(self) -> None:
-        """Ensure the cache profile stack is down before and after each test."""
-        _run_nexus("down", "--profile", "cache", timeout=30)
-        # Also stop any container already on port 6379 (e.g. from another project)
-        self._stop_port_6379()
-        yield
-        _run_nexus("down", "--profile", "cache", timeout=30)
-
-    @staticmethod
-    def _stop_port_6379() -> None:
-        """Stop any Docker container bound to port 6379."""
-        result = subprocess.run(
-            ["docker", "ps", "--filter", "publish=6379", "-q"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        for cid in result.stdout.strip().splitlines():
-            if cid:
-                subprocess.run(["docker", "stop", cid], capture_output=True, timeout=30)
-
-    def test_up_and_down_cache_profile(self) -> None:
-        """Bring up the cache profile (Dragonfly), verify it starts, then bring it down."""
-
-        result = _run_nexus("up", "--profile", "cache", timeout=120)
-        combined = result.stdout + result.stderr
-        assert result.returncode == 0, f"nexus up failed: {combined}"
-
-        # Give Docker a moment to fully start
-        time.sleep(3)
-
-        # Bring it down
-        result = _run_nexus("down", "--profile", "cache", timeout=30)
-        combined = result.stdout + result.stderr
-        assert result.returncode == 0, f"nexus down failed: {combined}"
-
-    def test_up_invalid_profile(self) -> None:
-        """An invalid profile should fail with a descriptive error."""
-        result = _run_nexus("up", "--profile", "nonexistent", timeout=15)
-        assert result.returncode != 0
-        combined = (result.stdout + result.stderr).lower()
-        assert "nonexistent" in combined or "unknown" in combined
-
-
-@docker_required
-class TestLogsE2E:
-    """Test ``nexus logs`` against real Docker."""
-
-    def test_logs_no_follow(self) -> None:
-        """``nexus logs --no-follow --tail 5`` should exit immediately."""
-        result = _run_nexus("logs", "--no-follow", "--tail", "5", timeout=15)
-        # Should exit cleanly regardless of whether services are running
-        assert result.returncode in (0, 1)  # 0 if containers exist, 1 if not

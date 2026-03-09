@@ -58,7 +58,7 @@ start_server() {
     echo "🚀 Starting Nexus server..."
     echo ""
 
-    nexus serve --host "$NEXUS_HOST" --port "$NEXUS_PORT" &
+    nexusd --host "$NEXUS_HOST" --port "$NEXUS_PORT" &
     SERVER_PID=$!
 
     # Wait for server to become healthy

@@ -8,6 +8,7 @@ import click
 from rich.syntax import Syntax
 
 import nexus
+from nexus.cli.dry_run import add_dry_run_option, dry_run_preview, render_dry_run
 from nexus.cli.output import OutputOptions, add_output_options, render_error, render_output
 from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
@@ -295,6 +296,7 @@ def _print_content(path: str, content: bytes) -> None:
     is_flag=True,
     help="Show metadata (etag, version) after writing",
 )
+@add_dry_run_option
 @add_backend_options
 @add_context_options
 def write(
@@ -305,6 +307,7 @@ def write(
     if_none_match: bool,
     force: bool,
     show_metadata: bool,
+    dry_run: bool,
     remote_url: str | None,
     remote_api_key: str | None,
     operation_context: dict[str, Any],
@@ -329,9 +332,19 @@ def write(
 
         # Show metadata after writing
         nexus write /doc.txt "Content" --show-metadata
+
+        # Dry run (preview without writing)
+        nexus write /workspace/data.txt "Hello" --dry-run
     """
     try:
         file_content = resolve_content(content, input_file)
+
+        if dry_run:
+            preview = dry_run_preview(
+                "write", path=path, details={"size": len(file_content)}
+            )
+            render_dry_run(preview)
+            return
 
         with open_filesystem(remote_url, remote_api_key) as nx:
             # OCC: use lib/occ helper if CAS params present (Issue #1323).
@@ -602,10 +615,12 @@ def write_batch(
 @click.command()
 @click.argument("source", type=str)
 @click.argument("dest", type=str)
+@add_dry_run_option
 @add_backend_options
 def cp(
     source: str,
     dest: str,
+    dry_run: bool,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
@@ -613,8 +628,14 @@ def cp(
 
     Examples:
         nexus cp /workspace/source.txt /workspace/dest.txt
+        nexus cp /workspace/source.txt /workspace/dest.txt --dry-run
     """
     try:
+        if dry_run:
+            preview = dry_run_preview("cp", path=source, details={"dest": dest})
+            render_dry_run(preview)
+            return
+
         nx = get_filesystem(remote_url, remote_api_key)
 
         # Read source
@@ -723,11 +744,13 @@ def copy_cmd(
 @click.argument("source", type=str)
 @click.argument("dest", type=str)
 @click.option("-f", "--force", is_flag=True, help="Don't ask for confirmation")
+@add_dry_run_option
 @add_backend_options
 def move_cmd(
     source: str,
     dest: str,
     force: bool,
+    dry_run: bool,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
@@ -739,8 +762,14 @@ def move_cmd(
     Examples:
         nexus move /workspace/old.txt /workspace/new.txt
         nexus move /workspace/old_dir/ /workspace/new_dir/ --force
+        nexus move /workspace/old.txt /workspace/new.txt --dry-run
     """
     try:
+        if dry_run:
+            preview = dry_run_preview("move", path=source, details={"dest": dest})
+            render_dry_run(preview)
+            return
+
         from nexus.sync import move_file
 
         nx = get_filesystem(remote_url, remote_api_key)
@@ -854,10 +883,12 @@ def sync_cmd(
 @click.command()
 @click.argument("path", type=str)
 @click.option("-f", "--force", is_flag=True, help="Don't ask for confirmation")
+@add_dry_run_option
 @add_backend_options
 def rm(
     path: str,
     force: bool,
+    dry_run: bool,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
@@ -866,8 +897,14 @@ def rm(
     Examples:
         nexus rm /workspace/data.txt
         nexus rm /workspace/data.txt --force
+        nexus rm /workspace/data.txt --dry-run
     """
     try:
+        if dry_run:
+            preview = dry_run_preview("rm", path=path)
+            render_dry_run(preview)
+            return
+
         nx = get_filesystem(remote_url, remote_api_key)
 
         # Check if file exists

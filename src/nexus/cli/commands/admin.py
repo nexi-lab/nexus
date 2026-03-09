@@ -64,12 +64,14 @@ def get_admin_rpc(url: str | None, api_key: str | None) -> AdminRPC:
     from urllib.parse import urlparse
 
     from nexus.remote.rpc_transport import RPCTransport
+    from nexus.security.tls.config import ZoneTlsConfig
 
     parsed = urlparse(url)
     grpc_port = int(os.environ.get("NEXUS_GRPC_PORT", "2028"))
     grpc_address = f"{parsed.hostname}:{grpc_port}"
 
-    transport = RPCTransport(server_address=grpc_address, auth_token=api_key)
+    tls_config = ZoneTlsConfig.from_env()
+    transport = RPCTransport(server_address=grpc_address, auth_token=api_key, tls_config=tls_config)
     return transport.call_rpc
 
 

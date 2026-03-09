@@ -269,6 +269,26 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
     # Typed RPCs — content operations (Phase 2)
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _scope_path_for_zone(request: Any, zone_id: str) -> None:
+        """Apply zone-scoping to typed gRPC request paths (mirrors rpc.py)."""
+        from nexus.contracts.constants import ROOT_ZONE_ID
+
+        if zone_id == ROOT_ZONE_ID:
+            return
+
+        prefix = f"/zone/{zone_id}"
+        for attr in ("path", "old_path", "new_path"):
+            value = getattr(request, attr, None)
+            if not isinstance(value, str):
+                continue
+            if value.startswith(("/zone/", "/tenant:")):
+                continue
+            if value.startswith("/"):
+                setattr(request, attr, f"{prefix}{value}")
+            else:
+                setattr(request, attr, f"{prefix}/{value}")
+
     async def Read(
         self,
         request: "vfs_pb2.ReadRequest",
@@ -277,6 +297,7 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
         """Typed read — returns raw bytes, no JSON/base64 overhead."""
         try:
             _, op_context = await self._auth_and_context(request.auth_token)
+            self._scope_path_for_zone(request, op_context.zone_id)
             result = await asyncio.to_thread(
                 self._nexus_fs.read,
                 request.path,
@@ -337,8 +358,8 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
         """
         try:
             _, op_context = await self._auth_and_context(request.auth_token)
+            self._scope_path_for_zone(request, op_context.zone_id)
             content = bytes(request.content)
-
             if request.etag:
                 # OCC: compare-and-swap via lib helper (Issue #1323)
                 from nexus.lib.occ import occ_write
@@ -413,9 +434,19 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
         """Typed delete — sys_unlink or sys_rmdir."""
         try:
             _, op_context = await self._auth_and_context(request.auth_token)
-            if request.recursive:
+            self._scope_path_for_zone(request, op_context.zone_id)
+
+            # Determine entry type so directories always go through sys_rmdir
+            # (sys_unlink skips backend directory cleanup).
+            meta = await asyncio.to_thread(self._nexus_fs.metadata.get, request.path)
+            is_dir = meta is not None and getattr(meta, "mime_type", "") == "inode/directory"
+
+            if is_dir:
                 await asyncio.to_thread(
-                    self._nexus_fs.sys_rmdir, request.path, recursive=True, context=op_context
+                    self._nexus_fs.sys_rmdir,
+                    request.path,
+                    recursive=request.recursive,
+                    context=op_context,
                 )
             else:
                 await asyncio.to_thread(self._nexus_fs.sys_unlink, request.path, context=op_context)
@@ -458,6 +489,7 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
 
         try:
             _, op_context = await self._auth_and_context(request.auth_token)
+            self._scope_path_for_zone(request, op_context.zone_id)
             result = await asyncio.to_thread(
                 self._nexus_fs.sys_read,
                 request.path,

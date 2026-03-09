@@ -24,6 +24,7 @@ import click
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
+from nexus.cli.dry_run import add_dry_run_option, dry_run_preview, render_dry_run
 from nexus.cli.output import OutputOptions, add_output_options, render_error, render_output
 from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
@@ -104,12 +105,21 @@ def _get_zone_manager(
     default=None,
     help="Comma-separated peer addresses (format: id@host:port)",
 )
+@click.option(
+    "--if-not-exists",
+    is_flag=True,
+    default=False,
+    help="Succeed silently if zone already exists",
+)
+@add_dry_run_option
 def create_zone_cmd(
     zone_id: str,
     node_id: int,
     data_dir: str,
     bind: str,
     peers: str | None,
+    if_not_exists: bool,
+    dry_run: bool,
 ) -> None:
     """Create a new Raft zone.
 
@@ -122,11 +132,30 @@ def create_zone_cmd(
         nexus zone create shared-zone --peers 2@peer2:2126,3@peer3:2126
 
         NEXUS_NODE_ID=2 nexus zone create shared-zone --peers 1@peer1:2126
+
+        nexus zone create my-zone --dry-run
+
+        nexus zone create my-zone --if-not-exists
     """
     try:
+        if dry_run:
+            preview = dry_run_preview(
+                "zone create", path=zone_id, details={"node_id": node_id, "peers": peers}
+            )
+            render_dry_run(preview)
+            return
+
         peer_list = [p.strip() for p in peers.split(",")] if peers else []
         mgr = _get_zone_manager(node_id, data_dir, bind)
-        store = mgr.create_zone(zone_id, peers=peer_list)
+
+        try:
+            store = mgr.create_zone(zone_id, peers=peer_list)
+        except Exception as create_err:
+            if if_not_exists and "already exists" in str(create_err).lower():
+                console.print(f"[green]✓[/green] Zone already exists: {zone_id}")
+                mgr.shutdown()
+                return
+            raise
 
         console.print(f"[green]Zone '{zone_id}' created[/green]")
         console.print(f"  Node ID: {node_id}")
@@ -311,6 +340,7 @@ def list_zones_cmd(
     show_default=True,
     help="gRPC bind address",
 )
+@add_dry_run_option
 def mount_zone_cmd(
     mount_path: str,
     target_zone: str,
@@ -318,6 +348,7 @@ def mount_zone_cmd(
     node_id: int,
     data_dir: str,
     bind: str,
+    dry_run: bool,
 ) -> None:
     """Mount a zone at a path (DT_MOUNT).
 
@@ -330,8 +361,19 @@ def mount_zone_cmd(
         nexus zone mount /shared team-zone
 
         nexus zone mount /projects/alice alice-zone --parent-zone root
+
+        nexus zone mount /shared team-zone --dry-run
     """
     try:
+        if dry_run:
+            preview = dry_run_preview(
+                "zone mount",
+                path=mount_path,
+                details={"target_zone": target_zone, "parent_zone": parent_zone},
+            )
+            render_dry_run(preview)
+            return
+
         mgr = _get_zone_manager(node_id, data_dir, bind)
         mgr.mount(parent_zone, mount_path, target_zone)
 
@@ -377,12 +419,14 @@ def mount_zone_cmd(
     show_default=True,
     help="gRPC bind address",
 )
+@add_dry_run_option
 def unmount_zone_cmd(
     mount_path: str,
     parent_zone: str,
     node_id: int,
     data_dir: str,
     bind: str,
+    dry_run: bool,
 ) -> None:
     """Remove a mount point (DT_MOUNT).
 
@@ -390,8 +434,19 @@ def unmount_zone_cmd(
         nexus zone unmount /shared
 
         nexus zone unmount /projects/alice --parent-zone root
+
+        nexus zone unmount /shared --dry-run
     """
     try:
+        if dry_run:
+            preview = dry_run_preview(
+                "zone unmount",
+                path=mount_path,
+                details={"parent_zone": parent_zone},
+            )
+            render_dry_run(preview)
+            return
+
         mgr = _get_zone_manager(node_id, data_dir, bind)
         mgr.unmount(parent_zone, mount_path)
 

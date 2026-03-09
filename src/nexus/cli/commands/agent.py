@@ -45,12 +45,19 @@ def agent() -> None:
 @click.argument("name", type=str)
 @click.option("--with-api-key", is_flag=True, help="Generate API key for agent (not recommended)")
 @click.option("--description", "-d", default="", help="Agent description")
+@click.option(
+    "--if-not-exists",
+    is_flag=True,
+    default=False,
+    help="Succeed silently if agent exists, returning existing agent info",
+)
 @add_backend_options
 def register_cmd(
     agent_id: str,
     name: str,
     with_api_key: bool,
     description: str,
+    if_not_exists: bool,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
@@ -66,19 +73,35 @@ def register_cmd(
         # Recommended: Register without API key
         nexus agent register alice "Data Analyst Agent"
 
+        # Idempotent: succeed if agent already exists
+        nexus agent register alice "Data Analyst Agent" --if-not-exists
+
         # Legacy: Register with API key
         nexus agent register alice "Data Analyst Agent" --with-api-key
     """
     try:
         nx: Any = get_filesystem(remote_url, remote_api_key)
 
-        # Register agent (context with user_id will be extracted from auth)
-        result = nx._agent_rpc_service.register_agent(
-            agent_id=agent_id,
-            name=name,
-            description=description,
-            generate_api_key=with_api_key,
-        )
+        try:
+            result = nx._agent_rpc_service.register_agent(
+                agent_id=agent_id,
+                name=name,
+                description=description,
+                generate_api_key=with_api_key,
+            )
+        except Exception as reg_err:
+            if if_not_exists and "already exists" in str(reg_err).lower():
+                try:
+                    existing = nx._agent_rpc_service.get_agent(agent_id)
+                    console.print(f"[green]✓[/green] Agent already exists: {agent_id}")
+                    console.print(f"  Name: {existing.get('name', name)}")
+                    console.print(f"  Owner: {existing.get('user_id', 'unknown')}")
+                except Exception:
+                    console.print(f"[green]✓[/green] Agent already exists: {agent_id}")
+                nx.close()
+                return
+            nx.close()
+            raise
 
         console.print(f"[green]✓[/green] Registered agent: {result['agent_id']}")
         console.print(f"  Name: {result.get('name', name)}")

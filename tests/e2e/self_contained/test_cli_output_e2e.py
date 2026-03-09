@@ -5,7 +5,7 @@ Tests run against a REAL local NexusFS with a temp data directory.
 Two test modes:
   1. **Local** — each CLI command subprocess cold-starts NexusFS (tests the
      standalone experience, ~2s connect overhead per invocation).
-  2. **Remote** — a ``nexus serve`` daemon is started once; CLI commands hit
+  2. **Remote** — a ``nexusd`` daemon is started once; CLI commands hit
      it via ``--remote-url`` (tests the production experience, fast connect).
 
 Validates:
@@ -423,7 +423,7 @@ def _seed_via_server(server_info: dict[str, str]) -> None:
 
 @pytest.fixture(scope="module")
 def remote_server(tmp_path_factory: pytest.TempPathFactory):  # noqa: ANN201
-    """Start a nexus serve daemon, seed data, and yield connection info.
+    """Start a nexusd daemon, seed data, and yield connection info.
 
     The server is started once per module and shared across all remote tests.
     Data is seeded through the running server to avoid redb lock conflicts.
@@ -440,13 +440,11 @@ def remote_server(tmp_path_factory: pytest.TempPathFactory):  # noqa: ANN201
         "NEXUS_DATA_DIR": data_dir,
     }
 
-    # Start server as a subprocess
+    # Start server as a subprocess using nexusd entry point
+    nexusd_bin = str(Path(sys.executable).parent / "nexusd")
     server_proc = subprocess.Popen(
         [
-            sys.executable,
-            "-c",
-            "from nexus.cli.main import main; main()",
-            "serve",
+            nexusd_bin,
             "--host",
             "127.0.0.1",
             "--port",

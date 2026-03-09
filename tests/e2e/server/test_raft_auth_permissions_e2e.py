@@ -111,8 +111,8 @@ def db_auth_server(
             sys.executable,
             "-c",
             (
-                "from nexus.cli import main; "
-                f"main(['serve', '--host', '127.0.0.1', '--port', '{port}', "
+                "from nexus.daemon.main import main; "
+                f"main(['--host', '127.0.0.1', '--port', '{port}', "
                 f"'--data-dir', '{tmp_path}', "
                 "'--auth-type', 'database', '--init'])"
             ),

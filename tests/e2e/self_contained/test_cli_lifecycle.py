@@ -120,6 +120,9 @@ docker_required = pytest.mark.skipif(
 )
 
 
+@pytest.mark.skip(
+    reason="up/down/logs moved to nexusd after PR #2842; nexus CLI no longer has these commands"
+)
 @docker_required
 class TestUpDownE2E:
     """Test ``nexus up`` and ``nexus down`` against real Docker.
@@ -173,6 +176,9 @@ class TestUpDownE2E:
         assert "nonexistent" in combined or "unknown" in combined
 
 
+@pytest.mark.skip(
+    reason="logs moved to nexusd after PR #2842; nexus CLI no longer has this command"
+)
 @docker_required
 class TestLogsE2E:
     """Test ``nexus logs`` against real Docker."""

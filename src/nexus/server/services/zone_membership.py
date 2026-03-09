@@ -188,12 +188,16 @@ def remove_user_from_zone(
     elif role == "admin":
         group_id = f"{group_id}-admins"
 
-    rebac_manager.rebac_delete(
+    # Find matching tuples via list, then delete by tuple_id
+    tuples = rebac_manager.rebac_list_tuples(
         subject=("user", user_id),
         relation="member",
         object=("group", group_id),
-        zone_id=zone_id,
     )
+    for t in tuples:
+        tid = t.get("tuple_id")
+        if tid:
+            rebac_manager.rebac_delete(tid)
 
 
 def get_user_zones(rebac_manager: Any, user_id: str) -> list[str]:

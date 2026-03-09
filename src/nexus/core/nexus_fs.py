@@ -1016,10 +1016,11 @@ class NexusFS(  # type: ignore[misc]
         if meta is None:
             raise NexusFileNotFoundError(path)
 
-        from dataclasses import fields, replace
+        from dataclasses import replace
 
-        valid_fields = {f.name for f in fields(meta)}
-        valid_attrs = {k: v for k, v in attrs.items() if k in valid_fields}
+        # Only allow safe, user-mutable fields — block structural invariants
+        _MUTABLE_FIELDS = frozenset({"mime_type", "modified_at"})
+        valid_attrs = {k: v for k, v in attrs.items() if k in _MUTABLE_FIELDS}
         if not valid_attrs:
             return {"path": path, "updated": []}
 
@@ -3019,13 +3020,12 @@ class NexusFS(  # type: ignore[misc]
                     )
         except Exception as e:
             # If file doesn't exist, treat as empty (will create new file)
-            # Permission errors on non-existent files are OK - write() will check parent permissions
             from nexus.contracts.exceptions import NexusFileNotFoundError
 
-            if not isinstance(e, NexusFileNotFoundError | PermissionError):
-                # Re-raise unexpected errors
+            if not isinstance(e, NexusFileNotFoundError):
+                # Re-raise unexpected errors (including PermissionError)
                 raise
-            # For FileNotFoundError or PermissionError, continue with empty content
+            # For FileNotFoundError, continue with empty content
             # write() will check if user has permission to create the file
 
         # Combine existing content with new content
@@ -4202,11 +4202,11 @@ class NexusFS(  # type: ignore[misc]
                         return True
                     # Fall back to descendant access check for non-root implicit dirs
                     # (e.g., /zones/zone_1 where user may have access to children)
-                    if not self._has_descendant_access(path, Permission.READ, ctx):  # type: ignore[attr-defined]  # allowed
+                    if not self._descendant_checker.has_access(path, Permission.READ, ctx):
                         return False
                 else:
                     # Issue #1147: OPTIMIZATION for real files - use direct permission check (O(1))
-                    # instead of _has_descendant_access (O(n) fallback).
+                    # instead of descendant access (O(n) fallback).
                     # Real files have no descendants, so descendant check is unnecessary.
                     # This reduces exists() latency from 300-500ms to 10-20ms.
                     if not self._permission_enforcer.check(path, Permission.READ, ctx):
@@ -4320,7 +4320,7 @@ class NexusFS(  # type: ignore[misc]
                 # Check permission if enforcement enabled
                 if self._enforce_permissions:  # type: ignore[attr-defined]  # allowed
                     ctx = context if context is not None else self._default_context
-                    if not self._has_descendant_access(path, Permission.READ, ctx):  # type: ignore[attr-defined]  # allowed
+                    if not self._descendant_checker.has_access(path, Permission.READ, ctx):
                         results[path] = None
                         continue
 

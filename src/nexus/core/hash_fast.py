@@ -168,15 +168,34 @@ def get_hash_backend() -> str:
         return "sha256"
 
 
+class _RustOnePassHasher:
+    """Accumulate chunks, then delegate to Rust BLAKE3 one-shot on finalize.
+
+    Used when only the Rust backend is available (no Python blake3 package).
+    Ensures streaming writes produce the same hash as hash_content().
+    """
+
+    __slots__ = ("_chunks",)
+
+    def __init__(self) -> None:
+        self._chunks: list[bytes] = []
+
+    def update(self, data: bytes) -> None:
+        self._chunks.append(data)
+
+    def hexdigest(self) -> str:
+        return hash_content(b"".join(self._chunks))
+
+
 def create_hasher() -> Any:
     """Create an incremental hasher for streaming content.
 
     Returns a hasher object with .update(chunk) and .hexdigest() methods.
-    Uses Python blake3 if available, otherwise SHA-256.
 
-    NOTE: This always uses the Python blake3 or SHA-256 backend.
-    The Rust backend is only available for one-shot hashing via
-    hash_content() and hash_content_smart().
+    Backend priority (matches hash_content() to avoid hash mismatches):
+        1. Python blake3 (incremental, consistent with Rust BLAKE3)
+        2. Rust BLAKE3 via accumulate-then-hash wrapper
+        3. SHA-256 (last resort)
 
     Example:
         >>> hasher = create_hasher()
@@ -186,5 +205,6 @@ def create_hasher() -> Any:
     """
     if _PYTHON_BLAKE3_AVAILABLE:
         return _python_blake3.blake3()
-    else:
-        return hashlib.sha256()
+    if _RUST_AVAILABLE:
+        return _RustOnePassHasher()
+    return hashlib.sha256()

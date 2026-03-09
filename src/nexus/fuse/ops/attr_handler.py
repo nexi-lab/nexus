@@ -40,7 +40,7 @@ class AttrHandler:
         check_namespace_visible(ctx, original_path)
 
         permission_bits = mode & 0o777
-        ctx.nexus_fs.chmod(original_path, permission_bits)  # type: ignore[attr-defined]
+        ctx.nexus_fs.sys_setattr(original_path, context=ctx.context, mode=permission_bits)
 
         ctx.cache.invalidate_path(original_path)
         if path != original_path:
@@ -59,40 +59,40 @@ class AttrHandler:
 
         check_namespace_visible(ctx, original_path)
 
-        try:
-            import grp
-            import pwd
+        if not ctx.nexus_fs.sys_access(original_path):
+            raise FuseOSError(errno.ENOENT)
 
-            if not ctx.nexus_fs.sys_access(original_path):
-                raise FuseOSError(errno.ENOENT)
+        attrs: dict[str, str] = {}
 
-            if uid != -1:
-                try:
-                    owner = pwd.getpwuid(uid).pw_name
-                    ctx.nexus_fs.chown(original_path, owner)  # type: ignore[attr-defined]
-                except KeyError:
-                    owner = str(uid)
-                    ctx.nexus_fs.chown(original_path, owner)  # type: ignore[attr-defined]
+        if uid != -1:
+            try:
+                import pwd
 
-            if gid != -1:
-                try:
-                    group = grp.getgrgid(gid).gr_name
-                    ctx.nexus_fs.chgrp(original_path, group)  # type: ignore[attr-defined]
-                except KeyError:
-                    group = str(gid)
-                    ctx.nexus_fs.chgrp(original_path, group)  # type: ignore[attr-defined]
+                owner = pwd.getpwuid(uid).pw_name
+            except (KeyError, ModuleNotFoundError):
+                owner = str(uid)
+            attrs["owner"] = owner
 
-            ctx.cache.invalidate_path(original_path)
-            if path != original_path:
-                ctx.cache.invalidate_path(path)
+        if gid != -1:
+            try:
+                import grp
 
-            if HAS_EVENT_BUS and FileEventType is not None:
-                ctx.events.fire(FileEventType.METADATA_CHANGE, original_path)
+                group = grp.getgrgid(gid).gr_name
+            except (KeyError, ModuleNotFoundError):
+                group = str(gid)
+            attrs["group"] = group
 
-        except (ModuleNotFoundError, AttributeError):
-            pass
+        if attrs:
+            ctx.nexus_fs.sys_setattr(original_path, context=ctx.context, **attrs)
 
-    def truncate(self, path: str, length: int, fh: int | None = None) -> None:
+        ctx.cache.invalidate_path(original_path)
+        if path != original_path:
+            ctx.cache.invalidate_path(path)
+
+        if HAS_EVENT_BUS and FileEventType is not None:
+            ctx.events.fire(FileEventType.METADATA_CHANGE, original_path)
+
+    def truncate(self, path: str, length: int, _fh: int | None = None) -> None:
         """Truncate file to specified length."""
         ctx = self._ctx
 
@@ -100,11 +100,8 @@ class AttrHandler:
         if view_type:
             raise FuseOSError(errno.EROFS)
 
-        # If called via ftruncate (with fh), auth was at open().
-        write_ctx = None if fh is not None else ctx.context
-
         if ctx.nexus_fs.sys_access(original_path):
-            raw_content = ctx.nexus_fs.sys_read(original_path, context=write_ctx)
+            raw_content = ctx.nexus_fs.sys_read(original_path, context=ctx.context)
             assert isinstance(raw_content, bytes), "Expected bytes from read()"
             content = raw_content
         else:
@@ -115,7 +112,7 @@ class AttrHandler:
         else:
             content += b"\x00" * (length - len(content))
 
-        ctx.nexus_fs.sys_write(original_path, content, context=write_ctx)
+        ctx.nexus_fs.sys_write(original_path, content, context=ctx.context)
 
         ctx.cache.invalidate_path(original_path)
         if path != original_path:

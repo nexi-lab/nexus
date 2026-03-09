@@ -217,9 +217,27 @@ class MetadataHandler:
             entries.append(".raw")
 
         # Rust delegation
-        ok, file_entries = try_rust(ctx, "READDIR", "list", path)
+        ok, file_entries = try_rust(ctx, "READDIR", "sys_readdir", path)
         if ok:
-            entries.extend([f.name for f in file_entries])
+            for f in file_entries:
+                name = f.name
+                if name and name not in entries:
+                    if is_os_metadata_file(name):
+                        continue
+                    entries.append(name)
+
+                    if (
+                        ctx.mode.value != "binary"
+                        and should_add_virtual_views(name)
+                        and f.entry_type != "directory"
+                    ):
+                        last_dot = name.rfind(".")
+                        if last_dot != -1:
+                            base_name = name[:last_dot]
+                            extension = name[last_dot:]
+                            parsed_name = f"{base_name}_parsed{extension}.md"
+                            entries.append(parsed_name)
+
             elapsed = time.time() - start_time
             logger.info(
                 f"[FUSE-PERF] readdir DONE via RUST: path={path}, "

@@ -3958,6 +3958,35 @@ class NexusFS(  # type: ignore[misc]
             return [{"path": e.path, "size": e.size, "etag": e.etag} for e in entries]
         return [e.path for e in entries]
 
+    def glob(self, pattern: str, path: str = "/", context: Any = None) -> builtins.list[str]:
+        return self.search_service.glob(pattern=pattern, path=path, context=context)
+
+    def grep(
+        self,
+        pattern: str,
+        path: str = "/",
+        file_pattern: str | None = None,
+        ignore_case: bool = False,
+        max_results: int = 100,
+        search_mode: str = "auto",
+        context: Any = None,
+        before_context: int = 0,
+        after_context: int = 0,
+        invert_match: bool = False,
+    ) -> builtins.list[dict[str, Any]]:
+        return self.search_service.grep(
+            pattern=pattern,
+            path=path,
+            file_pattern=file_pattern,
+            ignore_case=ignore_case,
+            max_results=max_results,
+            search_mode=search_mode,
+            context=context,
+            before_context=before_context,
+            after_context=after_context,
+            invert_match=invert_match,
+        )
+
     # _run_async: replaced by direct run_sync() calls (Issue #1381)
 
     @rpc_expose(description="Backfill sparse directory index for fast listings", admin_only=True)

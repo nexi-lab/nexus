@@ -219,6 +219,9 @@ class ScopedFilesystem(ScopedPathMixin):
         max_results: int = 1000,
         search_mode: str = "auto",
         context: Any = None,
+        before_context: int = 0,
+        after_context: int = 0,
+        invert_match: bool = False,
     ) -> builtins.list[dict[str, Any]]:
         """Search file contents using regex patterns."""
         search = cast(Any, self._fs).search_service
@@ -230,6 +233,9 @@ class ScopedFilesystem(ScopedPathMixin):
             max_results,
             search_mode,
             context,
+            before_context=before_context,
+            after_context=after_context,
+            invert_match=invert_match,
         )
         return [self._unscope_dict(r, ["file", "path"]) for r in result]
 

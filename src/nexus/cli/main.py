@@ -59,7 +59,7 @@ def main(ctx: click.Context, profile: str | None) -> None:
         nexus versions rollback /file.txt 1
 
         # Server and mounting
-        nexus serve --host 0.0.0.0 --port 2026
+        nexusd --host 0.0.0.0 --port 2026
         nexus mount /mnt/nexus
 
         # Profile management

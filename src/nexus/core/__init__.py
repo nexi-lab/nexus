@@ -34,7 +34,7 @@ def setup_uvloop() -> bool:
         asyncio.run(my_async_function())  # Now uses uvloop
 
         # To disable uvloop:
-        # NEXUS_USE_UVLOOP=false nexus serve
+        # NEXUS_USE_UVLOOP=false nexusd
     """
     # Check environment variable to allow disabling uvloop
     use_uvloop = os.environ.get("NEXUS_USE_UVLOOP", "true").lower()

@@ -2,7 +2,7 @@
 
 Implements the ``VFSOperations`` protocol using plain filesystem
 operations.  This driver is used when the server starts without a
-VFS-backed IPC layer (e.g., ``nexus serve`` with ``--data-dir``).
+VFS-backed IPC layer (e.g., ``nexusd`` with ``--data-dir``).
 
 File operations are wrapped in ``asyncio.to_thread()`` to prevent
 blocking the event loop.

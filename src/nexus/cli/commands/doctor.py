@@ -127,7 +127,7 @@ def check_server_reachable() -> CheckResult:
             name="server-http",
             status=CheckStatus.WARNING,
             message=f"Server not reachable at {url}.",
-            fix_hint="Start the server: nexus serve  or  nexus up",
+            fix_hint="Start the server: nexusd",
         )
 
 

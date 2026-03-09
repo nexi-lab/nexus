@@ -111,9 +111,15 @@ class CacheBrick:
         if self._started:
             return
         try:
-            await self._store.health_check()
+            healthy = await self._store.health_check()
             self._started = True
-            logger.info("[CacheBrick] started (backend=%s)", self.backend_name)
+            if not healthy:
+                logger.warning(
+                    "[CacheBrick] started but health check returned unhealthy (backend=%s)",
+                    self.backend_name,
+                )
+            else:
+                logger.info("[CacheBrick] started (backend=%s)", self.backend_name)
         except Exception as exc:
             logger.warning("[CacheBrick] start health check failed: %s", exc)
             self._started = True  # Still mark as started — silent degradation

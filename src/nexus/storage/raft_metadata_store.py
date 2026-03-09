@@ -491,6 +491,20 @@ class RaftMetadataStore(MetastoreABC):
         """
         self._engine.set_metadata(self._KEY_LINKS_COUNT, count.to_bytes(8, "big"))
 
+    def adjust_zone_links_count(self, delta: int) -> int:
+        """Atomically adjust the zone's i_links_count by delta.
+
+        Uses AdjustCounter Raft command — read-modify-write happens
+        in apply(), serialized by Raft. No lost updates under concurrency.
+
+        Args:
+            delta: Signed adjustment (+1 to increment, -1 to decrement).
+
+        Returns:
+            New count after adjustment.
+        """
+        return self._engine.adjust_counter(self._KEY_LINKS_COUNT, delta)
+
     # =========================================================================
     # Revision Counter (Issue #1330 Phase 4.2)
     # =========================================================================

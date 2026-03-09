@@ -488,25 +488,19 @@ class ZoneManager:
 
     @staticmethod
     def _increment_links(store: "RaftMetadataStore") -> int:
-        """Increment a zone's i_links_count via reserved key.
+        """Increment a zone's i_links_count via atomic Raft command.
 
         Returns the new count.
         """
-        current = store.get_zone_links_count()
-        new_count = current + 1
-        store.set_zone_links_count(new_count)
-        return new_count
+        return store.adjust_zone_links_count(1)
 
     @staticmethod
     def _decrement_links(store: "RaftMetadataStore") -> int:
-        """Decrement a zone's i_links_count via reserved key.
+        """Decrement a zone's i_links_count via atomic Raft command.
 
-        Returns the new count. Never goes below 0.
+        Returns the new count. Never goes below 0 (clamped in state machine).
         """
-        current = store.get_zone_links_count()
-        new_count = max(0, current - 1)
-        store.set_zone_links_count(new_count)
-        return new_count
+        return store.adjust_zone_links_count(-1)
 
     def get_links_count(self, zone_id: str) -> int:
         """Get a zone's current i_links_count.

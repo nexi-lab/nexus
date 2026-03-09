@@ -332,6 +332,34 @@ impl PyMetastore {
         Ok(count)
     }
 
+    /// Atomically adjust a metadata counter by a signed delta.
+    ///
+    /// Read-modify-write in a single operation. The value is stored as
+    /// i64 big-endian in the metadata tree. Result clamped to >= 0.
+    ///
+    /// Args:
+    ///     key: The metadata key (e.g., "__i_links_count__").
+    ///     delta: Signed adjustment (+1 to increment, -1 to decrement).
+    ///
+    /// Returns:
+    ///     New counter value after adjustment.
+    pub fn adjust_counter(&mut self, key: &str, delta: i64) -> PyResult<i64> {
+        let cmd = Command::AdjustCounter {
+            key: key.to_string(),
+            delta,
+        };
+        let result = self.apply_command_raw(cmd)?;
+        match result {
+            CommandResult::Value(bytes) => {
+                let arr: [u8; 8] = bytes
+                    .try_into()
+                    .map_err(|_| PyRuntimeError::new_err("Invalid counter value"))?;
+                Ok(i64::from_be_bytes(arr))
+            }
+            _ => Err(PyRuntimeError::new_err("Unexpected result type")),
+        }
+    }
+
     /// Delete multiple metadata entries in a single batch operation.
     ///
     /// Args:
@@ -956,6 +984,34 @@ impl PyZoneHandle {
                 current_version,
             } => Ok((success, current_version)),
             _ => Err(PyRuntimeError::new_err("Unexpected CAS result type")),
+        }
+    }
+
+    /// Atomically adjust a metadata counter by a signed delta (Raft-replicated).
+    ///
+    /// The read-modify-write happens during apply() on each node,
+    /// serialized by Raft — no lost updates under concurrency.
+    ///
+    /// Args:
+    ///     key: The metadata key (e.g., "__i_links_count__").
+    ///     delta: Signed adjustment (+1 to increment, -1 to decrement).
+    ///
+    /// Returns:
+    ///     New counter value after adjustment.
+    pub fn adjust_counter(&self, py: Python<'_>, key: &str, delta: i64) -> PyResult<i64> {
+        let cmd = Command::AdjustCounter {
+            key: key.to_string(),
+            delta,
+        };
+        let result = self.propose_command_raw(py, cmd)?;
+        match result {
+            CommandResult::Value(bytes) => {
+                let arr: [u8; 8] = bytes
+                    .try_into()
+                    .map_err(|_| PyRuntimeError::new_err("Invalid counter value"))?;
+                Ok(i64::from_be_bytes(arr))
+            }
+            _ => Err(PyRuntimeError::new_err("Unexpected result type")),
         }
     }
 

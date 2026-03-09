@@ -238,6 +238,12 @@ class NexusFS(  # type: ignore[misc]
 
         self._dispatch: KernelDispatch = KernelDispatch()
 
+        # Service registry — /proc/modules of Nexus (Issue #1452).
+        # Populated by factory via populate_service_registry() at link().
+        from nexus.core.service_registry import ServiceRegistry
+
+        self._service_registry: ServiceRegistry = ServiceRegistry()
+
         # Lifecycle state — set by link() / initialize() / bootstrap()
         self._linked: bool = False
         self._initialized: bool = False
@@ -309,6 +315,20 @@ class NexusFS(  # type: ignore[misc]
         for cb in self._bootstrap_callbacks:
             await cb()
         self._bootstrapped = True
+
+    # -- Service registry accessors (Issue #1452) ---------------------------
+
+    def service(self, name: str) -> Any | None:
+        """Look up a registered service by canonical name.
+
+        Returns the service instance, or ``None`` if not registered.
+        """
+        return self._service_registry.service(name)
+
+    @property
+    def service_registry(self) -> Any:
+        """Read-only access to the kernel ServiceRegistry.  Factory / diagnostics."""
+        return self._service_registry
 
     # Services wired by factory via bind_wired_services() (Issue #1381).
     # See nexus.factory.service_routing.bind_wired_services().

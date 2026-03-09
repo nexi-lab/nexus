@@ -62,6 +62,14 @@ _ADD_COMMAND: dict[str, str] = {
     "sandbox": "sandbox",
     "oauth": "oauth",
     "zone": "zone",
+    # Issue #2811: New CLI command groups
+    "pay": "pay",
+    "audit": "audit",
+    "locks": "lock",
+    "governance_cli": "governance",
+    "events_cli": "events",
+    "snapshots": "snapshot",
+    "exchange": "exchange",
 }
 
 

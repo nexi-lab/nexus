@@ -306,8 +306,8 @@ Repository = "https://github.com/nexi-lab/nexus"
 Issues = "https://github.com/nexi-lab/nexus/issues"
 
 [project.scripts]
-# CLI entry point - now separated from library code
 nexus = "nexus.cli:main"
+nexusd = "nexus.daemon:main"
 
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]

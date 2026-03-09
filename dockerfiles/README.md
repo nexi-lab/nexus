@@ -30,7 +30,7 @@ The Docker sandbox provider enables local container-based code execution as an a
 
 ```bash
 # Start Nexus server
-nexus serve --host 0.0.0.0 --port 2026
+nexusd --host 0.0.0.0 --port 2026
 
 # Create a Docker sandbox
 nexus sandbox create my-sandbox --provider docker

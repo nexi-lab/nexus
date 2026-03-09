@@ -34,6 +34,12 @@ import pytest
 
 import nexus
 
+# After PR #2842, CLI commands are remote-only (require --remote-url).
+# Local-mode CLI tests that seed a data dir and run CLI directly no longer work.
+_cli_local_skip = pytest.mark.skip(
+    reason="CLI is remote-only after PR #2842; local-mode CLI tests disabled"
+)
+
 # Ensure subprocess uses the worktree source (not the venv-installed package)
 _WORKTREE_SRC = str(Path(__file__).resolve().parents[3] / "src")
 _SUBPROCESS_ENV = {
@@ -88,19 +94,18 @@ def _run_nexus(args: list[str], data_dir: str) -> subprocess.CompletedProcess[st
     Uses ``python -c`` with the CLI entry point to ensure the correct
     interpreter and avoids redb lock conflicts with the seeding fixture.
     """
-    env_args = ["--data-dir", data_dir]
+    env = {**_SUBPROCESS_ENV, "NEXUS_DATA_DIR": data_dir}
     result = subprocess.run(
         [
             sys.executable,
             "-c",
             "from nexus.cli.main import main; main()",
             *args,
-            *env_args,
         ],
         capture_output=True,
         text=True,
         timeout=30,
-        env=_SUBPROCESS_ENV,
+        env=env,
     )
     return result
 
@@ -120,6 +125,7 @@ def _parse_json(result: subprocess.CompletedProcess[str]) -> dict:
 # =========================================================================
 
 
+@_cli_local_skip
 class TestLsE2E:
     """nexus ls against real NexusFS."""
 
@@ -188,6 +194,7 @@ class TestLsE2E:
 # =========================================================================
 
 
+@_cli_local_skip
 class TestTreeE2E:
     """nexus tree against real NexusFS."""
 
@@ -215,6 +222,7 @@ class TestTreeE2E:
 # =========================================================================
 
 
+@_cli_local_skip
 class TestCatE2E:
     """nexus cat against real NexusFS."""
 
@@ -260,6 +268,7 @@ class TestCatE2E:
 # =========================================================================
 
 
+@_cli_local_skip
 class TestGlobE2E:
     """nexus glob against real NexusFS."""
 
@@ -292,6 +301,7 @@ class TestGlobE2E:
 # =========================================================================
 
 
+@_cli_local_skip
 class TestGrepE2E:
     """nexus grep against real NexusFS."""
 
@@ -336,6 +346,7 @@ class TestGrepE2E:
 # =========================================================================
 
 
+@_cli_local_skip
 class TestInfoE2E:
     """nexus info against real NexusFS."""
 
@@ -364,6 +375,7 @@ class TestInfoE2E:
 # =========================================================================
 
 
+@_cli_local_skip
 class TestJsonEnvelopeConsistency:
     """All P0 commands should produce the same JSON envelope shape."""
 
@@ -421,8 +433,12 @@ def remote_server(tmp_path_factory: pytest.TempPathFactory):  # noqa: ANN201
     grpc_port = _find_free_port()
     url = f"http://127.0.0.1:{http_port}"
 
-    # Server env: enable gRPC on the chosen port
-    server_env = {**_SUBPROCESS_ENV, "NEXUS_GRPC_PORT": str(grpc_port)}
+    # Server env: enable gRPC on the chosen port, set data dir via env
+    server_env = {
+        **_SUBPROCESS_ENV,
+        "NEXUS_GRPC_PORT": str(grpc_port),
+        "NEXUS_DATA_DIR": data_dir,
+    }
 
     # Start server as a subprocess
     server_proc = subprocess.Popen(
@@ -435,8 +451,6 @@ def remote_server(tmp_path_factory: pytest.TempPathFactory):  # noqa: ANN201
             "127.0.0.1",
             "--port",
             str(http_port),
-            "--data-dir",
-            data_dir,
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

@@ -151,8 +151,8 @@ def nexus_server_with_pay(tmp_path, pg_engine):
             sys.executable,
             "-c",
             (
-                "from nexus.cli import main; "
-                f"main(['serve', '--host', '127.0.0.1', '--port', '{port}', "
+                "from nexus.daemon.main import main; "
+                f"main(['--host', '127.0.0.1', '--port', '{port}', "
                 f"'--data-dir', '{tmp_path}', '--auth-type', 'database', "
                 f"'--init', '--reset', '--admin-user', 'e2e-wallet-admin'])"
             ),
@@ -423,7 +423,7 @@ def _build_permissions_startup_script(port: int, data_dir: str) -> str:
         sys.path.insert(0, os.getenv("PYTHONPATH", ""))
 
         from nexus.bricks.auth.providers.static_key import StaticAPIKeyAuth
-        from nexus.cli import main as cli_main
+        from nexus.daemon.main import main as cli_main
 
         auth_config = {{
             "api_keys": {{
@@ -451,7 +451,7 @@ def _build_permissions_startup_script(port: int, data_dir: str) -> str:
         factory.create_auth_provider = _patched
 
         cli_main([
-            'serve', '--host', '127.0.0.1', '--port', '{port}',
+            '--host', '127.0.0.1', '--port', '{port}',
             '--data-dir', '{data_dir}',
             '--auth-type', 'static', '--api-key', '{ADMIN_KEY}',
         ])

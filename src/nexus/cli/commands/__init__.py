@@ -46,8 +46,6 @@ _REGISTER_COMMANDS = [
     "tls",
     "cluster",
     "skills",
-    # Issue #2807: Infrastructure lifecycle commands
-    "infra",  # up, down, logs
     "status",  # status [--watch] [--json]
     "doctor",  # doctor [--json] [--fix]
     # Issue #2809: Profile management

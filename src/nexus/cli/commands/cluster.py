@@ -47,7 +47,7 @@ def join(peer_address: str, token: str, node_id: int, data_dir: str | None) -> N
 
     Connects to the leader, authenticates with the join token, receives
     the cluster CA, and generates a node certificate locally.
-    After this, start the node with `nexus serve`.
+    After this, start the node with `nexusd`.
     """
     try:
         from nexus.security.tls.join_token import parse_join_token
@@ -63,7 +63,7 @@ def join(peer_address: str, token: str, node_id: int, data_dir: str | None) -> N
     # Check if certs already exist
     if (tls_dir / "ca.pem").exists() and (tls_dir / "node.pem").exists():
         click.echo(f"TLS certificates already exist in {tls_dir}/")
-        click.echo("This node has already been provisioned. Start with: nexus serve")
+        click.echo("This node has already been provisioned. Start with: nexusd")
         sys.exit(1)
 
     # Parse token
@@ -175,7 +175,7 @@ def join(peer_address: str, token: str, node_id: int, data_dir: str | None) -> N
     click.echo(f"Certificates provisioned in {tls_dir}/")
     click.echo(f"  CA fingerprint: {actual_fingerprint}")
     click.echo(f"  Node CN: nexus-zone-cluster-node-{node_id}")
-    click.echo("\nStart this node with: nexus serve")
+    click.echo("\nStart this node with: nexusd")
 
 
 def register_commands(cli: click.Group) -> None:

@@ -136,7 +136,7 @@ def audit_export(
     """
     try:
         with get_service_client(remote_url, remote_api_key) as client:
-            content = client.audit_export(format=fmt, since=since, until=until)
+            content = client.audit_export(fmt=fmt, since=since, until=until)
 
         if output_file:
             with open(output_file, "w") as f:

@@ -83,7 +83,7 @@ def glob(
                 for match in matches:
                     is_dir = (
                         nx.sys_is_directory(match)
-                        if hasattr(nx, "is_directory")
+                        if hasattr(nx, "sys_is_directory")
                         else match.endswith("/")
                     )
                     if (type == "d" and is_dir) or (type == "f" and not is_dir):
@@ -151,10 +151,28 @@ def glob(
 @click.option("-n", "--line-number", is_flag=True, help="Show line numbers (like grep -n)")
 @click.option("-l", "--files-with-matches", is_flag=True, help="Show only filenames with matches")
 @click.option("-c", "--count", is_flag=True, help="Show count of matches per file")
-@click.option("--invert-match", is_flag=True, help="Invert match (show non-matching lines)")
-@click.option("-A", "--after-context", type=int, default=0, help="Show N lines after match")
-@click.option("-B", "--before-context", type=int, default=0, help="Show N lines before match")
-@click.option("-C", "--context", type=int, default=0, help="Show N lines before and after match")
+@click.option("--invert-match", is_flag=True, help="Invert match (not yet wired to core grep)")
+@click.option(
+    "-A",
+    "--after-context",
+    type=int,
+    default=0,
+    help="Show N lines after match (not yet wired to core grep)",
+)
+@click.option(
+    "-B",
+    "--before-context",
+    type=int,
+    default=0,
+    help="Show N lines before match (not yet wired to core grep)",
+)
+@click.option(
+    "-C",
+    "--context",
+    type=int,
+    default=0,
+    help="Show N lines before and after match (not yet wired to core grep)",
+)
 @click.option("-m", "--max-results", default=100, help="Maximum results to show")
 @click.option(
     "--search-mode",

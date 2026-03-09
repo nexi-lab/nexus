@@ -489,6 +489,12 @@ def rebac_expand_cmd(
 @click.argument("object_type", type=str)
 @click.argument("object_id", type=str)
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed path information")
+@click.option(
+    "--zone-id",
+    type=str,
+    default=None,
+    help="Zone ID for multi-zone isolation (e.g., 'org_acme'). Can also be set via NEXUS_ZONE_ID env var.",
+)
 @add_backend_options
 def rebac_explain_cmd(
     subject_type: str,
@@ -497,6 +503,7 @@ def rebac_explain_cmd(
     object_type: str,
     object_id: str,
     verbose: bool,
+    zone_id: str | None,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
@@ -514,17 +521,30 @@ def rebac_explain_cmd(
 
         # Show detailed path information
         nexus rebac explain agent alice read file file123 --verbose
+
+        # Explain within a specific zone
+        nexus rebac explain agent alice read file file123 --zone-id org_acme
     """
     try:
         import json
+        import os
 
         nx = get_filesystem(remote_url, remote_api_key)
 
+        # Resolve zone_id from option or environment
+        resolved_zone_id = zone_id or os.getenv("NEXUS_ZONE_ID")
+
         # Get explanation
+        explain_kwargs: dict[str, Any] = {
+            "subject": (subject_type, subject_id),
+            "permission": permission,
+            "object": (object_type, object_id),
+        }
+        if resolved_zone_id:
+            explain_kwargs["zone_id"] = resolved_zone_id
+
         explanation = nx.rebac_service.rebac_explain_sync(  # type: ignore[attr-defined]
-            subject=(subject_type, subject_id),
-            permission=permission,
-            object=(object_type, object_id),
+            **explain_kwargs,
         )
 
         nx.close()

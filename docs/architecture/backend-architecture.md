@@ -18,8 +18,8 @@ delete all legacy code.
 
 | File | Lines | Class | Reg Name | Role |
 |---|---|---|---|---|
-| `cas_backend.py` | 427 | `CASBackend(Backend)` | — | CAS addressing engine |
-| `path_backend.py` | 499 | `PathBackend(Backend)` | — | Path addressing engine |
+| `cas_backend.py` | 588 | `CASBackend(Backend)` | — | CAS addressing engine |
+| `path_backend.py` | 526 | `PathBackend(Backend)` | — | Path addressing engine |
 | `blob_transport.py` | 140 | `BlobTransport` (Protocol) | — | Transport abstraction (9 methods) |
 | `cas_gcs.py` | 153 | `CASGCSBackend(CASBackend)` | `"cas_gcs"` | Thin: CAS + GCS transport |
 | `path_gcs.py` | 368 | `PathGCSBackend(PathBackend)` | `"path_gcs"` | Thin: Path + GCS transport |
@@ -30,24 +30,15 @@ delete all legacy code.
 **Naming:** Thin connectors follow the `{addressing}_{transport}` convention established
 in **Section 5.2**. Rename completed in Phase 5.
 
-### 1.2 Legacy — To Be Migrated and Deleted
+### 1.2 Surviving Legacy
 
-| File | Lines | Class | Status / Replaced By |
+| File | Lines | Class | Status |
 |---|---|---|---|
-| `local.py` | 966 | `LocalBackend` | `CASBackend(LocalBlobTransport)` + feature DI |
-| ~~`passthrough.py`~~ | ~~527~~ | ~~`PassthroughBackend`~~ | **Deleted** (#1447) — kernel OBSERVE replaces pointer/inotify layer |
-| `chunked_storage.py` | 573 | `ChunkedStorageMixin` | `CDCEngine` (standalone) |
-| `async_local.py` | 755 | `AsyncLocalBackend` | Async wrapper around `CASBackend(LocalBlobTransport)` |
-| `local_connector.py` | 808 | `LocalConnectorBackend` | **Keep** — unique path-based features (symlink safety, inode versioning, L1 cache) |
-| **To delete** | **~2,294** | | (excludes local_connector.py) |
+| `local_connector.py` | 806 | `LocalConnectorBackend` | **Kept** — unique path-based features (symlink safety, inode versioning, L1 cache) |
 
-**Why migrate `async_local.py`:** Async variant of `LocalBackend`, uses `CASBlobStore`
-directly, not registered in `ConnectorRegistry`. Same monolith problem.
-
-**Why keep `local_connector.py`:** Unique path-based features including symlink safety,
-inode versioning, and L1 cache. These are tightly coupled to local filesystem semantics
-that do not map cleanly onto the `PathBackend(LocalBlobTransport)` + `CacheConnectorMixin`
-pattern.
+All other legacy backends (`local.py`, `passthrough.py`, `chunked_storage.py`,
+`async_local.py`, `cas_blob_store.py`) have been deleted and replaced by the new
+composition model.
 
 ### 1.3 API Connectors — Out of Scope
 
@@ -72,12 +63,12 @@ PR #1323 established the principle: **transport** (WHERE blobs live) and **addre
 Addressing  CAS   | CASBackend    | CASBackend    | CASBackend    |
 (HOW)             | + LocalBlob   | + GCSBlob     | + S3Blob      |
                   | Transport     | Transport     | Transport     |
-                  | (new)         | (existing)    | (planned)     |
+                  | (existing)    | (existing)    | (planned)     |
                   +---------------+---------------+---------------+
             Path  | PathBackend   | PathBackend   | PathBackend   |
                   | + LocalBlob   | + GCSBlob     | + S3Blob      |
                   | Transport     | Transport     | Transport     |
-                  | (new)         | (existing)    | (existing)    |
+                  | (existing)    | (existing)    | (existing)    |
                   +---------------+---------------+---------------+
 ```
 
@@ -85,7 +76,7 @@ Addressing  CAS   | CASBackend    | CASBackend    | CASBackend    |
 
 | Cell | Current Reg Name | Status |
 |---|---|---|
-| CAS + Local | `"local"` | **To migrate** — currently `LocalBackend` monolith |
+| CAS + Local | `"cas_local"` | **Done** — `CASLocalBackend` in `cas_local.py` |
 | CAS + GCS | `"cas_gcs"` | **Done** — thin class exists |
 | CAS + S3 | — | **Future** — `S3BlobTransport` exists but no CAS wiring yet |
 | Path + Local | `"local_connector"` | **Keep** — unique architecture, not replaceable by PathBackend |
@@ -118,11 +109,11 @@ Ref counting operates at two independent layers:
 
 | Layer | Mechanism | Where | Purpose |
 |---|---|---|---|
-| **Metastore** | `i_links_count` on `FileMetadata` | redb | Mount references. DT_MOUNT increments, zone removal blocked if > 0. |
+| **Metastore** | Zone-level reserved key (`__i_links_count__`) | redb | Mount references. DT_MOUNT increments via Raft-side atomic op, zone removal blocked if > 0. |
 | **Backend** | `ref_count` in `.meta` sidecar | ObjectStore | Content references. CAS dedup: multiple paths -> same blob. GC at zero. |
 
-These are orthogonal. Federation DT_MOUNT increments `i_links_count` in the metastore —
-it never touches `Backend.get_ref_count()`. Path-addressed backends return ref_count=1
+These are orthogonal. Federation DT_MOUNT increments the zone-level link count in the
+metastore — it never touches `Backend.get_ref_count()`. Path-addressed backends return ref_count=1
 because there is no content dedup (each path owns its blob exclusively).
 
 ### 2.4 BlobTransport Protocol (9 methods)
@@ -150,9 +141,9 @@ Three transports exist. This is the complete set needed for V0:
 
 | Transport | File | Lines | Status |
 |---|---|---|---|
-| `LocalBlobTransport` | `transports/local_transport.py` | ~150 (new) | To create — extracts I/O from `CASBlobStore` + `LocalBackend` |
-| `GCSBlobTransport` | `transports/gcs_transport.py` | 326 | Existing — `google.cloud.storage`, signed URLs, generation tracking |
-| `S3BlobTransport` | `transports/s3_transport.py` | 413 | Existing — `boto3`, presigned URLs, multipart, versioning |
+| `LocalBlobTransport` | `transports/local_transport.py` | 317 | Extracted from `CASBlobStore` + `LocalBackend` blob I/O |
+| `GCSBlobTransport` | `transports/gcs_transport.py` | 325 | `google.cloud.storage`, signed URLs, generation tracking |
+| `S3BlobTransport` | `transports/s3_transport.py` | 412 | `boto3`, presigned URLs, multipart, versioning |
 
 Linux analogy: `BlobTransport` is the **block device driver** (ext4 doesn't care if
 the disk is SSD or NVMe). `CASBackend`/`PathBackend` are the **filesystem layer**
@@ -226,7 +217,7 @@ transport-level — they operate on content hashes and CAS metadata, not raw blo
 |---|---|---|---|
 | **BloomFilter** | `nexus_fast` (Rust) | Fast negative lookup on `content_exists()`. Populated from disk scan at startup, updated on every write. | Operates on content hashes — CAS addressing concept |
 | **CDC** | `ChunkedStorageMixin` (573L) | Content-defined chunking for files >= 16MB via FastCDC. Chunk-level dedup. | Decides how to split before writing — addressing decision |
-| **StripeLock** | `backends/base/stripe_lock.py` (~30L) | 64-stripe lock for local metadata sidecar read-modify-write. | Coordinates CAS ref_count updates — metadata concern |
+| **StripeLock** | `backends/base/stripe_lock.py` (47L) | 64-stripe lock for local metadata sidecar read-modify-write. | Coordinates CAS ref_count updates — metadata concern |
 | **ContentCache** | `ContentCache` (DI) | In-memory LRU keyed by content hash for hot reads. | Keyed by content_hash — CAS addressing concept |
 
 **Multipart upload** stays at the connector level. Currently used in production via
@@ -236,7 +227,7 @@ delegates multipart to `S3BlobTransport`. `CASBackend` with `LocalBlobTransport`
 also support multipart via the transport layer (add `init_multipart` / `upload_part` /
 `complete_multipart` / `abort_multipart` to `LocalBlobTransport`).
 
-### 4.1 CASBackend Constructor (After Migration)
+### 4.1 CASBackend Constructor
 
 ```python
 class CASBackend(Backend):
@@ -245,13 +236,17 @@ class CASBackend(Backend):
         transport: BlobTransport,
         *,
         backend_name: str | None = None,
-        # Feature injection — local-only features activate when provided
-        bloom_filter: BloomFilter | None = None,       # nexus_fast.BloomFilter
-        cdc_engine: CDCEngine | None = None,            # extracted from ChunkedStorageMixin
-        content_cache: ContentCache | None = None,      # storage.content_cache
-        use_stripe_lock: bool = False,                  # enables 64-stripe metadata lock
+        # Feature DI — local-only optimizations, all None-safe
+        bloom_filter: Any | None = None,       # nexus_fast.BloomFilter
+        content_cache: Any | None = None,      # storage.content_cache.ContentCache
+        stripe_lock: Any | None = None,        # _StripeLock instance for local metadata coordination
+        on_write_callback: Any | None = None,  # e.g. Zoekt reindex hook
     ):
 ```
+
+**Note:** `CDCEngine` is composed at the subclass level (`CASLocalBackend`), not injected
+into base `CASBackend`. This keeps the base class clean — CDC is a local-only concern
+that operates on the backend's internal methods.
 
 **Principle:** Features only activate when injected. Cloud backends pass `None` and get
 pure cloud-native behavior. Local backend passes all four and gets the full optimization
@@ -259,8 +254,8 @@ stack. No conditional logic in the transport layer.
 
 ### 4.2 CDCEngine Extraction
 
-`ChunkedStorageMixin` (573L) is currently a mixin on `LocalBackend`. Extract as
-standalone `CDCEngine` class (~300L):
+`ChunkedStorageMixin` (573L) was a mixin on `LocalBackend`. Extracted as standalone
+`CDCEngine` class at `backends/engines/cdc.py` (373L):
 
 ```python
 class CDCEngine:
@@ -307,9 +302,9 @@ ObjectStoreABC (kernel contract)
   |     |-- S3BlobTransport       -> "path_s3"    (thin class)
   |
   BlobTransport (Protocol, 9 methods)
-  |-- LocalBlobTransport  (new, ~150L)
-  |-- GCSBlobTransport    (existing, 326L)
-  |-- S3BlobTransport     (existing, 413L)
+  |-- LocalBlobTransport  (317L)
+  |-- GCSBlobTransport    (325L)
+  |-- S3BlobTransport     (412L)
 ```
 
 ### 5.1 LocalBlobTransport (New)
@@ -351,7 +346,7 @@ class LocalBlobTransport:
     #     create_directory_marker, stream_blob)
 ```
 
-~150 lines. Reuses the atomic temp-write + `os.replace()` pattern from `CASBlobStore`.
+317 lines. Reuses the atomic temp-write + `os.replace()` pattern from `CASBlobStore`.
 Also supports `MultipartUploadMixin` methods for TUS resumable uploads.
 
 ### 5.2 Thin Connector Naming Convention
@@ -504,23 +499,21 @@ slot in without changing the `CASBackend`/`PathBackend` interface — only the i
 
 ## 8. V0 Migration Plan
 
-### Phase 1: LocalBlobTransport (~150L new)
+### Phase 1: LocalBlobTransport — **DONE**
 
-Create `backends/transports/local_transport.py`:
-- Extract blob I/O from `CASBlobStore.write_blob/read_blob/blob_exists`
-- Extract directory ops from `LocalBackend.mkdir/rmdir/is_directory/list_dir`
-- Implement all 9 `BlobTransport` protocol methods + multipart support
-- Test: `BlobTransport` protocol conformance, atomic write, fsync behavior
+`backends/transports/local_transport.py` (317L):
+- Extracted blob I/O from `CASBlobStore.write_blob/read_blob/blob_exists`
+- Extracted directory ops from `LocalBackend.mkdir/rmdir/is_directory/list_dir`
+- All 9 `BlobTransport` protocol methods + multipart support
 
-### Phase 2: Feature migration into CASBackend
+### Phase 2: Feature migration into CASBackend — **DONE**
 
-Enhance `CASBackend.__init__()` with optional DI params:
-- `bloom_filter`: Wire into `content_exists()` as fast-miss pre-check
-- `cdc_engine`: Extract `CDCEngine` from `ChunkedStorageMixin`, wire into `write_content()` / `read_content()`
-- `content_cache`: Wire into `read_content()` (check cache first) and `write_content()` (populate on write)
-- `use_stripe_lock`: Use `StripeLock` from `backends/base/stripe_lock.py` for local metadata coordination
-
-Test: CAS + Local with all features enabled matches `LocalBackend` behavior.
+`CASBackend.__init__()` accepts optional DI params:
+- `bloom_filter`: Wired into `content_exists()` as fast-miss pre-check
+- `content_cache`: Wired into `read_content()` (check cache first) and `write_content()` (populate on write)
+- `stripe_lock`: `_StripeLock` instance for local metadata coordination
+- `on_write_callback`: Hook for external observers (e.g. Zoekt reindex)
+- `CDCEngine` composed at `CASLocalBackend` subclass level (`engines/cdc.py`, 373L)
 
 ### Phase 3: PathBackend + LocalBlobTransport verification — **DONE**
 
@@ -528,11 +521,10 @@ Test: CAS + Local with all features enabled matches `LocalBackend` behavior.
 `local_connector.py` kept — unique path-based features (symlink safety, inode versioning, L1 cache).
 `PathBackend(LocalBlobTransport)` remains available for future use cases.
 
-### Phase 4: AsyncLocalBackend migration
+### Phase 4: AsyncLocalBackend migration — **DONE**
 
-Replace `AsyncLocalBackend` (755L) with async wrapper around
-`CASBackend(LocalBlobTransport)`. Currently not in `ConnectorRegistry` — evaluate
-whether to register or keep as internal.
+`AsyncLocalBackend` (755L) deleted. Replaced by async wrapper around
+`CASBackend(LocalBlobTransport)`.
 
 ### Phase 5: Factory rewire + naming cleanup + legacy deletion — **DONE**
 
@@ -568,8 +560,8 @@ contract concern.
 
 | File | Lines | Purpose |
 |---|---|---|
-| `backends/transports/local_transport.py` | ~150 | `LocalBlobTransport` — local filesystem `BlobTransport` |
-| `backends/cdc_engine.py` | ~300 | `CDCEngine` — extracted from `ChunkedStorageMixin` |
+| `backends/transports/local_transport.py` | 317 | `LocalBlobTransport` — local filesystem `BlobTransport` |
+| `backends/engines/cdc.py` | 373 | `CDCEngine` — extracted from `ChunkedStorageMixin` |
 
 ### Renamed Files
 
@@ -579,61 +571,15 @@ See Section 5.2 for the full rename table (thin connector files + classes + regi
 
 | File | Change |
 |---|---|
-| `backends/cas_backend.py` (427L) | Add optional `bloom_filter`, `cdc_engine`, `content_cache`, `use_stripe_lock` DI params |
+| `backends/cas_backend.py` (588L) | Optional `bloom_filter`, `content_cache`, `stripe_lock`, `on_write_callback` DI params |
 | `backends/factory.py` (177L) | Rewire `"local"`, `"local_connector"` connector creation |
 | `backends/registry.py` (650L) | Update connector registration + add old-name aliases (Section 5.2) |
 | `backends/__init__.py` (130L) | Update exports: remove old, add `LocalBlobTransport`, `CDCEngine` |
 
-### Deleted Files
-
-| File | Lines | Replaced By |
-|---|---|---|
-| `backends/local.py` | 966 | `CASBackend(LocalBlobTransport)` + feature DI |
-| `backends/cas_blob_store.py` | 567 | `LocalBlobTransport` (I/O) + `CASBackend` (metadata). `_StripeLock` → `backends/base/stripe_lock.py` |
-| `backends/chunked_storage.py` | 573 | `CDCEngine` (standalone class) |
-| `backends/async_local.py` | 755 | Async wrapper around `CASBackend(LocalBlobTransport)` |
-| **Total deleted** | **~2,861** | All deleted |
-
-### Net Change
-
-| Metric | Count |
-|---|---|
-| New code | ~450L (`LocalBlobTransport` + `CDCEngine`) |
-| Deleted code | ~2,861L (4 legacy files) |
-| Modified code | ~100L (DI params + factory rewire) |
-| **Net** | **~-2,311L** |
 
 ---
 
-## 10. What Stays, What Goes
-
-**Stays (no changes):**
-- `Backend` base class (`backend.py`, 748L) — service-level contract
-- `BlobTransport` Protocol (`blob_transport.py`, 140L) — transport contract
-- `CASBackend` core logic (`cas_backend.py`, 427L) — addressing engine
-- `PathBackend` core logic (`path_backend.py`, 499L) — addressing engine
-- `GCSBlobTransport` (`gcs_transport.py`, 326L) — cloud transport
-- `S3BlobTransport` (`s3_transport.py`, 413L) — cloud transport
-- All cloud connector thin classes (renamed per Section 5.2)
-- All API connectors (gdrive, gmail, gcalendar, slack, hn, x)
-- All wrappers (`DelegatingBackend`, `CachingBackendWrapper`, `CompressedStorage`, etc.)
-- `nexus_fast.BloomFilter` (Rust) — reused via DI injection
-
-**Goes (deleted):**
-- `LocalBackend` (966L) — monolith split into composition
-- `CASBlobStore` (567L) — split into `LocalBlobTransport` + `CASBackend` metadata. `_StripeLock` extracted to `backends/base/stripe_lock.py`.
-- `ChunkedStorageMixin` (573L) — replaced by `CDCEngine`
-- `AsyncLocalBackend` (755L) — replaced by async `CASBackend` wrapper
-
-**Kept (not deleted):**
-- `LocalConnectorBackend` (808L) — unique path-based features (symlink safety, inode versioning, L1 cache)
-
-**Deleted later:**
-- ~~`PassthroughBackend`~~ (527L) — deleted in #1447 (kernel OBSERVE replaces pointer/inotify layer)
-
----
-
-## 11. Verification
+## 9. Verification
 
 ```bash
 # Unit tests — CAS + Local with feature parity
@@ -667,8 +613,8 @@ print('OK: LocalBlobTransport conforms to BlobTransport')
 
 ---
 
-## 12. Open Questions
+## 10. Open Questions
 
-1. **`on_write_callback` migration.** `LocalBackend` has `on_write_callback` for Zoekt
-   reindex (#1520). This should migrate to EventBus observer pattern (#809, #810) rather
-   than being wired into `CASBackend`. (Align with DT_PIPE design.)
+1. **`on_write_callback` sunset.** `CASBackend` currently accepts `on_write_callback`
+   as DI param (used by Zoekt reindex). This should migrate to EventBus observer pattern
+   (#809, #810) or DT_PIPE, then remove the DI param.

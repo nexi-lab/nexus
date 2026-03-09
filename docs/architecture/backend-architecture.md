@@ -554,31 +554,6 @@ contract concern.
 
 ---
 
-## 9. Files Changed
-
-### New Files
-
-| File | Lines | Purpose |
-|---|---|---|
-| `backends/transports/local_transport.py` | 317 | `LocalBlobTransport` — local filesystem `BlobTransport` |
-| `backends/engines/cdc.py` | 373 | `CDCEngine` — extracted from `ChunkedStorageMixin` |
-
-### Renamed Files
-
-See Section 5.2 for the full rename table (thin connector files + classes + registration names).
-
-### Refactored Files
-
-| File | Change |
-|---|---|
-| `backends/cas_backend.py` (588L) | Optional `bloom_filter`, `content_cache`, `stripe_lock`, `on_write_callback` DI params |
-| `backends/factory.py` (177L) | Rewire `"local"`, `"local_connector"` connector creation |
-| `backends/registry.py` (650L) | Update connector registration + add old-name aliases (Section 5.2) |
-| `backends/__init__.py` (130L) | Update exports: remove old, add `LocalBlobTransport`, `CDCEngine` |
-
-
----
-
 ## 9. Verification
 
 ```bash

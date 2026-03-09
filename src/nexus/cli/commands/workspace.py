@@ -389,13 +389,21 @@ def restore_cmd(
     try:
         nx: Any = get_filesystem(remote_url, remote_api_key)
 
-        # Get snapshot info
-        snapshots = nx._workspace_rpc_service.workspace_log(workspace_path=path, limit=1000)
+        # Get snapshot info — fetch by snapshot number directly if the API supports it,
+        # otherwise scan all snapshots without an arbitrary limit
         snap_info = None
-        for s in snapshots:
-            if s["snapshot_number"] == snapshot:
-                snap_info = s
-                break
+        try:
+            # Try direct lookup first (avoids scanning)
+            snap_info = nx._workspace_rpc_service.workspace_get_snapshot(
+                workspace_path=path, snapshot_number=snapshot
+            )
+        except (AttributeError, TypeError):
+            # Fallback: scan log without a hard limit so older snapshots are found
+            snapshots = nx._workspace_rpc_service.workspace_log(workspace_path=path, limit=0)
+            for s in snapshots:
+                if s["snapshot_number"] == snapshot:
+                    snap_info = s
+                    break
 
         if not snap_info:
             console.print(f"[red]✗[/red] Snapshot #{snapshot} not found")

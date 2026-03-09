@@ -19,8 +19,8 @@ def _get_engine_with_storage():  # type: ignore[no-untyped-def]
     """
     import nexus
 
-    # Get data directory from env or default
-    data_dir = os.getenv("NEXUS_DATA_DIR", "./nexus-data")
+    # Get data directory from env or default (consistent with rest of CLI)
+    data_dir = os.getenv("NEXUS_DATA_DIR", os.path.join(os.path.expanduser("~"), ".nexus", "data"))
 
     # Connect to Nexus — factory creates workflow_engine via _create_workflow_engine()
     nx = nexus.connect(config={"data_dir": str(data_dir)})

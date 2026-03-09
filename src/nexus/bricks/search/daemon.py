@@ -988,7 +988,7 @@ class SearchDaemon:
     # Index Refresh
     # =========================================================================
 
-    async def notify_file_change(self, path: str, _change_type: str = "update") -> None:
+    async def notify_file_change(self, path: str, change_type: str = "update") -> None:  # noqa: ARG002
         """Notify the daemon of a file change for index refresh.
 
         Changes are debounced and batched for efficiency.

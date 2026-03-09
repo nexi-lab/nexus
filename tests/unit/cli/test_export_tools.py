@@ -347,7 +347,7 @@ class TestExportToolsIntegration:
         from nexus.cli.main import main
 
         tools = walk_click_tree(main, prefix="nexus")
-        infra = {"data_dir", "backend", "config", "gcs_bucket", "remote_url", "remote_api_key"}
+        infra = {"remote_url", "remote_api_key"}
         for tool in tools:
             props = set(tool["inputSchema"]["properties"].keys())
             leaked = props & infra

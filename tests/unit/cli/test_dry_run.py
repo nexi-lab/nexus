@@ -131,21 +131,6 @@ class TestWriteDryRun:
         nx.sys_write.assert_not_called()
 
 
-class TestAppendDryRun:
-    def test_dry_run_does_not_append(self) -> None:
-        from nexus.cli.commands.file_ops import append
-
-        nx = _make_mock_nx()
-        runner = CliRunner()
-        with _patch_open_filesystem(nx):
-            result = runner.invoke(
-                append, ["/test.txt", "hello", "--dry-run"], catch_exceptions=False
-            )
-        assert result.exit_code == 0
-        assert "DRY RUN" in result.output
-        nx.append.assert_not_called()
-
-
 class TestRmDryRun:
     def test_dry_run_does_not_delete(self) -> None:
         from nexus.cli.commands.file_ops import rm

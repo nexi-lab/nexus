@@ -340,9 +340,7 @@ def write(
         file_content = resolve_content(content, input_file)
 
         if dry_run:
-            preview = dry_run_preview(
-                "write", path=path, details={"size": len(file_content)}
-            )
+            preview = dry_run_preview("write", path=path, details={"size": len(file_content)})
             render_dry_run(preview)
             return
 

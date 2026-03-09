@@ -451,11 +451,12 @@ class RaftMetadataStore(MetastoreABC):
     def close(self) -> None:
         """Close the metadata store and release resources."""
         if hasattr(self._engine, "shutdown"):
-            # ZoneHandle/ZoneManager: gracefully stop gRPC server + transport loop
+            # ZoneManager: gracefully stop gRPC server + transport loop
             self._engine.shutdown()
-        else:
-            # Metastore: just flush sled
+        elif hasattr(self._engine, "flush"):
+            # Metastore: flush redb to disk
             self._engine.flush()
+        # ZoneHandle: no explicit teardown needed (managed by ZoneManager)
 
     # =========================================================================
     # Zone-level reserved keys (federation ref counting)

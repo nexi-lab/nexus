@@ -29,13 +29,20 @@ Usage::
     # Advanced: create services separately, inject into kernel
     from nexus.factory import create_nexus_services
 
-    services = create_nexus_services(
+    kernel_svc, system_svc, brick_svc = create_nexus_services(
         record_store=record_store,
         metadata_store=metadata_store,
         backend=backend,
         router=my_router,
     )
-    nx = NexusFS(backend=backend, metadata_store=metadata_store, services=services)
+    nx = create_nexus_fs(
+        backend=backend,
+        metadata_store=metadata_store,
+        record_store=record_store,
+        kernel_services=kernel_svc,
+        system_services=system_svc,
+        brick_services=brick_svc,
+    )
 """
 
 # Public API

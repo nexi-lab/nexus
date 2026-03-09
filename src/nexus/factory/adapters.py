@@ -46,7 +46,17 @@ class _NexusFSFileReader:
         return result
 
     def list_files(self, path: str, recursive: bool = True) -> list[Any]:
-        result = self._nx.sys_readdir(path, recursive=recursive)
+        # Read with admin context so the search daemon can index all files
+        # regardless of per-user ReBAC permissions (same as read_text).
+        from nexus.contracts.types import OperationContext
+
+        admin_ctx = OperationContext(
+            user_id="system",
+            groups=[],
+            is_admin=True,
+            is_system=True,
+        )
+        result = self._nx.sys_readdir(path, recursive=recursive, context=admin_ctx)
         items: list[Any] = result.items if hasattr(result, "items") else result
         return items
 

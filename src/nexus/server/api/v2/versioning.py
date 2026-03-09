@@ -385,6 +385,14 @@ def build_v2_registry(
     except ImportError as e:
         logger.warning("Failed to import x402 routes: %s", e)
 
+    # ---- Federation router (A4: zone lifecycle + share/join) ----
+    try:
+        from nexus.server.api.v2.routers.federation import router as federation_router
+
+        registry.add(RouterEntry(router=federation_router, name="federation", endpoint_count=8))
+    except ImportError as e:
+        logger.warning("Failed to import Federation routes: %s", e)
+
     return registry
 
 

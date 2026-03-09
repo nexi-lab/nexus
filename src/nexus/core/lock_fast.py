@@ -58,16 +58,18 @@ class _LockEntry:
 
 
 def _normalize_path(path: str) -> str:
-    """Normalize a path: collapse repeated slashes, remove trailing slash (except root)."""
+    """Normalize a path: resolve ./.., collapse repeated slashes, remove trailing slash."""
     if not path:
         return "/"
-    # Collapse repeated slashes.
-    import re
+    import posixpath
 
-    result = re.sub(r"/+", "/", path)
-    # Remove trailing slash (keep root "/").
-    if len(result) > 1 and result.endswith("/"):
-        result = result[:-1]
+    result = posixpath.normpath(path)
+    # posixpath.normpath preserves leading // per POSIX; collapse to single /
+    if result.startswith("//"):
+        result = result[1:]
+    # Ensure leading slash is preserved for absolute paths
+    if path.startswith("/") and not result.startswith("/"):
+        result = "/" + result
     return result
 
 

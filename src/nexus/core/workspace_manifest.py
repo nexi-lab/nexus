@@ -123,9 +123,18 @@ class WorkspaceManifest:
         Raises:
             json.JSONDecodeError: If data is not valid JSON
             KeyError: If required fields are missing
+            ValueError: If any path contains traversal segments
         """
+        import posixpath
+
         parsed = json.loads(data)
-        entries = {path: ManifestEntry.from_dict(entry_data) for path, entry_data in parsed.items()}
+        entries: dict[str, ManifestEntry] = {}
+        for path, entry_data in parsed.items():
+            # Reject path traversal attempts (e.g., "../escape.txt")
+            normalized = posixpath.normpath(path)
+            if normalized.startswith("..") or "/../" in path or path.startswith("/"):
+                raise ValueError(f"Manifest path contains traversal or absolute segment: {path!r}")
+            entries[normalized] = ManifestEntry.from_dict(entry_data)
         return cls(entries=entries)
 
     @classmethod

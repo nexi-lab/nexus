@@ -70,6 +70,7 @@ _ADD_COMMAND: dict[str, str] = {
     "events_cli": "events",
     "snapshots": "snapshot",
     "exchange": "exchange",
+    "federation": "federation",
 }
 
 

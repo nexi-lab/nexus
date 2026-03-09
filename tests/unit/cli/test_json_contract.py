@@ -76,6 +76,10 @@ _UNIFIED_MODULES = [
     ("nexus.cli.commands.audit", "audit_list"),
     ("nexus.cli.commands.connectors", "list_connectors"),
     ("nexus.cli.commands.config_cmd", "show_cmd"),
+    # A4 — federation CLI
+    ("nexus.cli.commands.federation", "federation_status"),
+    ("nexus.cli.commands.federation", "federation_zones"),
+    ("nexus.cli.commands.federation", "federation_info"),
 ]
 
 

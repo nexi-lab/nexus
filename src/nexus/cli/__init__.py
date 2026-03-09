@@ -42,6 +42,7 @@ from nexus.cli.utils import (
     console,
     get_filesystem,
     handle_error,
+    open_filesystem,
 )
 
 __all__ = [
@@ -49,6 +50,7 @@ __all__ = [
     # Utilities (for internal CLI use only)
     "console",
     "get_filesystem",
+    "open_filesystem",
     "handle_error",
     "add_backend_options",
 ]

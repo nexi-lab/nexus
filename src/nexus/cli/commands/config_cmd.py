@@ -1,4 +1,4 @@
-"""Configuration commands — `nexus config show/get/set/reset`.
+"""Configuration commands -- `nexus config show/get/set/reset`.
 
 Manages runtime settings in ~/.nexus/config.yaml under the `settings:` section.
 

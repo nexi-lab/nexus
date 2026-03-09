@@ -104,7 +104,7 @@ jobs:
       - name: Build Rust extension (nexus_raft)
         run: |
           cd rust/nexus_raft
-          maturin develop --release --features full
+          maturin develop --release --features python
         shell: bash
 
       - name: Build Rust extension (nexus_tasks)
@@ -183,6 +183,9 @@ jobs:
             rust/nexus_raft
             rust/nexus_tasks
 
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
       - name: Build Rust extensions
         run: |
           pip install maturin
@@ -251,7 +254,7 @@ jobs:
         run: |
           pip install maturin
           cd rust/nexus_pyo3 && maturin develop --release && cd ../..
-          cd rust/nexus_raft && maturin develop --release --features full && cd ../..
+          cd rust/nexus_raft && maturin develop --release --features python && cd ../..
           cd rust/nexus_tasks && maturin develop --release && cd ../..
 
       - name: Install dependencies
@@ -313,7 +316,7 @@ jobs:
         run: |
           pip install maturin
           cd rust/nexus_pyo3 && maturin develop --release && cd ../..
-          cd rust/nexus_raft && maturin develop --release --features full && cd ../..
+          cd rust/nexus_raft && maturin develop --release --features python && cd ../..
           cd rust/nexus_tasks && maturin develop --release && cd ../..
 
       - name: Install dependencies
@@ -361,7 +364,7 @@ jobs:
         run: |
           pip install maturin
           cd rust/nexus_pyo3 && maturin develop --release && cd ../..
-          cd rust/nexus_raft && maturin develop --release --features full && cd ../..
+          cd rust/nexus_raft && maturin develop --release --features python && cd ../..
           cd rust/nexus_tasks && maturin develop --release && cd ../..
 
       - name: Install dependencies
@@ -416,7 +419,7 @@ jobs:
         run: |
           pip install maturin
           cd rust/nexus_pyo3 && maturin develop --release && cd ../..
-          cd rust/nexus_raft && maturin develop --release --features full && cd ../..
+          cd rust/nexus_raft && maturin develop --release --features python && cd ../..
           cd rust/nexus_tasks && maturin develop --release && cd ../..
 
       - name: Install dependencies

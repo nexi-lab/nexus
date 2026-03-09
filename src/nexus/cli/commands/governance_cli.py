@@ -6,13 +6,13 @@ Issue #2811.
 
 import click
 
+from nexus.cli.output import OutputOptions, add_output_options, render_output
+from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
-    JSON_OUTPUT_OPTION,
     REMOTE_API_KEY_OPTION,
     REMOTE_URL_OPTION,
     console,
     get_service_client,
-    output_result,
 )
 
 
@@ -35,11 +35,11 @@ def governance() -> None:
 
 
 @governance.command("status")
-@JSON_OUTPUT_OPTION
+@add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
 def governance_status(
-    json_output: bool,
+    output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
@@ -53,7 +53,8 @@ def governance_status(
         nexus governance status --json
     """
     try:
-        with get_service_client(remote_url, remote_api_key) as client:
+        timing = CommandTiming()
+        with timing.phase("server"), get_service_client(remote_url, remote_api_key) as client:
             data = client.governance_status()
 
         def _render(d: dict) -> None:
@@ -74,7 +75,12 @@ def governance_status(
                     color = "red" if sev == "high" else "yellow"
                     console.print(f"  [{color}]{sev}[/{color}] {alert.get('description', 'N/A')}")
 
-        output_result(data, json_output, _render)
+        render_output(
+            data=data,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(1) from None
@@ -84,14 +90,14 @@ def governance_status(
 @click.option("--severity", default=None, help="Filter by severity (low/medium/high)")
 @click.option("--since", default=None, help="Start time (ISO format)")
 @click.option("--limit", default=50, help="Maximum entries", show_default=True)
-@JSON_OUTPUT_OPTION
+@add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
 def governance_alerts(
     severity: str | None,
     since: str | None,
     limit: int,
-    json_output: bool,
+    output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
@@ -104,7 +110,8 @@ def governance_alerts(
         nexus governance alerts --json
     """
     try:
-        with get_service_client(remote_url, remote_api_key) as client:
+        timing = CommandTiming()
+        with timing.phase("server"), get_service_client(remote_url, remote_api_key) as client:
             data = client.governance_alerts(severity=severity, since=since, limit=limit)
 
         def _render(d: dict) -> None:
@@ -132,18 +139,23 @@ def governance_alerts(
                 )
             console.print(table)
 
-        output_result(data, json_output, _render)
+        render_output(
+            data=data,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(1) from None
 
 
 @governance.command("rings")
-@JSON_OUTPUT_OPTION
+@add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
 def governance_rings(
-    json_output: bool,
+    output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
@@ -155,7 +167,8 @@ def governance_rings(
         nexus governance rings --json
     """
     try:
-        with get_service_client(remote_url, remote_api_key) as client:
+        timing = CommandTiming()
+        with timing.phase("server"), get_service_client(remote_url, remote_api_key) as client:
             data = client.governance_rings()
 
         def _render(d: dict) -> None:
@@ -171,7 +184,12 @@ def governance_rings(
                 console.print(f"\n  [bold]Ring {i}[/bold] (risk: [red]{score:.2f}[/red])")
                 console.print(f"  Members: {', '.join(members)}")
 
-        output_result(data, json_output, _render)
+        render_output(
+            data=data,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(1) from None

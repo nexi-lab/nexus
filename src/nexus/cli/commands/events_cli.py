@@ -6,13 +6,13 @@ Issue #2811.
 
 import click
 
+from nexus.cli.output import OutputOptions, add_output_options, render_output
+from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
-    JSON_OUTPUT_OPTION,
     REMOTE_API_KEY_OPTION,
     REMOTE_URL_OPTION,
     console,
     get_service_client,
-    output_result,
 )
 
 
@@ -38,7 +38,7 @@ def events() -> None:
 @click.option("--type", "event_type", default=None, help="Filter by event type")
 @click.option("--path", "event_path", default=None, help="Filter by file path")
 @click.option("--limit", default=50, help="Maximum events", show_default=True)
-@JSON_OUTPUT_OPTION
+@add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
 def events_replay(
@@ -46,7 +46,7 @@ def events_replay(
     event_type: str | None,
     event_path: str | None,
     limit: int,
-    json_output: bool,
+    output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
@@ -59,7 +59,8 @@ def events_replay(
         nexus events replay --since 2024-01-01 --json
     """
     try:
-        with get_service_client(remote_url, remote_api_key) as client:
+        timing = CommandTiming()
+        with timing.phase("server"), get_service_client(remote_url, remote_api_key) as client:
             data = client.events_replay(
                 since=since,
                 event_type=event_type,
@@ -92,7 +93,12 @@ def events_replay(
                 )
             console.print(table)
 
-        output_result(data, json_output, _render)
+        render_output(
+            data=data,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(1) from None
@@ -100,12 +106,12 @@ def events_replay(
 
 @events.command("subscribe")
 @click.argument("pattern")
-@JSON_OUTPUT_OPTION
+@add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
 def events_subscribe(
     pattern: str,
-    json_output: bool,
+    output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
@@ -119,20 +125,25 @@ def events_subscribe(
         nexus events subscribe "*" --json
     """
     try:
-        with get_service_client(remote_url, remote_api_key) as client:
+        timing = CommandTiming()
+        with timing.phase("server"), get_service_client(remote_url, remote_api_key) as client:
             console.print(f"[yellow]Subscribing to events matching:[/yellow] {pattern}")
             console.print("[dim]Press Ctrl+C to stop[/dim]\n")
             content = client.events_subscribe(pattern)
 
-        # Display the received events
-        if json_output:
-            click.echo(content)
-        else:
-            for line in content.splitlines():
+        def _render(d: str) -> None:
+            for line in d.splitlines():
                 if line.startswith("data:"):
                     console.print(f"  {line[5:].strip()}")
                 elif line.strip():
                     console.print(f"  [dim]{line}[/dim]")
+
+        render_output(
+            data=content,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
     except KeyboardInterrupt:
         console.print("\n[yellow]Subscription ended[/yellow]")
     except Exception as e:

@@ -7,7 +7,7 @@ dependencies.  Each check is an independent function returning a structured
 
 from __future__ import annotations
 
-import json as json_mod
+import asyncio
 import os
 import shutil
 import subprocess
@@ -19,6 +19,8 @@ from typing import Any
 
 import click
 
+from nexus.cli.output import OutputOptions, add_output_options, render_output
+from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import console, handle_error
 
 # ---------------------------------------------------------------------------
@@ -492,20 +494,33 @@ _STATUS_ICONS = {
 }
 
 
-def _run_all_checks(fix: bool = False) -> dict[str, list[CheckResult]]:
-    """Execute all checks, optionally attempting auto-fixes."""
-    results: dict[str, list[CheckResult]] = {}
-    for category, checks in CHECKS.items():
+async def _run_all_checks_async(fix: bool = False) -> dict[str, list[CheckResult]]:
+    """Execute all checks concurrently across categories."""
+
+    async def _run_category(
+        category: str,
+        checks: list[Any],
+    ) -> tuple[str, list[CheckResult]]:
+        tasks = [asyncio.to_thread(fn) for fn in checks]
+        raw_results = await asyncio.gather(*tasks, return_exceptions=True)
         category_results: list[CheckResult] = []
-        for check_fn in checks:
-            result = check_fn()
+        for i, result in enumerate(raw_results):
+            if isinstance(result, BaseException):
+                result = CheckResult(
+                    name=checks[i].__name__.removeprefix("check_"),
+                    status=CheckStatus.ERROR,
+                    message=f"Check failed unexpectedly: {result}",
+                )
             if fix and result.status != CheckStatus.OK and result.fixable:
                 fixed = _try_fix(result)
                 if fixed is not None:
                     result = fixed
             category_results.append(result)
-        results[category] = category_results
-    return results
+        return (category, category_results)
+
+    tasks = [_run_category(cat, fns) for cat, fns in CHECKS.items()]
+    pairs = await asyncio.gather(*tasks)
+    return dict(pairs)
 
 
 def _display_results(results: dict[str, list[CheckResult]]) -> int:
@@ -546,9 +561,9 @@ def _display_results(results: dict[str, list[CheckResult]]) -> int:
 
 
 @click.command(name="doctor")
-@click.option("--json", "output_json", is_flag=True, help="Output as JSON.")
 @click.option("--fix", "auto_fix", is_flag=True, help="Attempt to auto-fix issues.")
-def doctor(output_json: bool, auto_fix: bool) -> None:
+@add_output_options
+def doctor(output_opts: OutputOptions, auto_fix: bool) -> None:
     """Run diagnostic checks on your Nexus environment.
 
     Checks connectivity, storage, federation, security, and dependencies.
@@ -559,25 +574,35 @@ def doctor(output_json: bool, auto_fix: bool) -> None:
         nexus doctor --fix
     """
     try:
-        results = _run_all_checks(fix=auto_fix)
+        timing = CommandTiming()
+        with timing.phase("checks"):
+            results = asyncio.run(_run_all_checks_async(fix=auto_fix))
 
-        if output_json:
-            serializable = {cat: [asdict(c) for c in checks] for cat, checks in results.items()}
-            # Convert enum values to strings
-            for checks in serializable.values():
-                for c in checks:
-                    c["status"] = c["status"].value
-            console.print(json_mod.dumps(serializable, indent=2))
-            # Exit code based on errors
+        # Serialize CheckResults for JSON output
+        serializable = {cat: [asdict(c) for c in checks] for cat, checks in results.items()}
+        for checks in serializable.values():
+            for c in checks:
+                c["status"] = c["status"].value
+
+        def _human_display(_data: dict[str, list[dict[str, Any]]]) -> None:  # noqa: ARG002
+            exit_code = _display_results(results)
+            if exit_code:
+                sys.exit(exit_code)
+
+        render_output(
+            data=serializable,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_human_display,
+        )
+
+        # For JSON mode, exit with error if any checks failed
+        if output_opts.json_output:
             has_error = any(
                 c.status == CheckStatus.ERROR for checks in results.values() for c in checks
             )
             if has_error:
                 sys.exit(1)
-        else:
-            exit_code = _display_results(results)
-            if exit_code:
-                sys.exit(exit_code)
     except Exception as exc:
         handle_error(exc)
 

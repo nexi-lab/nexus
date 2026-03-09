@@ -8,11 +8,10 @@ Supported keys:
     connection.timeout, connection.pool-size
 """
 
-import json
+from typing import Any
 
 import click
 from rich.console import Console
-from rich.table import Table
 
 from nexus.cli.config import (
     SUPPORTED_SETTINGS,
@@ -24,6 +23,8 @@ from nexus.cli.config import (
     save_cli_config,
     set_setting,
 )
+from nexus.cli.output import OutputOptions, add_output_options, render_output
+from nexus.cli.timing import CommandTiming
 
 console = Console()
 
@@ -44,39 +45,47 @@ def config_group() -> None:
 
 
 @config_group.command(name="show")
-@click.option(
-    "--json-output", "--json", "json_out", is_flag=True, default=False, help="Output as JSON"
-)
-def show_cmd(json_out: bool) -> None:
+@add_output_options
+def show_cmd(output_opts: OutputOptions) -> None:
     """Show merged configuration with source annotations.
 
     Examples:
         nexus config show
         nexus config show --json
     """
-    config = load_cli_config()
-    merged = get_merged_settings(config)
+    timing = CommandTiming()
+    with timing.phase("load"):
+        config = load_cli_config()
+        merged = get_merged_settings(config)
 
-    if json_out:
-        output = {key: value for key, (value, _source) in merged.items()}
-        console.print(json.dumps(output, indent=2))
-        return
+    # Build data dict for JSON output
+    data: dict[str, Any] = {key: value for key, (value, _source) in merged.items()}
 
-    table = Table(title=f"Configuration ({get_config_path()})")
-    table.add_column("Key", style="bold")
-    table.add_column("Value")
-    table.add_column("Source", style="dim")
+    def _render(_d: dict[str, Any]) -> None:  # noqa: ARG001
+        from rich.table import Table
 
-    for key in sorted(merged):
-        value, source = merged[key]
-        value_str = str(value) if value is not None else "[dim]null[/dim]"
-        table.add_row(key, value_str, source)
+        table = Table(title=f"Configuration ({get_config_path()})")
+        table.add_column("Key", style="bold")
+        table.add_column("Value")
+        table.add_column("Source", style="dim")
 
-    console.print(table)
+        for key in sorted(merged):
+            value, source = merged[key]
+            value_str = str(value) if value is not None else "[dim]null[/dim]"
+            table.add_row(key, value_str, source)
 
-    # Also show active profile info
-    if config.current_profile:
-        console.print(f"\nActive profile: [bold]{config.current_profile}[/bold]")
+        console.print(table)
+
+        # Also show active profile info
+        if config.current_profile:
+            console.print(f"\nActive profile: [bold]{config.current_profile}[/bold]")
+
+    render_output(
+        data=data,
+        output_opts=output_opts,
+        timing=timing,
+        human_formatter=_render,
+    )
 
 
 @config_group.command(name="get")

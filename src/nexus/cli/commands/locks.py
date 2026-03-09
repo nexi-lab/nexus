@@ -6,13 +6,13 @@ Issue #2811.
 
 import click
 
+from nexus.cli.output import OutputOptions, add_output_options, render_output
+from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
-    JSON_OUTPUT_OPTION,
     REMOTE_API_KEY_OPTION,
     REMOTE_URL_OPTION,
     console,
     get_service_client,
-    output_result,
 )
 
 
@@ -36,12 +36,12 @@ def lock() -> None:
 
 @lock.command("list")
 @click.option("--zone-id", default=None, help="Filter by zone ID")
-@JSON_OUTPUT_OPTION
+@add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
 def lock_list(
     zone_id: str | None,
-    json_output: bool,
+    output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
@@ -52,8 +52,9 @@ def lock_list(
         nexus lock list
         nexus lock list --zone-id org_acme --json
     """
+    timing = CommandTiming()
     try:
-        with get_service_client(remote_url, remote_api_key) as client:
+        with timing.phase("server"), get_service_client(remote_url, remote_api_key) as client:
             data = client.lock_list(zone_id=zone_id)
 
         def _render(d: dict) -> None:
@@ -79,7 +80,12 @@ def lock_list(
                 )
             console.print(table)
 
-        output_result(data, json_output, _render)
+        render_output(
+            data=data,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(1) from None
@@ -87,12 +93,12 @@ def lock_list(
 
 @lock.command("info")
 @click.argument("path")
-@JSON_OUTPUT_OPTION
+@add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
 def lock_info(
     path: str,
-    json_output: bool,
+    output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
@@ -103,8 +109,9 @@ def lock_info(
         nexus lock info /data/shared.db
         nexus lock info /workspace/file.txt --json
     """
+    timing = CommandTiming()
     try:
-        with get_service_client(remote_url, remote_api_key) as client:
+        with timing.phase("server"), get_service_client(remote_url, remote_api_key) as client:
             data = client.lock_info(path)
 
         def _render(d: dict) -> None:
@@ -120,7 +127,12 @@ def lock_info(
                 if info.get("expires_at"):
                     console.print(f"  Expires: {info['expires_at'][:19]}")
 
-        output_result(data, json_output, _render)
+        render_output(
+            data=data,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(1) from None

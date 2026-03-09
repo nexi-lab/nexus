@@ -4,7 +4,7 @@ Provides fixtures for:
 - isolated_db: Isolated SQLite database for each test
 - metadata_store: Raft metadata store (from integration tests)
 - record_store: In-memory SQLAlchemy record store (from integration tests)
-- nexus_server: Actual nexus serve process running on a free port
+- nexus_server: Actual nexusd process running on a free port
 - test_app: httpx client for making real HTTP requests
 - nexus_fs: Direct NexusFS instance (no server)
 
@@ -110,12 +110,12 @@ def isolated_db(tmp_path, monkeypatch):
 
 @pytest.fixture(scope="function")
 def nexus_server(isolated_db, tmp_path):
-    """Start actual nexus serve process for true e2e testing.
+    """Start actual nexusd process for true e2e testing.
 
     This fixture:
     1. Creates storage directory and database
     2. Finds a free port
-    3. Starts `nexus serve` as subprocess
+    3. Starts ``nexusd`` as subprocess
     4. Waits for server to be ready
     5. Yields server info (port, base_url)
     6. Kills server process on cleanup
@@ -154,8 +154,8 @@ def nexus_server(isolated_db, tmp_path):
         env["NEXUS_DRAGONFLY_COORDINATION_URL"] = dragonfly_url
         env["NEXUS_ALLOW_SINGLE_DRAGONFLY"] = "true"
 
-    # Start nexus serve process
-    # Using python -c to invoke the CLI entry point from source
+    # Start nexusd process
+    # Using python -c to invoke the daemon entry point from source
     # --data-dir sets both storage path and database location
     # Uses FastAPI async server (default) for full API support including Graph API
     process = subprocess.Popen(
@@ -163,8 +163,8 @@ def nexus_server(isolated_db, tmp_path):
             sys.executable,
             "-c",
             (
-                f"from nexus.cli import main; "
-                f"main(['serve', '--host', '127.0.0.1', '--port', '{port}', "
+                f"from nexus.daemon.main import main; "
+                f"main(['--host', '127.0.0.1', '--port', '{port}', "
                 f"'--data-dir', '{tmp_path}'])"
             ),
         ],

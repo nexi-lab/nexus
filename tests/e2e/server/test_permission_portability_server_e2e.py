@@ -247,8 +247,8 @@ def e2e_env():
                 PYTHON,
                 "-c",
                 (
-                    "from nexus.cli import main; "
-                    f"main(['serve', '--host', '127.0.0.1', '--port', '{port}', "
+                    "from nexus.daemon.main import main; "
+                    f"main(['--host', '127.0.0.1', '--port', '{port}', "
                     f"'--data-dir', '{target_dir}'])"
                 ),
             ],

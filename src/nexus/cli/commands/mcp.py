@@ -328,6 +328,36 @@ def serve(
         handle_error(e)
 
 
+@mcp.command(name="export-tools")
+def export_tools_cmd() -> None:
+    """Export CLI commands as MCP tool definitions (JSON Schema).
+
+    Walks the Click command tree and outputs MCP-compatible tool
+    definitions for every leaf command.  Each tool has a name,
+    description, and inputSchema suitable for use with the Model
+    Context Protocol.
+
+    Examples:
+        # Pretty-print to terminal
+        nexus mcp export-tools
+
+        # Pipe to file (auto-compact JSON)
+        nexus mcp export-tools > tools.json
+
+        # Filter with jq
+        nexus mcp export-tools | jq '.[].name'
+    """
+    import json
+
+    from nexus.cli.export_tools import walk_click_tree
+    from nexus.cli.main import main as cli_root
+
+    tools = walk_click_tree(cli_root, prefix="nexus")
+
+    indent = 2 if sys.stdout.isatty() else None
+    click.echo(json.dumps(tools, indent=indent, default=str))
+
+
 def register_commands(cli: click.Group) -> None:
     """Register MCP commands with the CLI.
 

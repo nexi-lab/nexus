@@ -1,9 +1,11 @@
 """Directory operation commands - ls, mkdir, rmdir, tree."""
 
+import contextlib
 from typing import Any
 
 import click
 
+from nexus.cli.dry_run import add_dry_run_option, dry_run_preview, render_dry_run
 from nexus.cli.formatters import format_timestamp
 from nexus.cli.output import OutputOptions, add_output_options, render_error, render_output
 from nexus.cli.timing import CommandTiming
@@ -203,10 +205,19 @@ def _ls_time_travel(
 @click.command()
 @click.argument("path", type=str)
 @click.option("-p", "--parents", is_flag=True, help="Create parent directories as needed")
+@click.option(
+    "--if-not-exists",
+    is_flag=True,
+    default=False,
+    help="Succeed silently if directory exists, returning existing directory info",
+)
+@add_dry_run_option
 @add_backend_options
 def mkdir(
     path: str,
     parents: bool,
+    if_not_exists: bool,
+    dry_run: bool,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
@@ -215,11 +226,23 @@ def mkdir(
     Examples:
         nexus mkdir /workspace/data
         nexus mkdir /workspace/deep/nested/dir --parents
+        nexus mkdir /workspace/data --dry-run
+        nexus mkdir /workspace/data --if-not-exists
     """
     try:
+        if dry_run:
+            preview = dry_run_preview("mkdir", path=path, details={"parents": parents})
+            render_dry_run(preview)
+            return
+
         with open_filesystem(remote_url, remote_api_key) as nx:
-            nx.sys_mkdir(path, parents=parents, exist_ok=True)
-        console.print(f"[green]✓[/green] Created directory [cyan]{path}[/cyan]")
+            if if_not_exists:
+                with contextlib.suppress(FileExistsError):
+                    nx.sys_mkdir(path, parents=parents, exist_ok=True)
+                console.print(f"[green]✓[/green] Directory exists: [cyan]{path}[/cyan]")
+            else:
+                nx.sys_mkdir(path, parents=parents, exist_ok=True)
+                console.print(f"[green]✓[/green] Created directory [cyan]{path}[/cyan]")
     except Exception as e:
         handle_error(e)
 
@@ -228,11 +251,13 @@ def mkdir(
 @click.argument("path", type=str)
 @click.option("-r", "--recursive", is_flag=True, help="Remove directory and contents")
 @click.option("-f", "--force", is_flag=True, help="Don't ask for confirmation")
+@add_dry_run_option
 @add_backend_options
 def rmdir(
     path: str,
     recursive: bool,
     force: bool,
+    dry_run: bool,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
@@ -241,8 +266,18 @@ def rmdir(
     Examples:
         nexus rmdir /workspace/data
         nexus rmdir /workspace/data --recursive --force
+        nexus rmdir /workspace/data --dry-run
     """
     try:
+        if dry_run:
+            preview = dry_run_preview(
+                "rmdir",
+                path=path,
+                details={"recursive": recursive},
+            )
+            render_dry_run(preview)
+            return
+
         with open_filesystem(remote_url, remote_api_key) as nx:
             if not force and not click.confirm(f"Remove directory {path}?"):
                 console.print("[yellow]Cancelled[/yellow]")

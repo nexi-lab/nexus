@@ -55,6 +55,7 @@ def nexus_server(tmp_path: Path):
     env["NEXUS_DATABASE_URL"] = f"sqlite:///{tmp_path / 'test.db'}"
     env["NEXUS_JWT_SECRET"] = "e2e-test-secret"
     env["NEXUS_RECORD_STORE_PATH"] = str(tmp_path / "record_store.db")
+    env["NEXUS_DATA_DIR"] = str(tmp_path)
 
     process = subprocess.Popen(
         [
@@ -64,8 +65,6 @@ def nexus_server(tmp_path: Path):
             "127.0.0.1",
             "--port",
             str(port),
-            "--data-dir",
-            str(tmp_path),
         ],
         env=env,
         stdout=subprocess.PIPE,

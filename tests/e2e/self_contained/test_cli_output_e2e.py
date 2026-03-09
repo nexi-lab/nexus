@@ -88,19 +88,18 @@ def _run_nexus(args: list[str], data_dir: str) -> subprocess.CompletedProcess[st
     Uses ``python -c`` with the CLI entry point to ensure the correct
     interpreter and avoids redb lock conflicts with the seeding fixture.
     """
-    env_args = ["--data-dir", data_dir]
+    env = {**_SUBPROCESS_ENV, "NEXUS_DATA_DIR": data_dir}
     result = subprocess.run(
         [
             sys.executable,
             "-c",
             "from nexus.cli.main import main; main()",
             *args,
-            *env_args,
         ],
         capture_output=True,
         text=True,
         timeout=30,
-        env=_SUBPROCESS_ENV,
+        env=env,
     )
     return result
 
@@ -421,8 +420,12 @@ def remote_server(tmp_path_factory: pytest.TempPathFactory):  # noqa: ANN201
     grpc_port = _find_free_port()
     url = f"http://127.0.0.1:{http_port}"
 
-    # Server env: enable gRPC on the chosen port
-    server_env = {**_SUBPROCESS_ENV, "NEXUS_GRPC_PORT": str(grpc_port)}
+    # Server env: enable gRPC on the chosen port, set data dir via env
+    server_env = {
+        **_SUBPROCESS_ENV,
+        "NEXUS_GRPC_PORT": str(grpc_port),
+        "NEXUS_DATA_DIR": data_dir,
+    }
 
     # Start server as a subprocess
     server_proc = subprocess.Popen(
@@ -435,8 +438,6 @@ def remote_server(tmp_path_factory: pytest.TempPathFactory):  # noqa: ANN201
             "127.0.0.1",
             "--port",
             str(http_port),
-            "--data-dir",
-            data_dir,
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

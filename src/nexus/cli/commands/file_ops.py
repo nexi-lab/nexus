@@ -143,7 +143,10 @@ def cat(
                             file_size = 0
 
                     if file_size > STREAM_THRESHOLD:
-                        console.print(f"[dim]Streaming large file ({file_size:,} bytes)...[/dim]")
+                        print(
+                            f"Streaming large file ({file_size:,} bytes)...",
+                            file=sys.stderr,
+                        )
                         for chunk in nx.stream(  # type: ignore[attr-defined]
                             path, chunk_size=65536, context=operation_context
                         ):
@@ -209,7 +212,7 @@ def _cat_time_travel(
     time_travel = getattr(nx, "time_travel_service", None)
     if time_travel is None:
         console.print("[red]Error:[/red] Time-travel is only supported with local NexusFS")
-        return
+        sys.exit(1)
 
     with timing.phase("server"):
         state = time_travel.get_file_at_operation(path, at_operation)

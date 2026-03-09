@@ -147,6 +147,9 @@ def create_user(
             "subject_type": subject_type,
         }
 
+        if email is not None:
+            params["email"] = email
+
         if expires_days is not None:
             params["expires_days"] = expires_days
 

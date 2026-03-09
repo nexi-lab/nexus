@@ -348,11 +348,16 @@ def tree(
             from pathlib import PurePosixPath
 
             tree_dict: dict[str, Any] = defaultdict(dict)
+            # Strip the base path prefix so depth is relative to target path
+            base_parts = PurePosixPath(path).parts
             for entry in data["files"]:
                 parts = PurePosixPath(entry["path"]).parts
+                rel_parts = parts[len(base_parts) :]
+                if not rel_parts:
+                    continue
                 current = tree_dict
-                for i, part in enumerate(parts):
-                    if i == len(parts) - 1:
+                for i, part in enumerate(rel_parts):
+                    if i == len(rel_parts) - 1:
                         current[part] = entry["size"]
                     else:
                         if part not in current or not isinstance(current[part], dict):

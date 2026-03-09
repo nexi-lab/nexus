@@ -7,7 +7,6 @@ from typing import Any
 import click
 
 from nexus.cli.utils import (
-    BackendConfig,
     add_backend_options,
     console,
     get_filesystem,
@@ -83,7 +82,8 @@ def read(
     search_mode: str,
     stream: bool,
     detailed: bool,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Read and analyze documents with LLM.
 
@@ -117,7 +117,7 @@ def read(
         nexus llm read /docs/**/*.md "API endpoints" --search-mode keyword
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
 
         # Auto-detect API key from environment if not provided
         if not api_key:

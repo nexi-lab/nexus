@@ -9,7 +9,7 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from nexus.cli.utils import BackendConfig, add_backend_options, get_filesystem, handle_error
+from nexus.cli.utils import add_backend_options, get_filesystem, handle_error
 
 console = Console()
 
@@ -51,7 +51,8 @@ def register_cmd(
     name: str,
     with_api_key: bool,
     description: str,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Register a new AI agent.
 
@@ -69,7 +70,7 @@ def register_cmd(
         nexus agent register alice "Data Analyst Agent" --with-api-key
     """
     try:
-        nx: Any = get_filesystem(backend_config)
+        nx: Any = get_filesystem(remote_url, remote_api_key)
 
         # Register agent (context with user_id will be extracted from auth)
         result = nx._agent_rpc_service.register_agent(
@@ -102,7 +103,8 @@ def register_cmd(
 @agent.command(name="list")
 @add_backend_options
 def list_cmd(
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """List all registered agents.
 
@@ -110,7 +112,7 @@ def list_cmd(
         nexus agent list
     """
     try:
-        nx: Any = get_filesystem(backend_config)
+        nx: Any = get_filesystem(remote_url, remote_api_key)
 
         agents = nx._agent_rpc_service.list_agents()
 
@@ -158,7 +160,8 @@ def list_cmd(
 @add_backend_options
 def info_cmd(
     agent_id: str,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Show detailed information about an agent.
 
@@ -166,7 +169,7 @@ def info_cmd(
         nexus agent info alice
     """
     try:
-        nx: Any = get_filesystem(backend_config)
+        nx: Any = get_filesystem(remote_url, remote_api_key)
 
         agent = nx._agent_rpc_service.get_agent(agent_id)
 
@@ -198,7 +201,8 @@ def info_cmd(
 def delete_cmd(
     agent_id: str,
     yes: bool,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Delete an agent.
 
@@ -209,7 +213,7 @@ def delete_cmd(
         nexus agent delete alice --yes
     """
     try:
-        nx: Any = get_filesystem(backend_config)
+        nx: Any = get_filesystem(remote_url, remote_api_key)
 
         # Confirm deletion
         if not yes:

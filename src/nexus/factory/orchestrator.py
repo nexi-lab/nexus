@@ -326,6 +326,12 @@ def create_nexus_fs(
     # KERNEL mode (Issue #2194): When record_store is None (e.g. profile=kernel),
     # this branch is skipped — bare kernel with empty SystemServices/BrickServices.
     if kernel_services is None and record_store is not None:
+        if system_services is not None or brick_services is not None:
+            logger.warning(
+                "[FACTORY] system_services/brick_services provided without kernel_services — "
+                "they will be overwritten by create_nexus_services(). Pass kernel_services "
+                "to use pre-built service containers."
+            )
         kernel_services, system_services, brick_services = create_nexus_services(
             record_store=record_store,
             metadata_store=metadata_store,

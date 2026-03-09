@@ -442,3 +442,51 @@ def open_filesystem(
         yield nx
     finally:
         nx.close()
+
+
+# =============================================================================
+# JSON output helpers (Issue #2811)
+# =============================================================================
+
+JSON_OUTPUT_OPTION = click.option("--json", "json_output", is_flag=True, help="Output as JSON")
+
+
+def output_result(data: Any, json_output: bool, rich_fn: Any) -> None:
+    """Output data as JSON or rich-formatted text.
+
+    Args:
+        data: The data to output.
+        json_output: If True, output as JSON.
+        rich_fn: Callable that renders data using Rich (called with data).
+    """
+    if json_output:
+        import json as json_mod
+
+        console.print(json_mod.dumps(data, indent=2, default=str))
+    else:
+        rich_fn(data)
+
+
+def get_service_client(
+    remote_url: str | None = None,
+    remote_api_key: str | None = None,
+) -> Any:
+    """Create a NexusServiceClient from URL/API key, with validation.
+
+    Args:
+        remote_url: Server URL (from --remote-url or NEXUS_URL env var)
+        remote_api_key: API key (from --remote-api-key or NEXUS_API_KEY env var)
+
+    Returns:
+        NexusServiceClient instance
+
+    Raises:
+        SystemExit: If URL is not provided
+    """
+    if not remote_url:
+        console.print("[red]Error:[/red] Server URL required. Set NEXUS_URL or use --remote-url")
+        sys.exit(1)
+
+    from nexus.cli.client import NexusServiceClient
+
+    return NexusServiceClient(url=remote_url, api_key=remote_api_key)

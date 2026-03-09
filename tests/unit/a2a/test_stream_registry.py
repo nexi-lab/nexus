@@ -98,3 +98,57 @@ class TestPushEvent:
         # Only the first event should be in the queue
         assert queue.get_nowait() == {"event": 1}
         assert queue.empty()
+
+
+class TestStreamRegistryActivity:
+    """Tests for last_activity tracking (Issue #2811)."""
+
+    def test_register_sets_last_activity(self) -> None:
+        reg = StreamRegistry()
+        reg.register("task-1")
+        assert "task-1" in reg._last_activity
+
+    def test_push_event_updates_last_activity(self) -> None:
+        reg = StreamRegistry()
+        reg.register("task-1")
+        old_activity = reg._last_activity["task-1"]
+        import time
+
+        time.sleep(0.01)
+        reg.push_event("task-1", {"type": "test"})
+        assert reg._last_activity["task-1"] >= old_activity
+
+    def test_unregister_cleans_last_activity(self) -> None:
+        reg = StreamRegistry()
+        queue = reg.register("task-1")
+        reg.unregister("task-1", queue)
+        assert "task-1" not in reg._last_activity
+
+    def test_get_idle_tasks(self) -> None:
+        import time
+
+        reg = StreamRegistry()
+        reg.register("task-1")
+        reg.register("task-2")
+        reg._last_activity["task-1"] = time.monotonic() - 600
+        idle = reg.get_idle_tasks(300.0)
+        assert "task-1" in idle
+        assert "task-2" not in idle
+
+    def test_close_task_streams_sends_sentinel(self) -> None:
+        reg = StreamRegistry()
+        q1 = reg.register("task-1")
+        q2 = reg.register("task-1")
+        closed = reg.close_task_streams("task-1")
+        assert closed == 2
+        assert q1.get_nowait() is None
+        assert q2.get_nowait() is None
+        assert reg.task_count == 0
+
+    def test_active_stream_count(self) -> None:
+        reg = StreamRegistry()
+        reg.register("task-1")
+        reg.register("task-1")
+        reg.register("task-2")
+        assert reg.active_stream_count == 3
+        assert reg.task_count == 2

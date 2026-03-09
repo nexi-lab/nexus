@@ -116,6 +116,9 @@ class SearchProtocol(Protocol):
         max_results: int = 100,
         search_mode: str = "auto",
         context: "OperationContext | None" = None,
+        before_context: int = 0,
+        after_context: int = 0,
+        invert_match: bool = False,
     ) -> builtins.list[dict[str, Any]]: ...
 
     # ── Async operations (semantic search requires I/O) ─────────────────

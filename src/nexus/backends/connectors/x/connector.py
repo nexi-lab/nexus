@@ -280,7 +280,8 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
 
         # Check cache
         if user_email in self._user_id_cache:
-            return self._user_id_cache[user_email]
+            cached_id: str = self._user_id_cache[user_email]
+            return cached_id
 
         # Fetch from API
         client = await self._get_api_client_async(context)
@@ -344,7 +345,8 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
             content, timestamp = self._memory_cache[mem_key]
             if time.time() - timestamp < max_age:
                 logger.debug(f"[X-CACHE] Memory hit: {cache_key}")
-                return content
+                cached_content: bytes | None = content
+                return cached_content
 
         # Check disk cache
         cache_file = Path(self.cache_dir) / f"{cache_key}.json"
@@ -1130,6 +1132,9 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
         ignore_case: bool = False,
         max_results: int = 100,
         context: Any = None,
+        before_context: int = 0,  # noqa: ARG002
+        after_context: int = 0,  # noqa: ARG002
+        invert_match: bool = False,  # noqa: ARG002
     ) -> list[dict[str, Any]]:
         """
         Search content using pattern.

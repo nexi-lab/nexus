@@ -1685,6 +1685,9 @@ class SearchService:
         max_results: int = 100,
         search_mode: str = "auto",  # noqa: ARG002
         context: Any = None,
+        before_context: int = 0,
+        after_context: int = 0,
+        invert_match: bool = False,
     ) -> builtins.list[dict[str, Any]]:
         r"""Search file contents using regex patterns.
 
@@ -1698,6 +1701,9 @@ class SearchService:
             max_results: Maximum number of results (default: 100)
             search_mode: Unused (reserved for future search mode selection)
             context: Operation context for permission filtering
+            before_context: Number of lines to include before each match
+            after_context: Number of lines to include after each match
+            invert_match: If True, return non-matching lines
         """
         if path and path != "/":
             path = self._validate_path(path)
@@ -1769,19 +1775,18 @@ class SearchService:
             for file_path, text in searchable_texts.items():
                 if len(results) >= max_results:
                     break
-                for line_num, line in enumerate(text.splitlines(), start=1):
-                    if len(results) >= max_results:
-                        break
-                    match_obj = regex.search(line)
-                    if match_obj:
-                        results.append(
-                            {
-                                "file": file_path,
-                                "line": line_num,
-                                "content": line,
-                                "match": match_obj.group(0),
-                            }
-                        )
+                lines = text.splitlines()
+                results.extend(
+                    self._grep_lines(
+                        regex=regex,
+                        lines=lines,
+                        file_path=file_path,
+                        before_context=before_context,
+                        after_context=after_context,
+                        invert_match=invert_match,
+                        max_results=max_results - len(results),
+                    )
+                )
             if strategy == SearchStrategy.CACHED_TEXT and len(results) >= max_results:
                 return results[:max_results]
 
@@ -1813,6 +1818,9 @@ class SearchService:
                     ignore_case=ignore_case,
                     remaining_results=remaining_results,
                     context=context,
+                    before_context=before_context,
+                    after_context=after_context,
+                    invert_match=invert_match,
                 )
             )
 
@@ -1821,6 +1829,89 @@ class SearchService:
     # =========================================================================
     # Grep Helpers
     # =========================================================================
+
+    @staticmethod
+    def _grep_lines(
+        regex: re.Pattern[str],
+        lines: builtins.list[str],
+        file_path: str,
+        before_context: int = 0,
+        after_context: int = 0,
+        invert_match: bool = False,
+        max_results: int = 100,
+    ) -> builtins.list[dict[str, Any]]:
+        """Search lines with optional context and invert-match support.
+
+        Args:
+            regex: Compiled regex pattern
+            lines: List of text lines to search
+            file_path: File path for result entries
+            before_context: Number of context lines before each match
+            after_context: Number of context lines after each match
+            invert_match: If True, return non-matching lines
+            max_results: Maximum results to return
+        """
+        results: builtins.list[dict[str, Any]] = []
+
+        if invert_match:
+            # Return lines that do NOT match
+            matching_indices: set[int] = set()
+            for idx, line in enumerate(lines):
+                if regex.search(line):
+                    matching_indices.add(idx)
+
+            for idx, line in enumerate(lines):
+                if len(results) >= max_results:
+                    break
+                if idx not in matching_indices:
+                    entry: dict[str, Any] = {
+                        "file": file_path,
+                        "line": idx + 1,
+                        "content": line,
+                    }
+                    if before_context > 0 or after_context > 0:
+                        b_start = max(0, idx - before_context)
+                        a_end = min(len(lines), idx + after_context + 1)
+                        if before_context > 0:
+                            entry["before_context"] = [
+                                {"line": i + 1, "content": lines[i]} for i in range(b_start, idx)
+                            ]
+                        if after_context > 0:
+                            entry["after_context"] = [
+                                {"line": i + 1, "content": lines[i]} for i in range(idx + 1, a_end)
+                            ]
+                    results.append(entry)
+        else:
+            # Normal matching: find matching indices first
+            match_data: builtins.list[tuple[int, re.Match[str]]] = []
+            for idx, line in enumerate(lines):
+                match_obj = regex.search(line)
+                if match_obj:
+                    match_data.append((idx, match_obj))
+
+            for idx, match_obj in match_data:
+                if len(results) >= max_results:
+                    break
+                entry = {
+                    "file": file_path,
+                    "line": idx + 1,
+                    "content": lines[idx],
+                    "match": match_obj.group(0),
+                }
+                if before_context > 0 or after_context > 0:
+                    b_start = max(0, idx - before_context)
+                    a_end = min(len(lines), idx + after_context + 1)
+                    if before_context > 0:
+                        entry["before_context"] = [
+                            {"line": i + 1, "content": lines[i]} for i in range(b_start, idx)
+                        ]
+                    if after_context > 0:
+                        entry["after_context"] = [
+                            {"line": i + 1, "content": lines[i]} for i in range(idx + 1, a_end)
+                        ]
+                results.append(entry)
+
+        return results
 
     def _grep_raw_content(
         self,
@@ -1831,6 +1922,9 @@ class SearchService:
         ignore_case: bool,
         remaining_results: int,
         context: Any,
+        before_context: int = 0,
+        after_context: int = 0,
+        invert_match: bool = False,
     ) -> builtins.list[dict[str, Any]]:
         """Process files needing raw content read (mmap, Rust bulk, sequential)."""
         results: builtins.list[dict[str, Any]] = []
@@ -1899,19 +1993,18 @@ class SearchService:
                         text = read_result.decode("utf-8")
                     except UnicodeDecodeError:
                         continue
-                    for line_num, line in enumerate(text.splitlines(), start=1):
-                        if len(results) >= remaining_results:
-                            break
-                        match_obj = regex.search(line)
-                        if match_obj:
-                            results.append(
-                                {
-                                    "file": file_path,
-                                    "line": line_num,
-                                    "content": line,
-                                    "match": match_obj.group(0),
-                                }
-                            )
+                    lines = text.splitlines()
+                    results.extend(
+                        self._grep_lines(
+                            regex=regex,
+                            lines=lines,
+                            file_path=file_path,
+                            before_context=before_context,
+                            after_context=after_context,
+                            invert_match=invert_match,
+                            max_results=remaining_results - len(results),
+                        )
+                    )
                 except Exception as e:
                     logger.debug("Failed to grep file %s: %s", file_path, e)
                     continue

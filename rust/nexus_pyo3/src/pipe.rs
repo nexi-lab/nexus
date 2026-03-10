@@ -1,4 +1,4 @@
-//! Rust-accelerated RingBuffer core for DT_PIPE kernel IPC (Task #806).
+//! Rust-accelerated RingBuffer core for DT_PIPE kernel IPC (Issue #806).
 //!
 //! Provides the data-plane operations (push/pop/peek) behind a `parking_lot::Mutex`.
 //! Python keeps asyncio.Event coordination; Rust owns the buffer + metrics.

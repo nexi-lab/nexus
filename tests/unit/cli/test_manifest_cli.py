@@ -42,7 +42,11 @@ class TestManifestCreate:
             create={
                 "manifest_id": "mfst_123",
                 "agent_id": "agent_alice",
-                "sources": ["/data", "/tools"],
+                "name": "dev tools",
+                "entries": [
+                    {"tool_pattern": "read_*", "permission": "allow"},
+                    {"tool_pattern": "write_file", "permission": "allow"},
+                ],
             }
         )
         with stack:
@@ -51,10 +55,12 @@ class TestManifestCreate:
                 [
                     "create",
                     "agent_alice",
-                    "--sources",
-                    "/data",
-                    "--sources",
-                    "/tools",
+                    "--name",
+                    "dev tools",
+                    "--entry",
+                    "read_*:allow",
+                    "--entry",
+                    "write_file:allow",
                     "--remote-url",
                     MOCK_URL,
                 ],
@@ -65,7 +71,12 @@ class TestManifestCreate:
     def test_json_output(self) -> None:
         runner = CliRunner()
         stack, _ = _patch_client(
-            create={"manifest_id": "mfst_123", "agent_id": "agent_alice", "sources": ["/data"]}
+            create={
+                "manifest_id": "mfst_123",
+                "agent_id": "agent_alice",
+                "name": "dev",
+                "entries": [{"tool_pattern": "read_*", "permission": "allow"}],
+            }
         )
         with stack:
             result = runner.invoke(
@@ -73,8 +84,10 @@ class TestManifestCreate:
                 [
                     "create",
                     "agent_alice",
-                    "--sources",
-                    "/data",
+                    "--name",
+                    "dev",
+                    "--entry",
+                    "read_*:allow",
                     "--remote-url",
                     MOCK_URL,
                     "--json",
@@ -93,19 +106,32 @@ class TestManifestCreate:
                 [
                     "create",
                     "agent_alice",
-                    "--sources",
-                    "/data",
-                    "--sources",
-                    "/tools",
+                    "--name",
+                    "dev",
+                    "--entry",
+                    "read_*:allow",
+                    "--entry",
+                    "write_file:deny",
                     "--remote-url",
                     MOCK_URL,
                 ],
             )
-        mocks["create"].assert_called_once_with("agent_alice", sources=["/data", "/tools"])
+        mocks["create"].assert_called_once_with(
+            "agent_alice",
+            name="dev",
+            entries=[
+                {"tool_pattern": "read_*", "permission": "allow"},
+                {"tool_pattern": "write_file", "permission": "deny"},
+            ],
+            zone_id="root",
+            valid_hours=720,
+        )
 
     def test_missing_url_exits_nonzero(self) -> None:
         runner = CliRunner()
-        result = runner.invoke(manifest, ["create", "agent_alice", "--sources", "/data"])
+        result = runner.invoke(
+            manifest, ["create", "agent_alice", "--name", "dev", "--entry", "read_*:allow"]
+        )
         assert result.exit_code != 0
 
 
@@ -198,25 +224,25 @@ class TestManifestShow:
 class TestManifestEvaluate:
     def test_happy_path(self) -> None:
         runner = CliRunner()
-        stack, _ = _patch_client(evaluate={"allowed": True, "reason": "Source permitted"})
+        stack, _ = _patch_client(evaluate={"permission": "allow", "manifest_id": "mfst_123"})
         with stack:
             result = runner.invoke(
                 manifest,
-                ["evaluate", "mfst_123", "--tool", "read", "--remote-url", MOCK_URL],
+                ["evaluate", "mfst_123", "--tool-name", "read", "--remote-url", MOCK_URL],
             )
         assert result.exit_code == 0
         assert "Allowed" in result.output
 
     def test_json_output(self) -> None:
         runner = CliRunner()
-        stack, _ = _patch_client(evaluate={"allowed": True})
+        stack, _ = _patch_client(evaluate={"permission": "allow"})
         with stack:
             result = runner.invoke(
                 manifest,
                 [
                     "evaluate",
                     "mfst_123",
-                    "--tool",
+                    "--tool-name",
                     "read",
                     "--remote-url",
                     MOCK_URL,
@@ -225,33 +251,32 @@ class TestManifestEvaluate:
             )
         assert result.exit_code == 0
         data = json.loads(result.output)
-        assert data["data"]["allowed"] is True
+        assert data["data"]["permission"] == "allow"
 
     def test_client_args(self) -> None:
         runner = CliRunner()
-        stack, mocks = _patch_client(evaluate={"allowed": False})
+        stack, mocks = _patch_client(evaluate={"permission": "deny"})
         with stack:
             runner.invoke(
                 manifest,
-                ["evaluate", "mfst_123", "--tool", "read", "--remote-url", MOCK_URL],
+                ["evaluate", "mfst_123", "--tool-name", "read", "--remote-url", MOCK_URL],
             )
-        mocks["evaluate"].assert_called_once_with("mfst_123", tool="read")
+        mocks["evaluate"].assert_called_once_with("mfst_123", tool_name="read")
 
-    def test_denied_shows_reason(self) -> None:
+    def test_denied(self) -> None:
         runner = CliRunner()
-        stack, _ = _patch_client(evaluate={"allowed": False, "reason": "Not in manifest"})
+        stack, _ = _patch_client(evaluate={"permission": "deny", "manifest_id": "mfst_123"})
         with stack:
             result = runner.invoke(
                 manifest,
-                ["evaluate", "mfst_123", "--tool", "write", "--remote-url", MOCK_URL],
+                ["evaluate", "mfst_123", "--tool-name", "write", "--remote-url", MOCK_URL],
             )
         assert result.exit_code == 0
         assert "Denied" in result.output
-        assert "Not in manifest" in result.output
 
     def test_missing_url_exits_nonzero(self) -> None:
         runner = CliRunner()
-        result = runner.invoke(manifest, ["evaluate", "mfst_123", "--tool", "read"])
+        result = runner.invoke(manifest, ["evaluate", "mfst_123", "--tool-name", "read"])
         assert result.exit_code != 0
 
 

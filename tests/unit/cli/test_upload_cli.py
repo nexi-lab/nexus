@@ -33,51 +33,6 @@ def _patch_client(**method_returns: object) -> tuple[ExitStack, dict[str, MagicM
     return stack, mocks
 
 
-class TestUploadList:
-    def test_happy_path(self) -> None:
-        runner = CliRunner()
-        stack, _ = _patch_client(
-            list={
-                "uploads": [
-                    {
-                        "upload_id": "upl_123",
-                        "target_path": "/data/file.bin",
-                        "offset": 5000,
-                        "length": 10000,
-                        "status": "in_progress",
-                    }
-                ]
-            }
-        )
-        with stack:
-            result = runner.invoke(upload, ["list", "--remote-url", MOCK_URL])
-        assert result.exit_code == 0
-
-    def test_json_output(self) -> None:
-        runner = CliRunner()
-        stack, _ = _patch_client(
-            list={"uploads": [{"upload_id": "upl_123", "target_path": "/data/file.bin"}]}
-        )
-        with stack:
-            result = runner.invoke(upload, ["list", "--remote-url", MOCK_URL, "--json"])
-        assert result.exit_code == 0
-        data = json.loads(result.output)
-        assert len(data["data"]["uploads"]) == 1
-
-    def test_empty_results(self) -> None:
-        runner = CliRunner()
-        stack, _ = _patch_client(list={"uploads": []})
-        with stack:
-            result = runner.invoke(upload, ["list", "--remote-url", MOCK_URL])
-        assert result.exit_code == 0
-        assert "No in-progress uploads" in result.output
-
-    def test_missing_url_exits_nonzero(self) -> None:
-        runner = CliRunner()
-        result = runner.invoke(upload, ["list"])
-        assert result.exit_code != 0
-
-
 class TestUploadStatus:
     def test_happy_path(self) -> None:
         runner = CliRunner()

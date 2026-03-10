@@ -133,7 +133,18 @@ class TestReputationFeedback:
         with _mock_client(submit_feedback={"status": "accepted"}):
             result = runner.invoke(
                 reputation,
-                ["feedback", "exch_1", "--outcome", "positive", "--remote-url", MOCK_URL],
+                [
+                    "feedback",
+                    "exch_1",
+                    "--rater",
+                    "alice",
+                    "--rated",
+                    "bob",
+                    "--outcome",
+                    "positive",
+                    "--remote-url",
+                    MOCK_URL,
+                ],
             )
         assert result.exit_code == 0
         assert "submitted" in result.output.lower()
@@ -146,31 +157,34 @@ class TestReputationFeedback:
                 [
                     "feedback",
                     "exch_1",
+                    "--rater",
+                    "alice",
+                    "--rated",
+                    "bob",
                     "--outcome",
                     "negative",
                     "--reliability",
                     "0.3",
                     "--quality",
                     "0.2",
-                    "--memo",
-                    "Late delivery",
                     "--remote-url",
                     MOCK_URL,
                 ],
             )
         mocks["submit_feedback"].assert_called_once_with(
             "exch_1",
+            rater_agent_id="alice",
+            rated_agent_id="bob",
             outcome="negative",
             reliability_score=0.3,
             quality_score=0.2,
-            memo="Late delivery",
         )
 
     def test_outcome_required(self) -> None:
         runner = CliRunner(env=_ENV)
         result = runner.invoke(
             reputation,
-            ["feedback", "exch_1", "--remote-url", MOCK_URL],
+            ["feedback", "exch_1", "--rater", "alice", "--rated", "bob", "--remote-url", MOCK_URL],
         )
         assert result.exit_code != 0
 
@@ -182,6 +196,10 @@ class TestReputationFeedback:
                 [
                     "feedback",
                     "exch_1",
+                    "--rater",
+                    "alice",
+                    "--rated",
+                    "bob",
                     "--outcome",
                     "neutral",
                     "--remote-url",
@@ -204,6 +222,10 @@ class TestReputationDisputeCreate:
                     "dispute",
                     "create",
                     "exch_1",
+                    "--complainant",
+                    "alice",
+                    "--respondent",
+                    "bob",
                     "--reason",
                     "Service not delivered",
                     "--remote-url",
@@ -217,7 +239,17 @@ class TestReputationDisputeCreate:
         runner = CliRunner(env=_ENV)
         result = runner.invoke(
             reputation,
-            ["dispute", "create", "exch_1", "--remote-url", MOCK_URL],
+            [
+                "dispute",
+                "create",
+                "exch_1",
+                "--complainant",
+                "alice",
+                "--respondent",
+                "bob",
+                "--remote-url",
+                MOCK_URL,
+            ],
         )
         assert result.exit_code != 0
 
@@ -230,6 +262,10 @@ class TestReputationDisputeCreate:
                     "dispute",
                     "create",
                     "exch_1",
+                    "--complainant",
+                    "alice",
+                    "--respondent",
+                    "bob",
                     "--reason",
                     "Bad quality",
                     "--remote-url",
@@ -240,30 +276,3 @@ class TestReputationDisputeCreate:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["data"]["dispute_id"] == "dsp_1"
-
-
-class TestReputationDisputeList:
-    def test_happy_path(self) -> None:
-        runner = CliRunner(env=_ENV)
-        with _mock_client(
-            _request={
-                "disputes": [
-                    {
-                        "dispute_id": "dsp_1",
-                        "exchange_id": "exch_1",
-                        "status": "filed",
-                        "reason": "Bad service",
-                        "created_at": "2025-01-01T00:00:00",
-                    }
-                ]
-            }
-        ):
-            result = runner.invoke(reputation, ["dispute", "list", "--remote-url", MOCK_URL])
-        assert result.exit_code == 0
-
-    def test_empty_disputes(self) -> None:
-        runner = CliRunner(env=_ENV)
-        with _mock_client(_request={"disputes": []}):
-            result = runner.invoke(reputation, ["dispute", "list", "--remote-url", MOCK_URL])
-        assert result.exit_code == 0
-        assert "No disputes found" in result.output

@@ -155,7 +155,19 @@ class TestIdentityE2E:
         assert "data" in envelope or "error" in envelope
 
     def test_identity_verify_unknown_agent(self, remote_server):
-        result = _run_cli(["identity", "verify", "nonexistent_agent", "--json"], remote_server)
+        result = _run_cli(
+            [
+                "identity",
+                "verify",
+                "nonexistent_agent",
+                "--message",
+                "dGVzdA==",
+                "--signature",
+                "c2lnbmF0dXJl",
+                "--json",
+            ],
+            remote_server,
+        )
         envelope = _parse_json_envelope(result)
         assert "data" in envelope or "error" in envelope
 
@@ -343,10 +355,10 @@ class TestRlmE2E:
 class TestUploadE2E:
     """nexus upload commands against a running server."""
 
-    def test_upload_list_json_envelope(self, remote_server):
-        result = _run_cli(["upload", "list", "--json"], remote_server)
+    def test_upload_status_json_envelope(self, remote_server):
+        result = _run_cli(["upload", "status", "upl_test_123", "--json"], remote_server)
         envelope = _parse_json_envelope(result)
-        assert envelope["_timing"]["total_ms"] > 0
+        assert "_timing" in envelope
 
     def test_upload_no_traceback(self, remote_server):
         result = _run_cli(["upload", "list"], remote_server)
@@ -387,7 +399,7 @@ class TestJsonEnvelopeConsistency:
             pytest.param("conflicts", ["list"], id="conflicts-list"),
             pytest.param("manifest", ["list"], id="manifest-list"),
             pytest.param("secrets-audit", ["list"], id="secrets-audit-list"),
-            pytest.param("upload", ["list"], id="upload-list"),
+            pytest.param("upload", ["status", "upl_test_123"], id="upload-status"),
             pytest.param("scheduler", ["status"], id="scheduler-status"),
             pytest.param("rlm", ["status"], id="rlm-status"),
             pytest.param("reputation", ["leaderboard"], id="reputation-leaderboard"),

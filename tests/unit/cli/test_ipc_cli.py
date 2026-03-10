@@ -35,7 +35,9 @@ class TestIPCSend:
         runner = CliRunner()
         stack, _ = _patch_client(send={"message_id": "msg_123"})
         with stack:
-            result = runner.invoke(ipc, ["send", "bob", "Hello", "--remote-url", MOCK_URL])
+            result = runner.invoke(
+                ipc, ["send", "bob", "Hello", "--from", "alice", "--remote-url", MOCK_URL]
+            )
         assert result.exit_code == 0
         assert "msg_123" in result.output
 
@@ -44,7 +46,8 @@ class TestIPCSend:
         stack, _ = _patch_client(send={"message_id": "msg_123"})
         with stack:
             result = runner.invoke(
-                ipc, ["send", "bob", "Hello", "--remote-url", MOCK_URL, "--json"]
+                ipc,
+                ["send", "bob", "Hello", "--from", "alice", "--remote-url", MOCK_URL, "--json"],
             )
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -54,10 +57,12 @@ class TestIPCSend:
         runner = CliRunner()
         stack, mocks = _patch_client(send={"message_id": "msg_456"})
         with stack:
-            runner.invoke(ipc, ["send", "bob", "Hello", "--remote-url", MOCK_URL])
-        mocks["send"].assert_called_once_with("bob", "Hello", message_type="task", zone_id=None)
+            runner.invoke(
+                ipc, ["send", "bob", "Hello", "--from", "alice", "--remote-url", MOCK_URL]
+            )
+        mocks["send"].assert_called_once_with("alice", "bob", "Hello", message_type="task")
 
-    def test_with_type_and_zone(self) -> None:
+    def test_with_type(self) -> None:
         runner = CliRunner()
         stack, mocks = _patch_client(send={"message_id": "msg_456"})
         with stack:
@@ -67,22 +72,20 @@ class TestIPCSend:
                     "send",
                     "bob",
                     "cancel",
+                    "--from",
+                    "alice",
                     "--type",
                     "cancel",
-                    "--zone-id",
-                    "org_1",
                     "--remote-url",
                     MOCK_URL,
                 ],
             )
         assert result.exit_code == 0
-        mocks["send"].assert_called_once_with(
-            "bob", "cancel", message_type="cancel", zone_id="org_1"
-        )
+        mocks["send"].assert_called_once_with("alice", "bob", "cancel", message_type="cancel")
 
     def test_missing_url_fails(self) -> None:
         runner = CliRunner()
-        result = runner.invoke(ipc, ["send", "bob", "Hello"])
+        result = runner.invoke(ipc, ["send", "bob", "Hello", "--from", "alice"])
         assert result.exit_code != 0
 
 
@@ -92,13 +95,7 @@ class TestIPCInbox:
         stack, _ = _patch_client(
             inbox={
                 "messages": [
-                    {
-                        "message_id": "msg_1",
-                        "from_agent": "alice",
-                        "message_type": "task",
-                        "body": "hello",
-                        "created_at": "2025-01-01T00:00:00",
-                    }
+                    {"filename": "msg_1.json"},
                 ]
             }
         )
@@ -114,33 +111,19 @@ class TestIPCInbox:
         assert result.exit_code == 0
         assert "empty" in result.output.lower()
 
-    def test_default_limit_is_50(self) -> None:
+    def test_client_called_with_agent_id(self) -> None:
         runner = CliRunner()
         stack, mocks = _patch_client(inbox={"messages": []})
         with stack:
             runner.invoke(ipc, ["inbox", "bob", "--remote-url", MOCK_URL])
-        mocks["inbox"].assert_called_once_with("bob", limit=50)
-
-    def test_with_limit(self) -> None:
-        runner = CliRunner()
-        stack, mocks = _patch_client(inbox={"messages": []})
-        with stack:
-            result = runner.invoke(ipc, ["inbox", "bob", "--limit", "5", "--remote-url", MOCK_URL])
-        assert result.exit_code == 0
-        mocks["inbox"].assert_called_once_with("bob", limit=5)
+        mocks["inbox"].assert_called_once_with("bob")
 
     def test_json_output(self) -> None:
         runner = CliRunner()
         stack, _ = _patch_client(
             inbox={
                 "messages": [
-                    {
-                        "message_id": "msg_1",
-                        "from_agent": "alice",
-                        "message_type": "task",
-                        "body": "hello",
-                        "created_at": "2025-01-01T00:00:00",
-                    }
+                    {"filename": "msg_1.json"},
                 ]
             }
         )

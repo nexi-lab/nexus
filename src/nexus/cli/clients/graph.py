@@ -22,14 +22,24 @@ class GraphClient(BaseServiceClient):
             params={"hops": hops},
         )
 
-    def subgraph(self, entity_id: str, *, depth: int = 2) -> dict[str, Any]:
-        """Extract a subgraph rooted at entity."""
+    def subgraph(self, entity_ids: list[str], *, max_hops: int = 2) -> dict[str, Any]:
+        """Extract a subgraph from the given entities."""
         return self._request(
             "POST",
             "/api/v2/graph/subgraph",
-            json_body={"entity_id": entity_id, "depth": depth},
+            json_body={"entity_ids": entity_ids, "max_hops": max_hops},
         )
 
-    def search(self, query: str) -> dict[str, Any]:
-        """Search the knowledge graph."""
-        return self._request("GET", "/api/v2/graph/search", params={"query": query})
+    def search(
+        self,
+        name: str,
+        *,
+        entity_type: str | None = None,
+        fuzzy: bool = False,
+    ) -> dict[str, Any]:
+        """Search the knowledge graph by entity name."""
+        return self._request(
+            "GET",
+            "/api/v2/graph/search",
+            params={"name": name, "entity_type": entity_type, "fuzzy": fuzzy},
+        )

@@ -125,23 +125,23 @@ class TestConflictsResolve:
         with _mock_client(resolve={}) as mocks:
             result = runner.invoke(
                 conflicts,
-                ["resolve", "c1", "--strategy", "ours", "--remote-url", MOCK_URL],
+                ["resolve", "c1", "--outcome", "nexus_wins", "--remote-url", MOCK_URL],
             )
         assert result.exit_code == 0
-        assert "resolved" in result.output.lower()
-        mocks["resolve"].assert_called_once_with("c1", strategy="ours")
+        assert "resolved (nexus_wins)" in result.output
+        mocks["resolve"].assert_called_once_with("c1", outcome="nexus_wins")
 
-    def test_theirs_strategy(self) -> None:
+    def test_backend_wins_outcome(self) -> None:
         runner = CliRunner(env=_ENV)
         with _mock_client(resolve={}) as mocks:
             result = runner.invoke(
                 conflicts,
-                ["resolve", "c1", "--strategy", "theirs", "--remote-url", MOCK_URL],
+                ["resolve", "c1", "--outcome", "backend_wins", "--remote-url", MOCK_URL],
             )
         assert result.exit_code == 0
-        mocks["resolve"].assert_called_once_with("c1", strategy="theirs")
+        mocks["resolve"].assert_called_once_with("c1", outcome="backend_wins")
 
-    def test_strategy_required(self) -> None:
+    def test_outcome_required(self) -> None:
         runner = CliRunner(env=_ENV)
         result = runner.invoke(conflicts, ["resolve", "c1", "--remote-url", MOCK_URL])
         assert result.exit_code != 0
@@ -154,8 +154,8 @@ class TestConflictsResolve:
                 [
                     "resolve",
                     "c1",
-                    "--strategy",
-                    "manual",
+                    "--outcome",
+                    "nexus_wins",
                     "--remote-url",
                     MOCK_URL,
                     "--json",

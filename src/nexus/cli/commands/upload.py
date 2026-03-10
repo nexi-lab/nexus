@@ -2,6 +2,7 @@
 
 Maps to /api/v2/uploads/* (tus.io) endpoints via UploadClient.
 Issue #2812. Note: `upload resume` is deferred to a future PR.
+The tus protocol does not expose a list endpoint; use `upload status` per ID.
 """
 
 from __future__ import annotations
@@ -19,60 +20,13 @@ def upload() -> None:
     """Resumable upload management.
 
     \b
-    List, inspect, and cancel in-progress chunked uploads.
+    Inspect and cancel in-progress chunked uploads (tus.io protocol).
 
     \b
     Examples:
-        nexus upload list --json
         nexus upload status <upload-id>
         nexus upload cancel <upload-id>
     """
-
-
-@upload.command("list")
-@add_output_options
-@REMOTE_API_KEY_OPTION
-@REMOTE_URL_OPTION
-@service_command(client_class=UploadClient)
-def upload_list(client: UploadClient) -> ServiceResult:
-    """List in-progress uploads.
-
-    \b
-    Examples:
-        nexus upload list
-        nexus upload list --json
-    """
-    data = client.list()
-
-    def _render(d: dict) -> None:
-        from rich.table import Table
-
-        from nexus.cli.utils import console
-
-        uploads = d.get("uploads", [])
-        if not uploads:
-            console.print("[yellow]No in-progress uploads[/yellow]")
-            return
-
-        table = Table(title=f"Uploads ({len(uploads)})")
-        table.add_column("ID", style="dim")
-        table.add_column("Path")
-        table.add_column("Progress", justify="right")
-        table.add_column("Status")
-
-        for u in uploads:
-            offset = u.get("offset", 0)
-            length = u.get("length", 0)
-            pct = f"{offset / length * 100:.0f}%" if length > 0 else "N/A"
-            table.add_row(
-                u.get("upload_id", "")[:12],
-                u.get("target_path", ""),
-                pct,
-                u.get("status", ""),
-            )
-        console.print(table)
-
-    return ServiceResult(data=data, human_formatter=_render)
 
 
 @upload.command("status")

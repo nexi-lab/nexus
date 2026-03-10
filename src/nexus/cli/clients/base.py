@@ -5,16 +5,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from nexus.cli.client import NexusAPIError
+
 logger = logging.getLogger(__name__)
 
-
-class NexusAPIError(Exception):
-    """Error from Nexus REST API."""
-
-    def __init__(self, status_code: int, detail: str) -> None:
-        self.status_code = status_code
-        self.detail = detail
-        super().__init__(f"HTTP {status_code}: {detail}")
+__all__ = ["BaseServiceClient", "NexusAPIError"]
 
 
 class BaseServiceClient:

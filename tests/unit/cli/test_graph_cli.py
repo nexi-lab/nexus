@@ -143,17 +143,17 @@ class TestGraphSubgraph:
         assert "Nodes: 2" in result.output
         assert "Edges: 1" in result.output
 
-    def test_default_depth_is_2(self) -> None:
+    def test_default_max_hops_is_2(self) -> None:
         runner = CliRunner(env=_ENV)
         with _mock_client(subgraph={"nodes": [], "edges": []}) as mocks:
             runner.invoke(graph, ["subgraph", "e1", "--remote-url", MOCK_URL])
-        mocks["subgraph"].assert_called_once_with("e1", depth=2)
+        mocks["subgraph"].assert_called_once_with(["e1"], max_hops=2)
 
-    def test_with_depth(self) -> None:
+    def test_with_max_hops(self) -> None:
         runner = CliRunner(env=_ENV)
         with _mock_client(subgraph={"nodes": [], "edges": []}) as mocks:
-            runner.invoke(graph, ["subgraph", "e1", "--depth", "3", "--remote-url", MOCK_URL])
-        mocks["subgraph"].assert_called_once_with("e1", depth=3)
+            runner.invoke(graph, ["subgraph", "e1", "--max-hops", "3", "--remote-url", MOCK_URL])
+        mocks["subgraph"].assert_called_once_with(["e1"], max_hops=3)
 
     def test_json_output(self) -> None:
         runner = CliRunner(env=_ENV)
@@ -201,8 +201,10 @@ class TestGraphSearch:
         data = json.loads(result.output)
         assert len(data["data"]["results"]) == 1
 
-    def test_client_called_with_query(self) -> None:
+    def test_client_called_with_name(self) -> None:
         runner = CliRunner(env=_ENV)
         with _mock_client(search={"results": []}) as mocks:
             runner.invoke(graph, ["search", "agent collaboration", "--remote-url", MOCK_URL])
-        mocks["search"].assert_called_once_with("agent collaboration")
+        mocks["search"].assert_called_once_with(
+            "agent collaboration", entity_type=None, fuzzy=False
+        )

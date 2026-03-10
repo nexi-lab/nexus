@@ -18,10 +18,15 @@ class ConflictsClient(BaseServiceClient):
         """Get conflict details."""
         return self._request("GET", f"/api/v2/sync/conflicts/{conflict_id}")
 
-    def resolve(self, conflict_id: str, *, strategy: str) -> dict[str, Any]:
-        """Resolve a conflict with the given strategy."""
+    def resolve(self, conflict_id: str, *, outcome: str) -> dict[str, Any]:
+        """Resolve a conflict.
+
+        Args:
+            conflict_id: The conflict to resolve.
+            outcome: Resolution outcome — "nexus_wins" or "backend_wins".
+        """
         return self._request(
             "POST",
             f"/api/v2/sync/conflicts/{conflict_id}/resolve",
-            json_body={"strategy": strategy},
+            json_body={"outcome": outcome},
         )

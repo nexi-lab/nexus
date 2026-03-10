@@ -77,7 +77,7 @@ _ADD_COMMAND: dict[str, str] = {
     "ipc": "ipc",
     "delegation": "delegation",
     "scheduler_cli": "scheduler",
-    "share": "share",
+    # "share" removed: /api/v2/share-links endpoints not implemented server-side
     "graph_cli": "graph",
     "conflicts": "conflicts",
     "manifest_cli": "manifest",

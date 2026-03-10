@@ -190,6 +190,49 @@ class TestEdgeSyncManagerNotifyIdempotency:
         await mgr.stop()
 
 
+class TestEdgeSyncManagerHealthCheckUrl:
+    """Bug #6: health_check_url value must be used, not hardcoded."""
+
+    async def test_custom_health_check_url_is_used(self) -> None:
+        deps = _make_deps()
+        mgr = EdgeSyncManager(
+            queue=deps["queue"],
+            transport=deps["transport"],
+            circuit=deps["circuit"],
+            health_check_url="custom.health.endpoint",
+        )
+        await mgr.start()
+
+        mgr.notify_disconnected()
+        mgr.notify_connected()
+        await asyncio.sleep(0.1)
+
+        # The transport should have been called with the custom URL, not "health.check"
+        deps["transport"].call.assert_called_with("custom.health.endpoint", params={})
+        await mgr.stop()
+
+    async def test_no_health_check_url_skips_transport_call(self) -> None:
+        deps = _make_deps()
+        deps["circuit"].is_open = False
+        mgr = EdgeSyncManager(
+            queue=deps["queue"],
+            transport=deps["transport"],
+            circuit=deps["circuit"],
+            # No health_check_url — should use circuit state
+        )
+        await mgr.start()
+
+        mgr.notify_disconnected()
+        mgr.notify_connected()
+        await asyncio.sleep(0.1)
+
+        # Transport.call should NOT be called for health check (circuit state used instead)
+        # But it might be called for other operations — check no "health" call was made
+        for call in deps["transport"].call.call_args_list:
+            assert "health" not in str(call), "Should not call transport for health check"
+        await mgr.stop()
+
+
 class TestEdgeSyncManagerStatusDict:
     """to_status_dict() returns monitoring info."""
 

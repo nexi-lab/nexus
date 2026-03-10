@@ -64,7 +64,15 @@ class TestMountInfo:
 
     def test_fields(self) -> None:
         fields = {f.name for f in dataclasses.fields(MountInfo)}
-        assert fields == {"mount_point", "readonly", "admin_only", "status"}
+        assert fields == {
+            "mount_point",
+            "readonly",
+            "admin_only",
+            "status",
+            "backend",
+            "priority",
+            "conflict_strategy",
+        }
 
     def test_equality(self) -> None:
         assert MountInfo("/ws", False) == MountInfo("/ws", False)

@@ -23,7 +23,7 @@ from sqlalchemy.exc import OperationalError
 
 from nexus.bricks.rebac.domain import Entity
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.contracts.rebac_types import CROSS_ZONE_ALLOWED_RELATIONS, ConsistencyLevel
+from nexus.contracts.rebac_types import CROSS_ZONE_ALLOWED_RELATIONS
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -103,7 +103,6 @@ class BulkPermissionChecker:
         self,
         checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
         zone_id: str,
-        consistency: ConsistencyLevel = ConsistencyLevel.EVENTUAL,
     ) -> dict[tuple[tuple[str, str], str, tuple[str, str]], bool]:
         """Check permissions for multiple (subject, permission, object) tuples in batch.
 
@@ -115,10 +114,11 @@ class BulkPermissionChecker:
         3. Runs permission checks against the cached graph
         4. Returns all results in a single call
 
+        Always uses cached (eventual) consistency.
+
         Args:
             checks: List of (subject, permission, object) tuples to check
             zone_id: Zone ID to scope all checks
-            consistency: Consistency level (EVENTUAL, BOUNDED, STRONG)
 
         Returns:
             Dict mapping each check tuple to its result (True/False)
@@ -155,14 +155,12 @@ class BulkPermissionChecker:
         cache_misses: list[tuple[tuple[str, str], str, tuple[str, str]]] = []
 
         # PHASE 0: L1 in-memory cache
-        cache_misses = self._phase_l1_cache(checks, zone_id, consistency, results, bulk_start)
+        cache_misses = self._phase_l1_cache(checks, zone_id, results, bulk_start)
         if not cache_misses:
             return results
 
         # PHASE 0.5: Tiger Cache
-        cache_misses = self._phase_tiger_cache(
-            cache_misses, zone_id, consistency, results, bulk_start
-        )
+        cache_misses = self._phase_tiger_cache(cache_misses, zone_id, results, bulk_start)
         if not cache_misses:
             return results
 
@@ -195,7 +193,6 @@ class BulkPermissionChecker:
                 cache_misses,
                 tuples_graph,
                 zone_id,
-                consistency,
                 results,
                 bulk_memo_cache,
                 memo_stats,
@@ -214,7 +211,6 @@ class BulkPermissionChecker:
         self,
         checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
         zone_id: str,
-        consistency: ConsistencyLevel,
         results: dict[tuple[tuple[str, str], str, tuple[str, str]], bool],
         bulk_start: float,
     ) -> list[tuple[tuple[str, str], str, tuple[str, str]]]:
@@ -222,17 +218,11 @@ class BulkPermissionChecker:
         l1_start = time_module.perf_counter()
         l1_hits = 0
         l1_cache_enabled = self._l1_cache is not None
-        logger.debug(
-            f"[BULK-DEBUG] L1 cache enabled: {l1_cache_enabled}, consistency: {consistency}"
-        )
+        logger.debug(f"[BULK-DEBUG] L1 cache enabled: {l1_cache_enabled}")
 
         cache_misses: list[tuple[tuple[str, str], str, tuple[str, str]]] = []
 
-        if (
-            l1_cache_enabled
-            and self._l1_cache is not None
-            and consistency == ConsistencyLevel.EVENTUAL
-        ):
+        if l1_cache_enabled and self._l1_cache is not None:
             l1_cache_stats = self._l1_cache.get_stats()
             logger.debug(f"[BULK-DEBUG] L1 cache stats before lookup: {l1_cache_stats}")
 
@@ -261,9 +251,7 @@ class BulkPermissionChecker:
                 )
         else:
             cache_misses = list(checks)
-            logger.debug(
-                f"[BULK-DEBUG] Skipping L1 cache (enabled={l1_cache_enabled}, consistency={consistency})"
-            )
+            logger.debug("[BULK-DEBUG] Skipping L1 cache (not available)")
 
         return cache_misses
 
@@ -271,12 +259,11 @@ class BulkPermissionChecker:
         self,
         cache_misses: list[tuple[tuple[str, str], str, tuple[str, str]]],
         zone_id: str,
-        consistency: ConsistencyLevel,
         results: dict[tuple[tuple[str, str], str, tuple[str, str]], bool],
         bulk_start: float,
     ) -> list[tuple[tuple[str, str], str, tuple[str, str]]]:
         """Phase 0.5: Tiger Cache bitmap lookup. Returns remaining misses."""
-        if not (self._tiger_cache and consistency == ConsistencyLevel.EVENTUAL):
+        if not self._tiger_cache:
             return cache_misses
 
         tiger_start = time_module.perf_counter()
@@ -760,7 +747,6 @@ class BulkPermissionChecker:
         cache_misses: list[tuple[tuple[str, str], str, tuple[str, str]]],
         tuples_graph: list[dict[str, Any]],
         zone_id: str,
-        consistency: ConsistencyLevel,
         results: dict[tuple[tuple[str, str], str, tuple[str, str]], bool],
         bulk_memo_cache: dict[tuple[str, str, str, str, str], bool],
         memo_stats: dict[str, int],
@@ -787,14 +773,11 @@ class BulkPermissionChecker:
                 )
             except (RuntimeError, ValueError, OperationalError) as e:
                 logger.warning(f"Bulk check failed for {check}, falling back: {e}")
-                result = self._rebac_check_single(
-                    subject, permission, obj, zone_id=zone_id, consistency=consistency
-                )
+                result = self._rebac_check_single(subject, permission, obj, zone_id=zone_id)
 
             results[check] = result
 
-            if consistency == ConsistencyLevel.EVENTUAL:
-                self._cache_result(subject_entity, permission, obj_entity, result, zone_id)
+            self._cache_result(subject_entity, permission, obj_entity, result, zone_id)
 
         # Write-through to Tiger Cache after Python fallback
         self._write_through_tiger_cache(

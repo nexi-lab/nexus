@@ -151,7 +151,7 @@ class TestStatusCommand:
         result = cli_runner.invoke(status, ["--json"])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
-        assert "server_reachable" in parsed
+        assert "server_reachable" in parsed.get("data", parsed)
 
     @patch("nexus.cli.commands.status._collect_status")
     def test_table_output(self, mock_collect: MagicMock, cli_runner: CliRunner) -> None:
@@ -161,7 +161,7 @@ class TestStatusCommand:
             "server_health": {"status": "healthy", "components": {}},
             "docker_services": [],
         }
-        result = cli_runner.invoke(status)
+        result = cli_runner.invoke(status, env={"NEXUS_NO_AUTO_JSON": "1"})
         assert result.exit_code == 0
         assert "Nexus Service Status" in result.output
 

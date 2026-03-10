@@ -7,12 +7,14 @@ auto-refresh every 2 seconds.
 
 from __future__ import annotations
 
-import json as json_mod
+import asyncio
 import time
 from typing import TYPE_CHECKING, Any
 
 import click
 
+from nexus.cli.output import OutputOptions, add_output_options, render_output
+from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import console, handle_error
 
 if TYPE_CHECKING:
@@ -56,19 +58,28 @@ def _docker_services(profiles: list[str] | None = None) -> list[dict[str, str]]:
         return []
 
 
-def _collect_status(
+async def _collect_status_async(
     server_url: str,
     profiles: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Collect all status data (dual-path: server health + Docker state)."""
-    health = _server_health(server_url)
-    docker = _docker_services(profiles)
+    """Collect all status data concurrently."""
+    health_task = asyncio.to_thread(_server_health, server_url)
+    docker_task = asyncio.to_thread(_docker_services, profiles)
+    health, docker = await asyncio.gather(health_task, docker_task)
     return {
         "server_url": server_url,
         "server_reachable": health is not None,
         "server_health": health,
         "docker_services": docker,
     }
+
+
+def _collect_status(
+    server_url: str,
+    profiles: list[str] | None = None,
+) -> dict[str, Any]:
+    """Collect all status data (dual-path: server health + Docker state)."""
+    return asyncio.run(_collect_status_async(server_url, profiles))
 
 
 # ---------------------------------------------------------------------------
@@ -157,12 +168,6 @@ def _render_table(data: dict[str, Any]) -> None:
 
 @click.command(name="status")
 @click.option(
-    "--json",
-    "output_json",
-    is_flag=True,
-    help="Output status as JSON.",
-)
-@click.option(
     "--watch",
     is_flag=True,
     help="Auto-refresh every 2 seconds.",
@@ -180,7 +185,13 @@ def _render_table(data: dict[str, Any]) -> None:
     default=(),
     help="Compose profiles to include in Docker status.",
 )
-def status(output_json: bool, watch: bool, url: str | None, profiles: tuple[str, ...]) -> None:
+@add_output_options
+def status(
+    output_opts: OutputOptions,
+    watch: bool,
+    url: str | None,
+    profiles: tuple[str, ...],
+) -> None:
     """Display Nexus service health, latency, and connection details.
 
     Examples:
@@ -192,14 +203,18 @@ def status(output_json: bool, watch: bool, url: str | None, profiles: tuple[str,
     profile_list = list(profiles) if profiles else None
 
     try:
-        if watch and not output_json:
+        if watch and not output_opts.json_output:
             _watch_loop(server_url, profile_list)
         else:
-            data = _collect_status(server_url, profile_list)
-            if output_json:
-                console.print(json_mod.dumps(data, indent=2, default=str))
-            else:
-                _render_table(data)
+            timing = CommandTiming()
+            with timing.phase("collect"):
+                data = _collect_status(server_url, profile_list)
+            render_output(
+                data=data,
+                output_opts=output_opts,
+                timing=timing,
+                human_formatter=_render_table,
+            )
     except KeyboardInterrupt:
         pass
     except Exception as exc:

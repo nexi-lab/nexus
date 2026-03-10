@@ -251,8 +251,8 @@ def _exception_to_error_code(error: Exception) -> str:
         return "PERMISSION_DENIED"
     if isinstance(error, ValidationError):
         return "VALIDATION_ERROR"
-    if isinstance(error, ConnectionError | OSError):
-        return "CONNECTION_ERROR"
     if isinstance(error, TimeoutError):
         return "TIMEOUT"
+    if isinstance(error, ConnectionError | OSError):
+        return "CONNECTION_ERROR"
     return "INTERNAL_ERROR"

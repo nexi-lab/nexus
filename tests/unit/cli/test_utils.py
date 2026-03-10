@@ -54,7 +54,7 @@ class TestParseSubject:
     def test_invalid_format_exits(self) -> None:
         with pytest.raises(SystemExit) as exc_info:
             parse_subject("no_colon")
-        assert exc_info.value.code == 1
+        assert exc_info.value.code == ExitCode.USAGE_ERROR
 
     def test_env_var_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("NEXUS_SUBJECT", "user:bob")

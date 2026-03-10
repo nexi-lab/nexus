@@ -14,6 +14,7 @@ The heavy lifting is done by existing modules:
 
 from __future__ import annotations
 
+import json as json_mod
 import logging
 import os
 import sys
@@ -22,7 +23,55 @@ from typing import Any
 
 import click
 
+from nexus.cli.exit_codes import ExitCode
+
 logger = logging.getLogger("nexusd")
+
+
+# ---------------------------------------------------------------------------
+# Helpers: PID file, ready file, JSON log formatter
+# ---------------------------------------------------------------------------
+
+
+class _JsonLogFormatter(logging.Formatter):
+    """Structured JSON log formatter for production use."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        entry: dict[str, str] = {
+            "ts": self.formatTime(record, "%Y-%m-%dT%H:%M:%S"),
+            "level": record.levelname.lower(),
+            "logger": record.name,
+            "msg": record.getMessage(),
+        }
+        if record.exc_info and record.exc_info[1]:
+            entry["error"] = str(record.exc_info[1])
+        return json_mod.dumps(entry)
+
+
+def _manage_pid_file() -> Path:
+    """Check for stale PID file and write current PID. Returns PID file path."""
+    pid_path = Path.home() / ".nexus" / "nexusd.pid"
+    pid_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if pid_path.exists():
+        try:
+            old_pid = int(pid_path.read_text().strip())
+            os.kill(old_pid, 0)  # Check if process exists
+            # Process is running
+            click.echo(f"Error: nexusd is already running (PID {old_pid}).", err=True)
+            click.echo(f"PID file: {pid_path}", err=True)
+            sys.exit(ExitCode.CONFIG_ERROR)
+        except (ValueError, ProcessLookupError, PermissionError):
+            # Stale PID file — remove it
+            pid_path.unlink(missing_ok=True)
+
+    pid_path.write_text(str(os.getpid()))
+    return pid_path
+
+
+def _remove_pid_file(pid_path: Path) -> None:
+    """Remove PID file on shutdown."""
+    pid_path.unlink(missing_ok=True)
 
 
 @click.command(name="nexusd")
@@ -89,6 +138,13 @@ logger = logging.getLogger("nexusd")
     help="Logging level (default: info).",
 )
 @click.option(
+    "--log-format",
+    type=click.Choice(["text", "json"], case_sensitive=False),
+    default="text",
+    envvar="NEXUS_LOG_FORMAT",
+    help="Log output format (default: text).",
+)
+@click.option(
     "--workers",
     type=int,
     default=None,
@@ -106,6 +162,7 @@ def main(
     database_url: str | None,
     auth_type: str | None,
     log_level: str | None,
+    log_format: str,
     workers: int | None,
 ) -> None:
     """Start the Nexus node daemon.
@@ -127,82 +184,89 @@ def main(
     deployment_profile = deployment_profile or "auto"
 
     # Configure logging early
-    logging.basicConfig(
-        level=getattr(logging, log_level.upper()),
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    )
+    _log_level = getattr(logging, log_level.upper())
+    if log_format == "json":
+        handler = logging.StreamHandler()
+        handler.setFormatter(_JsonLogFormatter())
+        logging.basicConfig(level=_log_level, handlers=[handler])
+    else:
+        logging.basicConfig(
+            level=_log_level,
+            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        )
+
+    # --- PID file -----------------------------------------------------------
+    pid_path = _manage_pid_file()
+    ready_path = Path.home() / ".nexus" / "nexusd.ready"
 
     # Guard: daemon cannot run in remote profile
     if deployment_profile == "remote":
+        _remove_pid_file(pid_path)
         click.echo(
             "Error: nexusd cannot run with profile='remote'. "
             "A daemon cannot be a thin client of another daemon.",
             err=True,
         )
-        sys.exit(1)
+        sys.exit(ExitCode.CONFIG_ERROR)
 
-    # --- Print banner -------------------------------------------------------
-    click.echo("")
-    click.echo("nexusd — Nexus Node Daemon")
-    click.echo(f"  Host:    {host}")
-    click.echo(f"  Port:    {port}")
-    click.echo(f"  Profile: {deployment_profile}")
-    if data_dir:
-        click.echo(f"  Data:    {data_dir}")
-    if config_path:
-        click.echo(f"  Config:  {config_path}")
-    if database_url:
-        # Redact password in URL for display
-        click.echo(f"  DB:      {_redact_url(database_url)}")
-    click.echo("")
-
-    # --- Create local NexusFS -----------------------------------------------
     try:
-        import nexus
-
-        connect_config: dict[str, object] = {"profile": deployment_profile}
-
+        # --- Print banner ---------------------------------------------------
+        click.echo("")
+        click.echo("nexusd — Nexus Node Daemon")
+        click.echo(f"  Host:    {host}")
+        click.echo(f"  Port:    {port}")
+        click.echo(f"  Profile: {deployment_profile}")
         if data_dir:
-            connect_config["data_dir"] = data_dir
+            click.echo(f"  Data:    {data_dir}")
         if config_path:
-            from nexus.config import load_config
-
-            config_obj = load_config(Path(config_path))
-            nx = nexus.connect(config=config_obj)
-            if hasattr(nx, "_config"):
-                nx._config = config_obj
-        else:
-            nx = nexus.connect(config=connect_config)
-
-    except Exception as e:
-        click.echo(f"Error: Failed to initialize NexusFS: {e}", err=True)
-        logger.exception("NexusFS initialization failed")
-        sys.exit(1)
-
-    # --- Resolve auth -------------------------------------------------------
-    auth_provider = None
-    if auth_type == "database":
-        if not database_url:
-            database_url = os.getenv("NEXUS_DATABASE_URL") or os.getenv("POSTGRES_URL")
+            click.echo(f"  Config:  {config_path}")
         if database_url:
-            try:
-                from nexus.server.auth.database_auth import DatabaseAuthProvider
+            # Redact password in URL for display
+            click.echo(f"  DB:      {_redact_url(database_url)}")
+        click.echo("")
 
-                auth_provider = DatabaseAuthProvider(database_url)
-                logger.info("Using database authentication")
-            except ImportError:
-                logger.warning("DatabaseAuthProvider not available, falling back to static")
+        # --- Create local NexusFS -------------------------------------------
+        try:
+            import nexus
 
-    # Resolve API key: explicit flag > env var > key file
-    if not api_key:
-        api_key = os.getenv("NEXUS_API_KEY")
-    if not api_key:
-        key_file = os.getenv("NEXUS_API_KEY_FILE", "")
-        if key_file and Path(key_file).is_file():
-            api_key = Path(key_file).read_text().strip()
+            connect_config: dict[str, object] = {"profile": deployment_profile}
 
-    # --- Create FastAPI app + run -------------------------------------------
-    try:
+            if data_dir:
+                connect_config["data_dir"] = data_dir
+            if config_path:
+                from nexus.config import load_config
+
+                config_obj = load_config(Path(config_path))
+                nx = nexus.connect(config=config_obj)
+            else:
+                nx = nexus.connect(config=connect_config)
+
+        except Exception as e:
+            click.echo(f"Error: Failed to initialize NexusFS: {e}", err=True)
+            logger.exception("NexusFS initialization failed")
+            sys.exit(ExitCode.INTERNAL_ERROR)
+
+        # --- Resolve auth ---------------------------------------------------
+        auth_provider = None
+        if auth_type == "database":
+            if not database_url:
+                database_url = os.getenv("POSTGRES_URL")
+            if database_url:
+                try:
+                    from nexus.server.auth.database_auth import DatabaseAuthProvider
+
+                    auth_provider = DatabaseAuthProvider(database_url)
+                    logger.info("Using database authentication")
+                except ImportError:
+                    logger.warning("DatabaseAuthProvider not available, falling back to static")
+
+        # Resolve API key: explicit flag > env var (handled by Click) > key file
+        if not api_key:
+            key_file = os.getenv("NEXUS_API_KEY_FILE", "")
+            if key_file and Path(key_file).is_file():
+                api_key = Path(key_file).read_text().strip()
+
+        # --- Create FastAPI app + run ---------------------------------------
         from nexus.server.fastapi_server import create_app, run_server
 
         # nexus.connect() returns NexusFilesystem protocol; create_app expects
@@ -216,6 +280,9 @@ def main(
             database_url=database_url,
         )
 
+        # --- Ready file -----------------------------------------------------
+        ready_path.write_text(f"{host}:{port}\n")
+
         click.echo(f"Starting nexusd on {host}:{port}")
         click.echo("Press Ctrl+C to stop")
         click.echo("")
@@ -227,7 +294,10 @@ def main(
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
         logger.exception("nexusd failed")
-        sys.exit(1)
+        sys.exit(ExitCode.INTERNAL_ERROR)
+    finally:
+        _remove_pid_file(pid_path)
+        ready_path.unlink(missing_ok=True)
 
 
 def _redact_url(url: str) -> str:

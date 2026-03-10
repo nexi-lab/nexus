@@ -1,23 +1,22 @@
 """Memory management CLI commands (v0.4.0+)."""
 
-import json
 import re
 from datetime import timedelta
 from typing import Any
 
 import click
-from rich.console import Console
 from rich.table import Table
 
 from nexus.bricks.memory.memory_provider import get_memory_api
+from nexus.cli.output import OutputOptions, add_output_options, render_output
+from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
     add_backend_options,
+    console,
     get_default_filesystem,
     get_filesystem,
     handle_error,
 )
-
-console = Console()
 
 
 @click.group()
@@ -98,7 +97,7 @@ def store(
     help="Filter memories during this period (e.g., '2025', '2025-01'). #1023",
 )
 @click.option("--limit", type=int, default=100, help="Maximum number of results")
-@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+@add_output_options
 def query(
     user_id: str | None,
     agent_id: str | None,
@@ -109,7 +108,7 @@ def query(
     before: str | None,
     during: str | None,
     limit: int,
-    output_json: bool,
+    output_opts: OutputOptions,
 ) -> None:
     """Query memories by filters.
 
@@ -122,19 +121,21 @@ def query(
         nexus memory query --after "2025-01-01T00:00:00Z"  # After this date
         nexus memory query --json
     """
+    timing = CommandTiming()
     nx = get_default_filesystem()
 
     try:
         # Note: user_id and agent_id filtering not supported in remote mode yet
-        results = get_memory_api(nx).query(
-            scope=scope,
-            memory_type=memory_type,
-            state=state,
-            after=after,
-            before=before,
-            during=during,
-            limit=limit,
-        )
+        with timing.phase("server"):
+            results = get_memory_api(nx).query(
+                scope=scope,
+                memory_type=memory_type,
+                state=state,
+                after=after,
+                before=before,
+                during=during,
+                limit=limit,
+            )
 
         # Client-side filtering if user_id or agent_id specified
         if user_id or agent_id:
@@ -145,15 +146,12 @@ def query(
                 and (not agent_id or r.get("agent_id") == agent_id)
             ]
 
-        if output_json:
-            click.echo(json.dumps(results, indent=2))
-        else:
-            if not results:
+        def _render(data: Any) -> None:
+            if not data:
                 click.echo("No memories found.")
                 return
-
-            click.echo(f"Found {len(results)} memories:\n")
-            for mem in results:
+            click.echo(f"Found {len(data)} memories:\n")
+            for mem in data:
                 click.echo(f"ID: {mem['memory_id']}")
                 click.echo(
                     f"  Content: {mem['content'][:100]}..."
@@ -167,6 +165,13 @@ def query(
                     click.echo(f"  Importance: {mem['importance']}")
                 click.echo(f"  Created: {mem['created_at']}")
                 click.echo()
+
+        render_output(
+            data=results,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
 
     except Exception as e:
         click.echo(f"Error querying memories: {e}", err=True)
@@ -203,7 +208,7 @@ def query(
     default=None,
     help="Filter memories during this period (e.g., '2025', '2025-01'). #1023",
 )
-@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+@add_output_options
 def search(
     query_text: str,
     scope: str | None,
@@ -214,7 +219,7 @@ def search(
     after: str | None,
     before: str | None,
     during: str | None,
-    output_json: bool,
+    output_opts: OutputOptions,
 ) -> None:
     """Semantic search over memories.
 
@@ -242,6 +247,7 @@ def search(
         # JSON output
         nexus memory search "database" --json
     """
+    timing = CommandTiming()
     nx = get_default_filesystem()
 
     try:
@@ -257,27 +263,25 @@ def search(
             )
             search_mode = "keyword"
 
-        results = get_memory_api(nx).search(
-            query=query_text,
-            scope=scope,
-            memory_type=memory_type,
-            limit=limit,
-            search_mode=search_mode,
-            embedding_provider=embedding_provider_obj,
-            after=after,
-            before=before,
-            during=during,
-        )
+        with timing.phase("server"):
+            results = get_memory_api(nx).search(
+                query=query_text,
+                scope=scope,
+                memory_type=memory_type,
+                limit=limit,
+                search_mode=search_mode,
+                embedding_provider=embedding_provider_obj,
+                after=after,
+                before=before,
+                during=during,
+            )
 
-        if output_json:
-            click.echo(json.dumps(results, indent=2))
-        else:
-            if not results:
+        def _render(data: Any) -> None:
+            if not data:
                 click.echo("No memories found.")
                 return
-
-            click.echo(f"Found {len(results)} memories (mode: {search_mode}):\n")
-            for mem in results:
+            click.echo(f"Found {len(data)} memories (mode: {search_mode}):\n")
+            for mem in data:
                 score = mem.get("score", 0)
                 semantic_score = mem.get("semantic_score")
                 keyword_score = mem.get("keyword_score")
@@ -298,6 +302,13 @@ def search(
                 if mem["memory_type"]:
                     click.echo(f"  Type: {mem['memory_type']}")
                 click.echo()
+
+        render_output(
+            data=results,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
 
     except Exception as e:
         click.echo(f"Error searching memories: {e}", err=True)
@@ -322,7 +333,7 @@ def search(
     help="Filter memories during this period (e.g., '2025', '2025-01'). #1023",
 )
 @click.option("--limit", type=int, default=100, help="Maximum number of results")
-@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+@add_output_options
 def list(
     scope: str | None,
     memory_type: str | None,
@@ -333,7 +344,7 @@ def list(
     before: str | None,
     during: str | None,
     limit: int,
-    output_json: bool,
+    output_opts: OutputOptions,
 ) -> None:
     """List memories for current user/agent.
 
@@ -348,30 +359,29 @@ def list(
         nexus memory list --after "2025-01-01"  # List recent memories
         nexus memory list --json
     """
+    timing = CommandTiming()
     nx = get_default_filesystem()
 
     try:
-        results = get_memory_api(nx).list(
-            scope=scope,
-            memory_type=memory_type,
-            namespace=namespace,
-            namespace_prefix=namespace_prefix,
-            state=state,
-            after=after,
-            before=before,
-            during=during,
-            limit=limit,
-        )
+        with timing.phase("server"):
+            results = get_memory_api(nx).list(
+                scope=scope,
+                memory_type=memory_type,
+                namespace=namespace,
+                namespace_prefix=namespace_prefix,
+                state=state,
+                after=after,
+                before=before,
+                during=during,
+                limit=limit,
+            )
 
-        if output_json:
-            click.echo(json.dumps(results, indent=2))
-        else:
-            if not results:
+        def _render(data: Any) -> None:
+            if not data:
                 click.echo("No memories found.")
                 return
-
-            click.echo(f"Found {len(results)} memories:\n")
-            for mem in results:
+            click.echo(f"Found {len(data)} memories:\n")
+            for mem in data:
                 click.echo(f"ID: {mem['memory_id']}")
                 if mem.get("state"):
                     click.echo(f"  State: {mem['state']}")
@@ -388,6 +398,13 @@ def list(
                 click.echo(f"  Created: {mem['created_at']}")
                 click.echo()
 
+        render_output(
+            data=results,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
+
     except Exception as e:
         click.echo(f"Error listing memories: {e}", err=True)
         raise click.Abort() from e
@@ -395,8 +412,8 @@ def list(
 
 @memory.command()
 @click.argument("memory_id")
-@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
-def get(memory_id: str, output_json: bool) -> None:
+@add_output_options
+def get(memory_id: str, output_opts: OutputOptions) -> None:
     """Get a specific memory by ID.
 
     \b
@@ -404,27 +421,35 @@ def get(memory_id: str, output_json: bool) -> None:
         nexus memory get mem_123
         nexus memory get mem_123 --json
     """
+    timing = CommandTiming()
     nx = get_default_filesystem()
 
     try:
-        result = get_memory_api(nx).get(memory_id)
+        with timing.phase("server"):
+            result = get_memory_api(nx).get(memory_id)
+
         if not result:
             click.echo(f"Memory not found: {memory_id}", err=True)
             raise click.Abort()
 
-        if output_json:
-            click.echo(json.dumps(result, indent=2))
-        else:
-            click.echo(f"Memory ID: {result['memory_id']}")
-            click.echo(f"Content: {result['content']}")
-            click.echo(f"User: {result['user_id']}, Agent: {result['agent_id']}")
-            click.echo(f"Scope: {result['scope']}, Visibility: {result['visibility']}")
-            if result["memory_type"]:
-                click.echo(f"Type: {result['memory_type']}")
-            if result["importance"]:
-                click.echo(f"Importance: {result['importance']}")
-            click.echo(f"Created: {result['created_at']}")
-            click.echo(f"Updated: {result['updated_at']}")
+        def _render(data: dict[str, Any]) -> None:
+            click.echo(f"Memory ID: {data['memory_id']}")
+            click.echo(f"Content: {data['content']}")
+            click.echo(f"User: {data['user_id']}, Agent: {data['agent_id']}")
+            click.echo(f"Scope: {data['scope']}, Visibility: {data['visibility']}")
+            if data["memory_type"]:
+                click.echo(f"Type: {data['memory_type']}")
+            if data["importance"]:
+                click.echo(f"Importance: {data['importance']}")
+            click.echo(f"Created: {data['created_at']}")
+            click.echo(f"Updated: {data['updated_at']}")
+
+        render_output(
+            data=result,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
 
     except Exception as e:
         click.echo(f"Error getting memory: {e}", err=True)
@@ -433,8 +458,8 @@ def get(memory_id: str, output_json: bool) -> None:
 
 @memory.command()
 @click.argument("path")
-@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
-def retrieve(path: str, output_json: bool) -> None:
+@add_output_options
+def retrieve(path: str, output_opts: OutputOptions) -> None:
     """Retrieve a memory by namespace path (namespace/path_key).
 
     \b
@@ -442,29 +467,37 @@ def retrieve(path: str, output_json: bool) -> None:
         nexus memory retrieve "user/preferences/ui/settings"
         nexus memory retrieve "knowledge/geography/facts/paris" --json
     """
+    timing = CommandTiming()
     nx = get_default_filesystem()
 
     try:
-        result = get_memory_api(nx).retrieve(path=path)
+        with timing.phase("server"):
+            result = get_memory_api(nx).retrieve(path=path)
+
         if not result:
             click.echo(f"Memory not found at path: {path}", err=True)
             raise click.Abort()
 
-        if output_json:
-            click.echo(json.dumps(result, indent=2))
-        else:
-            click.echo(f"Memory ID: {result['memory_id']}")
-            click.echo(f"Namespace: {result.get('namespace', 'N/A')}")
-            click.echo(f"Path Key: {result.get('path_key', 'N/A')}")
-            click.echo(f"Content: {result['content']}")
-            click.echo(f"User: {result['user_id']}, Agent: {result['agent_id']}")
-            click.echo(f"Scope: {result['scope']}, Visibility: {result['visibility']}")
-            if result.get("memory_type"):
-                click.echo(f"Type: {result['memory_type']}")
-            if result.get("importance"):
-                click.echo(f"Importance: {result['importance']}")
-            click.echo(f"Created: {result['created_at']}")
-            click.echo(f"Updated: {result['updated_at']}")
+        def _render(data: dict[str, Any]) -> None:
+            click.echo(f"Memory ID: {data['memory_id']}")
+            click.echo(f"Namespace: {data.get('namespace', 'N/A')}")
+            click.echo(f"Path Key: {data.get('path_key', 'N/A')}")
+            click.echo(f"Content: {data['content']}")
+            click.echo(f"User: {data['user_id']}, Agent: {data['agent_id']}")
+            click.echo(f"Scope: {data['scope']}, Visibility: {data['visibility']}")
+            if data.get("memory_type"):
+                click.echo(f"Type: {data['memory_type']}")
+            if data.get("importance"):
+                click.echo(f"Importance: {data['importance']}")
+            click.echo(f"Created: {data['created_at']}")
+            click.echo(f"Updated: {data['updated_at']}")
+
+        render_output(
+            data=result,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
 
     except Exception as e:
         click.echo(f"Error retrieving memory: {e}", err=True)
@@ -542,8 +575,8 @@ def deactivate(memory_id: str) -> None:
 
 @memory.command(name="approve-batch")
 @click.argument("memory_ids", nargs=-1, required=True)
-@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
-def approve_batch(memory_ids: tuple[str, ...], output_json: bool) -> None:
+@add_output_options
+def approve_batch(memory_ids: tuple[str, ...], output_opts: OutputOptions) -> None:
     """Approve multiple memories at once.
 
     \b
@@ -551,17 +584,25 @@ def approve_batch(memory_ids: tuple[str, ...], output_json: bool) -> None:
         nexus memory approve-batch mem_1 mem_2 mem_3
         nexus memory approve-batch mem_1 mem_2 --json
     """
+    timing = CommandTiming()
     nx = get_default_filesystem()
 
     try:
-        result = get_memory_api(nx).approve_batch(list(memory_ids))
-        if output_json:
-            click.echo(json.dumps(result, indent=2))
-        else:
-            click.echo(f"Approved: {result['approved']}")
-            click.echo(f"Failed: {result['failed']}")
-            if result["failed"] > 0:
-                click.echo(f"Failed IDs: {', '.join(result['failed_ids'])}")
+        with timing.phase("server"):
+            result = get_memory_api(nx).approve_batch(list(memory_ids))
+
+        def _render(data: dict[str, Any]) -> None:
+            click.echo(f"Approved: {data['approved']}")
+            click.echo(f"Failed: {data['failed']}")
+            if data["failed"] > 0:
+                click.echo(f"Failed IDs: {', '.join(data['failed_ids'])}")
+
+        render_output(
+            data=result,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
 
     except Exception as e:
         click.echo(f"Error approving memories: {e}", err=True)
@@ -570,8 +611,8 @@ def approve_batch(memory_ids: tuple[str, ...], output_json: bool) -> None:
 
 @memory.command(name="deactivate-batch")
 @click.argument("memory_ids", nargs=-1, required=True)
-@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
-def deactivate_batch(memory_ids: tuple[str, ...], output_json: bool) -> None:
+@add_output_options
+def deactivate_batch(memory_ids: tuple[str, ...], output_opts: OutputOptions) -> None:
     """Deactivate multiple memories at once.
 
     \b
@@ -579,17 +620,25 @@ def deactivate_batch(memory_ids: tuple[str, ...], output_json: bool) -> None:
         nexus memory deactivate-batch mem_1 mem_2 mem_3
         nexus memory deactivate-batch mem_1 mem_2 --json
     """
+    timing = CommandTiming()
     nx = get_default_filesystem()
 
     try:
-        result = get_memory_api(nx).deactivate_batch(list(memory_ids))
-        if output_json:
-            click.echo(json.dumps(result, indent=2))
-        else:
-            click.echo(f"Deactivated: {result['deactivated']}")
-            click.echo(f"Failed: {result['failed']}")
-            if result["failed"] > 0:
-                click.echo(f"Failed IDs: {', '.join(result['failed_ids'])}")
+        with timing.phase("server"):
+            result = get_memory_api(nx).deactivate_batch(list(memory_ids))
+
+        def _render(data: dict[str, Any]) -> None:
+            click.echo(f"Deactivated: {data['deactivated']}")
+            click.echo(f"Failed: {data['failed']}")
+            if data["failed"] > 0:
+                click.echo(f"Failed IDs: {', '.join(data['failed_ids'])}")
+
+        render_output(
+            data=result,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
 
     except Exception as e:
         click.echo(f"Error deactivating memories: {e}", err=True)
@@ -598,8 +647,8 @@ def deactivate_batch(memory_ids: tuple[str, ...], output_json: bool) -> None:
 
 @memory.command(name="delete-batch")
 @click.argument("memory_ids", nargs=-1, required=True)
-@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
-def delete_batch(memory_ids: tuple[str, ...], output_json: bool) -> None:
+@add_output_options
+def delete_batch(memory_ids: tuple[str, ...], output_opts: OutputOptions) -> None:
     """Delete multiple memories at once.
 
     \b
@@ -607,17 +656,25 @@ def delete_batch(memory_ids: tuple[str, ...], output_json: bool) -> None:
         nexus memory delete-batch mem_1 mem_2 mem_3
         nexus memory delete-batch mem_1 mem_2 --json
     """
+    timing = CommandTiming()
     nx = get_default_filesystem()
 
     try:
-        result = get_memory_api(nx).delete_batch(list(memory_ids))
-        if output_json:
-            click.echo(json.dumps(result, indent=2))
-        else:
-            click.echo(f"Deleted: {result['deleted']}")
-            click.echo(f"Failed: {result['failed']}")
-            if result["failed"] > 0:
-                click.echo(f"Failed IDs: {', '.join(result['failed_ids'])}")
+        with timing.phase("server"):
+            result = get_memory_api(nx).delete_batch(list(memory_ids))
+
+        def _render(data: dict[str, Any]) -> None:
+            click.echo(f"Deleted: {data['deleted']}")
+            click.echo(f"Failed: {data['failed']}")
+            if data["failed"] > 0:
+                click.echo(f"Failed IDs: {', '.join(data['failed_ids'])}")
+
+        render_output(
+            data=result,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
 
     except Exception as e:
         click.echo(f"Error deleting memories: {e}", err=True)
@@ -677,7 +734,7 @@ def register_memory_cmd(
             ttl=ttl_delta,  # v0.5.0
         )
 
-        console.print(f"[green]✓[/green] Registered memory: {result['path']}")
+        console.print(f"[green]\u2713[/green] Registered memory: {result['path']}")
         if result["name"]:
             console.print(f"  Name: {result['name']}")
         if result["description"]:
@@ -765,13 +822,13 @@ def unregister_memory_cmd(
         # Get memory info first
         info = nx._workspace_rpc_service.get_memory_info(path)
         if not info:
-            console.print(f"[red]✗[/red] Memory not registered: {path}")
+            console.print(f"[red]\u2717[/red] Memory not registered: {path}")
             nx.close()
             return
 
         # Confirm
         if not yes:
-            console.print(f"[yellow]⚠[/yellow]  About to unregister memory: {path}")
+            console.print(f"[yellow]\u26a0[/yellow]  About to unregister memory: {path}")
             if info["name"]:
                 console.print(f"    Name: {info['name']}")
             if info["description"]:
@@ -789,9 +846,9 @@ def unregister_memory_cmd(
         result = nx._workspace_rpc_service.unregister_memory(path)
 
         if result:
-            console.print(f"[green]✓[/green] Unregistered memory: {path}")
+            console.print(f"[green]\u2713[/green] Unregistered memory: {path}")
         else:
-            console.print(f"[red]✗[/red] Failed to unregister memory: {path}")
+            console.print(f"[red]\u2717[/red] Failed to unregister memory: {path}")
 
         nx.close()
 
@@ -818,7 +875,7 @@ def memory_info_cmd(
         info = nx._workspace_rpc_service.get_memory_info(path)
 
         if not info:
-            console.print(f"[red]✗[/red] Memory not registered: {path}")
+            console.print(f"[red]\u2717[/red] Memory not registered: {path}")
             nx.close()
             return
 

@@ -6,13 +6,13 @@ Issue #2811.
 
 import click
 
+from nexus.cli.output import OutputOptions, add_output_options, render_output
+from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
-    JSON_OUTPUT_OPTION,
     REMOTE_API_KEY_OPTION,
     REMOTE_URL_OPTION,
     console,
     get_service_client,
-    output_result,
 )
 
 
@@ -36,12 +36,12 @@ def pay() -> None:
 
 @pay.command("balance")
 @click.argument("agent_id", required=False, default=None)
-@JSON_OUTPUT_OPTION
+@add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
 def pay_balance(
     agent_id: str | None,
-    json_output: bool,
+    output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
@@ -53,8 +53,9 @@ def pay_balance(
         nexus pay balance agent_abc    # Specific agent
         nexus pay balance --json       # JSON output
     """
+    timing = CommandTiming()
     try:
-        with get_service_client(remote_url, remote_api_key) as client:
+        with timing.phase("server"), get_service_client(remote_url, remote_api_key) as client:
             data = client.pay_balance(agent_id)
 
         def _render(d: dict) -> None:
@@ -63,7 +64,12 @@ def pay_balance(
             console.print(f"  Reserved:  [yellow]{d.get('reserved', '0')}[/yellow]")
             console.print(f"  Total:     [bold]{d.get('total', '0')}[/bold]")
 
-        output_result(data, json_output, _render)
+        render_output(
+            data=data,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(1) from None
@@ -80,7 +86,7 @@ def pay_balance(
     help="Payment method",
     show_default=True,
 )
-@JSON_OUTPUT_OPTION
+@add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
 def pay_transfer(
@@ -88,7 +94,7 @@ def pay_transfer(
     amount: str,
     memo: str,
     method: str,
-    json_output: bool,
+    output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
@@ -100,8 +106,9 @@ def pay_transfer(
         nexus pay transfer bob 50.00 --memo "Data license fee"
         nexus pay transfer 0x1234...abcd 5.00 --method x402
     """
+    timing = CommandTiming()
     try:
-        with get_service_client(remote_url, remote_api_key) as client:
+        with timing.phase("server"), get_service_client(remote_url, remote_api_key) as client:
             data = client.pay_transfer(to, amount, memo=memo, method=method)
 
         def _render(d: dict) -> None:
@@ -113,7 +120,12 @@ def pay_transfer(
             if d.get("memo"):
                 console.print(f"  Memo:   {d['memo']}")
 
-        output_result(data, json_output, _render)
+        render_output(
+            data=data,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(1) from None
@@ -122,13 +134,13 @@ def pay_transfer(
 @pay.command("history")
 @click.option("--since", default=None, help="Start time (ISO format or relative, e.g., '1h')")
 @click.option("--limit", default=20, help="Maximum entries to show", show_default=True)
-@JSON_OUTPUT_OPTION
+@add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
 def pay_history(
     since: str | None,
     limit: int,
-    json_output: bool,
+    output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
@@ -140,8 +152,9 @@ def pay_history(
         nexus pay history --since 2024-01-01 --limit 50
         nexus pay history --json
     """
+    timing = CommandTiming()
     try:
-        with get_service_client(remote_url, remote_api_key) as client:
+        with timing.phase("server"), get_service_client(remote_url, remote_api_key) as client:
             data = client.pay_history(since=since, limit=limit)
 
         def _render(d: dict) -> None:
@@ -169,7 +182,12 @@ def pay_history(
                 )
             console.print(table)
 
-        output_result(data, json_output, _render)
+        render_output(
+            data=data,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(1) from None

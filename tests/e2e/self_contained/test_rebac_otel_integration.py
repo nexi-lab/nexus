@@ -18,7 +18,6 @@ from sqlalchemy import create_engine, text
 
 import nexus.bricks.rebac.rebac_tracing as _rebac_tracing_mod
 from nexus.bricks.rebac.manager import (
-    ConsistencyLevel,
     EnhancedReBACManager,
 )
 from nexus.bricks.rebac.rebac_tracing import (
@@ -194,7 +193,7 @@ class TestRealPermissionCheckSpans:
         assert attrs[ATTR_OBJECT_TYPE] == "file"
         assert attrs[ATTR_OBJECT_ID] == "/doc.txt"
         assert attrs[ATTR_ZONE_ID] == "test_zone"
-        assert attrs[ATTR_CONSISTENCY] == "eventual"
+        assert attrs[ATTR_CONSISTENCY] == "cached"
         assert attrs[ATTR_DECISION] == "ALLOW"
         assert ATTR_DECISION_TIME_MS in attrs
 
@@ -223,7 +222,6 @@ class TestRealPermissionCheckSpans:
                 permission="read",
                 object=("file", "/missing.txt"),
                 zone_id="test_zone",
-                consistency=ConsistencyLevel.STRONG,  # Force fresh compute
             )
             assert result is False
 

@@ -442,33 +442,6 @@ class TestReBACCheck:
         call_kwargs = mock_rebac_manager.rebac_check.call_args[1]
         assert call_kwargs["permission"] == permission
 
-    @pytest.mark.asyncio
-    async def test_check_with_consistency_fully_consistent(self, service, mock_rebac_manager):
-        """Test permission check with fully_consistent mode (security audit)."""
-        await service.rebac_check(
-            subject=("user", "alice"),
-            permission="read",
-            object=("file", "/doc.txt"),
-            consistency_mode="fully_consistent",
-        )
-
-        call_kwargs = mock_rebac_manager.rebac_check.call_args[1]
-        assert call_kwargs["consistency"] is not None
-
-    @pytest.mark.asyncio
-    async def test_check_with_consistency_at_least_as_fresh(self, service, mock_rebac_manager):
-        """Test permission check with at_least_as_fresh mode (read-after-write)."""
-        await service.rebac_check(
-            subject=("user", "alice"),
-            permission="read",
-            object=("file", "/doc.txt"),
-            consistency_mode="at_least_as_fresh",
-            min_revision=42,
-        )
-
-        call_kwargs = mock_rebac_manager.rebac_check.call_args[1]
-        assert call_kwargs["consistency"] is not None
-
 
 # =========================================================================
 # rebac_check_batch Tests

@@ -82,7 +82,9 @@ class NexusFederation:
 
                 self._trust_store = TofuTrustStore(tls_cfg.known_zones_path)
 
-        # Cache TLS credentials for gRPC connections
+        # Cache TLS credentials for gRPC connections.
+        # Use TOFU trust store CA bundle when available so federation
+        # works across zones with different CAs (SSH-style TOFU).
         self._tls_config: ZoneTlsConfig | None = getattr(zone_manager, "tls_config", None)
 
     # =========================================================================
@@ -147,6 +149,20 @@ class NexusFederation:
         """
         root_zone = self._mgr.root_zone_id or ROOT_ZONE_ID
 
+        # Step 0: Validate local mount point before any remote operations.
+        # Fail fast so we don't join a Raft group we can't mount.
+        root_store = self._mgr.get_store(root_zone)
+        if root_store is None:
+            raise RuntimeError(f"Root zone '{root_zone}' not found locally")
+        mount_point = root_store.get(local_path)
+        if mount_point is None:
+            raise ValueError(
+                f"Mount point '{local_path}' does not exist in root zone. "
+                f"Create the directory first (mkdir -p)."
+            )
+        if mount_point.is_mount:
+            raise ValueError(f"Mount point '{local_path}' is already a DT_MOUNT. Unmount first.")
+
         # Step 1: Discover zone via peer's DT_MOUNT (VFS layer: sys_stat)
         metadata = await self._discover_mount(peer_addr, remote_path)
 
@@ -173,12 +189,20 @@ class NexusFederation:
 
         # Step 3: Request membership via JoinZone RPC (ConfChange)
         # Auto-forwarded to leader if peer is a follower.
-        await self._request_membership(
-            peer_addr=peer_addr,
-            zone_id=zone_id,
-            node_id=self._mgr.node_id,
-            node_address=getattr(self._mgr, "advertise_addr", peer_addr),
-        )
+        try:
+            await self._request_membership(
+                peer_addr=peer_addr,
+                zone_id=zone_id,
+                node_id=self._mgr.node_id,
+                node_address=getattr(self._mgr, "advertise_addr", peer_addr),
+            )
+        except Exception:
+            # Rollback: remove local zone if membership request failed
+            try:
+                self._mgr.remove_zone(zone_id, force=True)
+            except Exception:
+                logger.warning("Failed to rollback zone '%s' after join failure", zone_id)
+            raise
 
         # Step 4: Mount in root zone (JoinZone handler already incremented i_links_count)
         self._mgr.mount(root_zone, local_path, zone_id, increment_links=False)
@@ -191,10 +215,19 @@ class NexusFederation:
     # =========================================================================
 
     def _build_channel(self, address: str) -> grpc_aio.Channel:
-        """Create an async gRPC channel with optional mTLS."""
+        """Create an async gRPC channel with optional mTLS.
+
+        Uses TOFU trust store CA bundle when available, so federation
+        works across zones with different CAs.
+        """
         if self._tls_config is not None:
+            ca_pem = self._tls_config.ca_pem
+            # Use TOFU CA bundle if trust store has trusted zones
+            if self._trust_store is not None:
+                bundle = self._trust_store.build_ca_bundle(self._tls_config.ca_cert_path)
+                ca_pem = bundle.read_bytes()
             creds = grpc.ssl_channel_credentials(
-                root_certificates=self._tls_config.ca_pem,
+                root_certificates=ca_pem,
                 private_key=self._tls_config.node_key_pem,
                 certificate_chain=self._tls_config.node_cert_pem,
             )

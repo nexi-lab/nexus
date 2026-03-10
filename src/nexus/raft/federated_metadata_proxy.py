@@ -58,6 +58,9 @@ class FederatedMetadataProxy(MetastoreABC):
         self._root_store = root_store
         self._zone_manager = zone_manager
         self._self_address = self_address
+        # Map EC tokens to the store that issued them, so is_committed()
+        # polls the correct zone's Raft log instead of always the root.
+        self._token_stores: dict[int, "RaftMetadataStore"] = {}
 
     @classmethod
     def from_zone_manager(
@@ -154,10 +157,14 @@ class FederatedMetadataProxy(MetastoreABC):
         resolved = self._resolve(metadata.path)
         zone_meta = self._to_zone_metadata(metadata, resolved)
         zone_meta = self._enrich_backend_name(zone_meta)
-        return resolved.store.put(zone_meta, consistency=consistency)
+        token = resolved.store.put(zone_meta, consistency=consistency)
+        if token is not None:
+            self._token_stores[token] = resolved.store
+        return token
 
     def is_committed(self, token: int) -> str | None:
-        return self._root_store.is_committed(token)
+        store = self._token_stores.get(token, self._root_store)
+        return store.is_committed(token)
 
     def delete(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
         resolved = self._resolve(path)
@@ -186,15 +193,18 @@ class FederatedMetadataProxy(MetastoreABC):
             return remapped
 
         # BFS queue: (mount_chain, zone_id)
-        visited: set[str] = {resolved.zone_id}
+        # Deduplicate by (zone_id, mount_path) to allow the same zone
+        # mounted at different paths while still preventing cycles.
+        visited: set[tuple[str, str]] = {(resolved.zone_id, resolved.path)}
         queue: list[tuple[list[tuple[str, str]], str]] = []
 
         for meta in results:
-            if meta.is_mount and meta.target_zone_id and meta.target_zone_id not in visited:
+            visit_key = (meta.target_zone_id or "", meta.path)
+            if meta.is_mount and meta.target_zone_id and visit_key not in visited:
                 queue.append(
                     (resolved.mount_chain + [(resolved.zone_id, meta.path)], meta.target_zone_id)
                 )
-                visited.add(meta.target_zone_id)
+                visited.add(visit_key)
 
         while queue:
             mount_chain, zone_id = queue.pop(0)
@@ -205,9 +215,10 @@ class FederatedMetadataProxy(MetastoreABC):
             child_results = store.list("/", recursive, **kwargs)
             for meta in child_results:
                 remapped.append(self._remap_metadata(meta, mount_chain))
-                if meta.is_mount and meta.target_zone_id and meta.target_zone_id not in visited:
+                visit_key = (meta.target_zone_id or "", meta.path)
+                if meta.is_mount and meta.target_zone_id and visit_key not in visited:
                     queue.append((mount_chain + [(zone_id, meta.path)], meta.target_zone_id))
-                    visited.add(meta.target_zone_id)
+                    visited.add(visit_key)
 
         return remapped
 

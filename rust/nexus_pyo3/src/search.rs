@@ -2,6 +2,7 @@
 
 use memchr::memmem;
 use memmap2::Mmap;
+use nexus_core::search::extract_original_match;
 use nexus_core::search::grep::GrepMatch;
 use nexus_core::search::literal::is_literal_pattern;
 use pyo3::prelude::*;
@@ -123,10 +124,8 @@ pub fn grep_bulk<'py>(
                 if let Some((start, end)) = match_result {
                     let match_text = if matches!(&search_mode, SearchMode::LiteralIgnoreCase { .. })
                     {
-                        line.chars()
-                            .skip(line[..start].chars().count())
-                            .take(end - start)
-                            .collect::<String>()
+                        let line_lower = line.to_lowercase();
+                        extract_original_match(line, &line_lower, start, end)
                     } else {
                         simd_from_utf8(&line_bytes[start..end])
                             .unwrap_or("")
@@ -351,11 +350,8 @@ fn grep_single_file_mmap(
                 let line_lower = line.to_lowercase();
                 if let Some(start) = finder.find(line_lower.as_bytes()) {
                     let end = start + pattern_lower.len();
-                    let match_text = line
-                        .chars()
-                        .skip(line[..start].chars().count())
-                        .take(end - start)
-                        .collect::<String>();
+                    let match_text =
+                        extract_original_match(line, &line_lower, start, end);
 
                     results.push(GrepMatch {
                         file: file_path.to_string(),

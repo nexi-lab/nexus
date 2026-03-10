@@ -330,6 +330,7 @@ class TestSystemServices:
             "resiliency_manager",
             "zone_lifecycle",
             "pipe_manager",
+            "process_table",
             "scheduler_service",
         }
         assert field_names == expected_fields, (

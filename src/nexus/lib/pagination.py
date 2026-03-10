@@ -1,46 +1,18 @@
-"""Cursor-based pagination utilities for Nexus APIs (Issue #937).
+"""Cursor encoding/decoding for brick-layer pagination (Issue #937).
 
-This module provides utilities for implementing cursor-based (keyset) pagination,
-enabling efficient traversal of large datasets at 1M+ file scale.
-
-Key features:
-- O(log n) performance for any page depth (vs O(n) for OFFSET)
-- Tamper-resistant cursors with filter hash validation
-- URL-safe Base64 encoding for cursor tokens
+Brick-layer utilities for tamper-resistant, URL-safe cursor tokens.
+Kernel pagination primitives (PaginatedResult, paginate_iter) live in
+``nexus.core.pagination``.
 """
 
 import base64
 import hashlib
 import json
 import logging
-from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class PaginatedResult:
-    """Result container for paginated list operations.
-
-    Supports cursor-based pagination for efficient traversal of large datasets
-    at 1M+ file scale without OOM or timeouts.
-    """
-
-    items: list[Any]
-    next_cursor: str | None
-    has_more: bool
-    total_count: int | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to JSON-serializable dict for API response."""
-        return {
-            "items": self.items,
-            "next_cursor": self.next_cursor,
-            "has_more": self.has_more,
-            "total_count": self.total_count,
-        }
 
 
 class CursorError(Exception):
@@ -78,10 +50,6 @@ def encode_cursor(
 
     Returns:
         URL-safe base64-encoded cursor string
-
-    Example:
-        >>> cursor = encode_cursor("/files/doc999.txt", "uuid-123", {"prefix": "/files/"})
-        >>> # Returns: "eyJwIjoiL2ZpbGVzL2RvYzk5OS50eHQiLCJpIjoidXVpZC0xMjMiLCJoIjoiYWJjMTIzIn0="
     """
     filters_hash = _hash_filters(filters)
     data = {
@@ -110,28 +78,20 @@ def decode_cursor(cursor: str, filters: dict[str, Any]) -> CursorData:
 
     Raises:
         CursorError: If cursor is malformed, expired, or filters changed
-
-    Example:
-        >>> data = decode_cursor(cursor, {"prefix": "/files/"})
-        >>> print(data.path)  # "/files/doc999.txt"
     """
     try:
-        # Decode base64
         json_bytes = base64.urlsafe_b64decode(cursor.encode("ascii"))
         data = json.loads(json_bytes.decode("utf-8"))
     except (ValueError, json.JSONDecodeError) as e:
         logger.debug(f"Failed to decode cursor: {e}")
         raise CursorError(f"Malformed cursor: {e}") from e
 
-    # Decoded JSON must be an object (dict)
     if not isinstance(data, dict):
         raise CursorError("Malformed cursor: expected JSON object")
 
-    # Validate required fields
     if "p" not in data or "h" not in data:
         raise CursorError("Cursor missing required fields")
 
-    # Validate filters hash to detect tampering or query parameter changes
     expected_hash = _hash_filters(filters)
     if data["h"] != expected_hash:
         raise CursorError(
@@ -146,53 +106,7 @@ def decode_cursor(cursor: str, filters: dict[str, Any]) -> CursorData:
     )
 
 
-def paginate_iter(
-    items_iter: Iterator,
-    limit: int = 1000,
-    cursor_path: str | None = None,
-) -> PaginatedResult:
-    """Paginate a metadata iterator using keyset pagination.
-
-    Service-layer utility: builds a PaginatedResult from list_iter().
-
-    Args:
-        items_iter: Iterator of FileMetadata (from MetastoreABC.list_iter)
-        limit: Maximum items per page
-        cursor_path: Skip entries with path <= cursor_path
-
-    Returns:
-        PaginatedResult with items, next_cursor, has_more
-    """
-    from itertools import islice
-
-    if cursor_path:
-        items_iter = (item for item in items_iter if item.path > cursor_path)
-
-    page = list(islice(items_iter, limit + 1))
-    has_more = len(page) > limit
-    if has_more:
-        page = page[:limit]
-
-    next_cursor = page[-1].path if has_more and page else None
-    return PaginatedResult(
-        items=page,
-        next_cursor=next_cursor,
-        has_more=has_more,
-    )
-
-
 def _hash_filters(filters: dict[str, Any]) -> str:
-    """Create deterministic hash of filter parameters.
-
-    Used to detect if client changed query parameters between pages,
-    which would invalidate the cursor position.
-
-    Args:
-        filters: Dictionary of filter parameters
-
-    Returns:
-        16-character hex hash (truncated SHA-256)
-    """
-    # Sort keys for deterministic ordering
+    """Create deterministic hash of filter parameters."""
     canonical = json.dumps(filters, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode()).hexdigest()[:16]

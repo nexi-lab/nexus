@@ -448,9 +448,13 @@ def open_filesystem(
 # JSON output helpers (Issue #2811)
 # =============================================================================
 
+# DEPRECATED: Use add_output_options + render_output from nexus.cli.output instead.
+# Kept for backwards compatibility with existing commands.
 JSON_OUTPUT_OPTION = click.option("--json", "json_output", is_flag=True, help="Output as JSON")
 
 
+# DEPRECATED: Use add_output_options + render_output from nexus.cli.output instead.
+# Kept for backwards compatibility with existing commands.
 def output_result(data: Any, json_output: bool, rich_fn: Any) -> None:
     """Output data as JSON or rich-formatted text.
 

@@ -42,8 +42,8 @@ from typing import TYPE_CHECKING, Any
 from nexus.contracts.metadata import FileMetadata
 
 if TYPE_CHECKING:
+    from nexus.core.pipe_manager import PipeManager
     from nexus.storage.record_store import RecordStoreABC
-    from nexus.system_services.pipe_manager import PipeManager
 
 logger = logging.getLogger(__name__)
 

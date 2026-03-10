@@ -242,7 +242,7 @@ def list_mounts(
         with timing.phase("server"):
             try:
                 mount_svc = nx.service("mount")
-            assert mount_svc is not None
+                assert mount_svc is not None
                 mounts = _await_if_needed(mount_svc.list_mounts())
             except AttributeError:
                 console.print(
@@ -793,7 +793,9 @@ def sync_jobs(
 
         with timing.phase("server"):
             try:
-                jobs = nx.service("sync_job").list_jobs(mount_point=mount, status=status, limit=limit)
+                jobs = nx.service("sync_job").list_jobs(
+                    mount_point=mount, status=status, limit=limit
+                )
             except AttributeError:
                 console.print("[red]Error:[/red] This Nexus instance doesn't support sync jobs")
                 sys.exit(1)

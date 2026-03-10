@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from nexus.contracts.metadata import FileMetadata
+from nexus.core.pipe_manager import PipeManager
 from nexus.storage.piped_record_store_write_observer import (
     _AUDIT_PIPE_PATH,
     PipedRecordStoreWriteObserver,
@@ -28,7 +29,6 @@ from nexus.storage.piped_record_store_write_observer import (
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.storage.record_store_write_observer import RecordStoreWriteObserver
-from nexus.system_services.pipe_manager import PipeManager
 
 # ── Constants ──────────────────────────────────────────────────────────
 WARMUP = 100

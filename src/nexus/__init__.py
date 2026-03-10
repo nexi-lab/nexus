@@ -536,7 +536,7 @@ def _restore_mounts(nx_fs: "NexusFS") -> None:
             "1",
             "yes",
         )
-        mount_result = nx_fs._mount_persist_service.load_all_mounts(auto_sync=auto_sync)
+        mount_result = nx_fs.service("mount_persist").load_all_mounts(auto_sync=auto_sync)
         if mount_result["loaded"] > 0 or mount_result["failed"] > 0:
             sync_msg = f", {mount_result['synced']} synced" if mount_result["synced"] > 0 else ""
             logger.info(

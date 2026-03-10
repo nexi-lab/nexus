@@ -5,7 +5,7 @@ Enables team-based permissions, hierarchical access, and dynamic inheritance.
 """
 
 import sys
-from typing import Any, cast
+from typing import Any
 
 import click
 from rich.table import Table
@@ -154,7 +154,9 @@ def rebac_create(
         # Create tuple
         # SECURITY: Pass operation_context for execute permission enforcement
         # Only owners (execute permission) can create permissions on files
-        tuple_id = nx.rebac_service.rebac_create_sync(  # type: ignore[attr-defined]
+        rebac = nx.service("rebac")
+        assert rebac is not None, "ReBAC service not available"
+        tuple_id = rebac.rebac_create_sync(
             subject=subject_tuple,
             relation=relation,
             object=(object_type, object_id),
@@ -262,7 +264,9 @@ def rebac_list_cmd(
             obj = (object_type, object_id)
 
         # List tuples
-        tuples = nx.rebac_service.rebac_list_tuples_sync(  # type: ignore[attr-defined]
+        rebac = nx.service("rebac")
+        assert rebac is not None, "ReBAC service not available"
+        tuples = rebac.rebac_list_tuples_sync(
             subject=subject,
             object=obj,
             relation=relation,
@@ -341,7 +345,9 @@ def rebac_delete_cmd(
     try:
         nx = get_filesystem(remote_url, remote_api_key)
 
-        deleted = nx.rebac_service.rebac_delete_sync(tuple_id)  # type: ignore[attr-defined]
+        rebac = nx.service("rebac")
+        assert rebac is not None, "ReBAC service not available"
+        deleted = rebac.rebac_delete_sync(tuple_id)
 
         nx.close()
 
@@ -391,7 +397,9 @@ def rebac_check_cmd(
 
         # Check permission (pass zone_id from --zone-id or NEXUS_ZONE_ID)
         zone = operation_context.get("zone")
-        granted = nx.rebac_service.rebac_check_sync(  # type: ignore[attr-defined]
+        rebac = nx.service("rebac")
+        assert rebac is not None, "ReBAC service not available"
+        granted = rebac.rebac_check_sync(
             subject=(subject_type, subject_id),
             permission=permission,
             object=(object_type, object_id),
@@ -449,7 +457,9 @@ def rebac_expand_cmd(
 
         # Expand permission (pass zone_id from --zone-id or NEXUS_ZONE_ID)
         zone = operation_context.get("zone")
-        subjects = nx.rebac_service.rebac_expand_sync(  # type: ignore[attr-defined]
+        rebac = nx.service("rebac")
+        assert rebac is not None, "ReBAC service not available"
+        subjects = rebac.rebac_expand_sync(
             permission=permission,
             object=(object_type, object_id),
             zone_id=zone,
@@ -543,7 +553,9 @@ def rebac_explain_cmd(
         if resolved_zone_id:
             explain_kwargs["zone_id"] = resolved_zone_id
 
-        explanation = nx.rebac_service.rebac_explain_sync(  # type: ignore[attr-defined]
+        rebac = nx.service("rebac")
+        assert rebac is not None, "ReBAC service not available"
+        explanation = rebac.rebac_explain_sync(
             **explain_kwargs,
         )
 
@@ -795,7 +807,9 @@ def rebac_check_batch_cmd(
         console.print(
             f"[cyan]Checking {len(checks)} permissions (Rust acceleration enabled)...[/cyan]"
         )
-        results = cast(Any, nx).rebac_service.rebac_check_batch_sync(checks)
+        rebac = nx.service("rebac")
+        assert rebac is not None, "ReBAC service not available"
+        results = rebac.rebac_check_batch_sync(checks)
         nx.close()
 
         # Output results
@@ -944,7 +958,9 @@ def namespace_create(
                 config["permissions"][perm_name] = rels.split(",")
 
         # Create namespace
-        nx.rebac_service.namespace_create_sync(object_type=object_type, config=config)  # type: ignore[attr-defined]
+        rebac = nx.service("rebac")
+        assert rebac is not None, "ReBAC service not available"
+        rebac.namespace_create_sync(object_type=object_type, config=config)
 
         console.print(f"[green]✓[/green] Created namespace for '{object_type}'")
 
@@ -978,7 +994,9 @@ def namespace_list(
     try:
         nx = get_filesystem(remote_url, remote_api_key)
 
-        namespaces = nx.rebac_service.namespace_list_sync()  # type: ignore[attr-defined]
+        rebac = nx.service("rebac")
+        assert rebac is not None, "ReBAC service not available"
+        namespaces = rebac.namespace_list_sync()
 
         if output_format == "json":
             import json
@@ -1049,7 +1067,9 @@ def namespace_get(
 
         nx = get_filesystem(remote_url, remote_api_key)
 
-        ns = nx.rebac_service.get_namespace_sync(object_type)  # type: ignore[attr-defined]
+        rebac = nx.service("rebac")
+        assert rebac is not None, "ReBAC service not available"
+        ns = rebac.get_namespace_sync(object_type)
 
         if ns is None:
             console.print(f"[red]✗[/red] Namespace '{object_type}' not found")
@@ -1094,7 +1114,9 @@ def namespace_delete(
 
         nx = get_filesystem(remote_url, remote_api_key)
 
-        deleted = nx.rebac_service.namespace_delete_sync(object_type)  # type: ignore[attr-defined]
+        rebac = nx.service("rebac")
+        assert rebac is not None, "ReBAC service not available"
+        deleted = rebac.namespace_delete_sync(object_type)
 
         if deleted:
             console.print(f"[green]✓[/green] Deleted namespace '{object_type}'")

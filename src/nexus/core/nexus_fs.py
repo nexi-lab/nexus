@@ -2357,7 +2357,7 @@ class NexusFS(  # type: ignore[misc]
                 "or pass coordination_url to NexusFS constructor."
             )
 
-        async with self.events_service.locked(path, timeout=timeout, ttl=ttl, _context=context):
+        async with self.service("events").locked(path, timeout=timeout, ttl=ttl, _context=context):
             # Read current content — sys_read (Tier 1) always returns bytes
             content = self.sys_read(path, context=context)
 
@@ -3959,8 +3959,8 @@ class NexusFS(  # type: ignore[misc]
         limit: int | None = None,
         cursor: str | None = None,
     ) -> builtins.list[str] | builtins.list[dict[str, Any]]:
-        if self.search_service is not None:
-            return self.search_service.list(
+        if self.service("search") is not None:
+            return self.service("search").list(
                 path=path,
                 recursive=recursive,
                 details=details,
@@ -3979,7 +3979,7 @@ class NexusFS(  # type: ignore[misc]
         return [e.path for e in entries]
 
     def glob(self, pattern: str, path: str = "/", context: Any = None) -> builtins.list[str]:
-        return self.search_service.glob(pattern=pattern, path=path, context=context)
+        return self.service("search").glob(pattern=pattern, path=path, context=context)
 
     def grep(
         self,
@@ -3994,7 +3994,7 @@ class NexusFS(  # type: ignore[misc]
         after_context: int = 0,
         invert_match: bool = False,
     ) -> builtins.list[dict[str, Any]]:
-        return self.search_service.grep(
+        return self.service("search").grep(
             pattern=pattern,
             path=path,
             file_pattern=file_pattern,

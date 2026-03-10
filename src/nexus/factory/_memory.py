@@ -63,7 +63,7 @@ def create_memory_service(nx: Any) -> Any:
             agent_id: str | None = None,
             use_paging: bool | None = None,
         ) -> Any:
-            nx._memory_provider.ensure_entity_registry()
+            nx.service("memory_provider").ensure_entity_registry()
             session = nx.SessionLocal()
             do_paging = use_paging if use_paging is not None else _paging
 

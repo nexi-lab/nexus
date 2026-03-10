@@ -44,7 +44,7 @@ def nx(temp_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[NexusFS, No
 
     # Grant admin ownership of root directory for tests
     admin_context = {"user_id": "admin", "groups": [], "is_admin": True, "is_system": False}
-    nx.rebac_service.rebac_create_sync(
+    nx.service("rebac").rebac_create_sync(
         subject=("user", "admin"),
         relation="direct_owner",
         object=("file", "/"),
@@ -76,7 +76,7 @@ class TestZoneAdminSharing:
         nx.sys_write(file_path, b"test content", context=OperationContext(**admin_context))
 
         # Grant bob ownership
-        nx.rebac_service.rebac_create_sync(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "bob"),
             relation="direct_owner",
             object=("file", file_path),
@@ -96,7 +96,7 @@ class TestZoneAdminSharing:
             "zone_id": zone_id,
         }
 
-        share_id = nx.rebac_service.share_with_user_sync(
+        share_id = nx.service("rebac").share_with_user_sync(
             resource=("file", file_path),
             user_id="charlie",
             relation="viewer",
@@ -105,7 +105,7 @@ class TestZoneAdminSharing:
 
         assert share_id
         # Verify charlie can now read the file
-        assert nx.rebac_service.rebac_check_sync(
+        assert nx.service("rebac").rebac_check_sync(
             subject=("user", "charlie"),
             permission="read",
             object=("file", file_path),
@@ -126,7 +126,7 @@ class TestZoneAdminSharing:
         nx.sys_write(file_path, b"test content", context=OperationContext(**admin_context))
 
         # Grant bob ownership of file
-        nx.rebac_service.rebac_create_sync(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "bob"),
             relation="direct_owner",
             object=("file", file_path),
@@ -145,7 +145,7 @@ class TestZoneAdminSharing:
             "zone_id": zone_id,
         }
 
-        share_id = nx.rebac_service.share_with_user_sync(
+        share_id = nx.service("rebac").share_with_user_sync(
             resource=("file", file_path),
             user_id="charlie",
             relation="viewer",
@@ -164,7 +164,7 @@ class TestZoneAdminSharing:
         nx.sys_mkdir(zone1_path, context=OperationContext(**admin_context))
         file1_path = f"{zone1_path}/doc.txt"
         nx.sys_write(file1_path, b"test", context=OperationContext(**admin_context))
-        nx.rebac_service.rebac_create_sync(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "bob"),
             relation="direct_owner",
             object=("file", file1_path),
@@ -176,7 +176,7 @@ class TestZoneAdminSharing:
         nx.sys_mkdir(zone2_path, context=OperationContext(**admin_context))
         file2_path = f"{zone2_path}/doc.txt"
         nx.sys_write(file2_path, b"test", context=OperationContext(**admin_context))
-        nx.rebac_service.rebac_create_sync(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "dave"),
             relation="direct_owner",
             object=("file", file2_path),
@@ -196,7 +196,7 @@ class TestZoneAdminSharing:
         }
 
         with pytest.raises(PermissionError, match="Only owners or zone admins can share"):
-            nx.rebac_service.share_with_user_sync(
+            nx.service("rebac").share_with_user_sync(
                 resource=("file", file2_path),  # File in techcorp
                 user_id="charlie",
                 relation="viewer",
@@ -216,7 +216,7 @@ class TestZoneAdminSharing:
         nx.sys_write(file_path, b"test content", context=OperationContext(**admin_context))
 
         # Grant bob ownership
-        nx.rebac_service.rebac_create_sync(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "bob"),
             relation="direct_owner",
             object=("file", file_path),
@@ -237,7 +237,7 @@ class TestZoneAdminSharing:
         }
 
         with pytest.raises(PermissionError, match="Only owners or zone admins can share"):
-            nx.rebac_service.share_with_user_sync(
+            nx.service("rebac").share_with_user_sync(
                 resource=("file", file_path),
                 user_id="charlie",
                 relation="viewer",
@@ -257,7 +257,7 @@ class TestZoneAdminSharing:
         nx.sys_write(file_path, b"test content", context=OperationContext(**admin_context))
 
         # Grant bob ownership
-        nx.rebac_service.rebac_create_sync(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "bob"),
             relation="direct_owner",
             object=("file", file_path),
@@ -266,13 +266,13 @@ class TestZoneAdminSharing:
         )
 
         # Create group with members
-        nx.rebac_service.rebac_create_sync(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "charlie"),
             relation="member",
             object=("group", "developers"),
             context=admin_context,
         )
-        nx.rebac_service.rebac_create_sync(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "dave"),
             relation="member",
             object=("group", "developers"),
@@ -291,7 +291,7 @@ class TestZoneAdminSharing:
             "zone_id": zone_id,
         }
 
-        share_id = nx.rebac_service.share_with_group_sync(
+        share_id = nx.service("rebac").share_with_group_sync(
             resource=("file", file_path),
             group_id="developers",
             relation="viewer",
@@ -300,12 +300,12 @@ class TestZoneAdminSharing:
 
         assert share_id
         # Verify group members can read the file
-        assert nx.rebac_service.rebac_check_sync(
+        assert nx.service("rebac").rebac_check_sync(
             subject=("user", "charlie"),
             permission="read",
             object=("file", file_path),
         )
-        assert nx.rebac_service.rebac_check_sync(
+        assert nx.service("rebac").rebac_check_sync(
             subject=("user", "dave"),
             permission="read",
             object=("file", file_path),
@@ -328,7 +328,7 @@ class TestBackwardCompatibility:
         nx.sys_write(file_path, b"test content", context=OperationContext(**admin_context))
 
         # Grant bob ownership
-        nx.rebac_service.rebac_create_sync(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "bob"),
             relation="direct_owner",
             object=("file", file_path),
@@ -345,7 +345,7 @@ class TestBackwardCompatibility:
             "zone_id": zone_id,
         }
 
-        share_id = nx.rebac_service.share_with_user_sync(
+        share_id = nx.service("rebac").share_with_user_sync(
             resource=("file", file_path),
             user_id="alice",
             relation="viewer",

@@ -173,7 +173,7 @@ def test_sync_mount_ensures_directory_exists(nx_with_mount):
     ctx = OperationContext(user_id="test-user", groups=[], zone_id="test", is_admin=True)
 
     # Use mount_core_service.add_mount (sync) which properly grants permissions
-    mount_point = nx._mount_core_service.add_mount(
+    mount_point = nx.service("mount_core").add_mount(
         mount_point="/zone/test/old/mount",
         backend_type="cas_local",
         backend_config={"data_dir": str(mount_dir)},
@@ -188,7 +188,7 @@ def test_sync_mount_ensures_directory_exists(nx_with_mount):
         mount_point=mount_point,
         context=ctx,
     )
-    result = nx._sync_service.sync_mount(sync_ctx)
+    result = nx.service("sync").sync_mount(sync_ctx)
 
     # Verify directory exists after sync
     assert nx.metadata.exists("/zone/test/old")
@@ -207,7 +207,7 @@ def test_add_mount_via_api_creates_directory(nx_with_mount):
     mount_dir.mkdir()
 
     # Use mount_core_service.add_mount (sync) instead of removed nx.add_mount
-    mount_id = nx._mount_core_service.add_mount(
+    mount_id = nx.service("mount_core").add_mount(
         mount_point="/api/mount",
         backend_type="cas_local",
         backend_config={"data_dir": str(mount_dir)},

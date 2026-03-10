@@ -289,18 +289,18 @@ class TestMemoryDelegation:
     def test_memory_provider_returns_fresh_instance(self, nx):
         """_memory_provider.get_for_context() should return a fresh Memory per context."""
         ctx = {"zone_id": "test-zone", "user_id": "alice"}
-        mem = nx._memory_provider.get_for_context(ctx)
+        mem = nx.service("memory_provider").get_for_context(ctx)
         assert mem is not None
         assert hasattr(mem, "store")
 
     def test_memory_provider_with_none_context(self, nx):
         """_memory_provider.get_for_context(None) should use defaults."""
-        mem = nx._memory_provider.get_for_context(None)
+        mem = nx.service("memory_provider").get_for_context(None)
         assert mem is not None
 
     def test_ensure_entity_registry(self, nx):
         """_memory_provider.ensure_entity_registry should return an EntityRegistry."""
-        reg = nx._memory_provider.ensure_entity_registry()
+        reg = nx.service("memory_provider").ensure_entity_registry()
         assert reg is not None
         assert hasattr(reg, "session") or hasattr(reg, "_session_factory")
 
@@ -576,7 +576,7 @@ class TestFastAPIIntegration:
         """_memory_provider.get_for_context() should work when called as server does."""
         nx = client["nx"]
         context_dict = {"zone_id": "root", "user_id": "test-user"}
-        mem = nx._memory_provider.get_for_context(context_dict)
+        mem = nx.service("memory_provider").get_for_context(context_dict)
         assert mem is not None
         assert hasattr(mem, "store")
 
@@ -715,18 +715,15 @@ class TestFactoryServiceWiring:
 
     def test_memory_provider_wired(self, nx):
         """MemoryProvider should be wired by service_wiring."""
-        assert hasattr(nx, "_memory_provider")
-        assert nx._memory_provider is not None
+        assert nx.service("memory_provider") is not None
 
     def test_sync_service_wired(self, nx):
         """SyncService should be wired."""
-        assert hasattr(nx, "_sync_service")
-        assert nx._sync_service is not None
+        assert nx.service("sync") is not None
 
     def test_sync_job_service_wired(self, nx):
         """SyncJobService should be wired."""
-        assert hasattr(nx, "_sync_job_service")
-        assert nx._sync_job_service is not None
+        assert nx.service("sync_job") is not None
 
     def test_version_service_wired(self, nx):
         """VersionService should be wired by factory."""
@@ -747,7 +744,7 @@ class TestFactoryServiceWiring:
 
     def test_entity_registry_wired(self, nx):
         """EntityRegistry should be wired by factory."""
-        reg = nx._memory_provider.ensure_entity_registry()
+        reg = nx.service("memory_provider").ensure_entity_registry()
         assert reg is not None
 
     def test_kernel_dispatch_wired(self, nx):

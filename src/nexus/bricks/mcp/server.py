@@ -657,7 +657,7 @@ def create_mcp_server(
             With pagination: nexus_glob("**/*.py", "/workspace", limit=50, offset=0)
         """
         nx_instance: Any = _get_nexus_instance(ctx)
-        _search = getattr(nx_instance, "search_service", None)
+        _search = nx_instance.service("search")
         if _search is not None:
             all_matches = _search.glob(pattern, path)
         else:
@@ -728,7 +728,7 @@ def create_mcp_server(
             To get next 50 matches: nexus_grep("TODO", "/workspace", limit=50, offset=50)
         """
         nx_instance: Any = _get_nexus_instance(ctx)
-        _search = getattr(nx_instance, "search_service", None)
+        _search = nx_instance.service("search")
         if _search is not None:
             all_results = _search.grep(pattern, path, ignore_case=ignore_case)
         else:
@@ -854,7 +854,7 @@ def create_mcp_server(
             Success message or error
         """
         nx_instance = _get_nexus_instance(ctx)
-        _provider = getattr(nx_instance, "_memory_provider", None)
+        _provider = nx_instance.service("memory_provider")
         if _provider is None:
             return tool_error("unavailable", "Memory system not available (requires NexusFS).")
         mem = _provider.get_or_create()
@@ -903,7 +903,7 @@ def create_mcp_server(
             JSON string with matching memories
         """
         nx_instance = _get_nexus_instance(ctx)
-        _provider = getattr(nx_instance, "_memory_provider", None)
+        _provider = nx_instance.service("memory_provider")
         if _provider is None:
             return tool_error("unavailable", "Memory system not available (requires NexusFS).")
         mem = _provider.get_or_create()
@@ -1041,7 +1041,7 @@ def create_mcp_server(
                 Execution result with stdout, stderr, exit_code, and execution time
             """
             nx_instance: Any = _get_nexus_instance(ctx)
-            result = nx_instance._sandbox_rpc_service.sandbox_run(
+            result = nx_instance.service("sandbox_rpc").sandbox_run(
                 sandbox_id=sandbox_id, language="python", code=code, timeout=300
             )
             return _format_sandbox_result(result)
@@ -1059,7 +1059,7 @@ def create_mcp_server(
                 Execution result with stdout, stderr, exit_code, and execution time
             """
             nx_instance: Any = _get_nexus_instance(ctx)
-            result = nx_instance._sandbox_rpc_service.sandbox_run(
+            result = nx_instance.service("sandbox_rpc").sandbox_run(
                 sandbox_id=sandbox_id, language="bash", code=command, timeout=300
             )
             return _format_sandbox_result(result)
@@ -1079,7 +1079,7 @@ def create_mcp_server(
                 JSON string with sandbox_id and metadata
             """
             nx_instance: Any = _get_nexus_instance(ctx)
-            result = nx_instance._sandbox_rpc_service.sandbox_create(
+            result = nx_instance.service("sandbox_rpc").sandbox_create(
                 name=name, ttl_minutes=ttl_minutes
             )
             return json.dumps(result, indent=2)
@@ -1093,7 +1093,7 @@ def create_mcp_server(
                 JSON string with list of sandboxes
             """
             nx_instance: Any = _get_nexus_instance(ctx)
-            result = nx_instance._sandbox_rpc_service.sandbox_list()
+            result = nx_instance.service("sandbox_rpc").sandbox_list()
             return json.dumps(result, indent=2)
 
         @mcp.tool()
@@ -1108,7 +1108,7 @@ def create_mcp_server(
                 Success message or error
             """
             nx_instance: Any = _get_nexus_instance(ctx)
-            nx_instance._sandbox_rpc_service.sandbox_stop(sandbox_id)
+            nx_instance.service("sandbox_rpc").sandbox_stop(sandbox_id)
             return f"Successfully stopped sandbox {sandbox_id}"
 
     # =========================================================================

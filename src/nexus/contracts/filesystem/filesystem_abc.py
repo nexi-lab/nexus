@@ -181,10 +181,15 @@ class NexusFilesystemABC(ABC):
         details: bool = False,
         show_parsed: bool = True,
         context: Any = None,
-    ) -> builtins.list[str] | builtins.list[dict[str, Any]]:
+        limit: int | None = None,
+        cursor: str | None = None,
+    ) -> builtins.list[str] | builtins.list[dict[str, Any]] | Any:
         """List directory entries (POSIX readdir(3)).
 
         Replaces ``list()`` — readdir is the POSIX name.
+
+        When *limit* is provided, returns a PaginatedResult instead of
+        a plain list.
         """
         ...
 

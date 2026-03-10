@@ -12,7 +12,6 @@ without creating cross-tier imports.
 
 from __future__ import annotations
 
-import fnmatch
 import functools
 import re
 
@@ -150,8 +149,11 @@ def path_matches_pattern(path: str, pattern: str) -> bool:
             return False
         return bool(compiled.match(path))
 
-    # Simple patterns without ** use fnmatch
-    return fnmatch.fnmatch(path, pattern)
+    # Simple patterns also use the regex compiler so * does not cross /
+    compiled = _compile_glob_pattern(pattern)
+    if compiled is None:
+        return False
+    return bool(compiled.match(path))
 
 
 def unscope_internal_path(path: str) -> str:

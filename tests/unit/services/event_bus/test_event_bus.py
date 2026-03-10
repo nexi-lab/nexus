@@ -263,8 +263,8 @@ class TestFileEventPathMatching:
 
         assert event.matches_path_pattern("/inbox/*.txt") is True
         assert event.matches_path_pattern("/inbox/*.pdf") is False
-        # Note: fnmatch's * matches any characters, so /*.txt matches /inbox/test.txt
-        assert event.matches_path_pattern("/*.txt") is True  # fnmatch * matches slashes too
+        # * does NOT cross / boundaries (proper glob semantics, not fnmatch)
+        assert event.matches_path_pattern("/*.txt") is False  # * stops at /
 
     def test_glob_question_pattern(self):
         """Test glob ? pattern matching."""

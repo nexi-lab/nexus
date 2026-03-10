@@ -36,6 +36,8 @@ class RPCEncoder(json.JSONEncoder):
         """Encode special types."""
         if isinstance(obj, bytes):
             return {"__type__": "bytes", "data": base64.b64encode(obj).decode("utf-8")}
+        elif isinstance(obj, date) and not isinstance(obj, datetime):
+            return {"__type__": "date", "data": obj.isoformat()}
         elif isinstance(obj, datetime):
             return {"__type__": "datetime", "data": obj.isoformat()}
         elif isinstance(obj, type(obj)) and obj.__class__.__name__ == "timedelta":
@@ -62,6 +64,8 @@ def rpc_decode_hook(obj: Any) -> Any:
             return base64.b64decode(obj["data"])
         elif obj["__type__"] == "datetime":
             return datetime.fromisoformat(obj["data"])
+        elif obj["__type__"] == "date":
+            return date.fromisoformat(obj["data"])
         elif obj["__type__"] == "timedelta":
             from datetime import timedelta
 
@@ -89,8 +93,10 @@ def _prepare_for_orjson(obj: Any) -> Any:
     """
     if isinstance(obj, bytes):
         return {"__type__": "bytes", "data": base64.b64encode(obj).decode("utf-8")}
-    elif isinstance(obj, (datetime, date)):
+    elif isinstance(obj, datetime):
         return {"__type__": "datetime", "data": obj.isoformat()}
+    elif isinstance(obj, date):
+        return {"__type__": "date", "data": obj.isoformat()}
     elif isinstance(obj, timedelta):
         return {"__type__": "timedelta", "seconds": obj.total_seconds()}
     elif isinstance(obj, dict):

@@ -37,7 +37,7 @@ class SubscriptionCreate(BaseModel):
         # SSRF protection: block private/internal IPs (Issue #1596)
         from nexus.lib.security.url_validator import validate_outbound_url
 
-        validate_outbound_url(v)
+        validate_outbound_url(v)  # raises ValueError on blocked IPs
         return v
 
     @field_validator("event_types")
@@ -78,7 +78,7 @@ class SubscriptionUpdate(BaseModel):
             # SSRF protection: block private/internal IPs (Issue #1596)
             from nexus.lib.security.url_validator import validate_outbound_url
 
-            validate_outbound_url(v)
+            validate_outbound_url(v)  # raises ValueError on blocked IPs
         return v
 
     @field_validator("event_types")

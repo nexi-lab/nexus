@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import ProgressCallback, SyncContext, SyncResult
-from nexus.core.router import RouteResult
+from nexus.core.router import PipeRouteResult
 from nexus.lib.context_utils import get_zone_id
 from nexus.lib.permission_utils import check_permission
 
@@ -195,7 +195,7 @@ class SyncService:
             raise ValueError(f"Mount not found: {ctx.mount_point}")
 
         route = self._gw.router.route(ctx.mount_point)
-        if not isinstance(route, RouteResult):
+        if isinstance(route, PipeRouteResult):
             raise ValueError(f"Cannot sync pipe path: {ctx.mount_point}")
         backend = route.backend
         backend_name = type(backend).__name__

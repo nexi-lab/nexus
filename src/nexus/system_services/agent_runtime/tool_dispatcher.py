@@ -415,6 +415,7 @@ class ToolDispatcher:
             # Fallback: use sys_readdir if glob not available
             try:
                 raw_entries = self._vfs.sys_readdir(path, recursive=True)
+                assert isinstance(raw_entries, list)  # no limit → always list
                 files = [str(e) for e in raw_entries]
             except Exception:
                 return "glob unavailable: search brick not enabled"
@@ -442,6 +443,8 @@ class ToolDispatcher:
             entries = self._vfs.sys_readdir(path, recursive=recursive, context=ctx)
         except Exception as exc:
             return f"Error listing {path}: {exc}"
+
+        assert isinstance(entries, list)  # no limit → always list
 
         if not entries:
             return f"Empty directory: {path}"

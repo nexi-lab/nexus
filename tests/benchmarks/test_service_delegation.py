@@ -32,6 +32,8 @@ def mock_nexus_fs():
     pre-defined values to isolate delegation overhead.
     """
     fs = object.__new__(NexusFS)
+    fs.metadata = MagicMock()
+    fs.metadata.list = MagicMock(return_value=[])
     fs.version_service = MagicMock()
     fs.version_service.get_version = AsyncMock(return_value=b"benchmark")
     fs.version_service.list_versions = AsyncMock(return_value=[{"v": 1}])

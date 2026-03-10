@@ -57,14 +57,24 @@ def reputation_show(
     def _render(d: dict) -> None:
         from nexus.cli.utils import console
 
+        def _beta_score(prefix: str) -> str:
+            """Compute score from Bayesian alpha/beta: alpha / (alpha + beta)."""
+            alpha = d.get(f"{prefix}_alpha")
+            beta = d.get(f"{prefix}_beta")
+            if alpha is not None and beta is not None and (alpha + beta) > 0:
+                return f"{alpha / (alpha + beta):.2f}"
+            return "N/A"
+
         score = d.get("composite_score", d.get("score", "N/A"))
+        confidence = d.get("composite_confidence", "N/A")
         console.print(f"[bold cyan]Reputation: {agent_id}[/bold cyan]")
-        console.print(f"  Composite Score: [bold]{score}[/bold]")
-        console.print(f"  Reliability:     {d.get('reliability_score', 'N/A')}")
-        console.print(f"  Quality:         {d.get('quality_score', 'N/A')}")
-        console.print(f"  Timeliness:      {d.get('timeliness_score', 'N/A')}")
-        console.print(f"  Fairness:        {d.get('fairness_score', 'N/A')}")
-        console.print(f"  Total Ratings:   {d.get('total_ratings', 0)}")
+        console.print(f"  Composite Score:      [bold]{score}[/bold]")
+        console.print(f"  Composite Confidence: {confidence}")
+        console.print(f"  Reliability:          {_beta_score('reliability')}")
+        console.print(f"  Quality:              {_beta_score('quality')}")
+        console.print(f"  Timeliness:           {_beta_score('timeliness')}")
+        console.print(f"  Fairness:             {_beta_score('fairness')}")
+        console.print(f"  Total Interactions:   {d.get('total_interactions', 0)}")
 
     return ServiceResult(data=data, human_formatter=_render)
 
@@ -104,14 +114,14 @@ def reputation_leaderboard(
         table.add_column("#", justify="right", style="dim")
         table.add_column("Agent")
         table.add_column("Score", justify="right", style="green")
-        table.add_column("Ratings", justify="right")
+        table.add_column("Interactions", justify="right")
 
         for i, entry in enumerate(entries, 1):
             table.add_row(
                 str(i),
                 entry.get("agent_id", ""),
                 str(entry.get("composite_score", entry.get("score", ""))),
-                str(entry.get("total_ratings", "")),
+                str(entry.get("total_interactions", "")),
             )
         console.print(table)
 

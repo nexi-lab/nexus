@@ -50,11 +50,9 @@ def identity_show(client: IdentityClient, agent_id: str) -> ServiceResult:
 
         console.print(f"[bold cyan]Identity: {agent_id}[/bold cyan]")
         console.print(f"  DID:        {d.get('did', 'N/A')}")
-        console.print(f"  Public Key: {d.get('public_key', 'N/A')}")
+        console.print(f"  Key ID:     {d.get('key_id', 'N/A')}")
+        console.print(f"  Public Key: {d.get('public_key_hex', d.get('public_key', 'N/A'))}")
         console.print(f"  Algorithm:  {d.get('algorithm', 'Ed25519')}")
-        caps = d.get("capabilities", [])
-        if caps:
-            console.print(f"  Capabilities: {', '.join(caps)}")
 
     return ServiceResult(data=data, human_formatter=_render)
 
@@ -125,16 +123,16 @@ def identity_credentials(client: IdentityClient, agent_id: str) -> ServiceResult
 
         table = Table(title=f"Credentials for {agent_id}")
         table.add_column("ID", style="dim")
-        table.add_column("Capabilities")
+        table.add_column("Issuer DID")
         table.add_column("Expires", style="dim")
-        table.add_column("Status")
+        table.add_column("Active")
 
         for c in creds:
             table.add_row(
                 c.get("credential_id", "")[:12],
-                ", ".join(c.get("capabilities", [])),
+                c.get("issuer_did", "")[:20],
                 c.get("expires_at", "")[:19],
-                c.get("status", ""),
+                "Yes" if c.get("is_active") else "No",
             )
         console.print(table)
 
@@ -164,12 +162,12 @@ def identity_passport(client: IdentityClient, agent_id: str) -> ServiceResult:
 
         console.print(f"[bold cyan]Agent Passport: {agent_id}[/bold cyan]")
         console.print(f"  DID:        {d.get('did', 'N/A')}")
-        console.print(f"  Public Key: {d.get('public_key', 'N/A')}")
+        console.print(f"  Public Key: {d.get('public_key_hex', d.get('public_key', 'N/A'))}")
         creds = d.get("credentials", [])
         console.print(f"  Credentials: {len(creds)} active")
         for c in creds[:5]:
             console.print(
-                f"    - {c.get('credential_id', '')[:12]}: {', '.join(c.get('capabilities', []))}"
+                f"    - {c.get('credential_id', '')[:12]}: {c.get('issuer_did', '')[:20]}"
             )
 
     return ServiceResult(data=data, human_formatter=_render)

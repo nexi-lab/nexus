@@ -8,7 +8,12 @@ from nexus.cli.clients.base import BaseServiceClient
 
 
 class ShareClient(BaseServiceClient):
-    """Client for share link management endpoints."""
+    """Client for share link management endpoints.
+
+    NOTE: The /api/v2/share-links endpoints are not yet implemented
+    server-side. These commands will return 404 until the server adds
+    the share-links REST router. See Issue #2812.
+    """
 
     def create(
         self,

@@ -111,35 +111,3 @@ class TestRlmInfer:
         runner = CliRunner()
         result = runner.invoke(rlm, ["infer", "/doc.pdf", "--prompt", "Summarize"])
         assert result.exit_code != 0
-
-
-class TestRlmStatus:
-    def test_happy_path(self) -> None:
-        runner = CliRunner()
-        stack, _ = _patch_client(status={"available": True, "model": "gpt-4", "max_concurrent": 10})
-        with stack:
-            result = runner.invoke(rlm, ["status", "--remote-url", MOCK_URL])
-        assert result.exit_code == 0
-        assert "Yes" in result.output
-
-    def test_json_output(self) -> None:
-        runner = CliRunner()
-        stack, _ = _patch_client(status={"available": True, "model": "gpt-4"})
-        with stack:
-            result = runner.invoke(rlm, ["status", "--remote-url", MOCK_URL, "--json"])
-        assert result.exit_code == 0
-        data = json.loads(result.output)
-        assert data["data"]["available"] is True
-
-    def test_unavailable_status(self) -> None:
-        runner = CliRunner()
-        stack, _ = _patch_client(status={"available": False})
-        with stack:
-            result = runner.invoke(rlm, ["status", "--remote-url", MOCK_URL])
-        assert result.exit_code == 0
-        assert "No" in result.output
-
-    def test_missing_url_exits_nonzero(self) -> None:
-        runner = CliRunner()
-        result = runner.invoke(rlm, ["status"])
-        assert result.exit_code != 0

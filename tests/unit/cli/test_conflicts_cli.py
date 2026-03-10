@@ -45,8 +45,8 @@ class TestConflictsList:
                     {
                         "conflict_id": "c1",
                         "path": "/file.txt",
-                        "conflict_type": "write-write",
-                        "detected_at": "2025-01-01T00:00:00",
+                        "backend_name": "s3-main",
+                        "status": "unresolved",
                     }
                 ]
             }
@@ -65,9 +65,7 @@ class TestConflictsList:
         runner = CliRunner(env=_ENV)
         with _mock_client(
             list={
-                "conflicts": [
-                    {"conflict_id": "c1", "path": "/file.txt", "conflict_type": "write-write"}
-                ]
+                "conflicts": [{"conflict_id": "c1", "path": "/file.txt", "backend_name": "s3-main"}]
             }
         ):
             result = runner.invoke(conflicts, ["list", "--remote-url", MOCK_URL, "--json"])
@@ -87,10 +85,13 @@ class TestConflictsShow:
         with _mock_client(
             show={
                 "path": "/file.txt",
-                "conflict_type": "write-write",
-                "ours_version": 3,
-                "theirs_version": 4,
-                "detected_at": "2025-01-01T00:00:00",
+                "backend_name": "s3-main",
+                "strategy": "last-writer-wins",
+                "outcome": "nexus_wins",
+                "status": "resolved",
+                "resolved_at": "2025-01-01T12:00:00",
+                "nexus_content_hash": "abc123",
+                "backend_content_hash": "def456",
             }
         ):
             result = runner.invoke(conflicts, ["show", "c1", "--remote-url", MOCK_URL])
@@ -102,15 +103,16 @@ class TestConflictsShow:
         with _mock_client(
             show={
                 "path": "/file.txt",
-                "conflict_type": "write-write",
-                "ours_version": 3,
-                "theirs_version": 4,
+                "backend_name": "s3-main",
+                "strategy": "last-writer-wins",
+                "outcome": "nexus_wins",
+                "status": "resolved",
             }
         ):
             result = runner.invoke(conflicts, ["show", "c1", "--remote-url", MOCK_URL, "--json"])
         assert result.exit_code == 0
         data = json.loads(result.output)
-        assert data["data"]["ours_version"] == 3
+        assert data["data"]["backend_name"] == "s3-main"
 
     def test_client_called_with_id(self) -> None:
         runner = CliRunner(env=_ENV)

@@ -21,11 +21,3 @@ class SchedulerClient(BaseServiceClient):
     def cancel_task(self, task_id: str) -> dict[str, Any]:
         """Cancel a running task."""
         return self._request("POST", f"/api/v2/scheduler/task/{task_id}/cancel")
-
-    def pause(self) -> dict[str, Any]:
-        """Pause the scheduler."""
-        return self._request("POST", "/api/v2/scheduler/pause")
-
-    def resume(self) -> dict[str, Any]:
-        """Resume the scheduler."""
-        return self._request("POST", "/api/v2/scheduler/resume")

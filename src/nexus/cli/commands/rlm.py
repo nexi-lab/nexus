@@ -24,7 +24,6 @@ def rlm() -> None:
     \b
     Examples:
         nexus rlm infer /doc.pdf --prompt "Summarize this document"
-        nexus rlm status --json
     """
 
 
@@ -71,35 +70,5 @@ def rlm_infer(
         console.print(f"  Tokens:     {tokens}")
         console.print()
         console.print(answer)
-
-    return ServiceResult(data=data, human_formatter=_render)
-
-
-@rlm.command("status")
-@add_output_options
-@REMOTE_API_KEY_OPTION
-@REMOTE_URL_OPTION
-@service_command(client_class=RLMClient)
-def rlm_status(client: RLMClient) -> ServiceResult:
-    """Show RLM service status.
-
-    \b
-    Examples:
-        nexus rlm status
-        nexus rlm status --json
-    """
-    data = client.status()
-
-    def _render(d: dict) -> None:
-        from nexus.cli.utils import console
-
-        console.print("[bold cyan]RLM Service Status[/bold cyan]")
-        console.print(
-            f"  Available: {'[green]Yes[/green]' if d.get('available') else '[red]No[/red]'}"
-        )
-        if d.get("model"):
-            console.print(f"  Model:     {d['model']}")
-        if d.get("max_concurrent"):
-            console.print(f"  Capacity:  {d['max_concurrent']} concurrent")
 
     return ServiceResult(data=data, human_formatter=_render)

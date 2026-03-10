@@ -39,27 +39,29 @@ def _mock_client(**overrides: Any):
 class TestGraphEntity:
     def test_happy_path(self) -> None:
         runner = CliRunner(env=_ENV)
-        with _mock_client(entity={"entity_id": "e1", "type": "concept", "label": "ML"}):
+        with _mock_client(entity={"entity": {"entity_id": "e1", "type": "concept", "label": "ML"}}):
             result = runner.invoke(graph, ["entity", "e1", "--remote-url", MOCK_URL])
         assert result.exit_code == 0
         assert "ML" in result.output
 
     def test_json_output(self) -> None:
         runner = CliRunner(env=_ENV)
-        with _mock_client(entity={"entity_id": "e1", "type": "concept", "label": "ML"}):
+        with _mock_client(entity={"entity": {"entity_id": "e1", "type": "concept", "label": "ML"}}):
             result = runner.invoke(graph, ["entity", "e1", "--remote-url", MOCK_URL, "--json"])
         assert result.exit_code == 0
         data = json.loads(result.output)
-        assert data["data"]["entity_id"] == "e1"
+        assert data["data"]["entity"]["entity_id"] == "e1"
 
     def test_with_properties(self) -> None:
         runner = CliRunner(env=_ENV)
         with _mock_client(
             entity={
-                "entity_id": "e1",
-                "type": "concept",
-                "label": "ML",
-                "properties": {"domain": "AI", "year": 2020},
+                "entity": {
+                    "entity_id": "e1",
+                    "type": "concept",
+                    "label": "ML",
+                    "properties": {"domain": "AI", "year": 2020},
+                }
             }
         ):
             result = runner.invoke(graph, ["entity", "e1", "--remote-url", MOCK_URL])
@@ -68,7 +70,7 @@ class TestGraphEntity:
 
     def test_client_called_with_entity_id(self) -> None:
         runner = CliRunner(env=_ENV)
-        with _mock_client(entity={"entity_id": "e1"}) as mocks:
+        with _mock_client(entity={"entity": {"entity_id": "e1"}}) as mocks:
             runner.invoke(graph, ["entity", "e1", "--remote-url", MOCK_URL])
         mocks["entity"].assert_called_once_with("e1")
 
@@ -85,10 +87,13 @@ class TestGraphNeighbors:
             neighbors={
                 "neighbors": [
                     {
-                        "entity_id": "e2",
-                        "type": "concept",
-                        "label": "DL",
-                        "relation": "related_to",
+                        "entity": {
+                            "entity_id": "e2",
+                            "type": "concept",
+                            "label": "DL",
+                        },
+                        "depth": 1,
+                        "path": [],
                     }
                 ]
             }
@@ -121,7 +126,15 @@ class TestGraphNeighbors:
     def test_json_output(self) -> None:
         runner = CliRunner(env=_ENV)
         with _mock_client(
-            neighbors={"neighbors": [{"entity_id": "e2", "type": "concept", "label": "DL"}]}
+            neighbors={
+                "neighbors": [
+                    {
+                        "entity": {"entity_id": "e2", "type": "concept", "label": "DL"},
+                        "depth": 1,
+                        "path": [],
+                    }
+                ]
+            }
         ):
             result = runner.invoke(graph, ["neighbors", "e1", "--remote-url", MOCK_URL, "--json"])
         assert result.exit_code == 0

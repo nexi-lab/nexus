@@ -15,6 +15,18 @@ from nexus.cli.commands.scheduler_cli import scheduler
 MOCK_URL = "http://localhost:2026"
 _ENV = {"NEXUS_NO_AUTO_JSON": "1"}
 
+_METRICS_RESPONSE: dict[str, Any] = {
+    "queue_by_class": [
+        {"priority_class": "high", "cnt": 5, "avg_wait": "2.3s", "max_wait": "8.1s"},
+        {"priority_class": "low", "cnt": 12, "avg_wait": "10.5s", "max_wait": "45.0s"},
+    ],
+    "fair_share": {
+        "agent-alice": {"running_count": 2, "max_concurrent": 4, "available_slots": 2},
+        "agent-bob": {"running_count": 0, "max_concurrent": 4, "available_slots": 4},
+    },
+    "use_hrrn": True,
+}
+
 
 @contextmanager
 def _mock_client(**overrides: Any):
@@ -39,32 +51,28 @@ def _mock_client(**overrides: Any):
 class TestSchedulerStatus:
     def test_happy_path(self) -> None:
         runner = CliRunner(env=_ENV)
-        with _mock_client(
-            status={
-                "queue_depth": 5,
-                "active_workers": 3,
-                "throughput": 12,
-                "avg_wait_ms": 150,
-            }
-        ):
+        with _mock_client(status=_METRICS_RESPONSE):
             result = runner.invoke(scheduler, ["status", "--remote-url", MOCK_URL])
         assert result.exit_code == 0
+        assert "high" in result.output
         assert "5" in result.output
+        assert "HRRN" in result.output
 
     def test_json_output(self) -> None:
         runner = CliRunner(env=_ENV)
-        with _mock_client(
-            status={
-                "queue_depth": 5,
-                "active_workers": 3,
-                "throughput": 12,
-                "avg_wait_ms": 150,
-            }
-        ):
+        with _mock_client(status=_METRICS_RESPONSE):
             result = runner.invoke(scheduler, ["status", "--remote-url", MOCK_URL, "--json"])
         assert result.exit_code == 0
         data = json.loads(result.output)
-        assert data["data"]["queue_depth"] == 5
+        assert data["data"]["use_hrrn"] is True
+        assert len(data["data"]["queue_by_class"]) == 2
+
+    def test_empty_queue(self) -> None:
+        runner = CliRunner(env=_ENV)
+        with _mock_client(status={"queue_by_class": [], "fair_share": {}, "use_hrrn": False}):
+            result = runner.invoke(scheduler, ["status", "--remote-url", MOCK_URL])
+        assert result.exit_code == 0
+        assert "No queued tasks" in result.output
 
     def test_missing_url_fails(self) -> None:
         runner = CliRunner(env=_ENV)
@@ -73,66 +81,31 @@ class TestSchedulerStatus:
 
 
 class TestSchedulerQueue:
-    def test_happy_path_with_tasks(self) -> None:
+    def test_happy_path_with_classes(self) -> None:
         runner = CliRunner(env=_ENV)
-        with _mock_client(
-            status={
-                "pending_tasks": [
-                    {
-                        "task_id": "t1",
-                        "priority_class": "high",
-                        "agent_id": "alice",
-                        "submitted_at": "2025-01-01T00:00:00",
-                    }
-                ]
-            }
-        ):
+        with _mock_client(status=_METRICS_RESPONSE):
             result = runner.invoke(scheduler, ["queue", "--remote-url", MOCK_URL])
         assert result.exit_code == 0
+        assert "high" in result.output
+        assert "low" in result.output
 
-    def test_no_pending_tasks(self) -> None:
+    def test_empty_queue(self) -> None:
         runner = CliRunner(env=_ENV)
-        with _mock_client(status={"pending_tasks": []}):
+        with _mock_client(status={"queue_by_class": [], "fair_share": {}, "use_hrrn": False}):
             result = runner.invoke(scheduler, ["queue", "--remote-url", MOCK_URL])
         assert result.exit_code == 0
-        assert "No pending tasks" in result.output
+        assert "No queued tasks" in result.output
 
     def test_calls_status(self) -> None:
         runner = CliRunner(env=_ENV)
-        with _mock_client(status={"pending_tasks": []}) as mocks:
+        with _mock_client(status=_METRICS_RESPONSE) as mocks:
             runner.invoke(scheduler, ["queue", "--remote-url", MOCK_URL])
         mocks["status"].assert_called_once()
 
-
-class TestSchedulerPause:
-    def test_happy_path(self) -> None:
-        runner = CliRunner(env=_ENV)
-        with _mock_client(pause={"status": "paused"}):
-            result = runner.invoke(scheduler, ["pause", "--remote-url", MOCK_URL])
-        assert result.exit_code == 0
-        assert "paused" in result.output.lower()
-
     def test_json_output(self) -> None:
         runner = CliRunner(env=_ENV)
-        with _mock_client(pause={"status": "paused"}):
-            result = runner.invoke(scheduler, ["pause", "--remote-url", MOCK_URL, "--json"])
+        with _mock_client(status=_METRICS_RESPONSE):
+            result = runner.invoke(scheduler, ["queue", "--remote-url", MOCK_URL, "--json"])
         assert result.exit_code == 0
         data = json.loads(result.output)
-        assert data["data"]["status"] == "paused"
-
-
-class TestSchedulerResume:
-    def test_happy_path(self) -> None:
-        runner = CliRunner(env=_ENV)
-        with _mock_client(resume={"status": "running"}):
-            result = runner.invoke(scheduler, ["resume", "--remote-url", MOCK_URL])
-        assert result.exit_code == 0
-        assert "resumed" in result.output.lower()
-
-    def test_json_output(self) -> None:
-        runner = CliRunner(env=_ENV)
-        with _mock_client(resume={"status": "running"}):
-            result = runner.invoke(scheduler, ["resume", "--remote-url", MOCK_URL, "--json"])
-        assert result.exit_code == 0
-        data = json.loads(result.output)
-        assert data["data"]["status"] == "running"
+        assert len(data["data"]["queue_by_class"]) == 2

@@ -9,8 +9,17 @@ Tests cover:
 
 import pytest
 
+from nexus.contracts.constants import INLINE_THRESHOLD
 from tests.conftest import make_test_nexus
 from tests.helpers.failing_backend import FailingBackend
+
+# Content must exceed INLINE_THRESHOLD to go through the backend (Issue #1508).
+# Tests that verify backend rename behavior need files in physical storage.
+_CAS_PAD = b"\x00" * (INLINE_THRESHOLD + 1)
+
+
+def _big(payload: bytes) -> bytes:
+    return payload + _CAS_PAD
 
 
 @pytest.fixture()
@@ -59,8 +68,8 @@ class TestRenameDirectoryWithChildren:
         Recursive rename in DictMetastore and PathLocalBackend ensures children
         are moved to the new path.
         """
-        nx.sys_write("/files/folder/a.txt", b"a")
-        nx.sys_write("/files/folder/b.txt", b"b")
+        nx.sys_write("/files/folder/a.txt", _big(b"a"))
+        nx.sys_write("/files/folder/b.txt", _big(b"b"))
         # /files/folder/ is an implicit directory
         nx.sys_rename("/files/folder", "/files/renamed")
 
@@ -69,8 +78,8 @@ class TestRenameDirectoryWithChildren:
         assert not nx.sys_access("/files/folder/b.txt")
         assert nx.sys_access("/files/renamed/a.txt")
         assert nx.sys_access("/files/renamed/b.txt")
-        assert nx.sys_read("/files/renamed/a.txt") == b"a"
-        assert nx.sys_read("/files/renamed/b.txt") == b"b"
+        assert nx.sys_read("/files/renamed/a.txt") == _big(b"a")
+        assert nx.sys_read("/files/renamed/b.txt") == _big(b"b")
 
 
 class TestRenameErrorPaths:
@@ -118,13 +127,13 @@ class TestRenameWithFailingBackend:
             fail_on_nth=2,
         )
         nx = make_test_nexus(tmp_path / "nx", backend=failing)
-        # First write succeeds
-        nx.sys_write("/files/a.txt", b"data")
+        # First write succeeds (content > INLINE_THRESHOLD to go through backend)
+        nx.sys_write("/files/a.txt", _big(b"data"))
         # Second write fails due to backend
         from nexus.contracts.exceptions import BackendError
 
         with pytest.raises(BackendError):
-            nx.sys_write("/files/b.txt", b"data2")
+            nx.sys_write("/files/b.txt", _big(b"data2"))
 
 
 class TestRenameMetadataConsistency:

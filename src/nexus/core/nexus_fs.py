@@ -1713,7 +1713,17 @@ class NexusFS(  # type: ignore[misc]
 
         # Read the full content and slice (backends can override for efficiency)
         # Note: For true efficiency, backends could implement read_range() natively
-        content = route.backend.read_content(meta.etag, context=read_context)
+        from nexus.contracts.constants import INLINE_CONTENT_KEY, INLINE_PREFIX
+
+        if meta.physical_path.startswith(INLINE_PREFIX):
+            import base64
+
+            _raw = self.metadata.get_file_metadata(path, INLINE_CONTENT_KEY)
+            if _raw is None:
+                raise NexusFileNotFoundError(path)
+            content = base64.b64decode(_raw)
+        else:
+            content = route.backend.read_content(meta.etag, context=read_context)
 
         # Apply range
         return content[start:end]
@@ -3272,7 +3282,11 @@ class NexusFS(  # type: ignore[misc]
             try:
                 # For path-based connector backends, move actual file/directory in storage
                 # CAS backends have supports_rename = False
-                if old_route.backend.supports_rename is True:
+                # Inline files (Issue #1508) skip backend rename — content is in metastore
+                from nexus.contracts.constants import INLINE_CONTENT_KEY, INLINE_PREFIX
+
+                _is_inline = meta is not None and meta.physical_path.startswith(INLINE_PREFIX)
+                if old_route.backend.supports_rename is True and not _is_inline:
                     try:
                         old_route.backend.rename_file(
                             old_route.backend_path, new_route.backend_path
@@ -3285,8 +3299,19 @@ class NexusFS(  # type: ignore[misc]
                             backend=old_route.backend.name,
                         ) from e
 
+                # Save inline content before rename (needed for RaftMetadataStore
+                # which does not migrate custom metadata keys automatically)
+                _inline_raw = None
+                if _is_inline:
+                    _inline_raw = self.metadata.get_file_metadata(old_path, INLINE_CONTENT_KEY)
+
                 # Perform metadata rename (recursively for directories)
                 self.metadata.rename_path(old_path, new_path)
+
+                # Migrate inline content metadata to new path
+                if _is_inline and _inline_raw is not None:
+                    self.metadata.set_file_metadata(new_path, INLINE_CONTENT_KEY, _inline_raw)
+                    self.metadata.set_file_metadata(old_path, INLINE_CONTENT_KEY, None)
             finally:
                 if _h2:
                     self._vfs_lock_manager.release(_h2)

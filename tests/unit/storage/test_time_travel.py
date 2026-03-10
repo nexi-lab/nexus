@@ -11,12 +11,22 @@ import pytest
 
 from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.bricks.versioning.time_travel_service import TimeTravelService
+from nexus.contracts.constants import INLINE_THRESHOLD
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.storage.operation_logger import OperationLogger
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
+
+# TimeTravelService reads content directly from CAS backend, bypassing
+# sys_read.  Content must exceed INLINE_THRESHOLD so it goes through CAS.
+_CAS_PAD = b"\x00" * (INLINE_THRESHOLD + 1)
+
+
+def _cas(payload: bytes) -> bytes:
+    """Pad payload above inline threshold so it goes through CAS."""
+    return payload + _CAS_PAD
 
 
 class TestTimeTravelDebug:
@@ -75,10 +85,10 @@ class TestTimeTravelDebug:
         """Test reading file at different historical points."""
         path = "/workspace/test.txt"
 
-        # Write three versions
-        nx.sys_write(path, b"Version 1")
-        nx.sys_write(path, b"Version 2")
-        nx.sys_write(path, b"Version 3")
+        # Write three versions (padded above INLINE_THRESHOLD for CAS path)
+        nx.sys_write(path, _cas(b"Version 1"))
+        nx.sys_write(path, _cas(b"Version 2"))
+        nx.sys_write(path, _cas(b"Version 3"))
 
         # Get all operations (most recent first)
         with record_store.session_factory() as session:
@@ -93,23 +103,23 @@ class TestTimeTravelDebug:
 
         # Read file at each version via service (session-managed)
         state_v1 = time_travel.get_file_at_operation(path, op_v1)
-        assert state_v1["content"] == b"Version 1"
+        assert state_v1["content"] == _cas(b"Version 1")
         assert state_v1["operation_id"] == op_v1
 
         state_v2 = time_travel.get_file_at_operation(path, op_v2)
-        assert state_v2["content"] == b"Version 2"
+        assert state_v2["content"] == _cas(b"Version 2")
         assert state_v2["operation_id"] == op_v2
 
         state_v3 = time_travel.get_file_at_operation(path, op_v3)
-        assert state_v3["content"] == b"Version 3"
+        assert state_v3["content"] == _cas(b"Version 3")
         assert state_v3["operation_id"] == op_v3
 
     def test_time_travel_file_deleted(self, nx, backend, record_store, time_travel):
         """Test reading file that was deleted."""
         path = "/workspace/deleted.txt"
 
-        # Write file
-        nx.sys_write(path, b"Content before delete")
+        # Write file (padded above INLINE_THRESHOLD for CAS path)
+        nx.sys_write(path, _cas(b"Content before delete"))
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)
@@ -120,7 +130,7 @@ class TestTimeTravelDebug:
             op_write = ops_after_write[0].operation_id
 
         # Delete file — hold extra CAS reference so blob survives unlink
-        backend.write_content(b"Content before delete")
+        backend.write_content(_cas(b"Content before delete"))
         nx.sys_unlink(path)
 
         with record_store.session_factory() as session:
@@ -133,7 +143,7 @@ class TestTimeTravelDebug:
 
         # Can read file at write operation
         state_before = time_travel.get_file_at_operation(path, op_write)
-        assert state_before["content"] == b"Content before delete"
+        assert state_before["content"] == _cas(b"Content before delete")
 
         # Cannot read file at delete operation (it's been deleted)
         with pytest.raises(NexusFileNotFoundError):
@@ -141,8 +151,8 @@ class TestTimeTravelDebug:
 
     def test_time_travel_list_directory(self, nx, record_store, time_travel):
         """Test listing directory at historical operation point."""
-        # Create multiple files
-        nx.sys_write("/workspace/file1.txt", b"File 1")
+        # Create multiple files (padded above INLINE_THRESHOLD for CAS path)
+        nx.sys_write("/workspace/file1.txt", _cas(b"File 1"))
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)
@@ -152,14 +162,14 @@ class TestTimeTravelDebug:
             op_1 = ops_1[0].operation_id
 
         # Add more files
-        nx.sys_write("/workspace/file2.txt", b"File 2")
+        nx.sys_write("/workspace/file2.txt", _cas(b"File 2"))
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)
             ops_2 = logger.list_operations(limit=10)
             op_2 = ops_2[0].operation_id
 
-        nx.sys_write("/workspace/file3.txt", b"File 3")
+        nx.sys_write("/workspace/file3.txt", _cas(b"File 3"))
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)
@@ -190,8 +200,8 @@ class TestTimeTravelDebug:
         """Test diffing file state between two operations."""
         path = "/workspace/evolving.txt"
 
-        # Write version 1
-        nx.sys_write(path, b"Hello World")
+        # Write version 1 (padded above INLINE_THRESHOLD for CAS path)
+        nx.sys_write(path, _cas(b"Hello World"))
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)
@@ -199,7 +209,7 @@ class TestTimeTravelDebug:
             op_v1 = ops_v1[0].operation_id
 
         # Write version 2 (changed content)
-        nx.sys_write(path, b"Hello World - Updated!")
+        nx.sys_write(path, _cas(b"Hello World - Updated!"))
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)
@@ -212,23 +222,23 @@ class TestTimeTravelDebug:
         assert diff["content_changed"] is True
         assert diff["operation_1"] is not None
         assert diff["operation_2"] is not None
-        assert diff["operation_1"]["content"] == b"Hello World"
-        assert diff["operation_2"]["content"] == b"Hello World - Updated!"
-        assert diff["size_diff"] == len(b"Hello World - Updated!") - len(b"Hello World")
+        assert diff["operation_1"]["content"] == _cas(b"Hello World")
+        assert diff["operation_2"]["content"] == _cas(b"Hello World - Updated!")
+        assert diff["size_diff"] == len(_cas(b"Hello World - Updated!")) - len(_cas(b"Hello World"))
 
     def test_time_travel_diff_file_created(self, nx, record_store, time_travel):
         """Test diff when file was created between operations."""
-        # Create a baseline operation (write different file)
-        nx.sys_write("/workspace/baseline.txt", b"Baseline")
+        # Create a baseline operation (write different file, padded for CAS)
+        nx.sys_write("/workspace/baseline.txt", _cas(b"Baseline"))
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)
             ops_baseline = logger.list_operations(limit=10)
             op_baseline = ops_baseline[0].operation_id
 
-        # Now create the target file
+        # Now create the target file (padded for CAS)
         path = "/workspace/new_file.txt"
-        nx.sys_write(path, b"New content")
+        nx.sys_write(path, _cas(b"New content"))
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)
@@ -241,15 +251,15 @@ class TestTimeTravelDebug:
         assert diff["content_changed"] is True
         assert diff["operation_1"] is None  # File didn't exist
         assert diff["operation_2"] is not None  # File exists now
-        assert diff["operation_2"]["content"] == b"New content"
-        assert diff["size_diff"] == len(b"New content")
+        assert diff["operation_2"]["content"] == _cas(b"New content")
+        assert diff["size_diff"] == len(_cas(b"New content"))
 
     def test_time_travel_diff_file_deleted(self, nx, backend, record_store, time_travel):
         """Test diff when file was deleted between operations."""
         path = "/workspace/to_delete.txt"
 
-        # Create file
-        nx.sys_write(path, b"Will be deleted")
+        # Create file (padded above INLINE_THRESHOLD for CAS path)
+        nx.sys_write(path, _cas(b"Will be deleted"))
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)
@@ -257,7 +267,7 @@ class TestTimeTravelDebug:
             op_created = ops_created[0].operation_id
 
         # Delete file — hold extra CAS reference so blob survives unlink
-        backend.write_content(b"Will be deleted")
+        backend.write_content(_cas(b"Will be deleted"))
         nx.sys_unlink(path)
 
         with record_store.session_factory() as session:
@@ -271,8 +281,8 @@ class TestTimeTravelDebug:
         assert diff["content_changed"] is True
         assert diff["operation_1"] is not None  # File existed
         assert diff["operation_2"] is None  # File deleted
-        assert diff["operation_1"]["content"] == b"Will be deleted"
-        assert diff["size_diff"] == -len(b"Will be deleted")
+        assert diff["operation_1"]["content"] == _cas(b"Will be deleted")
+        assert diff["size_diff"] == -len(_cas(b"Will be deleted"))
 
     def test_time_travel_with_agent_id(self, nx, record_store, time_travel):
         """Test time-travel with agent-specific operations using context parameter."""
@@ -282,7 +292,7 @@ class TestTimeTravelDebug:
         context = OperationContext(user_id="test", groups=[], agent_id="agent-1", zone_id="root")
 
         path = "/workspace/agent_file.txt"
-        nx.sys_write(path, b"Agent 1 content", context=context)
+        nx.sys_write(path, _cas(b"Agent 1 content"), context=context)
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)
@@ -298,7 +308,7 @@ class TestTimeTravelDebug:
         # FilePathModel may record different zone_id values when context
         # has zone_id=None, so omitting zone_id avoids a false mismatch.)
         state = time_travel.get_file_at_operation(path, op_id)
-        assert state["content"] == b"Agent 1 content"
+        assert state["content"] == _cas(b"Agent 1 content")
 
     def test_time_travel_nonexistent_operation(self, time_travel):
         """Test error handling for nonexistent operation ID."""
@@ -309,8 +319,8 @@ class TestTimeTravelDebug:
         """Test that metadata is preserved in historical reads."""
         path = "/workspace/metadata_test.txt"
 
-        # Write file
-        nx.sys_write(path, b"Content")
+        # Write file (padded above INLINE_THRESHOLD for CAS path)
+        nx.sys_write(path, _cas(b"Content"))
 
         # Set permissions using ReBAC (v0.6.0+)
         nx.service("rebac").rebac_create_sync(
@@ -318,7 +328,7 @@ class TestTimeTravelDebug:
         )
 
         # Write again to create a new version
-        nx.sys_write(path, b"Updated content")
+        nx.sys_write(path, _cas(b"Updated content"))
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)
@@ -332,6 +342,6 @@ class TestTimeTravelDebug:
         state = time_travel.get_file_at_operation(path, op_id)
 
         # Verify metadata is preserved
-        assert state["content"] == b"Updated content"
+        assert state["content"] == _cas(b"Updated content")
         # Note: Metadata from previous state should be in the snapshot
         assert "metadata" in state

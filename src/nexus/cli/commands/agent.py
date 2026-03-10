@@ -291,11 +291,24 @@ def agent_status(client: AgentExtClient, agent_id: str) -> ServiceResult:
 
     def _render(d: dict) -> None:
         console.print(f"[bold cyan]Agent Status: {agent_id}[/bold cyan]")
-        console.print(f"  State:      {d.get('state', 'N/A')}")
-        console.print(f"  Generation: {d.get('generation', 'N/A')}")
-        console.print(f"  Zone:       {d.get('zone_id', 'N/A')}")
+        console.print(f"  Phase:       {d.get('phase', 'N/A')}")
+        console.print(f"  Generation:  {d.get('observed_generation', 'N/A')}")
+        console.print(f"  Inbox:       {d.get('inbox_depth', 0)} message(s)")
+        console.print(f"  Context:     {d.get('context_usage_pct', 0):.1f}%")
         if d.get("last_heartbeat"):
-            console.print(f"  Heartbeat:  {d['last_heartbeat'][:19]}")
+            console.print(f"  Heartbeat:   {d['last_heartbeat'][:19]}")
+        if d.get("last_activity"):
+            console.print(f"  Activity:    {d['last_activity'][:19]}")
+        ru = d.get("resource_usage", {})
+        if ru:
+            console.print(f"  Tokens:      {ru.get('tokens_used', 0)}")
+            console.print(f"  Storage:     {ru.get('storage_used_mb', 0):.1f} MB")
+        conditions = d.get("conditions", [])
+        if conditions:
+            console.print("  Conditions:")
+            for c in conditions:
+                status_icon = "[green]OK[/green]" if c.get("status") == "True" else "[red]!![/red]"
+                console.print(f"    {status_icon} {c.get('type', '')}: {c.get('message', '')}")
 
     return ServiceResult(data=data, human_formatter=_render)
 

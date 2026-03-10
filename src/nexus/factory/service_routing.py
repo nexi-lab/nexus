@@ -15,6 +15,35 @@ if TYPE_CHECKING:
 
 
 # ---------------------------------------------------------------------------
+# EXPORT_SYMBOL declarations: each service's public API surface
+# ---------------------------------------------------------------------------
+
+_CANONICAL_EXPORTS: dict[str, tuple[str, ...]] = {
+    "search": ("glob", "grep", "list", "semantic_search"),
+    "rebac": ("rebac_check", "rebac_create", "rebac_list_tuples", "rebac_expand"),
+    "events": ("wait_for_changes", "on_mutation", "locked"),
+    "mount": ("add_mount", "remove_mount", "list_mounts"),
+    "gateway": (),
+    "mount_core": (),
+    "sync": (),
+    "sync_job": (),
+    "mount_persist": (),
+    "mcp": (),
+    "llm": (),
+    "oauth": (),
+    "share_link": (),
+    "time_travel": (),
+    "operations": (),
+    "workspace_rpc": (),
+    "agent_rpc": (),
+    "user_provisioning": (),
+    "sandbox_rpc": (),
+    "metadata_export": (),
+    "descendant_checker": (),
+    "memory_provider": (),
+}
+
+# ---------------------------------------------------------------------------
 # Canonical name mapping: WiredServices field → short registry key
 # ---------------------------------------------------------------------------
 
@@ -57,9 +86,17 @@ def populate_service_registry(
 
     Returns the number of services registered.
     """
-    services: dict[str, Any] = {}
+    count = 0
     for src_key, canonical in _CANONICAL_NAMES.items():
         val = wired.get(src_key) if isinstance(wired, dict) else getattr(wired, src_key, None)
-        if val is not None:
-            services[canonical] = val
-    return registry.register_many(services, is_remote=is_remote)
+        if val is None:
+            continue
+        exports = _CANONICAL_EXPORTS.get(canonical, ())
+        registry.register_service(
+            canonical,
+            val,
+            exports=exports,
+            is_remote=is_remote,
+        )
+        count += 1
+    return count

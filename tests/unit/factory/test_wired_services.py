@@ -64,8 +64,8 @@ class TestPopulateServiceRegistryFromWired:
         mock_svc = MagicMock()
         ws = WiredServices(rebac_service=mock_svc, mount_service=mock_svc)
         populate_service_registry(nx._service_registry, ws)
-        assert nx.service("rebac") is mock_svc
-        assert nx.service("mount") is mock_svc
+        assert nx.service("rebac")._service_instance is mock_svc
+        assert nx.service("mount")._service_instance is mock_svc
         assert nx.service("mcp") is None
 
     def test_populate_from_dict(self, nx: Any) -> None:
@@ -73,6 +73,6 @@ class TestPopulateServiceRegistryFromWired:
         populate_service_registry(
             nx._service_registry, {"rebac_service": mock_svc, "mount_service": mock_svc}
         )
-        assert nx.service("rebac") is mock_svc
-        assert nx.service("mount") is mock_svc
+        assert nx.service("rebac")._service_instance is mock_svc
+        assert nx.service("mount")._service_instance is mock_svc
         assert nx.service("mcp") is None

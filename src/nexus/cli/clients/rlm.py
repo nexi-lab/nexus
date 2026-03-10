@@ -25,7 +25,3 @@ class RLMClient(BaseServiceClient):
         if max_iterations is not None:
             body["max_iterations"] = max_iterations
         return self._request("POST", "/api/v2/rlm/infer", json_body=body)
-
-    def status(self) -> dict[str, Any]:
-        """Get RLM service status."""
-        return self._request("GET", "/api/v2/rlm/status")

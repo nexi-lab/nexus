@@ -48,10 +48,11 @@ def graph_entity(client: GraphClient, entity_id: str) -> ServiceResult:
     def _render(d: dict) -> None:
         from nexus.cli.utils import console
 
+        ent = d.get("entity", d)
         console.print(f"[bold cyan]Entity: {entity_id}[/bold cyan]")
-        console.print(f"  Type:   {d.get('type', 'N/A')}")
-        console.print(f"  Label:  {d.get('label', d.get('name', 'N/A'))}")
-        props = d.get("properties", {})
+        console.print(f"  Type:   {ent.get('type', 'N/A')}")
+        console.print(f"  Label:  {ent.get('label', ent.get('name', 'N/A'))}")
+        props = ent.get("properties", {})
         if props:
             console.print("  Properties:")
             for k, v in list(props.items())[:10]:
@@ -91,14 +92,15 @@ def graph_neighbors(client: GraphClient, entity_id: str, hops: int) -> ServiceRe
         table.add_column("Entity ID", style="dim")
         table.add_column("Type")
         table.add_column("Label")
-        table.add_column("Relation")
+        table.add_column("Depth")
 
         for n in neighbors:
+            ent = n.get("entity", n)
             table.add_row(
-                n.get("entity_id", ""),
-                n.get("type", ""),
-                n.get("label", n.get("name", "")),
-                n.get("relation", ""),
+                ent.get("entity_id", ""),
+                ent.get("type", ""),
+                ent.get("label", ent.get("name", "")),
+                str(n.get("depth", "")),
             )
         console.print(table)
 

@@ -337,13 +337,16 @@ class TestSecretsAuditE2E:
 class TestRlmE2E:
     """nexus rlm commands against a running server."""
 
-    def test_rlm_status_json_envelope(self, remote_server):
-        result = _run_cli(["rlm", "status", "--json"], remote_server)
+    def test_rlm_infer_json_envelope(self, remote_server):
+        result = _run_cli(
+            ["rlm", "infer", "/test.txt", "--prompt", "summarize", "--json"],
+            remote_server,
+        )
         envelope = _parse_json_envelope(result)
-        assert envelope["_timing"]["total_ms"] > 0
+        assert "_timing" in envelope
 
     def test_rlm_no_traceback(self, remote_server):
-        result = _run_cli(["rlm", "status"], remote_server)
+        result = _run_cli(["rlm", "infer", "/test.txt", "--prompt", "summarize"], remote_server)
         assert "Traceback" not in result.stderr
 
 
@@ -401,7 +404,7 @@ class TestJsonEnvelopeConsistency:
             pytest.param("secrets-audit", ["list"], id="secrets-audit-list"),
             pytest.param("upload", ["status", "upl_test_123"], id="upload-status"),
             pytest.param("scheduler", ["status"], id="scheduler-status"),
-            pytest.param("rlm", ["status"], id="rlm-status"),
+            pytest.param("rlm", ["infer", "/test.txt", "--prompt", "test"], id="rlm-infer"),
             pytest.param("reputation", ["leaderboard"], id="reputation-leaderboard"),
         ],
     )

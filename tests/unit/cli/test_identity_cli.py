@@ -36,16 +36,25 @@ class TestIdentityShow:
     def test_happy_path(self) -> None:
         runner = CliRunner()
         stack, _ = _patch_client(
-            show={"did": "did:nexus:abc", "public_key": "pk123", "algorithm": "Ed25519"}
+            show={
+                "did": "did:nexus:abc",
+                "key_id": "key_1",
+                "public_key_hex": "abcdef1234",
+                "algorithm": "Ed25519",
+            }
         )
         with stack:
             result = runner.invoke(identity, ["show", "alice", "--remote-url", MOCK_URL])
         assert result.exit_code == 0
         assert "did:nexus:abc" in result.output
+        assert "key_1" in result.output
+        assert "abcdef1234" in result.output
 
     def test_json_output(self) -> None:
         runner = CliRunner()
-        stack, _ = _patch_client(show={"did": "did:nexus:abc", "public_key": "pk123"})
+        stack, _ = _patch_client(
+            show={"did": "did:nexus:abc", "key_id": "key_1", "public_key_hex": "abcdef1234"}
+        )
         with stack:
             result = runner.invoke(identity, ["show", "alice", "--remote-url", MOCK_URL, "--json"])
         assert result.exit_code == 0
@@ -79,20 +88,20 @@ class TestIdentityShow:
             result = runner.invoke(identity, ["show", "unknown", "--remote-url", MOCK_URL])
         assert result.exit_code != 0
 
-    def test_shows_capabilities(self) -> None:
+    def test_shows_key_id(self) -> None:
         runner = CliRunner()
         stack, _ = _patch_client(
             show={
                 "did": "did:nexus:abc",
-                "public_key": "pk123",
+                "key_id": "key_42",
+                "public_key_hex": "abcdef1234",
                 "algorithm": "Ed25519",
-                "capabilities": ["read", "write"],
             }
         )
         with stack:
             result = runner.invoke(identity, ["show", "alice", "--remote-url", MOCK_URL])
         assert result.exit_code == 0
-        assert "read" in result.output
+        assert "key_42" in result.output
 
     def test_client_called_with_agent_id(self) -> None:
         runner = CliRunner()
@@ -184,9 +193,10 @@ class TestIdentityCredentials:
                 "credentials": [
                     {
                         "credential_id": "cred_1",
-                        "capabilities": ["read"],
+                        "issuer_did": "did:nexus:issuer1",
+                        "subject_did": "did:nexus:alice",
+                        "is_active": True,
                         "expires_at": "2025-12-31T00:00:00",
-                        "status": "active",
                     }
                 ]
             }
@@ -210,8 +220,9 @@ class TestIdentityCredentials:
                 "credentials": [
                     {
                         "credential_id": "c1",
-                        "capabilities": ["read"],
-                        "status": "active",
+                        "issuer_did": "did:nexus:issuer1",
+                        "subject_did": "did:nexus:alice",
+                        "is_active": True,
                     }
                 ]
             }
@@ -229,8 +240,12 @@ class TestIdentityPassport:
     def test_happy_path(self) -> None:
         runner = CliRunner()
         stack, _ = _patch_client(
-            show={"did": "did:nexus:abc", "public_key": "pk123"},
-            credentials_list={"credentials": [{"credential_id": "c1", "capabilities": ["read"]}]},
+            show={"did": "did:nexus:abc", "public_key_hex": "abcdef1234"},
+            credentials_list={
+                "credentials": [
+                    {"credential_id": "c1", "issuer_did": "did:nexus:issuer1", "is_active": True}
+                ]
+            },
         )
         with stack:
             result = runner.invoke(identity, ["passport", "alice", "--remote-url", MOCK_URL])
@@ -240,8 +255,12 @@ class TestIdentityPassport:
     def test_json_output_combines_identity_and_creds(self) -> None:
         runner = CliRunner()
         stack, _ = _patch_client(
-            show={"did": "did:nexus:abc", "public_key": "pk123"},
-            credentials_list={"credentials": [{"credential_id": "c1", "capabilities": ["read"]}]},
+            show={"did": "did:nexus:abc", "public_key_hex": "abcdef1234"},
+            credentials_list={
+                "credentials": [
+                    {"credential_id": "c1", "issuer_did": "did:nexus:issuer1", "is_active": True}
+                ]
+            },
         )
         with stack:
             result = runner.invoke(

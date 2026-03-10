@@ -42,11 +42,16 @@ class TestReputationShow:
         with _mock_client(
             show={
                 "composite_score": 0.85,
-                "reliability_score": 0.9,
-                "quality_score": 0.8,
-                "timeliness_score": 0.85,
-                "fairness_score": 0.85,
-                "total_ratings": 42,
+                "composite_confidence": 0.72,
+                "reliability_alpha": 9.0,
+                "reliability_beta": 1.0,
+                "quality_alpha": 8.0,
+                "quality_beta": 2.0,
+                "timeliness_alpha": 8.5,
+                "timeliness_beta": 1.5,
+                "fairness_alpha": 8.5,
+                "fairness_beta": 1.5,
+                "total_interactions": 42,
             }
         ):
             result = runner.invoke(reputation, ["show", "alice", "--remote-url", MOCK_URL])
@@ -55,7 +60,7 @@ class TestReputationShow:
 
     def test_json_output(self) -> None:
         runner = CliRunner(env=_ENV)
-        with _mock_client(show={"composite_score": 0.85, "total_ratings": 42}):
+        with _mock_client(show={"composite_score": 0.85, "total_interactions": 42}):
             result = runner.invoke(
                 reputation, ["show", "alice", "--remote-url", MOCK_URL, "--json"]
             )
@@ -90,9 +95,9 @@ class TestReputationLeaderboard:
         runner = CliRunner(env=_ENV)
         with _mock_client(
             leaderboard={
-                "leaderboard": [
-                    {"agent_id": "alice", "composite_score": 0.95, "total_ratings": 100},
-                    {"agent_id": "bob", "composite_score": 0.90, "total_ratings": 80},
+                "entries": [
+                    {"agent_id": "alice", "composite_score": 0.95, "total_interactions": 100},
+                    {"agent_id": "bob", "composite_score": 0.90, "total_interactions": 80},
                 ]
             }
         ):
@@ -101,14 +106,14 @@ class TestReputationLeaderboard:
 
     def test_empty(self) -> None:
         runner = CliRunner(env=_ENV)
-        with _mock_client(leaderboard={"leaderboard": []}):
+        with _mock_client(leaderboard={"entries": []}):
             result = runner.invoke(reputation, ["leaderboard", "--remote-url", MOCK_URL])
         assert result.exit_code == 0
         assert "No reputation data" in result.output
 
     def test_default_limit_and_zone(self) -> None:
         runner = CliRunner(env=_ENV)
-        with _mock_client(leaderboard={"leaderboard": []}) as mocks:
+        with _mock_client(leaderboard={"entries": []}) as mocks:
             runner.invoke(reputation, ["leaderboard", "--remote-url", MOCK_URL])
         mocks["leaderboard"].assert_called_once_with(zone_id=None, limit=20)
 
@@ -116,7 +121,7 @@ class TestReputationLeaderboard:
         runner = CliRunner(env=_ENV)
         with _mock_client(
             leaderboard={
-                "leaderboard": [
+                "entries": [
                     {"agent_id": "alice", "composite_score": 0.95},
                 ]
             }
@@ -124,7 +129,7 @@ class TestReputationLeaderboard:
             result = runner.invoke(reputation, ["leaderboard", "--remote-url", MOCK_URL, "--json"])
         assert result.exit_code == 0
         data = json.loads(result.output)
-        assert len(data["data"]["leaderboard"]) == 1
+        assert len(data["data"]["entries"]) == 1
 
 
 class TestReputationFeedback:

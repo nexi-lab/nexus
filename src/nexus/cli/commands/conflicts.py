@@ -57,15 +57,15 @@ def conflicts_list(client: ConflictsClient) -> ServiceResult:
         table = Table(title=f"Conflicts ({len(items)})")
         table.add_column("ID", style="dim")
         table.add_column("Path")
-        table.add_column("Type")
-        table.add_column("Detected", style="dim")
+        table.add_column("Backend")
+        table.add_column("Status", style="dim")
 
         for c in items:
             table.add_row(
                 c.get("conflict_id", "")[:12],
                 c.get("path", ""),
-                c.get("conflict_type", ""),
-                c.get("detected_at", "")[:19],
+                c.get("backend_name", ""),
+                c.get("status", ""),
             )
         console.print(table)
 
@@ -92,11 +92,16 @@ def conflicts_show(client: ConflictsClient, conflict_id: str) -> ServiceResult:
         from nexus.cli.utils import console
 
         console.print(f"[bold cyan]Conflict: {conflict_id}[/bold cyan]")
-        console.print(f"  Path:     {d.get('path', 'N/A')}")
-        console.print(f"  Type:     {d.get('conflict_type', 'N/A')}")
-        console.print(f"  Ours:     version {d.get('ours_version', 'N/A')}")
-        console.print(f"  Theirs:   version {d.get('theirs_version', 'N/A')}")
-        console.print(f"  Detected: {d.get('detected_at', 'N/A')[:19]}")
+        console.print(f"  Path:        {d.get('path', 'N/A')}")
+        console.print(f"  Backend:     {d.get('backend_name', 'N/A')}")
+        console.print(f"  Strategy:    {d.get('strategy', 'N/A')}")
+        console.print(f"  Outcome:     {d.get('outcome', 'N/A')}")
+        console.print(f"  Status:      {d.get('status', 'N/A')}")
+        console.print(f"  Resolved at: {d.get('resolved_at', 'N/A')}")
+        nexus_hash = d.get("nexus_content_hash", "N/A")
+        backend_hash = d.get("backend_content_hash", "N/A")
+        console.print(f"  Nexus hash:  {nexus_hash}")
+        console.print(f"  Backend hash:{backend_hash}")
 
     return ServiceResult(data=data, human_formatter=_render)
 

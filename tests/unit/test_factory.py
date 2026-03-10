@@ -185,6 +185,8 @@ class TestBootSystemServices:
             "zone_lifecycle",
             # DT_PIPE manager (Issue #809)
             "pipe_manager",
+            # Process lifecycle (Issue #1509)
+            "process_table",
             "scheduler_service",
             # Agent Runtime (AGENT-PROCESS-ARCHITECTURE)
             "agent_runtime",

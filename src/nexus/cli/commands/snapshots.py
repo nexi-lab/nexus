@@ -1,8 +1,4 @@
-"""Snapshot CLI commands — create, list, and restore transactional snapshots.
-
-Maps to /api/v2/snapshots/* REST endpoints via NexusServiceClient.
-Issue #2811.
-"""
+"""Snapshot CLI commands — create, list, and restore transactional snapshots."""
 
 import click
 
@@ -12,7 +8,7 @@ from nexus.cli.utils import (
     REMOTE_API_KEY_OPTION,
     REMOTE_URL_OPTION,
     console,
-    get_service_client,
+    rpc_call,
 )
 
 
@@ -62,14 +58,23 @@ def snapshot_create(
     """
     try:
         timing = CommandTiming()
-        with timing.phase("server"), get_service_client(remote_url, remote_api_key) as client:
-            data = client.snapshot_create(description=description, ttl_seconds=ttl)
+        with timing.phase("server"):
+            data = rpc_call(
+                remote_url,
+                remote_api_key,
+                "snapshot_create",
+                description=description,
+                ttl_seconds=ttl,
+            )
 
         def _render(d: dict) -> None:
             console.print("[green]Snapshot created[/green]")
             console.print(f"  Transaction ID: [bold]{d.get('transaction_id', 'N/A')}[/bold]")
             console.print(f"  Status:         {d.get('status', 'N/A')}")
-            console.print(f"  Expires:        {d.get('expires_at', 'N/A')[:19]}")
+            expires = d.get("expires_at", "N/A")
+            console.print(
+                f"  Expires:        {expires[:19] if expires and expires != 'N/A' else 'N/A'}"
+            )
             if d.get("description"):
                 console.print(f"  Description:    {d['description']}")
 
@@ -102,8 +107,8 @@ def snapshot_list(
     """
     try:
         timing = CommandTiming()
-        with timing.phase("server"), get_service_client(remote_url, remote_api_key) as client:
-            data = client.snapshot_list()
+        with timing.phase("server"):
+            data = rpc_call(remote_url, remote_api_key, "snapshot_list")
 
         def _render(d: dict) -> None:
             from rich.table import Table
@@ -169,8 +174,8 @@ def snapshot_restore(
     """
     try:
         timing = CommandTiming()
-        with timing.phase("server"), get_service_client(remote_url, remote_api_key) as client:
-            data = client.snapshot_restore(txn_id)
+        with timing.phase("server"):
+            data = rpc_call(remote_url, remote_api_key, "snapshot_restore", txn_id=txn_id)
 
         def _render(d: dict) -> None:
             console.print(f"[green]Snapshot restored:[/green] {txn_id}")

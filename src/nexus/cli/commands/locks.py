@@ -1,8 +1,4 @@
-"""Lock CLI commands — list, info, and release distributed locks.
-
-Maps to /api/v2/locks/* REST endpoints via NexusServiceClient.
-Issue #2811.
-"""
+"""Lock CLI commands — list, info, and release distributed locks."""
 
 import click
 
@@ -12,7 +8,7 @@ from nexus.cli.utils import (
     REMOTE_API_KEY_OPTION,
     REMOTE_URL_OPTION,
     console,
-    get_service_client,
+    rpc_call,
 )
 
 
@@ -54,8 +50,8 @@ def lock_list(
     """
     timing = CommandTiming()
     try:
-        with timing.phase("server"), get_service_client(remote_url, remote_api_key) as client:
-            data = client.lock_list(zone_id=zone_id)
+        with timing.phase("server"):
+            data = rpc_call(remote_url, remote_api_key, "lock_list", zone_id=zone_id)
 
         def _render(d: dict) -> None:
             from rich.table import Table
@@ -111,8 +107,8 @@ def lock_info(
     """
     timing = CommandTiming()
     try:
-        with timing.phase("server"), get_service_client(remote_url, remote_api_key) as client:
-            data = client.lock_info(path)
+        with timing.phase("server"):
+            data = rpc_call(remote_url, remote_api_key, "lock_info", path=path)
 
         def _render(d: dict) -> None:
             console.print(f"[bold cyan]Lock Status: {path}[/bold cyan]")
@@ -159,8 +155,14 @@ def lock_release(
         nexus lock release /data/shared.db --force
     """
     try:
-        with get_service_client(remote_url, remote_api_key) as client:
-            client.lock_release(path, lock_id=lock_id, force=force)
+        rpc_call(
+            remote_url,
+            remote_api_key,
+            "lock_release",
+            path=path,
+            lock_id=lock_id,
+            force=force,
+        )
         console.print(f"[green]Lock released:[/green] {path}")
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")

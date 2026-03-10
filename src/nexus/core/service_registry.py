@@ -4,8 +4,8 @@ Provides ``ServiceRegistry``, a typed registry for wired service instances.
 Extends ``BaseRegistry[ServiceInfo]`` with dependency validation, convenience
 accessors, bulk registration, and diagnostic snapshots.
 
-Phase 1 (Issue #1452): infrastructure + dual-write alongside ``bind_wired_services()``.
-Phase 2: caller migration (``nx.search_service`` → ``nx.service("search")``).
+Phase 1 (Issue #1452): infrastructure + dual-write.
+Phase 2: caller migration (``nx.search_service`` → ``nx.service("search")``) + delete setattr.
 Phase 3: ``EXPORT_SYMBOL`` pattern + runtime hot-swap.
 
 Linux analogy:

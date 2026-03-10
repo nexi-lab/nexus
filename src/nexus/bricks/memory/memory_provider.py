@@ -148,7 +148,7 @@ def get_memory_api(nx: Any) -> Any:
     """Get Memory API from a NexusFS instance.
 
     Replaces the deleted ``NexusFS.memory`` property (Issue #1410 Phase 5).
-    Accesses the ``_memory_provider`` (wired via ``bind_wired_services``).
+    Accesses the ``memory_provider`` service via ``nx.service("memory_provider")``.
 
     Args:
         nx: NexusFS instance with ``_memory_provider`` attribute.

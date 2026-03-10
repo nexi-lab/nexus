@@ -2180,15 +2180,7 @@ class NexusFS(  # type: ignore[misc]
                 owner_id=owner_id,
             )
 
-            # Atomic CAS: reject if another writer changed the version since our read
-            expected_version = meta.version if meta else 0
-            cas_result = self.metadata.put_if_version(metadata, expected_version)
-            if not cas_result.success:
-                raise ConflictError(
-                    path=path,
-                    expected_etag=content_hash,
-                    current_etag=f"version {cas_result.current_version}",
-                )
+            self.metadata.put(metadata)
 
         # --- Lock released — event dispatch + side effects (like Linux inotify after i_rwsem) ---
 

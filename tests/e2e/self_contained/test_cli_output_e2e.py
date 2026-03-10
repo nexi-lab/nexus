@@ -415,7 +415,15 @@ def _seed_via_server(server_info: dict[str, str]) -> None:
         "/workspace/data.txt": "line one\nline two\nline three\n",
     }
     for path, content in files.items():
-        result = _run_nexus_remote(["write", path, content], server_info)
+        # gRPC may take a moment to become ready after HTTP is up — retry up to 10s
+        for attempt in range(20):
+            result = _run_nexus_remote(["write", path, content], server_info)
+            if result.returncode == 0:
+                break
+            if "unavailable" in result.stdout.lower() and attempt < 19:
+                time.sleep(0.5)
+                continue
+            break
         assert result.returncode == 0, (
             f"Failed to seed {path}: stdout={result.stdout[:200]} stderr={result.stderr[:200]}"
         )

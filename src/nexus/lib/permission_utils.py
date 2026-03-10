@@ -75,5 +75,6 @@ def check_permission(
             f"Permission system unavailable while checking {permission} on {path}: {e}"
         ) from e
     except Exception as e:
-        logger.error(f"Permission check failed for {path}: {e}")
-        return False
+        # Treat unexpected errors as infrastructure failures — never mask
+        # code bugs or backend outages as permission denials.
+        raise PermissionCheckError(f"Permission check failed for {path}: {e}") from e

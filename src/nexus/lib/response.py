@@ -68,6 +68,8 @@ class HandlerResponse(Generic[T]):
     backend_name: str | None = None
     path: str | None = None
     affected_rows: int = 0
+    expected_etag: str | None = None
+    current_etag: str | None = None
 
     @property
     def success(self) -> bool:
@@ -199,6 +201,8 @@ class HandlerResponse(Generic[T]):
             execution_time_ms=execution_time_ms,
             backend_name=backend_name,
             path=path,
+            expected_etag=expected_etag,
+            current_etag=current_etag,
         )
 
     @classmethod
@@ -295,11 +299,10 @@ class HandlerResponse(Generic[T]):
                 message=self.error_message,
             )
         elif self.resp_type == ResponseType.CONFLICT:
-            # For conflict, we need etag info - extract from message or use placeholders
             raise ConflictError(
                 path=self.path or "unknown",
-                expected_etag="unknown",
-                current_etag="unknown",
+                expected_etag=self.expected_etag or "unknown",
+                current_etag=self.current_etag or "unknown",
             )
         else:
             raise BackendError(

@@ -123,6 +123,10 @@ def decode_cursor(cursor: str, filters: dict[str, Any]) -> CursorData:
         logger.debug(f"Failed to decode cursor: {e}")
         raise CursorError(f"Malformed cursor: {e}") from e
 
+    # Decoded JSON must be an object (dict)
+    if not isinstance(data, dict):
+        raise CursorError("Malformed cursor: expected JSON object")
+
     # Validate required fields
     if "p" not in data or "h" not in data:
         raise CursorError("Cursor missing required fields")

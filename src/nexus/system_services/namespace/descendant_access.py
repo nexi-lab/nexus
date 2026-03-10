@@ -162,7 +162,7 @@ class DescendantAccessChecker:
             subject=subject_tuple,
             permission=rebac_permission,
             object=("file", path),
-            zone_id=context.zone_id,
+            zone_id=zone_id,
         )
         if direct_access:
             # Cache this positive result
@@ -241,9 +241,7 @@ class DescendantAccessChecker:
 
             try:
                 # Perform bulk permission check
-                results = self._rebac_manager.rebac_check_bulk(
-                    checks, zone_id=context.zone_id or ROOT_ZONE_ID
-                )
+                results = self._rebac_manager.rebac_check_bulk(checks, zone_id=zone_id)
 
                 # OPTIMIZATION 5: Early exit on first accessible descendant
                 for check in checks:
@@ -286,7 +284,7 @@ class DescendantAccessChecker:
                 subject=subject_tuple,
                 permission=rebac_permission,
                 object=("file", meta.path),
-                zone_id=context.zone_id,
+                zone_id=zone_id,
             )
             if descendant_access:
                 # Found accessible descendant! User can see this parent

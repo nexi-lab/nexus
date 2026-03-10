@@ -14,6 +14,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.contracts.exceptions import NexusPermissionError
 from nexus.contracts.rpc import rpc_expose
 from nexus.contracts.types import VFSOperations, parse_operation_context
 
@@ -644,6 +645,15 @@ class AgentRPCService:
     @rpc_expose(description="Delete an agent")
     def delete_agent(self, agent_id: str, _context: dict | None = None) -> bool:
         """Delete a registered agent."""
+        # Ownership check: caller must own the agent or be admin
+        ctx = parse_operation_context(_context)
+        if "," in agent_id:
+            owner_user_id = agent_id.split(",", 1)[0]
+            if ctx.user_id and ctx.user_id != owner_user_id and not ctx.is_admin:
+                raise NexusPermissionError(
+                    f"Permission denied: only the agent owner or an admin can delete agent {agent_id}"
+                )
+
         try:
             if "," in agent_id:
                 user_id, agent_name_part = agent_id.split(",", 1)

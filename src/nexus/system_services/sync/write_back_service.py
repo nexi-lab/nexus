@@ -293,6 +293,8 @@ class WriteBackService:
             await self._handle_write(entry, backend, backend_path, mount_info)
         elif entry.operation_type == "delete":
             await self._handle_delete(backend, backend_path)
+        elif entry.operation_type == "rename":
+            await self._handle_rename(entry, backend, backend_path)
         elif entry.operation_type == "mkdir":
             await self._handle_mkdir(backend, backend_path)
         else:
@@ -526,6 +528,51 @@ class WriteBackService:
         else:
             # delete_content raises on error, returns None on success
             await asyncio.to_thread(backend.delete_content, backend_path, ctx)
+
+    async def _handle_rename(
+        self,
+        entry: "SyncBacklogEntry",
+        backend: Any,
+        backend_path: str,
+    ) -> None:
+        """Handle rename/move of a file on the backend.
+
+        entry.path is the new (current) path; entry.new_path stores the old path.
+        Tries backend.rename() or rename_file() first, falling back to
+        delete-old + write-new.
+
+        Args:
+            entry: Backlog entry with path (new) and new_path (old)
+            backend: Backend instance
+            backend_path: Backend-relative new path
+        """
+        old_virtual_path = entry.new_path
+        if old_virtual_path is None:
+            raise RuntimeError(f"Rename entry missing old path for {entry.path}")
+
+        # Resolve old path to backend-relative path
+        old_mount_info = self._gw.get_mount_for_path(old_virtual_path)
+        if old_mount_info is None:
+            raise RuntimeError(f"No mount found for old path: {old_virtual_path}")
+        old_backend_path = old_mount_info["backend_path"]
+
+        ctx = dataclasses.replace(self._system_ctx, backend_path=backend_path)
+
+        # Prefer native rename if available
+        if hasattr(backend, "rename"):
+            result = await asyncio.to_thread(backend.rename, old_backend_path, backend_path, ctx)
+            if hasattr(result, "success") and not result.success:
+                raise RuntimeError(f"Backend rename failed: {getattr(result, 'error', 'unknown')}")
+        elif hasattr(backend, "rename_file"):
+            await asyncio.to_thread(backend.rename_file, old_backend_path, backend_path, ctx)
+        else:
+            # Fallback: delete old path, write new content
+            await self._handle_delete(backend, old_backend_path)
+            content = self._read_nexus_content(entry.path)
+            if content is None:
+                raise RuntimeError(f"Failed to read content for rename of {entry.path}")
+            op_ctx = dataclasses.replace(self._system_ctx, backend_path=backend_path)
+            await asyncio.to_thread(backend.write_content, content, op_ctx)
 
     async def _handle_mkdir(self, backend: Any, backend_path: str) -> None:
         """Handle directory creation on the backend."""

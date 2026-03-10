@@ -42,18 +42,24 @@ class MountInfo:
     """Describes a registered mount point.
 
     Returned by ``list_mounts()`` — carries mount-level metadata without
-    exposing the backend object or route-resolution details.
+    exposing route-resolution details.
 
     Attributes:
         mount_point: Virtual path prefix (e.g. "/workspace").
         readonly: Whether the mount is read-only.
         admin_only: Whether the mount requires admin privileges.
+        backend: The storage backend instance (ObjectStoreABC), if available.
+        priority: Mount priority for ordering (higher = checked first).
+        conflict_strategy: Write-back conflict resolution strategy, or None.
     """
 
     mount_point: str
     readonly: bool
     admin_only: bool = False
     status: str = "active"  # "active" or "stale"
+    backend: "ObjectStoreABC | None" = None
+    priority: int = 0
+    conflict_strategy: str | None = None
 
 
 @runtime_checkable

@@ -506,6 +506,8 @@ class NexusFSGateway:
         """Get mount info and backend-relative path for a virtual path.
 
         Used by WriteBackService to resolve which backend to write back to.
+        Mounts are checked longest-prefix-first so that more-specific mounts
+        (e.g. ``/mnt/foo``) match before less-specific ones (e.g. ``/``).
 
         Args:
             path: Virtual file path
@@ -514,7 +516,9 @@ class NexusFSGateway:
             Dict with mount_point, backend, backend_path, readonly keys,
             or None if no mount matches.
         """
-        for mount in self.router.list_mounts():
+        # Sort by mount_point length descending so longest prefix matches first
+        mounts = sorted(self.router.list_mounts(), key=lambda m: len(m.mount_point), reverse=True)
+        for mount in mounts:
             mp = mount.mount_point
             if path == mp or path.startswith(mp + "/") or mp == "/":
                 # Strip mount prefix to get backend-relative path

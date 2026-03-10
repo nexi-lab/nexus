@@ -416,6 +416,55 @@ class NamespaceManager:
                 for k in keys_to_remove:
                     self._dcache_negative.pop(k, None)
 
+    def update_mount_table(
+        self,
+        subject: tuple[str, str],
+        mount_entries: list[MountEntry],
+        zone_id: str | None = None,
+    ) -> None:
+        """Replace a subject's cached mount table with the given entries.
+
+        Used by ``AgentNamespaceForkService.merge()`` to apply the merged
+        mount table back to the live namespace without a full ReBAC rebuild.
+
+        Invalidates dcache for the subject to ensure subsequent visibility
+        checks use the updated mount table.
+
+        Args:
+            subject: (subject_type, subject_id) tuple.
+            mount_entries: Sorted list of MountEntry to install.
+            zone_id: Zone ID for multi-zone isolation.
+        """
+        mount_paths = [m.virtual_path for m in mount_entries]
+
+        # Compute grants_hash from mount_paths (deterministic)
+        sorted_paths = sorted(f"file:{p}" for p in mount_paths)
+        grants_hash = hashlib.sha256("|".join(sorted_paths).encode()).hexdigest()[:16]
+
+        try:
+            current_revision = self._rebac_manager.get_zone_revision(zone_id)
+        except Exception:
+            current_revision = 0
+
+        with self._lock:
+            self._cache[subject] = (
+                mount_entries,
+                mount_paths,
+                current_revision,
+                zone_id,
+                grants_hash,
+            )
+
+        # Invalidate dcache so visibility checks pick up the new mount table
+        self.invalidate_dcache(subject)
+
+        logger.debug(
+            "[NAMESPACE] Updated mount table for %s:%s: %d mounts",
+            subject[0],
+            subject[1],
+            len(mount_entries),
+        )
+
     def invalidate(self, subject: tuple[str, str]) -> None:
         """Explicitly invalidate a subject's cached mount table, dcache, and L3 entries.
 

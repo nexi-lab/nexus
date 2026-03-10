@@ -114,6 +114,9 @@ class AgentProcessConfig:
     qos_class: QoSClass = QoSClass.STANDARD
     priority: int = 0
 
+    # Sandbox
+    sandbox_id: str | None = None
+
     # Filesystem
     cwd: str | None = None
     mount_paths: tuple[str, ...] = ()

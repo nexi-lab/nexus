@@ -200,7 +200,7 @@ class TestGlobCommand:
 
     def test_glob_json_output(self) -> None:
         nx = _make_mock_nx()
-        nx.search_service.glob.return_value = {"matches": ["/src/main.py", "/src/utils.py"]}
+        nx.service("search").glob.return_value = {"matches": ["/src/main.py", "/src/utils.py"]}
 
         runner = CliRunner()
         with _patch_search_open_filesystem(nx):
@@ -214,7 +214,7 @@ class TestGlobCommand:
 
     def test_glob_no_matches(self) -> None:
         nx = _make_mock_nx()
-        nx.search_service.glob.return_value = {"matches": []}
+        nx.service("search").glob.return_value = {"matches": []}
 
         runner = CliRunner()
         with _patch_search_open_filesystem(nx):
@@ -230,7 +230,7 @@ class TestGrepCommand:
 
     def test_grep_json_output(self) -> None:
         nx = _make_mock_nx()
-        nx.search_service.grep.return_value = {
+        nx.service("search").grep.return_value = {
             "results": [
                 {"file": "/src/main.py", "line": 10, "content": "# TODO: fix this"},
                 {"file": "/src/main.py", "line": 20, "content": "# TODO: refactor"},
@@ -249,7 +249,7 @@ class TestGrepCommand:
 
     def test_grep_no_matches(self) -> None:
         nx = _make_mock_nx()
-        nx.search_service.grep.return_value = {"results": []}
+        nx.service("search").grep.return_value = {"results": []}
 
         runner = CliRunner()
         with _patch_search_open_filesystem(nx):
@@ -261,7 +261,7 @@ class TestGrepCommand:
 
     def test_grep_human_with_line_numbers(self) -> None:
         nx = _make_mock_nx()
-        nx.search_service.grep.return_value = {
+        nx.service("search").grep.return_value = {
             "results": [
                 {"file": "/src/main.py", "line": 10, "content": "# TODO"},
             ]
@@ -276,7 +276,7 @@ class TestGrepCommand:
 
     def test_grep_vvv_includes_request_id(self) -> None:
         nx = _make_mock_nx()
-        nx.search_service.grep.return_value = {
+        nx.service("search").grep.return_value = {
             "results": [
                 {"file": "/a.py", "line": 1, "content": "match"},
             ]

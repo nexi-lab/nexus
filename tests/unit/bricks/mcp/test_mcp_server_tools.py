@@ -53,11 +53,12 @@ def mock_nx_basic():
     nx.sys_write = Mock()
     nx.sys_unlink = Mock()
     nx.sys_readdir = Mock(return_value=["/file1.txt", "/file2.txt"])
-    nx.search_service = Mock()
-    nx.search_service.glob = Mock(return_value=["test.py", "main.py"])
-    nx.search_service.grep = Mock(
-        return_value=[{"file": "test.py", "line": 10, "content": "match"}]
-    )
+    _mock_search = Mock()
+    _mock_search.glob = Mock(return_value=["test.py", "main.py"])
+    _mock_search.grep = Mock(return_value=[{"file": "test.py", "line": 10, "content": "match"}])
+    _service_map = {"search": _mock_search}
+    nx.service = Mock(side_effect=lambda name: _service_map.get(name))
+    nx._mock_search = _mock_search  # internal alias for assertion access
     nx.sys_access = Mock(return_value=True)
     nx.sys_is_directory = Mock(return_value=False)
     nx.sys_mkdir = Mock()
@@ -81,7 +82,7 @@ def mock_nx_with_memory():
     nx.sys_read = Mock(return_value=b"test")
     nx.sys_write = Mock()
 
-    # Add memory system via _memory_provider (get_memory_api() reads this)
+    # Add memory system via service("memory_provider") (get_memory_api() reads this)
     mock_memory = Mock()
     mock_memory.store = Mock()
     mock_memory.search = Mock(
@@ -92,7 +93,8 @@ def mock_nx_with_memory():
     mock_memory.session.rollback = Mock()
     mock_provider = Mock()
     mock_provider.get_or_create.return_value = mock_memory
-    nx._memory_provider = mock_provider
+    _service_map = {"memory_provider": mock_provider}
+    nx.service = Mock(side_effect=lambda name: _service_map.get(name))
     nx.memory = mock_memory  # alias for assertions
 
     return nx
@@ -143,8 +145,8 @@ def mock_nx_with_sandbox():
     # Add sandbox support
     nx.sandbox_available = True
 
-    nx._sandbox_rpc_service = Mock()
-    nx._sandbox_rpc_service.sandbox_create = Mock(
+    _mock_sandbox_rpc = Mock()
+    _mock_sandbox_rpc.sandbox_create = Mock(
         return_value={
             "sandbox_id": "test-sandbox-123",
             "name": "test",
@@ -152,10 +154,10 @@ def mock_nx_with_sandbox():
             "status": "running",
         }
     )
-    nx._sandbox_rpc_service.sandbox_list = Mock(
+    _mock_sandbox_rpc.sandbox_list = Mock(
         return_value=[{"sandbox_id": "test-sandbox-123", "name": "test", "status": "running"}]
     )
-    nx._sandbox_rpc_service.sandbox_run = Mock(
+    _mock_sandbox_rpc.sandbox_run = Mock(
         return_value={
             "stdout": "Hello, World!",
             "stderr": "",
@@ -163,7 +165,10 @@ def mock_nx_with_sandbox():
             "execution_time": 0.123,
         }
     )
-    nx._sandbox_rpc_service.sandbox_stop = Mock()
+    _mock_sandbox_rpc.sandbox_stop = Mock()
+    _service_map = {"sandbox_rpc": _mock_sandbox_rpc}
+    nx.service = Mock(side_effect=lambda name: _service_map.get(name))
+    nx._mock_sandbox_rpc = _mock_sandbox_rpc  # internal alias for assertion access
 
     return nx
 
@@ -196,7 +201,7 @@ def mock_nx_full():
     nx.sys_mkdir = Mock()
     nx.sys_rmdir = Mock()
 
-    # Memory system via _memory_provider (get_memory_api() reads this)
+    # Memory system via service("memory_provider") (get_memory_api() reads this)
     mock_memory = Mock()
     mock_memory.store = Mock()
     mock_memory.search = Mock(return_value=[])
@@ -205,7 +210,6 @@ def mock_nx_full():
     mock_memory.session.rollback = Mock()
     mock_provider = Mock()
     mock_provider.get_or_create.return_value = mock_memory
-    nx._memory_provider = mock_provider
     nx.memory = mock_memory  # alias for assertions
 
     # Workflow system
@@ -218,13 +222,16 @@ def mock_nx_full():
 
     # Sandbox
     nx.sandbox_available = True
-    nx._sandbox_rpc_service = Mock()
-    nx._sandbox_rpc_service.sandbox_create = Mock(return_value={"sandbox_id": "test-123"})
-    nx._sandbox_rpc_service.sandbox_list = Mock(return_value=[])
-    nx._sandbox_rpc_service.sandbox_run = Mock(
+    _mock_sandbox_rpc = Mock()
+    _mock_sandbox_rpc.sandbox_create = Mock(return_value={"sandbox_id": "test-123"})
+    _mock_sandbox_rpc.sandbox_list = Mock(return_value=[])
+    _mock_sandbox_rpc.sandbox_run = Mock(
         return_value={"stdout": "output", "stderr": "", "exit_code": 0, "execution_time": 0.1}
     )
-    nx._sandbox_rpc_service.sandbox_stop = Mock()
+    _mock_sandbox_rpc.sandbox_stop = Mock()
+
+    _service_map = {"memory_provider": mock_provider, "sandbox_rpc": _mock_sandbox_rpc}
+    nx.service = Mock(side_effect=lambda name: _service_map.get(name))
 
     return nx
 
@@ -628,7 +635,7 @@ class TestSearchTools:
         assert "total" in response
         assert isinstance(response["items"], list)
         assert "test.py" in response["items"]
-        mock_nx_basic.search_service.glob.assert_called_once_with("*.py", "/src")
+        mock_nx_basic._mock_search.glob.assert_called_once_with("*.py", "/src")
 
     def test_glob_default_path(self, mock_nx_basic):
         """Test glob with default path."""
@@ -637,11 +644,11 @@ class TestSearchTools:
         glob_tool = get_tool(server, "nexus_glob")
         glob_tool.fn(pattern="*.txt")
 
-        mock_nx_basic.search_service.glob.assert_called_once_with("*.txt", "/")
+        mock_nx_basic._mock_search.glob.assert_called_once_with("*.txt", "/")
 
     def test_glob_error(self, mock_nx_basic):
         """Test glob error handling."""
-        mock_nx_basic.search_service.glob.side_effect = ValueError("Invalid pattern")
+        mock_nx_basic._mock_search.glob.side_effect = ValueError("Invalid pattern")
         server = create_mcp_server(nx=mock_nx_basic)
 
         glob_tool = get_tool(server, "nexus_glob")
@@ -662,7 +669,7 @@ class TestSearchTools:
         assert "items" in response
         assert "total" in response
         assert isinstance(response["items"], list)
-        mock_nx_basic.search_service.grep.assert_called_once_with("TODO", "/src", ignore_case=False)
+        mock_nx_basic._mock_search.grep.assert_called_once_with("TODO", "/src", ignore_case=False)
 
     def test_grep_ignore_case(self, mock_nx_basic):
         """Test grep with case-insensitive search."""
@@ -671,15 +678,13 @@ class TestSearchTools:
         grep_tool = get_tool(server, "nexus_grep")
         grep_tool.fn(pattern="error", path="/logs", ignore_case=True)
 
-        mock_nx_basic.search_service.grep.assert_called_once_with(
-            "error", "/logs", ignore_case=True
-        )
+        mock_nx_basic._mock_search.grep.assert_called_once_with("error", "/logs", ignore_case=True)
 
     def test_grep_result_limiting(self, mock_nx_basic):
         """Test grep pagination with default limit of 100 matches."""
         # Create 150 fake results
         large_results = [{"file": f"file{i}.py", "line": i, "content": "match"} for i in range(150)]
-        mock_nx_basic.search_service.grep.return_value = large_results
+        mock_nx_basic._mock_search.grep.return_value = large_results
         server = create_mcp_server(nx=mock_nx_basic)
 
         grep_tool = get_tool(server, "nexus_grep")
@@ -695,7 +700,7 @@ class TestSearchTools:
 
     def test_grep_error(self, mock_nx_basic):
         """Test grep error handling."""
-        mock_nx_basic.search_service.grep.side_effect = ValueError("Invalid regex")
+        mock_nx_basic._mock_search.grep.side_effect = ValueError("Invalid regex")
         server = create_mcp_server(nx=mock_nx_basic)
 
         grep_tool = get_tool(server, "nexus_grep")
@@ -798,8 +803,8 @@ class TestMemoryTools:
 
     def test_store_memory_not_available(self, mock_nx_basic):
         """Test storing memory when system not available."""
-        # Implementation checks _memory_provider, not .memory
-        mock_nx_basic._memory_provider = None
+        # Implementation checks service("memory_provider"), not ._memory_provider
+        mock_nx_basic.service = Mock(return_value=None)
 
         server = create_mcp_server(nx=mock_nx_basic)
 
@@ -833,8 +838,8 @@ class TestMemoryTools:
 
     def test_query_memory_not_available(self, mock_nx_basic):
         """Test querying memory when system not available."""
-        # Implementation checks _memory_provider, not .memory
-        mock_nx_basic._memory_provider = None
+        # Implementation checks service("memory_provider"), not ._memory_provider
+        mock_nx_basic.service = Mock(return_value=None)
 
         server = create_mcp_server(nx=mock_nx_basic)
 
@@ -1005,7 +1010,7 @@ class TestSandboxTools:
 
     def test_python_execution_success(self, mock_nx_with_sandbox):
         """Test Python code execution successfully."""
-        mock_nx_with_sandbox._sandbox_rpc_service.sandbox_run.return_value = {
+        mock_nx_with_sandbox._mock_sandbox_rpc.sandbox_run.return_value = {
             "stdout": "Hello, World!",
             "stderr": "",
             "exit_code": 0,
@@ -1021,13 +1026,13 @@ class TestSandboxTools:
         assert "Exit code: 0" in result
         assert "Execution time: 0.456s" in result
 
-        mock_nx_with_sandbox._sandbox_rpc_service.sandbox_run.assert_called_once_with(
+        mock_nx_with_sandbox._mock_sandbox_rpc.sandbox_run.assert_called_once_with(
             sandbox_id="test-123", language="python", code='print("Hello, World!")', timeout=300
         )
 
     def test_python_execution_with_error(self, mock_nx_with_sandbox):
         """Test Python execution with stderr output."""
-        mock_nx_with_sandbox._sandbox_rpc_service.sandbox_run.return_value = {
+        mock_nx_with_sandbox._mock_sandbox_rpc.sandbox_run.return_value = {
             "stdout": "",
             "stderr": "NameError: name 'undefined' is not defined",
             "exit_code": 1,
@@ -1044,7 +1049,7 @@ class TestSandboxTools:
 
     def test_python_execution_no_output(self, mock_nx_with_sandbox):
         """Test Python execution with no output."""
-        mock_nx_with_sandbox._sandbox_rpc_service.sandbox_run.return_value = {
+        mock_nx_with_sandbox._mock_sandbox_rpc.sandbox_run.return_value = {
             "stdout": "",
             "stderr": "",
             "exit_code": 0,
@@ -1063,7 +1068,7 @@ class TestSandboxTools:
 
     def test_python_execution_error(self, mock_nx_with_sandbox):
         """Test Python execution error handling."""
-        mock_nx_with_sandbox._sandbox_rpc_service.sandbox_run.side_effect = RuntimeError(
+        mock_nx_with_sandbox._mock_sandbox_rpc.sandbox_run.side_effect = RuntimeError(
             "Sandbox not found"
         )
         server = create_mcp_server(nx=mock_nx_with_sandbox)
@@ -1076,7 +1081,7 @@ class TestSandboxTools:
 
     def test_bash_execution_success(self, mock_nx_with_sandbox):
         """Test bash command execution successfully."""
-        mock_nx_with_sandbox._sandbox_rpc_service.sandbox_run.return_value = {
+        mock_nx_with_sandbox._mock_sandbox_rpc.sandbox_run.return_value = {
             "stdout": "file1.txt\nfile2.txt\n",
             "stderr": "",
             "exit_code": 0,
@@ -1092,13 +1097,13 @@ class TestSandboxTools:
         assert "Exit code: 0" in result
         assert "Execution time: 0.089s" in result
 
-        mock_nx_with_sandbox._sandbox_rpc_service.sandbox_run.assert_called_once_with(
+        mock_nx_with_sandbox._mock_sandbox_rpc.sandbox_run.assert_called_once_with(
             sandbox_id="test-123", language="bash", code="ls -l", timeout=300
         )
 
     def test_bash_execution_with_error(self, mock_nx_with_sandbox):
         """Test bash execution with command error."""
-        mock_nx_with_sandbox._sandbox_rpc_service.sandbox_run.return_value = {
+        mock_nx_with_sandbox._mock_sandbox_rpc.sandbox_run.return_value = {
             "stdout": "",
             "stderr": "bash: invalid_command: command not found",
             "exit_code": 127,
@@ -1115,7 +1120,7 @@ class TestSandboxTools:
 
     def test_bash_execution_error(self, mock_nx_with_sandbox):
         """Test bash execution error handling."""
-        mock_nx_with_sandbox._sandbox_rpc_service.sandbox_run.side_effect = TimeoutError(
+        mock_nx_with_sandbox._mock_sandbox_rpc.sandbox_run.side_effect = TimeoutError(
             "Execution timeout"
         )
         server = create_mcp_server(nx=mock_nx_with_sandbox)
@@ -1137,7 +1142,7 @@ class TestSandboxTools:
         assert "sandbox_id" in sandbox_info
         assert sandbox_info["sandbox_id"] == "test-sandbox-123"
 
-        mock_nx_with_sandbox._sandbox_rpc_service.sandbox_create.assert_called_once_with(
+        mock_nx_with_sandbox._mock_sandbox_rpc.sandbox_create.assert_called_once_with(
             name="my-sandbox", ttl_minutes=15
         )
 
@@ -1148,12 +1153,12 @@ class TestSandboxTools:
         create_tool = get_tool(server, "nexus_sandbox_create")
         create_tool.fn(name="test")
 
-        call_args = mock_nx_with_sandbox._sandbox_rpc_service.sandbox_create.call_args
+        call_args = mock_nx_with_sandbox._mock_sandbox_rpc.sandbox_create.call_args
         assert call_args.kwargs["ttl_minutes"] == 10
 
     def test_sandbox_create_error(self, mock_nx_with_sandbox):
         """Test sandbox create error handling."""
-        mock_nx_with_sandbox._sandbox_rpc_service.sandbox_create.side_effect = RuntimeError(
+        mock_nx_with_sandbox._mock_sandbox_rpc.sandbox_create.side_effect = RuntimeError(
             "No providers available"
         )
         server = create_mcp_server(nx=mock_nx_with_sandbox)
@@ -1173,11 +1178,11 @@ class TestSandboxTools:
 
         sandboxes = json.loads(result)
         assert isinstance(sandboxes, list)
-        mock_nx_with_sandbox._sandbox_rpc_service.sandbox_list.assert_called_once()
+        mock_nx_with_sandbox._mock_sandbox_rpc.sandbox_list.assert_called_once()
 
     def test_sandbox_list_error(self, mock_nx_with_sandbox):
         """Test sandbox list error handling."""
-        mock_nx_with_sandbox._sandbox_rpc_service.sandbox_list.side_effect = RuntimeError(
+        mock_nx_with_sandbox._mock_sandbox_rpc.sandbox_list.side_effect = RuntimeError(
             "Connection failed"
         )
         server = create_mcp_server(nx=mock_nx_with_sandbox)
@@ -1197,11 +1202,11 @@ class TestSandboxTools:
 
         assert "Successfully stopped sandbox" in result
         assert "test-123" in result
-        mock_nx_with_sandbox._sandbox_rpc_service.sandbox_stop.assert_called_once_with("test-123")
+        mock_nx_with_sandbox._mock_sandbox_rpc.sandbox_stop.assert_called_once_with("test-123")
 
     def test_sandbox_stop_error(self, mock_nx_with_sandbox):
         """Test sandbox stop error handling."""
-        mock_nx_with_sandbox._sandbox_rpc_service.sandbox_stop.side_effect = ValueError(
+        mock_nx_with_sandbox._mock_sandbox_rpc.sandbox_stop.side_effect = ValueError(
             "Sandbox not found"
         )
         server = create_mcp_server(nx=mock_nx_with_sandbox)

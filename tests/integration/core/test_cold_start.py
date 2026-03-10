@@ -76,18 +76,18 @@ class TestColdStartNexusFSConstruction:
             parsing=ParseConfig(auto_parse=False),
         )
 
-        # Service attributes should be None (no factory wiring)
-        assert nx.rebac_service is None
-        assert nx.mount_service is None
-        assert nx.mcp_service is None
+        # ServiceRegistry should be empty (no factory wiring)
+        assert nx.service("rebac") is None
+        assert nx.service("mount") is None
+        assert nx.service("mcp") is None
 
-    def test_wired_services_can_be_bound(self) -> None:
-        """bind_wired_services should accept WiredServices dataclass."""
+    def test_populate_service_registry(self) -> None:
+        """populate_service_registry should register services into ServiceRegistry."""
         from unittest.mock import MagicMock
 
-        from nexus.core.config import ParseConfig, WiredServices
+        from nexus.core.config import ParseConfig
         from nexus.core.nexus_fs import NexusFS
-        from nexus.factory.service_routing import bind_wired_services
+        from nexus.factory.service_routing import populate_service_registry
 
         mock_metadata = MagicMock()
         mock_metadata.list = MagicMock(return_value=[])
@@ -98,6 +98,5 @@ class TestColdStartNexusFSConstruction:
         )
 
         mock_svc = MagicMock()
-        ws = WiredServices(rebac_service=mock_svc)
-        bind_wired_services(nx, ws)
-        assert nx.rebac_service is mock_svc
+        populate_service_registry(nx._service_registry, {"rebac_service": mock_svc})
+        assert nx.service("rebac") is mock_svc

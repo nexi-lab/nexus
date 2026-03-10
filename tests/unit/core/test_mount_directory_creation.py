@@ -116,7 +116,11 @@ def test_mount_appears_in_detailed_listing(nx_with_mount):
     # Find /personal in results
     personal_entry = next((e for e in root_list if e["path"] == "/personal"), None)
     assert personal_entry is not None, f"Expected /personal in {root_list}"
-    assert personal_entry["is_directory"] is True
+    # sys_readdir(details=True) returns {"path", "size", "etag"}; verify keys
+    assert "size" in personal_entry
+    assert "etag" in personal_entry
+    # Confirm the kernel recognises /personal as a directory
+    assert nx.sys_is_directory("/personal")
 
     # List /personal with details
     personal_list = nx.sys_readdir("/personal", recursive=False, details=True)
@@ -124,7 +128,10 @@ def test_mount_appears_in_detailed_listing(nx_with_mount):
     # Find /personal/alice in results
     alice_entry = next((e for e in personal_list if e["path"] == "/personal/alice"), None)
     assert alice_entry is not None, f"Expected /personal/alice in {personal_list}"
-    assert alice_entry["is_directory"] is True
+    assert "size" in alice_entry
+    assert "etag" in alice_entry
+    # Confirm the kernel recognises /personal/alice as a directory
+    assert nx.sys_is_directory("/personal/alice")
 
 
 def test_nested_mount_creates_all_parents(nx_with_mount):
@@ -173,7 +180,7 @@ def test_sync_mount_ensures_directory_exists(nx_with_mount):
     ctx = OperationContext(user_id="test-user", groups=[], zone_id="test", is_admin=True)
 
     # Use mount_core_service.add_mount (sync) which properly grants permissions
-    mount_point = nx._mount_core_service.add_mount(
+    mount_point = nx.service("mount_core").add_mount(
         mount_point="/zone/test/old/mount",
         backend_type="cas_local",
         backend_config={"data_dir": str(mount_dir)},
@@ -188,7 +195,7 @@ def test_sync_mount_ensures_directory_exists(nx_with_mount):
         mount_point=mount_point,
         context=ctx,
     )
-    result = nx._sync_service.sync_mount(sync_ctx)
+    result = nx.service("sync").sync_mount(sync_ctx)
 
     # Verify directory exists after sync
     assert nx.metadata.exists("/zone/test/old")
@@ -207,7 +214,7 @@ def test_add_mount_via_api_creates_directory(nx_with_mount):
     mount_dir.mkdir()
 
     # Use mount_core_service.add_mount (sync) instead of removed nx.add_mount
-    mount_id = nx._mount_core_service.add_mount(
+    mount_id = nx.service("mount_core").add_mount(
         mount_point="/api/mount",
         backend_type="cas_local",
         backend_config={"data_dir": str(mount_dir)},

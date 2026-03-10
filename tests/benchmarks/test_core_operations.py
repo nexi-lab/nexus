@@ -205,7 +205,7 @@ class TestGlobBenchmarks:
         nx = populated_nexus
 
         def glob_files():
-            return nx.search_service.glob("*.txt", "/many_files")
+            return nx.service("search").glob("*.txt", "/many_files")
 
         result = benchmark(glob_files)
         assert len(result) >= 100
@@ -216,8 +216,8 @@ class TestGlobBenchmarks:
 
         def glob_files():
             # Find all .py and .json files
-            py_files = nx.search_service.glob("*.py", "/many_files")
-            json_files = nx.search_service.glob("*.json", "/many_files")
+            py_files = nx.service("search").glob("*.py", "/many_files")
+            json_files = nx.service("search").glob("*.json", "/many_files")
             return py_files + json_files
 
         result = benchmark(glob_files)
@@ -228,7 +228,7 @@ class TestGlobBenchmarks:
         nx = populated_nexus
 
         def glob_files():
-            return nx.search_service.glob("**/*.bin", "/")
+            return nx.service("search").glob("**/*.bin", "/")
 
         result = benchmark(glob_files)
         assert len(result) > 0
@@ -263,7 +263,7 @@ class TestGlobBenchmarks:
         nx = deep_directory_nexus
 
         def glob_files():
-            return nx.search_service.glob("*.txt", "/level_0/level_1/level_2/level_3/level_4")
+            return nx.service("search").glob("*.txt", "/level_0/level_1/level_2/level_3/level_4")
 
         result = benchmark(glob_files)
         assert result is not None

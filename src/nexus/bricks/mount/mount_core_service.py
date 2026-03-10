@@ -28,7 +28,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from nexus.lib.context_utils import get_user_identity, get_zone_id
-from nexus.lib.permission_utils import check_permission
+from nexus.lib.permission_utils import PermissionCheckError, check_permission
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
@@ -258,8 +258,12 @@ class MountCoreService:
         for mount_info in router_mounts:
             mount_point = mount_info.mount_point
 
-            # Check permission
-            has_permission = self._check_mount_permission(mount_point, context)
+            # Check permission — exclude on infrastructure failure (fail-safe)
+            try:
+                has_permission = self._check_mount_permission(mount_point, context)
+            except PermissionCheckError:
+                logger.warning("Permission check failed for mount %s, excluding", mount_point)
+                continue
 
             if has_permission:
                 mounts.append(

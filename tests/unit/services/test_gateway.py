@@ -32,17 +32,29 @@ def mock_fs():
     fs.metadata.delete = MagicMock()
     fs.metadata.delete_batch = MagicMock()
     fs.metadata.delete_directory_entries_recursive = MagicMock(return_value=5)
-    fs.rebac_service = MagicMock()
-    fs.rebac_service.rebac_create_sync = MagicMock(return_value={"tuple_id": "t1"})
-    fs.rebac_service.rebac_check_sync = MagicMock(return_value=True)
-    fs.rebac_service.rebac_list_tuples_sync = MagicMock(
+    mock_rebac_svc = MagicMock()
+    mock_rebac_svc.rebac_create_sync = MagicMock(return_value={"tuple_id": "t1"})
+    mock_rebac_svc.rebac_check_sync = MagicMock(return_value=True)
+    mock_rebac_svc.rebac_list_tuples_sync = MagicMock(
         return_value=[
             {"tuple_id": "t1"},
             {"tuple_id": "t2"},
             {"tuple_id": "t3"},
         ]
     )
-    fs.rebac_service.rebac_delete_sync = MagicMock(return_value=True)
+    mock_rebac_svc.rebac_delete_sync = MagicMock(return_value=True)
+    mock_descendant_checker = MagicMock()
+    mock_descendant_checker.has_access = MagicMock(return_value=True)
+
+    # Wire up fs.service() to return the correct mock by service name.
+    # The gateway calls self._fs.service("rebac") and
+    # self._fs.service("descendant_checker") to get service instances.
+    _service_map = {
+        "rebac": mock_rebac_svc,
+        "descendant_checker": mock_descendant_checker,
+    }
+    fs.service = MagicMock(side_effect=lambda name: _service_map.get(name, MagicMock()))
+
     fs._rebac_manager = MagicMock()
     fs._rebac_manager.rebac_delete = MagicMock()
     fs._hierarchy_manager = MagicMock()
@@ -53,8 +65,6 @@ def mock_fs():
     fs.SessionLocal = MagicMock()
     fs.read_bulk = MagicMock(return_value={"/a": b"data"})
     fs._get_routing_params = MagicMock(return_value=("zone1", "agent1", False))
-    fs._descendant_checker = MagicMock()
-    fs._descendant_checker.has_access = MagicMock(return_value=True)
     fs._get_backend_directory_entries = MagicMock(return_value={"file.txt"})
     fs.backend = MagicMock()
     return fs
@@ -219,7 +229,7 @@ class TestReBACOperations:
             zone_id="z1",
         )
         assert result == {"tuple_id": "t1"}
-        mock_fs.rebac_service.rebac_create_sync.assert_called_once_with(
+        mock_fs.service("rebac").rebac_create_sync.assert_called_once_with(
             subject=("user", "alice"),
             relation="viewer",
             object=("file", "/test"),
@@ -236,25 +246,25 @@ class TestReBACOperations:
             zone_id="z1",
         )
         assert result is True
-        mock_fs.rebac_service.rebac_check_sync.assert_called_once()
+        mock_fs.service("rebac").rebac_check_sync.assert_called_once()
 
     def test_rebac_delete_object_tuples(self, gateway, mock_fs):
         """rebac_delete_object_tuples lists then deletes each tuple."""
         result = gateway.rebac_delete_object_tuples(object=("file", "/test"), zone_id="z1")
         assert result == 3
-        mock_fs.rebac_service.rebac_list_tuples_sync.assert_called_once()
-        assert mock_fs.rebac_service.rebac_delete_sync.call_count == 3
+        mock_fs.service("rebac").rebac_list_tuples_sync.assert_called_once()
+        assert mock_fs.service("rebac").rebac_delete_sync.call_count == 3
 
     def test_rebac_list_tuples(self, gateway, mock_fs):
         """rebac_list_tuples delegates to rebac_service."""
         gateway.rebac_list_tuples(subject=("user", "alice"), relation="viewer")
-        mock_fs.rebac_service.rebac_list_tuples_sync.assert_called()
+        mock_fs.service("rebac").rebac_list_tuples_sync.assert_called()
 
     def test_rebac_delete(self, gateway, mock_fs):
         """rebac_delete delegates to rebac_service."""
         result = gateway.rebac_delete("tuple-123")
         assert result is True
-        mock_fs.rebac_service.rebac_delete_sync.assert_called_with("tuple-123")
+        mock_fs.service("rebac").rebac_delete_sync.assert_called_with("tuple-123")
 
     def test_rebac_delete_no_manager(self, mock_fs):
         """rebac_delete delegates to rebac_service even without rebac_manager."""

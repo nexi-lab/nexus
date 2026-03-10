@@ -217,22 +217,6 @@ class NexusFS(  # type: ignore[misc]
         self._vfs_lock_manager = create_vfs_lock_manager()
         logger.info("VFS lock manager initialized (%s)", type(self._vfs_lock_manager).__name__)
 
-        # Service attributes — set to None by default.
-        # Wired by factory via _bind_wired_services() after construction.
-        # Issue #643/#2133: kernel never imports or creates services.
-        self.rebac_service: Any = None
-        self.mount_service: Any = None
-        self._gateway: Any = None
-        self._mount_core_service: Any = None
-        self._sync_service: Any = None
-        self._sync_job_service: Any = None
-        self._mount_persist_service: Any = None
-        self.mcp_service: Any = None
-        self.llm_service: Any = None
-        self.oauth_service: Any = None
-        self.search_service: Any = None
-        self.share_link_service: Any = None
-        self.events_service: Any = None
         # Kernel notification dispatch (INTERCEPT + OBSERVE).
         # Kernel owns dispatch infrastructure — creates empty callback lists.
         # Factory registers hooks at boot (KERNEL-ARCHITECTURE §3).
@@ -332,8 +316,8 @@ class NexusFS(  # type: ignore[misc]
         """Read-only access to the kernel ServiceRegistry.  Factory / diagnostics."""
         return self._service_registry
 
-    # Services wired by factory via bind_wired_services() (Issue #1381).
-    # See nexus.factory.service_routing.bind_wired_services().
+    # Services accessed via self.service("name") → ServiceRegistry (Issue #1452).
+    # Registered by factory via populate_service_registry() at link().
 
     @property
     def namespace_manager(self) -> Any | None:

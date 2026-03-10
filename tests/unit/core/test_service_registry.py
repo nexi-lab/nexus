@@ -171,24 +171,13 @@ class TestSnapshot:
 
 
 class TestPopulateServiceRegistry:
-    """Verify populate_service_registry produces the same instances as bind_wired_services."""
+    """Verify populate_service_registry registers all services correctly."""
 
-    def test_dual_write_same_instances(self) -> None:
-        from nexus.core.config import KernelServices, ParseConfig
-        from nexus.core.nexus_fs import NexusFS
+    def test_all_canonical_names_registered(self) -> None:
         from nexus.core.service_registry import ServiceRegistry
         from nexus.factory.service_routing import (
             _CANONICAL_NAMES,
-            bind_wired_services,
             populate_service_registry,
-        )
-
-        mock_metadata = MagicMock()
-        mock_metadata.list = MagicMock(return_value=[])
-        nx = NexusFS(
-            metadata_store=mock_metadata,
-            kernel_services=KernelServices(),
-            parsing=ParseConfig(auto_parse=False),
         )
 
         # Build a dict with a unique mock per service
@@ -196,42 +185,13 @@ class TestPopulateServiceRegistry:
         for src_key in _CANONICAL_NAMES:
             wired_dict[src_key] = MagicMock(name=f"mock_{src_key}")
 
-        bind_wired_services(nx, wired_dict)
-
         reg = ServiceRegistry()
         count = populate_service_registry(reg, wired_dict)
         assert count == len(_CANONICAL_NAMES)
 
-        # Every registry entry must be the exact same instance as the attr on nx
-        # Re-read the slot map to get attr names
-        _SLOT_MAP = {
-            "rebac_service": "rebac_service",
-            "mount_service": "mount_service",
-            "gateway": "_gateway",
-            "mount_core_service": "_mount_core_service",
-            "sync_service": "_sync_service",
-            "sync_job_service": "_sync_job_service",
-            "mount_persist_service": "_mount_persist_service",
-            "mcp_service": "mcp_service",
-            "llm_service": "llm_service",
-            "oauth_service": "oauth_service",
-            "search_service": "search_service",
-            "share_link_service": "share_link_service",
-            "events_service": "events_service",
-            "workspace_rpc_service": "_workspace_rpc_service",
-            "agent_rpc_service": "_agent_rpc_service",
-            "user_provisioning_service": "_user_provisioning_service",
-            "sandbox_rpc_service": "_sandbox_rpc_service",
-            "metadata_export_service": "_metadata_export_service",
-            "descendant_checker": "_descendant_checker",
-            "memory_provider": "_memory_provider",
-            "time_travel_service": "time_travel_service",
-            "operations_service": "operations_service",
-        }
+        # Every canonical name should map to the correct mock instance
         for src_key, canonical in _CANONICAL_NAMES.items():
-            attr_name = _SLOT_MAP[src_key]
-            attr_val = getattr(nx, attr_name)
             reg_val = reg.service(canonical)
-            assert attr_val is reg_val, (
-                f"Mismatch for {src_key}: attr ({attr_name}) is not registry ({canonical})"
+            assert reg_val is wired_dict[src_key], (
+                f"Mismatch for {src_key}: registry({canonical}) is not wired_dict[{src_key}]"
             )

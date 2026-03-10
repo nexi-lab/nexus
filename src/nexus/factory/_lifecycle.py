@@ -29,7 +29,7 @@ def _do_link(
 
     from nexus.contracts.deployment_profile import DeploymentProfile as _DP
     from nexus.factory._wired import _boot_wired_services
-    from nexus.factory.service_routing import bind_wired_services, populate_service_registry
+    from nexus.factory.service_routing import populate_service_registry
 
     _parsing = parsing if parsing is not None else nx._parse_config
 
@@ -87,7 +87,7 @@ def _do_link(
     def _brick_on(name: str) -> bool:
         return name in _resolved_bricks
 
-    # --- Boot + bind wired services (Tier 2b) ---
+    # --- Boot wired services → register into ServiceRegistry ---
     _wired = _boot_wired_services(
         nx,
         nx._kernel_services,
@@ -95,13 +95,13 @@ def _do_link(
         nx._brick_services,
         _brick_on,
     )
-    bind_wired_services(nx, _wired)
     populate_service_registry(nx._service_registry, _wired)
 
-    # MetadataExportService lives outside the slot map
-    _mds = getattr(_wired, "metadata_export_service", None)
-    if _mds is not None:
-        nx._metadata_export_service = _mds
+    # Kernel DI: _descendant_checker is a kernel component (like Linux LSM hook),
+    # not an external service — inject directly onto the kernel instance.
+    _dc = getattr(_wired, "descendant_checker", None)
+    if _dc is not None:
+        nx._descendant_checker = _dc
 
     # --- PermissionChecker (services layer — Issue #899) ---
     from nexus.bricks.rebac.checker import PermissionChecker as _PC

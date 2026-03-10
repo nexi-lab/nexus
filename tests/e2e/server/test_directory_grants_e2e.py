@@ -141,7 +141,7 @@ class TestDirectoryGrantExpansion:
         directory_path = "/workspace/project/"
 
         # Grant read permission on the directory
-        nx.rebac_service.rebac_create_sync(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "alice"),
             relation="reader",
             object=("file", directory_path),
@@ -196,7 +196,7 @@ class TestDirectoryGrantExpansion:
         assert len(listed) == 3, f"Expected 3 files, got {len(listed)}"
 
         # Grant read permission on the directory
-        nx.rebac_service.rebac_create_sync(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "bob"),
             relation="reader",
             object=("file", "/workspace/project/"),
@@ -245,7 +245,7 @@ class TestDirectoryGrantExpansion:
         )
 
         # First grant permission on the directory
-        nx.rebac_service.rebac_create_sync(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "charlie"),
             relation="reader",
             object=("file", "/workspace/shared/"),
@@ -257,7 +257,7 @@ class TestDirectoryGrantExpansion:
         nx.sys_write(new_file, "new content", context=ctx)
 
         # The new file should inherit the permission via Tiger Cache
-        has_access = nx.rebac_service.rebac_check_sync(
+        has_access = nx.service("rebac").rebac_check_sync(
             subject=("user", "charlie"),
             permission="read",
             object=("file", new_file),
@@ -289,13 +289,13 @@ class TestDirectoryGrantExpansion:
         # Create two directories with different grants
         # Directory A: alice has read
         # Directory B: bob has read
-        nx.rebac_service.rebac_create_sync(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "alice"),
             relation="reader",
             object=("file", "/dir_a/"),
             zone_id="root",
         )
-        nx.rebac_service.rebac_create_sync(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "bob"),
             relation="reader",
             object=("file", "/dir_b/"),
@@ -309,7 +309,7 @@ class TestDirectoryGrantExpansion:
         time.sleep(0.2)
 
         # Verify alice has access via Tiger Cache
-        assert nx.rebac_service.rebac_check_sync(
+        assert nx.service("rebac").rebac_check_sync(
             subject=("user", "alice"),
             permission="read",
             object=("file", "/dir_a/moveme.txt"),
@@ -323,7 +323,7 @@ class TestDirectoryGrantExpansion:
         time.sleep(0.2)
 
         # After move: bob should gain access
-        has_bob_access = nx.rebac_service.rebac_check_sync(
+        has_bob_access = nx.service("rebac").rebac_check_sync(
             subject=("user", "bob"),
             permission="read",
             object=("file", "/dir_b/moveme.txt"),
@@ -487,7 +487,7 @@ class TestTigerCacheIntegration:
             nx.sys_write(path, f"content of {path}")
 
         # Grant permission on directory
-        nx.rebac_service.rebac_create_sync(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "diana"),
             relation="reader",
             object=("file", "/cache_test/"),

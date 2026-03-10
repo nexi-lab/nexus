@@ -1,10 +1,10 @@
 """Benchmark tests for service delegation overhead (Issue #1287).
 
-Measures the cost of NexusFS → service delegation patterns:
+Measures the cost of NexusFS -> service delegation patterns:
 - Direct vs delegated file operations
 - Gateway method delegation overhead
 - Service instantiation time
-- Parameter transformation cost (zone_id → _zone_id renaming)
+- Parameter transformation cost (zone_id -> _zone_id renaming)
 - Result wrapping cost (SkillService dict construction)
 
 Run with: pytest tests/benchmarks/test_service_delegation.py -v --benchmark-only
@@ -17,6 +17,7 @@ import pytest
 
 from nexus.contracts.types import OperationContext
 from nexus.core.nexus_fs import NexusFS
+from nexus.core.service_registry import ServiceRegistry
 from nexus.system_services.gateway import NexusFSGateway
 
 # =============================================================================
@@ -32,38 +33,46 @@ def mock_nexus_fs():
     pre-defined values to isolate delegation overhead.
     """
     fs = object.__new__(NexusFS)
+    fs._service_registry = ServiceRegistry()
     fs.metadata = MagicMock()
     fs.metadata.list = MagicMock(return_value=[])
     fs.version_service = MagicMock()
     fs.version_service.get_version = AsyncMock(return_value=b"benchmark")
     fs.version_service.list_versions = AsyncMock(return_value=[{"v": 1}])
     fs.version_service.diff_versions = AsyncMock(return_value={"changed": False})
-    fs.rebac_service = MagicMock()
-    fs.rebac_service.rebac_check = AsyncMock(return_value=True)
-    fs.rebac_service.rebac_create = AsyncMock(return_value={"tuple_id": "t1"})
-    fs.rebac_service.rebac_list_tuples = AsyncMock(return_value=[])
-    fs.rebac_service.rebac_expand = AsyncMock(return_value=[])
-    fs.mcp_service = MagicMock()
-    fs.mcp_service.mcp_list_mounts = AsyncMock(return_value=[])
+    mock_rebac_svc = MagicMock()
+    mock_rebac_svc.rebac_check = AsyncMock(return_value=True)
+    mock_rebac_svc.rebac_create = AsyncMock(return_value={"tuple_id": "t1"})
+    mock_rebac_svc.rebac_list_tuples = AsyncMock(return_value=[])
+    mock_rebac_svc.rebac_expand = AsyncMock(return_value=[])
+    fs._service_registry.register_service("rebac", mock_rebac_svc)
+    mock_mcp_svc = MagicMock()
+    mock_mcp_svc.mcp_list_mounts = AsyncMock(return_value=[])
+    fs._service_registry.register_service("mcp", mock_mcp_svc)
     fs.skill_service = MagicMock()
     fs.skill_service.share = MagicMock(return_value="tuple-abc")
     fs.skill_service.discover = MagicMock(return_value=[])
     fs.skill_service.get_prompt_context = MagicMock(
         return_value=MagicMock(to_dict=MagicMock(return_value={}))
     )
-    fs.llm_service = MagicMock()
-    fs.llm_service.create_llm_reader = MagicMock()
-    fs.oauth_service = MagicMock()
-    fs.oauth_service.oauth_list_providers = AsyncMock(return_value=[])
-    fs.search_service = MagicMock()
-    fs.search_service.list = MagicMock(return_value=[])
-    fs.search_service.glob = MagicMock(return_value=[])
-    fs.search_service.grep = MagicMock(return_value=[])
-    fs.search_service.semantic_search = AsyncMock(return_value=[])
-    fs.share_link_service = MagicMock()
-    fs.share_link_service.create_share_link = AsyncMock(return_value=MagicMock())
-    fs.mount_service = MagicMock()
-    fs.mount_service.list_mounts = AsyncMock(return_value=[])
+    mock_llm_svc = MagicMock()
+    mock_llm_svc.create_llm_reader = MagicMock()
+    fs._service_registry.register_service("llm", mock_llm_svc)
+    mock_oauth_svc = MagicMock()
+    mock_oauth_svc.oauth_list_providers = AsyncMock(return_value=[])
+    fs._service_registry.register_service("oauth", mock_oauth_svc)
+    mock_search_svc = MagicMock()
+    mock_search_svc.list = MagicMock(return_value=[])
+    mock_search_svc.glob = MagicMock(return_value=[])
+    mock_search_svc.grep = MagicMock(return_value=[])
+    mock_search_svc.semantic_search = AsyncMock(return_value=[])
+    fs._service_registry.register_service("search", mock_search_svc)
+    mock_share_link_svc = MagicMock()
+    mock_share_link_svc.create_share_link = AsyncMock(return_value=MagicMock())
+    fs._service_registry.register_service("share_link", mock_share_link_svc)
+    mock_mount_svc = MagicMock()
+    mock_mount_svc.list_mounts = AsyncMock(return_value=[])
+    fs._service_registry.register_service("mount", mock_mount_svc)
     return fs
 
 
@@ -131,7 +140,7 @@ class TestAsyncDelegationOverhead:
 
         def run():
             asyncio.run(
-                mock_nexus_fs.rebac_service.rebac_check(
+                mock_nexus_fs.service("rebac").rebac_check(
                     subject=("user", "alice"),
                     permission="read",
                     object=("file", "/doc.txt"),
@@ -146,7 +155,7 @@ class TestAsyncDelegationOverhead:
 
         def run():
             asyncio.run(
-                mock_nexus_fs.rebac_service.rebac_list_tuples(
+                mock_nexus_fs.service("rebac").rebac_list_tuples(
                     subject=("user", "alice"),
                     zone_id="z1",
                     limit=100,
@@ -160,7 +169,7 @@ class TestAsyncDelegationOverhead:
         """Benchmark mcp_list_mounts via mcp_service direct call."""
 
         def run():
-            asyncio.run(mock_nexus_fs.mcp_service.mcp_list_mounts(_context=context))
+            asyncio.run(mock_nexus_fs.service("mcp").mcp_list_mounts(_context=context))
 
         benchmark(run)
 
@@ -168,7 +177,7 @@ class TestAsyncDelegationOverhead:
         """Benchmark oauth_list_providers via oauth_service direct call."""
 
         def run():
-            asyncio.run(mock_nexus_fs.oauth_service.oauth_list_providers(_context=context))
+            asyncio.run(mock_nexus_fs.service("oauth").oauth_list_providers(_context=context))
 
         benchmark(run)
 
@@ -225,12 +234,12 @@ class TestSyncDelegationOverhead:
 
     def test_search_glob_delegation(self, benchmark, mock_nexus_fs, context):
         """Benchmark glob() delegation to SearchService."""
-        benchmark(mock_nexus_fs.search_service.glob, "*.py", "/src", context)
+        benchmark(mock_nexus_fs.service("search").glob, "*.py", "/src", context)
 
     def test_search_grep_delegation(self, benchmark, mock_nexus_fs, context):
         """Benchmark grep() delegation to SearchService."""
         benchmark(
-            mock_nexus_fs.search_service.grep,
+            mock_nexus_fs.service("search").grep,
             "import os",
             "/src",
             None,
@@ -242,7 +251,7 @@ class TestSyncDelegationOverhead:
 
     def test_create_llm_reader_delegation(self, benchmark, mock_nexus_fs):
         """Benchmark create_llm_reader sync delegation via llm_service."""
-        benchmark(mock_nexus_fs.llm_service.create_llm_reader)
+        benchmark(mock_nexus_fs.service("llm").create_llm_reader)
 
 
 # =============================================================================

@@ -48,18 +48,21 @@ def nx_with_db(tmp_path):
     # Issue #2133: service_wiring.py deleted — explicitly create UserProvisioningService
     from nexus.system_services.lifecycle.user_provisioning import UserProvisioningService
 
-    nx._user_provisioning_service = UserProvisioningService(
-        vfs=nx,
-        session_factory=session_factory,
-        entity_registry=mock_registry,
-        api_key_creator=mock_key_creator,
-        backend=nx.router.route("/").backend,
-        rebac_manager=nx._rebac_manager,
-        rmdir_fn=nx.sys_rmdir,
-        rebac_create_fn=MagicMock(),
-        rebac_delete_fn=MagicMock(),
-        register_workspace_fn=MagicMock(),
-        register_agent_fn=MagicMock(),
+    nx._service_registry.register_service(
+        "user_provisioning",
+        UserProvisioningService(
+            vfs=nx,
+            session_factory=session_factory,
+            entity_registry=mock_registry,
+            api_key_creator=mock_key_creator,
+            backend=nx.router.route("/").backend,
+            rebac_manager=nx._rebac_manager,
+            rmdir_fn=nx.sys_rmdir,
+            rebac_create_fn=MagicMock(),
+            rebac_delete_fn=MagicMock(),
+            register_workspace_fn=MagicMock(),
+            register_agent_fn=MagicMock(),
+        ),
     )
 
     return nx
@@ -70,17 +73,17 @@ class TestProvisionUserInputValidation:
 
     def test_empty_user_id_raises(self, nx_with_db):
         with pytest.raises(ValueError, match="user_id is required"):
-            nx_with_db._user_provisioning_service.provision_user(
+            nx_with_db.service("user_provisioning").provision_user(
                 user_id="", email="test@example.com"
             )
 
     def test_missing_email_raises(self, nx_with_db):
         with pytest.raises(ValueError, match="Valid email required"):
-            nx_with_db._user_provisioning_service.provision_user(user_id="alice", email="")
+            nx_with_db.service("user_provisioning").provision_user(user_id="alice", email="")
 
     def test_invalid_email_no_at_sign_raises(self, nx_with_db):
         with pytest.raises(ValueError, match="Valid email required"):
-            nx_with_db._user_provisioning_service.provision_user(
+            nx_with_db.service("user_provisioning").provision_user(
                 user_id="alice", email="not-an-email"
             )
 
@@ -90,14 +93,14 @@ class TestProvisionUserZoneIdExtraction:
 
     def test_zone_id_extracted_from_email(self, nx_with_db):
         """When zone_id is not provided, extract from email local part."""
-        result = nx_with_db._user_provisioning_service.provision_user(
+        result = nx_with_db.service("user_provisioning").provision_user(
             user_id="alice",
             email="alice@example.com",
         )
         assert result["zone_id"] == "alice"
 
     def test_explicit_zone_id_takes_precedence(self, nx_with_db):
-        result = nx_with_db._user_provisioning_service.provision_user(
+        result = nx_with_db.service("user_provisioning").provision_user(
             user_id="alice",
             email="alice@example.com",
             zone_id="custom-zone",
@@ -109,7 +112,7 @@ class TestProvisionUserHappyPath:
     """Full provisioning should create user, zone, API key, etc."""
 
     def test_returns_expected_keys(self, nx_with_db):
-        result = nx_with_db._user_provisioning_service.provision_user(
+        result = nx_with_db.service("user_provisioning").provision_user(
             user_id="alice",
             email="alice@example.com",
             zone_id="test-zone",
@@ -126,7 +129,7 @@ class TestProvisionUserHappyPath:
 
         from nexus.storage.models import ZoneModel
 
-        nx_with_db._user_provisioning_service.provision_user(
+        nx_with_db.service("user_provisioning").provision_user(
             user_id="alice",
             email="alice@example.com",
             zone_id="test-zone",
@@ -146,7 +149,7 @@ class TestProvisionUserHappyPath:
 
         from nexus.storage.models import UserModel
 
-        nx_with_db._user_provisioning_service.provision_user(
+        nx_with_db.service("user_provisioning").provision_user(
             user_id="alice",
             email="alice@example.com",
             zone_id="test-zone",
@@ -161,7 +164,7 @@ class TestProvisionUserHappyPath:
             session.close()
 
     def test_creates_api_key(self, nx_with_db):
-        result = nx_with_db._user_provisioning_service.provision_user(
+        result = nx_with_db.service("user_provisioning").provision_user(
             user_id="alice",
             email="alice@example.com",
             zone_id="test-zone",
@@ -175,7 +178,7 @@ class TestProvisionUserHappyPath:
         nx_with_db._api_key_creator.create_key.assert_called_once()
 
     def test_skip_api_key_creation(self, nx_with_db):
-        result = nx_with_db._user_provisioning_service.provision_user(
+        result = nx_with_db.service("user_provisioning").provision_user(
             user_id="alice",
             email="alice@example.com",
             zone_id="test-zone",
@@ -195,10 +198,10 @@ class TestProvisionUserIdempotency:
 
         from nexus.storage.models import ZoneModel
 
-        nx_with_db._user_provisioning_service.provision_user(
+        nx_with_db.service("user_provisioning").provision_user(
             user_id="alice", email="alice@example.com", zone_id="z1"
         )
-        nx_with_db._user_provisioning_service.provision_user(
+        nx_with_db.service("user_provisioning").provision_user(
             user_id="bob", email="bob@example.com", zone_id="z1"
         )
 
@@ -219,7 +222,7 @@ class TestProvisionUserReactivation:
         from nexus.storage.models import UserModel
 
         # First provision
-        nx_with_db._user_provisioning_service.provision_user(
+        nx_with_db.service("user_provisioning").provision_user(
             user_id="alice", email="alice@example.com", zone_id="z1"
         )
 
@@ -232,7 +235,7 @@ class TestProvisionUserReactivation:
         session.close()
 
         # Re-provision should reactivate
-        nx_with_db._user_provisioning_service.provision_user(
+        nx_with_db.service("user_provisioning").provision_user(
             user_id="alice", email="alice@example.com", zone_id="z1"
         )
 
@@ -251,11 +254,11 @@ class TestProvisionUserPartialFailure:
     def test_api_key_creator_not_injected(self, nx_with_db):
         nx_with_db._api_key_creator = None
         # Also update the service (Issue #2033: provision_user delegated to service)
-        ups = getattr(nx_with_db, "_user_provisioning_service", None)
+        ups = nx_with_db.service("user_provisioning")
         if ups is not None:
             ups._api_key_creator = None
         with pytest.raises(RuntimeError, match="API key creator not injected"):
-            nx_with_db._user_provisioning_service.provision_user(
+            nx_with_db.service("user_provisioning").provision_user(
                 user_id="alice",
                 email="alice@example.com",
                 zone_id="z1",
@@ -271,29 +274,34 @@ class TestProvisionUserPartialFailure:
         mock_registry.get_entity.return_value = None
         nx._entity_registry = mock_registry
         # Issue #2133: explicitly create service with session_factory=None
-        nx._user_provisioning_service = UserProvisioningService(
-            vfs=nx,
-            session_factory=None,
-            entity_registry=mock_registry,
-            api_key_creator=None,
-            backend=nx.router.route("/").backend,
-            rebac_manager=MagicMock(),
-            rmdir_fn=nx.sys_rmdir,
-            rebac_create_fn=MagicMock(),
-            rebac_delete_fn=MagicMock(),
-            register_workspace_fn=MagicMock(),
-            register_agent_fn=MagicMock(),
+        nx._service_registry.register_service(
+            "user_provisioning",
+            UserProvisioningService(
+                vfs=nx,
+                session_factory=None,
+                entity_registry=mock_registry,
+                api_key_creator=None,
+                backend=nx.router.route("/").backend,
+                rebac_manager=MagicMock(),
+                rmdir_fn=nx.sys_rmdir,
+                rebac_create_fn=MagicMock(),
+                rebac_delete_fn=MagicMock(),
+                register_workspace_fn=MagicMock(),
+                register_agent_fn=MagicMock(),
+            ),
         )
         # Don't set SessionLocal — it defaults to None
         with pytest.raises(TypeError):
-            nx._user_provisioning_service.provision_user(user_id="alice", email="alice@example.com")
+            nx.service("user_provisioning").provision_user(
+                user_id="alice", email="alice@example.com"
+            )
 
     def test_directory_creation_failure_continues(self, nx_with_db):
         """If directory creation fails, provisioning should continue."""
         # Issue #2033: _create_user_directories is now on UserProvisioningService
-        target = getattr(nx_with_db, "_user_provisioning_service", nx_with_db)
+        target = nx_with_db.service("user_provisioning") or nx_with_db
         with patch.object(target, "_create_user_directories", side_effect=OSError("disk full")):
-            result = nx_with_db._user_provisioning_service.provision_user(
+            result = nx_with_db.service("user_provisioning").provision_user(
                 user_id="alice",
                 email="alice@example.com",
                 zone_id="z1",
@@ -311,7 +319,7 @@ class TestProvisionUserPartialFailure:
         The key assertion is that provisioning doesn't abort.
         """
         with patch.object(nx_with_db, "sys_mkdir", side_effect=Exception("workspace error")):
-            result = nx_with_db._user_provisioning_service.provision_user(
+            result = nx_with_db.service("user_provisioning").provision_user(
                 user_id="alice",
                 email="alice@example.com",
                 zone_id="z1",

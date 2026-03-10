@@ -471,26 +471,29 @@ def output_result(data: Any, json_output: bool, rich_fn: Any) -> None:
         rich_fn(data)
 
 
-def get_service_client(
-    remote_url: str | None = None,
-    remote_api_key: str | None = None,
+def rpc_call(
+    remote_url: str | None,
+    remote_api_key: str | None,
+    rpc_method: str,
+    **kwargs: Any,
 ) -> Any:
-    """Create a NexusServiceClient from URL/API key, with validation.
+    """Call a server RPC method via gRPC transport.
+
+    Opens a remote NexusFilesystem, grabs any wired service proxy, and
+    dispatches the method through ``RemoteServiceProxy.__getattr__`` →
+    ``_call_rpc`` → gRPC ``Call`` RPC → server-side ``dispatch_method()``.
 
     Args:
         remote_url: Server URL (from --remote-url or NEXUS_URL env var)
         remote_api_key: API key (from --remote-api-key or NEXUS_API_KEY env var)
+        rpc_method: RPC method name (e.g. ``"federation_list_zones"``)
+        **kwargs: Method parameters
 
     Returns:
-        NexusServiceClient instance
-
-    Raises:
-        SystemExit: If URL is not provided
+        Result dict from the server.
     """
-    if not remote_url:
-        console.print("[red]Error:[/red] Server URL required. Set NEXUS_URL or use --remote-url")
-        sys.exit(ExitCode.CONFIG_ERROR)
-
-    from nexus.cli.client import NexusServiceClient
-
-    return NexusServiceClient(url=remote_url, api_key=remote_api_key)
+    with open_filesystem(remote_url, remote_api_key) as nx:
+        svc = nx.service("version")  # any wired proxy works — they all share _call_rpc
+        if svc is None:
+            raise RuntimeError("Cannot reach server — no service proxy available")
+        return getattr(svc, rpc_method)(**kwargs)

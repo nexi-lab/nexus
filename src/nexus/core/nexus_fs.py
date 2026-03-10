@@ -4039,14 +4039,42 @@ class NexusFS(  # type: ignore[misc]
         context: Any = None,
         limit: int | None = None,
         cursor: str | None = None,
-    ) -> builtins.list[str] | builtins.list[dict[str, Any]]:
+    ) -> builtins.list[str] | builtins.list[dict[str, Any]] | Any:
         prefix = path if path != "/" else ""
         if prefix and not prefix.endswith("/"):
             prefix = prefix + "/"
-        entries = self.metadata.list(prefix=prefix, recursive=recursive)
+
+        if limit is None:
+            # Backward-compatible path: return plain list
+            entries = self.metadata.list(prefix=prefix, recursive=recursive)
+            if details:
+                return [{"path": e.path, "size": e.size, "etag": e.etag} for e in entries]
+            return [e.path for e in entries]
+
+        # Paginated path: return PaginatedResult
+        from nexus.lib.pagination import decode_cursor, encode_cursor, paginate_iter
+
+        filters = {"prefix": prefix, "recursive": recursive}
+        cursor_path = None
+        if cursor:
+            cursor_data = decode_cursor(cursor, filters)
+            cursor_path = cursor_data.path
+
+        items_iter = self.metadata.list_iter(prefix=prefix, recursive=recursive)
+        result = paginate_iter(items_iter, limit=limit, cursor_path=cursor_path)
+
+        # Convert FileMetadata items to the requested output type
         if details:
-            return [{"path": e.path, "size": e.size, "etag": e.etag} for e in entries]
-        return [e.path for e in entries]
+            result.items = [{"path": e.path, "size": e.size, "etag": e.etag} for e in result.items]
+        else:
+            result.items = [e.path for e in result.items]
+
+        # Re-encode cursor with filter hash for tamper detection
+        if result.has_more and result.items:
+            last_path = result.items[-1] if not details else result.items[-1]["path"]
+            result.next_cursor = encode_cursor(last_path, None, filters)
+
+        return result
 
     # _run_async: replaced by direct run_sync() calls (Issue #1381)
 

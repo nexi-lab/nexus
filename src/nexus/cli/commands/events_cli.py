@@ -1,7 +1,6 @@
-"""Events CLI commands — replay and subscribe.
+"""Events CLI commands — replay.
 
-Maps to /api/v2/events/* REST endpoints via NexusServiceClient.
-Issue #2811.
+``subscribe`` (SSE streaming) is not supported via gRPC Call and has been removed.
 """
 
 import click
@@ -12,13 +11,13 @@ from nexus.cli.utils import (
     REMOTE_API_KEY_OPTION,
     REMOTE_URL_OPTION,
     console,
-    get_service_client,
+    rpc_call,
 )
 
 
 @click.group()
 def events() -> None:
-    """Event replay and subscription.
+    """Event replay.
 
     \b
     Prerequisites:
@@ -29,7 +28,6 @@ def events() -> None:
     \b
     Examples:
         nexus events replay --since 1h
-        nexus events subscribe "file_write"
     """
 
 
@@ -60,8 +58,11 @@ def events_replay(
     """
     try:
         timing = CommandTiming()
-        with timing.phase("server"), get_service_client(remote_url, remote_api_key) as client:
-            data = client.events_replay(
+        with timing.phase("server"):
+            data = rpc_call(
+                remote_url,
+                remote_api_key,
+                "events_replay",
                 since=since,
                 event_type=event_type,
                 path=event_path,
@@ -99,53 +100,6 @@ def events_replay(
             timing=timing,
             human_formatter=_render,
         )
-    except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
-        raise SystemExit(1) from None
-
-
-@events.command("subscribe")
-@click.argument("pattern")
-@add_output_options
-@REMOTE_API_KEY_OPTION
-@REMOTE_URL_OPTION
-def events_subscribe(
-    pattern: str,
-    output_opts: OutputOptions,
-    remote_url: str | None,
-    remote_api_key: str | None,
-) -> None:
-    """Subscribe to real-time events (SSE).
-
-    Streams events matching the given pattern until interrupted (Ctrl+C).
-
-    \b
-    Examples:
-        nexus events subscribe "file_write"
-        nexus events subscribe "*" --json
-    """
-    try:
-        timing = CommandTiming()
-        with timing.phase("server"), get_service_client(remote_url, remote_api_key) as client:
-            console.print(f"[yellow]Subscribing to events matching:[/yellow] {pattern}")
-            console.print("[dim]Press Ctrl+C to stop[/dim]\n")
-            content = client.events_subscribe(pattern)
-
-        def _render(d: str) -> None:
-            for line in d.splitlines():
-                if line.startswith("data:"):
-                    console.print(f"  {line[5:].strip()}")
-                elif line.strip():
-                    console.print(f"  [dim]{line}[/dim]")
-
-        render_output(
-            data=content,
-            output_opts=output_opts,
-            timing=timing,
-            human_formatter=_render,
-        )
-    except KeyboardInterrupt:
-        console.print("\n[yellow]Subscription ended[/yellow]")
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(1) from None

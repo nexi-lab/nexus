@@ -1,8 +1,4 @@
-"""Audit CLI commands — transaction listing and export.
-
-Maps to /api/v2/audit/* REST endpoints via NexusServiceClient.
-Issue #2811.
-"""
+"""Audit CLI commands — transaction listing and export."""
 
 import click
 
@@ -12,7 +8,7 @@ from nexus.cli.utils import (
     REMOTE_API_KEY_OPTION,
     REMOTE_URL_OPTION,
     console,
-    get_service_client,
+    rpc_call,
 )
 
 
@@ -63,8 +59,11 @@ def audit_list(
     """
     timing = CommandTiming()
     try:
-        with timing.phase("server"), get_service_client(remote_url, remote_api_key) as client:
-            data = client.audit_list(
+        with timing.phase("server"):
+            data = rpc_call(
+                remote_url,
+                remote_api_key,
+                "audit_list",
                 since=since,
                 until=until,
                 agent_id=agent_id,
@@ -141,8 +140,9 @@ def audit_export(
         nexus audit export --format csv > transactions.csv
     """
     try:
-        with get_service_client(remote_url, remote_api_key) as client:
-            content = client.audit_export(fmt=fmt, since=since, until=until)
+        content = rpc_call(
+            remote_url, remote_api_key, "audit_export", fmt=fmt, since=since, until=until
+        )
 
         if output_file:
             with open(output_file, "w") as f:

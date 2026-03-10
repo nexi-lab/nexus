@@ -1,15 +1,9 @@
-"""``nexusd`` entry point — start the Nexus node daemon.
+"""``nexusd`` entry point — Nexus node daemon + node-local commands.
 
-Thin orchestrator that:
-1. Parses CLI flags and environment variables
-2. Creates a local NexusFS via ``nexus.connect()``
-3. Wraps it in a FastAPI app via ``create_app()``
-4. Runs uvicorn (blocking until SIGTERM)
-
-The heavy lifting is done by existing modules:
-- ``nexus.connect()`` handles profile detection, storage pillar creation
-- ``nexus.server.fastapi_server.create_app()`` handles middleware, routes, auth
-- ``nexus.server.lifespan`` handles async startup phases and graceful shutdown
+Subcommands:
+- (default, no subcommand) — start the daemon
+- ``nexusd share`` — share a local subtree as a federation zone
+- ``nexusd join``  — join a peer's federation zone
 """
 
 from __future__ import annotations
@@ -29,7 +23,7 @@ logger = logging.getLogger("nexusd")
 
 
 # ---------------------------------------------------------------------------
-# Helpers: PID file, ready file, JSON log formatter
+# Helpers
 # ---------------------------------------------------------------------------
 
 
@@ -57,12 +51,10 @@ def _manage_pid_file() -> Path:
         try:
             old_pid = int(pid_path.read_text().strip())
             os.kill(old_pid, 0)  # Check if process exists
-            # Process is running
             click.echo(f"Error: nexusd is already running (PID {old_pid}).", err=True)
             click.echo(f"PID file: {pid_path}", err=True)
             sys.exit(ExitCode.CONFIG_ERROR)
         except (ValueError, ProcessLookupError, PermissionError):
-            # Stale PID file — remove it
             pid_path.unlink(missing_ok=True)
 
     pid_path.write_text(str(os.getpid()))
@@ -74,7 +66,28 @@ def _remove_pid_file(pid_path: Path) -> None:
     pid_path.unlink(missing_ok=True)
 
 
-@click.command(name="nexusd")
+def _redact_url(url: str) -> str:
+    """Redact password from database URL for safe logging."""
+    try:
+        from urllib.parse import urlparse, urlunparse
+
+        parsed = urlparse(url)
+        if parsed.password:
+            netloc = f"{parsed.username}:****@{parsed.hostname}"
+            if parsed.port:
+                netloc += f":{parsed.port}"
+            return urlunparse(parsed._replace(netloc=netloc))
+    except Exception:
+        pass
+    return url
+
+
+# ---------------------------------------------------------------------------
+# CLI group — bare ``nexusd`` starts the daemon, subcommands are node-local ops
+# ---------------------------------------------------------------------------
+
+
+@click.group(invoke_without_command=True)
 @click.option(
     "--host",
     default=None,
@@ -152,7 +165,9 @@ def _remove_pid_file(pid_path: Path) -> None:
     help="Number of uvicorn workers (default: 1).",
 )
 @click.version_option(package_name="nexus-ai-fs", prog_name="nexusd")
+@click.pass_context
 def main(
+    ctx: click.Context,
     host: str | None,
     port: int | None,
     config_path: str | None,
@@ -165,18 +180,23 @@ def main(
     log_format: str,
     workers: int | None,
 ) -> None:
-    """Start the Nexus node daemon.
+    """Nexus node daemon.
 
-    Starts a long-running process that exposes gRPC/HTTP APIs for file
+    Start a long-running process that exposes gRPC/HTTP APIs for file
     operations, search, permissions, and federation.
 
     \b
     Examples:
-        nexusd                                  # defaults
+        nexusd                                  # start daemon (defaults)
         nexusd --port 2026 --host 0.0.0.0       # explicit bind
         nexusd --config /etc/nexus/config.yaml   # from config file
-        nexusd --profile full --log-level debug  # full profile, debug logs
+        nexusd share /data/shared                # share a subtree
+        nexusd join peer1:2126 /shared /local    # join a peer's zone
     """
+    # If a subcommand was invoked, skip daemon startup
+    if ctx.invoked_subcommand is not None:
+        return
+
     # --- Defaults -----------------------------------------------------------
     host = host or "0.0.0.0"
     port = port or 2026
@@ -221,7 +241,6 @@ def main(
         if config_path:
             click.echo(f"  Config:  {config_path}")
         if database_url:
-            # Redact password in URL for display
             click.echo(f"  DB:      {_redact_url(database_url)}")
         click.echo("")
 
@@ -269,9 +288,6 @@ def main(
         # --- Create FastAPI app + run ---------------------------------------
         from nexus.server.fastapi_server import create_app, run_server
 
-        # nexus.connect() returns NexusFilesystem protocol; create_app expects
-        # NexusFS concrete type.  The daemon always creates a local NexusFS so
-        # the cast is safe at runtime.
         nx_fs: Any = nx
         app = create_app(
             nexus_fs=nx_fs,
@@ -300,17 +316,95 @@ def main(
         ready_path.unlink(missing_ok=True)
 
 
-def _redact_url(url: str) -> str:
-    """Redact password from database URL for safe logging."""
-    try:
-        from urllib.parse import urlparse, urlunparse
+# ---------------------------------------------------------------------------
+# nexusd share — share a local subtree as a federation zone
+# ---------------------------------------------------------------------------
 
-        parsed = urlparse(url)
-        if parsed.password:
-            netloc = f"{parsed.username}:****@{parsed.hostname}"
-            if parsed.port:
-                netloc += f":{parsed.port}"
-            return urlunparse(parsed._replace(netloc=netloc))
-    except Exception:
-        pass
-    return url
+
+@main.command("share")
+@click.argument("path", type=str)
+@click.option(
+    "--zone-id",
+    type=str,
+    default=None,
+    help="Explicit zone ID for the shared subtree (auto-generated if omitted).",
+)
+@click.option("--remote-url", default=None, envvar="NEXUS_URL", help="Running nexusd URL.")
+@click.option("--remote-api-key", default=None, envvar="NEXUS_API_KEY", help="API key.")
+def share_cmd(
+    path: str,
+    zone_id: str | None,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
+    """Share a local subtree as a federation zone.
+
+    Tells the running nexusd to create a new zone from a local path
+    so that peers can join it.
+
+    \b
+    Examples:
+        nexusd share /data/shared
+        nexusd share /data/shared --zone-id my-shared-zone
+    """
+    from nexus.cli.utils import console, rpc_call
+
+    try:
+        data = rpc_call(
+            remote_url, remote_api_key, "federation_share", local_path=path, zone_id=zone_id
+        )
+        new_zone = data.get("zone_id", "unknown")
+        console.print(f"[green]Shared '{path}' as federation zone[/green]")
+        console.print(f"  Zone ID: [cyan]{new_zone}[/cyan]")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# nexusd join — join a peer's federation zone
+# ---------------------------------------------------------------------------
+
+
+@main.command("join")
+@click.argument("peer_addr", type=str)
+@click.argument("remote_path", type=str)
+@click.argument("local_path", type=str)
+@click.option("--remote-url", default=None, envvar="NEXUS_URL", help="Running nexusd URL.")
+@click.option("--remote-api-key", default=None, envvar="NEXUS_API_KEY", help="API key.")
+def join_cmd(
+    peer_addr: str,
+    remote_path: str,
+    local_path: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
+    """Join a peer's federation zone.
+
+    Tells the running nexusd to connect to a remote peer and replicate
+    a shared subtree locally.
+
+    \b
+    Examples:
+        nexusd join peer1:2126 /shared /local/shared
+        nexusd join 10.0.0.5:2126 /data /mnt/data
+    """
+    from nexus.cli.utils import console, rpc_call
+
+    try:
+        data = rpc_call(
+            remote_url,
+            remote_api_key,
+            "federation_join",
+            peer_addr=peer_addr,
+            remote_path=remote_path,
+            local_path=local_path,
+        )
+        joined_zone = data.get("zone_id", "unknown")
+        console.print(f"[green]Joined federation zone from {peer_addr}[/green]")
+        console.print(f"  Zone ID:     [cyan]{joined_zone}[/cyan]")
+        console.print(f"  Remote path: {remote_path}")
+        console.print(f"  Local path:  {local_path}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)

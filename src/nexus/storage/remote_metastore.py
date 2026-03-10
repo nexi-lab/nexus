@@ -133,5 +133,28 @@ class RemoteMetastore(MetastoreABC):
             return bool(result.get("is_directory", False))
         return bool(result)
 
+    def set_file_metadata(self, path: str, key: str, value: Any) -> None:
+        """Store custom metadata key-value pair via server RPC.
+
+        Non-fatal: inline data decisions are server-side concerns.
+        """
+        try:
+            self._call_rpc("set_file_metadata", {"path": path, "key": key, "value": value})
+        except Exception as exc:
+            logger.debug(
+                "RemoteMetastore.set_file_metadata(%s, %s) failed (non-fatal): %s", path, key, exc
+            )
+
+    def get_file_metadata(self, path: str, key: str) -> Any:
+        """Get custom metadata value via server RPC."""
+        try:
+            result = self._call_rpc("get_file_metadata", {"path": path, "key": key})
+            if isinstance(result, dict):
+                return result.get("value")
+            return result
+        except Exception as exc:
+            logger.debug("RemoteMetastore.get_file_metadata(%s, %s) failed: %s", path, key, exc)
+            return None
+
     def close(self) -> None:
         """No-op — transport lifecycle managed by factory."""

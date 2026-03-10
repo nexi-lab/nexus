@@ -561,10 +561,17 @@ class ZoneManager:
         # Step 2: List all entries under path (including path itself if it's a dir)
         # Normalize: ensure path ends without trailing slash for prefix matching
         prefix = path.rstrip("/")
-        entries = list(parent_store.list_iter(prefix=prefix, recursive=True))
+        entries = [
+            e
+            for e in parent_store.list_iter(prefix=prefix, recursive=True)
+            if e.path == prefix or e.path.startswith(prefix + "/")
+        ]
 
         # Step 3: Copy entries to new zone with path rebasing
+        # Track nested DT_MOUNT targets so we can increment their link counts
         from dataclasses import replace
+
+        nested_mount_targets: list[str] = []
 
         for entry in entries:
             if entry.path == prefix:
@@ -581,7 +588,16 @@ class ZoneManager:
                 if not relative.startswith("/"):
                     relative = "/" + relative
                 rebased = replace(entry, path=relative, zone_id=new_zone_id)
+                # Track nested mounts for link count updates
+                if entry.is_mount and entry.target_zone_id:
+                    nested_mount_targets.append(entry.target_zone_id)
             new_store.put(rebased)
+
+        # Increment link counts for nested mount targets (Finding #4)
+        for nested_target_id in nested_mount_targets:
+            nested_store = self.get_store(nested_target_id)
+            if nested_store is not None:
+                self._increment_links(nested_store)
 
         # Ensure new zone has a root "/" even if no entries existed
         if new_store.get("/") is None:
@@ -721,19 +737,22 @@ class ZoneManager:
         """Check if all pending mounts are fully applied on this node.
 
         Uses target zone's i_links_count as mount-complete indicator:
-        Phase B (_increment_links) sets i_links_count >= 1 on the target
-        zone. This is the LAST phase of a mount, so i_links_count >= 1
-        implies Phase A (DT_MOUNT) is also done.
+        Phase B (_increment_links) sets i_links_count on the target zone.
+        The expected count equals the number of mounts referencing that zone.
 
         Works on both leader and follower nodes (reads replicated state).
         """
         if not self._pending_mounts:
             return True
-        for target_zone_id in self._pending_mounts.values():
+        # Count expected links per target zone
+        from collections import Counter
+
+        expected_counts = Counter(self._pending_mounts.values())
+        for target_zone_id, expected in expected_counts.items():
             target_store = self.get_store(target_zone_id)
             if target_store is None:
                 return False
-            if target_store.get_zone_links_count() < 1:
+            if target_store.get_zone_links_count() < expected:
                 return False
         return True
 
@@ -869,7 +888,10 @@ class ZoneManager:
                     continue
 
             # --- Phase B: i_links_count in target zone ---
-            if target_store.get_zone_links_count() < 1:
+            # Count how many pending mounts reference this target zone.
+            # i_links_count must reflect ALL mount references, not just the first.
+            expected_links = sum(1 for _, tz in sorted_mounts if tz == target_zone_id)
+            if target_store.get_zone_links_count() < expected_links:
                 if not self._is_zone_leader(target_store):
                     remaining[global_path] = target_zone_id
                     active_mounts[global_path] = target_zone_id

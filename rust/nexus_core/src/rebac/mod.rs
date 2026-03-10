@@ -451,6 +451,9 @@ pub fn expand_permission(
                         depth + 1,
                     );
                 }
+
+                // Direct tuples always apply (Zanzibar: direct fallback)
+                add_direct_subjects(permission, object, graph, subjects);
             }
         }
         return;

@@ -20,6 +20,9 @@ pub enum TaskError {
 
     #[error("queue full: {pending} pending tasks (max: {max_pending})")]
     QueueFull { pending: usize, max_pending: usize },
+
+    #[error("task {task_id} not owned by worker {worker_id}")]
+    NotOwner { task_id: u64, worker_id: String },
 }
 
 pub type Result<T> = std::result::Result<T, TaskError>;

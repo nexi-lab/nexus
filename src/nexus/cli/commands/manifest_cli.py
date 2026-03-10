@@ -1,0 +1,182 @@
+"""Access manifest CLI commands — agent tool access management.
+
+Maps to /api/v2/access-manifests/* endpoints via ManifestClient.
+Issue #2812.
+"""
+
+from __future__ import annotations
+
+import click
+
+from nexus.cli.clients.manifest import ManifestClient
+from nexus.cli.output import add_output_options
+from nexus.cli.service_command import ServiceResult, service_command
+from nexus.cli.utils import REMOTE_API_KEY_OPTION, REMOTE_URL_OPTION
+
+
+@click.group()
+def manifest() -> None:
+    """Agent access manifest management.
+
+    \b
+    Create, inspect, and evaluate agent access manifests that control
+    which tools and data sources an agent can use.
+
+    \b
+    Examples:
+        nexus manifest create agent_alice --sources /data /tools
+        nexus manifest list --json
+        nexus manifest evaluate <id> --tool read
+    """
+
+
+@manifest.command("create")
+@click.argument("agent_id")
+@click.option("--sources", multiple=True, required=True, help="Data sources (can specify multiple)")
+@add_output_options
+@REMOTE_API_KEY_OPTION
+@REMOTE_URL_OPTION
+@service_command(client_class=ManifestClient)
+def manifest_create(
+    client: ManifestClient, agent_id: str, sources: tuple[str, ...]
+) -> ServiceResult:
+    """Create an access manifest for an agent.
+
+    \b
+    Examples:
+        nexus manifest create agent_alice --sources /data --sources /tools
+        nexus manifest create agent_alice --sources /workspace --json
+    """
+    data = client.create(agent_id, sources=list(sources))
+
+    def _render(d: dict) -> None:
+        from nexus.cli.utils import console
+
+        console.print("[green]Manifest created[/green]")
+        console.print(f"  Manifest ID: {d.get('manifest_id', 'N/A')}")
+        console.print(f"  Agent:       {d.get('agent_id', agent_id)}")
+        console.print(f"  Sources:     {', '.join(d.get('sources', list(sources)))}")
+
+    return ServiceResult(data=data, human_formatter=_render)
+
+
+@manifest.command("list")
+@add_output_options
+@REMOTE_API_KEY_OPTION
+@REMOTE_URL_OPTION
+@service_command(client_class=ManifestClient)
+def manifest_list(client: ManifestClient) -> ServiceResult:
+    """List access manifests.
+
+    \b
+    Examples:
+        nexus manifest list
+        nexus manifest list --json
+    """
+    data = client.list()
+
+    def _render(d: dict) -> None:
+        from rich.table import Table
+
+        from nexus.cli.utils import console
+
+        manifests = d.get("manifests", [])
+        if not manifests:
+            console.print("[yellow]No manifests[/yellow]")
+            return
+
+        table = Table(title=f"Access Manifests ({len(manifests)})")
+        table.add_column("ID", style="dim")
+        table.add_column("Agent")
+        table.add_column("Sources")
+        table.add_column("Status")
+        table.add_column("Created", style="dim")
+
+        for m in manifests:
+            table.add_row(
+                m.get("manifest_id", "")[:12],
+                m.get("agent_id", ""),
+                ", ".join(m.get("sources", []))[:40],
+                m.get("status", ""),
+                m.get("created_at", "")[:19],
+            )
+        console.print(table)
+
+    return ServiceResult(data=data, human_formatter=_render)
+
+
+@manifest.command("show")
+@click.argument("manifest_id")
+@add_output_options
+@REMOTE_API_KEY_OPTION
+@REMOTE_URL_OPTION
+@service_command(client_class=ManifestClient)
+def manifest_show(client: ManifestClient, manifest_id: str) -> ServiceResult:
+    """Show manifest details.
+
+    \b
+    Examples:
+        nexus manifest show mfst_123 --json
+    """
+    data = client.show(manifest_id)
+
+    def _render(d: dict) -> None:
+        from nexus.cli.utils import console
+
+        console.print(f"[bold cyan]Manifest: {manifest_id}[/bold cyan]")
+        console.print(f"  Agent:   {d.get('agent_id', 'N/A')}")
+        console.print(f"  Status:  {d.get('status', 'N/A')}")
+        console.print(f"  Created: {d.get('created_at', 'N/A')[:19]}")
+        sources = d.get("sources", [])
+        if sources:
+            console.print("  Sources:")
+            for s in sources:
+                console.print(f"    - {s}")
+
+    return ServiceResult(data=data, human_formatter=_render)
+
+
+@manifest.command("evaluate")
+@click.argument("manifest_id")
+@click.option("--tool", required=True, help="Tool name to evaluate access for")
+@add_output_options
+@REMOTE_API_KEY_OPTION
+@REMOTE_URL_OPTION
+@service_command(client_class=ManifestClient)
+def manifest_evaluate(client: ManifestClient, manifest_id: str, tool: str) -> ServiceResult:
+    """Test tool access against a manifest.
+
+    \b
+    Examples:
+        nexus manifest evaluate mfst_123 --tool read
+        nexus manifest evaluate mfst_123 --tool write --json
+    """
+    data = client.evaluate(manifest_id, tool=tool)
+
+    def _render(d: dict) -> None:
+        from nexus.cli.utils import console
+
+        allowed = d.get("allowed", False)
+        status = "[green]Allowed[/green]" if allowed else "[red]Denied[/red]"
+        console.print(f"Tool '{tool}': {status}")
+        if d.get("reason"):
+            console.print(f"  Reason: {d['reason']}")
+
+    return ServiceResult(data=data, human_formatter=_render)
+
+
+@manifest.command("revoke")
+@click.argument("manifest_id")
+@add_output_options
+@REMOTE_API_KEY_OPTION
+@REMOTE_URL_OPTION
+@service_command(client_class=ManifestClient)
+def manifest_revoke(client: ManifestClient, manifest_id: str) -> ServiceResult:
+    """Revoke an access manifest.
+
+    \b
+    Examples:
+        nexus manifest revoke mfst_123
+    """
+    data = client.revoke(manifest_id)
+    return ServiceResult(data=data, message=f"Manifest {manifest_id} revoked")

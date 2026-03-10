@@ -71,6 +71,19 @@ _ADD_COMMAND: dict[str, str] = {
     "snapshots": "snapshot",
     "exchange": "exchange",
     "federation": "federation",
+    # Issue #2812: Missing CLI commands for identity, reputation, ipc, etc.
+    "identity": "identity",
+    "reputation": "reputation",
+    "ipc": "ipc",
+    "delegation": "delegation",
+    "scheduler_cli": "scheduler",
+    "share": "share",
+    "graph_cli": "graph",
+    "conflicts": "conflicts",
+    "manifest_cli": "manifest",
+    "secrets_audit": "secrets_audit",
+    "rlm": "rlm",
+    "upload": "upload",
 }
 
 

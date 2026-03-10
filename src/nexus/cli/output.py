@@ -198,6 +198,29 @@ def _render_human(
             click.echo(timing.format_short(), err=True)
 
 
+def _api_error_to_exit_code(error: Exception) -> ExitCode | None:
+    """Map NexusAPIError HTTP status to ExitCode, or None if not applicable."""
+    from nexus.cli.client import NexusAPIError
+
+    if not isinstance(error, NexusAPIError):
+        return None
+
+    status = error.status_code
+    if status == 400:
+        return ExitCode.USAGE_ERROR
+    if status in {401, 403}:
+        return ExitCode.PERMISSION_DENIED
+    if status == 404:
+        return ExitCode.NOT_FOUND
+    if status in {408, 504}:
+        return ExitCode.TEMPFAIL
+    if status in {429, 503}:
+        return ExitCode.UNAVAILABLE
+    if status >= 500:
+        return ExitCode.INTERNAL_ERROR
+    return ExitCode.GENERAL_ERROR
+
+
 def render_error(
     *,
     error: Exception,
@@ -211,6 +234,11 @@ def render_error(
     a Rich-formatted error message to stderr.
     """
     error_code = _exception_to_error_code(error)
+
+    # Override exit_code when the error is a NexusAPIError
+    api_exit = _api_error_to_exit_code(error)
+    if api_exit is not None:
+        exit_code = api_exit
 
     if output_opts is not None and output_opts.json_output:
         envelope: dict[str, Any] = {
@@ -237,6 +265,25 @@ def render_error(
 
 def _exception_to_error_code(error: Exception) -> str:
     """Map an exception to a short machine-readable error code."""
+    # NexusAPIError — map HTTP status codes to error codes
+    from nexus.cli.client import NexusAPIError
+
+    if isinstance(error, NexusAPIError):
+        status = error.status_code
+        if status == 400:
+            return "VALIDATION_ERROR"
+        if status in {401, 403}:
+            return "PERMISSION_DENIED"
+        if status == 404:
+            return "NOT_FOUND"
+        if status in {408, 504}:
+            return "TIMEOUT"
+        if status in {429, 503}:
+            return "UNAVAILABLE"
+        if status >= 500:
+            return "INTERNAL_ERROR"
+        return "INTERNAL_ERROR"
+
     # Lazy import to avoid circular deps
     from nexus.contracts.exceptions import (
         AccessDeniedError,

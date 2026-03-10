@@ -124,9 +124,11 @@ def create_tus_uploads_router(
     async def tus_create(
         request: Request,
         _tus_resumable: str = Depends(_validate_tus_resumable),
+        auth_result: dict = Depends(require_auth),
     ) -> Response:
         """Create a new upload session (tus creation extension)."""
         from nexus.contracts.exceptions import ValidationError
+        from nexus.server.dependencies import get_operation_context
 
         service = _get_service()
 
@@ -145,9 +147,10 @@ def create_tus_uploads_router(
         metadata_raw = request.headers.get("Upload-Metadata")
         metadata = _parse_upload_metadata(metadata_raw)
 
-        # Extract identity from request context if available
-        zone_id = request.headers.get("X-Zone-Id", "root")
-        user_id = request.headers.get("X-User-Id", "anonymous")
+        # Use authenticated principal instead of trusting request headers
+        ctx = get_operation_context(auth_result)
+        zone_id = ctx.zone_id or "root"
+        user_id = ctx.user_id or "anonymous"
 
         try:
             session = await service.create_upload(

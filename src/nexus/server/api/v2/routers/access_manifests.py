@@ -17,9 +17,30 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from nexus.server.dependencies import require_auth
+from nexus.server.dependencies import get_operation_context, require_auth
 
 logger = logging.getLogger(__name__)
+
+
+def _authorize_agent_access(
+    auth_result: dict[str, Any],
+    agent_id: str,
+    action: str = "access",
+) -> None:
+    """Verify caller is authorized to act on an agent's manifests.
+
+    Admins may operate on any agent.  Non-admins must match agent_id
+    or share the same zone scope.
+    """
+    ctx = get_operation_context(auth_result)
+    if ctx.is_admin:
+        return
+    if ctx.subject_id != agent_id:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Not authorized to {action} manifests for agent '{agent_id}'",
+        )
+
 
 router = APIRouter(prefix="/api/v2/access-manifests", tags=["access_manifests"])
 
@@ -85,10 +106,11 @@ def _get_manifest_service(request: Request) -> Any:
 @router.post("")
 async def create_manifest(
     body: CreateManifestRequest,
-    _auth_result: dict[str, Any] = Depends(require_auth),
+    auth_result: dict[str, Any] = Depends(require_auth),
     manifest_service: Any = Depends(_get_manifest_service),
 ) -> dict:
     """Create a new access manifest with ReBAC tuple generation."""
+    _authorize_agent_access(auth_result, body.agent_id, "create")
     from nexus.contracts.access_manifest_types import ManifestEntry, ToolPermission
 
     entries = tuple(
@@ -133,13 +155,14 @@ async def create_manifest(
 @router.get("/{manifest_id}")
 async def get_manifest(
     manifest_id: str,
-    _auth_result: dict[str, Any] = Depends(require_auth),
+    auth_result: dict[str, Any] = Depends(require_auth),
     manifest_service: Any = Depends(_get_manifest_service),
 ) -> dict:
     """Get a single manifest by ID."""
     manifest = await asyncio.to_thread(manifest_service.get_manifest, manifest_id)
     if manifest is None:
         raise HTTPException(status_code=404, detail="Manifest not found")
+    _authorize_agent_access(auth_result, manifest.agent_id, "read")
 
     return {
         "manifest_id": manifest.id,
@@ -167,10 +190,18 @@ async def list_manifests(
     active_only: bool = False,
     offset: int = 0,
     limit: int = 50,
-    _auth_result: dict[str, Any] = Depends(require_auth),
+    auth_result: dict[str, Any] = Depends(require_auth),
     manifest_service: Any = Depends(_get_manifest_service),
 ) -> dict:
     """List manifests with optional filters (paginated)."""
+    # Scope non-admin callers to their own agent_id
+    ctx = get_operation_context(auth_result)
+    if not ctx.is_admin and agent_id and ctx.subject_id != agent_id:
+        raise HTTPException(
+            status_code=403, detail="Not authorized to list manifests for this agent"
+        )
+    if not ctx.is_admin and not agent_id:
+        agent_id = ctx.subject_id
     manifests = await asyncio.to_thread(
         manifest_service.list_manifests,
         agent_id=agent_id,
@@ -203,13 +234,14 @@ async def list_manifests(
 async def evaluate_tool(
     manifest_id: str,
     body: EvaluateRequest,
-    _auth_result: dict[str, Any] = Depends(require_auth),
+    auth_result: dict[str, Any] = Depends(require_auth),
     manifest_service: Any = Depends(_get_manifest_service),
 ) -> dict:
     """Evaluate whether a tool is allowed for a manifest's agent."""
     manifest = await asyncio.to_thread(manifest_service.get_manifest, manifest_id)
     if manifest is None:
         raise HTTPException(status_code=404, detail="Manifest not found")
+    _authorize_agent_access(auth_result, manifest.agent_id, "evaluate")
 
     permission = await asyncio.to_thread(
         manifest_service.evaluate,
@@ -229,10 +261,15 @@ async def evaluate_tool(
 @router.post("/{manifest_id}/revoke")
 async def revoke_manifest(
     manifest_id: str,
-    _auth_result: dict[str, Any] = Depends(require_auth),
+    auth_result: dict[str, Any] = Depends(require_auth),
     manifest_service: Any = Depends(_get_manifest_service),
 ) -> dict:
     """Revoke a manifest and delete its ReBAC tuples."""
+    # Verify ownership before revoking
+    manifest = await asyncio.to_thread(manifest_service.get_manifest, manifest_id)
+    if manifest is None:
+        raise HTTPException(status_code=404, detail="Manifest not found")
+    _authorize_agent_access(auth_result, manifest.agent_id, "revoke")
     revoked = await asyncio.to_thread(manifest_service.revoke_manifest, manifest_id)
     if not revoked:
         raise HTTPException(status_code=404, detail="Manifest not found")

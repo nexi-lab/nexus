@@ -769,8 +769,6 @@ async def request_verification(
     Returns:
         Acceptance message (always 202)
     """
-    from nexus.server.auth.email_sender import LogEmailSender
-
     email = request.email
     if not email:
         return {"message": "If this email is registered, a verification link has been sent."}
@@ -783,7 +781,15 @@ async def request_verification(
             if user and not user.email_verified:
                 token = auth.create_email_verification_token(user.user_id, str(email))
                 verification_url = f"/auth/verify-email?token={token}"
-                sender = LogEmailSender()
+                # Use configured email sender if available; fall back to log-only
+                from nexus.server.auth.email_sender import LogEmailSender
+
+                sender = getattr(auth, "email_sender", None) or LogEmailSender()
+                if isinstance(sender, LogEmailSender):
+                    logger.warning(
+                        "[AUTH] Using LogEmailSender — verification tokens logged, not emailed. "
+                        "Configure a real email sender for production."
+                    )
                 sender.send_verification_email(str(email), verification_url)
     except Exception as e:
         # Log but don't reveal errors to prevent enumeration

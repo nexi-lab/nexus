@@ -48,11 +48,12 @@ class RemoteMetastore(MetastoreABC):
     # === MetastoreABC Implementation ===
 
     def get(self, path: str) -> FileMetadata | None:
-        """Get metadata for a file by proxying ``stat`` to the server."""
-        try:
-            result = self._call_rpc("sys_stat", {"path": path})
-        except Exception:
-            return None
+        """Get metadata for a file by proxying ``stat`` to the server.
+
+        Raises transport errors so callers can distinguish "not found"
+        from "server unreachable".
+        """
+        result = self._call_rpc("sys_stat", {"path": path})
         if result is None:
             return None
         if isinstance(result, dict):
@@ -66,16 +67,12 @@ class RemoteMetastore(MetastoreABC):
         """Store metadata by proxying ``sys_setattr`` to the server.
 
         The *consistency* hint is forwarded so the server can honour it.
-        Non-fatal: in REMOTE mode the server already owns metadata —
-        failures here (e.g. during init) are logged but not raised.
+        Raises on transport failure so callers are aware of write failures.
         """
-        try:
-            self._call_rpc(
-                "sys_setattr",
-                {"path": metadata.path, "metadata": metadata.to_dict(), "consistency": consistency},
-            )
-        except Exception as exc:
-            logger.debug("RemoteMetastore.put(%s) failed (non-fatal): %s", metadata.path, exc)
+        self._call_rpc(
+            "sys_setattr",
+            {"path": metadata.path, "metadata": metadata.to_dict(), "consistency": consistency},
+        )
         return None
 
     def delete(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:

@@ -107,9 +107,11 @@ class OperationLogger:
             operation_id: UUID of logged operation
         """
         # Auto-assign sequence_number for cursor-based replay (#1138/#1139).
-        # Uses MAX+1 within the current session for gap-free ordering.
+        # Uses SELECT ... FOR UPDATE to prevent concurrent duplicate sequences.
         next_seq = self.session.execute(
-            select(func.coalesce(func.max(OperationLogModel.sequence_number), 0) + 1)
+            select(
+                func.coalesce(func.max(OperationLogModel.sequence_number), 0) + 1
+            ).with_for_update()
         ).scalar()
 
         operation = OperationLogModel(

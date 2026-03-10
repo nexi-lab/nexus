@@ -210,7 +210,7 @@ def main():
         # ── Test 5: Grant → IMMEDIATE visibility (Issue #1244 core) ──────
         print("\n[Test 5] Grant → IMMEDIATE visibility (Issue #1244)")
 
-        result = nx.rebac_service.rebac_create_sync(
+        result = nx.service("rebac").rebac_create_sync(
             subject=("user", "alice"),
             relation="direct_viewer",
             object=("file", "/workspace/proj/data.csv"),
@@ -246,13 +246,13 @@ def main():
         rpc("write", {"path": "/workspace/bob-dir/f.txt", "content": "Bob-data"}, ADMIN_H)
 
         # Grant each user their own file
-        nx.rebac_service.rebac_create_sync(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "alice"),
             relation="direct_viewer",
             object=("file", "/workspace/alice-dir/f.txt"),
             zone_id="test",
         )
-        nx.rebac_service.rebac_create_sync(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "bob"),
             relation="direct_viewer",
             object=("file", "/workspace/bob-dir/f.txt"),
@@ -274,7 +274,7 @@ def main():
         # ── Test 8: Rapid grant/revoke/grant (cache churn) ───────────────
         print("\n[Test 8] Rapid grant/revoke/grant (cache churn)")
         for i in range(5):
-            tid_result = nx.rebac_service.rebac_create_sync(
+            tid_result = nx.service("rebac").rebac_create_sync(
                 subject=("user", "alice"),
                 relation="direct_viewer",
                 object=("file", "/workspace/proj/data.csv"),

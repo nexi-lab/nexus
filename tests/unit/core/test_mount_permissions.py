@@ -66,14 +66,14 @@ class TestListMountsPermissionFiltering:
         mount_data_dir = temp_dir / "mount_data"
         mount_data_dir.mkdir()
 
-        nx_without_permissions._mount_core_service.add_mount(
+        nx_without_permissions.service("mount_core").add_mount(
             mount_point="/mnt/test",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
         )
 
         # Call without context - should return all mounts
-        mounts = nx_without_permissions._mount_core_service.list_mounts()
+        mounts = nx_without_permissions.service("mount_core").list_mounts()
         mount_points = [m["mount_point"] for m in mounts]
 
         # Should include both root and test mount
@@ -110,7 +110,7 @@ class TestListMountsPermissionFiltering:
         )
 
         # Add first mount as Alice (she'll be granted direct_owner)
-        nx_with_permissions._mount_core_service.add_mount(
+        nx_with_permissions.service("mount_core").add_mount(
             mount_point="/mnt/alice",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir1)},
@@ -137,7 +137,7 @@ class TestListMountsPermissionFiltering:
         )
 
         # Add second mount as Bob (he'll be granted direct_owner)
-        nx_with_permissions._mount_core_service.add_mount(
+        nx_with_permissions.service("mount_core").add_mount(
             mount_point="/mnt/bob",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir2)},
@@ -145,7 +145,7 @@ class TestListMountsPermissionFiltering:
         )
 
         # When Alice calls list_mounts, she should only see her mount
-        alice_mounts = nx_with_permissions._mount_core_service.list_mounts(context=context_alice)
+        alice_mounts = nx_with_permissions.service("mount_core").list_mounts(context=context_alice)
         alice_mount_points = [m["mount_point"] for m in alice_mounts]
 
         # Alice should see her mount
@@ -154,7 +154,7 @@ class TestListMountsPermissionFiltering:
         assert "/mnt/bob" not in alice_mount_points
 
         # When Bob calls list_mounts, he should only see his mount
-        bob_mounts = nx_with_permissions._mount_core_service.list_mounts(context=context_bob)
+        bob_mounts = nx_with_permissions.service("mount_core").list_mounts(context=context_bob)
         bob_mount_points = [m["mount_point"] for m in bob_mounts]
 
         # Bob should see his mount
@@ -181,7 +181,7 @@ class TestListMountsPermissionFiltering:
         )
 
         # Alice creates a shared mount (using admin to bypass parent permission check)
-        nx_with_permissions._mount_core_service.add_mount(
+        nx_with_permissions.service("mount_core").add_mount(
             mount_point="/mnt/shared",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
@@ -197,7 +197,7 @@ class TestListMountsPermissionFiltering:
         )
 
         # Grant Bob direct_viewer permission on the shared mount
-        nx_with_permissions.rebac_service.rebac_create_sync(
+        nx_with_permissions.service("rebac").rebac_create_sync(
             subject=("user", "bob@example.com"),
             relation="direct_viewer",
             object=("file", "/mnt/shared"),
@@ -205,7 +205,7 @@ class TestListMountsPermissionFiltering:
         )
 
         # Bob should now see the shared mount
-        bob_mounts = nx_with_permissions._mount_core_service.list_mounts(context=context_bob)
+        bob_mounts = nx_with_permissions.service("mount_core").list_mounts(context=context_bob)
         bob_mount_points = [m["mount_point"] for m in bob_mounts]
         assert "/mnt/shared" in bob_mount_points
 
@@ -235,7 +235,7 @@ class TestListMountsPermissionFiltering:
             subject_id="alice@example.com",
         )
 
-        nx_with_permissions._mount_core_service.add_mount(
+        nx_with_permissions.service("mount_core").add_mount(
             mount_point="/mnt/test",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
@@ -243,10 +243,10 @@ class TestListMountsPermissionFiltering:
         )
 
         # Mock rebac_check on the gateway (mount_core_service delegates to gw.rebac_check)
-        gw = nx_with_permissions._mount_core_service._gw
+        gw = nx_with_permissions.service("mount_core")._gw
         with patch.object(gw, "rebac_check", side_effect=Exception("DB error")):
             # Should exclude the mount for safety
-            mounts = nx_with_permissions._mount_core_service.list_mounts(context=context_alice)
+            mounts = nx_with_permissions.service("mount_core").list_mounts(context=context_alice)
             mount_points = [m["mount_point"] for m in mounts]
             # The mount should be excluded due to permission check failure
             assert "/mnt/test" not in mount_points
@@ -260,7 +260,7 @@ class TestListSavedMountsUserFiltering:
     ) -> None:
         """Test that list_saved_mounts without context returns empty list (no context = no user)."""
         # Save a mount
-        nx_with_permissions._mount_persist_service.save_mount(
+        nx_with_permissions.service("mount_persist").save_mount(
             mount_point="/mnt/test",
             backend_type="cas_local",
             backend_config={"data_dir": "/tmp/test"},
@@ -270,7 +270,7 @@ class TestListSavedMountsUserFiltering:
 
         # Call without context - should filter by current user (but there is none)
         # So it should return empty list or filter to current user (which is None)
-        mounts = nx_with_permissions._mount_persist_service.list_saved_mounts()
+        mounts = nx_with_permissions.service("mount_persist").list_saved_mounts()
         # Without context, owner_user_id defaults to None, so mount_manager will return
         # all mounts without filtering. This is backward compatible behavior.
         # The fix ensures that WITH context, it filters automatically.
@@ -279,7 +279,7 @@ class TestListSavedMountsUserFiltering:
     def test_list_saved_mounts_filters_by_user_context(self, nx_with_permissions: NexusFS) -> None:
         """Test that list_saved_mounts automatically filters by current user."""
         # Save mount for Alice
-        nx_with_permissions._mount_persist_service.save_mount(
+        nx_with_permissions.service("mount_persist").save_mount(
             mount_point="/mnt/alice",
             backend_type="cas_local",
             backend_config={"data_dir": "/tmp/alice"},
@@ -288,7 +288,7 @@ class TestListSavedMountsUserFiltering:
         )
 
         # Save mount for Bob
-        nx_with_permissions._mount_persist_service.save_mount(
+        nx_with_permissions.service("mount_persist").save_mount(
             mount_point="/mnt/bob",
             backend_type="cas_local",
             backend_config={"data_dir": "/tmp/bob"},
@@ -306,7 +306,7 @@ class TestListSavedMountsUserFiltering:
         )
 
         # When Alice calls list_saved_mounts, she should only see her mount
-        alice_mounts = nx_with_permissions._mount_persist_service.list_saved_mounts(
+        alice_mounts = nx_with_permissions.service("mount_persist").list_saved_mounts(
             context=context_alice
         )
         alice_mount_points = [m["mount_point"] for m in alice_mounts]
@@ -326,7 +326,7 @@ class TestListSavedMountsUserFiltering:
         )
 
         # When Bob calls list_saved_mounts, he should only see his mount
-        bob_mounts = nx_with_permissions._mount_persist_service.list_saved_mounts(
+        bob_mounts = nx_with_permissions.service("mount_persist").list_saved_mounts(
             context=context_bob
         )
         bob_mount_points = [m["mount_point"] for m in bob_mounts]
@@ -339,7 +339,7 @@ class TestListSavedMountsUserFiltering:
     def test_list_saved_mounts_filters_by_zone(self, nx_with_permissions: NexusFS) -> None:
         """Test that list_saved_mounts filters by zone_id from context."""
         # Save mount for zone1
-        nx_with_permissions._mount_persist_service.save_mount(
+        nx_with_permissions.service("mount_persist").save_mount(
             mount_point="/mnt/zone1",
             backend_type="cas_local",
             backend_config={"data_dir": "/tmp/zone1"},
@@ -348,7 +348,7 @@ class TestListSavedMountsUserFiltering:
         )
 
         # Save mount for zone2
-        nx_with_permissions._mount_persist_service.save_mount(
+        nx_with_permissions.service("mount_persist").save_mount(
             mount_point="/mnt/zone2",
             backend_type="cas_local",
             backend_config={"data_dir": "/tmp/zone2"},
@@ -366,7 +366,7 @@ class TestListSavedMountsUserFiltering:
         )
 
         # When called with zone1 context, should only see zone1 mounts
-        zone1_mounts = nx_with_permissions._mount_persist_service.list_saved_mounts(
+        zone1_mounts = nx_with_permissions.service("mount_persist").list_saved_mounts(
             context=context_zone1
         )
         zone1_mount_points = [m["mount_point"] for m in zone1_mounts]
@@ -380,7 +380,7 @@ class TestListSavedMountsUserFiltering:
     ) -> None:
         """Test that explicit owner_user_id parameter overrides context filtering."""
         # Save mounts for different users
-        nx_with_permissions._mount_persist_service.save_mount(
+        nx_with_permissions.service("mount_persist").save_mount(
             mount_point="/mnt/alice",
             backend_type="cas_local",
             backend_config={"data_dir": "/tmp/alice"},
@@ -388,7 +388,7 @@ class TestListSavedMountsUserFiltering:
             zone_id="zone1",
         )
 
-        nx_with_permissions._mount_persist_service.save_mount(
+        nx_with_permissions.service("mount_persist").save_mount(
             mount_point="/mnt/bob",
             backend_type="cas_local",
             backend_config={"data_dir": "/tmp/bob"},
@@ -406,7 +406,7 @@ class TestListSavedMountsUserFiltering:
         )
 
         # Alice explicitly asks for Bob's mounts (if allowed by API policy)
-        mounts = nx_with_permissions._mount_persist_service.list_saved_mounts(
+        mounts = nx_with_permissions.service("mount_persist").list_saved_mounts(
             owner_user_id="user:bob@example.com", context=context_alice
         )
         mount_points = [m["mount_point"] for m in mounts]
@@ -418,7 +418,7 @@ class TestListSavedMountsUserFiltering:
     def test_list_saved_mounts_with_agent_context(self, nx_with_permissions: NexusFS) -> None:
         """Test that list_saved_mounts works with agent subject_type."""
         # Save mount for an agent
-        nx_with_permissions._mount_persist_service.save_mount(
+        nx_with_permissions.service("mount_persist").save_mount(
             mount_point="/mnt/agent",
             backend_type="cas_local",
             backend_config={"data_dir": "/tmp/agent"},
@@ -436,7 +436,7 @@ class TestListSavedMountsUserFiltering:
         )
 
         # Agent should see its own mount
-        agent_mounts = nx_with_permissions._mount_persist_service.list_saved_mounts(
+        agent_mounts = nx_with_permissions.service("mount_persist").list_saved_mounts(
             context=context_agent
         )
         agent_mount_points = [m["mount_point"] for m in agent_mounts]
@@ -474,7 +474,7 @@ class TestCrossZoneIsolation:
             subject_id="alice@example.com",
         )
 
-        nx_with_permissions._mount_core_service.add_mount(
+        nx_with_permissions.service("mount_core").add_mount(
             mount_point="/mnt/zone1",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_dir1)},
@@ -482,7 +482,7 @@ class TestCrossZoneIsolation:
         )
 
         # Save mount for zone1
-        nx_with_permissions._mount_persist_service.save_mount(
+        nx_with_permissions.service("mount_persist").save_mount(
             mount_point="/mnt/zone1_saved",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_dir1)},
@@ -513,7 +513,7 @@ class TestCrossZoneIsolation:
             subject_id="bob@example.com",
         )
 
-        nx_with_permissions._mount_core_service.add_mount(
+        nx_with_permissions.service("mount_core").add_mount(
             mount_point="/mnt/zone2",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_dir2)},
@@ -521,7 +521,7 @@ class TestCrossZoneIsolation:
         )
 
         # Save mount for zone2
-        nx_with_permissions._mount_persist_service.save_mount(
+        nx_with_permissions.service("mount_persist").save_mount(
             mount_point="/mnt/zone2_saved",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_dir2)},
@@ -530,7 +530,7 @@ class TestCrossZoneIsolation:
         )
 
         # Zone1 user should only see zone1 active mounts
-        zone1_active_mounts = nx_with_permissions._mount_core_service.list_mounts(
+        zone1_active_mounts = nx_with_permissions.service("mount_core").list_mounts(
             context=context_zone1
         )
         zone1_active_mount_points = [m["mount_point"] for m in zone1_active_mounts]
@@ -538,7 +538,7 @@ class TestCrossZoneIsolation:
         assert "/mnt/zone2" not in zone1_active_mount_points
 
         # Zone1 user should only see zone1 saved mounts
-        zone1_saved_mounts = nx_with_permissions._mount_persist_service.list_saved_mounts(
+        zone1_saved_mounts = nx_with_permissions.service("mount_persist").list_saved_mounts(
             context=context_zone1
         )
         zone1_saved_mount_points = [m["mount_point"] for m in zone1_saved_mounts]
@@ -546,7 +546,7 @@ class TestCrossZoneIsolation:
         assert "/mnt/zone2_saved" not in zone1_saved_mount_points
 
         # Zone2 user should only see zone2 active mounts
-        zone2_active_mounts = nx_with_permissions._mount_core_service.list_mounts(
+        zone2_active_mounts = nx_with_permissions.service("mount_core").list_mounts(
             context=context_zone2
         )
         zone2_active_mount_points = [m["mount_point"] for m in zone2_active_mounts]
@@ -554,7 +554,7 @@ class TestCrossZoneIsolation:
         assert "/mnt/zone1" not in zone2_active_mount_points
 
         # Zone2 user should only see zone2 saved mounts
-        zone2_saved_mounts = nx_with_permissions._mount_persist_service.list_saved_mounts(
+        zone2_saved_mounts = nx_with_permissions.service("mount_persist").list_saved_mounts(
             context=context_zone2
         )
         zone2_saved_mount_points = [m["mount_point"] for m in zone2_saved_mounts]
@@ -578,7 +578,7 @@ class TestSaveMountAutoPopulation:
         )
 
         # Save mount without explicit owner_user_id
-        nx_with_permissions._mount_persist_service.save_mount(
+        nx_with_permissions.service("mount_persist").save_mount(
             mount_point="/mnt/auto_owner",
             backend_type="cas_local",
             backend_config={"data_dir": "/tmp/test"},
@@ -604,7 +604,7 @@ class TestSaveMountAutoPopulation:
         )
 
         # Save mount without explicit zone_id
-        nx_with_permissions._mount_persist_service.save_mount(
+        nx_with_permissions.service("mount_persist").save_mount(
             mount_point="/mnt/auto_zone",
             backend_type="cas_local",
             backend_config={"data_dir": "/tmp/test"},
@@ -630,7 +630,7 @@ class TestSaveMountAutoPopulation:
         )
 
         # Save mount with explicit owner and zone (different from context)
-        nx_with_permissions._mount_persist_service.save_mount(
+        nx_with_permissions.service("mount_persist").save_mount(
             mount_point="/mnt/explicit_override",
             backend_type="cas_local",
             backend_config={"data_dir": "/tmp/test"},
@@ -656,7 +656,7 @@ class TestSaveMountAutoPopulation:
         )
 
         # Save mount with agent context
-        nx_with_permissions._mount_persist_service.save_mount(
+        nx_with_permissions.service("mount_persist").save_mount(
             mount_point="/mnt/agent_mount",
             backend_type="cas_local",
             backend_config={"data_dir": "/tmp/agent"},
@@ -681,7 +681,7 @@ class TestSaveMountAutoPopulation:
             subject_type="user",
             subject_id="alice@example.com",
         )
-        nx_with_permissions._mount_persist_service.save_mount(
+        nx_with_permissions.service("mount_persist").save_mount(
             mount_point="/mnt/alice_auto",
             backend_type="cas_local",
             backend_config={"data_dir": "/tmp/alice"},
@@ -696,7 +696,7 @@ class TestSaveMountAutoPopulation:
             subject_type="user",
             subject_id="bob@example.com",
         )
-        nx_with_permissions._mount_persist_service.save_mount(
+        nx_with_permissions.service("mount_persist").save_mount(
             mount_point="/mnt/bob_auto",
             backend_type="cas_local",
             backend_config={"data_dir": "/tmp/bob"},
@@ -704,7 +704,7 @@ class TestSaveMountAutoPopulation:
         )
 
         # Alice should only see her own mount
-        alice_mounts = nx_with_permissions._mount_persist_service.list_saved_mounts(
+        alice_mounts = nx_with_permissions.service("mount_persist").list_saved_mounts(
             context=context_alice
         )
         alice_mount_points = [m["mount_point"] for m in alice_mounts]
@@ -712,7 +712,7 @@ class TestSaveMountAutoPopulation:
         assert "/mnt/bob_auto" not in alice_mount_points
 
         # Bob should only see his own mount
-        bob_mounts = nx_with_permissions._mount_persist_service.list_saved_mounts(
+        bob_mounts = nx_with_permissions.service("mount_persist").list_saved_mounts(
             context=context_bob
         )
         bob_mount_points = [m["mount_point"] for m in bob_mounts]
@@ -724,7 +724,7 @@ class TestSaveMountAutoPopulation:
     ) -> None:
         """Test that save_mount works without context when explicit params are provided."""
         # Save mount without context but with explicit parameters
-        nx_with_permissions._mount_persist_service.save_mount(
+        nx_with_permissions.service("mount_persist").save_mount(
             mount_point="/mnt/no_context",
             backend_type="cas_local",
             backend_config={"data_dir": "/tmp/test"},

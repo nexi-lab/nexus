@@ -32,17 +32,18 @@ def mock_fs():
     fs.metadata.delete = MagicMock()
     fs.metadata.delete_batch = MagicMock()
     fs.metadata.delete_directory_entries_recursive = MagicMock(return_value=5)
-    fs.rebac_service = MagicMock()
-    fs.rebac_service.rebac_create_sync = MagicMock(return_value={"tuple_id": "t1"})
-    fs.rebac_service.rebac_check_sync = MagicMock(return_value=True)
-    fs.rebac_service.rebac_list_tuples_sync = MagicMock(
+    mock_rebac_svc = MagicMock()
+    mock_rebac_svc.rebac_create_sync = MagicMock(return_value={"tuple_id": "t1"})
+    mock_rebac_svc.rebac_check_sync = MagicMock(return_value=True)
+    mock_rebac_svc.rebac_list_tuples_sync = MagicMock(
         return_value=[
             {"tuple_id": "t1"},
             {"tuple_id": "t2"},
             {"tuple_id": "t3"},
         ]
     )
-    fs.rebac_service.rebac_delete_sync = MagicMock(return_value=True)
+    mock_rebac_svc.rebac_delete_sync = MagicMock(return_value=True)
+    fs._service_registry.register_service("rebac", mock_rebac_svc)
     fs._rebac_manager = MagicMock()
     fs._rebac_manager.rebac_delete = MagicMock()
     fs._hierarchy_manager = MagicMock()
@@ -219,7 +220,7 @@ class TestReBACOperations:
             zone_id="z1",
         )
         assert result == {"tuple_id": "t1"}
-        mock_fs.rebac_service.rebac_create_sync.assert_called_once_with(
+        mock_fs.service("rebac").rebac_create_sync.assert_called_once_with(
             subject=("user", "alice"),
             relation="viewer",
             object=("file", "/test"),
@@ -236,25 +237,25 @@ class TestReBACOperations:
             zone_id="z1",
         )
         assert result is True
-        mock_fs.rebac_service.rebac_check_sync.assert_called_once()
+        mock_fs.service("rebac").rebac_check_sync.assert_called_once()
 
     def test_rebac_delete_object_tuples(self, gateway, mock_fs):
         """rebac_delete_object_tuples lists then deletes each tuple."""
         result = gateway.rebac_delete_object_tuples(object=("file", "/test"), zone_id="z1")
         assert result == 3
-        mock_fs.rebac_service.rebac_list_tuples_sync.assert_called_once()
-        assert mock_fs.rebac_service.rebac_delete_sync.call_count == 3
+        mock_fs.service("rebac").rebac_list_tuples_sync.assert_called_once()
+        assert mock_fs.service("rebac").rebac_delete_sync.call_count == 3
 
     def test_rebac_list_tuples(self, gateway, mock_fs):
         """rebac_list_tuples delegates to rebac_service."""
         gateway.rebac_list_tuples(subject=("user", "alice"), relation="viewer")
-        mock_fs.rebac_service.rebac_list_tuples_sync.assert_called()
+        mock_fs.service("rebac").rebac_list_tuples_sync.assert_called()
 
     def test_rebac_delete(self, gateway, mock_fs):
         """rebac_delete delegates to rebac_service."""
         result = gateway.rebac_delete("tuple-123")
         assert result is True
-        mock_fs.rebac_service.rebac_delete_sync.assert_called_with("tuple-123")
+        mock_fs.service("rebac").rebac_delete_sync.assert_called_with("tuple-123")
 
     def test_rebac_delete_no_manager(self, mock_fs):
         """rebac_delete delegates to rebac_service even without rebac_manager."""

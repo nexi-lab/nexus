@@ -69,7 +69,7 @@ class TestListMounts:
 
     def test_list_mounts_empty(self, nx: NexusFS) -> None:
         """Test listing mounts when only root mount exists."""
-        mounts = nx._mount_core_service.list_mounts()
+        mounts = nx.service("mount_core").list_mounts()
         # Should have at least the root mount
         assert isinstance(mounts, list)
         # Root mount always exists
@@ -77,7 +77,7 @@ class TestListMounts:
 
     def test_list_mounts_returns_mount_info(self, nx: NexusFS) -> None:
         """Test that list_mounts returns proper mount info structure."""
-        mounts = nx._mount_core_service.list_mounts()
+        mounts = nx.service("mount_core").list_mounts()
         assert len(mounts) >= 1
 
         mount = mounts[0]
@@ -92,7 +92,7 @@ class TestListMounts:
         mount_data_dir.mkdir()
 
         # Add a local mount
-        mount_id = nx._mount_core_service.add_mount(
+        mount_id = nx.service("mount_core").add_mount(
             mount_point="/mnt/test",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
@@ -100,7 +100,7 @@ class TestListMounts:
 
         assert mount_id == "/mnt/test"
 
-        mounts = nx._mount_core_service.list_mounts()
+        mounts = nx.service("mount_core").list_mounts()
         mount_points = [m["mount_point"] for m in mounts]
         assert "/mnt/test" in mount_points
 
@@ -115,13 +115,13 @@ class TestGetMount:
 
     def test_get_mount_root(self, nx: NexusFS) -> None:
         """Test getting the root mount."""
-        mount = nx._mount_core_service.get_mount("/")
+        mount = nx.service("mount_core").get_mount("/")
         assert mount is not None
         assert mount["mount_point"] == "/"
 
     def test_get_mount_nonexistent(self, nx: NexusFS) -> None:
         """Test getting a nonexistent mount returns None."""
-        mount = nx._mount_core_service.get_mount("/nonexistent")
+        mount = nx.service("mount_core").get_mount("/nonexistent")
         assert mount is None
 
     def test_get_mount_after_add(self, nx: NexusFS, temp_dir: Path) -> None:
@@ -129,14 +129,14 @@ class TestGetMount:
         mount_data_dir = temp_dir / "mount_data"
         mount_data_dir.mkdir()
 
-        nx._mount_core_service.add_mount(
+        nx.service("mount_core").add_mount(
             mount_point="/mnt/test",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
             readonly=True,
         )
 
-        mount = nx._mount_core_service.get_mount("/mnt/test")
+        mount = nx.service("mount_core").get_mount("/mnt/test")
         assert mount is not None
         assert mount["mount_point"] == "/mnt/test"
         assert mount["readonly"] is True
@@ -147,26 +147,26 @@ class TestHasMount:
 
     def test_has_mount_root(self, nx: NexusFS) -> None:
         """Test has_mount returns True for root mount."""
-        assert nx._mount_core_service.has_mount("/") is True
+        assert nx.service("mount_core").has_mount("/") is True
 
     def test_has_mount_nonexistent(self, nx: NexusFS) -> None:
         """Test has_mount returns False for nonexistent mount."""
-        assert nx._mount_core_service.has_mount("/nonexistent") is False
+        assert nx.service("mount_core").has_mount("/nonexistent") is False
 
     def test_has_mount_after_add(self, nx: NexusFS, temp_dir: Path) -> None:
         """Test has_mount after adding a mount."""
         mount_data_dir = temp_dir / "mount_data"
         mount_data_dir.mkdir()
 
-        assert nx._mount_core_service.has_mount("/mnt/test") is False
+        assert nx.service("mount_core").has_mount("/mnt/test") is False
 
-        nx._mount_core_service.add_mount(
+        nx.service("mount_core").add_mount(
             mount_point="/mnt/test",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
         )
 
-        assert nx._mount_core_service.has_mount("/mnt/test") is True
+        assert nx.service("mount_core").has_mount("/mnt/test") is True
 
 
 class TestAddMount:
@@ -177,28 +177,28 @@ class TestAddMount:
         mount_data_dir = temp_dir / "local_mount"
         mount_data_dir.mkdir()
 
-        mount_id = nx._mount_core_service.add_mount(
+        mount_id = nx.service("mount_core").add_mount(
             mount_point="/mnt/local",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
         )
 
         assert mount_id == "/mnt/local"
-        assert nx._mount_core_service.has_mount("/mnt/local")
+        assert nx.service("mount_core").has_mount("/mnt/local")
 
     def test_add_mount_with_io_profile(self, nx: NexusFS, temp_dir: Path) -> None:
         """Test adding a mount with custom io_profile."""
         mount_data_dir = temp_dir / "profile_mount"
         mount_data_dir.mkdir()
 
-        nx._mount_core_service.add_mount(
+        nx.service("mount_core").add_mount(
             mount_point="/mnt/fast_read",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
             io_profile="fast_read",
         )
 
-        mount = nx._mount_core_service.get_mount("/mnt/fast_read")
+        mount = nx.service("mount_core").get_mount("/mnt/fast_read")
         assert mount is not None
 
     def test_add_mount_readonly(self, nx: NexusFS, temp_dir: Path) -> None:
@@ -206,21 +206,21 @@ class TestAddMount:
         mount_data_dir = temp_dir / "readonly_mount"
         mount_data_dir.mkdir()
 
-        nx._mount_core_service.add_mount(
+        nx.service("mount_core").add_mount(
             mount_point="/mnt/readonly",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
             readonly=True,
         )
 
-        mount = nx._mount_core_service.get_mount("/mnt/readonly")
+        mount = nx.service("mount_core").get_mount("/mnt/readonly")
         assert mount is not None
         assert mount["readonly"] is True
 
     def test_add_mount_unsupported_backend_raises_error(self, nx: NexusFS) -> None:
         """Test adding an unsupported backend type raises RuntimeError."""
         with pytest.raises(RuntimeError, match="Unsupported backend type"):
-            nx._mount_core_service.add_mount(
+            nx.service("mount_core").add_mount(
                 mount_point="/mnt/unsupported",
                 backend_type="unsupported_backend",
                 backend_config={},
@@ -245,14 +245,14 @@ class TestAddMount:
             is_admin=True,
         )
 
-        nx_with_permissions._mount_core_service.add_mount(
+        nx_with_permissions.service("mount_core").add_mount(
             mount_point="/mnt/alice",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
             context=context,
         )
 
-        assert nx_with_permissions._mount_core_service.has_mount("/mnt/alice")
+        assert nx_with_permissions.service("mount_core").has_mount("/mnt/alice")
 
 
 class TestRemoveMount:
@@ -263,21 +263,21 @@ class TestRemoveMount:
         mount_data_dir = temp_dir / "removable_mount"
         mount_data_dir.mkdir()
 
-        nx._mount_core_service.add_mount(
+        nx.service("mount_core").add_mount(
             mount_point="/mnt/removable",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
         )
 
-        assert nx._mount_core_service.has_mount("/mnt/removable")
+        assert nx.service("mount_core").has_mount("/mnt/removable")
 
-        result = nx._mount_core_service.remove_mount("/mnt/removable")
+        result = nx.service("mount_core").remove_mount("/mnt/removable")
         assert result["removed"] is True
-        assert nx._mount_core_service.has_mount("/mnt/removable") is False
+        assert nx.service("mount_core").has_mount("/mnt/removable") is False
 
     def test_remove_mount_nonexistent(self, nx: NexusFS) -> None:
         """Test removing a nonexistent mount returns error."""
-        result = nx._mount_core_service.remove_mount("/mnt/nonexistent")
+        result = nx.service("mount_core").remove_mount("/mnt/nonexistent")
         assert result["removed"] is False
         assert "Mount not found" in result["errors"][0]
 
@@ -286,13 +286,13 @@ class TestRemoveMount:
         mount_data_dir = temp_dir / "cleanup_mount"
         mount_data_dir.mkdir()
 
-        nx._mount_core_service.add_mount(
+        nx.service("mount_core").add_mount(
             mount_point="/mnt/cleanup",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
         )
 
-        result = nx._mount_core_service.remove_mount("/mnt/cleanup")
+        result = nx.service("mount_core").remove_mount("/mnt/cleanup")
 
         assert "removed" in result
         assert "directory_deleted" in result
@@ -319,7 +319,7 @@ class TestSaveMount:
             # Check if mount_manager is available
             if not hasattr(nx, "mount_manager") or nx.mount_manager is None:
                 with pytest.raises(RuntimeError, match="Mount manager not available"):
-                    nx._mount_persist_service.save_mount(
+                    nx.service("mount_persist").save_mount(
                         mount_point="/mnt/test",
                         backend_type="cas_local",
                         backend_config={"data_dir": str(temp_dir)},
@@ -335,7 +335,7 @@ class TestSaveMount:
         mount_data_dir = temp_dir / "saved_mount"
         mount_data_dir.mkdir()
 
-        mount_id = nx._mount_persist_service.save_mount(
+        mount_id = nx.service("mount_persist").save_mount(
             mount_point="/mnt/saved",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
@@ -366,7 +366,7 @@ class TestListSavedMounts:
         try:
             if not hasattr(nx, "mount_manager") or nx.mount_manager is None:
                 with pytest.raises(RuntimeError, match="Mount manager not available"):
-                    nx._mount_persist_service.list_saved_mounts()
+                    nx.service("mount_persist").list_saved_mounts()
         finally:
             nx.close()
 
@@ -387,7 +387,7 @@ class TestLoadMount:
         try:
             if not hasattr(nx, "mount_manager") or nx.mount_manager is None:
                 with pytest.raises(RuntimeError, match="Mount manager not available"):
-                    nx._mount_persist_service.load_mount("/mnt/test")
+                    nx.service("mount_persist").load_mount("/mnt/test")
         finally:
             nx.close()
 
@@ -410,7 +410,7 @@ class TestDeleteSavedMount:
         try:
             if not hasattr(nx, "mount_manager") or nx.mount_manager is None:
                 with pytest.raises(RuntimeError, match="Mount manager not available"):
-                    nx._mount_persist_service.delete_saved_mount("/mnt/test")
+                    nx.service("mount_persist").delete_saved_mount("/mnt/test")
         finally:
             nx.close()
 
@@ -423,7 +423,7 @@ class TestLoadAllSavedMounts:
         if hasattr(nx, "mount_manager") and nx.mount_manager is not None:
             pytest.skip("Mount manager is available, test N/A")
 
-        result = nx._mount_persist_service.load_all_mounts()
+        result = nx.service("mount_persist").load_all_mounts()
         assert result == {"loaded": 0, "synced": 0, "failed": 0, "errors": []}
 
     def test_load_all_saved_mounts_empty(self, nx: NexusFS) -> None:
@@ -431,7 +431,7 @@ class TestLoadAllSavedMounts:
         if not hasattr(nx, "mount_manager") or nx.mount_manager is None:
             pytest.skip("Mount manager not available")
 
-        result = nx._mount_persist_service.load_all_mounts()
+        result = nx.service("mount_persist").load_all_mounts()
         assert "loaded" in result
         assert "synced" in result
         assert "failed" in result
@@ -444,7 +444,7 @@ class TestSyncMount:
     def test_sync_mount_nonexistent_raises_error(self, nx: NexusFS) -> None:
         """Test that sync_mount raises ValueError for nonexistent mount."""
         with pytest.raises(ValueError, match="Mount not found"):
-            nx._sync_service.sync_mount_flat("/mnt/nonexistent")
+            nx.service("sync").sync_mount_flat("/mnt/nonexistent")
 
     def test_sync_mount_non_connector_backend_raises_error(
         self, nx: NexusFS, temp_dir: Path
@@ -456,7 +456,7 @@ class TestSyncMount:
         mount_data_dir = temp_dir / "sync_mount"
         mount_data_dir.mkdir()
 
-        nx._mount_core_service.add_mount(
+        nx.service("mount_core").add_mount(
             mount_point="/mnt/sync",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
@@ -464,7 +464,7 @@ class TestSyncMount:
 
         # CASLocalBackend has list_dir, so it won't raise the "does not support" error
         # but we can test the sync functionality
-        result = nx._sync_service.sync_mount_flat("/mnt/sync")
+        result = nx.service("sync").sync_mount_flat("/mnt/sync")
         assert "files_scanned" in result
         assert "files_created" in result
         assert "files_updated" in result
@@ -480,14 +480,14 @@ class TestSyncMount:
         (mount_data_dir / "file1.txt").write_text("content1")
         (mount_data_dir / "file2.txt").write_text("content2")
 
-        nx._mount_core_service.add_mount(
+        nx.service("mount_core").add_mount(
             mount_point="/mnt/dryrun",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
         )
 
         # Dry run should not create entries in database
-        result = nx._sync_service.sync_mount_flat("/mnt/dryrun", dry_run=True)
+        result = nx.service("sync").sync_mount_flat("/mnt/dryrun", dry_run=True)
 
         assert result["files_scanned"] >= 0
         assert result["files_created"] == 0  # Dry run doesn't create
@@ -505,13 +505,13 @@ class TestSyncMount:
         (mount_data_dir / "file1.txt").write_text("content1")
         (subdir / "file2.txt").write_text("content2")
 
-        nx._mount_core_service.add_mount(
+        nx.service("mount_core").add_mount(
             mount_point="/mnt/recursive",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
         )
 
-        result = nx._sync_service.sync_mount_flat("/mnt/recursive", recursive=True)
+        result = nx.service("sync").sync_mount_flat("/mnt/recursive", recursive=True)
 
         assert "files_scanned" in result
         assert "files_created" in result
@@ -530,7 +530,7 @@ class TestSyncMount:
         mount_data_dir.mkdir()
         (mount_data_dir / "file.txt").write_text("content")
 
-        nx._mount_core_service.add_mount(
+        nx.service("mount_core").add_mount(
             mount_point="/mnt/context",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
@@ -545,7 +545,7 @@ class TestSyncMount:
             is_admin=True,
         )
 
-        result = nx._sync_service.sync_mount_flat("/mnt/context", context=context)
+        result = nx.service("sync").sync_mount_flat("/mnt/context", context=context)
 
         assert "files_scanned" in result
         assert "errors" in result
@@ -574,7 +574,7 @@ class TestMountPermissionEnforcement:
         )
 
         with pytest.raises(PermissionError, match="no write permission"):
-            nx_with_permissions._mount_core_service.add_mount(
+            nx_with_permissions.service("mount_core").add_mount(
                 mount_point="/mnt/bob_mount",
                 backend_type="cas_local",
                 backend_config={"data_dir": str(mount_data_dir)},
@@ -599,7 +599,7 @@ class TestMountPermissionEnforcement:
             subject_id="admin",
             is_admin=True,
         )
-        nx_with_permissions._mount_core_service.add_mount(
+        nx_with_permissions.service("mount_core").add_mount(
             mount_point="/mnt/admin_mount",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
@@ -617,7 +617,7 @@ class TestMountPermissionEnforcement:
         )
 
         with pytest.raises(PermissionError, match="no write permission"):
-            nx_with_permissions._mount_core_service.remove_mount(
+            nx_with_permissions.service("mount_core").remove_mount(
                 "/mnt/admin_mount", context=user_context
             )
 
@@ -639,7 +639,7 @@ class TestMountPermissionEnforcement:
             subject_id="admin",
             is_admin=True,
         )
-        nx_with_permissions._mount_core_service.add_mount(
+        nx_with_permissions.service("mount_core").add_mount(
             mount_point="/mnt/sync_test",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
@@ -657,7 +657,7 @@ class TestMountPermissionEnforcement:
         )
 
         with pytest.raises(PermissionError, match="no read permission"):
-            nx_with_permissions._sync_service.sync_mount_flat(
+            nx_with_permissions.service("sync").sync_mount_flat(
                 "/mnt/sync_test", context=user_context
             )
 
@@ -679,7 +679,7 @@ class TestMountPermissionEnforcement:
             subject_id="admin",
             is_admin=True,
         )
-        nx_with_permissions._mount_core_service.add_mount(
+        nx_with_permissions.service("mount_core").add_mount(
             mount_point="/mnt/get_test",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
@@ -696,7 +696,7 @@ class TestMountPermissionEnforcement:
             is_admin=False,
         )
 
-        result = nx_with_permissions._mount_core_service.get_mount(
+        result = nx_with_permissions.service("mount_core").get_mount(
             "/mnt/get_test", context=user_context
         )
         assert result is None
@@ -709,7 +709,7 @@ class TestMountPermissionEnforcement:
         mount_data_dir.mkdir()
 
         # Should succeed without context
-        mount_id = nx._mount_core_service.add_mount(
+        mount_id = nx.service("mount_core").add_mount(
             mount_point="/mnt/no_ctx",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
@@ -718,15 +718,15 @@ class TestMountPermissionEnforcement:
         assert mount_id == "/mnt/no_ctx"
 
         # get_mount should also work
-        mount = nx._mount_core_service.get_mount("/mnt/no_ctx", context=None)
+        mount = nx.service("mount_core").get_mount("/mnt/no_ctx", context=None)
         assert mount is not None
 
         # sync_mount should work
-        result = nx._sync_service.sync_mount_flat("/mnt/no_ctx", context=None)
+        result = nx.service("sync").sync_mount_flat("/mnt/no_ctx", context=None)
         assert "files_scanned" in result
 
         # remove_mount should work
-        result = nx._mount_core_service.remove_mount("/mnt/no_ctx", context=None)
+        result = nx.service("mount_core").remove_mount("/mnt/no_ctx", context=None)
         assert result["removed"] is True
 
 
@@ -738,7 +738,7 @@ class TestMountIntegration:
         mount_data_dir = temp_dir / "write_mount"
         mount_data_dir.mkdir()
 
-        nx._mount_core_service.add_mount(
+        nx.service("mount_core").add_mount(
             mount_point="/mnt/write",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
@@ -756,7 +756,7 @@ class TestMountIntegration:
         mount_data_dir = temp_dir / "list_mount"
         mount_data_dir.mkdir()
 
-        nx._mount_core_service.add_mount(
+        nx.service("mount_core").add_mount(
             mount_point="/mnt/list",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
@@ -779,21 +779,21 @@ class TestMountIntegration:
         mount1_dir.mkdir()
         mount2_dir.mkdir()
 
-        nx._mount_core_service.add_mount(
+        nx.service("mount_core").add_mount(
             mount_point="/mnt/one",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount1_dir)},
         )
 
-        nx._mount_core_service.add_mount(
+        nx.service("mount_core").add_mount(
             mount_point="/mnt/two",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount2_dir)},
         )
 
         # Both mounts should exist
-        assert nx._mount_core_service.has_mount("/mnt/one")
-        assert nx._mount_core_service.has_mount("/mnt/two")
+        assert nx.service("mount_core").has_mount("/mnt/one")
+        assert nx.service("mount_core").has_mount("/mnt/two")
 
         # Write to each
         nx.sys_write("/mnt/one/file.txt", b"Mount 1")
@@ -834,7 +834,7 @@ class TestMountContextUtilsIntegration:
             mock_get_zone.return_value = "test_zone"
             mock_get_user.return_value = ("user", "alice")
 
-            nx_with_permissions._mount_core_service.add_mount(
+            nx_with_permissions.service("mount_core").add_mount(
                 mount_point="/mnt/context_test",
                 backend_type="cas_local",
                 backend_config={"data_dir": str(mount_data_dir)},
@@ -863,7 +863,7 @@ class TestMountContextUtilsIntegration:
         )
 
         # Add mount first
-        nx_with_permissions._mount_core_service.add_mount(
+        nx_with_permissions.service("mount_core").add_mount(
             mount_point="/mnt/remove_test",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
@@ -871,13 +871,13 @@ class TestMountContextUtilsIntegration:
         )
 
         # Remove mount with context - should work correctly
-        result = nx_with_permissions._mount_core_service.remove_mount(
+        result = nx_with_permissions.service("mount_core").remove_mount(
             "/mnt/remove_test", context=context
         )
 
         # Verify mount was removed
         assert result["removed"] is True
-        assert not nx_with_permissions._mount_core_service.has_mount("/mnt/remove_test")
+        assert not nx_with_permissions.service("mount_core").has_mount("/mnt/remove_test")
 
     def test_add_mount_oauth_backend_uses_context_utils_database_url(
         self, nx: NexusFS, temp_dir: Path
@@ -890,7 +890,7 @@ class TestMountContextUtilsIntegration:
         # and patch get_database_url at the source module
         with (
             patch.object(
-                type(nx._mount_core_service),
+                type(nx.service("mount_core")),
                 "_needs_token_manager_db",
                 return_value=True,
             ),
@@ -900,7 +900,7 @@ class TestMountContextUtilsIntegration:
 
             # This should use get_database_url for gdrive_connector
             with contextlib.suppress(Exception):
-                nx._mount_core_service.add_mount(
+                nx.service("mount_core").add_mount(
                     mount_point="/mnt/gdrive",
                     backend_type="gdrive_connector",
                     backend_config={},
@@ -924,7 +924,7 @@ class TestMountContextUtilsIntegration:
         # The function should resolve the database URL from nx.db_path
         # It may fail due to missing OAuth config, but should not fail due to missing database URL
         try:
-            nx._mount_persist_service.load_mount(mount_config["mount_point"])
+            nx.service("mount_persist").load_mount(mount_config["mount_point"])
         except RuntimeError as e:
             # Should not fail with "No database path configured" error
             # (may fail for other reasons like missing OAuth config)
@@ -942,7 +942,7 @@ class TestMountContextUtilsIntegration:
 
         # Should not raise error with None context - context_utils provides defaults
         # This tests that the refactored code works with None context
-        nx_with_permissions._mount_core_service.add_mount(
+        nx_with_permissions.service("mount_core").add_mount(
             mount_point="/mnt/none_context",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
@@ -950,4 +950,4 @@ class TestMountContextUtilsIntegration:
         )
 
         # Verify mount was created successfully
-        assert nx_with_permissions._mount_core_service.has_mount("/mnt/none_context")
+        assert nx_with_permissions.service("mount_core").has_mount("/mnt/none_context")

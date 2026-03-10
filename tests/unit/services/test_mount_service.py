@@ -157,7 +157,7 @@ class TestListMounts:
         def check_permission(subject, permission, object, zone_id=None):
             return object[1] == "/mnt/allowed"
 
-        mock_nexus_fs.rebac_service.rebac_check_sync.side_effect = check_permission
+        mock_nexus_fs.service("rebac").rebac_check_sync.side_effect = check_permission
 
         result = asyncio.run(mount_service.list_mounts(context=operation_context))
 
@@ -397,8 +397,8 @@ class TestGrantMountOwnerPermission:
         mount_service._grant_mount_owner_permission("/mnt/test", operation_context)
 
         # Issue #2033: MountService now uses rebac_service.rebac_create_sync
-        mock_nexus_fs.rebac_service.rebac_create_sync.assert_called_once()
-        call_kwargs = mock_nexus_fs.rebac_service.rebac_create_sync.call_args
+        mock_nexus_fs.service("rebac").rebac_create_sync.assert_called_once()
+        call_kwargs = mock_nexus_fs.service("rebac").rebac_create_sync.call_args
         assert call_kwargs.kwargs["relation"] == "direct_owner"
 
     def test_skips_permission_without_context(self, mount_service, mock_nexus_fs):
@@ -419,4 +419,4 @@ class TestGrantMountOwnerPermission:
         mount_service._grant_mount_owner_permission("/mnt/test", operation_context)
 
         # Permission grant should still be attempted (Issue #2033: via rebac_service)
-        mock_nexus_fs.rebac_service.rebac_create_sync.assert_called_once()
+        mock_nexus_fs.service("rebac").rebac_create_sync.assert_called_once()

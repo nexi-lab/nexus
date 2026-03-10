@@ -130,7 +130,7 @@ class TestRebacCreate:
 
     def test_rebac_create_basic(self, nx: NexusFS) -> None:
         """Test creating a basic relationship tuple."""
-        result = nx.rebac_service.rebac_create_sync(
+        result = nx.service("rebac").rebac_create_sync(
             subject=("user", "alice"),
             relation="viewer-of",
             object=("file", "/test.txt"),
@@ -142,7 +142,7 @@ class TestRebacCreate:
 
     def test_rebac_create_with_zone(self, nx: NexusFS) -> None:
         """Test creating relationship with zone_id."""
-        tuple_id = nx.rebac_service.rebac_create_sync(
+        tuple_id = nx.service("rebac").rebac_create_sync(
             subject=("user", "alice"),
             relation="viewer-of",
             object=("file", "/test.txt"),
@@ -155,7 +155,7 @@ class TestRebacCreate:
         """Test creating relationship with expiration."""
         expires = datetime.now(UTC) + timedelta(hours=1)
 
-        tuple_id = nx.rebac_service.rebac_create_sync(
+        tuple_id = nx.service("rebac").rebac_create_sync(
             subject=("user", "alice"),
             relation="viewer-of",
             object=("file", "/test.txt"),
@@ -167,7 +167,7 @@ class TestRebacCreate:
     def test_rebac_create_invalid_subject_raises_error(self, nx: NexusFS) -> None:
         """Test that invalid subject raises ValueError."""
         with pytest.raises(ValueError, match="subject must be"):
-            nx.rebac_service.rebac_create_sync(
+            nx.service("rebac").rebac_create_sync(
                 subject=cast(Any, "invalid"),
                 relation="viewer-of",
                 object=("file", "/test.txt"),
@@ -176,7 +176,7 @@ class TestRebacCreate:
     def test_rebac_create_invalid_object_raises_error(self, nx: NexusFS) -> None:
         """Test that invalid object raises ValueError."""
         with pytest.raises(ValueError, match="object must be"):
-            nx.rebac_service.rebac_create_sync(
+            nx.service("rebac").rebac_create_sync(
                 subject=("user", "alice"),
                 relation="viewer-of",
                 object=cast(Any, "invalid"),
@@ -184,7 +184,7 @@ class TestRebacCreate:
 
     def test_rebac_create_group_membership(self, nx: NexusFS) -> None:
         """Test creating group membership relationship."""
-        tuple_id = nx.rebac_service.rebac_create_sync(
+        tuple_id = nx.service("rebac").rebac_create_sync(
             subject=("user", "alice"),
             relation="member-of",
             object=("group", "developers"),
@@ -194,7 +194,7 @@ class TestRebacCreate:
 
     def test_rebac_create_owner_relationship(self, nx: NexusFS) -> None:
         """Test creating owner relationship."""
-        tuple_id = nx.rebac_service.rebac_create_sync(
+        tuple_id = nx.service("rebac").rebac_create_sync(
             subject=("group", "admins"),
             relation="owner-of",
             object=("file", "/workspace"),
@@ -210,7 +210,7 @@ class TestRebacCheck:
         """Test checking a direct permission."""
         # Create a direct_owner relationship with zone_id
         # direct_owner is a standard relation that grants read access
-        nx.rebac_service.rebac_create_sync(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "alice"),
             relation="direct_owner",
             object=("file", "/test.txt"),
@@ -218,7 +218,7 @@ class TestRebacCheck:
         )
 
         # Check permission with zone_id
-        has_permission = nx.rebac_service.rebac_check_sync(
+        has_permission = nx.service("rebac").rebac_check_sync(
             subject=("user", "alice"),
             permission="read",
             object=("file", "/test.txt"),
@@ -229,7 +229,7 @@ class TestRebacCheck:
 
     def test_rebac_check_no_permission(self, nx: NexusFS) -> None:
         """Test checking when no permission exists."""
-        has_permission = nx.rebac_service.rebac_check_sync(
+        has_permission = nx.service("rebac").rebac_check_sync(
             subject=("user", "bob"),
             permission="read",
             object=("file", "/secret.txt"),
@@ -241,7 +241,7 @@ class TestRebacCheck:
     def test_rebac_check_invalid_subject_raises_error(self, nx: NexusFS) -> None:
         """Test that invalid subject raises ValueError."""
         with pytest.raises(ValueError, match="subject must be"):
-            nx.rebac_service.rebac_check_sync(
+            nx.service("rebac").rebac_check_sync(
                 subject=cast(Any, "invalid"),
                 permission="read",
                 object=("file", "/test.txt"),
@@ -250,7 +250,7 @@ class TestRebacCheck:
     def test_rebac_check_invalid_object_raises_error(self, nx: NexusFS) -> None:
         """Test that invalid object raises ValueError."""
         with pytest.raises(ValueError, match="object must be"):
-            nx.rebac_service.rebac_check_sync(
+            nx.service("rebac").rebac_check_sync(
                 subject=("user", "alice"),
                 permission="read",
                 object=cast(Any, "invalid"),
@@ -259,7 +259,7 @@ class TestRebacCheck:
     def test_rebac_check_with_zone_isolation(self, nx: NexusFS) -> None:
         """Test that zone isolation works."""
         # Create permission in zone "acme"
-        nx.rebac_service.rebac_create_sync(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "alice"),
             relation="direct_owner",
             object=("file", "/test.txt"),
@@ -267,7 +267,7 @@ class TestRebacCheck:
         )
 
         # Check in same zone
-        has_permission = nx.rebac_service.rebac_check_sync(
+        has_permission = nx.service("rebac").rebac_check_sync(
             subject=("user", "alice"),
             permission="read",
             object=("file", "/test.txt"),
@@ -276,7 +276,7 @@ class TestRebacCheck:
         assert has_permission is True
 
         # Check in different zone (should not have access)
-        has_permission = nx.rebac_service.rebac_check_sync(
+        has_permission = nx.service("rebac").rebac_check_sync(
             subject=("user", "alice"),
             permission="read",
             object=("file", "/test.txt"),
@@ -291,13 +291,13 @@ class TestRebacExpand:
     def test_rebac_expand_basic(self, nx: NexusFS) -> None:
         """Test expanding permissions to find all subjects."""
         # Create some relationships with zone_id using direct_owner relation
-        nx.rebac_service.rebac_create_sync(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "expand_alice"),
             relation="direct_owner",
             object=("file", "/expand_test.txt"),
             zone_id="root",
         )
-        nx.rebac_service.rebac_create_sync(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "expand_bob"),
             relation="direct_owner",
             object=("file", "/expand_test.txt"),
@@ -305,7 +305,7 @@ class TestRebacExpand:
         )
 
         # Expand to find all subjects with read permission
-        subjects = nx.rebac_service.rebac_expand_sync(
+        subjects = nx.service("rebac").rebac_expand_sync(
             permission="read",
             object=("file", "/expand_test.txt"),
         )
@@ -315,7 +315,7 @@ class TestRebacExpand:
 
     def test_rebac_expand_empty(self, nx: NexusFS) -> None:
         """Test expanding when no subjects have permission."""
-        subjects = nx.rebac_service.rebac_expand_sync(
+        subjects = nx.service("rebac").rebac_expand_sync(
             permission="read",
             object=("file", "/totally_unique_nonexistent.txt"),
         )
@@ -326,7 +326,7 @@ class TestRebacExpand:
     def test_rebac_expand_invalid_object_raises_error(self, nx: NexusFS) -> None:
         """Test that invalid object raises ValueError."""
         with pytest.raises(ValueError, match="object must be"):
-            nx.rebac_service.rebac_expand_sync(
+            nx.service("rebac").rebac_expand_sync(
                 permission="read",
                 object=cast(Any, "invalid"),
             )
@@ -337,18 +337,18 @@ class TestRebacDelete:
 
     def test_rebac_delete_existing_tuple(self, nx: NexusFS) -> None:
         """Test deleting an existing tuple."""
-        write_result = nx.rebac_service.rebac_create_sync(
+        write_result = nx.service("rebac").rebac_create_sync(
             subject=("user", "alice"),
             relation="viewer-of",
             object=("file", "/test.txt"),
         )
 
         # Delete the tuple
-        deleted = nx.rebac_service.rebac_delete_sync(write_result["tuple_id"])
+        deleted = nx.service("rebac").rebac_delete_sync(write_result["tuple_id"])
         assert deleted is True
 
         # Check permission should now fail
-        has_permission = nx.rebac_service.rebac_check_sync(
+        has_permission = nx.service("rebac").rebac_check_sync(
             subject=("user", "alice"),
             permission="read",
             object=("file", "/test.txt"),
@@ -357,7 +357,7 @@ class TestRebacDelete:
 
     def test_rebac_delete_nonexistent_tuple(self, nx: NexusFS) -> None:
         """Test deleting a nonexistent tuple returns False."""
-        deleted = nx.rebac_service.rebac_delete_sync("nonexistent-tuple-id")
+        deleted = nx.service("rebac").rebac_delete_sync("nonexistent-tuple-id")
         assert deleted is False
 
 
@@ -366,14 +366,14 @@ class TestRebacExplain:
 
     def test_rebac_explain_with_permission(self, nx: NexusFS) -> None:
         """Test explaining a granted permission."""
-        nx.rebac_service.rebac_create_sync(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "alice"),
             relation="direct_owner",
             object=("file", "/test.txt"),
             zone_id="root",
         )
 
-        explanation = nx.rebac_service.rebac_explain_sync(
+        explanation = nx.service("rebac").rebac_explain_sync(
             subject=("user", "alice"),
             permission="read",
             object=("file", "/test.txt"),
@@ -386,7 +386,7 @@ class TestRebacExplain:
 
     def test_rebac_explain_without_permission(self, nx: NexusFS) -> None:
         """Test explaining a denied permission."""
-        explanation = nx.rebac_service.rebac_explain_sync(
+        explanation = nx.service("rebac").rebac_explain_sync(
             subject=("user", "bob"),
             permission="write",
             object=("file", "/test.txt"),
@@ -400,7 +400,7 @@ class TestRebacExplain:
     def test_rebac_explain_invalid_subject_raises_error(self, nx: NexusFS) -> None:
         """Test that invalid subject raises ValueError."""
         with pytest.raises(ValueError, match="subject must be"):
-            nx.rebac_service.rebac_explain_sync(
+            nx.service("rebac").rebac_explain_sync(
                 subject=cast(Any, "invalid"),
                 permission="read",
                 object=("file", "/test.txt"),
@@ -413,13 +413,13 @@ class TestRebacCheckBatch:
     def test_rebac_check_batch_basic(self, nx: NexusFS) -> None:
         """Test batch permission checks."""
         # Create some relationships with zone_id using direct_owner relation
-        nx.rebac_service.rebac_create_sync(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "batch_alice"),
             relation="direct_owner",
             object=("file", "/batch_file1.txt"),
             zone_id="root",
         )
-        nx.rebac_service.rebac_create_sync(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "batch_alice"),
             relation="direct_owner",
             object=("file", "/batch_file2.txt"),
@@ -433,7 +433,7 @@ class TestRebacCheckBatch:
             (("user", "batch_bob"), "read", ("file", "/batch_file1.txt")),
         ]
 
-        results = nx.rebac_service.rebac_check_batch_sync(checks)
+        results = nx.service("rebac").rebac_check_batch_sync(checks)
 
         assert isinstance(results, list)
         assert len(results) == 3
@@ -443,7 +443,7 @@ class TestRebacCheckBatch:
     def test_rebac_check_batch_invalid_check_raises_error(self, nx: NexusFS) -> None:
         """Test that invalid check format raises ValueError."""
         with pytest.raises(ValueError, match="Check 0 must be"):
-            nx.rebac_service.rebac_check_batch_sync(["invalid"])
+            nx.service("rebac").rebac_check_batch_sync(["invalid"])
 
 
 class TestRebacListTuples:
@@ -452,36 +452,36 @@ class TestRebacListTuples:
     def test_rebac_list_tuples_all(self, nx: NexusFS) -> None:
         """Test listing all tuples."""
         # Create some tuples
-        nx.rebac_service.rebac_create_sync(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "alice"),
             relation="viewer-of",
             object=("file", "/test.txt"),
         )
-        nx.rebac_service.rebac_create_sync(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "bob"),
             relation="editor-of",
             object=("file", "/test.txt"),
         )
 
-        tuples = nx.rebac_service.rebac_list_tuples_sync()
+        tuples = nx.service("rebac").rebac_list_tuples_sync()
 
         assert isinstance(tuples, list)
         assert len(tuples) >= 2
 
     def test_rebac_list_tuples_by_subject(self, nx: NexusFS) -> None:
         """Test filtering tuples by subject."""
-        nx.rebac_service.rebac_create_sync(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "alice"),
             relation="viewer-of",
             object=("file", "/test1.txt"),
         )
-        nx.rebac_service.rebac_create_sync(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "bob"),
             relation="viewer-of",
             object=("file", "/test2.txt"),
         )
 
-        tuples = nx.rebac_service.rebac_list_tuples_sync(subject=("user", "alice"))
+        tuples = nx.service("rebac").rebac_list_tuples_sync(subject=("user", "alice"))
 
         # All returned tuples should have alice as subject
         for t in tuples:
@@ -490,18 +490,18 @@ class TestRebacListTuples:
 
     def test_rebac_list_tuples_by_relation(self, nx: NexusFS) -> None:
         """Test filtering tuples by relation."""
-        nx.rebac_service.rebac_create_sync(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "alice"),
             relation="viewer-of",
             object=("file", "/test.txt"),
         )
-        nx.rebac_service.rebac_create_sync(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "alice"),
             relation="editor-of",
             object=("file", "/test.txt"),
         )
 
-        tuples = nx.rebac_service.rebac_list_tuples_sync(relation="viewer-of")
+        tuples = nx.service("rebac").rebac_list_tuples_sync(relation="viewer-of")
 
         # All returned tuples should have viewer-of relation
         for t in tuples:
@@ -509,18 +509,18 @@ class TestRebacListTuples:
 
     def test_rebac_list_tuples_by_object(self, nx: NexusFS) -> None:
         """Test filtering tuples by object."""
-        nx.rebac_service.rebac_create_sync(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "alice"),
             relation="viewer-of",
             object=("file", "/target.txt"),
         )
-        nx.rebac_service.rebac_create_sync(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "bob"),
             relation="viewer-of",
             object=("file", "/other.txt"),
         )
 
-        tuples = nx.rebac_service.rebac_list_tuples_sync(object=("file", "/target.txt"))
+        tuples = nx.service("rebac").rebac_list_tuples_sync(object=("file", "/target.txt"))
 
         # All returned tuples should have target.txt as object
         for t in tuples:
@@ -533,35 +533,35 @@ class TestRebacOptions:
 
     def test_set_rebac_option_max_depth(self, nx: NexusFS) -> None:
         """Test setting max_depth option."""
-        nx.rebac_service.set_rebac_option("max_depth", 15)
-        value = nx.rebac_service.get_rebac_option("max_depth")
+        nx.service("rebac").set_rebac_option("max_depth", 15)
+        value = nx.service("rebac").get_rebac_option("max_depth")
         assert value == 15
 
     def test_set_rebac_option_cache_ttl(self, nx: NexusFS) -> None:
         """Test setting cache_ttl option."""
-        nx.rebac_service.set_rebac_option("cache_ttl", 600)
-        value = nx.rebac_service.get_rebac_option("cache_ttl")
+        nx.service("rebac").set_rebac_option("cache_ttl", 600)
+        value = nx.service("rebac").get_rebac_option("cache_ttl")
         assert value == 600
 
     def test_set_rebac_option_invalid_key(self, nx: NexusFS) -> None:
         """Test setting invalid option raises ValueError."""
         with pytest.raises(ValueError, match="Unknown ReBAC option"):
-            nx.rebac_service.set_rebac_option("invalid_option", 10)
+            nx.service("rebac").set_rebac_option("invalid_option", 10)
 
     def test_get_rebac_option_invalid_key(self, nx: NexusFS) -> None:
         """Test getting invalid option raises ValueError."""
         with pytest.raises(ValueError, match="Unknown ReBAC option"):
-            nx.rebac_service.get_rebac_option("invalid_option")
+            nx.service("rebac").get_rebac_option("invalid_option")
 
     def test_set_rebac_option_invalid_max_depth_value(self, nx: NexusFS) -> None:
         """Test setting invalid max_depth value raises ValueError."""
         with pytest.raises(ValueError, match="max_depth must be"):
-            nx.rebac_service.set_rebac_option("max_depth", 0)
+            nx.service("rebac").set_rebac_option("max_depth", 0)
 
     def test_set_rebac_option_invalid_cache_ttl_value(self, nx: NexusFS) -> None:
         """Test setting invalid cache_ttl value raises ValueError."""
         with pytest.raises(ValueError, match="cache_ttl must be"):
-            nx.rebac_service.set_rebac_option("cache_ttl", -1)
+            nx.service("rebac").set_rebac_option("cache_ttl", -1)
 
 
 class TestNamespaceOperations:
@@ -569,7 +569,7 @@ class TestNamespaceOperations:
 
     def test_register_namespace(self, nx: NexusFS) -> None:
         """Test registering a namespace."""
-        nx.rebac_service.register_namespace(
+        nx.service("rebac").register_namespace(
             {
                 "object_type": "document",
                 "config": {
@@ -586,27 +586,27 @@ class TestNamespaceOperations:
         )
 
         # Verify namespace exists (use sync variant — get_namespace is async)
-        ns = nx.rebac_service.get_namespace_sync("document")
+        ns = nx.service("rebac").get_namespace_sync("document")
         assert ns is not None
         assert ns["object_type"] == "document"
 
     def test_register_namespace_invalid_format(self, nx: NexusFS) -> None:
         """Test that invalid namespace format raises ValueError."""
         with pytest.raises(ValueError, match="object_type"):
-            nx.rebac_service.register_namespace({"config": {}})
+            nx.service("rebac").register_namespace({"config": {}})
 
         with pytest.raises(ValueError, match="config"):
-            nx.rebac_service.register_namespace({"object_type": "test"})
+            nx.service("rebac").register_namespace({"object_type": "test"})
 
     def test_get_namespace_nonexistent(self, nx: NexusFS) -> None:
         """Test getting nonexistent namespace returns None."""
-        result = nx.rebac_service.get_namespace_sync("nonexistent")
+        result = nx.service("rebac").get_namespace_sync("nonexistent")
         # Might return None or a default - the actual behavior depends on implementation
         assert result is None or isinstance(result, dict)
 
     def test_namespace_create(self, nx: NexusFS) -> None:
         """Test creating/updating a namespace."""
-        nx.rebac_service.namespace_create_sync(
+        nx.service("rebac").namespace_create_sync(
             "project",
             {
                 "relations": {
@@ -620,18 +620,18 @@ class TestNamespaceOperations:
             },
         )
 
-        ns = nx.rebac_service.get_namespace_sync("project")
+        ns = nx.service("rebac").get_namespace_sync("project")
         assert ns is not None
 
     def test_namespace_create_invalid_config(self, nx: NexusFS) -> None:
         """Test creating namespace with invalid config raises ValueError."""
         with pytest.raises(ValueError, match="relations"):
-            nx.rebac_service.namespace_create_sync("invalid", {"permissions": {}})
+            nx.service("rebac").namespace_create_sync("invalid", {"permissions": {}})
 
     def test_namespace_list(self, nx: NexusFS) -> None:
         """Test listing namespaces."""
         # Create a namespace
-        nx.rebac_service.namespace_create_sync(
+        nx.service("rebac").namespace_create_sync(
             "test_list",
             {
                 "relations": {"viewer": {}},
@@ -639,13 +639,13 @@ class TestNamespaceOperations:
             },
         )
 
-        namespaces = nx.rebac_service.namespace_list_sync()
+        namespaces = nx.service("rebac").namespace_list_sync()
         assert isinstance(namespaces, list)
 
     def test_namespace_delete(self, nx: NexusFS) -> None:
         """Test deleting a namespace."""
         # Create namespace
-        nx.rebac_service.namespace_create_sync(
+        nx.service("rebac").namespace_create_sync(
             "deletable",
             {
                 "relations": {"viewer": {}},
@@ -654,16 +654,16 @@ class TestNamespaceOperations:
         )
 
         # Delete it
-        deleted = nx.rebac_service.namespace_delete_sync("deletable")
+        deleted = nx.service("rebac").namespace_delete_sync("deletable")
         assert deleted is True
 
         # Verify deleted
-        ns = nx.rebac_service.get_namespace_sync("deletable")
+        ns = nx.service("rebac").get_namespace_sync("deletable")
         assert ns is None
 
     def test_namespace_delete_nonexistent(self, nx: NexusFS) -> None:
         """Test deleting nonexistent namespace returns False."""
-        deleted = nx.rebac_service.namespace_delete_sync("nonexistent_namespace")
+        deleted = nx.service("rebac").namespace_delete_sync("nonexistent_namespace")
         assert deleted is False
 
 
@@ -672,7 +672,7 @@ class TestConsentAndPrivacy:
 
     def test_grant_consent(self, nx: NexusFS) -> None:
         """Test granting consent for discovery."""
-        tuple_id = nx.rebac_service.grant_consent_sync(
+        tuple_id = nx.service("rebac").grant_consent_sync(
             from_subject=("profile", "alice"),
             to_subject=("user", "bob"),
             zone_id="root",
@@ -684,7 +684,7 @@ class TestConsentAndPrivacy:
         """Test granting consent with expiration."""
         expires = datetime.now(UTC) + timedelta(days=30)
 
-        tuple_id = nx.rebac_service.grant_consent_sync(
+        tuple_id = nx.service("rebac").grant_consent_sync(
             from_subject=("profile", "alice"),
             to_subject=("user", "bob"),
             expires_at=expires,
@@ -696,7 +696,7 @@ class TestConsentAndPrivacy:
     def test_revoke_consent(self, nx: NexusFS) -> None:
         """Test revoking consent."""
         # Grant consent
-        tuple_id = nx.rebac_service.grant_consent_sync(
+        tuple_id = nx.service("rebac").grant_consent_sync(
             from_subject=("profile", "consent_alice"),
             to_subject=("user", "consent_bob"),
             zone_id="root",
@@ -706,7 +706,7 @@ class TestConsentAndPrivacy:
 
         # Revoke consent - should work or return False if already revoked
         try:
-            revoked = nx.rebac_service.revoke_consent_sync(
+            revoked = nx.service("rebac").revoke_consent_sync(
                 from_subject=("profile", "consent_alice"),
                 to_subject=("user", "consent_bob"),
                 zone_id="root",
@@ -720,7 +720,7 @@ class TestConsentAndPrivacy:
     def test_revoke_consent_nonexistent(self, nx: NexusFS) -> None:
         """Test revoking nonexistent consent."""
         try:
-            revoked = nx.rebac_service.revoke_consent_sync(
+            revoked = nx.service("rebac").revoke_consent_sync(
                 from_subject=("profile", "nonexistent_charlie"),
                 to_subject=("user", "nonexistent_dave"),
                 zone_id="root",
@@ -732,17 +732,17 @@ class TestConsentAndPrivacy:
 
     def test_make_public(self, nx: NexusFS) -> None:
         """Test making a resource publicly discoverable."""
-        tuple_id = nx.rebac_service.make_public_sync(("profile", "public_alice"), zone_id="root")
+        tuple_id = nx.service("rebac").make_public_sync(("profile", "public_alice"), zone_id="root")
         assert tuple_id is not None
 
     def test_make_private(self, nx: NexusFS) -> None:
         """Test making a resource private."""
         # Make public first
-        nx.rebac_service.make_public_sync(("profile", "private_alice"), zone_id="root")
+        nx.service("rebac").make_public_sync(("profile", "private_alice"), zone_id="root")
 
         # Make private - implementation varies
         try:
-            made_private = nx.rebac_service.make_private_sync(
+            made_private = nx.service("rebac").make_private_sync(
                 ("profile", "private_alice"), zone_id="root"
             )
             assert isinstance(made_private, bool)
@@ -753,7 +753,7 @@ class TestConsentAndPrivacy:
     def test_make_private_already_private(self, nx: NexusFS) -> None:
         """Test making already private resource."""
         try:
-            made_private = nx.rebac_service.make_private_sync(
+            made_private = nx.service("rebac").make_private_sync(
                 ("profile", "already_private_bob"), zone_id="root"
             )
             assert isinstance(made_private, bool)
@@ -764,7 +764,7 @@ class TestConsentAndPrivacy:
     def test_rebac_expand_with_privacy(self, nx: NexusFS) -> None:
         """Test privacy-aware expansion."""
         # Create direct_owner relationship (standard relation)
-        nx.rebac_service.rebac_create_sync(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "privacy_alice"),
             relation="direct_owner",
             object=("file", "/privacy_doc.txt"),
@@ -772,7 +772,7 @@ class TestConsentAndPrivacy:
         )
 
         # Without privacy filtering
-        subjects = nx.rebac_service.rebac_expand_with_privacy_sync(
+        subjects = nx.service("rebac").rebac_expand_with_privacy_sync(
             "read",
             ("file", "/privacy_doc.txt"),
             respect_consent=False,
@@ -790,7 +790,7 @@ class TestDynamicViewer:
         """Test basic dynamic viewer filter application."""
         csv_data = "name,email,age,password\nalice,a@ex.com,30,secret\nbob,b@ex.com,25,pwd\n"
 
-        result = nx.rebac_service.apply_dynamic_viewer_filter_sync(
+        result = nx.service("rebac").apply_dynamic_viewer_filter_sync(
             data=csv_data,
             column_config={
                 "hidden_columns": ["password"],
@@ -813,7 +813,7 @@ class TestDynamicViewer:
         """Test dynamic viewer filter with aggregations."""
         csv_data = "name,salary\nalice,50000\nbob,60000\n"
 
-        result = nx.rebac_service.apply_dynamic_viewer_filter_sync(
+        result = nx.service("rebac").apply_dynamic_viewer_filter_sync(
             data=csv_data,
             column_config={
                 "hidden_columns": [],
@@ -829,7 +829,7 @@ class TestDynamicViewer:
     def test_apply_dynamic_viewer_filter_unsupported_format(self, nx: NexusFS) -> None:
         """Test that unsupported format raises ValueError."""
         with pytest.raises(ValueError, match="Unsupported file format"):
-            nx.rebac_service.apply_dynamic_viewer_filter_sync(
+            nx.service("rebac").apply_dynamic_viewer_filter_sync(
                 data="some data",
                 column_config={},
                 file_format="json",
@@ -837,7 +837,7 @@ class TestDynamicViewer:
 
     def test_get_dynamic_viewer_config_no_config(self, nx: NexusFS) -> None:
         """Test getting dynamic viewer config when none exists."""
-        config = nx.rebac_service.get_dynamic_viewer_config_sync(
+        config = nx.service("rebac").get_dynamic_viewer_config_sync(
             subject=("user", "alice"),
             file_path="/nonexistent.csv",
         )
@@ -864,7 +864,7 @@ class TestRebacIntegration:
         nx_no_permissions.sys_write("/protected.txt", b"Secret content")
 
         # Create read permission for alice with direct_owner relation
-        nx_no_permissions.rebac_service.rebac_create_sync(
+        nx_no_permissions.service("rebac").rebac_create_sync(
             subject=("user", "alice"),
             relation="direct_owner",
             object=("file", "/protected.txt"),
@@ -872,7 +872,7 @@ class TestRebacIntegration:
         )
 
         # This tests that the permission check works
-        has_read = nx_no_permissions.rebac_service.rebac_check_sync(
+        has_read = nx_no_permissions.service("rebac").rebac_check_sync(
             subject=("user", "alice"),
             permission="read",
             object=("file", "/protected.txt"),
@@ -881,7 +881,7 @@ class TestRebacIntegration:
         assert has_read is True
 
         # Bob should not have permission
-        has_read = nx_no_permissions.rebac_service.rebac_check_sync(
+        has_read = nx_no_permissions.service("rebac").rebac_check_sync(
             subject=("user", "bob"),
             permission="read",
             object=("file", "/protected.txt"),
@@ -892,7 +892,7 @@ class TestRebacIntegration:
     def test_group_inheritance(self, nx: NexusFS) -> None:
         """Test that relationships can be created for groups."""
         # Alice is member of developers
-        tuple1 = nx.rebac_service.rebac_create_sync(
+        tuple1 = nx.service("rebac").rebac_create_sync(
             subject=("user", "group_alice"),
             relation="member",
             object=("group", "group_developers"),
@@ -900,7 +900,7 @@ class TestRebacIntegration:
         )
 
         # Developers group has direct_owner access to file
-        tuple2 = nx.rebac_service.rebac_create_sync(
+        tuple2 = nx.service("rebac").rebac_create_sync(
             subject=("group", "group_developers"),
             relation="direct_owner",
             object=("file", "/project/group_code.py"),

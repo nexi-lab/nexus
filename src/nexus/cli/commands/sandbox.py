@@ -72,7 +72,7 @@ def create_sandbox(
         nx: Any = get_default_filesystem()
 
         with timing.phase("server"):
-            result = nx._sandbox_rpc_service.sandbox_create(
+            result = nx.service("sandbox_rpc").sandbox_create(
                 name=name,
                 ttl_minutes=ttl,
                 provider=provider,
@@ -152,7 +152,7 @@ def get_or_create_sandbox(
         nx: Any = get_default_filesystem()
 
         with timing.phase("server"):
-            result = nx._sandbox_rpc_service.sandbox_get_or_create(
+            result = nx.service("sandbox_rpc").sandbox_get_or_create(
                 name=name,
                 ttl_minutes=ttl,
                 provider=provider,
@@ -223,7 +223,7 @@ def run_code(
 
         nx: Any = get_default_filesystem()
         with timing.phase("server"):
-            result = nx._sandbox_rpc_service.sandbox_run(
+            result = nx.service("sandbox_rpc").sandbox_run(
                 sandbox_id=sandbox_id, language=language, code=code_to_run, timeout=timeout
             )
 
@@ -264,7 +264,7 @@ def pause_sandbox(sandbox_id: str, output_opts: OutputOptions, data_dir: str | N
     try:
         nx: Any = get_default_filesystem()
         with timing.phase("server"):
-            result = nx._sandbox_rpc_service.sandbox_pause(sandbox_id=sandbox_id)
+            result = nx.service("sandbox_rpc").sandbox_pause(sandbox_id=sandbox_id)
 
         def _render(d: dict[str, Any]) -> None:
             click.echo(f"Paused sandbox: {sandbox_id}")
@@ -293,7 +293,7 @@ def resume_sandbox(sandbox_id: str, output_opts: OutputOptions, data_dir: str | 
     try:
         nx: Any = get_default_filesystem()
         with timing.phase("server"):
-            result = nx._sandbox_rpc_service.sandbox_resume(sandbox_id=sandbox_id)
+            result = nx.service("sandbox_rpc").sandbox_resume(sandbox_id=sandbox_id)
 
         def _render(d: dict[str, Any]) -> None:
             click.echo(f"Resumed sandbox: {sandbox_id}")
@@ -322,7 +322,7 @@ def stop_sandbox(sandbox_id: str, output_opts: OutputOptions, data_dir: str | No
     try:
         nx: Any = get_default_filesystem()
         with timing.phase("server"):
-            result = nx._sandbox_rpc_service.sandbox_stop(sandbox_id=sandbox_id)
+            result = nx.service("sandbox_rpc").sandbox_stop(sandbox_id=sandbox_id)
 
         def _render(d: dict[str, Any]) -> None:
             click.echo(f"Stopped sandbox: {sandbox_id}")
@@ -363,7 +363,7 @@ def list_sandboxes(
     try:
         nx: Any = get_default_filesystem()
         with timing.phase("server"):
-            result = nx._sandbox_rpc_service.sandbox_list(
+            result = nx.service("sandbox_rpc").sandbox_list(
                 user_id=user_id, agent_id=agent_id, zone_id=zone_id, verify_status=verify
             )
         sandboxes = result["sandboxes"]
@@ -416,7 +416,7 @@ def sandbox_status(sandbox_id: str, output_opts: OutputOptions, data_dir: str | 
     try:
         nx: Any = get_default_filesystem()
         with timing.phase("server"):
-            result = nx._sandbox_rpc_service.sandbox_status(sandbox_id=sandbox_id)
+            result = nx.service("sandbox_rpc").sandbox_status(sandbox_id=sandbox_id)
 
         def _render(d: dict[str, Any]) -> None:
             click.echo(f"Sandbox: {d['sandbox_id']}")
@@ -481,7 +481,7 @@ def connect_sandbox(
     try:
         nx: Any = get_default_filesystem()
         with timing.phase("server"):
-            result = nx._sandbox_rpc_service.sandbox_connect(
+            result = nx.service("sandbox_rpc").sandbox_connect(
                 sandbox_id=sandbox_id,
                 provider=provider,
                 sandbox_api_key=sandbox_api_key,
@@ -545,7 +545,7 @@ def disconnect_sandbox(
     try:
         nx: Any = get_default_filesystem()
         with timing.phase("server"):
-            result = nx._sandbox_rpc_service.sandbox_disconnect(
+            result = nx.service("sandbox_rpc").sandbox_disconnect(
                 sandbox_id=sandbox_id, provider=provider, sandbox_api_key=sandbox_api_key
             )
 

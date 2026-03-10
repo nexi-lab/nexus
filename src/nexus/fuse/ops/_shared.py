@@ -582,7 +582,9 @@ def resolve_io_profile(ctx: FUSESharedContext, path: str) -> str:
     if not ctx._io_profile_loaded:  # type: ignore[attr-defined]
         ctx._io_profile_loaded = True  # type: ignore[attr-defined]
         try:
-            mount_svc = cast(Any, ctx.nexus_fs).mount_service
+            mount_svc = ctx.nexus_fs.service("mount")
+            if mount_svc is None:
+                raise AttributeError("mount service not available")
             from nexus.lib.sync_bridge import run_sync as _run_sync
 
             mounts = _run_sync(mount_svc.list_mounts())

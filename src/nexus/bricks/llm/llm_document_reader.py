@@ -132,10 +132,9 @@ class LLMDocumentReader:
 
         # If not using search, read document directly
         if not use_search:
+            search = self.nx.service("search")
             file_paths = (
-                cast(Any, self.nx).search_service.glob(path, context=context)
-                if "*" in path
-                else [path]
+                search.glob(path, context=context) if "*" in path and search is not None else [path]
             )
 
             for file_path in file_paths[:search_limit]:

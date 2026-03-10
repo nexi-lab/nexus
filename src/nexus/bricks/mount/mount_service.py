@@ -270,10 +270,10 @@ class MountService:
                     logger.warning(error_msg)
 
             # Remove direct_owner permission tuple for the mount point
-            if self.nexus_fs and hasattr(self.nexus_fs, "rebac_service"):
+            if self.nexus_fs and self.nexus_fs.service("rebac"):
                 try:
                     zone_id = get_zone_id(context)
-                    svc = self.nexus_fs.rebac_service
+                    svc = self.nexus_fs.service("rebac")
                     tuples = svc.rebac_list_tuples_sync(object=("file", mount_point))
                     deleted = 0
                     for t in tuples:
@@ -515,7 +515,7 @@ class MountService:
                             )
                         elif subject_id:
                             # Check if user has read permission (includes owner, editor, viewer)
-                            has_permission = self.nexus_fs.rebac_service.rebac_check_sync(
+                            has_permission = self.nexus_fs.service("rebac").rebac_check_sync(
                                 subject=(subject_type, subject_id),
                                 permission="read",
                                 object=("file", mount_point),
@@ -1104,9 +1104,9 @@ class MountService:
             subject_type, subject_id = get_user_identity(context)
             zone_id = get_zone_id(context)
 
-            if subject_id and self.nexus_fs and hasattr(self.nexus_fs, "rebac_service"):
+            if subject_id and self.nexus_fs and self.nexus_fs.service("rebac"):
                 try:
-                    self.nexus_fs.rebac_service.rebac_create_sync(
+                    self.nexus_fs.service("rebac").rebac_create_sync(
                         subject=(subject_type, subject_id),
                         relation="direct_owner",
                         object=("file", mount_point),

@@ -61,7 +61,7 @@ def glob(
     try:
         with timing.phase("connect"), open_filesystem(remote_url, remote_api_key) as nx:
             with timing.phase("server"):
-                result = nx.search_service.glob(pattern, path)
+                result = nx.service("search").glob(pattern, path)
                 matches = (
                     result["matches"]
                     if isinstance(result, dict) and "matches" in result
@@ -221,7 +221,7 @@ def grep(
             open_filesystem(remote_url, remote_api_key) as nx,
             timing.phase("server"),
         ):
-            result = nx.search_service.grep(
+            result = nx.service("search").grep(
                 pattern,
                 path=path,
                 file_pattern=file_pattern,
@@ -368,7 +368,7 @@ def search_init(
         with console.status("[yellow]Initializing search engine...[/yellow]", spinner="dots"):
 
             async def init_search() -> None:
-                await nx.search_service.ainitialize_semantic_search(
+                await nx.service("search").ainitialize_semantic_search(
                     nx=nx,
                     record_store_engine=None,
                     embedding_provider=provider,
@@ -429,7 +429,7 @@ def search_index(
         with console.status(f"[yellow]Indexing {path}...[/yellow]", spinner="dots"):
 
             async def do_index() -> dict[str, int]:
-                result: dict[str, int] = await nx.search_service.semantic_search_index(
+                result: dict[str, int] = await nx.service("search").semantic_search_index(
                     path, recursive=recursive
                 )
                 return result
@@ -449,7 +449,7 @@ def search_index(
 
         # Show stats
         async def get_stats() -> dict[str, Any]:
-            result: dict[str, Any] = await nx.search_service.semantic_search_stats()
+            result: dict[str, Any] = await nx.service("search").semantic_search_stats()
             return result
 
         stats = asyncio.run(get_stats())
@@ -507,7 +507,7 @@ def search_query(
         with console.status(f"[yellow]Searching for: {query}[/yellow]", spinner="dots"):
 
             async def do_search() -> list[dict[str, Any]]:
-                result: list[dict[str, Any]] = await nx.search_service.semantic_search(
+                result: list[dict[str, Any]] = await nx.service("search").semantic_search(
                     query, path=path, limit=limit, search_mode=mode
                 )
                 return result
@@ -561,7 +561,7 @@ def search_stats(remote_url: str | None, remote_api_key: str | None) -> None:
         nx = get_filesystem(remote_url, remote_api_key)
 
         async def get_stats() -> dict[str, Any]:
-            result: dict[str, Any] = await nx.search_service.semantic_search_stats()
+            result: dict[str, Any] = await nx.service("search").semantic_search_stats()
             return result
 
         stats = asyncio.run(get_stats())

@@ -53,7 +53,7 @@ def create_impersonated_user_agent(
     agent_id = f"{user_id},ImpersonatedUser"
 
     try:
-        agent_result = nx._agent_rpc_service.register_agent(
+        agent_result = nx.service("agent_rpc").register_agent(
             agent_id=agent_id,
             name="ImpersonatedUser",
             description="Digital twin agent - no separate identity, inherits all user permissions",
@@ -96,7 +96,7 @@ def create_untrusted_agent(
     agent_id = f"{user_id},UntrustedAgent"
 
     try:
-        agent_result = nx._agent_rpc_service.register_agent(
+        agent_result = nx.service("agent_rpc").register_agent(
             agent_id=agent_id,
             name="UntrustedAgent",
             description="Untrusted agent with API key - zero permissions by default, read-only access granted explicitly",
@@ -175,7 +175,7 @@ def grant_agent_resource_access(
     for resource_type in resource_types:
         folder_path = f"{user_base_path}/{resource_type}"
         try:
-            nx.rebac_service.rebac_create_sync(
+            nx.service("rebac").rebac_create_sync(
                 subject=("agent", agent_id),
                 relation="viewer",  # Read-only access
                 object=("file", folder_path),

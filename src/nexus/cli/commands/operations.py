@@ -65,7 +65,7 @@ def ops_diff(
     try:
         nx = get_filesystem(remote_url, remote_api_key)
 
-        time_travel = getattr(nx, "time_travel_service", None)
+        time_travel = nx.service("time_travel")
         if time_travel is None:
             console.print("[red]Error:[/red] Time-travel is only supported with local NexusFS")
             nx.close()
@@ -190,7 +190,7 @@ def ops_log(
     try:
         nx = get_filesystem(remote_url, remote_api_key)
 
-        ops_service = getattr(nx, "operations_service", None)
+        ops_service = nx.service("operations")
         if ops_service is None:
             raise click.ClickException("Operation log requires a local NexusFS instance")
 
@@ -274,7 +274,7 @@ def undo(agent: str | None, yes: bool, remote_url: str | None, remote_api_key: s
     try:
         nx = get_filesystem(remote_url, remote_api_key)
 
-        ops_service = getattr(nx, "operations_service", None)
+        ops_service = nx.service("operations")
         if ops_service is None:
             raise click.ClickException("Undo requires a local NexusFS instance")
 

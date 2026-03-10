@@ -206,7 +206,9 @@ class ScopedFilesystem(ScopedPathMixin):
 
     def glob(self, pattern: str, path: str = "/", context: Any = None) -> builtins.list[str]:
         """Find files matching a glob pattern."""
-        search = cast(Any, self._fs).search_service
+        search = self._fs.service("search")
+        if search is None:
+            raise NotImplementedError("SearchService not available")
         result = search.glob(pattern, self._scope_path(path), context)
         return self._unscope_paths(result)
 
@@ -224,7 +226,9 @@ class ScopedFilesystem(ScopedPathMixin):
         invert_match: bool = False,
     ) -> builtins.list[dict[str, Any]]:
         """Search file contents using regex patterns."""
-        search = cast(Any, self._fs).search_service
+        search = self._fs.service("search")
+        if search is None:
+            raise NotImplementedError("SearchService not available")
         result = search.grep(
             pattern,
             self._scope_path(path),

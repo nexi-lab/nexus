@@ -159,7 +159,7 @@ def get_memory_api(nx: Any) -> Any:
     Raises:
         AttributeError: If ``_memory_provider`` is not configured.
     """
-    provider = getattr(nx, "_memory_provider", None)
+    provider = nx.service("memory_provider")
     if provider is None:
         raise AttributeError("Memory provider not configured on NexusFS")
     return provider.get_or_create()

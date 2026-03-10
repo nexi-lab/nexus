@@ -35,6 +35,21 @@ class NexusFilesystemABC(ABC):
     protocols, not the kernel.
     """
 
+    # ── Service Registry ──────────────────────────────────────────
+    #
+    # Concrete method — look up registered services by name.
+    # Returns None when service not registered (default for the ABC).
+
+    def service(self, name: str) -> Any | None:
+        """Look up a registered service by canonical name.
+
+        Returns the service instance, or ``None`` if not registered.
+        Concrete implementations (e.g. NexusFS) back this with a
+        ServiceRegistry; the ABC default returns ``None``.
+        """
+        del name
+        return None
+
     # ── Tier 1: Abstract Syscalls ──────────────────────────────────
     #
     # Content I/O — sys_read(2), sys_write(2)

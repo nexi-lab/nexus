@@ -92,7 +92,7 @@ def register_cmd(
         nx: Any = get_filesystem(remote_url, remote_api_key)
 
         try:
-            result = nx._agent_rpc_service.register_agent(
+            result = nx.service("agent_rpc").register_agent(
                 agent_id=agent_id,
                 name=name,
                 description=description,
@@ -101,7 +101,7 @@ def register_cmd(
         except Exception as reg_err:
             if if_not_exists and "already exists" in str(reg_err).lower():
                 try:
-                    existing = nx._agent_rpc_service.get_agent(agent_id)
+                    existing = nx.service("agent_rpc").get_agent(agent_id)
                     console.print(f"[green]✓[/green] Agent already exists: {agent_id}")
                     console.print(f"  Name: {existing.get('name', name)}")
                     console.print(f"  Owner: {existing.get('user_id', 'unknown')}")
@@ -146,7 +146,7 @@ def list_cmd(
     try:
         nx: Any = get_filesystem(remote_url, remote_api_key)
 
-        agents = nx._agent_rpc_service.list_agents()
+        agents = nx.service("agent_rpc").list_agents()
 
         if not agents:
             console.print("[yellow]No agents registered[/yellow]")
@@ -203,7 +203,7 @@ def info_cmd(
     try:
         nx: Any = get_filesystem(remote_url, remote_api_key)
 
-        agent = nx._agent_rpc_service.get_agent(agent_id)
+        agent = nx.service("agent_rpc").get_agent(agent_id)
 
         if not agent:
             console.print(f"[red]✗[/red] Agent not found: {agent_id}")
@@ -260,7 +260,7 @@ def delete_cmd(
                 nx.close()
                 return
 
-        result = nx._agent_rpc_service.delete_agent(agent_id)
+        result = nx.service("agent_rpc").delete_agent(agent_id)
 
         if result:
             console.print(f"[green]✓[/green] Deleted agent: {agent_id}")

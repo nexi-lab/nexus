@@ -45,7 +45,7 @@ def connectors_group() -> None:
 
 def _list_connectors_remote(nx: Any, category: str | None) -> list[dict[str, Any]]:
     """List connectors from remote server via RPC."""
-    result: list[dict[str, Any]] = nx._mount_core_service.list_connectors(category=category)
+    result: list[dict[str, Any]] = nx.service("mount_core").list_connectors(category=category)
     return result
 
 

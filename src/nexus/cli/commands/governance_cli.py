@@ -1,8 +1,4 @@
-"""Governance CLI commands — alerts, fraud rings, and status.
-
-Maps to /api/v2/governance/* REST endpoints via NexusServiceClient.
-Issue #2811.
-"""
+"""Governance CLI commands — alerts, fraud rings, and status."""
 
 import click
 
@@ -12,7 +8,7 @@ from nexus.cli.utils import (
     REMOTE_API_KEY_OPTION,
     REMOTE_URL_OPTION,
     console,
-    get_service_client,
+    rpc_call,
 )
 
 
@@ -45,8 +41,6 @@ def governance_status(
 ) -> None:
     """Show governance overview.
 
-    Displays recent alerts and detected fraud rings.
-
     \b
     Examples:
         nexus governance status
@@ -54,8 +48,8 @@ def governance_status(
     """
     try:
         timing = CommandTiming()
-        with timing.phase("server"), get_service_client(remote_url, remote_api_key) as client:
-            data = client.governance_status()
+        with timing.phase("server"):
+            data = rpc_call(remote_url, remote_api_key, "governance_status")
 
         def _render(d: dict) -> None:
             alerts = d.get("recent_alerts", {})
@@ -88,14 +82,12 @@ def governance_status(
 
 @governance.command("alerts")
 @click.option("--severity", default=None, help="Filter by severity (low/medium/high)")
-@click.option("--since", default=None, help="Start time (ISO format)")
 @click.option("--limit", default=50, help="Maximum entries", show_default=True)
 @add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
 def governance_alerts(
     severity: str | None,
-    since: str | None,
     limit: int,
     output_opts: OutputOptions,
     remote_url: str | None,
@@ -106,13 +98,19 @@ def governance_alerts(
     \b
     Examples:
         nexus governance alerts
-        nexus governance alerts --severity high --since 2024-01-01
+        nexus governance alerts --severity high
         nexus governance alerts --json
     """
     try:
         timing = CommandTiming()
-        with timing.phase("server"), get_service_client(remote_url, remote_api_key) as client:
-            data = client.governance_alerts(severity=severity, since=since, limit=limit)
+        with timing.phase("server"):
+            data = rpc_call(
+                remote_url,
+                remote_api_key,
+                "governance_alerts",
+                severity=severity,
+                limit=limit,
+            )
 
         def _render(d: dict) -> None:
             from rich.table import Table
@@ -168,8 +166,8 @@ def governance_rings(
     """
     try:
         timing = CommandTiming()
-        with timing.phase("server"), get_service_client(remote_url, remote_api_key) as client:
-            data = client.governance_rings()
+        with timing.phase("server"):
+            data = rpc_call(remote_url, remote_api_key, "governance_rings")
 
         def _render(d: dict) -> None:
             rings = d.get("rings", [])

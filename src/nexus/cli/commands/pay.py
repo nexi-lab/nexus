@@ -1,8 +1,4 @@
-"""Pay CLI commands — agent balance, transfer, and history.
-
-Maps to /api/v2/pay/* REST endpoints via NexusServiceClient.
-Issue #2811.
-"""
+"""Pay CLI commands — agent balance, transfer, and history."""
 
 import click
 
@@ -12,7 +8,7 @@ from nexus.cli.utils import (
     REMOTE_API_KEY_OPTION,
     REMOTE_URL_OPTION,
     console,
-    get_service_client,
+    rpc_call,
 )
 
 
@@ -55,8 +51,8 @@ def pay_balance(
     """
     timing = CommandTiming()
     try:
-        with timing.phase("server"), get_service_client(remote_url, remote_api_key) as client:
-            data = client.pay_balance(agent_id)
+        with timing.phase("server"):
+            data = rpc_call(remote_url, remote_api_key, "pay_balance", agent_id=agent_id)
 
         def _render(d: dict) -> None:
             console.print("[bold cyan]Balance[/bold cyan]")
@@ -108,8 +104,16 @@ def pay_transfer(
     """
     timing = CommandTiming()
     try:
-        with timing.phase("server"), get_service_client(remote_url, remote_api_key) as client:
-            data = client.pay_transfer(to, amount, memo=memo, method=method)
+        with timing.phase("server"):
+            data = rpc_call(
+                remote_url,
+                remote_api_key,
+                "pay_transfer",
+                to=to,
+                amount=amount,
+                memo=memo,
+                method=method,
+            )
 
         def _render(d: dict) -> None:
             console.print("[green]Transfer successful[/green]")
@@ -154,8 +158,8 @@ def pay_history(
     """
     timing = CommandTiming()
     try:
-        with timing.phase("server"), get_service_client(remote_url, remote_api_key) as client:
-            data = client.pay_history(since=since, limit=limit)
+        with timing.phase("server"):
+            data = rpc_call(remote_url, remote_api_key, "pay_history", since=since, limit=limit)
 
         def _render(d: dict) -> None:
             from rich.table import Table

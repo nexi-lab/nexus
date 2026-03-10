@@ -73,11 +73,18 @@ class SQLAlchemyAPIKeyStore:
             return _to_dto(key)
 
     def get_by_hash(self, key_hash: str) -> APIKeyDTO | None:
+        from sqlalchemy import or_
+
+        now = datetime.now(UTC)
         with self._session_factory() as session:
             key = session.scalar(
                 select(APIKeyModel).where(
                     APIKeyModel.key_hash == key_hash,
                     APIKeyModel.revoked == 0,
+                    or_(
+                        APIKeyModel.expires_at.is_(None),
+                        APIKeyModel.expires_at > now,
+                    ),
                 )
             )
             return _to_dto(key) if key else None

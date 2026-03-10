@@ -51,7 +51,7 @@ DEFAULT_BLOOM_CAPACITY = 1_000_000
 DEFAULT_BLOOM_FP_RATE = 0.01
 
 # Metadata file format version
-METADATA_VERSION = 1
+METADATA_VERSION = 2
 
 
 @dataclass
@@ -197,6 +197,9 @@ class LocalDiskCache:
             Cache key in format "{zone_id}:{content_hash}" or just "{content_hash}"
         """
         if zone_id:
+            from nexus.lib.zone import validate_zone_id
+
+            validate_zone_id(zone_id)
             return f"{zone_id}:{content_hash}"
         return content_hash
 
@@ -634,8 +637,9 @@ class LocalDiskCache:
 
                 # Read entries
                 for _ in range(entry_count):
-                    # Hash (32 bytes hex = 64 bytes)
-                    content_hash = f.read(64).decode("ascii")
+                    # Key length (2 bytes) + variable-length key
+                    key_len = struct.unpack("!H", f.read(2))[0]
+                    content_hash = f.read(key_len).decode("ascii")
                     # Size, created, accessed, access_count, priority
                     size, created, accessed, access_count, priority = struct.unpack(
                         "!QddIi", f.read(8 + 8 + 8 + 4 + 4)
@@ -675,7 +679,13 @@ class LocalDiskCache:
         for cache_file in self.content_dir.rglob("*.bin"):
             try:
                 content_hash = cache_file.stem
-                if len(content_hash) != 64:  # SHA-256 hex length
+                # Accept plain SHA-256 hashes (64 chars) and zone-prefixed
+                # keys (zone_id:hash, variable length > 64 with ':' separator).
+                if len(content_hash) == 64:
+                    pass  # plain hash
+                elif ":" in content_hash and len(content_hash.rsplit(":", 1)[-1]) == 64:
+                    pass  # zone_id:hash
+                else:
                     continue
 
                 size = cache_file.stat().st_size
@@ -714,7 +724,9 @@ class LocalDiskCache:
 
                     # Entries
                     for content_hash, entry in self._entries.items():
-                        f.write(content_hash.encode("ascii"))
+                        key_bytes = content_hash.encode("ascii")
+                        f.write(struct.pack("!H", len(key_bytes)))
+                        f.write(key_bytes)
                         f.write(
                             struct.pack(
                                 "!QddIi",

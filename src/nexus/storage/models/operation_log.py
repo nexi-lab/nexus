@@ -63,7 +63,9 @@ class OperationLogModel(Base):
 
     # Monotonic sequence for cursor-based replay pagination (Issue #1138/#1139).
     # Nullable for backfill of existing rows; new rows auto-populated via trigger/app.
-    sequence_number: Mapped[int | None] = mapped_column(BigInteger, nullable=True, default=None)
+    sequence_number: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True, default=None, unique=True
+    )
 
     # Persistent retry count for delivery worker (Issue #2751).
     # Survives worker restarts; prevents over-retry and DLQ bypass.

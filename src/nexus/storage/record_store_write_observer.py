@@ -158,6 +158,7 @@ class RecordStoreWriteObserver:
     ) -> None:
         """Sync a rename operation to RecordStore."""
         from nexus.storage.operation_logger import OperationLogger
+        from nexus.storage.version_recorder import VersionRecorder
 
         try:
             with self._session_factory() as session:
@@ -171,6 +172,7 @@ class RecordStoreWriteObserver:
                     metadata_snapshot=metadata.to_dict() if metadata else None,
                     status="success",
                 )
+                VersionRecorder(session).record_rename(old_path, new_path)
                 session.commit()
         except Exception as e:
             self._handle_error("rename", old_path, e)

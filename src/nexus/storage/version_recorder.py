@@ -55,6 +55,27 @@ class VersionRecorder:
         else:
             self._record_update(metadata)
 
+    def record_rename(self, old_path: str, new_path: str) -> None:
+        """Record a file rename (update virtual_path in FilePathModel).
+
+        Args:
+            old_path: Previous virtual path.
+            new_path: New virtual path after rename.
+        """
+        existing = self.session.execute(
+            select(FilePathModel).where(
+                FilePathModel.virtual_path == old_path,
+                FilePathModel.deleted_at.is_(None),
+            )
+        ).scalar_one_or_none()
+
+        if existing:
+            self.session.execute(
+                update(FilePathModel)
+                .where(FilePathModel.path_id == existing.path_id)
+                .values(virtual_path=new_path, updated_at=_utcnow_naive())
+            )
+
     def record_delete(self, path: str) -> None:
         """Record a file deletion (soft-delete FilePathModel).
 

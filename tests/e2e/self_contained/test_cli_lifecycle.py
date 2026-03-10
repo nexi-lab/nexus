@@ -1,6 +1,7 @@
 """E2E tests for CLI infrastructure lifecycle commands (Issue #2807).
 
 Tests ``nexus doctor`` and ``nexus status`` as real subprocess invocations.
+Tests unwrap the JSON envelope produced by ``render_output``.
 """
 
 from __future__ import annotations

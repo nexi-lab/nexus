@@ -371,7 +371,10 @@ class ToolDispatcher:
         ignore_case = args.get("ignore_case", False)
 
         try:
-            results = self._vfs.search_service.grep(
+            search = self._vfs.service("search")
+            if search is None:
+                return "grep unavailable: search brick not enabled"
+            results = search.grep(
                 pattern=pattern,
                 path=path,
                 file_pattern=file_pattern,
@@ -404,7 +407,10 @@ class ToolDispatcher:
 
         files: list[str]
         try:
-            files = self._vfs.search_service.glob(pattern, path)
+            search = self._vfs.service("search")
+            if search is None:
+                return "glob unavailable: search brick not enabled"
+            files = search.glob(pattern, path)
         except Exception:
             # Fallback: use sys_readdir if glob not available
             try:

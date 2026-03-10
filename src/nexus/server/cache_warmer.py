@@ -497,7 +497,9 @@ class CacheWarmer:
 
             # Get files using glob
             pattern = self._build_glob_pattern(path, depth)
-            files = self._nexus.search_service.glob(pattern, path="/", context=context)
+            search = self._nexus.service("search")
+            assert search is not None, "SearchService required for cache warmup"
+            files = search.glob(pattern, path="/", context=context)
             files = files[:max_files]
 
             logger.info(f"[WARMUP] Found {len(files)} files to warm")

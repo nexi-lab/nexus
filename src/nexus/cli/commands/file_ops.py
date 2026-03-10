@@ -209,7 +209,7 @@ def _cat_time_travel(
     timing: CommandTiming,
 ) -> None:
     """Handle time-travel cat (--at-operation)."""
-    time_travel = getattr(nx, "time_travel_service", None)
+    time_travel = nx.service("time_travel")
     if time_travel is None:
         console.print("[red]Error:[/red] Time-travel is only supported with local NexusFS")
         sys.exit(1)

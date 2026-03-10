@@ -411,7 +411,7 @@ def _register_vfs_hooks(
             default_context=nx._default_context,
             enforce_permissions=nx._enforce_permissions,
             permission_enforcer=nx._permission_enforcer,
-            descendant_checker=getattr(nx, "_descendant_checker", None),
+            descendant_checker=nx.service("descendant_checker"),
         )
         dispatch.register_intercept_read(_perm_hook)
         dispatch.register_intercept_write(_perm_hook)
@@ -514,7 +514,7 @@ def _register_vfs_hooks(
     # memory_router removed from BrickServices — get it from MemoryPermissionEnforcer
     _mem_perm = getattr(nx._brick_services, "memory_permission", None)
     _mem_router = getattr(_mem_perm, "memory_router", None) if _mem_perm else None
-    _mem_provider = getattr(nx, "_memory_provider", None)
+    _mem_provider = nx.service("memory_provider")
     if _mem_router is not None and _mem_provider is not None:
         from nexus.bricks.memory.io_handler import MemoryIOHandler
 
@@ -551,9 +551,10 @@ def _register_vfs_hooks(
 
     # EventsService observer: receives FileEvents for wait_for_changes() internal path.
     # Registered as VFSObserver so dispatch.notify() delivers events directly.
-    if nx.events_service is not None:
-        dispatch.register_observe(nx.events_service)
-        nx.events_service._observe_registered = True
+    _events_svc = nx.service("events")
+    if _events_svc is not None:
+        dispatch.register_observe(_events_svc)
+        _events_svc._observe_registered = True
 
     # RevisionTrackingObserver: feeds RevisionNotifier on versioned mutations.
     # Replaces the old kernel-internal _increment_vfs_revision() (Issue #1382).

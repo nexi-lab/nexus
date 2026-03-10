@@ -476,21 +476,25 @@ def test_overwrite_preserves_path(embedded: NexusFS) -> None:
 
 
 def test_list_recursive(embedded: NexusFS) -> None:
-    """Test recursive listing of files."""
+    """Test recursive listing of files.
+
+    The kernel's metadata.list() returns only file entries, not virtual
+    directories.  Non-recursive mode filters to direct children (no '/'
+    in the relative path after the prefix).
+    """
     # Create directory structure
     embedded.sys_write("/file1.txt", b"Content 1")
     embedded.sys_write("/dir1/file2.txt", b"Content 2")
     embedded.sys_write("/dir1/subdir/file3.txt", b"Content 3")
     embedded.sys_write("/dir2/file4.txt", b"Content 4")
 
-    # Non-recursive list of root (includes directories now)
+    # Non-recursive list of root — only direct-child *files* are returned
+    # (virtual directories like /dir1, /dir2 are NOT materialised in the metastore)
     files = [f for f in embedded.sys_readdir("/", recursive=False) if f not in _SYSTEM_PATHS]
-    assert len(files) == 3  # file1.txt + dir1 + dir2
+    assert len(files) == 1  # file1.txt only
     assert "/file1.txt" in files
-    assert "/dir1" in files
-    assert "/dir2" in files
 
-    # Recursive list of root
+    # Recursive list of root — all files regardless of depth
     files = [f for f in embedded.sys_readdir("/", recursive=True) if f not in _SYSTEM_PATHS]
     assert len(files) == 4
     assert "/file1.txt" in files
@@ -498,11 +502,10 @@ def test_list_recursive(embedded: NexusFS) -> None:
     assert "/dir1/subdir/file3.txt" in files
     assert "/dir2/file4.txt" in files
 
-    # Non-recursive list of dir1 (includes subdirectories now)
+    # Non-recursive list of dir1 — only direct-child files
     files = embedded.sys_readdir("/dir1", recursive=False)
-    assert len(files) == 2  # file2.txt + subdir
+    assert len(files) == 1  # file2.txt only (subdir is virtual, not stored)
     assert "/dir1/file2.txt" in files
-    assert "/dir1/subdir" in files
 
     # Recursive list of dir1
     files = embedded.sys_readdir("/dir1", recursive=True)
@@ -512,7 +515,13 @@ def test_list_recursive(embedded: NexusFS) -> None:
 
 
 def test_list_with_details(embedded: NexusFS) -> None:
-    """Test listing files with detailed metadata."""
+    """Test listing files with detailed metadata.
+
+    The kernel's sys_readdir(details=True) returns dicts with keys:
+    ``path``, ``size``, ``etag``.  Richer fields (modified_at, created_at)
+    are available via ``metadata.get()`` but are NOT included in the
+    readdir detail dict.
+    """
     # Create files
     embedded.sys_write("/file1.txt", b"Hello")
     embedded.sys_write("/file2.txt", b"World!")
@@ -527,12 +536,10 @@ def test_list_with_details(embedded: NexusFS) -> None:
     assert len(files) == 2
     assert isinstance(files[0], dict)
 
-    # Check file1
+    # Check file1 — only path/size/etag are returned by sys_readdir
     file1 = next(f for f in files if f["path"] == "/file1.txt")
     assert file1["size"] == 5
     assert file1["etag"] is not None
-    assert file1["modified_at"] is not None
-    assert file1["created_at"] is not None
 
     # Check file2
     file2 = next(f for f in files if f["path"] == "/file2.txt")

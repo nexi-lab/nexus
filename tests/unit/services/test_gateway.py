@@ -43,7 +43,18 @@ def mock_fs():
         ]
     )
     mock_rebac_svc.rebac_delete_sync = MagicMock(return_value=True)
-    fs._service_registry.register_service("rebac", mock_rebac_svc)
+    mock_descendant_checker = MagicMock()
+    mock_descendant_checker.has_access = MagicMock(return_value=True)
+
+    # Wire up fs.service() to return the correct mock by service name.
+    # The gateway calls self._fs.service("rebac") and
+    # self._fs.service("descendant_checker") to get service instances.
+    _service_map = {
+        "rebac": mock_rebac_svc,
+        "descendant_checker": mock_descendant_checker,
+    }
+    fs.service = MagicMock(side_effect=lambda name: _service_map.get(name, MagicMock()))
+
     fs._rebac_manager = MagicMock()
     fs._rebac_manager.rebac_delete = MagicMock()
     fs._hierarchy_manager = MagicMock()
@@ -54,8 +65,6 @@ def mock_fs():
     fs.SessionLocal = MagicMock()
     fs.read_bulk = MagicMock(return_value={"/a": b"data"})
     fs._get_routing_params = MagicMock(return_value=("zone1", "agent1", False))
-    fs._descendant_checker = MagicMock()
-    fs._descendant_checker.has_access = MagicMock(return_value=True)
     fs._get_backend_directory_entries = MagicMock(return_value={"file.txt"})
     fs.backend = MagicMock()
     return fs

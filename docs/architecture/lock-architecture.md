@@ -14,7 +14,7 @@
 | **VFSSemaphore** | `core/semaphore.py` | ~200ns Rust / Python | Local, holder-tracked counting semaphore |
 | **LocalLockManager** | `lib/distributed_lock.py` | ~5μs | Standalone advisory locks via MetastoreABC |
 | **RaftLockManager** | `raft/lock_manager.py` | ~5-10ms | Distributed advisory locks, zone-scoped |
-| **_StripeLock** | `backends/cas_blob_store.py` | ~1us | Local, CAS hash-stripe threading.Lock |
+| **_StripeLock** | `backends/base/stripe_lock.py` | ~1us | Local, CAS hash-stripe threading.Lock |
 | **LockManagerBase** | `lib/distributed_lock.py` | — | ABC: async advisory lock API (zone_id bound at construction) |
 | **LockStoreProtocol** | `lib/distributed_lock.py` | — | Low-level store interface (MetastoreABC lock methods) |
 | ~12 `asyncio.Semaphore` | scattered | — | Ad-hoc concurrency bounding |
@@ -147,7 +147,7 @@ Callers see only `LockManagerBase`. Same async API regardless of backend.
 | VFSSemaphore | `core/semaphore.py` | ~200ns | Kernel-internal | Yes | Local |
 | LocalLockManager | `lib/distributed_lock.py` | ~5μs | Internal | Yes | Local (standalone) |
 | RaftLockManager | `raft/lock_manager.py` | ~5-10ms | Internal | Yes | Distributed (zone) |
-| _StripeLock | `backends/cas_blob_store.py` | ~1us | Backend-internal | No | Local (per-hash) |
+| _StripeLock | `backends/base/stripe_lock.py` | ~1us | Backend-internal | No | Local (per-hash) |
 
 ---
 

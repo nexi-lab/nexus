@@ -386,7 +386,9 @@ def handle_glob(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any
     if hasattr(params, "path") and params.path:
         kwargs["path"] = params.path
 
-    matches = nexus_fs.search_service.glob(params.pattern, **kwargs)
+    search = nexus_fs.service("search")
+    assert search is not None, "SearchService required for glob"
+    matches = search.glob(params.pattern, **kwargs)
     matches = [unscope_internal_path(m) if isinstance(m, str) else m for m in matches]
     return {"matches": matches}
 
@@ -405,7 +407,9 @@ def handle_grep(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any
     if hasattr(params, "search_mode") and params.search_mode is not None:
         kwargs["search_mode"] = params.search_mode
 
-    results = nexus_fs.search_service.grep(params.pattern, **kwargs)
+    search = nexus_fs.service("search")
+    assert search is not None, "SearchService required for grep"
+    results = search.grep(params.pattern, **kwargs)
     results = [unscope_result(r) for r in results]
     return {"results": results}
 
@@ -432,15 +436,17 @@ async def handle_semantic_search_index(
     recursive = getattr(params, "recursive", True)
 
     try:
-        await nexus_fs.search_service.ainitialize_semantic_search(
-            nx=nexus_fs, record_store_engine=None
-        )
+        search = nexus_fs.service("search")
+        assert search is not None, "SearchService required for semantic search"
+        await search.ainitialize_semantic_search(nx=nexus_fs, record_store_engine=None)
     except Exception as e:
         raise ValueError(
             f"Semantic search is not initialized and could not be auto-initialized: {e}"
         ) from e
 
-    results = await nexus_fs.search_service.semantic_search_index(path=path, recursive=recursive)
+    search = nexus_fs.service("search")
+    assert search is not None
+    results = await search.semantic_search_index(path=path, recursive=recursive)
 
     total_chunks = 0
     for v in results.values():

@@ -224,7 +224,7 @@ async def resolve_manifest(
     # Per-agent MemoryQueryExecutor wiring (Issue #1428: 1B)
     # Memory is per-agent (scoped by zone/user), so we bind at resolve-time.
     request_resolver = resolver
-    _mem_provider = getattr(nexus_fs, "_memory_provider", None)
+    _mem_provider = nexus_fs.service("memory_provider")
     memory = _mem_provider.get_for_context() if _mem_provider else None
     if memory is not None:
         try:

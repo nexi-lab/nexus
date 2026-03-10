@@ -313,25 +313,28 @@ def create_app(
     # Discover exposed methods — includes brick services (Issue #2035, Follow-up 1)
     # Services with @rpc_expose override kernel stubs (later sources win).
     _brick_sources: list[Any] = []
-    for _attr_name in (
-        "mcp_service",
-        "llm_service",
-        "oauth_service",
-        "mount_service",
-        "search_service",
-        "version_service",
-        "share_link_service",
-        "rebac_service",
+    for _svc_name in (
+        "mcp",
+        "llm",
+        "oauth",
+        "mount",
+        "search",
+        "share_link",
+        "rebac",
     ):
-        _brick_svc = getattr(nexus_fs, _attr_name, None)
+        _brick_svc = nexus_fs.service(_svc_name)
         if _brick_svc is not None:
             _brick_sources.append(_brick_svc)
-    # AgentRPCService: stored as private attr _agent_rpc_service on NexusFS
-    _agent_rpc = getattr(nexus_fs, "_agent_rpc_service", None)
+    # version_service is on BrickServices, not in ServiceRegistry
+    _version_svc = getattr(nexus_fs, "version_service", None)
+    if _version_svc is not None:
+        _brick_sources.append(_version_svc)
+    # AgentRPCService
+    _agent_rpc = nexus_fs.service("agent_rpc")
     if _agent_rpc is not None:
         _brick_sources.append(_agent_rpc)
-    # WorkspaceRPCService: stored as private attr _workspace_rpc_service on NexusFS
-    _workspace_rpc = getattr(nexus_fs, "_workspace_rpc_service", None)
+    # WorkspaceRPCService
+    _workspace_rpc = nexus_fs.service("workspace_rpc")
     if _workspace_rpc is not None:
         _brick_sources.append(_workspace_rpc)
     # Issue #12: MemoryService lives outside kernel — created by factory, not on NexusFS

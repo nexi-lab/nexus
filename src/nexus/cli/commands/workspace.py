@@ -89,7 +89,7 @@ def register_cmd(
         if ttl:
             ttl_delta = _parse_ttl(ttl)
 
-        result = nx._workspace_rpc_service.register_workspace(
+        result = nx.service("workspace_rpc").register_workspace(
             path=path,
             name=name,
             description=description,
@@ -131,7 +131,7 @@ def list_cmd(
     try:
         nx: Any = get_filesystem(remote_url, remote_api_key)
 
-        workspaces = nx._workspace_rpc_service.list_workspaces()
+        workspaces = nx.service("workspace_rpc").list_workspaces()
 
         if not workspaces:
             console.print("[yellow]No workspaces registered[/yellow]")
@@ -184,7 +184,7 @@ def unregister_cmd(
         nx: Any = get_filesystem(remote_url, remote_api_key)
 
         # Get workspace info first
-        info = nx._workspace_rpc_service.get_workspace_info(path)
+        info = nx.service("workspace_rpc").get_workspace_info(path)
         if not info:
             console.print(f"[red]✗[/red] Workspace not registered: {path}")
             nx.close()
@@ -207,7 +207,7 @@ def unregister_cmd(
                 return
 
         # Unregister
-        result = nx._workspace_rpc_service.unregister_workspace(path)
+        result = nx.service("workspace_rpc").unregister_workspace(path)
 
         if result:
             console.print(f"[green]✓[/green] Unregistered workspace: {path}")
@@ -236,7 +236,7 @@ def info_cmd(
     try:
         nx: Any = get_filesystem(remote_url, remote_api_key)
 
-        info = nx._workspace_rpc_service.get_workspace_info(path)
+        info = nx.service("workspace_rpc").get_workspace_info(path)
 
         if not info:
             console.print(f"[red]✗[/red] Workspace not registered: {path}")
@@ -284,7 +284,7 @@ def snapshot_cmd(
         tags = list(tag) if tag else None
 
         with console.status(f"[bold cyan]Creating snapshot for workspace '{path}'..."):
-            result = nx._workspace_rpc_service.workspace_snapshot(
+            result = nx.service("workspace_rpc").workspace_snapshot(
                 workspace_path=path,
                 description=description,
                 tags=tags,
@@ -328,7 +328,7 @@ def log_cmd(
     try:
         nx: Any = get_filesystem(remote_url, remote_api_key)
 
-        snapshots = nx._workspace_rpc_service.workspace_log(workspace_path=path, limit=limit)
+        snapshots = nx.service("workspace_rpc").workspace_log(workspace_path=path, limit=limit)
 
         if not snapshots:
             console.print(f"[yellow]No snapshots found for workspace '{path}'[/yellow]")
@@ -394,12 +394,12 @@ def restore_cmd(
         snap_info = None
         try:
             # Try direct lookup first (avoids scanning)
-            snap_info = nx._workspace_rpc_service.workspace_get_snapshot(
+            snap_info = nx.service("workspace_rpc").workspace_get_snapshot(
                 workspace_path=path, snapshot_number=snapshot
             )
         except (AttributeError, TypeError):
             # Fallback: scan log without a hard limit so older snapshots are found
-            snapshots = nx._workspace_rpc_service.workspace_log(workspace_path=path, limit=0)
+            snapshots = nx.service("workspace_rpc").workspace_log(workspace_path=path, limit=0)
             for s in snapshots:
                 if s["snapshot_number"] == snapshot:
                     snap_info = s
@@ -426,7 +426,7 @@ def restore_cmd(
 
         # Perform restore
         with console.status(f"[bold cyan]Restoring snapshot #{snapshot}..."):
-            result = nx._workspace_rpc_service.workspace_restore(
+            result = nx.service("workspace_rpc").workspace_restore(
                 snapshot_number=snapshot, workspace_path=path
             )
 
@@ -465,7 +465,7 @@ def diff_cmd(
         nx: Any = get_filesystem(remote_url, remote_api_key)
 
         with console.status("[bold cyan]Computing diff between snapshots..."):
-            diff = nx._workspace_rpc_service.workspace_diff(
+            diff = nx.service("workspace_rpc").workspace_diff(
                 snapshot_1=snapshot1, snapshot_2=snapshot2, workspace_path=path
             )
 

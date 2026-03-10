@@ -19,8 +19,22 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from nexus.server.api.v2.dependencies import _get_require_auth
+from nexus.server.dependencies import get_operation_context
 
 logger = logging.getLogger(__name__)
+
+
+def _authorize_agent_access(auth_result: dict, agent_id: str, action: str = "access") -> None:
+    """Verify caller is authorized to act on this agent."""
+    ctx = get_operation_context(auth_result)
+    if ctx.is_admin:
+        return
+    if ctx.subject_id != agent_id:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Not authorized to {action} agent '{agent_id}'",
+        )
+
 
 router = APIRouter(tags=["agents"])
 
@@ -180,10 +194,11 @@ async def _get_async_agent_registry(request: Request) -> Any:
 )
 async def get_agent_status(
     agent_id: str,
-    _auth: dict = Depends(_get_require_auth()),
+    auth_result: dict = Depends(_get_require_auth()),
     registry: Any = Depends(_get_async_agent_registry),
 ) -> AgentStatusResponse:
     """Get computed status for an agent."""
+    _authorize_agent_access(auth_result, agent_id, "read status of")
     status = await registry.get_status(agent_id)
     if status is None:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
@@ -226,10 +241,11 @@ async def get_agent_status(
 async def set_agent_spec(
     agent_id: str,
     body: AgentSpecRequest,
-    _auth: dict = Depends(_get_require_auth()),
+    auth_result: dict = Depends(_get_require_auth()),
     registry: Any = Depends(_get_async_agent_registry),
 ) -> AgentSpecResponse:
     """Set the desired state spec for an agent."""
+    _authorize_agent_access(auth_result, agent_id, "set spec for")
     from nexus.contracts.agent_types import AgentResources, AgentSpec, QoSClass
 
     try:
@@ -276,10 +292,11 @@ async def set_agent_spec(
 )
 async def get_agent_spec(
     agent_id: str,
-    _auth: dict = Depends(_get_require_auth()),
+    auth_result: dict = Depends(_get_require_auth()),
     registry: Any = Depends(_get_async_agent_registry),
 ) -> AgentSpecResponse:
     """Get the stored spec for an agent."""
+    _authorize_agent_access(auth_result, agent_id, "read spec of")
     stored = await registry.get_spec(agent_id)
     if stored is None:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' has no spec")
@@ -313,10 +330,11 @@ async def _get_warmup_service(request: Request) -> Any:
 async def warmup_agent(
     agent_id: str,
     body: WarmupRequest | None = None,
-    _auth: dict = Depends(_get_require_auth()),
+    auth_result: dict = Depends(_get_require_auth()),
     warmup_service: Any = Depends(_get_warmup_service),
 ) -> WarmupResponse:
     """Trigger agent warmup."""
+    _authorize_agent_access(auth_result, agent_id, "warm up")
     from datetime import timedelta
 
     from nexus.contracts.agent_warmup_types import WarmupStep

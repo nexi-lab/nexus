@@ -465,14 +465,29 @@ class TestGetOperationContext:
         assert ctx.agent_id == "agent-001"
         assert ctx.user_id == "agent-001"
 
-    def test_x_agent_id_upgrades_user_to_agent(self):
-        """X-Agent-ID header should upgrade user subject to agent."""
+    def test_x_agent_id_ignored_for_non_admin(self):
+        """X-Agent-ID header should NOT upgrade non-admin user to agent (security fix)."""
         ctx = get_operation_context(
             {
                 "subject_type": "user",
                 "subject_id": "alice",
                 "zone_id": "root",
                 "is_admin": False,
+                "x_agent_id": "my-agent",
+            }
+        )
+        # Non-admin: X-Agent-ID is ignored to prevent impersonation
+        assert ctx.subject_type == "user"
+        assert ctx.subject_id == "alice"
+
+    def test_x_agent_id_upgrades_admin_to_agent(self):
+        """X-Agent-ID header should upgrade admin user to agent."""
+        ctx = get_operation_context(
+            {
+                "subject_type": "user",
+                "subject_id": "alice",
+                "zone_id": "root",
+                "is_admin": True,
                 "x_agent_id": "my-agent",
             }
         )

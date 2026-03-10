@@ -142,6 +142,7 @@ async def get_operation_logger(
     """Get OperationLogger scoped to the authenticated user's zone.
 
     Returns a tuple of (OperationLogger, zone_id) for zone-scoped queries.
+    Uses an async generator so FastAPI closes the session after the request.
     """
     from nexus.storage.operation_logger import OperationLogger
 
@@ -153,7 +154,10 @@ async def get_operation_logger(
     session = session_factory()
     zone_id = context.zone_id or ROOT_ZONE_ID
 
-    return OperationLogger(session=session), zone_id
+    try:
+        yield OperationLogger(session=session), zone_id
+    finally:
+        session.close()
 
 
 async def get_exchange_audit_logger(

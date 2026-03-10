@@ -189,6 +189,8 @@ class NexusFS(  # type: ignore[misc]
         self._context_branch_service = sys_svc.context_branch_service
         # Zone lifecycle — write gating during deprovisioning (Issue #2061)
         self._zone_lifecycle = getattr(sys_svc, "zone_lifecycle", None)
+        # DT_PIPE manager — kernel primitive (§4.2), None when unavailable (CLI mode)
+        self._pipe_manager = sys_svc.pipe_manager
 
         # =====================================================================
         # Tier 2: BRICK services (Issue #2034: from BrickServices)
@@ -1193,6 +1195,12 @@ class NexusFS(  # type: ignore[misc]
             check_write=False,
         )
 
+        # DT_PIPE: kernel-native pipe dispatch (§4.2)
+        from nexus.core.router import PipeRouteResult
+
+        if isinstance(route, PipeRouteResult):
+            return self._pipe_read(path, count=count, offset=offset)
+
         # Add backend_path to context for path-based connectors
         from dataclasses import replace
 
@@ -1981,6 +1989,11 @@ class NexusFS(  # type: ignore[misc]
         _handled, _result = self._dispatch.resolve_write(path, buf)
         if _handled:
             return len(buf)
+
+        # DT_PIPE: kernel-native pipe dispatch (§4.2)
+        _pipe_meta = self.metadata.get(path)
+        if _pipe_meta is not None and _pipe_meta.is_pipe:
+            return self._pipe_write(path, buf)
 
         self._write_internal(path=path, content=buf, context=context)
         return len(buf)
@@ -2995,6 +3008,11 @@ class NexusFS(  # type: ignore[misc]
         if _handled:
             return _result
 
+        # DT_PIPE: kernel-native pipe destroy (§4.2)
+        _pipe_meta = self.metadata.get(path)
+        if _pipe_meta is not None and _pipe_meta.is_pipe:
+            return self._pipe_destroy(path)
+
         # Route to backend with write access check FIRST (to check zone/agent isolation)
         # This must happen before permission check so AccessDeniedError is raised before PermissionError
         zone_id, agent_id, is_admin = self._get_routing_params(context)
@@ -3990,6 +4008,95 @@ class NexusFS(  # type: ignore[misc]
         """
         created = self.metadata.backfill_directory_index(prefix=prefix, zone_id=zone_id)
         return {"entries_created": created, "prefix": prefix}
+
+    # ------------------------------------------------------------------
+    # DT_PIPE kernel primitives (§4.2)
+    # ------------------------------------------------------------------
+
+    def _pipe_read(self, path: str, *, count: int | None = None, offset: int = 0) -> bytes:
+        """Read from DT_PIPE — non-blocking, returns b"" if empty."""
+        from nexus.core.pipe import PipeClosedError, PipeEmptyError, PipeNotFoundError
+
+        if self._pipe_manager is None:
+            raise NexusFileNotFoundError(path, "PipeManager not available")
+        try:
+            buf = self._pipe_manager._get_buffer(path)
+        except PipeNotFoundError:
+            try:
+                buf = self._pipe_manager.open(path)
+            except PipeNotFoundError:
+                raise NexusFileNotFoundError(path, f"Pipe not found: {path}") from None
+        try:
+            data = buf.read_nowait()
+        except PipeEmptyError:
+            data = b""
+        except PipeClosedError:
+            raise NexusFileNotFoundError(path, f"Pipe closed: {path}") from None
+        if offset or count is not None:
+            data = data[offset : offset + count] if count is not None else data[offset:]
+        return data
+
+    def _pipe_write(self, path: str, data: bytes) -> int:
+        """Write to DT_PIPE — non-blocking, PipeFullError propagates."""
+        from nexus.core.pipe import PipeClosedError, PipeNotFoundError
+
+        if self._pipe_manager is None:
+            raise NexusFileNotFoundError(path, "PipeManager not available")
+        try:
+            return self._pipe_manager.pipe_write_nowait(path, data)
+        except PipeNotFoundError:
+            raise NexusFileNotFoundError(path, f"Pipe not found: {path}") from None
+        except PipeClosedError:
+            raise NexusFileNotFoundError(path, f"Pipe closed: {path}") from None
+
+    def _pipe_destroy(self, path: str) -> dict[str, Any]:
+        """Destroy DT_PIPE — close buffer + delete inode."""
+        from nexus.core.pipe import PipeNotFoundError
+
+        if self._pipe_manager is None:
+            raise NexusFileNotFoundError(path, "PipeManager not available")
+        try:
+            self._pipe_manager.destroy(path)
+        except PipeNotFoundError:
+            raise NexusFileNotFoundError(path, f"Pipe not found: {path}") from None
+        return {}
+
+    @rpc_expose(description="Create a named pipe (mknod S_IFIFO)")
+    def sys_mkpipe(
+        self,
+        path: str,
+        *,
+        capacity: int = 65_536,
+        owner_id: str | None = None,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Create a named pipe at the given VFS path (Linux mknod(2) + S_IFIFO).
+
+        Creates a DT_PIPE inode in MetastoreABC and a RingBuffer in memory.
+
+        Args:
+            path: VFS path (e.g., "/pipes/my-pipe"). Must be absolute.
+            capacity: Ring buffer byte capacity. Default 64KB.
+            owner_id: Owner for ReBAC permission checks.
+            context: Operation context.
+
+        Returns:
+            Dict with path and capacity.
+        """
+        path = self._validate_path(path)
+        self._check_zone_writable(context)
+
+        if self._pipe_manager is None:
+            raise BackendError("PipeManager not available — cannot create pipe")
+
+        from nexus.core.pipe import PipeError
+
+        try:
+            self._pipe_manager.create(path, capacity=capacity, owner_id=owner_id)
+        except PipeError as exc:
+            raise BackendError(str(exc)) from exc
+
+        return {"path": path, "capacity": capacity}
 
     def close(self) -> None:
         """Close the filesystem and release resources."""

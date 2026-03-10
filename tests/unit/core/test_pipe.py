@@ -19,7 +19,7 @@ from nexus.core.pipe import (
     PipeNotFoundError,
     RingBuffer,
 )
-from nexus.system_services.pipe_manager import PipeManager
+from nexus.core.pipe_manager import PipeManager
 
 # ======================================================================
 # RingBuffer — basic operations

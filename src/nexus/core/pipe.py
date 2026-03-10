@@ -8,10 +8,10 @@ Implements the Kernel messaging tier from KERNEL-ARCHITECTURE.md §6:
 
 This file contains the kernel-internal ring buffer (kfifo equivalent).
 For VFS-visible named pipes (mkfifo/fs/pipe.c equivalent), see
-system_services/pipe_manager.py (moved from core/ per Issue #2366).
+core/pipe_manager.py.
 
     pipe.py         = kfifo     (include/linux/kfifo.h + lib/kfifo.c)
-    system_services/pipe_manager.py = fs/pipe.c (VFS named pipe, system service tier)
+    core/pipe_manager.py = fs/pipe.c (VFS named pipe, kernel tier)
 
 Storage model (KERNEL-ARCHITECTURE.md line 228):
     - Pipe **inode** (FileMetadata, entry_type=DT_PIPE) → MetastoreABC
@@ -70,7 +70,7 @@ class RingBuffer:
     directly for fast async signaling.
 
     For VFS-visible named pipes (mkfifo equivalent), use PipeManager
-    from system_services/pipe_manager.py.
+    from core/pipe_manager.py.
 
     Design choices:
       - Message-oriented (deque of discrete bytes), not byte-stream.

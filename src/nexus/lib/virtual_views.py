@@ -95,8 +95,9 @@ def parse_virtual_path(path: str, exists_fn: Callable[[str], bool]) -> tuple[str
                 original_ext = ext_with_md[:-3]  # Remove .md
                 original_path = base_path + original_ext
 
-                # Check if the original file exists
-                if exists_fn(original_path):
+                # Only treat as virtual view if the extension is parseable
+                # and the original file exists
+                if original_ext in PARSEABLE_EXTENSIONS and exists_fn(original_path):
                     return (original_path, "md")
 
     # Not a virtual view, return as-is

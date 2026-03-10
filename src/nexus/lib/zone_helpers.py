@@ -12,7 +12,6 @@ Tier-neutral utility — ``lib/`` (zero kernel deps).
 ``nexus.contracts.protocols.rebac.ReBACBrickProtocol``.
 """
 
-import contextlib
 import logging
 from typing import Any
 
@@ -227,9 +226,17 @@ def remove_user_from_zone(
         Removing owners should be done carefully - ensure at least one owner remains.
     """
     if role is None:
+        errors: list[Exception] = []
         for r in ["owner", "admin", "member"]:
-            with contextlib.suppress(Exception):
+            try:
                 remove_user_from_zone(rebac_manager, user_id, zone_id, r)
+            except Exception as exc:
+                errors.append(exc)
+        if errors:
+            raise ExceptionGroup(
+                f"Partial failure removing user {user_id} from zone {zone_id}",
+                errors,
+            )
         return
 
     group_id = _role_group_id(zone_id, role)

@@ -110,7 +110,7 @@ class RaftLockManager(LockManagerBase):
 
         lock_key = self._lock_key(path)
         holder_id = str(uuid.uuid4())
-        ttl_secs = int(ttl)
+        ttl_secs = max(1, int(ttl))
 
         deadline = asyncio.get_running_loop().time() + timeout
         retry_interval = self.RETRY_BASE_INTERVAL
@@ -163,7 +163,7 @@ class RaftLockManager(LockManagerBase):
         ttl: float = LockManagerBase.DEFAULT_TTL,
     ) -> ExtendResult:
         lock_key = self._lock_key(path)
-        ttl_secs = int(ttl)
+        ttl_secs = max(1, int(ttl))
         try:
             extended = self._store.extend_lock(lock_key, lock_id, ttl_secs)
             if not extended:

@@ -1,4 +1,4 @@
-"""Tests for WiredServices dataclass and bind_wired_services (Issue #2133, #1381)."""
+"""Tests for WiredServices dataclass and populate_service_registry (Issue #2133, #1381, #1452)."""
 
 import dataclasses
 from typing import Any
@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from nexus.core.config import WiredServices
-from nexus.factory.service_routing import bind_wired_services
+from nexus.factory.service_routing import populate_service_registry
 
 
 class TestWiredServicesDataclass:
@@ -41,8 +41,8 @@ class TestWiredServicesDataclass:
         assert len(dataclasses.fields(WiredServices)) == 22
 
 
-class TestBindWiredServices:
-    """Test bind_wired_services accepts both WiredServices and dict."""
+class TestPopulateServiceRegistryFromWired:
+    """Test populate_service_registry accepts both WiredServices and dict."""
 
     @pytest.fixture()
     def nx(self) -> Any:
@@ -60,17 +60,19 @@ class TestBindWiredServices:
         )
         return nx
 
-    def test_bind_wired_services_dataclass(self, nx: Any) -> None:
+    def test_populate_from_dataclass(self, nx: Any) -> None:
         mock_svc = MagicMock()
         ws = WiredServices(rebac_service=mock_svc, mount_service=mock_svc)
-        bind_wired_services(nx, ws)
-        assert nx.rebac_service is mock_svc
-        assert nx.mount_service is mock_svc
-        assert nx.mcp_service is None
+        populate_service_registry(nx._service_registry, ws)
+        assert nx.service("rebac") is mock_svc
+        assert nx.service("mount") is mock_svc
+        assert nx.service("mcp") is None
 
-    def test_bind_wired_services_dict(self, nx: Any) -> None:
+    def test_populate_from_dict(self, nx: Any) -> None:
         mock_svc = MagicMock()
-        bind_wired_services(nx, {"rebac_service": mock_svc, "mount_service": mock_svc})
-        assert nx.rebac_service is mock_svc
-        assert nx.mount_service is mock_svc
-        assert nx.mcp_service is None
+        populate_service_registry(
+            nx._service_registry, {"rebac_service": mock_svc, "mount_service": mock_svc}
+        )
+        assert nx.service("rebac") is mock_svc
+        assert nx.service("mount") is mock_svc
+        assert nx.service("mcp") is None

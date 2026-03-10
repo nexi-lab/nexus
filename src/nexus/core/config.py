@@ -339,8 +339,8 @@ class BrickServices:
 class WiredServices:
     """Tier 2b (WIRED) — services requiring NexusFS reference.
 
-    Created by ``nexus.factory._wired._boot_wired_services()`` and bound
-    to NexusFS via ``_bind_wired_services()``.
+    Created by ``nexus.factory._wired._boot_wired_services()`` and registered
+    into ServiceRegistry via ``populate_service_registry()``.
 
     Issue #2133: Replaces ``dict[str, Any]`` return type in wiring layer.
     """

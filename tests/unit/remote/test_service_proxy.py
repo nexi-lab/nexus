@@ -126,25 +126,27 @@ class TestRemoteServiceProxy:
 class TestBootRemoteServices:
     """Tests for the factory wiring helper."""
 
-    def test_wires_all_service_slots(self):
-        """_boot_remote_services fills all wired service slots with proxy."""
+    def test_registers_all_canonical_services(self):
+        """_boot_remote_services registers all canonical services via ServiceRegistry."""
         from unittest.mock import MagicMock, patch
 
-        from nexus.factory._remote import _WIRED_FIELDS, _boot_remote_services
+        from nexus.factory._remote import _boot_remote_services
+        from nexus.factory.service_routing import _CANONICAL_NAMES
         from nexus.remote.service_proxy import RemoteServiceProxy
 
         nfs = MagicMock()
 
         _, call_rpc = _make_recorder()
-        with patch("nexus.factory.service_routing.bind_wired_services") as mock_bind:
+        with patch("nexus.factory.service_routing.populate_service_registry") as mock_pop:
+            mock_pop.return_value = len(_CANONICAL_NAMES)
             _boot_remote_services(nfs, call_rpc)
 
-            # bind_wired_services was called with nfs and a dict covering all fields
-            mock_bind.assert_called_once()
-            target, wired_dict = mock_bind.call_args[0]
-            assert target is nfs
+            # populate_service_registry was called with registry and a dict covering all canonical keys
+            mock_pop.assert_called_once()
+            registry, wired_dict = mock_pop.call_args[0]
+            assert registry is nfs._service_registry
             assert isinstance(wired_dict, dict)
-            for field in _WIRED_FIELDS:
+            for field in _CANONICAL_NAMES:
                 assert field in wired_dict
                 assert isinstance(wired_dict[field], RemoteServiceProxy)
 
@@ -156,14 +158,16 @@ class TestBootRemoteServices:
         from unittest.mock import MagicMock, patch
 
         from nexus.factory._remote import _boot_remote_services
+        from nexus.factory.service_routing import _CANONICAL_NAMES
 
         nfs = MagicMock()
 
         _, call_rpc = _make_recorder()
-        with patch("nexus.factory.service_routing.bind_wired_services") as mock_bind:
+        with patch("nexus.factory.service_routing.populate_service_registry") as mock_pop:
+            mock_pop.return_value = len(_CANONICAL_NAMES)
             _boot_remote_services(nfs, call_rpc)
 
-            wired_dict = mock_bind.call_args[0][1]
+            wired_dict = mock_pop.call_args[0][1]
             proxies = list(wired_dict.values())
 
             # All values should be the same object

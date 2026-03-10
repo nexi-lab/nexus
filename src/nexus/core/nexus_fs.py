@@ -191,6 +191,8 @@ class NexusFS(  # type: ignore[misc]
         self._zone_lifecycle = getattr(sys_svc, "zone_lifecycle", None)
         # DT_PIPE manager — kernel primitive (§4.2), None when unavailable (CLI mode)
         self._pipe_manager = sys_svc.pipe_manager
+        # Process lifecycle — kernel process table (Issue #1509)
+        self._process_table = sys_svc.process_table
 
         # =====================================================================
         # Tier 2: BRICK services (Issue #2034: from BrickServices)
@@ -4193,6 +4195,10 @@ class NexusFS(  # type: ignore[misc]
 
     def close(self) -> None:
         """Close the filesystem and release resources."""
+        # Close ProcessTable — kill all processes, clear state
+        if hasattr(self, "_process_table") and self._process_table is not None:
+            self._process_table.close_all()
+
         # Stop DeferredPermissionBuffer first to flush pending permissions
         if hasattr(self, "_deferred_permission_buffer") and self._deferred_permission_buffer:
             self._deferred_permission_buffer.stop()

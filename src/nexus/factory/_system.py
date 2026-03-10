@@ -498,6 +498,20 @@ def _boot_system_services(
     except Exception as exc:
         logger.warning("[BOOT:SYSTEM] PipeManager unavailable: %s", exc)
 
+    # --- ProcessTable (Issue #1509: kernel process lifecycle) ---
+    process_table: Any = None
+    try:
+        from nexus.core.process_table import ProcessTable
+
+        process_table = ProcessTable(ctx.metadata_store, zone_id=ctx.zone_id or ROOT_ZONE_ID)
+        recovered = process_table.recover()
+        if recovered > 0:
+            logger.info("[BOOT:SYSTEM] ProcessTable recovered %d processes", recovered)
+        else:
+            logger.debug("[BOOT:SYSTEM] ProcessTable created")
+    except Exception as exc:
+        logger.warning("[BOOT:SYSTEM] ProcessTable unavailable: %s", exc)
+
     # --- Agent Runtime (Agent Process Engine, AGENT-PROCESS-ARCHITECTURE) ---
     agent_runtime: Any = None
     if _on("agent_runtime") and agent_registry is not None:
@@ -532,6 +546,7 @@ def _boot_system_services(
         "permission_enforcer": permission_enforcer,
         "write_observer": write_observer,
         "pipe_manager": pipe_manager,
+        "process_table": process_table,
         # Former-kernel degradable
         "dir_visibility_cache": dir_visibility_cache,
         "hierarchy_manager": hierarchy_manager,

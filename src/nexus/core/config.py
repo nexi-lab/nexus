@@ -258,6 +258,9 @@ class SystemServices:
     # DT_PIPE manager — VFS named-pipe IPC (Issue #809)
     pipe_manager: Any = None
 
+    # Process lifecycle — kernel process table (Issue #1509)
+    process_table: Any = None
+
     # Scheduler — task scheduling service (Issue #2195, #2360)
     scheduler_service: Any = None
 

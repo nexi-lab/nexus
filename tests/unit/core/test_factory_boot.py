@@ -73,6 +73,7 @@ EXPECTED_SYSTEM_KEYS = frozenset(
         "brick_reconciler",
         "zone_lifecycle",
         "pipe_manager",
+        "process_table",
         "scheduler_service",
         "agent_runtime",
     }

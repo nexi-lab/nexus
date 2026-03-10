@@ -3973,11 +3973,51 @@ class NexusFS(  # type: ignore[misc]
         context: Any = None,
         limit: int | None = None,
         cursor: str | None = None,
-    ) -> builtins.list[str] | builtins.list[dict[str, Any]]:
+    ) -> builtins.list[str] | builtins.list[dict[str, Any]] | Any:
         prefix = path if path != "/" else ""
         if prefix and not prefix.endswith("/"):
             prefix = prefix + "/"
         entries = self.metadata.list(prefix=prefix, recursive=recursive)
+
+        # Cursor-based pagination when limit is specified (Issue #937)
+        if limit is not None:
+            from nexus.lib.pagination import PaginatedResult
+
+            # Apply cursor: skip entries with path <= cursor
+            if cursor:
+                import base64
+                import json as _json
+
+                try:
+                    cursor_data = _json.loads(base64.urlsafe_b64decode(cursor.encode("ascii")))
+                    cursor_path = cursor_data.get("p", "")
+                except Exception:
+                    cursor_path = ""
+                entries = [e for e in entries if e.path > cursor_path]
+            else:
+                entries = list(entries)
+
+            has_more = len(entries) > limit
+            page = entries[:limit]
+
+            if details:
+                items: builtins.list[Any] = [
+                    {"path": e.path, "size": e.size, "etag": e.etag} for e in page
+                ]
+            else:
+                items = [e.path for e in page]
+
+            next_cursor = None
+            if has_more and page:
+                import base64
+                import json as _json
+
+                next_cursor = base64.urlsafe_b64encode(
+                    _json.dumps({"p": page[-1].path, "i": None, "h": ""}).encode("utf-8")
+                ).decode("ascii")
+
+            return PaginatedResult(items=items, next_cursor=next_cursor, has_more=has_more)
+
         if details:
             return [{"path": e.path, "size": e.size, "etag": e.etag} for e in entries]
         return [e.path for e in entries]

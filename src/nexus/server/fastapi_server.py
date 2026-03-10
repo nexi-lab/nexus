@@ -642,6 +642,9 @@ def _register_routes(app: FastAPI) -> None:
 
     # A2A Protocol Endpoint (Issue #1256, brick-extracted #1401)
     try:
+        if app.state.nexus_fs is None:
+            raise ValueError("NexusFS not initialized — skipping A2A router")
+
         from nexus.server.api.v2.routers.a2a import create_a2a_router
 
         a2a_base_url = os.environ.get("NEXUS_A2A_BASE_URL", DEFAULT_NEXUS_URL)
@@ -679,8 +682,8 @@ def _register_routes(app: FastAPI) -> None:
         app.state.a2a_task_manager = a2a_task_manager  # Expose for gRPC transport
         app.include_router(a2a_router)
         logger.info("A2A protocol endpoint registered (/.well-known/agent.json + /a2a)")
-    except ImportError as e:
-        logger.warning(f"Failed to import A2A router: {e}. A2A endpoint will not be available.")
+    except (ImportError, ValueError) as e:
+        logger.warning(f"A2A router not registered: {e}")
 
     # IPC Brick endpoints (Issue #1727, LEGO §8)
     try:

@@ -195,7 +195,51 @@ def _trim_to_budget(
                 lo = mid + 1  # need to drop more
         except Exception:
             return candidate
+    # Align trim point to respect tool-call / tool-result boundaries.
+    # A tool-call group is: ASSISTANT(tool_calls) followed by one or more TOOL
+    # messages.  Splitting inside a group produces orphaned messages that
+    # cause LLM API errors.
+    best = _align_trim_boundary(messages, best)
+
     return [system_msg, *messages[best:]]
+
+
+def _align_trim_boundary(messages: list[Message], idx: int) -> int:
+    """Adjust *idx* so the kept slice ``messages[idx:]`` never splits a
+    tool-call / tool-result group.
+
+    Rules
+    -----
+    * If ``messages[idx]`` is a TOOL message, move *idx* backwards to include
+      the preceding ASSISTANT message that owns the tool call.
+    * If ``messages[idx]`` is an ASSISTANT message **with** ``tool_calls``,
+      verify that all its TOOL results are present after it.  If not (i.e.
+      we are at the very end and some results were trimmed from the *right*,
+      which shouldn't happen in practice), skip past the group.
+    """
+    if idx <= 0 or idx >= len(messages):
+        return idx
+
+    # Case 1: trim point lands on a TOOL result — walk back to include
+    # the ASSISTANT message that started this group.
+    if messages[idx].role == MessageRole.TOOL:
+        while idx > 0 and messages[idx].role == MessageRole.TOOL:
+            idx -= 1
+        # idx now points at the ASSISTANT message (or another non-TOOL msg)
+        return idx
+
+    # Case 2: trim point lands on an ASSISTANT message with tool_calls but
+    # the following TOOL results would be cut.  This can't happen with our
+    # binary search (we keep messages[idx:] i.e. everything *after* idx),
+    # but guard defensively: if the next message is missing or isn't a TOOL,
+    # skip past this incomplete group.
+    msg = messages[idx]
+    has_tool_calls = msg.role == MessageRole.ASSISTANT and getattr(msg, "tool_calls", None)
+    if has_tool_calls and (idx + 1 >= len(messages) or messages[idx + 1].role != MessageRole.TOOL):
+        # Skip past this lonely assistant tool-call message
+        return idx + 1
+
+    return idx
 
 
 def _extract_tool_calls(response: object) -> list[ToolCall]:

@@ -164,7 +164,7 @@ class EvictionManager:
                     connected_count,
                     self._tuning.max_active_agents,
                 )
-            elif requesting_qos is not None:
+            elif requesting_qos is not None and connected_count >= self._tuning.max_active_agents:
                 # Preemption trigger: at cap, premium needs slot
                 over_cap = True
                 logger.info(

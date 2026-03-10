@@ -69,6 +69,7 @@ class ProcessManager:
         self._session_store = SessionStore(vfs)
         self._processes: dict[str, AgentProcess] = {}
         self._dispatchers: dict[str, ToolDispatcher] = {}  # cached per process
+        self._tasks: dict[str, asyncio.Task[None]] = {}  # running loop tasks per PID
 
     # ------------------------------------------------------------------
     # spawn
@@ -188,6 +189,10 @@ class ProcessManager:
             yield Error(error=f"Process not found: {pid}")
             return
 
+        if process.state == AgentProcessState.RUNNING:
+            yield Error(error=f"Process {pid} is already running")
+            return
+
         config = process.config
         if config is None:
             yield Error(error=f"Process {pid} has no config")
@@ -277,6 +282,7 @@ class ProcessManager:
                     on_event=_on_event,
                     on_checkpoint=_on_checkpoint,
                     cwd=agent_cwd,
+                    sandbox_id=config.sandbox_id,
                 )
                 # Final save (captures the last assistant message / Completed)
                 await self._session_store.save(pid, result_messages, ctx, cwd=agent_cwd)
@@ -285,9 +291,11 @@ class ProcessManager:
                 logger.error(error_msg)
                 await queue.put(Error(error=error_msg))
             finally:
+                self._tasks.pop(pid, None)
                 await queue.put(None)  # sentinel
 
         task = asyncio.create_task(_run_loop())
+        self._tasks[pid] = task
         try:
             while True:
                 event = await queue.get()
@@ -299,6 +307,7 @@ class ProcessManager:
                 task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
+            self._tasks.pop(pid, None)
             # Transition to SLEEPING
             process = replace(process, state=AgentProcessState.SLEEPING)
             self._processes[pid] = process
@@ -331,6 +340,11 @@ class ProcessManager:
         if process is None:
             logger.warning("Cannot terminate unknown process: %s", pid)
             return
+
+        # Cancel running loop task if any
+        task = self._tasks.pop(pid, None)
+        if task is not None and not task.done():
+            task.cancel()
 
         # Transition to ZOMBIE
         process = replace(process, state=AgentProcessState.ZOMBIE)
@@ -373,6 +387,9 @@ class ProcessManager:
 
         match sig:
             case AgentSignal.SIGSTOP:
+                task = self._tasks.pop(pid, None)
+                if task is not None and not task.done():
+                    task.cancel()
                 process = replace(process, state=AgentProcessState.STOPPED)
                 self._processes[pid] = process
                 logger.info("Process stopped: pid=%s", pid)
@@ -387,6 +404,9 @@ class ProcessManager:
 
             case AgentSignal.SIGKILL:
                 # Immediate removal, no cleanup
+                task = self._tasks.pop(pid, None)
+                if task is not None and not task.done():
+                    task.cancel()
                 self._processes.pop(pid, None)
                 logger.info("Process killed: pid=%s", pid)
 

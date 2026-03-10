@@ -4,7 +4,7 @@ Uses SELECT ... FOR UPDATE SKIP LOCKED for concurrent, safe dequeue.
 Tasks are ordered by (effective_tier ASC, enqueued_at ASC) for
 strict priority ordering with FIFO within each tier.
 
-HRRN dequeue (Issue #1274) orders by priority_class ASC,
+HRRN dequeue (Issue #1274) orders by priority_class DESC,
 inline HRRN score DESC, enqueued_at ASC for Astraea-style scheduling.
 
 Related: Issue #1212, #1274
@@ -47,7 +47,18 @@ INSERT INTO scheduled_tasks (
     zone_id, idempotency_key,
     request_state, priority_class, estimated_service_time
 ) VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-ON CONFLICT (idempotency_key) DO UPDATE SET agent_id = EXCLUDED.agent_id
+ON CONFLICT (idempotency_key) DO UPDATE SET
+    agent_id = EXCLUDED.agent_id,
+    payload = EXCLUDED.payload,
+    deadline = EXCLUDED.deadline,
+    priority_tier = EXCLUDED.priority_tier,
+    effective_tier = EXCLUDED.effective_tier,
+    boost_amount = EXCLUDED.boost_amount,
+    boost_tiers = EXCLUDED.boost_tiers,
+    boost_reservation_id = EXCLUDED.boost_reservation_id,
+    request_state = EXCLUDED.request_state,
+    priority_class = EXCLUDED.priority_class,
+    estimated_service_time = EXCLUDED.estimated_service_time
 RETURNING id::text
 """
 
@@ -124,7 +135,7 @@ WHERE id = (
       AND (deadline IS NULL OR deadline <= now())
       AND executor_state IN ('CONNECTED', 'IDLE', 'UNKNOWN')
     ORDER BY
-        priority_class ASC,
+        priority_class DESC,
         (EXTRACT(EPOCH FROM (now() - enqueued_at)) + estimated_service_time)
             / GREATEST(estimated_service_time, 0.001) DESC,
         enqueued_at ASC
@@ -143,7 +154,7 @@ WHERE id = (
       AND (deadline IS NULL OR deadline <= now())
       AND executor_state IN ('CONNECTED', 'IDLE', 'UNKNOWN')
     ORDER BY
-        priority_class ASC,
+        priority_class DESC,
         (EXTRACT(EPOCH FROM (now() - enqueued_at)) + estimated_service_time)
             / GREATEST(estimated_service_time, 0.001) DESC,
         enqueued_at ASC
@@ -424,7 +435,7 @@ class TaskQueue:
     ) -> ScheduledTask | None:
         """Dequeue using HRRN scoring within priority classes (Astraea).
 
-        Orders by: priority_class ASC, HRRN score DESC, enqueued_at ASC.
+        Orders by: priority_class DESC, HRRN score DESC, enqueued_at ASC.
         Filters out tasks whose executor is SUSPENDED.
 
         Args:

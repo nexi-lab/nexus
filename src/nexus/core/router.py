@@ -249,6 +249,7 @@ class PathRouter:
                 mount_point=normalized,
                 readonly=entry.readonly,
                 admin_only=entry.admin_only,
+                backend=entry.backend,
             )
         except ValueError:
             return None
@@ -282,7 +283,12 @@ class PathRouter:
 
         active_mps: set[str] = set(self._backends.keys())
         result: list[MountInfo] = [
-            MountInfo(mount_point=mp, readonly=entry.readonly, admin_only=entry.admin_only)
+            MountInfo(
+                mount_point=mp,
+                readonly=entry.readonly,
+                admin_only=entry.admin_only,
+                backend=entry.backend,
+            )
             for mp, entry in sorted(self._backends.items())
         ]
 

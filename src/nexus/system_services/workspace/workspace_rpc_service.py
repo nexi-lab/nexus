@@ -197,7 +197,7 @@ class WorkspaceRPCService:
     def snapshot_begin(
         self,
         agent_id: str | None = None,
-        zone_id: str = ROOT_ZONE_ID,
+        zone_id: str | None = None,
         description: str | None = None,
         ttl_seconds: int = 3600,
         context: OperationContext | None = None,
@@ -207,11 +207,12 @@ class WorkspaceRPCService:
             raise RuntimeError("Transactional snapshot service not available")
         ctx = context or self._default_ctx
         resolved_agent = agent_id or ctx.agent_id or "default"
+        resolved_zone = zone_id or (ctx.zone_id if ctx else None) or ROOT_ZONE_ID
         import asyncio
 
-        info = asyncio.get_event_loop().run_until_complete(
+        info = asyncio.run(
             self._snapshot_service.begin(
-                zone_id=zone_id,
+                zone_id=resolved_zone,
                 agent_id=resolved_agent,
                 description=description,
                 ttl_seconds=ttl_seconds,
@@ -230,7 +231,7 @@ class WorkspaceRPCService:
             raise RuntimeError("Transactional snapshot service not available")
         import asyncio
 
-        asyncio.get_event_loop().run_until_complete(self._snapshot_service.commit(snapshot_id))
+        asyncio.run(self._snapshot_service.commit(snapshot_id))
         return {"status": "committed", "snapshot_id": snapshot_id}
 
     @rpc_expose(description="Rollback transactional snapshot")
@@ -244,9 +245,7 @@ class WorkspaceRPCService:
             raise RuntimeError("Transactional snapshot service not available")
         import asyncio
 
-        info = asyncio.get_event_loop().run_until_complete(
-            self._snapshot_service.rollback(snapshot_id)
-        )
+        info = asyncio.run(self._snapshot_service.rollback(snapshot_id))
         return {
             "snapshot_id": info.snapshot_id,
             "status": info.status,

@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 from nexus.bricks.mcp.models import MCPToolConfig, MCPToolDefinition, MCPToolExample
 
 if TYPE_CHECKING:
-    from nexus.contracts.protocols.filesystem import NexusFilesystem
+    from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
 
 logger = logging.getLogger(__name__)
 
@@ -568,7 +568,7 @@ class MCPToolExporter:
     # Output path for exported tools
     OUTPUT_PATH = "/skills/system/mcp-tools/nexus/"
 
-    def __init__(self, filesystem: "NexusFilesystem | None" = None):
+    def __init__(self, filesystem: "NexusFilesystemABC | None" = None):
         """Initialize exporter.
 
         Args:

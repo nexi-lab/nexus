@@ -8,7 +8,7 @@ from typing import Any, cast
 
 import yaml
 
-from nexus.contracts.protocols.filesystem import NexusFilesystem
+from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
 from nexus.lib.registry import BaseRegistry
 from nexus.plugins.base import NexusPlugin, PluginMetadata
 
@@ -39,11 +39,11 @@ class PluginRegistry(BaseRegistry[NexusPlugin]):
     configuration.
     """
 
-    def __init__(self, nexus_fs: NexusFilesystem | None = None, config_dir: Path | None = None):
+    def __init__(self, nexus_fs: NexusFilesystemABC | None = None, config_dir: Path | None = None):
         """Initialize plugin registry.
 
         Args:
-            nexus_fs: NexusFilesystem instance to pass to plugins
+            nexus_fs: NexusFilesystemABC instance to pass to plugins
             config_dir: Directory for plugin configurations (default: ~/.nexus/plugins)
         """
         super().__init__(name="plugins")

@@ -192,7 +192,7 @@ class ReBACService(ReBACShareMixin):
 
         Returns:
             Dict with tuple_id, revision, and consistency_token (Issue #1081).
-            Use revision with consistency_mode="at_least_as_fresh" for read-your-writes.
+            Use revision for audit trail.
 
         Raises:
             PermissionError: If caller lacks permission to grant
@@ -384,16 +384,12 @@ class ReBACService(ReBACShareMixin):
         object: tuple[str, str],
         context: Any = None,
         zone_id: str | None = None,
-        consistency_mode: str | None = None,  # Issue #1081
-        min_revision: int | None = None,  # Issue #1081
     ) -> bool:
-        """Check if subject has permission on object (Issue #1081).
+        """Check if subject has permission on object.
 
         Uses relationship graph traversal to determine access, supporting both
         direct relationships and inherited permissions through group membership.
-
-        Supports ABAC-style contextual conditions (time windows, IP allowlists, etc.)
-        and per-request consistency modes aligned with SpiceDB/Zanzibar.
+        Always uses cached (eventual) consistency.
 
         Args:
             subject: Subject tuple e.g., ("user", "alice")
@@ -401,11 +397,6 @@ class ReBACService(ReBACShareMixin):
             object: Object tuple e.g., ("file", "/doc.txt")
             context: Optional ABAC context for condition evaluation (time, ip, device, attributes)
             zone_id: Zone ID for multi-zone isolation
-            consistency_mode: Per-request consistency mode (Issue #1081):
-                - "minimize_latency" (default): Use cache for fastest response
-                - "at_least_as_fresh": Cache must be >= min_revision
-                - "fully_consistent": Bypass cache entirely
-            min_revision: Minimum acceptable revision (required for at_least_as_fresh)
 
         Returns:
             True if permission granted, False otherwise
@@ -415,28 +406,10 @@ class ReBACService(ReBACShareMixin):
             RuntimeError: If ReBAC manager not available
 
         Examples:
-            # Check read access (default: minimize_latency)
             can_read = await rebac.rebac_check(
                 subject=("user", "alice"),
                 permission="read",
                 object=("file", "/doc.txt")
-            )
-
-            # Check after a write with read-your-writes guarantee
-            can_read = await rebac.rebac_check(
-                subject=("user", "alice"),
-                permission="read",
-                object=("file", "/doc.txt"),
-                consistency_mode="at_least_as_fresh",
-                min_revision=123  # From previous write result
-            )
-
-            # Security audit: bypass all caches
-            can_read = await rebac.rebac_check(
-                subject=("user", "alice"),
-                permission="read",
-                object=("file", "/doc.txt"),
-                consistency_mode="fully_consistent"
             )
         """
 
@@ -457,23 +430,7 @@ class ReBACService(ReBACShareMixin):
                 elif hasattr(context, "zone_id"):
                     effective_zone_id = context.zone_id
 
-            # Issue #1081: Build consistency requirement from API params
-            consistency = None
-            if consistency_mode or min_revision is not None:
-                from nexus.contracts.rebac_types import (
-                    ConsistencyMode,
-                    ConsistencyRequirement,
-                )
-
-                mode = ConsistencyMode.MINIMIZE_LATENCY
-                if consistency_mode == "at_least_as_fresh":
-                    mode = ConsistencyMode.AT_LEAST_AS_FRESH
-                elif consistency_mode == "fully_consistent":
-                    mode = ConsistencyMode.FULLY_CONSISTENT
-
-                consistency = ConsistencyRequirement(mode=mode, min_revision=min_revision)
-
-            # Check permission with optional ABAC context and consistency
+            # Check permission with optional ABAC context (always cached consistency)
             # Manager guaranteed by _run_in_thread
             assert self._rebac_manager is not None
             result: bool = self._rebac_manager.rebac_check(
@@ -482,7 +439,6 @@ class ReBACService(ReBACShareMixin):
                 object=object,
                 context=context,
                 zone_id=effective_zone_id,
-                consistency=consistency,
             )
 
             return result

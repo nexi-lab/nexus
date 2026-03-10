@@ -658,10 +658,9 @@ def create_mcp_server(
         """
         nx_instance: Any = _get_nexus_instance(ctx)
         _search = nx_instance.service("search")
-        if _search is not None:
-            all_matches = _search.glob(pattern, path)
-        else:
-            all_matches = nx_instance.glob(pattern, path)
+        if _search is None:
+            raise ValueError("SearchService not available — glob requires the search brick")
+        all_matches = _search.glob(pattern, path)
         total = len(all_matches)
 
         # Apply pagination
@@ -729,10 +728,9 @@ def create_mcp_server(
         """
         nx_instance: Any = _get_nexus_instance(ctx)
         _search = nx_instance.service("search")
-        if _search is not None:
-            all_results = _search.grep(pattern, path, ignore_case=ignore_case)
-        else:
-            all_results = nx_instance.grep(pattern, path, ignore_case=ignore_case)
+        if _search is None:
+            raise ValueError("SearchService not available — grep requires the search brick")
+        all_results = _search.grep(pattern, path, ignore_case=ignore_case)
         total = len(all_results)
 
         # Apply pagination

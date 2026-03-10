@@ -46,19 +46,22 @@ class ReputationClient(BaseServiceClient):
         self,
         exchange_id: str,
         *,
+        rater_agent_id: str,
+        rated_agent_id: str,
         outcome: str,
         reliability_score: float | None = None,
         quality_score: float | None = None,
-        memo: str | None = None,
     ) -> dict[str, Any]:
         """Submit feedback for an exchange."""
-        body: dict[str, Any] = {"outcome": outcome}
+        body: dict[str, Any] = {
+            "rater_agent_id": rater_agent_id,
+            "rated_agent_id": rated_agent_id,
+            "outcome": outcome,
+        }
         if reliability_score is not None:
             body["reliability_score"] = reliability_score
         if quality_score is not None:
             body["quality_score"] = quality_score
-        if memo:
-            body["memo"] = memo
         return self._request(
             "POST",
             f"/api/v2/exchanges/{exchange_id}/feedback",
@@ -69,12 +72,23 @@ class ReputationClient(BaseServiceClient):
         """Get feedback for an exchange."""
         return self._request("GET", f"/api/v2/exchanges/{exchange_id}/feedback")
 
-    def dispute_create(self, exchange_id: str, *, reason: str) -> dict[str, Any]:
+    def dispute_create(
+        self,
+        exchange_id: str,
+        *,
+        complainant_agent_id: str,
+        respondent_agent_id: str,
+        reason: str,
+    ) -> dict[str, Any]:
         """File a dispute for an exchange."""
         return self._request(
             "POST",
             f"/api/v2/exchanges/{exchange_id}/dispute",
-            json_body={"reason": reason},
+            json_body={
+                "complainant_agent_id": complainant_agent_id,
+                "respondent_agent_id": respondent_agent_id,
+                "reason": reason,
+            },
         )
 
     def dispute_get(self, dispute_id: str) -> dict[str, Any]:

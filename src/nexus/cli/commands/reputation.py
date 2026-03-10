@@ -25,7 +25,7 @@ def reputation() -> None:
     Examples:
         nexus reputation show agent_alice --json
         nexus reputation leaderboard --limit 10
-        nexus reputation feedback <exchange-id> --outcome positive
+        nexus reputation feedback <exchange-id> --rater alice --rated bob --outcome positive
     """
 
 
@@ -120,15 +120,16 @@ def reputation_leaderboard(
 
 @reputation.command("feedback")
 @click.argument("exchange_id")
+@click.option("--rater", "rater_agent_id", required=True, help="Rater agent ID")
+@click.option("--rated", "rated_agent_id", required=True, help="Rated agent ID")
 @click.option(
     "--outcome",
     required=True,
-    type=click.Choice(["positive", "negative", "neutral"]),
+    type=click.Choice(["positive", "negative", "neutral", "mixed"]),
     help="Outcome of the exchange",
 )
 @click.option("--reliability", type=float, default=None, help="Reliability score (0.0-1.0)")
 @click.option("--quality", type=float, default=None, help="Quality score (0.0-1.0)")
-@click.option("--memo", default=None, help="Feedback memo/description")
 @add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
@@ -136,24 +137,26 @@ def reputation_leaderboard(
 def reputation_feedback(
     client: ReputationClient,
     exchange_id: str,
+    rater_agent_id: str,
+    rated_agent_id: str,
     outcome: str,
     reliability: float | None,
     quality: float | None,
-    memo: str | None,
 ) -> ServiceResult:
     """Submit feedback for an exchange.
 
     \b
     Examples:
-        nexus reputation feedback exch_123 --outcome positive
-        nexus reputation feedback exch_123 --outcome negative --reliability 0.3 --memo "Late delivery"
+        nexus reputation feedback exch_123 --rater alice --rated bob --outcome positive
+        nexus reputation feedback exch_123 --rater alice --rated bob --outcome negative --reliability 0.3
     """
     data = client.submit_feedback(
         exchange_id,
+        rater_agent_id=rater_agent_id,
+        rated_agent_id=rated_agent_id,
         outcome=outcome,
         reliability_score=reliability,
         quality_score=quality,
-        memo=memo,
     )
     return ServiceResult(data=data, message=f"Feedback submitted for exchange {exchange_id}")
 
@@ -165,83 +168,65 @@ def dispute() -> None:
 
 @dispute.command("create")
 @click.argument("exchange_id")
+@click.option("--complainant", required=True, help="Complainant agent ID")
+@click.option("--respondent", required=True, help="Respondent agent ID")
 @click.option("--reason", required=True, help="Reason for the dispute")
 @add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
 @service_command(client_class=ReputationClient)
-def dispute_create(client: ReputationClient, exchange_id: str, reason: str) -> ServiceResult:
+def dispute_create(
+    client: ReputationClient,
+    exchange_id: str,
+    complainant: str,
+    respondent: str,
+    reason: str,
+) -> ServiceResult:
     """Open a dispute for an exchange.
 
     \b
     Examples:
-        nexus reputation dispute create exch_123 --reason "Service not delivered"
+        nexus reputation dispute create exch_123 --complainant alice --respondent bob --reason "Service not delivered"
     """
-    data = client.dispute_create(exchange_id, reason=reason)
+    data = client.dispute_create(
+        exchange_id,
+        complainant_agent_id=complainant,
+        respondent_agent_id=respondent,
+        reason=reason,
+    )
 
     def _render(d: dict) -> None:
         from nexus.cli.utils import console
 
         console.print("[green]Dispute filed[/green]")
-        console.print(f"  Dispute ID: {d.get('dispute_id', 'N/A')}")
+        console.print(f"  Dispute ID: {d.get('id', d.get('dispute_id', 'N/A'))}")
         console.print(f"  Status:     {d.get('status', 'filed')}")
 
     return ServiceResult(data=data, human_formatter=_render)
 
 
-@dispute.command("list")
-@click.option("--agent-id", default=None, help="Filter by agent ID")
-@click.option("--status", "dispute_status", default=None, help="Filter by status")
+@dispute.command("show")
+@click.argument("dispute_id")
 @add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
 @service_command(client_class=ReputationClient)
-def dispute_list_cmd(
-    client: ReputationClient,
-    agent_id: str | None,
-    dispute_status: str | None,
-) -> ServiceResult:
-    """List disputes.
+def dispute_show(client: ReputationClient, dispute_id: str) -> ServiceResult:
+    """Show dispute details.
 
     \b
     Examples:
-        nexus reputation dispute list
-        nexus reputation dispute list --status filed --json
+        nexus reputation dispute show disp_123 --json
     """
-    # Use the leaderboard endpoint filtered — or more accurately, list disputes
-    # The reputation client doesn't have a direct list-disputes method via the
-    # exchange endpoint, so we use a general query approach
-    data = client._request(
-        "GET",
-        "/api/v2/disputes",
-        params={"agent_id": agent_id, "status": dispute_status},
-    )
+    data = client.dispute_get(dispute_id)
 
     def _render(d: dict) -> None:
-        from rich.table import Table
-
         from nexus.cli.utils import console
 
-        disputes = d.get("disputes", [])
-        if not disputes:
-            console.print("[yellow]No disputes found[/yellow]")
-            return
-
-        table = Table(title=f"Disputes ({len(disputes)})")
-        table.add_column("ID", style="dim")
-        table.add_column("Exchange")
-        table.add_column("Status")
-        table.add_column("Reason")
-        table.add_column("Filed", style="dim")
-
-        for disp in disputes:
-            table.add_row(
-                disp.get("dispute_id", "")[:12],
-                disp.get("exchange_id", ""),
-                disp.get("status", ""),
-                disp.get("reason", "")[:40],
-                disp.get("created_at", "")[:19],
-            )
-        console.print(table)
+        console.print(f"[bold cyan]Dispute: {dispute_id}[/bold cyan]")
+        console.print(f"  Status:      {d.get('status', 'N/A')}")
+        console.print(f"  Complainant: {d.get('complainant_agent_id', 'N/A')}")
+        console.print(f"  Respondent:  {d.get('respondent_agent_id', 'N/A')}")
+        console.print(f"  Reason:      {d.get('reason', 'N/A')}")
 
     return ServiceResult(data=data, human_formatter=_render)

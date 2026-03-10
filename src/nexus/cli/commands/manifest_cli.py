@@ -24,38 +24,69 @@ def manifest() -> None:
 
     \b
     Examples:
-        nexus manifest create agent_alice --sources /data /tools
+        nexus manifest create agent_alice --name "dev tools" --entry "read_*:allow"
         nexus manifest list --json
-        nexus manifest evaluate <id> --tool read
+        nexus manifest evaluate <id> --tool-name read_file
     """
 
 
 @manifest.command("create")
 @click.argument("agent_id")
-@click.option("--sources", multiple=True, required=True, help="Data sources (can specify multiple)")
+@click.option("--name", required=True, help="Human-readable manifest name")
+@click.option(
+    "--entry",
+    "entries",
+    multiple=True,
+    required=True,
+    help="Tool entry as 'pattern:permission' (e.g. 'read_*:allow'). Repeatable.",
+)
+@click.option("--zone-id", default="root", show_default=True, help="Zone ID")
+@click.option("--valid-hours", default=720, show_default=True, help="Validity in hours")
 @add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
 @service_command(client_class=ManifestClient)
 def manifest_create(
-    client: ManifestClient, agent_id: str, sources: tuple[str, ...]
+    client: ManifestClient,
+    agent_id: str,
+    name: str,
+    entries: tuple[str, ...],
+    zone_id: str,
+    valid_hours: int,
 ) -> ServiceResult:
     """Create an access manifest for an agent.
 
     \b
     Examples:
-        nexus manifest create agent_alice --sources /data --sources /tools
-        nexus manifest create agent_alice --sources /workspace --json
+        nexus manifest create agent_alice --name "dev" --entry "read_*:allow"
+        nexus manifest create agent_alice --name "ops" --entry "write_file:allow" --entry "delete_*:deny"
     """
-    data = client.create(agent_id, sources=list(sources))
+    parsed_entries = []
+    for entry_str in entries:
+        parts = entry_str.rsplit(":", 1)
+        if len(parts) != 2:
+            raise click.BadParameter(
+                f"Entry must be 'pattern:permission', got '{entry_str}'",
+                param_hint="--entry",
+            )
+        parsed_entries.append({"tool_pattern": parts[0], "permission": parts[1]})
+
+    data = client.create(
+        agent_id, name=name, entries=parsed_entries, zone_id=zone_id, valid_hours=valid_hours
+    )
 
     def _render(d: dict) -> None:
         from nexus.cli.utils import console
 
         console.print("[green]Manifest created[/green]")
-        console.print(f"  Manifest ID: {d.get('manifest_id', 'N/A')}")
+        console.print(f"  Manifest ID: {d.get('manifest_id', d.get('id', 'N/A'))}")
         console.print(f"  Agent:       {d.get('agent_id', agent_id)}")
-        console.print(f"  Sources:     {', '.join(d.get('sources', list(sources)))}")
+        console.print(f"  Name:        {d.get('name', name)}")
+        manifest_entries = d.get("entries", [])
+        if manifest_entries:
+            console.print("  Entries:")
+            for e in manifest_entries:
+                console.print(f"    - {e.get('tool_pattern', '?')}: {e.get('permission', '?')}")
 
     return ServiceResult(data=data, human_formatter=_render)
 
@@ -88,17 +119,18 @@ def manifest_list(client: ManifestClient) -> ServiceResult:
         table = Table(title=f"Access Manifests ({len(manifests)})")
         table.add_column("ID", style="dim")
         table.add_column("Agent")
-        table.add_column("Sources")
-        table.add_column("Status")
-        table.add_column("Created", style="dim")
+        table.add_column("Name")
+        table.add_column("Entries")
+        table.add_column("Valid Until", style="dim")
 
         for m in manifests:
+            entry_count = len(m.get("entries", []))
             table.add_row(
-                m.get("manifest_id", "")[:12],
+                str(m.get("manifest_id", m.get("id", "")))[:12],
                 m.get("agent_id", ""),
-                ", ".join(m.get("sources", []))[:40],
-                m.get("status", ""),
-                m.get("created_at", "")[:19],
+                m.get("name", ""),
+                str(entry_count),
+                m.get("valid_until", "")[:19],
             )
         console.print(table)
 
@@ -124,43 +156,45 @@ def manifest_show(client: ManifestClient, manifest_id: str) -> ServiceResult:
         from nexus.cli.utils import console
 
         console.print(f"[bold cyan]Manifest: {manifest_id}[/bold cyan]")
-        console.print(f"  Agent:   {d.get('agent_id', 'N/A')}")
-        console.print(f"  Status:  {d.get('status', 'N/A')}")
-        console.print(f"  Created: {d.get('created_at', 'N/A')[:19]}")
-        sources = d.get("sources", [])
-        if sources:
-            console.print("  Sources:")
-            for s in sources:
-                console.print(f"    - {s}")
+        console.print(f"  Name:       {d.get('name', 'N/A')}")
+        console.print(f"  Agent:      {d.get('agent_id', 'N/A')}")
+        console.print(f"  Valid From: {d.get('valid_from', 'N/A')[:19]}")
+        console.print(f"  Valid Until:{d.get('valid_until', 'N/A')[:19]}")
+        manifest_entries = d.get("entries", [])
+        if manifest_entries:
+            console.print("  Entries:")
+            for e in manifest_entries:
+                console.print(f"    - {e.get('tool_pattern', '?')}: {e.get('permission', '?')}")
 
     return ServiceResult(data=data, human_formatter=_render)
 
 
 @manifest.command("evaluate")
 @click.argument("manifest_id")
-@click.option("--tool", required=True, help="Tool name to evaluate access for")
+@click.option("--tool-name", required=True, help="Tool name to evaluate access for")
 @add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
 @service_command(client_class=ManifestClient)
-def manifest_evaluate(client: ManifestClient, manifest_id: str, tool: str) -> ServiceResult:
+def manifest_evaluate(client: ManifestClient, manifest_id: str, tool_name: str) -> ServiceResult:
     """Test tool access against a manifest.
 
     \b
     Examples:
-        nexus manifest evaluate mfst_123 --tool read
-        nexus manifest evaluate mfst_123 --tool write --json
+        nexus manifest evaluate mfst_123 --tool-name read_file
+        nexus manifest evaluate mfst_123 --tool-name write_file --json
     """
-    data = client.evaluate(manifest_id, tool=tool)
+    data = client.evaluate(manifest_id, tool_name=tool_name)
 
     def _render(d: dict) -> None:
         from nexus.cli.utils import console
 
-        allowed = d.get("allowed", False)
+        permission = d.get("permission", "deny")
+        allowed = permission == "allow"
         status = "[green]Allowed[/green]" if allowed else "[red]Denied[/red]"
-        console.print(f"Tool '{tool}': {status}")
-        if d.get("reason"):
-            console.print(f"  Reason: {d['reason']}")
+        console.print(f"Tool '{tool_name}': {status}")
+        if d.get("manifest_id"):
+            console.print(f"  Manifest: {d['manifest_id']}")
 
     return ServiceResult(data=data, human_formatter=_render)
 

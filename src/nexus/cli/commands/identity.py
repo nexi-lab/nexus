@@ -24,7 +24,7 @@ def identity() -> None:
     \b
     Examples:
         nexus identity show agent_alice --json
-        nexus identity verify agent_alice
+        nexus identity verify agent_alice --message <b64> --signature <b64>
         nexus identity credentials agent_alice
     """
 
@@ -61,19 +61,28 @@ def identity_show(client: IdentityClient, agent_id: str) -> ServiceResult:
 
 @identity.command("verify")
 @click.argument("agent_id")
+@click.option("--message", required=True, help="Base64-encoded message to verify")
+@click.option("--signature", required=True, help="Base64-encoded signature")
+@click.option("--key-id", default=None, help="Key ID (uses newest active key if omitted)")
 @add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
 @service_command(client_class=IdentityClient)
-def identity_verify(client: IdentityClient, agent_id: str) -> ServiceResult:
-    """Verify agent's credential chain.
+def identity_verify(
+    client: IdentityClient,
+    agent_id: str,
+    message: str,
+    signature: str,
+    key_id: str | None,
+) -> ServiceResult:
+    """Verify an agent's signature.
 
     \b
     Examples:
-        nexus identity verify agent_alice
-        nexus identity verify agent_alice --json
+        nexus identity verify agent_alice --message <b64msg> --signature <b64sig>
+        nexus identity verify agent_alice --message <b64> --signature <b64> --key-id key_1 --json
     """
-    data = client.verify(agent_id)
+    data = client.verify(agent_id, message=message, signature=signature, key_id=key_id)
 
     def _render(d: dict) -> None:
         from nexus.cli.utils import console

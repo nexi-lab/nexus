@@ -14,9 +14,30 @@ class IdentityClient(BaseServiceClient):
         """Get agent identity (DID, public key, capabilities)."""
         return self._request("GET", f"/api/v2/agents/{agent_id}/identity")
 
-    def verify(self, agent_id: str) -> dict[str, Any]:
-        """Verify agent's signature/credential chain."""
-        return self._request("POST", f"/api/v2/agents/{agent_id}/verify")
+    def verify(
+        self,
+        agent_id: str,
+        *,
+        message: str,
+        signature: str,
+        key_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Verify agent's signature.
+
+        Args:
+            agent_id: The agent to verify against.
+            message: Base64-encoded message.
+            signature: Base64-encoded signature.
+            key_id: Optional key ID (uses newest active key if omitted).
+        """
+        body: dict[str, Any] = {"message": message, "signature": signature}
+        if key_id is not None:
+            body["key_id"] = key_id
+        return self._request(
+            "POST",
+            f"/api/v2/agents/{agent_id}/verify",
+            json_body=body,
+        )
 
     def credentials_list(self, agent_id: str) -> dict[str, Any]:
         """List agent's active credentials."""

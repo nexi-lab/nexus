@@ -25,7 +25,7 @@ def conflicts() -> None:
     Examples:
         nexus conflicts list --json
         nexus conflicts show <conflict-id>
-        nexus conflicts resolve <conflict-id> --strategy ours
+        nexus conflicts resolve <conflict-id> --outcome nexus_wins
     """
 
 
@@ -104,24 +104,22 @@ def conflicts_show(client: ConflictsClient, conflict_id: str) -> ServiceResult:
 @conflicts.command("resolve")
 @click.argument("conflict_id")
 @click.option(
-    "--strategy",
+    "--outcome",
     required=True,
-    type=click.Choice(["ours", "theirs", "manual"]),
-    help="Resolution strategy",
+    type=click.Choice(["nexus_wins", "backend_wins"]),
+    help="Resolution outcome",
 )
 @add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
 @service_command(client_class=ConflictsClient)
-def conflicts_resolve(client: ConflictsClient, conflict_id: str, strategy: str) -> ServiceResult:
-    """Resolve a conflict with a strategy.
+def conflicts_resolve(client: ConflictsClient, conflict_id: str, outcome: str) -> ServiceResult:
+    """Resolve a conflict.
 
     \b
     Examples:
-        nexus conflicts resolve abc123 --strategy ours
-        nexus conflicts resolve abc123 --strategy theirs --json
+        nexus conflicts resolve abc123 --outcome nexus_wins
+        nexus conflicts resolve abc123 --outcome backend_wins --json
     """
-    data = client.resolve(conflict_id, strategy=strategy)
-    return ServiceResult(
-        data=data, message=f"Conflict {conflict_id} resolved with strategy '{strategy}'"
-    )
+    data = client.resolve(conflict_id, outcome=outcome)
+    return ServiceResult(data=data, message=f"Conflict {conflict_id} resolved ({outcome})")

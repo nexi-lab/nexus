@@ -103,19 +103,52 @@ class TestIdentityShow:
 
 
 class TestIdentityVerify:
+    _B64_MSG = "aGVsbG8="
+    _B64_SIG = "c2lnbmF0dXJl"
+
     def test_valid(self) -> None:
         runner = CliRunner()
-        stack, _ = _patch_client(verify={"valid": True})
+        stack, mocks = _patch_client(verify={"valid": True})
         with stack:
-            result = runner.invoke(identity, ["verify", "alice", "--remote-url", MOCK_URL])
+            result = runner.invoke(
+                identity,
+                [
+                    "verify",
+                    "alice",
+                    "--message",
+                    self._B64_MSG,
+                    "--signature",
+                    self._B64_SIG,
+                    "--remote-url",
+                    MOCK_URL,
+                ],
+            )
         assert result.exit_code == 0
         assert "Valid" in result.output
+        mocks["verify"].assert_called_once_with(
+            "alice",
+            message=self._B64_MSG,
+            signature=self._B64_SIG,
+            key_id=None,
+        )
 
     def test_invalid_shows_reason(self) -> None:
         runner = CliRunner()
         stack, _ = _patch_client(verify={"valid": False, "reason": "Expired credential"})
         with stack:
-            result = runner.invoke(identity, ["verify", "alice", "--remote-url", MOCK_URL])
+            result = runner.invoke(
+                identity,
+                [
+                    "verify",
+                    "alice",
+                    "--message",
+                    self._B64_MSG,
+                    "--signature",
+                    self._B64_SIG,
+                    "--remote-url",
+                    MOCK_URL,
+                ],
+            )
         assert result.exit_code == 0
         assert "Invalid" in result.output
         assert "Expired credential" in result.output
@@ -125,7 +158,18 @@ class TestIdentityVerify:
         stack, _ = _patch_client(verify={"valid": True})
         with stack:
             result = runner.invoke(
-                identity, ["verify", "alice", "--remote-url", MOCK_URL, "--json"]
+                identity,
+                [
+                    "verify",
+                    "alice",
+                    "--message",
+                    self._B64_MSG,
+                    "--signature",
+                    self._B64_SIG,
+                    "--remote-url",
+                    MOCK_URL,
+                    "--json",
+                ],
             )
         assert result.exit_code == 0
         data = json.loads(result.output)

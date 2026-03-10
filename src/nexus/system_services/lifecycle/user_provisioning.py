@@ -67,7 +67,7 @@ class UserProvisioningService:
     # Public RPC Methods
     # ------------------------------------------------------------------
 
-    @rpc_expose(description="Provision a new user account with all resources")
+    @rpc_expose(description="Provision a new user account with all resources", admin_only=True)
     def provision_user(
         self,
         user_id: str,
@@ -309,7 +309,7 @@ class UserProvisioningService:
             "created_resources": created_resources,
         }
 
-    @rpc_expose(description="Deprovision a user and remove all their resources")
+    @rpc_expose(description="Deprovision a user and remove all their resources", admin_only=True)
     def deprovision_user(
         self,
         user_id: str,

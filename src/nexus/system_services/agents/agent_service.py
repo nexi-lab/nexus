@@ -19,6 +19,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
 from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.contracts.exceptions import NexusPermissionError
 from nexus.contracts.types import OperationContext
 from nexus.lib.rpc_decorator import rpc_expose
 
@@ -692,7 +693,10 @@ class AgentService:
                 try:
                     if "," in e.entity_id:
                         user_id, agent_name = e.entity_id.split(",", 1)
-                        config_path = f"/zone/default/user/{user_id}/agent/{agent_name}/config.yaml"
+                        zone_id = _extract_zone_id(_context) or ROOT_ZONE_ID
+                        config_path = (
+                            f"/zone/{zone_id}/user/{user_id}/agent/{agent_name}/config.yaml"
+                        )
                         try:
                             config_content = self._fs.sys_read(
                                 config_path, context=_parse_context(_context)
@@ -831,6 +835,15 @@ class AgentService:
     @rpc_expose(description="Delete an agent")
     def delete_agent(self, agent_id: str, _context: dict | None = None) -> bool:
         """Delete a registered agent (v0.5.0)."""
+        # Ownership check: caller must own the agent or be admin
+        ctx = _parse_context(_context)
+        if "," in agent_id:
+            owner_user_id = agent_id.split(",", 1)[0]
+            if ctx.user_id and ctx.user_id != owner_user_id and not ctx.is_admin:
+                raise NexusPermissionError(
+                    f"Permission denied: only the agent owner or an admin can delete agent {agent_id}"
+                )
+
         try:
             if "," in agent_id:
                 user_id, agent_name_part = agent_id.split(",", 1)

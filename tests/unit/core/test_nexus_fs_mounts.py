@@ -890,7 +890,7 @@ class TestMountContextUtilsIntegration:
         # and patch get_database_url at the source module
         with (
             patch.object(
-                type(nx.service("mount_core")),
+                type(nx.service("mount_core")._service_instance),
                 "_needs_token_manager_db",
                 return_value=True,
             ),

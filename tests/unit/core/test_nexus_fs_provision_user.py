@@ -299,7 +299,8 @@ class TestProvisionUserPartialFailure:
     def test_directory_creation_failure_continues(self, nx_with_db):
         """If directory creation fails, provisioning should continue."""
         # Issue #2033: _create_user_directories is now on UserProvisioningService
-        target = nx_with_db.service("user_provisioning") or nx_with_db
+        ref = nx_with_db.service("user_provisioning")
+        target = ref._service_instance if ref is not None else nx_with_db
         with patch.object(target, "_create_user_directories", side_effect=OSError("disk full")):
             result = nx_with_db.service("user_provisioning").provision_user(
                 user_id="alice",

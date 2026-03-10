@@ -131,7 +131,7 @@ def _do_initialize(nx: Any) -> None:
     # --- Register VFS hooks (INTERCEPT + OBSERVE — Issue #900) ---
     from nexus.factory.orchestrator import _register_vfs_hooks
 
-    _register_vfs_hooks(
+    _hook_refs = _register_vfs_hooks(
         nx,
         permission_checker=nx._permission_checker,
         auto_parse=nx._parse_config.auto_parse if nx._parse_config else True,
@@ -146,6 +146,20 @@ def _do_initialize(nx: Any) -> None:
             _blm.register("parsers", _parsers_brick, protocol_name="ParsersProtocol")
         if _cache_brick is not None:
             _blm.register("cache", _cache_brick, protocol_name="CacheProtocol")
+
+    # --- ServiceLifecycleCoordinator (Issue #1452 Phase 3) ---
+    if _blm is not None:
+        from nexus.system_services.lifecycle.service_lifecycle_coordinator import (
+            ServiceLifecycleCoordinator,
+        )
+
+        coordinator = ServiceLifecycleCoordinator(nx._service_registry, _blm, nx._dispatch)
+        nx._service_coordinator = coordinator
+
+        # Build retroactive HookSpecs for hooks registered above
+        from nexus.factory.orchestrator import _build_retroactive_hook_specs
+
+        _build_retroactive_hook_specs(coordinator, _hook_refs)
 
     # --- Register background services as bootstrap callbacks ---
     # TL directive: initialize() prepares resources but stays static.

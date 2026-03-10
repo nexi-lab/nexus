@@ -389,7 +389,7 @@ def create_nexus_fs(
 
 def _register_vfs_hooks(
     nx: "NexusFS", *, permission_checker: Any = None, auto_parse: bool = True
-) -> None:
+) -> dict[str, Any]:
     """Register hooks + observers into kernel-owned dispatch (Issue #900).
 
     Kernel creates KernelDispatch with empty callback lists at init.
@@ -398,20 +398,31 @@ def _register_vfs_hooks(
 
     Called by ``create_nexus_fs()`` after NexusFS construction + wired
     services binding, keeping the kernel free of service-layer imports.
+
+    Returns a dict of named hook references for retroactive HookSpec
+    construction (Issue #1452 Phase 3).
     """
     dispatch = nx._dispatch
 
+    # Hook references for retroactive HookSpec (Issue #1452 Phase 3).
+    # Factory code uses raw instances (not ServiceRef) so hooks can be
+    # matched by identity for later unregistration.
+    _raw_svc = nx._service_registry.service_info
+    hook_refs: dict[str, Any] = {}
+
     # ── Permission pre-intercept hook (Issue #899) ────────────────
+    _perm_hook = None
     if permission_checker is not None:
         from nexus.bricks.rebac.permission_hook import PermissionCheckHook
 
+        _dc_info = _raw_svc("descendant_checker")
         _perm_hook = PermissionCheckHook(
             checker=permission_checker,
             metadata_store=nx.metadata,
             default_context=nx._default_context,
             enforce_permissions=nx._enforce_permissions,
             permission_enforcer=nx._permission_enforcer,
-            descendant_checker=nx.service("descendant_checker"),
+            descendant_checker=_dc_info.instance if _dc_info else None,
         )
         dispatch.register_intercept_read(_perm_hook)
         dispatch.register_intercept_write(_perm_hook)
@@ -419,12 +430,14 @@ def _register_vfs_hooks(
         dispatch.register_intercept_rename(_perm_hook)
         dispatch.register_intercept_mkdir(_perm_hook)
         dispatch.register_intercept_rmdir(_perm_hook)
+    hook_refs["perm_hook"] = _perm_hook
 
     # ── Audit write observer as interceptor (Issue #900) ──────────
     # Registered FIRST so it runs before other hooks (audit before side effects).
     write_observer = (
         getattr(nx._system_services, "write_observer", None) if nx._system_services else None
     )
+    audit = None
     if write_observer is not None:
         from nexus.storage.write_observer_hooks import AuditWriteInterceptor
 
@@ -436,6 +449,7 @@ def _register_vfs_hooks(
         dispatch.register_intercept_rename(audit)
         dispatch.register_intercept_mkdir(audit)
         dispatch.register_intercept_rmdir(audit)
+    hook_refs["audit"] = audit
 
     # DynamicViewerReadHook (post-read: column-level CSV filtering)
     has_viewer = (
@@ -443,17 +457,18 @@ def _register_vfs_hooks(
         and hasattr(nx, "get_dynamic_viewer_config")
         and hasattr(nx, "apply_dynamic_viewer_filter")
     )
+    _viewer_hook = None
     if has_viewer:
         from nexus.bricks.rebac.dynamic_viewer_hook import DynamicViewerReadHook
         from nexus.lib.context_utils import get_subject_from_context
 
-        dispatch.register_intercept_read(
-            DynamicViewerReadHook(
-                get_subject=get_subject_from_context,
-                get_viewer_config=nx.get_dynamic_viewer_config,
-                apply_filter=nx.apply_dynamic_viewer_filter,
-            )
+        _viewer_hook = DynamicViewerReadHook(
+            get_subject=get_subject_from_context,
+            get_viewer_config=nx.get_dynamic_viewer_config,
+            apply_filter=nx.apply_dynamic_viewer_filter,
         )
+        dispatch.register_intercept_read(_viewer_hook)
+    hook_refs["viewer_hook"] = _viewer_hook
 
     # ContentParserEngine (on-demand parsed reads — Issue #1383)
     from nexus.bricks.parsers.engine import ContentParserEngine
@@ -466,20 +481,23 @@ def _register_vfs_hooks(
     # AutoParseWriteHook (post-write: background parsing + cache invalidation)
     parser_reg = getattr(nx, "parser_registry", None)
     parse_fn = getattr(nx, "_virtual_view_parse_fn", None)
+    _auto_parse_hook = None
     if auto_parse and parser_reg is not None and parse_fn is not None:
         from nexus.bricks.parsers.auto_parse_hook import AutoParseWriteHook
 
-        dispatch.register_intercept_write(
-            AutoParseWriteHook(
-                get_parser=parser_reg.get_parser,
-                parse_fn=parse_fn,
-                metadata=nx.metadata,
-            )
+        _auto_parse_hook = AutoParseWriteHook(
+            get_parser=parser_reg.get_parser,
+            parse_fn=parse_fn,
+            metadata=nx.metadata,
         )
+        dispatch.register_intercept_write(_auto_parse_hook)
+    hook_refs["auto_parse_hook"] = _auto_parse_hook
 
     # TigerCacheRenameHook (post-rename: bitmap updates)
     _rebac_mgr = getattr(nx, "_rebac_manager", None)
     tiger_cache = getattr(_rebac_mgr, "_tiger_cache", None) if _rebac_mgr else None
+    _tiger_rename_hook = None
+    _tiger_write_hook = None
     if tiger_cache is not None:
         from nexus.bricks.rebac.cache.tiger.rename_hook import TigerCacheRenameHook
 
@@ -490,47 +508,51 @@ def _register_vfs_hooks(
         ) -> Any:
             return nx.metadata.list(prefix=prefix, recursive=recursive)
 
-        dispatch.register_intercept_rename(
-            TigerCacheRenameHook(
-                tiger_cache=tiger_cache,
-                metadata_list_iter=_metadata_list_iter,
-            )
+        _tiger_rename_hook = TigerCacheRenameHook(
+            tiger_cache=tiger_cache,
+            metadata_list_iter=_metadata_list_iter,
         )
+        dispatch.register_intercept_rename(_tiger_rename_hook)
 
     # TigerCacheWriteHook (post-write: add new files to ancestor directory grants)
     if tiger_cache is not None:
         from nexus.bricks.rebac.cache.tiger.write_hook import TigerCacheWriteHook
 
-        dispatch.register_intercept_write(TigerCacheWriteHook(tiger_cache=tiger_cache))
+        _tiger_write_hook = TigerCacheWriteHook(tiger_cache=tiger_cache)
+        dispatch.register_intercept_write(_tiger_write_hook)
+    hook_refs["tiger_rename_hook"] = _tiger_rename_hook
+    hook_refs["tiger_write_hook"] = _tiger_write_hook
 
     # ── PRE-DISPATCH: Memory virtual path resolver (Issue #889) ────────
     # memory_router removed from BrickServices — get it from MemoryPermissionEnforcer
     _mem_perm = getattr(nx._brick_services, "memory_permission", None)
     _mem_router = getattr(_mem_perm, "memory_router", None) if _mem_perm else None
-    _mem_provider = nx.service("memory_provider")
+    _mem_info = _raw_svc("memory_provider")
+    _mem_provider = _mem_info.instance if _mem_info else None
+    _mem_resolver = None
     if _mem_router is not None and _mem_provider is not None:
         from nexus.bricks.memory.io_handler import MemoryIOHandler
 
-        dispatch.register_resolver(
-            MemoryIOHandler(
-                memory_router=_mem_router,
-                memory_provider=_mem_provider,
-                path_router=nx.router,
-            )
+        _mem_resolver = MemoryIOHandler(
+            memory_router=_mem_router,
+            memory_provider=_mem_provider,
+            path_router=nx.router,
         )
+        dispatch.register_resolver(_mem_resolver)
+    hook_refs["mem_resolver"] = _mem_resolver
 
     # ── PRE-DISPATCH: Virtual view resolver (Issue #332, #889) ────────
     from nexus.bricks.parsers.virtual_view_resolver import VirtualViewResolver
 
-    dispatch.register_resolver(
-        VirtualViewResolver(
-            metadata=nx.metadata,
-            path_router=nx.router,
-            permission_checker=permission_checker,
-            parse_fn=getattr(nx, "_virtual_view_parse_fn", None),
-            read_tracker_fn=None,
-        )
+    _vview_resolver = VirtualViewResolver(
+        metadata=nx.metadata,
+        path_router=nx.router,
+        permission_checker=permission_checker,
+        parse_fn=getattr(nx, "_virtual_view_parse_fn", None),
+        read_tracker_fn=None,
     )
+    dispatch.register_resolver(_vview_resolver)
+    hook_refs["vview_resolver"] = _vview_resolver
 
     # ── OBSERVE observers (Issue #900, #922) ──────────────────────────
     # EventBusObserver: forwards FileEvents to distributed EventBus (Redis/NATS).
@@ -540,14 +562,19 @@ def _register_vfs_hooks(
     # injecting a shared Redis bus) are picked up automatically.
     from nexus.system_services.event_subsystem.bus.observer import EventBusObserver
 
-    dispatch.register_observe(EventBusObserver(bus_provider=nx))
+    _bus_observer = EventBusObserver(bus_provider=nx)
+    dispatch.register_observe(_bus_observer)
+    hook_refs["bus_observer"] = _bus_observer
 
     # EventsService observer: receives FileEvents for wait_for_changes() internal path.
     # Registered as VFSObserver so dispatch.notify() delivers events directly.
-    _events_svc = nx.service("events")
-    if _events_svc is not None:
-        dispatch.register_observe(_events_svc)
-        _events_svc._observe_registered = True
+    # Use raw instance (not ServiceRef) so identity-based unregister works.
+    _events_info = _raw_svc("events")
+    _events_instance = _events_info.instance if _events_info else None
+    if _events_instance is not None:
+        dispatch.register_observe(_events_instance)
+        _events_instance._observe_registered = True
+    hook_refs["events_observer"] = _events_instance
 
     # RevisionTrackingObserver: feeds RevisionNotifier on versioned mutations.
     # Replaces the old kernel-internal _increment_vfs_revision() (Issue #1382).
@@ -555,8 +582,10 @@ def _register_vfs_hooks(
     from nexus.system_services.lifecycle.revision_tracking_observer import RevisionTrackingObserver
 
     _rev_notifier = RevisionNotifier()
-    dispatch.register_observe(RevisionTrackingObserver(revision_notifier=_rev_notifier))
+    _rev_observer = RevisionTrackingObserver(revision_notifier=_rev_notifier)
+    dispatch.register_observe(_rev_observer)
     nx._revision_notifier = _rev_notifier
+    hook_refs["rev_observer"] = _rev_observer
 
     # ── Test hooks (Issue #2) ────────────────────────────────────────
     # Only registered when NEXUS_TEST_HOOKS=true for E2E hook testing.
@@ -566,3 +595,24 @@ def _register_vfs_hooks(
         from nexus.core.test_hooks import register_test_hooks
 
         register_test_hooks(dispatch)
+
+    return hook_refs
+
+
+def _build_retroactive_hook_specs(coordinator: Any, hook_refs: dict[str, Any]) -> None:
+    """Build HookSpecs retroactively for hooks registered by _register_vfs_hooks().
+
+    Maps boot-time hook objects back to their owning service so the coordinator
+    can unregister them during hot-swap.
+    """
+    from nexus.contracts.protocols.service_hooks import HookSpec
+
+    # events service → observer
+    _events_obs = hook_refs.get("events_observer")
+    if _events_obs is not None:
+        coordinator.set_hook_spec("events", HookSpec(observers=(_events_obs,)))
+
+    # memory_provider → resolver
+    _mem_resolver = hook_refs.get("mem_resolver")
+    if _mem_resolver is not None:
+        coordinator.set_hook_spec("memory_provider", HookSpec(resolvers=(_mem_resolver,)))

@@ -603,7 +603,9 @@ def _build_retroactive_hook_specs(coordinator: Any, hook_refs: dict[str, Any]) -
     """Build HookSpecs retroactively for hooks registered by _register_vfs_hooks().
 
     Maps boot-time hook objects back to their owning service so the coordinator
-    can unregister them during hot-swap.
+    can unregister them during hot-swap.  Covers all 11 hook groups from
+    ``_register_vfs_hooks()`` so ``swap_service()`` can cleanly unregister
+    any subsystem's hooks.
     """
     from nexus.contracts.protocols.service_hooks import HookSpec
 
@@ -616,3 +618,70 @@ def _build_retroactive_hook_specs(coordinator: Any, hook_refs: dict[str, Any]) -
     _mem_resolver = hook_refs.get("mem_resolver")
     if _mem_resolver is not None:
         coordinator.set_hook_spec("memory_provider", HookSpec(resolvers=(_mem_resolver,)))
+
+    # permission → 6 dispatch channels
+    _perm = hook_refs.get("perm_hook")
+    if _perm is not None:
+        coordinator.set_hook_spec(
+            "permission",
+            HookSpec(
+                read_hooks=(_perm,),
+                write_hooks=(_perm,),
+                delete_hooks=(_perm,),
+                rename_hooks=(_perm,),
+                mkdir_hooks=(_perm,),
+                rmdir_hooks=(_perm,),
+            ),
+        )
+
+    # audit → 6 dispatch channels
+    _audit = hook_refs.get("audit")
+    if _audit is not None:
+        coordinator.set_hook_spec(
+            "audit",
+            HookSpec(
+                write_hooks=(_audit,),
+                write_batch_hooks=(_audit,),
+                delete_hooks=(_audit,),
+                rename_hooks=(_audit,),
+                mkdir_hooks=(_audit,),
+                rmdir_hooks=(_audit,),
+            ),
+        )
+
+    # viewer → read
+    _viewer = hook_refs.get("viewer_hook")
+    if _viewer is not None:
+        coordinator.set_hook_spec("viewer", HookSpec(read_hooks=(_viewer,)))
+
+    # auto_parse → write
+    _auto_parse = hook_refs.get("auto_parse_hook")
+    if _auto_parse is not None:
+        coordinator.set_hook_spec("auto_parse", HookSpec(write_hooks=(_auto_parse,)))
+
+    # tiger_cache → rename + write (combined into one spec)
+    _tiger_rename = hook_refs.get("tiger_rename_hook")
+    _tiger_write = hook_refs.get("tiger_write_hook")
+    if _tiger_rename is not None or _tiger_write is not None:
+        coordinator.set_hook_spec(
+            "tiger_cache",
+            HookSpec(
+                rename_hooks=(_tiger_rename,) if _tiger_rename else (),
+                write_hooks=(_tiger_write,) if _tiger_write else (),
+            ),
+        )
+
+    # virtual_view → resolver
+    _vview = hook_refs.get("vview_resolver")
+    if _vview is not None:
+        coordinator.set_hook_spec("virtual_view", HookSpec(resolvers=(_vview,)))
+
+    # event_bus → observer
+    _bus_obs = hook_refs.get("bus_observer")
+    if _bus_obs is not None:
+        coordinator.set_hook_spec("event_bus", HookSpec(observers=(_bus_obs,)))
+
+    # revision_tracking → observer
+    _rev_obs = hook_refs.get("rev_observer")
+    if _rev_obs is not None:
+        coordinator.set_hook_spec("revision_tracking", HookSpec(observers=(_rev_obs,)))

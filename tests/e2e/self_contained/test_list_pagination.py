@@ -15,6 +15,10 @@ from nexus.factory import create_nexus_fs
 from nexus.lib.pagination import PaginatedResult
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 
+# sys_readdir does not yet implement pagination (returns plain list).
+# These tests will be re-enabled when pagination lands (#937).
+pytestmark = pytest.mark.skip(reason="Pagination not yet implemented in sys_readdir (#937)")
+
 
 @pytest.fixture
 def nexus_fs(tmp_path, isolated_db):

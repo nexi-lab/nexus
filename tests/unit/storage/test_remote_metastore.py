@@ -94,11 +94,13 @@ class TestRemoteMetastoreRPC:
             result = metastore.get("/nonexistent.txt")
             assert result is None
 
-    def test_get_returns_none_on_exception(self, metastore: RemoteMetastore) -> None:
-        """get() should return None when RPC raises an exception."""
-        with patch.object(metastore, "_call_rpc", side_effect=Exception("boom")):
-            result = metastore.get("/error.txt")
-            assert result is None
+    def test_get_propagates_exception(self, metastore: RemoteMetastore) -> None:
+        """get() should propagate RPC exceptions so callers can distinguish errors from not-found."""
+        with (
+            patch.object(metastore, "_call_rpc", side_effect=Exception("boom")),
+            pytest.raises(Exception, match="boom"),
+        ):
+            metastore.get("/error.txt")
 
     def test_put_calls_sys_setattr(self, metastore: RemoteMetastore) -> None:
         """put() should call _call_rpc('sys_setattr', ...)."""

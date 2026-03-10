@@ -125,6 +125,9 @@ impl ReplicationLog {
     /// Returns the sequence number which serves as the WriteToken.
     /// The caller should have already applied this command to the local
     /// state machine before calling this.
+    ///
+    /// Both the log entry and the next_seq counter are written in a single
+    /// redb transaction to prevent sequence reuse after a crash.
     pub fn append(&self, command_bytes: &[u8]) -> Result<u64> {
         let seq = self.next_seq.fetch_add(1, Ordering::SeqCst);
 
@@ -139,10 +142,32 @@ impl ReplicationLog {
 
         let key = seq.to_be_bytes();
         let value = bincode::serialize(&entry)?;
-        self.log_tree.set(&key, &value)?;
+        let next_seq_bytes = (seq + 1).to_be_bytes();
 
-        // Persist next_seq so we don't reuse sequence numbers after restart
-        self.meta_tree.set(KEY_NEXT_SEQ, &(seq + 1).to_be_bytes())?;
+        // Atomic: write log entry + persist next_seq in a single transaction
+        let log_table_def = redb::TableDefinition::<&[u8], &[u8]>::new(self.log_tree.name());
+        let meta_table_def = redb::TableDefinition::<&[u8], &[u8]>::new(self.meta_tree.name());
+        let db = self.log_tree.raw_db();
+        let write_txn = db
+            .begin_write()
+            .map_err(|e| super::RaftError::Storage(e.to_string()))?;
+        {
+            let mut log_table = write_txn
+                .open_table(log_table_def)
+                .map_err(|e| super::RaftError::Storage(e.to_string()))?;
+            log_table
+                .insert(key.as_slice(), value.as_slice())
+                .map_err(|e| super::RaftError::Storage(e.to_string()))?;
+            let mut meta_table = write_txn
+                .open_table(meta_table_def)
+                .map_err(|e| super::RaftError::Storage(e.to_string()))?;
+            meta_table
+                .insert(KEY_NEXT_SEQ, next_seq_bytes.as_slice())
+                .map_err(|e| super::RaftError::Storage(e.to_string()))?;
+        }
+        write_txn
+            .commit()
+            .map_err(|e| super::RaftError::Storage(e.to_string()))?;
 
         tracing::trace!(seq, "EC write appended to replication log");
         Ok(seq)

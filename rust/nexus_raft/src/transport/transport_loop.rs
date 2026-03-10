@@ -286,16 +286,37 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
 
             // Anti-entropy: check if peer fell behind compacted WAL region
             let earliest = repl_log.earliest_seq();
-            if state.acked_seq > 0 && state.acked_seq < earliest {
-                if !state.needs_snapshot {
+
+            // Clear needs_snapshot if peer has caught up (e.g., via external
+            // snapshot delivery or WAL re-expansion)
+            if state.needs_snapshot {
+                if state.acked_seq >= earliest {
+                    tracing::info!(
+                        peer = peer_id,
+                        acked = state.acked_seq,
+                        earliest,
+                        "Peer caught up — clearing needs_snapshot"
+                    );
+                    state.needs_snapshot = false;
+                } else {
                     tracing::warn!(
                         peer = peer_id,
                         acked = state.acked_seq,
                         earliest,
-                        "Peer fell behind compacted WAL — needs snapshot"
+                        "Peer needs snapshot (not yet implemented) — skipping"
                     );
-                    state.needs_snapshot = true;
+                    continue;
                 }
+            }
+
+            if state.acked_seq > 0 && state.acked_seq < earliest {
+                tracing::warn!(
+                    peer = peer_id,
+                    acked = state.acked_seq,
+                    earliest,
+                    "Peer fell behind compacted WAL — needs snapshot"
+                );
+                state.needs_snapshot = true;
                 continue; // Skip — incremental replication impossible
             }
 

@@ -302,6 +302,13 @@ pub fn compute_permission_interned(
                     }
                 }
 
+                // Direct tuples always apply (Zanzibar: direct fallback)
+                if !allowed {
+                    allowed = check_relation_with_usersets_interned(
+                        subject, permission, object, graph, namespaces, memo_cache, visited, depth,
+                    );
+                }
+
                 allowed
             }
         }

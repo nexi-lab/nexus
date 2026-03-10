@@ -182,14 +182,20 @@ impl PyTaskEngine {
     }
 
     /// Mark a task as completed with an optional result payload.
-    #[pyo3(signature = (task_id, result=vec![]))]
-    fn complete(&self, task_id: u64, result: Vec<u8>) -> PyResult<()> {
-        self.engine.complete(task_id, &result).map_err(to_py_err)
+    /// `worker_id` must match the current owner to prevent stale workers.
+    #[pyo3(signature = (task_id, worker_id, result=vec![]))]
+    fn complete(&self, task_id: u64, worker_id: &str, result: Vec<u8>) -> PyResult<()> {
+        self.engine
+            .complete(task_id, &result, worker_id)
+            .map_err(to_py_err)
     }
 
     /// Mark a task as failed. Will auto-retry if attempts remain.
-    fn fail(&self, task_id: u64, error_message: &str) -> PyResult<()> {
-        self.engine.fail(task_id, error_message).map_err(to_py_err)
+    /// `worker_id` must match the current owner to prevent stale workers.
+    fn fail(&self, task_id: u64, worker_id: &str, error_message: &str) -> PyResult<()> {
+        self.engine
+            .fail(task_id, error_message, worker_id)
+            .map_err(to_py_err)
     }
 
     /// Cancel a pending or running task.

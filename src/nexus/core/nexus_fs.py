@@ -2357,15 +2357,13 @@ class NexusFS(  # type: ignore[misc]
                 "or pass coordination_url to NexusFS constructor."
             )
 
-        async with self.service("events").locked(path, timeout=timeout, ttl=ttl, _context=context):
-            # Read current content — sys_read (Tier 1) always returns bytes
+        lock_id = await self._lock_manager.acquire(path, timeout=timeout, ttl=ttl)
+        try:
             content = self.sys_read(path, context=context)
-
-            # Apply update function
             new_content = update_fn(content)
-
-            # Write back via Tier 2 write() (no lock since we already hold it)
             return self.write(path, new_content, context=context)
+        finally:
+            await self._lock_manager.release(lock_id, path)
 
     @rpc_expose(description="Append content to an existing file or create if it doesn't exist")
     def append(
@@ -3959,17 +3957,6 @@ class NexusFS(  # type: ignore[misc]
         limit: int | None = None,
         cursor: str | None = None,
     ) -> builtins.list[str] | builtins.list[dict[str, Any]]:
-        if self.service("search") is not None:
-            return self.service("search").list(
-                path=path,
-                recursive=recursive,
-                details=details,
-                show_parsed=show_parsed,
-                context=context,
-                limit=limit,
-                cursor=cursor,
-            )
-        # Kernel-only fallback: delegate directly to metadata store
         prefix = path if path != "/" else ""
         if prefix and not prefix.endswith("/"):
             prefix = prefix + "/"
@@ -3977,35 +3964,6 @@ class NexusFS(  # type: ignore[misc]
         if details:
             return [{"path": e.path, "size": e.size, "etag": e.etag} for e in entries]
         return [e.path for e in entries]
-
-    def glob(self, pattern: str, path: str = "/", context: Any = None) -> builtins.list[str]:
-        return self.service("search").glob(pattern=pattern, path=path, context=context)
-
-    def grep(
-        self,
-        pattern: str,
-        path: str = "/",
-        file_pattern: str | None = None,
-        ignore_case: bool = False,
-        max_results: int = 100,
-        search_mode: str = "auto",
-        context: Any = None,
-        before_context: int = 0,
-        after_context: int = 0,
-        invert_match: bool = False,
-    ) -> builtins.list[dict[str, Any]]:
-        return self.service("search").grep(
-            pattern=pattern,
-            path=path,
-            file_pattern=file_pattern,
-            ignore_case=ignore_case,
-            max_results=max_results,
-            search_mode=search_mode,
-            context=context,
-            before_context=before_context,
-            after_context=after_context,
-            invert_match=invert_match,
-        )
 
     # _run_async: replaced by direct run_sync() calls (Issue #1381)
 

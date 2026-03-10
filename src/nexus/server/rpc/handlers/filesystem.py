@@ -255,7 +255,11 @@ def handle_list(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any
         kwargs["cursor"] = cursor
 
     _list_start = _time.time()
-    result = nexus_fs.sys_readdir(params.path, **kwargs)
+    search = nexus_fs.service("search")
+    if search is not None:
+        result = search.list(path=params.path, **kwargs)
+    else:
+        result = nexus_fs.sys_readdir(params.path, **kwargs)
     _list_elapsed = (_time.time() - _list_start) * 1000
 
     # Result is PaginatedResult when limit is provided

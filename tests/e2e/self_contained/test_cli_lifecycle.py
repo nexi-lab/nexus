@@ -1,6 +1,7 @@
 """E2E tests for CLI infrastructure lifecycle commands (Issue #2807).
 
 Tests ``nexus doctor`` and ``nexus status`` as real subprocess invocations.
+Tests unwrap the JSON envelope produced by ``render_output``.
 """
 
 from __future__ import annotations
@@ -67,8 +68,7 @@ class TestDoctorE2E:
         result = _run_nexus("doctor", "--json")
         assert result.returncode in (0, 1)
         envelope = json.loads(result.stdout)
-        # render_output wraps in {data, _timing} envelope
-        data = envelope.get("data", envelope)
+        data = envelope.get("data", envelope)  # unwrap JSON envelope
         expected_categories = {"connectivity", "storage", "federation", "security", "dependencies"}
         assert set(data.keys()) == expected_categories
         # Each category should be a list of check results
@@ -83,7 +83,7 @@ class TestDoctorE2E:
         """Should have at least 10 checks across all categories."""
         result = _run_nexus("doctor", "--json")
         envelope = json.loads(result.stdout)
-        data = envelope.get("data", envelope)
+        data = envelope.get("data", envelope)  # unwrap JSON envelope
         total = sum(len(checks) for checks in data.values())
         assert total >= 10, f"Expected at least 10 checks, got {total}"
 
@@ -102,7 +102,7 @@ class TestStatusE2E:
         result = _run_nexus("status", "--json", "--url", f"http://127.0.0.1:{port}")
         assert result.returncode == 0, f"status exited {result.returncode}: {result.stderr}"
         envelope = json.loads(result.stdout)
-        data = envelope.get("data", envelope)
+        data = envelope.get("data", envelope)  # unwrap JSON envelope
         assert data["server_reachable"] is False
         assert data["server_health"] is None
 

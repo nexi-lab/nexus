@@ -20,6 +20,7 @@ References:
     - Issue #1383: Define 6 kernel protocol interfaces
 """
 
+from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
 from nexus.contracts.protocols.adaptive_k import AdaptiveKProtocol
 from nexus.contracts.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
 from nexus.contracts.protocols.auth import APIKeyCreatorProtocol
@@ -32,7 +33,6 @@ from nexus.contracts.protocols.brick_lifecycle import (
 from nexus.contracts.protocols.chunked_upload import ChunkedUploadProtocol
 from nexus.contracts.protocols.entity_registry import EntityRegistryProtocol
 from nexus.contracts.protocols.file_reader import FileReaderProtocol
-from nexus.contracts.protocols.filesystem import NexusFilesystem
 from nexus.contracts.protocols.llm import LLMServiceProtocol
 from nexus.contracts.protocols.llm_provider import LLMProviderProtocol
 from nexus.contracts.protocols.mcp import MCPProtocol
@@ -86,7 +86,7 @@ __all__ = [
     "MountPersistProtocol",
     "MountProtocol",
     "NamespaceManagerProtocol",
-    "NexusFilesystem",
+    "NexusFilesystemABC",
     "OAuthProtocol",
     "OperationLogProtocol",
     "ParseProtocol",

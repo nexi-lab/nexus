@@ -176,7 +176,6 @@ class TestBootSystemServices:
             "eviction_manager",
             "namespace_manager",
             "async_namespace_manager",
-            "async_vfs_router",
             "delivery_worker",
             "observability_subsystem",
             "resiliency_manager",

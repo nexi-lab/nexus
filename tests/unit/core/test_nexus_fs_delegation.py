@@ -1,4 +1,4 @@
-"""Delegation round-trip tests for NexusFS kernel syscalls and service access.
+"""Delegation round-trip tests for NexusFS kernel syscalls and service access (Issue #1452).
 
 Tests verify that:
 - NexusFS kernel syscalls (sys_readdir) use internal metadata directly

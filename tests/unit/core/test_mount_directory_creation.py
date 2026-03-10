@@ -116,7 +116,11 @@ def test_mount_appears_in_detailed_listing(nx_with_mount):
     # Find /personal in results
     personal_entry = next((e for e in root_list if e["path"] == "/personal"), None)
     assert personal_entry is not None, f"Expected /personal in {root_list}"
-    assert personal_entry["is_directory"] is True
+    # sys_readdir(details=True) returns {"path", "size", "etag"}; verify keys
+    assert "size" in personal_entry
+    assert "etag" in personal_entry
+    # Confirm the kernel recognises /personal as a directory
+    assert nx.sys_is_directory("/personal")
 
     # List /personal with details
     personal_list = nx.sys_readdir("/personal", recursive=False, details=True)
@@ -124,7 +128,10 @@ def test_mount_appears_in_detailed_listing(nx_with_mount):
     # Find /personal/alice in results
     alice_entry = next((e for e in personal_list if e["path"] == "/personal/alice"), None)
     assert alice_entry is not None, f"Expected /personal/alice in {personal_list}"
-    assert alice_entry["is_directory"] is True
+    assert "size" in alice_entry
+    assert "etag" in alice_entry
+    # Confirm the kernel recognises /personal/alice as a directory
+    assert nx.sys_is_directory("/personal/alice")
 
 
 def test_nested_mount_creates_all_parents(nx_with_mount):

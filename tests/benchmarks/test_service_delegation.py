@@ -1,10 +1,10 @@
 """Benchmark tests for service delegation overhead (Issue #1287).
 
-Measures the cost of NexusFS → service delegation patterns:
+Measures the cost of NexusFS -> service delegation patterns:
 - Direct vs delegated file operations
 - Gateway method delegation overhead
 - Service instantiation time
-- Parameter transformation cost (zone_id → _zone_id renaming)
+- Parameter transformation cost (zone_id -> _zone_id renaming)
 - Result wrapping cost (SkillService dict construction)
 
 Run with: pytest tests/benchmarks/test_service_delegation.py -v --benchmark-only
@@ -17,6 +17,7 @@ import pytest
 
 from nexus.contracts.types import OperationContext
 from nexus.core.nexus_fs import NexusFS
+from nexus.core.service_registry import ServiceRegistry
 from nexus.system_services.gateway import NexusFSGateway
 
 # =============================================================================
@@ -32,6 +33,7 @@ def mock_nexus_fs():
     pre-defined values to isolate delegation overhead.
     """
     fs = object.__new__(NexusFS)
+    fs._service_registry = ServiceRegistry()
     fs.metadata = MagicMock()
     fs.metadata.list = MagicMock(return_value=[])
     fs.version_service = MagicMock()

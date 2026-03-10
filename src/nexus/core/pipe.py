@@ -4,7 +4,7 @@ Implements the Kernel messaging tier from KERNEL-ARCHITECTURE.md §6:
 
     | Tier       | Linux Analogue   | Nexus                              | Latency |
     |------------|------------------|------------------------------------|---------|
-    | **Kernel** | kfifo ring buffer| Nexus Native Pipe (DT_PIPE)        | ~5μs    |
+    | **Kernel** | kfifo ring buffer| Nexus Native Pipe (DT_PIPE)        | ~0.5μs  |
 
 This file contains the kernel-internal ring buffer (kfifo equivalent).
 For VFS-visible named pipes (mkfifo/fs/pipe.c equivalent), see
@@ -17,18 +17,17 @@ Storage model (KERNEL-ARCHITECTURE.md line 228):
     - Pipe **inode** (FileMetadata, entry_type=DT_PIPE) → MetastoreABC
     - Pipe **data** (bytes in ring buffer) → process heap (not in any pillar)
 
-Design: SPSC (single-producer, single-consumer) message-oriented deque with
-byte-capacity tracking. No explicit lock — CPython deque.append/popleft are
-GIL-atomic for SPSC. asyncio.Event pairs provide blocking semantics.
-
-Phase 1 = Python (this file). Phase 2 = Rust lock-free SPSC via nexus_fast (Task #806).
+Design: SPSC (single-producer, single-consumer) message-oriented buffer with
+byte-capacity tracking. Data plane in Rust (nexus_fast.RingBufferCore) for
+~0.5μs/op. asyncio.Event pairs provide blocking semantics from Python.
 
 See: federation-memo.md §7j, ISSUE-A2A-PHASE2-VFS-IPC.md
 """
 
 import asyncio
 import logging
-from collections import deque
+
+from nexus_fast import RingBufferCore
 
 logger = logging.getLogger(__name__)
 
@@ -72,24 +71,12 @@ class RingBuffer:
     For VFS-visible named pipes (mkfifo equivalent), use PipeManager
     from core/pipe_manager.py.
 
-    Design choices:
-      - Message-oriented (deque of discrete bytes), not byte-stream.
-        All real usage is discrete JSON messages (A2A tasks, agent commands).
-      - No explicit lock. SPSC contract + CPython GIL makes deque
-        append/popleft atomic. asyncio.Event pairs for blocking.
-      - Byte-capacity tracking (not message count) for backpressure.
-        A single A2A message is 500-2000 bytes; capacity in bytes is
-        more meaningful than message count.
-
-    Performance: ~5μs per operation (Python Phase 1).
-    Phase 2 target: ~0.5μs via Rust lock-free SPSC (Task #806).
+    Data plane backed by Rust ``nexus_fast.RingBufferCore`` (~0.5μs/op).
+    Python provides asyncio.Event coordination for blocking read/write.
     """
 
     __slots__ = (
-        "_capacity",
-        "_buf",
-        "_size",
-        "_closed",
+        "_core",
         "_not_empty",
         "_not_full",
     )
@@ -103,13 +90,12 @@ class RingBuffer:
         """
         if capacity <= 0:
             raise ValueError(f"capacity must be > 0, got {capacity}")
-        self._capacity = capacity
-        self._buf: deque[bytes] = deque()
-        self._size: int = 0
-        self._closed: bool = False
+        self._core = RingBufferCore(capacity)
         self._not_empty = asyncio.Event()
         self._not_full = asyncio.Event()
         self._not_full.set()  # initially not full
+
+    # -- async write/read ---------------------------------------------------
 
     async def write(self, data: bytes, *, blocking: bool = True) -> int:
         """Write a message to the buffer.
@@ -127,33 +113,17 @@ class RingBuffer:
             PipeFullError: Non-blocking and buffer is full.
             ValueError: Message larger than total capacity.
         """
-        if self._closed:
-            raise PipeClosedError("write to closed pipe")
-
-        if not data:
-            return 0
-
-        msg_len = len(data)
-        if msg_len > self._capacity:
-            raise ValueError(f"message size {msg_len} exceeds buffer capacity {self._capacity}")
-
-        while self._size + msg_len > self._capacity:
-            if not blocking:
-                raise PipeFullError(f"buffer full ({self._size}/{self._capacity} bytes)")
-            self._not_full.clear()
-            # Wait for space or close
-            await self._not_full.wait()
-            if self._closed:
-                raise PipeClosedError("write to closed pipe")
-
-        self._buf.append(data)
-        self._size += msg_len
-        self._not_empty.set()
-
-        if self._size >= self._capacity:
-            self._not_full.clear()
-
-        return msg_len
+        while True:
+            try:
+                n = self.write_nowait(data)
+                return n
+            except PipeFullError:
+                if not blocking:
+                    raise
+                self._not_full.clear()
+                await self._not_full.wait()
+                if self._core.closed:
+                    raise PipeClosedError("write to closed pipe") from None
 
     async def read(self, *, blocking: bool = True) -> bytes:
         """Read the next message from the buffer.
@@ -169,111 +139,99 @@ class RingBuffer:
             PipeClosedError: Buffer is closed AND empty.
             PipeEmptyError: Non-blocking and buffer is empty.
         """
-        while not self._buf:
-            if self._closed:
-                raise PipeClosedError("read from closed empty pipe")
-            if not blocking:
-                raise PipeEmptyError("buffer empty")
-            self._not_empty.clear()
-            await self._not_empty.wait()
+        while True:
+            try:
+                return self.read_nowait()
+            except PipeEmptyError:
+                if not blocking:
+                    raise
+                self._not_empty.clear()
+                await self._not_empty.wait()
 
-        msg = self._buf.popleft()
-        self._size -= len(msg)
-        self._not_full.set()
-
-        if not self._buf:
-            self._not_empty.clear()
-
-        return msg
+    # -- sync nowait --------------------------------------------------------
 
     def write_nowait(self, data: bytes) -> int:
-        """Synchronous non-blocking write. Raises PipeFullError if full.
+        """Synchronous non-blocking write. Raises PipeFullError if full."""
+        try:
+            n = self._core.push(data)
+        except RuntimeError as exc:
+            _translate_rust_error(exc)
+            raise  # unreachable, but keeps type checker happy
+        except ValueError:
+            raise  # oversized message — already a ValueError from Rust
 
-        Same logic as write(blocking=False) but callable from sync code.
-        Used by PipeManager.pipe_write_nowait() for sync producers.
-        """
-        if self._closed:
-            raise PipeClosedError("write to closed pipe")
-        if not data:
-            return 0
-        msg_len = len(data)
-        if msg_len > self._capacity:
-            raise ValueError(f"message size {msg_len} exceeds buffer capacity {self._capacity}")
-        if self._size + msg_len > self._capacity:
-            raise PipeFullError(f"buffer full ({self._size}/{self._capacity} bytes)")
-        self._buf.append(data)
-        self._size += msg_len
         self._not_empty.set()
-        if self._size >= self._capacity:
+        if self._core.is_full():
             self._not_full.clear()
-        return msg_len
+        return int(n)
 
     def read_nowait(self) -> bytes:
-        """Synchronous non-blocking read. Raises PipeEmptyError if empty.
+        """Synchronous non-blocking read. Raises PipeEmptyError if empty."""
+        try:
+            msg = bytes(self._core.pop())
+        except RuntimeError as exc:
+            _translate_rust_error(exc)
+            raise  # unreachable
 
-        Same logic as read(blocking=False) but callable from sync code.
-        Used by PipeManager.pipe_read() under lock for MPMC safety.
-        """
-        if not self._buf:
-            if self._closed:
-                raise PipeClosedError("read from closed empty pipe")
-            raise PipeEmptyError("buffer empty")
-        msg = self._buf.popleft()
-        self._size -= len(msg)
         self._not_full.set()
-        if not self._buf:
+        if self._core.is_empty():
             self._not_empty.clear()
         return msg
 
-    async def wait_writable(self) -> None:
-        """Wait until buffer has space or is closed.
+    # -- wait helpers -------------------------------------------------------
 
-        Public interface to internal Event state. Used by PipeManager
-        for lock→try→unlock→wait→retry pattern (avoids exposing _not_full).
-        """
-        while self._size >= self._capacity and not self._closed:
+    async def wait_writable(self) -> None:
+        """Wait until buffer has space or is closed."""
+        while self._core.is_full() and not self._core.closed:
             self._not_full.clear()
             await self._not_full.wait()
 
     async def wait_readable(self) -> None:
-        """Wait until buffer has data or is closed.
-
-        Public interface to internal Event state. Used by PipeManager
-        for lock→try→unlock→wait→retry pattern (avoids exposing _not_empty).
-        """
-        while not self._buf and not self._closed:
+        """Wait until buffer has data or is closed."""
+        while self._core.is_empty() and not self._core.closed:
             self._not_empty.clear()
             await self._not_empty.wait()
 
+    # -- observability ------------------------------------------------------
+
     def peek(self) -> bytes | None:
         """Non-consuming peek at the next message. Returns None if empty."""
-        return self._buf[0] if self._buf else None
+        result = self._core.peek()
+        return bytes(result) if result is not None else None
 
     def peek_all(self) -> list[bytes]:
-        """Non-consuming view of all buffered messages (for observability)."""
-        return list(self._buf)
+        """Non-consuming view of all buffered messages."""
+        return [bytes(b) for b in self._core.peek_all()]
 
     def close(self) -> None:
-        """Close the buffer. Wakes all blocked readers/writers.
-
-        After close:
-          - write() raises PipeClosedError
-          - read() drains remaining messages, then raises PipeClosedError
-        """
-        self._closed = True
+        """Close the buffer. Wakes all blocked readers/writers."""
+        self._core.close()
         self._not_empty.set()  # wake blocked readers
         self._not_full.set()  # wake blocked writers
 
     @property
     def closed(self) -> bool:
-        return self._closed
+        return bool(self._core.closed)
 
     @property
     def stats(self) -> dict:
         """Buffer statistics for observability."""
-        return {
-            "size": self._size,
-            "capacity": self._capacity,
-            "msg_count": len(self._buf),
-            "closed": self._closed,
-        }
+        return dict(self._core.stats())
+
+
+# ---------------------------------------------------------------------------
+# Error translation
+# ---------------------------------------------------------------------------
+
+
+def _translate_rust_error(exc: RuntimeError) -> None:
+    """Translate Rust RuntimeError tags to Python exception classes."""
+    msg = str(exc)
+    if msg.startswith("PipeClosed:"):
+        raise PipeClosedError(msg.split(":", 1)[1]) from None
+    if msg.startswith("PipeFull:"):
+        raise PipeFullError(msg.split(":", 1)[1]) from None
+    if msg.startswith("PipeEmpty:"):
+        raise PipeEmptyError(msg.split(":", 1)[1]) from None
+    # Unknown RuntimeError — re-raise as-is
+    raise exc

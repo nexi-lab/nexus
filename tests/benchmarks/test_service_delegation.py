@@ -225,11 +225,10 @@ class TestSyncDelegationOverhead:
         benchmark(
             mock_nexus_fs.sys_readdir,
             "/data",
-            True,
-            False,
-            None,
-            True,
-            context,
+            recursive=True,
+            details=False,
+            show_parsed=True,
+            context=context,
         )
 
     def test_search_glob_delegation(self, benchmark, mock_nexus_fs, context):

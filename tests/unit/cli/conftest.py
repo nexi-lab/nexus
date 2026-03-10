@@ -10,6 +10,7 @@ import pytest
 import yaml
 from click.testing import CliRunner
 
+from nexus.cli.client import NexusAPIError
 from nexus.cli.config import NexusCliConfig, ProfileEntry
 
 
@@ -122,3 +123,47 @@ def patch_compose_runner_status(mock_compose_runner: MagicMock):
     """Patch ComposeRunner in the status module."""
     with patch("nexus.cli.commands.status.ComposeRunner", return_value=mock_compose_runner):
         yield mock_compose_runner
+
+
+# ---------------------------------------------------------------------------
+# Service command fixtures (Issue #2812)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def mock_service_client():
+    """Mock NexusServiceClient for testing service CLI commands."""
+    client = MagicMock()
+    client.__enter__ = MagicMock(return_value=client)
+    client.__exit__ = MagicMock(return_value=False)
+    return client
+
+
+@pytest.fixture()
+def patch_service_client(mock_service_client):
+    """Patch get_service_client to return mock. Yields the mock client."""
+    with patch("nexus.cli.service_command.get_service_client", return_value=mock_service_client):
+        yield mock_service_client
+
+
+def make_api_error(status_code: int = 500, detail: str = "Internal Server Error") -> NexusAPIError:
+    """Factory for NexusAPIError in tests."""
+    return NexusAPIError(status_code=status_code, detail=detail)
+
+
+def assert_json_envelope(result, *, expect_data: bool = True, expect_error: bool = False):
+    """Assert CLI result contains valid JSON envelope structure."""
+    import json
+
+    assert result.exit_code is not None
+    output = json.loads(result.output)
+    assert "data" in output
+    if expect_data:
+        assert output["data"] is not None
+    if expect_error:
+        assert "error" in output
+        assert output["error"] is not None
+        assert "code" in output["error"]
+        assert "message" in output["error"]
+        assert "type" in output["error"]
+    return output

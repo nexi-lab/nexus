@@ -9,7 +9,16 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from nexus.cli.utils import add_backend_options, get_filesystem, handle_error
+from nexus.cli.clients.agent_ext import AgentExtClient
+from nexus.cli.output import add_output_options
+from nexus.cli.service_command import ServiceResult, service_command
+from nexus.cli.utils import (
+    REMOTE_API_KEY_OPTION,
+    REMOTE_URL_OPTION,
+    add_backend_options,
+    get_filesystem,
+    handle_error,
+)
 
 console = Console()
 
@@ -262,6 +271,113 @@ def delete_cmd(
 
     except Exception as e:
         handle_error(e)
+
+
+@agent.command(name="status")
+@click.argument("agent_id", type=str)
+@add_output_options
+@REMOTE_API_KEY_OPTION
+@REMOTE_URL_OPTION
+@service_command(client_class=AgentExtClient)
+def agent_status(client: AgentExtClient, agent_id: str) -> ServiceResult:
+    """Show agent lifecycle state, generation, and zone.
+
+    \b
+    Examples:
+        nexus agent status alice
+        nexus agent status alice --json
+    """
+    data = client.status(agent_id)
+
+    def _render(d: dict) -> None:
+        console.print(f"[bold cyan]Agent Status: {agent_id}[/bold cyan]")
+        console.print(f"  Phase:       {d.get('phase', 'N/A')}")
+        console.print(f"  Generation:  {d.get('observed_generation', 'N/A')}")
+        console.print(f"  Inbox:       {d.get('inbox_depth', 0)} message(s)")
+        console.print(f"  Context:     {d.get('context_usage_pct', 0):.1f}%")
+        if d.get("last_heartbeat"):
+            console.print(f"  Heartbeat:   {d['last_heartbeat'][:19]}")
+        if d.get("last_activity"):
+            console.print(f"  Activity:    {d['last_activity'][:19]}")
+        ru = d.get("resource_usage", {})
+        if ru:
+            console.print(f"  Tokens:      {ru.get('tokens_used', 0)}")
+            console.print(f"  Storage:     {ru.get('storage_used_mb', 0):.1f} MB")
+        conditions = d.get("conditions", [])
+        if conditions:
+            console.print("  Conditions:")
+            for c in conditions:
+                status_icon = "[green]OK[/green]" if c.get("status") == "True" else "[red]!![/red]"
+                console.print(f"    {status_icon} {c.get('type', '')}: {c.get('message', '')}")
+
+    return ServiceResult(data=data, human_formatter=_render)
+
+
+@agent.group(name="spec")
+def agent_spec() -> None:
+    """Agent capabilities specification."""
+
+
+@agent_spec.command(name="show")
+@click.argument("agent_id", type=str)
+@add_output_options
+@REMOTE_API_KEY_OPTION
+@REMOTE_URL_OPTION
+@service_command(client_class=AgentExtClient)
+def agent_spec_show(client: AgentExtClient, agent_id: str) -> ServiceResult:
+    """Show agent capabilities spec.
+
+    \b
+    Examples:
+        nexus agent spec show alice --json
+    """
+    data = client.spec_show(agent_id)
+
+    def _render(d: dict) -> None:
+        import json
+
+        console.print(f"[bold cyan]Agent Spec: {agent_id}[/bold cyan]")
+        console.print(json.dumps(d, indent=2, default=str))
+
+    return ServiceResult(data=data, human_formatter=_render)
+
+
+@agent_spec.command(name="set")
+@click.argument("agent_id", type=str)
+@click.argument("spec_json", type=str)
+@add_output_options
+@REMOTE_API_KEY_OPTION
+@REMOTE_URL_OPTION
+@service_command(client_class=AgentExtClient)
+def agent_spec_set(client: AgentExtClient, agent_id: str, spec_json: str) -> ServiceResult:
+    """Set agent capabilities spec (JSON string).
+
+    \b
+    Examples:
+        nexus agent spec set alice '{"tools": ["read", "write"]}'
+    """
+    import json
+
+    spec = json.loads(spec_json)
+    data = client.spec_set(agent_id, spec)
+    return ServiceResult(data=data, message=f"Spec updated for {agent_id}")
+
+
+@agent.command(name="warmup")
+@click.argument("agent_id", type=str)
+@add_output_options
+@REMOTE_API_KEY_OPTION
+@REMOTE_URL_OPTION
+@service_command(client_class=AgentExtClient)
+def agent_warmup(client: AgentExtClient, agent_id: str) -> ServiceResult:
+    """Pre-warm an agent.
+
+    \b
+    Examples:
+        nexus agent warmup alice
+    """
+    data = client.warmup(agent_id)
+    return ServiceResult(data=data, message=f"Agent {agent_id} warmup initiated")
 
 
 def register_commands(cli: click.Group) -> None:

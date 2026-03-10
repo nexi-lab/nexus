@@ -138,14 +138,14 @@ def get_filesystem(
                 "[yellow]Hint:[/yellow] export NEXUS_URL=http://your-nexus-server:2026"
                 " or use `nexus profile add`"
             )
-            sys.exit(1)
+            sys.exit(ExitCode.CONFIG_ERROR)
 
         return nexus.connect(
             config={"profile": "remote", "url": resolved.url, "api_key": resolved.api_key}
         )
     except Exception as e:
         console.print(f"[red]Error connecting to Nexus:[/red] {e}")
-        sys.exit(1)
+        sys.exit(ExitCode.UNAVAILABLE)
 
 
 def get_default_filesystem() -> NexusFilesystem:
@@ -171,7 +171,7 @@ def get_default_filesystem() -> NexusFilesystem:
                 "[yellow]Hint:[/yellow] export NEXUS_URL=http://your-nexus-server:2026"
                 " or use `nexus profile add`"
             )
-            sys.exit(1)
+            sys.exit(ExitCode.CONFIG_ERROR)
 
         return nexus.connect(
             config={
@@ -182,7 +182,7 @@ def get_default_filesystem() -> NexusFilesystem:
         )
     except Exception as e:
         console.print(f"[red]Error connecting to Nexus:[/red] {e}")
-        sys.exit(1)
+        sys.exit(ExitCode.UNAVAILABLE)
 
 
 def get_subject_from_env() -> tuple[str, str] | None:
@@ -237,7 +237,7 @@ def parse_subject(subject_str: str | None) -> tuple[str, str] | None:
         console.print(
             "[yellow]Expected format:[/yellow] type:id (e.g., 'user:alice', 'agent:bot1')"
         )
-        sys.exit(1)
+        sys.exit(ExitCode.USAGE_ERROR)
 
     parts = subject_str.split(":", 1)
     return (parts[0], parts[1])
@@ -485,7 +485,7 @@ def get_service_client(
     """
     if not remote_url:
         console.print("[red]Error:[/red] Server URL required. Set NEXUS_URL or use --remote-url")
-        sys.exit(1)
+        sys.exit(ExitCode.CONFIG_ERROR)
 
     from nexus.cli.client import NexusServiceClient
 

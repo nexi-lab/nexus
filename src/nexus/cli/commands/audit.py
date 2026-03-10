@@ -6,13 +6,13 @@ Issue #2811.
 
 import click
 
+from nexus.cli.output import OutputOptions, add_output_options, render_output
+from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
-    JSON_OUTPUT_OPTION,
     REMOTE_API_KEY_OPTION,
     REMOTE_URL_OPTION,
     console,
     get_service_client,
-    output_result,
 )
 
 
@@ -40,7 +40,7 @@ def audit() -> None:
 @click.option("--agent-id", default=None, help="Filter by agent ID")
 @click.option("--action", default=None, help="Filter by action/status")
 @click.option("--limit", default=50, help="Maximum entries", show_default=True)
-@JSON_OUTPUT_OPTION
+@add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
 def audit_list(
@@ -49,7 +49,7 @@ def audit_list(
     agent_id: str | None,
     action: str | None,
     limit: int,
-    json_output: bool,
+    output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
@@ -61,8 +61,9 @@ def audit_list(
         nexus audit list --since 2024-01-01 --limit 100
         nexus audit list --agent-id alice --json
     """
+    timing = CommandTiming()
     try:
-        with get_service_client(remote_url, remote_api_key) as client:
+        with timing.phase("server"), get_service_client(remote_url, remote_api_key) as client:
             data = client.audit_list(
                 since=since,
                 until=until,
@@ -98,7 +99,12 @@ def audit_list(
                 )
             console.print(table)
 
-        output_result(data, json_output, _render)
+        render_output(
+            data=data,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(1) from None

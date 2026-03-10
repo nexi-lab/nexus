@@ -7,13 +7,13 @@ Commands for discovering and inspecting available connectors:
 Connects to a remote Nexus instance via RPC.
 """
 
-import json
 import sys
 from typing import Any
 
 import click
-from rich.table import Table
 
+from nexus.cli.output import OutputOptions, add_output_options, render_output
+from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
     add_backend_options,
     console,
@@ -57,11 +57,11 @@ def _list_connectors_remote(nx: Any, category: str | None) -> list[dict[str, Any
     default=None,
     help="Filter by category (storage, api, oauth, database)",
 )
-@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+@add_output_options
 @add_backend_options
 def list_connectors(
     category: str | None,
-    as_json: bool,
+    output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
@@ -79,10 +79,12 @@ def list_connectors(
         # Output as JSON
         nexus connectors list --json
     """
+    timing = CommandTiming()
     try:
         nx: Any = get_filesystem(remote_url, remote_api_key)
         try:
-            connectors = _list_connectors_remote(nx, category)
+            with timing.phase("server"):
+                connectors = _list_connectors_remote(nx, category)
         except AttributeError:
             console.print("[red]Error:[/red] Server doesn't support list_connectors")
             console.print("[yellow]Hint:[/yellow] Update server to latest Nexus version")
@@ -95,28 +97,33 @@ def list_connectors(
                 console.print("[yellow]No connectors registered[/yellow]")
             return
 
-        if as_json:
-            console.print(json.dumps(connectors, indent=2))
-            return
+        def _render(data: list[dict[str, Any]]) -> None:
+            from rich.table import Table
 
-        # Create table
-        table = Table(title="Available Connectors", show_header=True, header_style="bold cyan")
-        table.add_column("Name", style="green")
-        table.add_column("Description")
-        table.add_column("Category", style="yellow")
-        table.add_column("Dependencies", style="dim")
+            table = Table(title="Available Connectors", show_header=True, header_style="bold cyan")
+            table.add_column("Name", style="green")
+            table.add_column("Description")
+            table.add_column("Category", style="yellow")
+            table.add_column("Dependencies", style="dim")
 
-        for c in connectors:
-            deps = ", ".join(c["requires"]) if c.get("requires") else "-"
-            table.add_row(
-                c["name"],
-                c.get("description", ""),
-                c.get("category", ""),
-                deps,
-            )
+            for c in data:
+                deps = ", ".join(c["requires"]) if c.get("requires") else "-"
+                table.add_row(
+                    c["name"],
+                    c.get("description", ""),
+                    c.get("category", ""),
+                    deps,
+                )
 
-        console.print(table)
-        console.print(f"\n[dim]Total: {len(connectors)} connectors[/dim]")
+            console.print(table)
+            console.print(f"\n[dim]Total: {len(data)} connectors[/dim]")
+
+        render_output(
+            data=connectors,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
 
     except Exception as e:
         handle_error(e)

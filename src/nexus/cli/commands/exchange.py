@@ -6,12 +6,21 @@ server side; these commands will work once the backend is available.
 
 import click
 
+from nexus.cli.output import OutputOptions, add_output_options, render_output
+from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
-    JSON_OUTPUT_OPTION,
     REMOTE_API_KEY_OPTION,
     REMOTE_URL_OPTION,
     console,
 )
+
+_STUB_STATUS = "not_implemented"
+_STUB_ISSUE = "#2811"
+
+
+def _stub_data(command: str) -> dict[str, str]:
+    """Return structured stub data for a Phase 2 command."""
+    return {"status": _STUB_STATUS, "command": command, "issue": _STUB_ISSUE}
 
 
 @click.group()
@@ -33,10 +42,11 @@ def exchange() -> None:
 
 @exchange.command("list")
 @click.option("--status", type=click.Choice(["active", "completed"]), default=None)
-@JSON_OUTPUT_OPTION
+@add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
 def exchange_list(
+    output_opts: OutputOptions,
     **_kwargs: object,  # noqa: ARG001 — Phase 2 stub
 ) -> None:
     """List exchange offers.
@@ -46,9 +56,15 @@ def exchange_list(
         nexus exchange list
         nexus exchange list --status active --json
     """
-    console.print(
-        "[yellow]Exchange offer listing is not yet available.[/yellow]\n"
-        "This feature is planned for Phase 2. See issue #2811."
+    timing = CommandTiming()
+    render_output(
+        data=_stub_data("exchange list"),
+        output_opts=output_opts,
+        timing=timing,
+        human_formatter=lambda _d: console.print(
+            "[yellow]Exchange offer listing is not yet available.[/yellow]\n"
+            "This feature is planned for Phase 2. See issue #2811."
+        ),
     )
 
 
@@ -56,10 +72,11 @@ def exchange_list(
 @click.argument("resource")
 @click.option("--price", required=True, help="Asking price in credits")
 @click.option("--description", default="", help="Offer description")
-@JSON_OUTPUT_OPTION
+@add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
 def exchange_create(
+    output_opts: OutputOptions,
     **_kwargs: object,  # noqa: ARG001 — Phase 2 stub
 ) -> None:
     """Create an exchange offer.
@@ -69,18 +86,25 @@ def exchange_create(
         nexus exchange create /data/dataset.csv --price 100
         nexus exchange create /models/v2.bin --price 500 --description "Trained model"
     """
-    console.print(
-        "[yellow]Exchange offer creation is not yet available.[/yellow]\n"
-        "This feature is planned for Phase 2. See issue #2811."
+    timing = CommandTiming()
+    render_output(
+        data=_stub_data("exchange create"),
+        output_opts=output_opts,
+        timing=timing,
+        human_formatter=lambda _d: console.print(
+            "[yellow]Exchange offer creation is not yet available.[/yellow]\n"
+            "This feature is planned for Phase 2. See issue #2811."
+        ),
     )
 
 
 @exchange.command("show")
 @click.argument("offer_id")
-@JSON_OUTPUT_OPTION
+@add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
 def exchange_show(
+    output_opts: OutputOptions,
     **_kwargs: object,  # noqa: ARG001 — Phase 2 stub
 ) -> None:
     """Show exchange offer details.
@@ -89,17 +113,25 @@ def exchange_show(
     Examples:
         nexus exchange show abc123 --json
     """
-    console.print(
-        "[yellow]Exchange offer details are not yet available.[/yellow]\n"
-        "This feature is planned for Phase 2. See issue #2811."
+    timing = CommandTiming()
+    render_output(
+        data=_stub_data("exchange show"),
+        output_opts=output_opts,
+        timing=timing,
+        human_formatter=lambda _d: console.print(
+            "[yellow]Exchange offer details are not yet available.[/yellow]\n"
+            "This feature is planned for Phase 2. See issue #2811."
+        ),
     )
 
 
 @exchange.command("cancel")
 @click.argument("offer_id")
+@add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
 def exchange_cancel(
+    output_opts: OutputOptions,
     **_kwargs: object,  # noqa: ARG001 — Phase 2 stub
 ) -> None:
     """Cancel an exchange offer.
@@ -108,7 +140,13 @@ def exchange_cancel(
     Examples:
         nexus exchange cancel abc123
     """
-    console.print(
-        "[yellow]Exchange offer cancellation is not yet available.[/yellow]\n"
-        "This feature is planned for Phase 2. See issue #2811."
+    timing = CommandTiming()
+    render_output(
+        data=_stub_data("exchange cancel"),
+        output_opts=output_opts,
+        timing=timing,
+        human_formatter=lambda _d: console.print(
+            "[yellow]Exchange offer cancellation is not yet available.[/yellow]\n"
+            "This feature is planned for Phase 2. See issue #2811."
+        ),
     )

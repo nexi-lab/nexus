@@ -5,11 +5,14 @@ for secure, time-limited file streaming access via the local backend.
 """
 
 import hmac
+import logging
 import os
 import secrets
 import time
 
 from nexus.contracts.constants import ROOT_ZONE_ID
+
+logger = logging.getLogger(__name__)
 
 # Secret key for signing stream tokens (persistent across restarts if set via env)
 _STREAM_SECRET: bytes | None = None
@@ -20,8 +23,15 @@ def _get_stream_secret() -> bytes:
     global _STREAM_SECRET
     if _STREAM_SECRET is None:
         env_secret = os.environ.get("NEXUS_STREAM_SECRET")
-        # Use env var if set, otherwise generate random secret (changes on restart)
-        _STREAM_SECRET = env_secret.encode() if env_secret else secrets.token_bytes(32)
+        if env_secret:
+            _STREAM_SECRET = env_secret.encode()
+        else:
+            logger.warning(
+                "NEXUS_STREAM_SECRET not set — using random secret. "
+                "Signed stream URLs will break across restarts and workers. "
+                "Set NEXUS_STREAM_SECRET for production use."
+            )
+            _STREAM_SECRET = secrets.token_bytes(32)
     return _STREAM_SECRET
 
 

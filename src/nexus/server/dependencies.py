@@ -322,10 +322,18 @@ def get_operation_context(auth_result: dict[str, Any]) -> Any:
     if subject_type == "agent":
         agent_id = subject_id
 
-    # Handle X-Agent-ID header
+    # Handle X-Agent-ID header — only admins may impersonate arbitrary agents.
+    # Non-admin users must authenticate as the agent directly (subject_type="agent").
     if agent_id and subject_type == "user":
-        subject_type = "agent"
-        subject_id = agent_id
+        if is_admin:
+            subject_type = "agent"
+            subject_id = agent_id
+        else:
+            logger.warning(
+                "Non-admin user %s attempted agent impersonation via X-Agent-ID: %s",
+                subject_id,
+                agent_id,
+            )
 
     # Admin capabilities
     admin_capabilities = set()

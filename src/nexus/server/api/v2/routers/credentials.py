@@ -18,9 +18,26 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from nexus.contracts.credential_types import Ability, Capability
-from nexus.server.dependencies import require_auth
+from nexus.server.dependencies import get_operation_context, require_auth
 
 logger = logging.getLogger(__name__)
+
+
+def _authorize_agent_credential_access(
+    auth_result: dict[str, Any],
+    agent_id: str,
+    action: str = "access",
+) -> None:
+    """Verify caller is authorized to manage an agent's credentials."""
+    ctx = get_operation_context(auth_result)
+    if ctx.is_admin:
+        return
+    if ctx.subject_id != agent_id:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Not authorized to {action} credentials for agent '{agent_id}'",
+        )
+
 
 router = APIRouter(tags=["credentials"])
 
@@ -111,7 +128,7 @@ def _parse_capabilities(raw: list[CapabilityRequest]) -> list[Capability]:
 @router.post("/api/v2/credentials/issue")
 async def issue_credential(
     body: IssueCredentialRequest,
-    _auth_result: dict[str, Any] = Depends(require_auth),
+    auth_result: dict[str, Any] = Depends(require_auth),
     credential_service: Any = Depends(_get_credential_service),
     key_service: Any = Depends(_get_key_service),
 ) -> dict:
@@ -119,6 +136,7 @@ async def issue_credential(
 
     Requires authentication. The agent must have a provisioned identity (DID).
     """
+    _authorize_agent_credential_access(auth_result, body.agent_id, "issue")
     # Resolve agent's DID
     keys = await asyncio.to_thread(key_service.get_active_keys, body.agent_id)
     if not keys:
@@ -232,10 +250,11 @@ async def get_credential_status(
 async def list_agent_credentials(
     agent_id: str,
     active_only: bool = True,
-    _auth_result: dict[str, Any] = Depends(require_auth),
+    auth_result: dict[str, Any] = Depends(require_auth),
     credential_service: Any = Depends(_get_credential_service),
 ) -> dict:
     """List credentials for an agent."""
+    _authorize_agent_credential_access(auth_result, agent_id, "list")
     credentials = await asyncio.to_thread(
         credential_service.list_agent_credentials,
         agent_id,
@@ -271,6 +290,7 @@ async def delegate_credential(
     """Delegate attenuated capabilities to another agent.
 
     The delegated capabilities must be a subset of the parent credential.
+    Caller must own the parent credential (verified by service via token claims).
     """
     # Resolve delegate's DID
     keys = await asyncio.to_thread(key_service.get_active_keys, body.delegate_agent_id)

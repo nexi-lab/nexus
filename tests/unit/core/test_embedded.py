@@ -478,9 +478,9 @@ def test_overwrite_preserves_path(embedded: NexusFS) -> None:
 def test_list_recursive(embedded: NexusFS) -> None:
     """Test recursive listing of files.
 
-    Note: After Issue #1499 refactoring, sys_readdir delegates to
-    metadata.list() which only returns stored file entries — implicit
-    directories are not synthesized.
+    The kernel's metadata.list() returns only file entries, not virtual
+    directories.  Non-recursive mode filters to direct children (no '/'
+    in the relative path after the prefix).
     """
     # Create directory structure
     embedded.sys_write("/file1.txt", b"Content 1")
@@ -488,12 +488,13 @@ def test_list_recursive(embedded: NexusFS) -> None:
     embedded.sys_write("/dir1/subdir/file3.txt", b"Content 3")
     embedded.sys_write("/dir2/file4.txt", b"Content 4")
 
-    # Non-recursive list of root — only files directly in "/" (no implicit dirs)
+    # Non-recursive list of root — only direct-child *files* are returned
+    # (virtual directories like /dir1, /dir2 are NOT materialised in the metastore)
     files = [f for f in embedded.sys_readdir("/", recursive=False) if f not in _SYSTEM_PATHS]
-    assert len(files) == 1
+    assert len(files) == 1  # file1.txt only
     assert "/file1.txt" in files
 
-    # Recursive list of root
+    # Recursive list of root — all files regardless of depth
     files = [f for f in embedded.sys_readdir("/", recursive=True) if f not in _SYSTEM_PATHS]
     assert len(files) == 4
     assert "/file1.txt" in files
@@ -501,9 +502,9 @@ def test_list_recursive(embedded: NexusFS) -> None:
     assert "/dir1/subdir/file3.txt" in files
     assert "/dir2/file4.txt" in files
 
-    # Non-recursive list of dir1 — only direct children files
+    # Non-recursive list of dir1 — only direct-child files
     files = embedded.sys_readdir("/dir1", recursive=False)
-    assert len(files) == 1
+    assert len(files) == 1  # file2.txt only (subdir is virtual, not stored)
     assert "/dir1/file2.txt" in files
 
     # Recursive list of dir1
@@ -516,8 +517,10 @@ def test_list_recursive(embedded: NexusFS) -> None:
 def test_list_with_details(embedded: NexusFS) -> None:
     """Test listing files with detailed metadata.
 
-    Note: After Issue #1499 refactoring, details dict contains
-    {path, size, etag} from metadata.list() (not modified_at/created_at).
+    The kernel's sys_readdir(details=True) returns dicts with keys:
+    ``path``, ``size``, ``etag``.  Richer fields (modified_at, created_at)
+    are available via ``metadata.get()`` but are NOT included in the
+    readdir detail dict.
     """
     # Create files
     embedded.sys_write("/file1.txt", b"Hello")
@@ -533,7 +536,7 @@ def test_list_with_details(embedded: NexusFS) -> None:
     assert len(files) == 2
     assert isinstance(files[0], dict)
 
-    # Check file1
+    # Check file1 — only path/size/etag are returned by sys_readdir
     file1 = next(f for f in files if f["path"] == "/file1.txt")
     assert file1["size"] == 5
     assert file1["etag"] is not None
@@ -552,18 +555,18 @@ def test_glob_simple_pattern(embedded: NexusFS) -> None:
     embedded.sys_write("/data.csv", b"Content")
 
     # Glob for .txt files
-    files = embedded.search_service.glob("*.txt")
+    files = embedded.service("search").glob("*.txt")
     assert len(files) == 2
     assert "/test1.txt" in files
     assert "/test2.txt" in files
 
     # Glob for .py files
-    files = embedded.search_service.glob("*.py")
+    files = embedded.service("search").glob("*.py")
     assert len(files) == 1
     assert "/file.py" in files
 
     # Glob for test* files
-    files = embedded.search_service.glob("test*")
+    files = embedded.service("search").glob("test*")
     assert len(files) == 2
     assert "/test1.txt" in files
     assert "/test2.txt" in files
@@ -578,14 +581,14 @@ def test_glob_recursive_pattern(embedded: NexusFS) -> None:
     embedded.sys_write("/README.md", b"Content")
 
     # Find all Python files recursively
-    files = embedded.search_service.glob("**/*.py")
+    files = embedded.service("search").glob("**/*.py")
     assert len(files) == 3
     assert "/src/main.py" in files
     assert "/src/utils/helper.py" in files
     assert "/tests/test_main.py" in files
 
     # Find all files recursively (filter out system entries)
-    files = [f for f in embedded.search_service.glob("**/*") if f not in _SYSTEM_PATHS]
+    files = [f for f in embedded.service("search").glob("**/*") if f not in _SYSTEM_PATHS]
     assert len(files) == 4
 
 
@@ -597,7 +600,7 @@ def test_glob_with_base_path(embedded: NexusFS) -> None:
     embedded.sys_write("/other/file3.csv", b"Content")
 
     # Glob in data directory
-    files = embedded.search_service.glob("*.csv", path="/data")
+    files = embedded.service("search").glob("*.csv", path="/data")
     assert len(files) == 2
     assert "/data/file1.csv" in files
     assert "/data/file2.csv" in files
@@ -611,7 +614,7 @@ def test_glob_question_mark_pattern(embedded: NexusFS) -> None:
     embedded.sys_write("/file10.txt", b"Content")
 
     # Match single character
-    files = embedded.search_service.glob("file?.txt")
+    files = embedded.service("search").glob("file?.txt")
     assert len(files) == 2
     assert "/file1.txt" in files
     assert "/file2.txt" in files
@@ -625,7 +628,7 @@ def test_grep_simple_search(embedded: NexusFS) -> None:
     embedded.sys_write("/file2.txt", b"Goodbye\nWorld Peace")
 
     # Search for "Hello"
-    results = embedded.search_service.grep("Hello")
+    results = embedded.service("search").grep("Hello")
 
     assert len(results) == 2
     assert results[0]["file"] == "/file1.txt"
@@ -644,7 +647,7 @@ def test_grep_regex_pattern(embedded: NexusFS) -> None:
     embedded.sys_write("/code.py", b"def foo():\n    pass\ndef bar():\n    return 42")
 
     # Search for function definitions
-    results = embedded.search_service.grep(r"def \w+")
+    results = embedded.service("search").grep(r"def \w+")
 
     assert len(results) == 2
     assert results[0]["match"] == "def foo"
@@ -659,7 +662,7 @@ def test_grep_with_file_pattern(embedded: NexusFS) -> None:
     embedded.sys_write("/file.txt", b"import nothing")
 
     # Search only in .py files
-    results = embedded.search_service.grep("import", file_pattern="*.py")
+    results = embedded.service("search").grep("import", file_pattern="*.py")
 
     assert len(results) == 3
     # Should not include file.txt
@@ -674,11 +677,11 @@ def test_grep_case_insensitive(embedded: NexusFS) -> None:
     )
 
     # Case-sensitive (default)
-    results = embedded.search_service.grep("ERROR")
+    results = embedded.service("search").grep("ERROR")
     assert len(results) == 1
 
     # Case-insensitive
-    results = embedded.search_service.grep("ERROR", ignore_case=True)
+    results = embedded.service("search").grep("ERROR", ignore_case=True)
     assert len(results) == 3
 
 
@@ -689,7 +692,7 @@ def test_grep_max_results(embedded: NexusFS) -> None:
     embedded.sys_write("/file.txt", content.encode())
 
     # Limit results
-    results = embedded.search_service.grep("MATCH", max_results=10)
+    results = embedded.service("search").grep("MATCH", max_results=10)
     assert len(results) == 10
 
 
@@ -702,7 +705,7 @@ def test_grep_skips_binary_files(embedded: NexusFS) -> None:
     embedded.sys_write("/text.txt", b"findme")
 
     # Search should only find text file
-    results = embedded.search_service.grep("findme")
+    results = embedded.service("search").grep("findme")
     assert len(results) == 1
     assert results[0]["file"] == "/text.txt"
 
@@ -711,7 +714,7 @@ def test_grep_empty_results(embedded: NexusFS) -> None:
     """Test grep with no matches."""
     embedded.sys_write("/file.txt", b"Hello World")
 
-    results = embedded.search_service.grep("nonexistent")
+    results = embedded.service("search").grep("nonexistent")
     assert len(results) == 0
 
 

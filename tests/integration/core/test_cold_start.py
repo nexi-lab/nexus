@@ -99,4 +99,4 @@ class TestColdStartNexusFSConstruction:
 
         mock_svc = MagicMock()
         populate_service_registry(nx._service_registry, {"rebac_service": mock_svc})
-        assert nx.service("rebac") is mock_svc
+        assert nx.service("rebac")._service_instance is mock_svc

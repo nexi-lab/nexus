@@ -320,6 +320,21 @@ class NexusFS(  # type: ignore[misc]
     # Registered by factory via populate_service_registry() at link().
 
     @property
+    def service_coordinator(self) -> Any | None:
+        """ServiceLifecycleCoordinator (set by factory at initialize time)."""
+        return getattr(self, "_service_coordinator", None)
+
+    async def swap_service(self, name: str, new_instance: Any, **kwargs: Any) -> None:
+        """Hot-swap a service: atomic replace → drain → hook swap.
+
+        Requires system services to be available (coordinator must exist).
+        """
+        coord = self.service_coordinator
+        if coord is None:
+            raise RuntimeError("Service hot-swap requires system services (no coordinator)")
+        await coord.swap_service(name, new_instance, **kwargs)
+
+    @property
     def namespace_manager(self) -> Any | None:
         """Public accessor for the NamespaceManager (via PermissionEnforcer)."""
         enforcer = self._permission_enforcer

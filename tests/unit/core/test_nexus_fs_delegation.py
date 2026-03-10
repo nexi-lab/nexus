@@ -99,22 +99,20 @@ class TestServiceAccess:
     def test_search_service_glob_direct(self, mock_fs, context):
         """Callers should use service("search").glob() directly."""
         matches = ["/data/test.py"]
-        mock_fs.service("search").glob = MagicMock(return_value=matches)
+        mock_glob = MagicMock(return_value=matches)
+        mock_fs.service("search").glob = mock_glob
         result = mock_fs.service("search").glob("*.py", path="/data", context=context)
         assert result == matches
-        mock_fs.service("search").glob.assert_called_once_with(
-            "*.py", path="/data", context=context
-        )
+        mock_glob.assert_called_once_with("*.py", path="/data", context=context)
 
     def test_search_service_grep_direct(self, mock_fs, context):
         """Callers should use service("search").grep() directly."""
         results = [{"path": "/a.py", "line": 1, "match": "import os"}]
-        mock_fs.service("search").grep = MagicMock(return_value=results)
+        mock_grep = MagicMock(return_value=results)
+        mock_fs.service("search").grep = mock_grep
         result = mock_fs.service("search").grep("import os", path="/src", context=context)
         assert result == results
-        mock_fs.service("search").grep.assert_called_once_with(
-            "import os", path="/src", context=context
-        )
+        mock_grep.assert_called_once_with("import os", path="/src", context=context)
 
 
 # =============================================================================

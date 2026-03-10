@@ -204,10 +204,76 @@ class KernelDispatch:
     def register_intercept_rmdir(self, hook: VFSRmdirHook) -> None:
         self._rmdir_hooks.append(hook)
 
+    # ── unregister_intercept: mirror methods for hook removal ────────
+
+    def unregister_resolver(self, resolver: "VFSPathResolver") -> bool:
+        """Remove a PRE-DISPATCH resolver. Returns True if found."""
+        try:
+            self._resolvers.remove(resolver)
+            return True
+        except ValueError:
+            return False
+
+    def unregister_intercept_read(self, hook: VFSReadHook) -> bool:
+        try:
+            self._read_hooks.remove(hook)
+            return True
+        except ValueError:
+            return False
+
+    def unregister_intercept_write(self, hook: VFSWriteHook) -> bool:
+        try:
+            self._write_hooks.remove(hook)
+            return True
+        except ValueError:
+            return False
+
+    def unregister_intercept_write_batch(self, hook: VFSWriteBatchHook) -> bool:
+        try:
+            self._write_batch_hooks.remove(hook)
+            return True
+        except ValueError:
+            return False
+
+    def unregister_intercept_delete(self, hook: VFSDeleteHook) -> bool:
+        try:
+            self._delete_hooks.remove(hook)
+            return True
+        except ValueError:
+            return False
+
+    def unregister_intercept_rename(self, hook: VFSRenameHook) -> bool:
+        try:
+            self._rename_hooks.remove(hook)
+            return True
+        except ValueError:
+            return False
+
+    def unregister_intercept_mkdir(self, hook: VFSMkdirHook) -> bool:
+        try:
+            self._mkdir_hooks.remove(hook)
+            return True
+        except ValueError:
+            return False
+
+    def unregister_intercept_rmdir(self, hook: VFSRmdirHook) -> bool:
+        try:
+            self._rmdir_hooks.remove(hook)
+            return True
+        except ValueError:
+            return False
+
     # ── register_observe: generic OBSERVE observers ────────────────────
 
     def register_observe(self, obs: VFSObserver) -> None:
         self._observers.append(obs)
+
+    def unregister_observe(self, obs: VFSObserver) -> bool:
+        try:
+            self._observers.remove(obs)
+            return True
+        except ValueError:
+            return False
 
     # ── PRE-INTERCEPT dispatch (Issue #899) ───────────────────────────
     # Reuses existing hook lists — calls on_pre_* via getattr.

@@ -329,6 +329,15 @@ def submit_feedback(
     reputation_service, _dispute_service, auth_ctx = deps
     zone_id = auth_ctx.get("zone_id", ROOT_ZONE_ID) or ROOT_ZONE_ID
 
+    # Verify caller is the rater (prevent impersonation)
+    caller_id = auth_ctx.get("subject_id", "")
+    is_admin = auth_ctx.get("is_admin", False)
+    if not is_admin and caller_id != request.rater_agent_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Not authorized to submit feedback as another agent",
+        )
+
     try:
         event = reputation_service.submit_feedback(
             rater_agent_id=request.rater_agent_id,
@@ -374,6 +383,15 @@ def file_dispute(
 
     _reputation_service, dispute_service, auth_ctx = deps
     zone_id = auth_ctx.get("zone_id", ROOT_ZONE_ID) or ROOT_ZONE_ID
+
+    # Verify caller is the complainant (prevent impersonation)
+    caller_id = auth_ctx.get("subject_id", "")
+    is_admin = auth_ctx.get("is_admin", False)
+    if not is_admin and caller_id != request.complainant_agent_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Not authorized to file disputes as another agent",
+        )
 
     try:
         dispute = dispute_service.file_dispute(

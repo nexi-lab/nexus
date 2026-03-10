@@ -425,6 +425,9 @@ class PipedRecordStoreWriteObserver:
                     metadata_snapshot=event.get("metadata_snapshot"),
                     status="success",
                 )
+                new_path = event.get("new_path")
+                if new_path:
+                    recorder.record_rename(event["path"], new_path)
 
             elif op == "mkdir":
                 op_logger.log_operation(

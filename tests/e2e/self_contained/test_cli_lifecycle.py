@@ -63,10 +63,14 @@ class TestDoctorE2E:
         assert "check" in combined.lower(), f"Expected 'check' in output: {combined}"
 
     def test_doctor_json_output(self) -> None:
-        """--json flag should produce valid JSON with all 5 categories."""
+        """--json flag should produce valid JSON envelope with all 5 categories."""
         result = _run_nexus("doctor", "--json")
         assert result.returncode in (0, 1)
-        data = json.loads(result.stdout)
+        envelope = json.loads(result.stdout)
+        # render_output wraps payload in {"data": ..., "_timing": ...}
+        assert "data" in envelope, f"Expected 'data' key in envelope, got: {set(envelope.keys())}"
+        assert "_timing" in envelope
+        data = envelope["data"]
         expected_categories = {"connectivity", "storage", "federation", "security", "dependencies"}
         assert set(data.keys()) == expected_categories
         # Each category should be a list of check results
@@ -80,7 +84,8 @@ class TestDoctorE2E:
     def test_doctor_json_check_count(self) -> None:
         """Should have at least 10 checks across all categories."""
         result = _run_nexus("doctor", "--json")
-        data = json.loads(result.stdout)
+        envelope = json.loads(result.stdout)
+        data = envelope["data"]
         total = sum(len(checks) for checks in data.values())
         assert total >= 10, f"Expected at least 10 checks, got {total}"
 
@@ -98,7 +103,10 @@ class TestStatusE2E:
         port = _find_free_port()
         result = _run_nexus("status", "--json", "--url", f"http://127.0.0.1:{port}")
         assert result.returncode == 0, f"status exited {result.returncode}: {result.stderr}"
-        data = json.loads(result.stdout)
+        envelope = json.loads(result.stdout)
+        # render_output wraps payload in {"data": ..., "_timing": ...}
+        assert "data" in envelope, f"Expected 'data' key in envelope, got: {set(envelope.keys())}"
+        data = envelope["data"]
         assert data["server_reachable"] is False
         assert data["server_health"] is None
 

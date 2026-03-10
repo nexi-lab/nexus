@@ -34,6 +34,7 @@ from nexus.core.file_events import FileEvent, FileEventType
 from nexus.core.hash_fast import hash_content
 from nexus.core.metastore import MetastoreABC
 from nexus.core.router import PathRouter
+from nexus.lib.pagination import PaginatedResult
 from nexus.lib.path_utils import validate_path
 from nexus.lib.rpc_decorator import rpc_expose
 from nexus.storage.record_store import RecordStoreABC
@@ -4039,14 +4040,52 @@ class NexusFS(  # type: ignore[misc]
         context: Any = None,
         limit: int | None = None,
         cursor: str | None = None,
-    ) -> builtins.list[str] | builtins.list[dict[str, Any]]:
+    ) -> builtins.list[str] | builtins.list[dict[str, Any]] | PaginatedResult:
         prefix = path if path != "/" else ""
         if prefix and not prefix.endswith("/"):
             prefix = prefix + "/"
         entries = self.metadata.list(prefix=prefix, recursive=recursive)
+
+        # Convert entries to the requested format
         if details:
-            return [{"path": e.path, "size": e.size, "etag": e.etag} for e in entries]
-        return [e.path for e in entries]
+            items: builtins.list[Any] = [
+                {"path": e.path, "size": e.size, "etag": e.etag} for e in entries
+            ]
+        else:
+            items = [e.path for e in entries]
+
+        # Backward compat: no limit means return plain list
+        if limit is None:
+            return items
+
+        # --- Paginated path ---
+        # Sort items by path for deterministic cursor-based pagination
+        items.sort(key=lambda x: x["path"] if isinstance(x, dict) else x)
+
+        # Apply cursor: skip items whose path <= cursor
+        if cursor is not None:
+            items = [
+                item
+                for item in items
+                if (item["path"] if isinstance(item, dict) else item) > cursor
+            ]
+
+        # Slice to limit + 1 to detect has_more
+        has_more = len(items) > limit
+        page = items[:limit]
+
+        # Compute next_cursor from last item's path
+        if has_more and page:
+            last = page[-1]
+            next_cursor = last["path"] if isinstance(last, dict) else last
+        else:
+            next_cursor = None
+
+        return PaginatedResult(
+            items=page,
+            next_cursor=next_cursor,
+            has_more=has_more,
+        )
 
     # _run_async: replaced by direct run_sync() calls (Issue #1381)
 

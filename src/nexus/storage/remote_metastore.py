@@ -133,5 +133,50 @@ class RemoteMetastore(MetastoreABC):
             return bool(result.get("is_directory", False))
         return bool(result)
 
+    def set_file_metadata(self, path: str, key: str, value: Any) -> None:
+        """Store custom metadata key-value pair for a file via server RPC.
+
+        Proxies to ``sys_setattr`` with the custom key-value pair so the
+        server can persist it in its metastore.
+
+        Args:
+            path: Virtual file path.
+            key: Metadata key (e.g. ``parsed_text``, ``parser_name``).
+            value: Metadata value (JSON-serialisable).
+        """
+        try:
+            self._call_rpc(
+                "sys_setattr",
+                {"path": path, "key": key, "value": value},
+            )
+        except Exception as exc:
+            logger.debug(
+                "RemoteMetastore.set_file_metadata(%s, %s) failed (non-fatal): %s",
+                path,
+                key,
+                exc,
+            )
+
+    def get_file_metadata(self, path: str, key: str) -> Any:
+        """Get custom metadata value for a file via server RPC.
+
+        Args:
+            path: Virtual file path.
+            key: Metadata key.
+
+        Returns:
+            Metadata value or ``None`` if not found.
+        """
+        try:
+            result = self._call_rpc(
+                "sys_getattr",
+                {"path": path, "key": key},
+            )
+            if isinstance(result, dict):
+                return result.get("value")
+            return result
+        except Exception:
+            return None
+
     def close(self) -> None:
         """No-op — transport lifecycle managed by factory."""

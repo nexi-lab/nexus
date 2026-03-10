@@ -30,7 +30,7 @@ def _to_dto(user: UserModel) -> UserDTO:
         password_hash=user.password_hash,
         primary_auth_method=user.primary_auth_method,
         is_global_admin=bool(user.is_global_admin),
-        api_key=user.api_key,
+        api_key=None,  # Never expose plaintext legacy api_key; use hashed api_keys table
         last_login_at=user.last_login_at,
         created_at=user.created_at,
         updated_at=user.updated_at,

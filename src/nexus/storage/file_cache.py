@@ -171,6 +171,13 @@ class FileContentCache:
         hash_hex: str = blake3.blake3(virtual_path.encode()).hexdigest()
         return hash_hex[:32]
 
+    @staticmethod
+    def _safe_zone_id(zone_id: str) -> str:
+        """Validate zone_id is safe for filesystem path construction."""
+        from nexus.lib.zone import validate_zone_id
+
+        return validate_zone_id(zone_id)
+
     def _get_cache_path(self, zone_id: str, virtual_path: str) -> Path:
         """Get the file path for cached content.
 
@@ -178,17 +185,20 @@ class FileContentCache:
         This prevents too many files in a single directory (max 256 per level).
         """
         path_hash = self._path_hash(virtual_path)
-        return self.cache_dir / zone_id / path_hash[:2] / path_hash[2:4] / f"{path_hash}.bin"
+        safe_zone = self._safe_zone_id(zone_id)
+        return self.cache_dir / safe_zone / path_hash[:2] / path_hash[2:4] / f"{path_hash}.bin"
 
     def _get_text_cache_path(self, zone_id: str, virtual_path: str) -> Path:
         """Get the file path for cached parsed text."""
         path_hash = self._path_hash(virtual_path)
-        return self.cache_dir / zone_id / path_hash[:2] / path_hash[2:4] / f"{path_hash}.txt"
+        safe_zone = self._safe_zone_id(zone_id)
+        return self.cache_dir / safe_zone / path_hash[:2] / path_hash[2:4] / f"{path_hash}.txt"
 
     def _get_meta_cache_path(self, zone_id: str, virtual_path: str) -> Path:
         """Get the file path for cached metadata (replaces DB ContentCacheModel)."""
         path_hash = self._path_hash(virtual_path)
-        return self.cache_dir / zone_id / path_hash[:2] / path_hash[2:4] / f"{path_hash}.meta"
+        safe_zone = self._safe_zone_id(zone_id)
+        return self.cache_dir / safe_zone / path_hash[:2] / path_hash[2:4] / f"{path_hash}.meta"
 
     def write(
         self,
@@ -547,7 +557,8 @@ class FileContentCache:
         Returns:
             Number of files deleted
         """
-        zone_dir = self.cache_dir / zone_id
+        safe_zone = self._safe_zone_id(zone_id)
+        zone_dir = self.cache_dir / safe_zone
         if not zone_dir.exists():
             return 0
 

@@ -29,13 +29,16 @@ class ReputationScoreModel(Base):
 
     __tablename__ = "reputation_scores"
 
-    # Composite primary key
+    # Composite primary key (zone_id included for cross-zone isolation)
     agent_id: Mapped[str] = mapped_column(String(255), primary_key=True, nullable=False)
     context: Mapped[str] = mapped_column(
         String(100), primary_key=True, nullable=False, default="general"
     )
     window: Mapped[str] = mapped_column(
         String(20), primary_key=True, nullable=False, default="all_time"
+    )
+    zone_id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, nullable=False, default=ROOT_ZONE_ID
     )
 
     # Per-dimension Beta distribution parameters (prior = 1.0)
@@ -60,9 +63,6 @@ class ReputationScoreModel(Base):
 
     # Cross-zone trust
     global_trust_score: Mapped[float | None] = mapped_column(Float, nullable=True)
-
-    # Zone scope
-    zone_id: Mapped[str] = mapped_column(String(36), nullable=False, default=ROOT_ZONE_ID)
 
     # Last update timestamp
     updated_at: Mapped[datetime] = mapped_column(

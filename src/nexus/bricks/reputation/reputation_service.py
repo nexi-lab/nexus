@@ -176,6 +176,7 @@ class ReputationService(SessionMixin):
         agent_id: str,
         context: str = "general",
         window: str = "all_time",
+        zone_id: str | None = None,
     ) -> ReputationScore | None:
         """Get materialized reputation score for an agent.
 
@@ -183,16 +184,21 @@ class ReputationService(SessionMixin):
             agent_id: Agent to look up.
             context: Reputation context (default "general").
             window: Time window (default "all_time").
+            zone_id: Zone to scope the lookup (default ROOT_ZONE_ID).
 
         Returns:
             ReputationScore record or None if not found.
         """
+        from nexus.contracts.constants import ROOT_ZONE_ID
+
+        effective_zone = zone_id or ROOT_ZONE_ID
         with self._get_session() as session:
             model = session.execute(
                 select(ReputationScoreModel).where(
                     ReputationScoreModel.agent_id == agent_id,
                     ReputationScoreModel.context == context,
                     ReputationScoreModel.window == window,
+                    ReputationScoreModel.zone_id == effective_zone,
                 )
             ).scalar_one_or_none()
 
@@ -325,12 +331,13 @@ class ReputationService(SessionMixin):
         context: str,
     ) -> None:
         """Incrementally update the materialized reputation score."""
-        # Get or create score record (all_time window)
+        # Get or create score record (all_time window, zone-scoped)
         model = session.execute(
             select(ReputationScoreModel).where(
                 ReputationScoreModel.agent_id == rated_agent_id,
                 ReputationScoreModel.context == context,
                 ReputationScoreModel.window == "all_time",
+                ReputationScoreModel.zone_id == zone_id,
             )
         ).scalar_one_or_none()
 

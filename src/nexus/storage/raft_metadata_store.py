@@ -581,17 +581,28 @@ class RaftMetadataStore(MetastoreABC):
         serialized: list[tuple[str, bytes]] = [
             (m.path, _serialize_metadata(m)) for m in metadata_list
         ]
+        path_list = [path for path, _ in serialized]
 
-        # Phase 2: apply all writes in a single FFI call
+        # Phase 2: capture existing metadata for rollback (single FFI call)
+        if hasattr(self._engine, "get_metadata_multi"):
+            snapshots = self._engine.get_metadata_multi(path_list)
+        else:
+            snapshots = [(p, self._engine.get_metadata(p)) for p in path_list]
+
+        # Phase 3: apply all writes in a single FFI call
         try:
             self._engine.batch_set_metadata(serialized)
         except Exception as e:
-            # Best-effort rollback: delete entries that were written
-            paths_to_rollback = [path for path, _ in serialized]
+            # Best-effort rollback: restore pre-existing entries, delete new ones
+            restore_items = [(path, data) for path, data in snapshots if data is not None]
+            delete_paths = [path for path, data in snapshots if data is None]
             try:
-                self._engine.batch_delete_metadata(paths_to_rollback)
+                if restore_items:
+                    self._engine.batch_set_metadata(restore_items)
+                if delete_paths:
+                    self._engine.batch_delete_metadata(delete_paths)
             except Exception:
-                logger.warning("put_batch rollback failed for %d paths", len(paths_to_rollback))
+                logger.warning("put_batch rollback failed for %d paths", len(path_list))
             raise RuntimeError(f"put_batch failed writing {len(serialized)} entries: {e}") from e
 
     def delete_batch(self, paths: Sequence[str]) -> None:

@@ -14,8 +14,8 @@ import pytest
 
 from nexus.contracts.metadata import FileMetadata
 from nexus.core.file_events import FileEvent, FileEventType
+from nexus.core.pipe_manager import PipeManager
 from nexus.system_services.lifecycle.workflow_dispatch_service import WorkflowDispatchService
-from nexus.system_services.pipe_manager import PipeManager
 
 # ======================================================================
 # Fixtures

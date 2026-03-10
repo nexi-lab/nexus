@@ -334,16 +334,6 @@ def _boot_system_services(
         except Exception as exc:
             logger.warning("[BOOT:SYSTEM] NamespaceManager unavailable: %s", exc)
 
-    # --- Async VFS Router (Issue #1502) ---
-    async_vfs_router: Any = None
-    try:
-        from nexus.core.router import AsyncVFSRouter
-
-        async_vfs_router = AsyncVFSRouter(ctx.router)
-        logger.debug("[BOOT:SYSTEM] AsyncVFSRouter created")
-    except Exception as exc:
-        logger.warning("[BOOT:SYSTEM] AsyncVFSRouter unavailable: %s", exc)
-
     # --- Event Delivery Worker (Issue #1241, constructed, NOT started) ---
     delivery_worker = None
     if not _on("eventlog"):
@@ -501,7 +491,7 @@ def _boot_system_services(
     # --- PipeManager (Issue #809: DT_PIPE kernel IPC for write observer + zoekt) ---
     pipe_manager: Any = None
     try:
-        from nexus.system_services.pipe_manager import PipeManager
+        from nexus.core.pipe_manager import PipeManager
 
         pipe_manager = PipeManager(ctx.metadata_store, zone_id=ctx.zone_id or ROOT_ZONE_ID)
         logger.debug("[BOOT:SYSTEM] PipeManager created")
@@ -554,7 +544,6 @@ def _boot_system_services(
         "async_agent_registry": async_agent_registry,
         "namespace_manager": namespace_manager,
         "async_namespace_manager": async_namespace_manager,
-        "async_vfs_router": async_vfs_router,
         "delivery_worker": delivery_worker,
         "observability_subsystem": observability_subsystem,
         "resiliency_manager": resiliency_manager,

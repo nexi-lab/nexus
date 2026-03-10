@@ -208,6 +208,24 @@ class NexusFilesystemABC(ABC):
         """
         ...
 
+    # ── Pipe ────────────────────────────────────────────────────────
+
+    @abstractmethod
+    def sys_mkpipe(
+        self,
+        path: str,
+        *,
+        capacity: int = 65_536,
+        owner_id: str | None = None,
+        context: Any = None,
+    ) -> dict[str, Any]:
+        """Create a named pipe (Linux mknod(2) + S_IFIFO).
+
+        Creates a DT_PIPE inode in MetastoreABC and a RingBuffer in memory.
+        Pipe I/O is then handled by sys_read/sys_write natively.
+        """
+        ...
+
     # ── System Info + Lifecycle ────────────────────────────────────
 
     @abstractmethod

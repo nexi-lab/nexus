@@ -10,19 +10,18 @@ import importlib
 
 class TestPipeTierPlacement:
     """pipe.py (RingBuffer/kfifo) is a kernel VFS primitive — stays in core/.
-    pipe_manager.py (PipeManager/fs/pipe.c) is a system service — lives in system_services/.
+    pipe_manager.py (PipeManager/fs/pipe.c) is a kernel primitive — lives in core/.
 
-    Issue #2366: PipeManager moved from core/ to system_services/ because the kernel
-    should contain only VFSRouter + MetastoreABC + ConnectorProtocol per
-    NEXUS-LEGO-ARCHITECTURE.md. RingBuffer stays as a kernel primitive.
+    Issue #2366: PipeManager reverted back to core/ — it is a kernel primitive
+    alongside RingBuffer per KERNEL-ARCHITECTURE.md.
     """
 
     def test_ring_buffer_in_core(self) -> None:
         mod = importlib.import_module("nexus.core.pipe")
         assert hasattr(mod, "RingBuffer")
 
-    def test_pipe_manager_in_system_services(self) -> None:
-        mod = importlib.import_module("nexus.system_services.pipe_manager")
+    def test_pipe_manager_in_core(self) -> None:
+        mod = importlib.import_module("nexus.core.pipe_manager")
         assert hasattr(mod, "PipeManager")
 
 

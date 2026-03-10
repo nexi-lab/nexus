@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from nexus.bricks.search.zoekt_client import ZoektIndexManager
-    from nexus.system_services.pipe_manager import PipeManager
+    from nexus.core.pipe_manager import PipeManager
 
 logger = logging.getLogger(__name__)
 

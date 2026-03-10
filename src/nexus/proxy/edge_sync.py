@@ -149,7 +149,7 @@ class EdgeSyncManager:
             return not self._circuit.is_open
 
         try:
-            await self._transport.call("health.check", params={})
+            await self._transport.call(self._health_check_url, params={})
             logger.info("Health check passed for node %s", self._node_id)
             return True  # Any non-exception response = healthy
         except Exception:

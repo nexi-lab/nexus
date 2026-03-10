@@ -632,8 +632,6 @@ class RebacCheckParams:
     object: tuple[str, str]
     context: Any = None
     zone_id: str | None = None
-    consistency_mode: str | None = None
-    min_revision: int | None = None
 
     def __post_init__(self) -> None:
         """Convert lists to tuples (JSON deserializes tuples as lists)."""

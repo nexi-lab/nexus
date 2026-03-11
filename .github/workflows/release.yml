@@ -29,35 +29,10 @@ jobs:
           fi
           echo "✅ Version match confirmed"
 
-  build-wheels:
+  build-wheel:
     needs: [verify-version]
-    name: Build wheels for ${{ matrix.platform.target }}
-    runs-on: ${{ matrix.platform.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        platform:
-          # Linux builds
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            arch: x64
-          # TODO: Re-enable aarch64 Linux builds once Docker/QEMU issues are resolved
-          # - os: ubuntu-latest
-          #   target: aarch64-unknown-linux-gnu
-          #   arch: aarch64
-
-          # macOS builds
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            arch: x64
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            arch: arm64
-
-          # Windows builds
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            arch: x64
+    name: Build wheel
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
@@ -67,22 +42,16 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-          architecture: ${{ matrix.platform.arch }}
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.platform.target }}
 
       - name: Build wheels
         run: |
-          pip install maturin
-          maturin build --release --target ${{ matrix.platform.target }} --out dist
+          python -m pip install build
+          python -m build --wheel --outdir dist
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-${{ matrix.platform.target }}
+          name: wheel
           path: dist/*.whl
           if-no-files-found: error
 
@@ -104,8 +73,8 @@ jobs:
 
       - name: Build sdist
         run: |
-          pip install maturin
-          maturin sdist --out dist
+          python -m pip install build
+          python -m build --sdist --outdir dist
 
       - name: Upload sdist
         uses: actions/upload-artifact@v4
@@ -116,7 +85,7 @@ jobs:
 
   publish:
     name: Publish to PyPI
-    needs: [build-wheels, build-sdist]
+    needs: [build-wheel, build-sdist]
     runs-on: ubuntu-latest
 
     steps:

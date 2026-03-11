@@ -9,6 +9,56 @@ Nexus is easiest to understand as a terminal-first filesystem and context plane 
 
 There is not a first-party full-screen TUI in this repository today. The shipped terminal UX is a rich CLI with prompts, tables, watch mode, and JSON output. If you want a true TUI, the supported foundation is `nexus.sdk` plus the CLI JSON contracts.
 
+## Setup First
+
+Before choosing a workflow, make sure Nexus is installed in a way that matches your goal.
+
+### Start from a source checkout
+
+Use a source checkout when you are:
+
+- contributing to Nexus
+- validating docs or tests against this repository
+- changing code and docs together
+- working with examples that assume the current branch state
+
+Typical setup:
+
+```bash
+uv venv --python 3.14
+source .venv/bin/activate
+uv pip install -r requirements-minimal.txt
+uv pip install -e . --no-deps
+```
+
+### Start from PyPI
+
+Use a package install when you are:
+
+- evaluating Nexus as a user rather than a contributor
+- embedding Nexus in another project
+- following the stable package path instead of the repo checkout path
+
+Typical setup:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install nexus-ai-fs
+```
+
+### Which should the guide assume?
+
+The user guide assumes the package is importable and the CLI is available. In practice:
+
+- if you are in a source checkout, use the editable install path above
+- if you are outside the repo, use the PyPI install path
+
+For CLI examples:
+
+- after a package install, use `nexus ...`
+- from a source checkout without console scripts on `PATH`, `python -m nexus.cli.main ...` is the safest fallback
+
 ## Choose Your Path
 
 | Use case | Start here | Main packages |

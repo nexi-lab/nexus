@@ -16,16 +16,19 @@
 // Client
 export { NexusPay } from "./client.js";
 
-// Errors
+// Errors (pay-specific + re-exported from @nexus/api-client)
 export {
   NexusPayError,
-  AuthenticationError,
   InsufficientCreditsError,
   BudgetExceededError,
   WalletNotFoundError,
   ReservationError,
+  AuthenticationError,
   RateLimitError,
 } from "./errors.js";
+
+// Shared base error (for instanceof checks)
+export { NexusApiError } from "@nexus/api-client";
 
 // Types
 export type {

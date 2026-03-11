@@ -18,7 +18,7 @@ from typing import Any
 
 from nexus.contracts.metadata import FileMetadata
 from nexus.core.metastore import MetastoreABC
-from nexus.lib.pagination import PaginatedResult
+from nexus.core.pagination import PaginatedResult
 
 logger = logging.getLogger(__name__)
 

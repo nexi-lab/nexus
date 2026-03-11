@@ -11,13 +11,9 @@ import pytest
 
 from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.core.config import PermissionConfig
+from nexus.core.pagination import PaginatedResult
 from nexus.factory import create_nexus_fs
-from nexus.lib.pagination import PaginatedResult
 from nexus.storage.raft_metadata_store import RaftMetadataStore
-
-# sys_readdir does not yet implement pagination (returns plain list).
-# These tests will be re-enabled when pagination lands (#937).
-pytestmark = pytest.mark.skip(reason="Pagination not yet implemented in sys_readdir (#937)")
 
 
 @pytest.fixture
@@ -165,7 +161,7 @@ class TestBackwardCompatibility:
         result = nexus_fs.sys_readdir("/test/")
         assert len(result) >= 3  # at least a.txt, b.txt, sub/c.txt
 
-        # Non-recursive list — direct children only
+        # Non-recursive list — direct children only (may include sub/ dir entry)
         result = nexus_fs.sys_readdir("/test/", recursive=False)
         assert len(result) >= 2  # at least a.txt, b.txt
 

@@ -1,26 +1,31 @@
 /**
- * Brick list sidebar: status indicator + brick_id + zone_id for each brick.
+ * Brick list sidebar: state indicator + name + protocol for each brick.
  */
 
 import React from "react";
-import type { Brick } from "../../stores/zones-store.js";
+import type { BrickStatusResponse } from "../../stores/zones-store.js";
 
 interface BrickListProps {
-  readonly bricks: readonly Brick[];
+  readonly bricks: readonly BrickStatusResponse[];
   readonly selectedIndex: number;
   readonly loading: boolean;
 }
 
-const STATUS_INDICATORS: Readonly<Record<Brick["status"], string>> = {
-  online: "[ON]",
-  offline: "[--]",
-  degraded: "[DG]",
-  syncing: "[SY]",
-};
-
-function shortId(id: string): string {
-  if (id.length <= 12) return id;
-  return `${id.slice(0, 10)}..`;
+function stateIndicator(state: string): string {
+  switch (state) {
+    case "running":
+      return "[ON]";
+    case "stopped":
+      return "[--]";
+    case "failed":
+      return "[!!]";
+    case "mounted":
+      return "[MT]";
+    case "unmounted":
+      return "[UM]";
+    default:
+      return "[??]";
+  }
 }
 
 export function BrickList({
@@ -49,11 +54,11 @@ export function BrickList({
       {bricks.map((brick, i) => {
         const isSelected = i === selectedIndex;
         const prefix = isSelected ? "> " : "  ";
-        const indicator = STATUS_INDICATORS[brick.status] ?? "[??]";
+        const indicator = stateIndicator(brick.state);
 
         return (
-          <box key={brick.brick_id} height={1} width="100%">
-            <text>{`${prefix}${indicator} ${shortId(brick.brick_id)} (${brick.zone_id})`}</text>
+          <box key={brick.name} height={1} width="100%">
+            <text>{`${prefix}${indicator} ${brick.name} (${brick.protocol_name})`}</text>
           </box>
         );
       })}

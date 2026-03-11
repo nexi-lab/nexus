@@ -42,7 +42,6 @@ export default function PaymentsPanel(): React.ReactNode {
   const error = usePaymentsStore((s) => s.error);
 
   const fetchBalance = usePaymentsStore((s) => s.fetchBalance);
-  const fetchReservations = usePaymentsStore((s) => s.fetchReservations);
   const fetchPolicies = usePaymentsStore((s) => s.fetchPolicies);
   const fetchAudit = usePaymentsStore((s) => s.fetchAudit);
   const commitReservation = usePaymentsStore((s) => s.commitReservation);
@@ -52,14 +51,13 @@ export default function PaymentsPanel(): React.ReactNode {
     (s) => s.setSelectedReservationIndex,
   );
 
-  // Refresh current view based on active tab
+  // Refresh current view based on active tab.
+  // Reservations are tracked locally, so no fetch is needed for that tab.
   const refreshCurrentView = (): void => {
     if (!client) return;
 
     if (activeTab === "balance") {
       fetchBalance(client);
-    } else if (activeTab === "reservations") {
-      fetchReservations(client);
     } else if (activeTab === "policies") {
       fetchPolicies(client);
     } else if (activeTab === "audit") {

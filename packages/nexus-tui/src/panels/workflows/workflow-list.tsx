@@ -1,30 +1,19 @@
 /**
- * Workflow list view: name, status, trigger type, step count, last run.
+ * Workflow list view: name, version, enabled, triggers count, actions count, description.
  */
 
 import React from "react";
-import type { Workflow } from "../../stores/workflows-store.js";
+import type { WorkflowSummary } from "../../stores/workflows-store.js";
 
 interface WorkflowListProps {
-  readonly workflows: readonly Workflow[];
+  readonly workflows: readonly WorkflowSummary[];
   readonly selectedIndex: number;
   readonly loading: boolean;
 }
 
-const STATUS_BADGES: Readonly<Record<Workflow["status"], string>> = {
-  active: "[ACT]",
-  paused: "[PAU]",
-  draft: "[DRF]",
-  archived: "[ARC]",
-};
-
-function formatTimestamp(ts: string | null): string {
-  if (!ts) return "never";
-  try {
-    return new Date(ts).toLocaleString();
-  } catch {
-    return ts;
-  }
+function truncate(text: string, maxLen: number): string {
+  if (text.length <= maxLen) return text;
+  return `${text.slice(0, maxLen - 3)}...`;
 }
 
 export function WorkflowList({
@@ -52,26 +41,25 @@ export function WorkflowList({
     <scrollbox height="100%" width="100%">
       {/* Header */}
       <box height={1} width="100%">
-        <text>{"  ST     NAME                 TRIGGER         STEPS  LAST RUN"}</text>
+        <text>{"  EN   NAME                 VERSION   TRIG  ACT  DESCRIPTION"}</text>
       </box>
       <box height={1} width="100%">
-        <text>{"  -----  -------------------  --------------  -----  --------"}</text>
+        <text>{"  ---  -------------------  --------  ----  ---  -----------"}</text>
       </box>
 
       {/* Rows */}
       {workflows.map((w, i) => {
         const isSelected = i === selectedIndex;
-        const badge = STATUS_BADGES[w.status] ?? `[${w.status.toUpperCase()}]`;
-        const name = w.name.length > 19 ? `${w.name.slice(0, 16)}...` : w.name;
-        const trigger = w.trigger_type.length > 14
-          ? `${w.trigger_type.slice(0, 11)}...`
-          : w.trigger_type;
+        const enabledBadge = w.enabled ? "[ON]" : "[--]";
+        const name = truncate(w.name, 19);
+        const version = truncate(w.version, 8);
+        const desc = w.description ? truncate(w.description, 30) : "";
         const prefix = isSelected ? "> " : "  ";
 
         return (
-          <box key={w.workflow_id} height={1} width="100%">
+          <box key={w.name} height={1} width="100%">
             <text>
-              {`${prefix}${badge.padEnd(5)}  ${name.padEnd(19)}  ${trigger.padEnd(14)}  ${String(w.step_count).padEnd(5)}  ${formatTimestamp(w.last_run)}`}
+              {`${prefix}${enabledBadge.padEnd(3)}  ${name.padEnd(19)}  ${version.padEnd(8)}  ${String(w.triggers).padEnd(4)}  ${String(w.actions).padEnd(3)}  ${desc}`}
             </text>
           </box>
         );

@@ -6,12 +6,6 @@ import React from "react";
 import type { SecretAuditEntry } from "../../stores/infra-store.js";
 import { Spinner } from "../../shared/components/spinner.js";
 
-const RESULT_ICON: Record<string, string> = {
-  success: "✓",
-  denied: "✗",
-  error: "!",
-};
-
 export function SecretsAudit({
   entries,
   loading,
@@ -31,19 +25,18 @@ export function SecretsAudit({
     <scrollbox height="100%" width="100%">
       {/* Header */}
       <box height={1} width="100%">
-        <text>{"  Result  Action       Secret               Actor                Time"}</text>
+        <text>{"  Event Type     Actor                Zone                 Time"}</text>
       </box>
 
       {entries.map((entry) => {
-        const icon = RESULT_ICON[entry.result] ?? "?";
-        const action = entry.action.padEnd(12).slice(0, 12);
-        const secret = entry.secret_name.padEnd(20).slice(0, 20);
-        const actor = entry.actor.padEnd(20).slice(0, 20);
-        const time = entry.timestamp.slice(11, 19);
+        const eventType = entry.event_type.padEnd(14).slice(0, 14);
+        const actor = entry.actor_id.padEnd(20).slice(0, 20);
+        const zone = entry.zone_id.padEnd(20).slice(0, 20);
+        const time = entry.created_at.slice(11, 19);
 
         return (
-          <box key={entry.entry_id} height={1} width="100%">
-            <text>{`  ${icon}     ${action} ${secret} ${actor} ${time}`}</text>
+          <box key={entry.id} height={1} width="100%">
+            <text>{`  ${eventType} ${actor} ${zone} ${time}`}</text>
           </box>
         );
       })}

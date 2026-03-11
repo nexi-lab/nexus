@@ -16,9 +16,21 @@ function mockClient(responses: Record<string, unknown>): FetchClient {
       }
       throw new Error(`Unmocked path: ${path}`);
     }),
+    patch: mock(async (path: string) => {
+      for (const [pattern, response] of Object.entries(responses)) {
+        if (path.includes(pattern)) return response;
+      }
+      throw new Error(`Unmocked path: ${path}`);
+    }),
     delete: mock(async (path: string) => {
       for (const [pattern, response] of Object.entries(responses)) {
         if (path.includes(pattern)) return response;
+      }
+      throw new Error(`Unmocked path: ${path}`);
+    }),
+    deleteNoContent: mock(async (path: string) => {
+      for (const [pattern, response] of Object.entries(responses)) {
+        if (path.includes(pattern)) return;
       }
       throw new Error(`Unmocked path: ${path}`);
     }),
@@ -245,23 +257,26 @@ describe("InfraStore", () => {
           locks: [
             {
               lock_id: "lock-1",
+              mode: "mutex",
+              max_holders: 1,
+              holder_info: "agent-42",
+              acquired_at: 1704067200,
+              expires_at: 1704067500,
+              fence_token: 1,
               resource: "/data/important.bin",
-              holder: "agent-42",
-              status: "held",
-              acquired_at: "2025-01-01T10:00:00Z",
-              expires_at: "2025-01-01T10:05:00Z",
-              ttl_seconds: 300,
             },
             {
               lock_id: "lock-2",
+              mode: "mutex",
+              max_holders: 1,
+              holder_info: "agent-7",
+              acquired_at: 1704060000,
+              expires_at: 1704060060,
+              fence_token: 2,
               resource: "/config/settings.json",
-              holder: "agent-7",
-              status: "expired",
-              acquired_at: "2025-01-01T08:00:00Z",
-              expires_at: "2025-01-01T08:01:00Z",
-              ttl_seconds: 60,
             },
           ],
+          count: 2,
         },
       });
 
@@ -270,8 +285,10 @@ describe("InfraStore", () => {
 
       expect(state.locks).toHaveLength(2);
       expect(state.locks[0]!.resource).toBe("/data/important.bin");
-      expect(state.locks[0]!.holder).toBe("agent-42");
-      expect(state.locks[1]!.status).toBe("expired");
+      expect(state.locks[0]!.holder_info).toBe("agent-42");
+      expect(state.locks[0]!.mode).toBe("mutex");
+      expect(state.locks[0]!.fence_token).toBe(1);
+      expect(state.locks[1]!.lock_id).toBe("lock-2");
       expect(state.locksLoading).toBe(false);
       expect(state.selectedLockIndex).toBe(0);
     });
@@ -287,101 +304,119 @@ describe("InfraStore", () => {
   });
 
   describe("releaseLock", () => {
-    it("updates lock status to released locally", async () => {
+    it("calls DELETE and removes lock from local list", async () => {
       useInfraStore.setState({
         locks: [
           {
             lock_id: "lock-1",
+            mode: "mutex",
+            max_holders: 1,
+            holder_info: "agent-1",
+            acquired_at: 1704067200,
+            expires_at: 1704067500,
+            fence_token: 1,
             resource: "/data/file",
-            holder: "agent-1",
-            status: "held",
-            acquired_at: "2025-01-01T00:00:00Z",
-            expires_at: "2025-01-01T00:05:00Z",
-            ttl_seconds: 300,
           },
         ],
       });
 
       const client = mockClient({
-        "/api/v2/locks/lock-1/release": {},
+        "/api/v2/locks/": {},
       });
 
-      await useInfraStore.getState().releaseLock("lock-1", client);
-      expect(useInfraStore.getState().locks[0]!.status).toBe("released");
+      await useInfraStore.getState().releaseLock("/data/file", "lock-1", client);
+      expect(useInfraStore.getState().locks).toHaveLength(0);
       expect(useInfraStore.getState().error).toBeNull();
+      expect((client.deleteNoContent as ReturnType<typeof mock>).mock.calls.length).toBe(1);
     });
 
     it("sets error on failure", async () => {
       const client = {
-        post: mock(async () => { throw new Error("Lock release denied"); }),
+        deleteNoContent: mock(async () => { throw new Error("Lock release denied"); }),
       } as unknown as FetchClient;
 
-      await useInfraStore.getState().releaseLock("lock-1", client);
+      await useInfraStore.getState().releaseLock("/data/file", "lock-1", client);
       expect(useInfraStore.getState().error).toBe("Lock release denied");
     });
   });
 
   describe("extendLock", () => {
-    it("calls extend and refreshes locks", async () => {
+    it("calls PATCH and refreshes locks", async () => {
+      const lockData = {
+        locks: [
+          {
+            lock_id: "lock-1",
+            mode: "mutex",
+            max_holders: 1,
+            holder_info: "agent-1",
+            acquired_at: 1704067200,
+            expires_at: 1704067800,
+            fence_token: 1,
+            resource: "/data/file",
+          },
+        ],
+        count: 1,
+      };
       const client = mockClient({
-        "/api/v2/locks/lock-1/extend": {},
-        "/api/v2/locks": {
-          locks: [
-            {
-              lock_id: "lock-1",
-              resource: "/data/file",
-              holder: "agent-1",
-              status: "held",
-              acquired_at: "2025-01-01T00:00:00Z",
-              expires_at: "2025-01-01T00:10:00Z",
-              ttl_seconds: 600,
-            },
-          ],
-        },
+        "/api/v2/locks": lockData,
       });
 
-      await useInfraStore.getState().extendLock("lock-1", 600, client);
+      await useInfraStore.getState().extendLock("/data/file", 600, client);
       const state = useInfraStore.getState();
 
       expect(state.locks).toHaveLength(1);
-      expect(state.locks[0]!.ttl_seconds).toBe(600);
+      expect(state.locks[0]!.expires_at).toBe(1704067800);
       expect(state.error).toBeNull();
     });
 
     it("sets error on failure", async () => {
       const client = {
-        post: mock(async () => { throw new Error("Extension denied"); }),
+        patch: mock(async () => { throw new Error("Extension denied"); }),
       } as unknown as FetchClient;
 
-      await useInfraStore.getState().extendLock("lock-1", 300, client);
+      await useInfraStore.getState().extendLock("/data/file", 300, client);
       expect(useInfraStore.getState().error).toBe("Extension denied");
     });
   });
 
   describe("fetchSecretAudit", () => {
-    it("fetches and stores audit entries", async () => {
+    it("fetches and stores audit events", async () => {
       const client = mockClient({
-        "/api/v2/secrets/audit": {
-          entries: [
+        "/api/v2/secrets-audit/events": {
+          events: [
             {
-              entry_id: "audit-1",
-              action: "read",
-              secret_name: "DB_PASSWORD",
-              actor: "agent-10",
-              timestamp: "2025-01-01T12:00:00Z",
+              id: "audit-1",
+              record_hash: "abc123",
+              created_at: "2025-01-01T12:00:00Z",
+              event_type: "read",
+              actor_id: "agent-10",
+              provider: null,
+              credential_id: null,
+              token_family_id: null,
+              zone_id: "zone-1",
               ip_address: "10.0.0.1",
-              result: "success",
+              details: null,
+              metadata_hash: null,
             },
             {
-              entry_id: "audit-2",
-              action: "write",
-              secret_name: "API_KEY",
-              actor: "agent-5",
-              timestamp: "2025-01-01T12:05:00Z",
+              id: "audit-2",
+              record_hash: "def456",
+              created_at: "2025-01-01T12:05:00Z",
+              event_type: "write",
+              actor_id: "agent-5",
+              provider: "vault",
+              credential_id: "cred-1",
+              token_family_id: null,
+              zone_id: "zone-1",
               ip_address: null,
-              result: "denied",
+              details: "Updated secret",
+              metadata_hash: "hash789",
             },
           ],
+          limit: 50,
+          has_more: false,
+          total: 2,
+          next_cursor: null,
         },
       });
 
@@ -389,9 +424,12 @@ describe("InfraStore", () => {
       const state = useInfraStore.getState();
 
       expect(state.secretAuditEntries).toHaveLength(2);
-      expect(state.secretAuditEntries[0]!.secret_name).toBe("DB_PASSWORD");
-      expect(state.secretAuditEntries[0]!.result).toBe("success");
-      expect(state.secretAuditEntries[1]!.result).toBe("denied");
+      expect(state.secretAuditEntries[0]!.id).toBe("audit-1");
+      expect(state.secretAuditEntries[0]!.event_type).toBe("read");
+      expect(state.secretAuditEntries[0]!.actor_id).toBe("agent-10");
+      expect(state.secretAuditEntries[0]!.ip_address).toBe("10.0.0.1");
+      expect(state.secretAuditEntries[1]!.provider).toBe("vault");
+      expect(state.secretAuditEntries[1]!.details).toBe("Updated secret");
       expect(state.secretsLoading).toBe(false);
     });
 

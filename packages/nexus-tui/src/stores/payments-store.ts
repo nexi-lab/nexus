@@ -3,6 +3,9 @@
  *
  * Manages balance queries, credit transfers, reservations (hold/commit/release),
  * payment policies, and the audit log.
+ *
+ * Reservations are tracked locally (from createReservation responses) because
+ * the backend has no reservation list endpoint.
  */
 
 import { create } from "zustand";
@@ -71,7 +74,7 @@ export interface PaymentsState {
   readonly balance: BalanceInfo | null;
   readonly balanceLoading: boolean;
 
-  // Reservations
+  // Reservations (tracked locally from create responses)
   readonly reservations: readonly Reservation[];
   readonly selectedReservationIndex: number;
   readonly reservationsLoading: boolean;
@@ -103,7 +106,6 @@ export interface PaymentsState {
   ) => Promise<void>;
   readonly commitReservation: (id: string, client: FetchClient) => Promise<void>;
   readonly releaseReservation: (id: string, client: FetchClient) => Promise<void>;
-  readonly fetchReservations: (client: FetchClient) => Promise<void>;
   readonly fetchPolicies: (client: FetchClient) => Promise<void>;
   readonly fetchAudit: (client: FetchClient) => Promise<void>;
   readonly setActiveTab: (tab: PaymentsTab) => void;
@@ -158,11 +160,13 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
     set({ error: null });
 
     try {
-      await client.post<Reservation>("/api/v2/pay/reserve", {
+      const reservation = await client.post<Reservation>("/api/v2/pay/reserve", {
         amount,
         description,
       });
-      await get().fetchReservations(client);
+      set((state) => ({
+        reservations: [...state.reservations, reservation],
+      }));
     } catch (err) {
       set({
         error:
@@ -175,11 +179,14 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
     set({ error: null });
 
     try {
-      await client.post<void>(
+      await client.postNoContent(
         `/api/v2/pay/reserve/${encodeURIComponent(id)}/commit`,
-        {},
       );
-      await get().fetchReservations(client);
+      set((state) => ({
+        reservations: state.reservations.map((r) =>
+          r.reservation_id === id ? { ...r, status: "committed" as const } : r,
+        ),
+      }));
     } catch (err) {
       set({
         error:
@@ -192,35 +199,18 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
     set({ error: null });
 
     try {
-      await client.post<void>(
+      await client.postNoContent(
         `/api/v2/pay/reserve/${encodeURIComponent(id)}/release`,
-        {},
       );
-      await get().fetchReservations(client);
+      set((state) => ({
+        reservations: state.reservations.map((r) =>
+          r.reservation_id === id ? { ...r, status: "released" as const } : r,
+        ),
+      }));
     } catch (err) {
       set({
         error:
           err instanceof Error ? err.message : "Failed to release reservation",
-      });
-    }
-  },
-
-  fetchReservations: async (client) => {
-    set({ reservationsLoading: true, error: null });
-
-    try {
-      const response = await client.get<{
-        readonly reservations: readonly Reservation[];
-      }>("/api/v2/pay/reservations");
-      const reservations = response.reservations ?? [];
-      set({ reservations, reservationsLoading: false });
-    } catch (err) {
-      set({
-        reservationsLoading: false,
-        error:
-          err instanceof Error
-            ? err.message
-            : "Failed to fetch reservations",
       });
     }
   },

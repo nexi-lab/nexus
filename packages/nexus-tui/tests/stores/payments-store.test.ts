@@ -16,6 +16,12 @@ function mockClient(responses: Record<string, unknown>): FetchClient {
       }
       throw new Error(`Unmocked path: ${path}`);
     }),
+    postNoContent: mock(async (path: string) => {
+      for (const [pattern, response] of Object.entries(responses)) {
+        if (path.includes(pattern)) return;
+      }
+      throw new Error(`Unmocked path: ${path}`);
+    }),
   } as unknown as FetchClient;
 }
 
@@ -193,7 +199,7 @@ describe("PaymentsStore", () => {
   // ---------------------------------------------------------------------------
 
   describe("createReservation", () => {
-    it("calls POST and refreshes reservations", async () => {
+    it("calls POST and stores reservation locally", async () => {
       const client = mockClient({
         "/api/v2/pay/reserve": {
           reservation_id: "res-001",
@@ -203,19 +209,6 @@ describe("PaymentsStore", () => {
           description: "Hold for job",
           created_at: "2025-06-01T12:00:00Z",
           expires_at: "2025-06-02T12:00:00Z",
-        },
-        "/api/v2/pay/reservations": {
-          reservations: [
-            {
-              reservation_id: "res-001",
-              account_id: "acct-001",
-              amount: "50.00",
-              status: "active",
-              description: "Hold for job",
-              created_at: "2025-06-01T12:00:00Z",
-              expires_at: "2025-06-02T12:00:00Z",
-            },
-          ],
         },
       });
 
@@ -227,6 +220,44 @@ describe("PaymentsStore", () => {
       expect(state.error).toBeNull();
       expect(state.reservations).toHaveLength(1);
       expect(state.reservations[0]!.reservation_id).toBe("res-001");
+      expect(state.reservations[0]!.status).toBe("active");
+    });
+
+    it("appends to existing reservations", async () => {
+      usePaymentsStore.setState({
+        reservations: [
+          {
+            reservation_id: "res-existing",
+            account_id: "acct-001",
+            amount: "25.00",
+            status: "active",
+            description: "Previous",
+            created_at: "2025-06-01T10:00:00Z",
+            expires_at: "2025-06-02T10:00:00Z",
+          },
+        ],
+      });
+
+      const client = mockClient({
+        "/api/v2/pay/reserve": {
+          reservation_id: "res-002",
+          account_id: "acct-001",
+          amount: "75.00",
+          status: "active",
+          description: "New hold",
+          created_at: "2025-06-01T12:00:00Z",
+          expires_at: "2025-06-02T12:00:00Z",
+        },
+      });
+
+      await usePaymentsStore
+        .getState()
+        .createReservation("75.00", "New hold", client);
+      const state = usePaymentsStore.getState();
+
+      expect(state.reservations).toHaveLength(2);
+      expect(state.reservations[0]!.reservation_id).toBe("res-existing");
+      expect(state.reservations[1]!.reservation_id).toBe("res-002");
     });
 
     it("sets error on failure", async () => {
@@ -251,22 +282,23 @@ describe("PaymentsStore", () => {
   // ---------------------------------------------------------------------------
 
   describe("commitReservation", () => {
-    it("calls POST commit and refreshes reservations", async () => {
+    it("calls POST commit (204) and updates local status", async () => {
+      usePaymentsStore.setState({
+        reservations: [
+          {
+            reservation_id: "res-001",
+            account_id: "acct-001",
+            amount: "50.00",
+            status: "active",
+            description: "Hold for job",
+            created_at: "2025-06-01T12:00:00Z",
+            expires_at: "2025-06-02T12:00:00Z",
+          },
+        ],
+      });
+
       const client = mockClient({
         "/api/v2/pay/reserve/res-001/commit": undefined,
-        "/api/v2/pay/reservations": {
-          reservations: [
-            {
-              reservation_id: "res-001",
-              account_id: "acct-001",
-              amount: "50.00",
-              status: "committed",
-              description: "Hold for job",
-              created_at: "2025-06-01T12:00:00Z",
-              expires_at: "2025-06-02T12:00:00Z",
-            },
-          ],
-        },
       });
 
       await usePaymentsStore.getState().commitReservation("res-001", client);
@@ -279,7 +311,7 @@ describe("PaymentsStore", () => {
     it("sets error on failure", async () => {
       const client = {
         get: mock(async () => ({})),
-        post: mock(async () => {
+        postNoContent: mock(async () => {
           throw new Error("Reservation not found");
         }),
       } as unknown as FetchClient;
@@ -294,22 +326,23 @@ describe("PaymentsStore", () => {
   // ---------------------------------------------------------------------------
 
   describe("releaseReservation", () => {
-    it("calls POST release and refreshes reservations", async () => {
+    it("calls POST release (204) and updates local status", async () => {
+      usePaymentsStore.setState({
+        reservations: [
+          {
+            reservation_id: "res-001",
+            account_id: "acct-001",
+            amount: "50.00",
+            status: "active",
+            description: "Hold for job",
+            created_at: "2025-06-01T12:00:00Z",
+            expires_at: "2025-06-02T12:00:00Z",
+          },
+        ],
+      });
+
       const client = mockClient({
         "/api/v2/pay/reserve/res-001/release": undefined,
-        "/api/v2/pay/reservations": {
-          reservations: [
-            {
-              reservation_id: "res-001",
-              account_id: "acct-001",
-              amount: "50.00",
-              status: "released",
-              description: "Hold for job",
-              created_at: "2025-06-01T12:00:00Z",
-              expires_at: "2025-06-02T12:00:00Z",
-            },
-          ],
-        },
       });
 
       await usePaymentsStore.getState().releaseReservation("res-001", client);
@@ -322,7 +355,7 @@ describe("PaymentsStore", () => {
     it("sets error on failure", async () => {
       const client = {
         get: mock(async () => ({})),
-        post: mock(async () => {
+        postNoContent: mock(async () => {
           throw new Error("Cannot release committed reservation");
         }),
       } as unknown as FetchClient;
@@ -331,62 +364,6 @@ describe("PaymentsStore", () => {
       expect(usePaymentsStore.getState().error).toBe(
         "Cannot release committed reservation",
       );
-    });
-  });
-
-  // ---------------------------------------------------------------------------
-  // fetchReservations
-  // ---------------------------------------------------------------------------
-
-  describe("fetchReservations", () => {
-    it("fetches and stores reservations list", async () => {
-      const client = mockClient({
-        "/api/v2/pay/reservations": {
-          reservations: [
-            {
-              reservation_id: "res-001",
-              account_id: "acct-001",
-              amount: "50.00",
-              status: "active",
-              description: "Hold for job A",
-              created_at: "2025-06-01T12:00:00Z",
-              expires_at: "2025-06-02T12:00:00Z",
-            },
-            {
-              reservation_id: "res-002",
-              account_id: "acct-001",
-              amount: "75.00",
-              status: "expired",
-              description: null,
-              created_at: "2025-06-01T10:00:00Z",
-              expires_at: "2025-06-01T11:00:00Z",
-            },
-          ],
-        },
-      });
-
-      await usePaymentsStore.getState().fetchReservations(client);
-      const state = usePaymentsStore.getState();
-
-      expect(state.reservations).toHaveLength(2);
-      expect(state.reservations[0]!.reservation_id).toBe("res-001");
-      expect(state.reservations[0]!.status).toBe("active");
-      expect(state.reservations[1]!.description).toBeNull();
-      expect(state.reservationsLoading).toBe(false);
-      expect(state.error).toBeNull();
-    });
-
-    it("sets error on failure", async () => {
-      const client = {
-        get: mock(async () => {
-          throw new Error("Reservations service down");
-        }),
-      } as unknown as FetchClient;
-
-      await usePaymentsStore.getState().fetchReservations(client);
-      const state = usePaymentsStore.getState();
-      expect(state.reservationsLoading).toBe(false);
-      expect(state.error).toBe("Reservations service down");
     });
   });
 

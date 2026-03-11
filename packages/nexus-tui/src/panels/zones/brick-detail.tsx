@@ -1,48 +1,35 @@
 /**
- * Brick detail overview: status, type, address, capacity usage, last_seen.
+ * Brick detail view: shows individual brick info from GET /api/v2/bricks/{name}.
+ *
+ * Displays: name, state, protocol_name, error, started_at, stopped_at, unmounted_at.
  */
 
 import React from "react";
-import type { Brick } from "../../stores/zones-store.js";
+import type { BrickStatusResponse } from "../../stores/zones-store.js";
 
 interface BrickDetailProps {
-  readonly brick: Brick | null;
+  readonly brick: BrickStatusResponse | null;
+  readonly loading: boolean;
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
-  const exp = Math.floor(Math.log(bytes) / Math.log(1024));
-  const idx = Math.min(exp, units.length - 1);
-  const value = bytes / Math.pow(1024, idx);
-  return `${value.toFixed(1)} ${units[idx]}`;
-}
-
-function formatTimestamp(ts: string | null): string {
-  if (!ts) return "n/a";
+function formatEpoch(epoch: number | null): string {
+  if (epoch === null) return "n/a";
   try {
-    return new Date(ts).toLocaleString();
+    return new Date(epoch * 1000).toLocaleString();
   } catch {
-    return ts;
+    return String(epoch);
   }
 }
 
-function renderUsageBar(used: number, total: number, width: number): string {
-  if (total === 0) return `[${"?".repeat(width)}] n/a`;
-  const pct = (used / total) * 100;
-  const filled = Math.round((pct / 100) * width);
-  const empty = width - filled;
-  return `[${"#".repeat(filled)}${"-".repeat(empty)}] ${pct.toFixed(1)}%`;
-}
+export function BrickDetail({ brick, loading }: BrickDetailProps): React.ReactNode {
+  if (loading) {
+    return (
+      <box height="100%" width="100%" justifyContent="center" alignItems="center">
+        <text>Loading brick detail...</text>
+      </box>
+    );
+  }
 
-const STATUS_LABELS: Readonly<Record<Brick["status"], string>> = {
-  online: "Online",
-  offline: "Offline",
-  degraded: "Degraded",
-  syncing: "Syncing",
-};
-
-export function BrickDetail({ brick }: BrickDetailProps): React.ReactNode {
   if (!brick) {
     return (
       <box height="100%" width="100%" justifyContent="center" alignItems="center">
@@ -51,38 +38,32 @@ export function BrickDetail({ brick }: BrickDetailProps): React.ReactNode {
     );
   }
 
-  const statusLabel = STATUS_LABELS[brick.status] ?? brick.status;
-
   return (
     <scrollbox height="100%" width="100%">
       <box height={1} width="100%">
-        <text>{`Brick ID:  ${brick.brick_id}`}</text>
+        <text>{`Name:         ${brick.name}`}</text>
       </box>
       <box height={1} width="100%">
-        <text>{`Zone ID:   ${brick.zone_id}`}</text>
+        <text>{`State:        ${brick.state}`}</text>
       </box>
       <box height={1} width="100%">
-        <text>{`Status:    ${statusLabel}`}</text>
+        <text>{`Protocol:     ${brick.protocol_name}`}</text>
       </box>
       <box height={1} width="100%">
-        <text>{`Type:      ${brick.brick_type}`}</text>
-      </box>
-      <box height={1} width="100%">
-        <text>{`Address:   ${brick.address}`}</text>
+        <text>{`Error:        ${brick.error ?? "none"}`}</text>
       </box>
 
       <box height={1} width="100%" marginTop={1}>
-        <text>--- Capacity ---</text>
+        <text>--- Timestamps ---</text>
       </box>
       <box height={1} width="100%">
-        <text>{`Used:      ${formatBytes(brick.used_bytes)} / ${formatBytes(brick.capacity_bytes)}`}</text>
+        <text>{`Started at:   ${formatEpoch(brick.started_at)}`}</text>
       </box>
       <box height={1} width="100%">
-        <text>{`Usage:     ${renderUsageBar(brick.used_bytes, brick.capacity_bytes, 20)}`}</text>
+        <text>{`Stopped at:   ${formatEpoch(brick.stopped_at)}`}</text>
       </box>
-
-      <box height={1} width="100%" marginTop={1}>
-        <text>{`Last seen: ${formatTimestamp(brick.last_seen)}`}</text>
+      <box height={1} width="100%">
+        <text>{`Unmounted at: ${formatEpoch(brick.unmounted_at)}`}</text>
       </box>
     </scrollbox>
   );

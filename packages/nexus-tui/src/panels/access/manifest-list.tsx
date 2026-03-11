@@ -1,5 +1,5 @@
 /**
- * Access manifest list: shows ReBAC tuples as rows.
+ * Access manifest list: shows manifests with name, agent, zone, status, entries count, validity.
  */
 
 import React from "react";
@@ -16,8 +16,7 @@ function shortId(id: string): string {
   return `${id.slice(0, 12)}..`;
 }
 
-function formatTimestamp(ts: string | null): string {
-  if (!ts) return "never";
+function formatTimestamp(ts: string): string {
   try {
     return new Date(ts).toLocaleString();
   } catch {
@@ -50,22 +49,22 @@ export function ManifestList({
     <scrollbox height="100%" width="100%">
       {/* Header */}
       <box height={1} width="100%">
-        <text>{"  SUBJECT          RELATION       OBJECT           ZONE       GRANTED BY       EXPIRES"}</text>
+        <text>{"  NAME             AGENT            ZONE             STATUS     ENTRIES  VALID FROM         VALID UNTIL"}</text>
       </box>
       <box height={1} width="100%">
-        <text>{"  ---------------  -------------  ---------------  ---------  ---------------  -------"}</text>
+        <text>{"  ---------------  ---------------  ---------------  ---------  -------  -----------------  -----------------"}</text>
       </box>
 
       {/* Rows */}
       {manifests.map((m, i) => {
         const isSelected = i === selectedIndex;
         const prefix = isSelected ? "> " : "  ";
-        const zone = m.zone_id ?? "global";
+        const entriesCount = String(m.entries.length);
 
         return (
           <box key={m.manifest_id} height={1} width="100%">
             <text>
-              {`${prefix}${shortId(m.subject).padEnd(15)}  ${m.relation.padEnd(13)}  ${shortId(m.object).padEnd(15)}  ${zone.padEnd(9)}  ${shortId(m.granted_by).padEnd(15)}  ${formatTimestamp(m.expires_at)}`}
+              {`${prefix}${shortId(m.name).padEnd(15)}  ${shortId(m.agent_id).padEnd(15)}  ${shortId(m.zone_id).padEnd(15)}  ${m.status.padEnd(9)}  ${entriesCount.padEnd(7)}  ${formatTimestamp(m.valid_from).padEnd(17)}  ${formatTimestamp(m.valid_until)}`}
             </text>
           </box>
         );

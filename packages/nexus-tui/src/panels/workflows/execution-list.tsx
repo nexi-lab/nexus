@@ -1,24 +1,19 @@
 /**
- * Execution list view: status, started_at, duration, trigger, error.
+ * Execution list view: execution_id, trigger_type, status, started_at,
+ * completed_at, actions progress, error_message.
  */
 
 import React from "react";
-import type { Execution } from "../../stores/workflows-store.js";
+import type { ExecutionSummary } from "../../stores/workflows-store.js";
 
 interface ExecutionListProps {
-  readonly executions: readonly Execution[];
+  readonly executions: readonly ExecutionSummary[];
   readonly selectedIndex: number;
   readonly loading: boolean;
 }
 
-const STATUS_BADGES: Readonly<Record<Execution["status"], string>> = {
-  running: "[RUN]",
-  completed: "[OK ]",
-  failed: "[ERR]",
-  cancelled: "[CAN]",
-};
-
-function formatTimestamp(ts: string): string {
+function formatTimestamp(ts: string | null): string {
+  if (!ts) return "---";
   try {
     return new Date(ts).toLocaleString();
   } catch {
@@ -26,11 +21,14 @@ function formatTimestamp(ts: string): string {
   }
 }
 
-function formatDuration(ms: number | null): string {
-  if (ms === null) return "---";
-  if (ms < 1000) return `${ms}ms`;
-  const seconds = (ms / 1000).toFixed(1);
-  return `${seconds}s`;
+function shortId(id: string): string {
+  if (id.length <= 10) return id;
+  return `${id.slice(0, 8)}..`;
+}
+
+function truncate(text: string, maxLen: number): string {
+  if (text.length <= maxLen) return text;
+  return `${text.slice(0, maxLen - 3)}...`;
 }
 
 export function ExecutionList({
@@ -58,28 +56,28 @@ export function ExecutionList({
     <scrollbox height="100%" width="100%">
       {/* Header */}
       <box height={1} width="100%">
-        <text>{"  ST     STARTED              DURATION  TRIGGER         ERROR"}</text>
+        <text>{"  ID          STATUS     TRIGGER       PROGRESS  STARTED              ERROR"}</text>
       </box>
       <box height={1} width="100%">
-        <text>{"  -----  -------------------  --------  --------------  -----"}</text>
+        <text>{"  ----------  ---------  ------------  --------  -------------------  -----"}</text>
       </box>
 
       {/* Rows */}
       {executions.map((ex, i) => {
         const isSelected = i === selectedIndex;
-        const badge = STATUS_BADGES[ex.status] ?? `[${ex.status.toUpperCase()}]`;
-        const trigger = ex.trigger.length > 14
-          ? `${ex.trigger.slice(0, 11)}...`
-          : ex.trigger;
-        const errorText = ex.error
-          ? ex.error.length > 20 ? `${ex.error.slice(0, 17)}...` : ex.error
+        const id = shortId(ex.execution_id);
+        const status = truncate(ex.status, 9);
+        const trigger = truncate(ex.trigger_type, 12);
+        const progress = `${ex.actions_completed}/${ex.actions_total}`;
+        const errorText = ex.error_message
+          ? truncate(ex.error_message, 20)
           : "";
         const prefix = isSelected ? "> " : "  ";
 
         return (
           <box key={ex.execution_id} height={1} width="100%">
             <text>
-              {`${prefix}${badge.padEnd(5)}  ${formatTimestamp(ex.started_at).padEnd(19)}  ${formatDuration(ex.duration_ms).padEnd(8)}  ${trigger.padEnd(14)}  ${errorText}`}
+              {`${prefix}${id.padEnd(10)}  ${status.padEnd(9)}  ${trigger.padEnd(12)}  ${progress.padEnd(8)}  ${formatTimestamp(ex.started_at).padEnd(19)}  ${errorText}`}
             </text>
           </box>
         );

@@ -1,5 +1,5 @@
 /**
- * Access Control (ReBAC) panel: tabbed layout for manifests, alerts, reputation, credentials.
+ * Access Control panel: tabbed layout for manifests, alerts, reputation, credentials.
  */
 
 import React, { useEffect } from "react";
@@ -29,8 +29,6 @@ export default function AccessPanel(): React.ReactNode {
   const lastPermissionCheck = useAccessStore((s) => s.lastPermissionCheck);
   const alerts = useAccessStore((s) => s.alerts);
   const alertsLoading = useAccessStore((s) => s.alertsLoading);
-  const scores = useAccessStore((s) => s.scores);
-  const scoresLoading = useAccessStore((s) => s.scoresLoading);
   const leaderboard = useAccessStore((s) => s.leaderboard);
   const leaderboardLoading = useAccessStore((s) => s.leaderboardLoading);
   const credentials = useAccessStore((s) => s.credentials);
@@ -40,7 +38,6 @@ export default function AccessPanel(): React.ReactNode {
 
   const fetchManifests = useAccessStore((s) => s.fetchManifests);
   const fetchAlerts = useAccessStore((s) => s.fetchAlerts);
-  const fetchScores = useAccessStore((s) => s.fetchScores);
   const fetchLeaderboard = useAccessStore((s) => s.fetchLeaderboard);
   const fetchCredentials = useAccessStore((s) => s.fetchCredentials);
   const setActiveTab = useAccessStore((s) => s.setActiveTab);
@@ -55,10 +52,13 @@ export default function AccessPanel(): React.ReactNode {
     } else if (activeTab === "alerts") {
       fetchAlerts(client);
     } else if (activeTab === "reputation") {
-      fetchScores(client);
       fetchLeaderboard(client);
     } else if (activeTab === "credentials") {
-      fetchCredentials(client);
+      // Credentials require an agent_id; use selected manifest's agent_id if available
+      const selected = manifests[selectedManifestIndex];
+      if (selected) {
+        fetchCredentials(selected.agent_id, client);
+      }
     }
   };
 
@@ -116,11 +116,11 @@ export default function AccessPanel(): React.ReactNode {
         </text>
       </box>
 
-      {/* Permission check result */}
+      {/* Permission evaluation result */}
       {lastPermissionCheck && (
         <box height={1} width="100%">
           <text>
-            {`Permission: ${lastPermissionCheck.allowed ? "ALLOWED" : "DENIED"} - ${lastPermissionCheck.reason}`}
+            {`Evaluate: tool=${lastPermissionCheck.tool_name} permission=${lastPermissionCheck.permission} agent=${lastPermissionCheck.agent_id} manifest=${lastPermissionCheck.manifest_id}`}
           </text>
         </box>
       )}
@@ -149,8 +149,6 @@ export default function AccessPanel(): React.ReactNode {
         )}
         {activeTab === "reputation" && (
           <ReputationView
-            scores={scores}
-            scoresLoading={scoresLoading}
             leaderboard={leaderboard}
             leaderboardLoading={leaderboardLoading}
           />
@@ -166,7 +164,7 @@ export default function AccessPanel(): React.ReactNode {
       {/* Help bar */}
       <box height={1} width="100%">
         <text>
-          {"j/k:navigate  Tab:switch tab  c:check permission  r:refresh  q:quit"}
+          {"j/k:navigate  Tab:switch tab  e:evaluate  r:refresh  q:quit"}
         </text>
       </box>
     </box>

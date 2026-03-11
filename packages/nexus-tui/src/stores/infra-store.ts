@@ -33,24 +33,33 @@ export interface Subscription {
   readonly trigger_count: number;
 }
 
+/** Lock shape matching backend LockInfoMutex / LockInfoSemaphore. */
 export interface Lock {
   readonly lock_id: string;
+  readonly mode: "mutex" | "semaphore";
+  readonly max_holders: number;
+  readonly holder_info: string;
+  readonly acquired_at: number;
+  readonly expires_at: number;
+  readonly fence_token: number;
+  /** The resource path this lock is held on (derived from the list key). */
   readonly resource: string;
-  readonly holder: string;
-  readonly status: "held" | "released" | "expired";
-  readonly acquired_at: string;
-  readonly expires_at: string;
-  readonly ttl_seconds: number;
 }
 
+/** Matches backend SecretAuditEventResponse. */
 export interface SecretAuditEntry {
-  readonly entry_id: string;
-  readonly action: string;
-  readonly secret_name: string;
-  readonly actor: string;
-  readonly timestamp: string;
+  readonly id: string;
+  readonly record_hash: string;
+  readonly created_at: string;
+  readonly event_type: string;
+  readonly actor_id: string;
+  readonly provider: string | null;
+  readonly credential_id: string | null;
+  readonly token_family_id: string | null;
+  readonly zone_id: string;
   readonly ip_address: string | null;
-  readonly result: "success" | "denied" | "error";
+  readonly details: string | null;
+  readonly metadata_hash: string | null;
 }
 
 export type InfraTab = "connectors" | "subscriptions" | "locks" | "secrets";
@@ -96,8 +105,8 @@ export interface InfraState {
   readonly deleteSubscription: (id: string, client: FetchClient) => Promise<void>;
   readonly testSubscription: (id: string, client: FetchClient) => Promise<void>;
   readonly fetchLocks: (client: FetchClient) => Promise<void>;
-  readonly releaseLock: (id: string, client: FetchClient) => Promise<void>;
-  readonly extendLock: (id: string, ttlSeconds: number, client: FetchClient) => Promise<void>;
+  readonly releaseLock: (path: string, lockId: string, client: FetchClient) => Promise<void>;
+  readonly extendLock: (path: string, ttlSeconds: number, client: FetchClient) => Promise<void>;
   readonly fetchSecretAudit: (client: FetchClient) => Promise<void>;
   readonly setActiveTab: (tab: InfraTab) => void;
   readonly setSelectedConnectorIndex: (index: number) => void;
@@ -202,6 +211,7 @@ export const useInfraStore = create<InfraState>((set, get) => ({
     try {
       const response = await client.get<{
         readonly locks: readonly Lock[];
+        readonly count: number;
       }>("/api/v2/locks");
       set({ locks: response.locks ?? [], locksLoading: false, selectedLockIndex: 0 });
     } catch (err) {
@@ -212,14 +222,14 @@ export const useInfraStore = create<InfraState>((set, get) => ({
     }
   },
 
-  releaseLock: async (id, client) => {
+  releaseLock: async (path, lockId, client) => {
     set({ error: null });
     try {
-      await client.post(`/api/v2/locks/${encodeURIComponent(id)}/release`, {});
+      await client.deleteNoContent(
+        `/api/v2/locks/${encodeURIComponent(path)}?lock_id=${encodeURIComponent(lockId)}`,
+      );
       set((state) => ({
-        locks: state.locks.map((l) =>
-          l.lock_id === id ? { ...l, status: "released" as const } : l,
-        ),
+        locks: state.locks.filter((l) => l.lock_id !== lockId),
       }));
     } catch (err) {
       set({
@@ -228,10 +238,10 @@ export const useInfraStore = create<InfraState>((set, get) => ({
     }
   },
 
-  extendLock: async (id, ttlSeconds, client) => {
+  extendLock: async (path, ttlSeconds, client) => {
     set({ error: null });
     try {
-      await client.post(`/api/v2/locks/${encodeURIComponent(id)}/extend`, {
+      await client.patch(`/api/v2/locks/${encodeURIComponent(path)}`, {
         ttl_seconds: ttlSeconds,
       });
       await get().fetchLocks(client);
@@ -246,9 +256,13 @@ export const useInfraStore = create<InfraState>((set, get) => ({
     set({ secretsLoading: true, error: null });
     try {
       const response = await client.get<{
-        readonly entries: readonly SecretAuditEntry[];
-      }>("/api/v2/secrets/audit");
-      set({ secretAuditEntries: response.entries ?? [], secretsLoading: false });
+        readonly events: readonly SecretAuditEntry[];
+        readonly limit: number;
+        readonly has_more: boolean;
+        readonly total: number | null;
+        readonly next_cursor: string | null;
+      }>("/api/v2/secrets-audit/events");
+      set({ secretAuditEntries: response.events ?? [], secretsLoading: false });
     } catch (err) {
       set({
         secretsLoading: false,

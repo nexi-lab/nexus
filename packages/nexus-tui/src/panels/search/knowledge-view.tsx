@@ -1,37 +1,35 @@
 /**
- * Knowledge graph view: entity detail and neighbors list.
+ * Knowledge graph view: entity detail (as dict) and neighbors list with depth info.
  */
 
 import React from "react";
-import type { KnowledgeEntity } from "../../stores/search-store.js";
+import type { KnowledgeEntity, NeighborEntry } from "../../stores/search-store.js";
 
 interface KnowledgeViewProps {
   readonly entity: KnowledgeEntity | null;
-  readonly neighbors: readonly KnowledgeEntity[];
-  readonly entities: readonly KnowledgeEntity[];
+  readonly neighbors: readonly NeighborEntry[];
+  readonly knowledgeSearchResult: KnowledgeEntity | null;
   readonly loading: boolean;
 }
 
-function formatTimestamp(ts: string): string {
-  try {
-    return new Date(ts).toLocaleString();
-  } catch {
-    return ts;
-  }
+function formatEntityDict(entity: KnowledgeEntity): string {
+  const entries = Object.entries(entity);
+  if (entries.length === 0) return "{}";
+  return entries
+    .map(([key, value]) => `${key}: ${JSON.stringify(value)}`)
+    .join(", ");
 }
 
-function formatProperties(props: Record<string, unknown>): string {
-  const entries = Object.entries(props);
-  if (entries.length === 0) return "(none)";
-  return entries
-    .map(([key, value]) => `${key}=${JSON.stringify(value)}`)
-    .join(", ");
+function truncateValue(value: unknown, maxLen: number): string {
+  const str = JSON.stringify(value);
+  if (str.length <= maxLen) return str;
+  return `${str.slice(0, maxLen - 3)}...`;
 }
 
 export function KnowledgeView({
   entity,
   neighbors,
-  entities,
+  knowledgeSearchResult,
   loading,
 }: KnowledgeViewProps): React.ReactNode {
   if (loading) {
@@ -42,7 +40,7 @@ export function KnowledgeView({
     );
   }
 
-  if (!entity && entities.length === 0) {
+  if (!entity && !knowledgeSearchResult) {
     return (
       <box height="100%" width="100%" justifyContent="center" alignItems="center">
         <text>Search or select a result to explore the knowledge graph</text>
@@ -58,24 +56,11 @@ export function KnowledgeView({
           <box height={1} width="100%">
             <text>--- Entity Detail ---</text>
           </box>
-          <box height={1} width="100%">
-            <text>{`ID:   ${entity.entity_id}`}</text>
-          </box>
-          <box height={1} width="100%">
-            <text>{`Name: ${entity.name}`}</text>
-          </box>
-          <box height={1} width="100%">
-            <text>{`Type: ${entity.type}`}</text>
-          </box>
-          <box height={1} width="100%">
-            <text>{`Properties: ${formatProperties(entity.properties)}`}</text>
-          </box>
-          <box height={1} width="100%">
-            <text>{`Created: ${formatTimestamp(entity.created_at)}`}</text>
-          </box>
-          <box height={1} width="100%">
-            <text>{`Updated: ${formatTimestamp(entity.updated_at)}`}</text>
-          </box>
+          {Object.entries(entity).map(([key, value]) => (
+            <box key={key} height={1} width="100%">
+              <text>{`  ${key}: ${truncateValue(value, 60)}`}</text>
+            </box>
+          ))}
         </>
       )}
 
@@ -85,23 +70,27 @@ export function KnowledgeView({
           <box height={1} width="100%" marginTop={1}>
             <text>{`--- Neighbors (${neighbors.length}) ---`}</text>
           </box>
-          {neighbors.map((n) => (
-            <box key={n.entity_id} height={1} width="100%">
-              <text>{`  [${n.type}] ${n.name} (${n.entity_id})`}</text>
-            </box>
-          ))}
+          {neighbors.map((n, i) => {
+            const entitySummary = formatEntityDict(n.entity);
+            const pathStr = n.path.join(" -> ");
+            return (
+              <box key={i} height={1} width="100%">
+                <text>{`  [depth=${n.depth}] ${truncateValue(entitySummary, 50)}  path: ${pathStr}`}</text>
+              </box>
+            );
+          })}
         </>
       )}
 
-      {/* Knowledge search results */}
-      {!entity && entities.length > 0 && (
+      {/* Knowledge search result (single entity) */}
+      {!entity && knowledgeSearchResult && (
         <>
           <box height={1} width="100%">
-            <text>{`--- Knowledge Entities (${entities.length}) ---`}</text>
+            <text>--- Graph Search Result ---</text>
           </box>
-          {entities.map((e) => (
-            <box key={e.entity_id} height={1} width="100%">
-              <text>{`  [${e.type}] ${e.name} - ${formatTimestamp(e.updated_at)}`}</text>
+          {Object.entries(knowledgeSearchResult).map(([key, value]) => (
+            <box key={key} height={1} width="100%">
+              <text>{`  ${key}: ${truncateValue(value, 60)}`}</text>
             </box>
           ))}
         </>

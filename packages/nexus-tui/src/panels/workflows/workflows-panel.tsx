@@ -1,6 +1,6 @@
 /**
  * Workflows & Automation panel: tabbed layout with workflows, executions,
- * scheduler metrics, and trajectory views.
+ * and scheduler metrics views.
  */
 
 import React, { useEffect } from "react";
@@ -11,20 +11,17 @@ import { useApi } from "../../shared/hooks/use-api.js";
 import { WorkflowList } from "./workflow-list.js";
 import { ExecutionList } from "./execution-list.js";
 import { SchedulerView } from "./scheduler-view.js";
-import { TrajectoryView } from "./trajectory-view.js";
 
 const TAB_ORDER: readonly WorkflowTab[] = [
   "workflows",
   "executions",
   "scheduler",
-  "trajectories",
 ];
 
 const TAB_LABELS: Readonly<Record<WorkflowTab, string>> = {
   workflows: "Workflows",
   executions: "Executions",
   scheduler: "Scheduler",
-  trajectories: "Trajectories",
 };
 
 export default function WorkflowsPanel(): React.ReactNode {
@@ -40,11 +37,6 @@ export default function WorkflowsPanel(): React.ReactNode {
   const executionsLoading = useWorkflowsStore((s) => s.executionsLoading);
   const schedulerMetrics = useWorkflowsStore((s) => s.schedulerMetrics);
   const schedulerLoading = useWorkflowsStore((s) => s.schedulerLoading);
-  const trajectories = useWorkflowsStore((s) => s.trajectories);
-  const selectedTrajectoryIndex = useWorkflowsStore((s) => s.selectedTrajectoryIndex);
-  const trajectoriesLoading = useWorkflowsStore((s) => s.trajectoriesLoading);
-  const selectedTrajectory = useWorkflowsStore((s) => s.selectedTrajectory);
-  const trajectoryDetailLoading = useWorkflowsStore((s) => s.trajectoryDetailLoading);
   const activeTab = useWorkflowsStore((s) => s.activeTab);
   const error = useWorkflowsStore((s) => s.error);
 
@@ -53,12 +45,9 @@ export default function WorkflowsPanel(): React.ReactNode {
   const executeWorkflow = useWorkflowsStore((s) => s.executeWorkflow);
   const fetchExecutions = useWorkflowsStore((s) => s.fetchExecutions);
   const fetchSchedulerMetrics = useWorkflowsStore((s) => s.fetchSchedulerMetrics);
-  const fetchTrajectories = useWorkflowsStore((s) => s.fetchTrajectories);
-  const fetchTrajectoryDetail = useWorkflowsStore((s) => s.fetchTrajectoryDetail);
   const setActiveTab = useWorkflowsStore((s) => s.setActiveTab);
   const setSelectedWorkflowIndex = useWorkflowsStore((s) => s.setSelectedWorkflowIndex);
   const setSelectedExecutionIndex = useWorkflowsStore((s) => s.setSelectedExecutionIndex);
-  const setSelectedTrajectoryIndex = useWorkflowsStore((s) => s.setSelectedTrajectoryIndex);
 
   // Refresh current view based on active tab
   const refreshCurrentView = (): void => {
@@ -69,12 +58,10 @@ export default function WorkflowsPanel(): React.ReactNode {
     } else if (activeTab === "executions") {
       const wf = workflows[selectedWorkflowIndex];
       if (wf) {
-        fetchExecutions(wf.workflow_id, client);
+        fetchExecutions(wf.name, client);
       }
     } else if (activeTab === "scheduler") {
       fetchSchedulerMetrics(client);
-    } else if (activeTab === "trajectories") {
-      fetchTrajectories(client);
     }
   };
 
@@ -88,14 +75,12 @@ export default function WorkflowsPanel(): React.ReactNode {
   const currentListLength = (): number => {
     if (activeTab === "workflows") return workflows.length;
     if (activeTab === "executions") return executions.length;
-    if (activeTab === "trajectories") return trajectories.length;
     return 0;
   };
 
   const currentIndex = (): number => {
     if (activeTab === "workflows") return selectedWorkflowIndex;
     if (activeTab === "executions") return selectedExecutionIndex;
-    if (activeTab === "trajectories") return selectedTrajectoryIndex;
     return 0;
   };
 
@@ -104,8 +89,6 @@ export default function WorkflowsPanel(): React.ReactNode {
       setSelectedWorkflowIndex(index);
     } else if (activeTab === "executions") {
       setSelectedExecutionIndex(index);
-    } else if (activeTab === "trajectories") {
-      setSelectedTrajectoryIndex(index);
     }
   };
 
@@ -140,8 +123,8 @@ export default function WorkflowsPanel(): React.ReactNode {
     e: () => {
       if (activeTab !== "workflows" || !client) return;
       const wf = workflows[selectedWorkflowIndex];
-      if (wf && wf.status === "active") {
-        executeWorkflow(wf.workflow_id, client);
+      if (wf && wf.enabled) {
+        executeWorkflow(wf.name, client);
       }
     },
     return: () => {
@@ -150,12 +133,7 @@ export default function WorkflowsPanel(): React.ReactNode {
       if (activeTab === "workflows") {
         const wf = workflows[selectedWorkflowIndex];
         if (wf) {
-          fetchWorkflowDetail(wf.workflow_id, client);
-        }
-      } else if (activeTab === "trajectories") {
-        const traj = trajectories[selectedTrajectoryIndex];
-        if (traj) {
-          fetchTrajectoryDetail(traj.trajectory_id, client);
+          fetchWorkflowDetail(wf.name, client);
         }
       }
     },
@@ -202,22 +180,13 @@ export default function WorkflowsPanel(): React.ReactNode {
             loading={schedulerLoading}
           />
         )}
-        {activeTab === "trajectories" && (
-          <TrajectoryView
-            trajectories={trajectories}
-            selectedIndex={selectedTrajectoryIndex}
-            selectedTrajectory={selectedTrajectory}
-            loading={trajectoriesLoading}
-            detailLoading={trajectoryDetailLoading}
-          />
-        )}
       </box>
 
       {/* Workflow detail overlay when loaded */}
       {selectedWorkflow && activeTab === "workflows" && !detailLoading && (
         <box height={3} width="100%">
           <text>
-            {`Detail: ${selectedWorkflow.name} | ${selectedWorkflow.status} | ${selectedWorkflow.step_count} steps | trigger: ${selectedWorkflow.trigger_type}`}
+            {`Detail: ${selectedWorkflow.name} | v${selectedWorkflow.version} | ${selectedWorkflow.enabled ? "enabled" : "disabled"} | ${selectedWorkflow.triggers.length} triggers | ${selectedWorkflow.actions.length} actions`}
           </text>
         </box>
       )}

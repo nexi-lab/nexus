@@ -1,5 +1,5 @@
 /**
- * Memory list: agent_id, type, content preview, tags, version.
+ * Memory list: displays memory dicts from search results.
  */
 
 import React from "react";
@@ -11,19 +11,19 @@ interface MemoryListProps {
   readonly loading: boolean;
 }
 
-function truncateContent(content: string, maxLen: number): string {
-  if (content.length <= maxLen) return content;
-  return `${content.slice(0, maxLen - 3)}...`;
+function truncateText(text: string, maxLen: number): string {
+  if (text.length <= maxLen) return text;
+  return `${text.slice(0, maxLen - 3)}...`;
 }
 
-function formatTags(tags: readonly string[]): string {
-  if (tags.length === 0) return "";
-  return `[${tags.join(", ")}]`;
+function shortId(id: unknown): string {
+  const str = String(id ?? "");
+  if (str.length <= 12) return str;
+  return `${str.slice(0, 8)}..`;
 }
 
-function shortId(id: string): string {
-  if (id.length <= 12) return id;
-  return `${id.slice(0, 8)}..`;
+function getMemoryField(memory: Memory, field: string): unknown {
+  return (memory as Record<string, unknown>)[field];
 }
 
 export function MemoryList({
@@ -54,10 +54,10 @@ export function MemoryList({
         <text>{`Memories: ${memories.length}`}</text>
       </box>
       <box height={1} width="100%">
-        <text>{"  AGENT       TYPE       V  CONTENT                          TAGS"}</text>
+        <text>{"  ID            TYPE       CONTENT"}</text>
       </box>
       <box height={1} width="100%">
-        <text>{"  ----------  ---------  -  -------------------------------  --------"}</text>
+        <text>{"  ------------  ---------  ------------------------------------------------"}</text>
       </box>
 
       {/* Rows */}
@@ -65,15 +65,17 @@ export function MemoryList({
         {memories.map((m, i) => {
           const isSelected = i === selectedIndex;
           const prefix = isSelected ? "> " : "  ";
-          const agent = shortId(m.agent_id).padEnd(10);
-          const type = m.type.padEnd(9);
-          const content = truncateContent(m.content, 31);
-          const tags = formatTags(m.tags);
+          const memoryId = shortId(getMemoryField(m, "memory_id")).padEnd(12);
+          const memType = String(getMemoryField(m, "type") ?? "unknown").padEnd(9);
+          const content = truncateText(
+            String(getMemoryField(m, "content") ?? JSON.stringify(m)),
+            48,
+          );
 
           return (
-            <box key={m.memory_id} height={1} width="100%">
+            <box key={i} height={1} width="100%">
               <text>
-                {`${prefix}${agent}  ${type}  ${String(m.version)}  ${content.padEnd(31)}  ${tags}`}
+                {`${prefix}${memoryId}  ${memType}  ${content}`}
               </text>
             </box>
           );

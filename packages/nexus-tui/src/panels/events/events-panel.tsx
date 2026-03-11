@@ -169,7 +169,7 @@ export default function EventsPanel(): React.ReactNode {
         if (sub) deleteSubscription(sub.subscription_id, apiClient);
       } else if (activeTab === "locks" && apiClient) {
         const lock = locks[selectedLockIndex];
-        if (lock && lock.status === "held") releaseLock(lock.lock_id, apiClient);
+        if (lock) releaseLock(lock.resource, lock.lock_id, apiClient);
       }
     },
     t: () => {

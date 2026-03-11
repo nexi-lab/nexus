@@ -100,7 +100,7 @@ class ScopedFilesystem(ScopedPathMixin):
         count: int | None = None,
         offset: int = 0,
         context: OperationContext | None = None,
-    ) -> int:
+    ) -> dict[str, Any]:
         """Write content to a file (POSIX pwrite)."""
         return self._fs.sys_write(
             self._scope_path(path), buf, count=count, offset=offset, context=context

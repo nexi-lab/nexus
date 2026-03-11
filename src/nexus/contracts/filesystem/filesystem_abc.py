@@ -92,12 +92,11 @@ class NexusFilesystemABC(ABC):
         count: int | None = None,
         offset: int = 0,
         context: OperationContext | None = None,
-    ) -> int:
+    ) -> dict[str, Any]:
         """Write content to a file (POSIX pwrite(2)).
 
-        Content-only primitive. CAS and locking are driver/application
-        concerns — not kernel. Metadata update is a kernel side effect
-        (Phase A); Phase B will separate into sys_write + sys_setattr.
+        Content-only primitive with create-on-write semantics.
+        CAS and locking are driver/application concerns — not kernel.
 
         Args:
             path: Virtual file path.
@@ -107,7 +106,7 @@ class NexusFilesystemABC(ABC):
             context: Operation context.
 
         Returns:
-            Number of bytes written.
+            Dict with path, bytes_written, and created flag.
         """
         ...
 
@@ -124,18 +123,21 @@ class NexusFilesystemABC(ABC):
 
     @abstractmethod
     def sys_setattr(self, path: str, context: Any = None, **attrs: Any) -> dict[str, Any]:
-        """Update file metadata attributes (chmod/chown/utimensat analog).
+        """Upsert file metadata (chmod/chown/utimensat + mknod analog).
 
-        Linux has separate chmod(2), chown(2), utimensat(2) — we combine
-        into one call (better for VFS).
+        Upsert semantics — create-on-write for metadata:
+        - Path missing + entry_type provided → CREATE inode
+        - Path missing + no entry_type → NexusFileNotFoundError
+        - Path exists + no entry_type → UPDATE mutable fields
+        - Path exists + entry_type → ValueError (immutable after creation)
 
         Args:
             path: Virtual file path.
             context: Operation context.
-            **attrs: Metadata attributes to update.
+            **attrs: Metadata attributes. Include ``entry_type`` to create.
 
         Returns:
-            Dict with path and list of updated attributes.
+            Dict with path, created flag, and type-specific fields.
         """
         ...
 
@@ -210,24 +212,6 @@ class NexusFilesystemABC(ABC):
 
         Linux uses stat(2) + S_ISDIR macro — we provide direct check
         for convenience.
-        """
-        ...
-
-    # ── Pipe ────────────────────────────────────────────────────────
-
-    @abstractmethod
-    def sys_mkpipe(
-        self,
-        path: str,
-        *,
-        capacity: int = 65_536,
-        owner_id: str | None = None,
-        context: Any = None,
-    ) -> dict[str, Any]:
-        """Create a named pipe (Linux mknod(2) + S_IFIFO).
-
-        Creates a DT_PIPE inode in MetastoreABC and a RingBuffer in memory.
-        Pipe I/O is then handled by sys_read/sys_write natively.
         """
         ...
 

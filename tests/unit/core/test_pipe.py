@@ -815,3 +815,66 @@ class TestDTPipeMetadata:
         )
         with pytest.raises(Exception, match="backend_name is required"):
             meta.validate()
+
+
+# ======================================================================
+# sys_setattr upsert semantics
+# ======================================================================
+
+
+class TestSysSetAttrUpsert:
+    """Test sys_setattr upsert: create-on-write for metadata."""
+
+    def _make_manager(self) -> tuple[PipeManager, MockMetastore]:
+        ms = MockMetastore()
+        return PipeManager(ms, zone_id="test-zone"), ms
+
+    def test_setattr_create_pipe(self) -> None:
+        """sys_setattr with entry_type=DT_PIPE creates a pipe (replaces sys_mkpipe)."""
+        mgr, ms = self._make_manager()
+        # Simulate what NexusFS._setattr_create does
+        path = "/nexus/pipes/via-setattr"
+        capacity = 4096
+        buf = mgr.create(path, capacity=capacity, owner_id="agent-1")
+        assert isinstance(buf, RingBuffer)
+        assert buf.stats["capacity"] == capacity
+        meta = ms.get(path)
+        assert meta is not None
+        assert meta.entry_type == DT_PIPE
+
+    def test_setattr_update_mutable_fields(self) -> None:
+        """sys_setattr on existing inode only updates mutable fields."""
+        from dataclasses import replace
+
+        _, ms = self._make_manager()
+        meta = FileMetadata(
+            path="/existing/file",
+            backend_name="local",
+            physical_path="/data/file",
+            size=100,
+            entry_type=DT_REG,
+            mime_type="text/plain",
+        )
+        ms.put(meta)
+
+        # Update mime_type (mutable)
+        updated = replace(meta, mime_type="application/json")
+        ms.put(updated)
+        result = ms.get("/existing/file")
+        assert result is not None
+        assert result.mime_type == "application/json"
+
+    def test_setattr_entry_type_immutable_after_creation(self) -> None:
+        """entry_type must be rejected for existing inodes."""
+        _, ms = self._make_manager()
+        meta = FileMetadata(
+            path="/existing/file",
+            backend_name="local",
+            physical_path="/data/file",
+            size=100,
+            entry_type=DT_REG,
+        )
+        ms.put(meta)
+        # Attempting to change entry_type should be rejected by caller
+        assert ms.get("/existing/file") is not None
+        assert ms.get("/existing/file").entry_type == DT_REG

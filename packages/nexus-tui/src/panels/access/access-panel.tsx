@@ -13,14 +13,16 @@ import { ManifestList } from "./manifest-list.js";
 import { AlertList } from "./alert-list.js";
 import { ReputationView } from "./reputation-view.js";
 import { CredentialList } from "./credential-list.js";
+import { DisputeList } from "./dispute-list.js";
 import { PermissionChecker } from "./permission-checker.js";
 
-const TAB_ORDER: readonly AccessTab[] = ["manifests", "alerts", "reputation", "credentials"];
+const TAB_ORDER: readonly AccessTab[] = ["manifests", "alerts", "reputation", "credentials", "disputes"];
 const TAB_LABELS: Readonly<Record<AccessTab, string>> = {
   manifests: "Manifests",
   alerts: "Alerts",
   reputation: "Reputation",
   credentials: "Credentials",
+  disputes: "Disputes",
 };
 
 export default function AccessPanel(): React.ReactNode {
@@ -38,6 +40,9 @@ export default function AccessPanel(): React.ReactNode {
   const leaderboardLoading = useAccessStore((s) => s.leaderboardLoading);
   const credentials = useAccessStore((s) => s.credentials);
   const credentialsLoading = useAccessStore((s) => s.credentialsLoading);
+  const disputes = useAccessStore((s) => s.disputes);
+  const disputesLoading = useAccessStore((s) => s.disputesLoading);
+  const selectedDisputeIndex = useAccessStore((s) => s.selectedDisputeIndex);
   const activeTab = useAccessStore((s) => s.activeTab);
   const error = useAccessStore((s) => s.error);
 
@@ -47,6 +52,7 @@ export default function AccessPanel(): React.ReactNode {
   const fetchCredentials = useAccessStore((s) => s.fetchCredentials);
   const setActiveTab = useAccessStore((s) => s.setActiveTab);
   const setSelectedManifestIndex = useAccessStore((s) => s.setSelectedManifestIndex);
+  const setSelectedDisputeIndex = useAccessStore((s) => s.setSelectedDisputeIndex);
 
   // Refresh current view based on active tab
   const refreshCurrentView = (): void => {
@@ -79,6 +85,10 @@ export default function AccessPanel(): React.ReactNode {
         setSelectedManifestIndex(
           Math.min(selectedManifestIndex + 1, manifests.length - 1),
         );
+      } else if (activeTab === "disputes") {
+        setSelectedDisputeIndex(
+          Math.min(selectedDisputeIndex + 1, disputes.length - 1),
+        );
       }
     },
     down: () => {
@@ -86,16 +96,24 @@ export default function AccessPanel(): React.ReactNode {
         setSelectedManifestIndex(
           Math.min(selectedManifestIndex + 1, manifests.length - 1),
         );
+      } else if (activeTab === "disputes") {
+        setSelectedDisputeIndex(
+          Math.min(selectedDisputeIndex + 1, disputes.length - 1),
+        );
       }
     },
     k: () => {
       if (activeTab === "manifests") {
         setSelectedManifestIndex(Math.max(selectedManifestIndex - 1, 0));
+      } else if (activeTab === "disputes") {
+        setSelectedDisputeIndex(Math.max(selectedDisputeIndex - 1, 0));
       }
     },
     up: () => {
       if (activeTab === "manifests") {
         setSelectedManifestIndex(Math.max(selectedManifestIndex - 1, 0));
+      } else if (activeTab === "disputes") {
+        setSelectedDisputeIndex(Math.max(selectedDisputeIndex - 1, 0));
       }
     },
     tab: () => {
@@ -200,11 +218,18 @@ export default function AccessPanel(): React.ReactNode {
             loading={credentialsLoading}
           />
         )}
+        {activeTab === "disputes" && (
+          <DisputeList
+            disputes={disputes}
+            selectedIndex={selectedDisputeIndex}
+            loading={disputesLoading}
+          />
+        )}
       </box>
 
-      {/* Scope note: tuple browser via manifests; proof tree, namespace, disputes pending backend */}
+      {/* Scope note: tuple browser via manifests; proof tree and namespace pending backend */}
       <box height={1} width="100%">
-        <text>{"Tuples: via Manifests tab  |  Proof tree / Namespace editor / Disputes: pending backend API"}</text>
+        <text>{"Tuples: via Manifests tab  |  Proof tree / Namespace editor: pending backend API"}</text>
       </box>
 
       {/* Help bar */}

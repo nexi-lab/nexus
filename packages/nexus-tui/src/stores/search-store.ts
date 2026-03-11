@@ -187,9 +187,10 @@ export interface SearchState {
   readonly memoryDiff: MemoryDiff | null;
   readonly memoryDiffLoading: boolean;
 
-  // RLM Q&A
+  // RLM Q&A (document-scoped via context_paths)
   readonly rlmAnswer: RlmAnswer | null;
   readonly rlmLoading: boolean;
+  readonly rlmContextPaths: readonly string[];
 
   // Search mode
   readonly searchMode: SearchMode;
@@ -219,6 +220,9 @@ export interface SearchState {
   readonly rollbackMemory: (memoryId: string, version: number, client: FetchClient) => Promise<void>;
   readonly clearMemoryHistory: () => void;
   readonly clearMemoryDiff: () => void;
+  readonly addRlmContextPath: (path: string) => void;
+  readonly removeRlmContextPath: (path: string) => void;
+  readonly clearRlmContextPaths: () => void;
   readonly askRlm: (query: string, client: FetchClient, zoneId?: string) => Promise<void>;
 }
 
@@ -249,6 +253,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
 
   rlmAnswer: null,
   rlmLoading: false,
+  rlmContextPaths: [],
 
   searchMode: "hybrid",
 
@@ -549,6 +554,23 @@ export const useSearchStore = create<SearchState>((set, get) => ({
     set({ memoryDiff: null });
   },
 
+  addRlmContextPath: (path) => {
+    set((state) => {
+      if (state.rlmContextPaths.includes(path)) return state;
+      return { rlmContextPaths: [...state.rlmContextPaths, path] };
+    });
+  },
+
+  removeRlmContextPath: (path) => {
+    set((state) => ({
+      rlmContextPaths: state.rlmContextPaths.filter((p) => p !== path),
+    }));
+  },
+
+  clearRlmContextPaths: () => {
+    set({ rlmContextPaths: [] });
+  },
+
   askRlm: async (query, client, zoneId) => {
     const initial: RlmAnswer = {
       status: "streaming",
@@ -563,9 +585,13 @@ export const useSearchStore = create<SearchState>((set, get) => ({
     set({ rlmLoading: true, error: null, rlmAnswer: initial });
 
     try {
+      const { rlmContextPaths } = get();
       const body: Record<string, unknown> = { query, stream: true };
       if (zoneId) {
         body.zone_id = zoneId;
+      }
+      if (rlmContextPaths.length > 0) {
+        body.context_paths = rlmContextPaths;
       }
 
       const response = await client.rawRequest(

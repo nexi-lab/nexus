@@ -70,7 +70,26 @@ export interface Credential {
   readonly delegation_depth: number;
 }
 
-export type AccessTab = "manifests" | "alerts" | "reputation" | "credentials";
+/** Matches backend DisputeResponse from reputation.py. */
+export interface Dispute {
+  readonly id: string;
+  readonly exchange_id: string;
+  readonly zone_id: string;
+  readonly complainant_agent_id: string;
+  readonly respondent_agent_id: string;
+  readonly status: string;
+  readonly tier: number;
+  readonly reason: string;
+  readonly resolution: string | null;
+  readonly resolution_evidence_hash: string | null;
+  readonly escrow_amount: string | null;
+  readonly escrow_released: boolean;
+  readonly filed_at: string;
+  readonly resolved_at: string | null;
+  readonly appeal_deadline: string | null;
+}
+
+export type AccessTab = "manifests" | "alerts" | "reputation" | "credentials" | "disputes";
 
 // =============================================================================
 // Store
@@ -98,6 +117,11 @@ export interface AccessState {
   readonly credentials: readonly Credential[];
   readonly credentialsLoading: boolean;
 
+  // Disputes
+  readonly disputes: readonly Dispute[];
+  readonly disputesLoading: boolean;
+  readonly selectedDisputeIndex: number;
+
   // UI state
   readonly activeTab: AccessTab;
   readonly error: string | null;
@@ -115,8 +139,18 @@ export interface AccessState {
     agentId: string,
     client: FetchClient,
   ) => Promise<void>;
+  readonly fetchDispute: (disputeId: string, client: FetchClient) => Promise<void>;
+  readonly fileDispute: (
+    exchangeId: string,
+    complainantId: string,
+    respondentId: string,
+    reason: string,
+    client: FetchClient,
+  ) => Promise<void>;
+  readonly resolveDispute: (disputeId: string, resolution: string, client: FetchClient) => Promise<void>;
   readonly setActiveTab: (tab: AccessTab) => void;
   readonly setSelectedManifestIndex: (index: number) => void;
+  readonly setSelectedDisputeIndex: (index: number) => void;
 }
 
 export const useAccessStore = create<AccessState>((set) => ({
@@ -131,6 +165,9 @@ export const useAccessStore = create<AccessState>((set) => ({
   leaderboardLoading: false,
   credentials: [],
   credentialsLoading: false,
+  disputes: [],
+  disputesLoading: false,
+  selectedDisputeIndex: 0,
   activeTab: "manifests",
   error: null,
 
@@ -242,11 +279,78 @@ export const useAccessStore = create<AccessState>((set) => ({
     }
   },
 
+  fetchDispute: async (disputeId, client) => {
+    set({ disputesLoading: true, error: null });
+    try {
+      const dispute = await client.get<Dispute>(
+        `/api/v2/disputes/${encodeURIComponent(disputeId)}`,
+      );
+      set((state) => {
+        const existing = state.disputes.findIndex((d) => d.id === dispute.id);
+        const updated = existing >= 0
+          ? state.disputes.map((d, i) => (i === existing ? dispute : d))
+          : [...state.disputes, dispute];
+        return { disputes: updated, disputesLoading: false };
+      });
+    } catch (err) {
+      set({
+        disputesLoading: false,
+        error: err instanceof Error ? err.message : "Failed to fetch dispute",
+      });
+    }
+  },
+
+  fileDispute: async (exchangeId, complainantId, respondentId, reason, client) => {
+    set({ disputesLoading: true, error: null });
+    try {
+      const dispute = await client.post<Dispute>(
+        `/api/v2/exchanges/${encodeURIComponent(exchangeId)}/dispute`,
+        {
+          complainant_agent_id: complainantId,
+          respondent_agent_id: respondentId,
+          reason,
+        },
+      );
+      set((state) => ({
+        disputes: [...state.disputes, dispute],
+        disputesLoading: false,
+      }));
+    } catch (err) {
+      set({
+        disputesLoading: false,
+        error: err instanceof Error ? err.message : "Failed to file dispute",
+      });
+    }
+  },
+
+  resolveDispute: async (disputeId, resolution, client) => {
+    set({ disputesLoading: true, error: null });
+    try {
+      const updated = await client.post<Dispute>(
+        `/api/v2/disputes/${encodeURIComponent(disputeId)}/resolve`,
+        { resolution },
+      );
+      set((state) => ({
+        disputes: state.disputes.map((d) => (d.id === disputeId ? updated : d)),
+        disputesLoading: false,
+      }));
+    } catch (err) {
+      set({
+        disputesLoading: false,
+        error: err instanceof Error ? err.message : "Failed to resolve dispute",
+      });
+    }
+  },
+
   setActiveTab: (tab) => {
     set({ activeTab: tab, error: null });
   },
 
   setSelectedManifestIndex: (index) => {
     set({ selectedManifestIndex: index });
+  },
+
+  setSelectedDisputeIndex: (index) => {
+    set({ selectedDisputeIndex: index });
   },
 }));

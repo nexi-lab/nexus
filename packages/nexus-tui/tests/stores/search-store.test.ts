@@ -48,6 +48,7 @@ function resetStore(): void {
     selectedPlaybookIndex: 0,
     rlmAnswer: null,
     rlmLoading: false,
+    rlmContextPaths: [],
     activeTab: "search",
     error: null,
   });
@@ -967,6 +968,62 @@ describe("SearchStore", () => {
       const calledBody = (client.rawRequest as ReturnType<typeof mock>).mock.calls[0]![2] as string;
       const parsed = JSON.parse(calledBody);
       expect(parsed.zone_id).toBeUndefined();
+    });
+
+    it("sends context_paths when rlmContextPaths is populated", async () => {
+      useSearchStore.setState({
+        rlmContextPaths: ["/data/doc1.md", "/data/doc2.py"],
+      });
+
+      const stream = buildSseStream([
+        { event: "rlm.final_answer", data: { answer: "found it", total_tokens: 50, total_duration_seconds: 0.5, iterations: 1 } },
+      ]);
+      const client = mockStreamingClient(stream);
+
+      await useSearchStore.getState().askRlm("what is in doc1?", client, "zone-x");
+
+      const calledBody = (client.rawRequest as ReturnType<typeof mock>).mock.calls[0]![2] as string;
+      const parsed = JSON.parse(calledBody);
+      expect(parsed.context_paths).toEqual(["/data/doc1.md", "/data/doc2.py"]);
+      expect(parsed.zone_id).toBe("zone-x");
+    });
+
+    it("omits context_paths when rlmContextPaths is empty", async () => {
+      const stream = buildSseStream([
+        { event: "rlm.final_answer", data: { answer: "ok", total_tokens: 10, total_duration_seconds: 0.1, iterations: 0 } },
+      ]);
+      const client = mockStreamingClient(stream);
+
+      await useSearchStore.getState().askRlm("test", client);
+
+      const calledBody = (client.rawRequest as ReturnType<typeof mock>).mock.calls[0]![2] as string;
+      const parsed = JSON.parse(calledBody);
+      expect(parsed.context_paths).toBeUndefined();
+    });
+  });
+
+  describe("rlmContextPaths management", () => {
+    it("adds a path to context", () => {
+      useSearchStore.getState().addRlmContextPath("/data/file.txt");
+      expect(useSearchStore.getState().rlmContextPaths).toEqual(["/data/file.txt"]);
+    });
+
+    it("prevents duplicate paths", () => {
+      useSearchStore.getState().addRlmContextPath("/data/file.txt");
+      useSearchStore.getState().addRlmContextPath("/data/file.txt");
+      expect(useSearchStore.getState().rlmContextPaths).toEqual(["/data/file.txt"]);
+    });
+
+    it("removes a path from context", () => {
+      useSearchStore.setState({ rlmContextPaths: ["/a", "/b", "/c"] });
+      useSearchStore.getState().removeRlmContextPath("/b");
+      expect(useSearchStore.getState().rlmContextPaths).toEqual(["/a", "/c"]);
+    });
+
+    it("clears all context paths", () => {
+      useSearchStore.setState({ rlmContextPaths: ["/a", "/b"] });
+      useSearchStore.getState().clearRlmContextPaths();
+      expect(useSearchStore.getState().rlmContextPaths).toEqual([]);
     });
   });
 

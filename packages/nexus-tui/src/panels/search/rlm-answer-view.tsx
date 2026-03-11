@@ -1,8 +1,8 @@
 /**
- * RLM Q&A answer view: progressive streaming display.
+ * RLM document Q&A answer view: progressive streaming display.
  *
- * Shows iteration steps as they arrive via SSE, then the final answer.
- * Status bar shows model, tokens, duration, and iteration count.
+ * Shows document context paths, iteration steps as they arrive via SSE,
+ * then the final answer. Status bar shows model, tokens, duration, iteration count.
  */
 
 import React from "react";
@@ -11,6 +11,7 @@ import type { RlmAnswer, RlmStep } from "../../stores/search-store.js";
 interface RlmAnswerViewProps {
   readonly answer: RlmAnswer | null;
   readonly loading: boolean;
+  readonly contextPaths: readonly string[];
 }
 
 function formatStep(step: RlmStep): string {
@@ -23,11 +24,16 @@ function formatStep(step: RlmStep): string {
   return `[${step.step}] ${code}\n    → ${output}  (${step.tokens_used} tok, ${step.duration_seconds.toFixed(1)}s)`;
 }
 
-export function RlmAnswerView({ answer, loading }: RlmAnswerViewProps): React.ReactNode {
+export function RlmAnswerView({ answer, loading, contextPaths }: RlmAnswerViewProps): React.ReactNode {
   if (!answer && !loading) {
     return (
-      <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text>Press / to ask a question, then Enter to submit</text>
+      <box height="100%" width="100%" flexDirection="column" justifyContent="center" alignItems="center">
+        <text>Press / to ask a question about your documents</text>
+        {contextPaths.length > 0 ? (
+          <text>{`Context: ${contextPaths.length} file(s) — a:clear`}</text>
+        ) : (
+          <text>{"Tip: go to Search tab, select results, press 'a' to add document context"}</text>
+        )}
       </box>
     );
   }
@@ -48,6 +54,13 @@ export function RlmAnswerView({ answer, loading }: RlmAnswerViewProps): React.Re
 
   return (
     <box height="100%" width="100%" flexDirection="column">
+      {/* Document context paths */}
+      {contextPaths.length > 0 && (
+        <box height={1} width="100%">
+          <text>{`Docs: ${contextPaths.join(", ")}`}</text>
+        </box>
+      )}
+
       {/* Status bar */}
       <box height={1} width="100%">
         <text>

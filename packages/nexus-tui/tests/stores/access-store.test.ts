@@ -32,6 +32,9 @@ function resetStore(): void {
     leaderboardLoading: false,
     credentials: [],
     credentialsLoading: false,
+    disputes: [],
+    disputesLoading: false,
+    selectedDisputeIndex: 0,
     activeTab: "manifests",
     error: null,
   });
@@ -467,6 +470,153 @@ describe("AccessStore", () => {
       const state = useAccessStore.getState();
       expect(state.credentialsLoading).toBe(false);
       expect(state.error).toBe("Credentials service down");
+    });
+  });
+
+  describe("fetchDispute", () => {
+    it("fetches a single dispute and adds it to the list", async () => {
+      const client = mockClient({
+        "/api/v2/disputes/d-1": {
+          id: "d-1",
+          exchange_id: "ex-1",
+          zone_id: "zone-1",
+          complainant_agent_id: "agent-a",
+          respondent_agent_id: "agent-b",
+          status: "open",
+          tier: 1,
+          reason: "Service not delivered",
+          resolution: null,
+          resolution_evidence_hash: null,
+          escrow_amount: "100.00",
+          escrow_released: false,
+          filed_at: "2025-06-01T12:00:00Z",
+          resolved_at: null,
+          appeal_deadline: "2025-06-08T12:00:00Z",
+        },
+      });
+
+      await useAccessStore.getState().fetchDispute("d-1", client);
+      const state = useAccessStore.getState();
+
+      expect(state.disputes).toHaveLength(1);
+      expect(state.disputes[0]!.id).toBe("d-1");
+      expect(state.disputes[0]!.status).toBe("open");
+      expect(state.disputes[0]!.reason).toBe("Service not delivered");
+      expect(state.disputes[0]!.escrow_amount).toBe("100.00");
+      expect(state.disputesLoading).toBe(false);
+      expect(state.error).toBeNull();
+    });
+
+    it("sets error on failure", async () => {
+      const client = {
+        get: mock(async () => { throw new Error("Dispute not found"); }),
+      } as unknown as FetchClient;
+
+      await useAccessStore.getState().fetchDispute("d-999", client);
+      expect(useAccessStore.getState().error).toBe("Dispute not found");
+    });
+  });
+
+  describe("fileDispute", () => {
+    it("files a dispute via POST and adds to list", async () => {
+      const client = mockClient({
+        "/api/v2/exchanges/ex-1/dispute": {
+          id: "d-new",
+          exchange_id: "ex-1",
+          zone_id: "zone-1",
+          complainant_agent_id: "agent-a",
+          respondent_agent_id: "agent-b",
+          status: "open",
+          tier: 1,
+          reason: "Bad quality",
+          resolution: null,
+          resolution_evidence_hash: null,
+          escrow_amount: null,
+          escrow_released: false,
+          filed_at: "2025-06-01T12:00:00Z",
+          resolved_at: null,
+          appeal_deadline: null,
+        },
+      });
+
+      await useAccessStore.getState().fileDispute(
+        "ex-1", "agent-a", "agent-b", "Bad quality", client,
+      );
+      const state = useAccessStore.getState();
+
+      expect(state.disputes).toHaveLength(1);
+      expect(state.disputes[0]!.id).toBe("d-new");
+      expect(state.disputesLoading).toBe(false);
+    });
+
+    it("sets error on duplicate dispute", async () => {
+      const client = {
+        post: mock(async () => { throw new Error("Dispute already filed"); }),
+      } as unknown as FetchClient;
+
+      await useAccessStore.getState().fileDispute(
+        "ex-1", "a", "b", "reason", client,
+      );
+      expect(useAccessStore.getState().error).toBe("Dispute already filed");
+    });
+  });
+
+  describe("resolveDispute", () => {
+    it("resolves a dispute and updates local state", async () => {
+      useAccessStore.setState({
+        disputes: [{
+          id: "d-1",
+          exchange_id: "ex-1",
+          zone_id: "zone-1",
+          complainant_agent_id: "agent-a",
+          respondent_agent_id: "agent-b",
+          status: "open",
+          tier: 1,
+          reason: "Service not delivered",
+          resolution: null,
+          resolution_evidence_hash: null,
+          escrow_amount: "100.00",
+          escrow_released: false,
+          filed_at: "2025-06-01T12:00:00Z",
+          resolved_at: null,
+          appeal_deadline: null,
+        }],
+      });
+
+      const client = mockClient({
+        "/api/v2/disputes/d-1/resolve": {
+          id: "d-1",
+          exchange_id: "ex-1",
+          zone_id: "zone-1",
+          complainant_agent_id: "agent-a",
+          respondent_agent_id: "agent-b",
+          status: "resolved",
+          tier: 1,
+          reason: "Service not delivered",
+          resolution: "Refund issued",
+          resolution_evidence_hash: "hash123",
+          escrow_amount: "100.00",
+          escrow_released: true,
+          filed_at: "2025-06-01T12:00:00Z",
+          resolved_at: "2025-06-05T10:00:00Z",
+          appeal_deadline: null,
+        },
+      });
+
+      await useAccessStore.getState().resolveDispute("d-1", "Refund issued", client);
+      const state = useAccessStore.getState();
+
+      expect(state.disputes[0]!.status).toBe("resolved");
+      expect(state.disputes[0]!.resolution).toBe("Refund issued");
+      expect(state.disputes[0]!.escrow_released).toBe(true);
+      expect(state.disputesLoading).toBe(false);
+    });
+  });
+
+  describe("setSelectedDisputeIndex", () => {
+    it("sets the selected dispute index", () => {
+      useAccessStore.getState().setSelectedDisputeIndex(2);
+      expect(useAccessStore.getState().selectedDisputeIndex).toBe(2);
     });
   });
 

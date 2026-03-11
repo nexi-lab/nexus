@@ -93,7 +93,6 @@ __all__ = [
     "ReBACTuple",
     "Entity",
     "WILDCARD_SUBJECT",
-    "ConsistencyLevel",
     "CheckResult",
     "GraphLimitExceeded",
 ]
@@ -110,7 +109,6 @@ from nexus.bricks.rebac.domain import WILDCARD_SUBJECT, Entity, ReBACTuple
 from nexus.bricks.rebac.enforcer import PermissionEnforcer
 from nexus.bricks.rebac.manager import (
     CheckResult,
-    ConsistencyLevel,
     GraphLimitExceeded,
     ReBACManager,
 )

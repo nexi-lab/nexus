@@ -530,3 +530,30 @@ def get_service_client(
     from nexus.cli.client import NexusServiceClient
 
     return NexusServiceClient(url=remote_url, api_key=remote_api_key)
+
+
+def rpc_call(
+    remote_url: str | None,
+    remote_api_key: str | None,
+    rpc_method: str,
+    **kwargs: Any,
+) -> Any:
+    """Backward-compatible wrapper over ``NexusServiceClient`` methods.
+
+    A few CLI commands still call the older ``rpc_call(...)`` helper. Keep it
+    as a thin adapter until those commands are migrated to the newer client
+    wrappers.
+    """
+    method_aliases = {
+        "federation_list_zones": "federation_zones",
+    }
+    client_method_name = method_aliases.get(rpc_method, rpc_method)
+
+    with get_service_client(remote_url, remote_api_key) as client:
+        client_method = getattr(client, client_method_name, None)
+        if client_method is None or not callable(client_method):
+            raise AttributeError(
+                f"NexusServiceClient has no method {client_method_name!r} "
+                f"(requested via legacy rpc_call name {rpc_method!r})"
+            )
+        return client_method(**kwargs)

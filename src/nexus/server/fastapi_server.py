@@ -278,7 +278,11 @@ def create_app(
     # Kept for backward compatibility with handlers not yet migrated.
     if _record_store is not None:
         app.state.session_factory = _record_store.session_factory
-    elif hasattr(nexus_fs, "SessionLocal") and nexus_fs.SessionLocal is not None:
+    elif (
+        nexus_fs is not None
+        and hasattr(nexus_fs, "SessionLocal")
+        and nexus_fs.SessionLocal is not None
+    ):
         app.state.session_factory = nexus_fs.SessionLocal
     else:
         app.state.session_factory = None
@@ -312,55 +316,59 @@ def create_app(
 
     # Discover exposed methods — includes brick services (Issue #2035, Follow-up 1)
     # Services with @rpc_expose override kernel stubs (later sources win).
-    _brick_sources: list[Any] = []
-    for _svc_name in (
-        "mcp",
-        "llm",
-        "oauth",
-        "mount",
-        "search",
-        "share_link",
-        "rebac",
-    ):
-        _brick_svc = nexus_fs.service(_svc_name)
-        if _brick_svc is not None:
-            _brick_sources.append(_brick_svc)
-    # version_service is on BrickServices, not in ServiceRegistry
-    _version_svc = getattr(nexus_fs, "version_service", None)
-    if _version_svc is not None:
-        _brick_sources.append(_version_svc)
-    # AgentRPCService
-    _agent_rpc = nexus_fs.service("agent_rpc")
-    if _agent_rpc is not None:
-        _brick_sources.append(_agent_rpc)
-    # WorkspaceRPCService
-    _workspace_rpc = nexus_fs.service("workspace_rpc")
-    if _workspace_rpc is not None:
-        _brick_sources.append(_workspace_rpc)
-    # Issue #12: MemoryService lives outside kernel — created by factory, not on NexusFS
-    try:
-        from nexus.factory import create_memory_service
+    if nexus_fs is not None:
+        _brick_sources: list[Any] = []
+        for _svc_name in (
+            "mcp",
+            "llm",
+            "oauth",
+            "mount",
+            "search",
+            "share_link",
+            "rebac",
+        ):
+            _brick_svc = nexus_fs.service(_svc_name)
+            if _brick_svc is not None:
+                _brick_sources.append(_brick_svc)
+        # version_service is on BrickServices, not in ServiceRegistry
+        _version_svc = getattr(nexus_fs, "version_service", None)
+        if _version_svc is not None:
+            _brick_sources.append(_version_svc)
+        # AgentRPCService
+        _agent_rpc = nexus_fs.service("agent_rpc")
+        if _agent_rpc is not None:
+            _brick_sources.append(_agent_rpc)
+        # WorkspaceRPCService
+        _workspace_rpc = nexus_fs.service("workspace_rpc")
+        if _workspace_rpc is not None:
+            _brick_sources.append(_workspace_rpc)
+        # Issue #12: MemoryService lives outside kernel — created by factory, not on NexusFS
+        try:
+            from nexus.factory import create_memory_service
 
-        _memory_svc = create_memory_service(nexus_fs)
-        if _memory_svc is not None:
-            _brick_sources.append(_memory_svc)
-            app.state.memory_service = _memory_svc  # for cleanup in lifespan
-    except Exception as _exc:
-        logger.debug("MemoryService unavailable: %s", _exc)
-    # Issue #841: MetadataExportService lives outside kernel
-    try:
-        from nexus.factory import create_metadata_export_service
+            _memory_svc = create_memory_service(nexus_fs)
+            if _memory_svc is not None:
+                _brick_sources.append(_memory_svc)
+                app.state.memory_service = _memory_svc  # for cleanup in lifespan
+        except Exception as _exc:
+            logger.debug("MemoryService unavailable: %s", _exc)
+        # Issue #841: MetadataExportService lives outside kernel
+        try:
+            from nexus.factory import create_metadata_export_service
 
-        _meta_export_svc = create_metadata_export_service(nexus_fs)
-        if _meta_export_svc is not None:
-            _brick_sources.append(_meta_export_svc)
-    except Exception as _exc:
-        logger.debug("MetadataExportService unavailable: %s", _exc)
-    # Issue #1410: VersionService @rpc_expose methods (moved from NexusFS)
-    _version_svc = getattr(nexus_fs, "version_service", None)
-    if _version_svc is not None:
-        _brick_sources.append(_version_svc)
-    app.state.exposed_methods = _discover_exposed_methods(nexus_fs, *_brick_sources)
+            _meta_export_svc = create_metadata_export_service(nexus_fs)
+            if _meta_export_svc is not None:
+                _brick_sources.append(_meta_export_svc)
+        except Exception as _exc:
+            logger.debug("MetadataExportService unavailable: %s", _exc)
+        # Issue #1410: VersionService @rpc_expose methods (moved from NexusFS)
+        _version_svc = getattr(nexus_fs, "version_service", None)
+        if _version_svc is not None:
+            _brick_sources.append(_version_svc)
+        app.state.exposed_methods = _discover_exposed_methods(nexus_fs, *_brick_sources)
+    else:
+        logger.info("create_app() started without NexusFS; service discovery disabled")
+        app.state.exposed_methods = {}
 
     # Defaults for optional services are set by init_app_state() above (Issue #2135)
 
@@ -376,7 +384,7 @@ def create_app(
 
     # Initialize subscription manager if we have a metadata store
     try:
-        if hasattr(nexus_fs, "SessionLocal"):
+        if nexus_fs is not None and hasattr(nexus_fs, "SessionLocal"):
             from nexus.server.subscriptions import (
                 SubscriptionManager,
                 set_subscription_manager,
@@ -511,10 +519,11 @@ def create_app(
     # Register NexusFS instance for zone routes, migration, and user provisioning.
     # This must happen unconditionally (not only when OAuth is configured).
     try:
-        from nexus.server.auth.auth_routes import set_nexus_instance
+        if nexus_fs is not None:
+            from nexus.server.auth.auth_routes import set_nexus_instance
 
-        set_nexus_instance(nexus_fs)
-        logger.info("NexusFS instance registered for zone management")
+            set_nexus_instance(nexus_fs)
+            logger.info("NexusFS instance registered for zone management")
     except Exception as e:
         logger.warning(f"Failed to register NexusFS instance: {e}")
 

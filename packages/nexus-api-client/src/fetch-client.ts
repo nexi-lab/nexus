@@ -79,6 +79,32 @@ export class FetchClient {
     await this.requestRaw("DELETE", path, undefined, options);
   }
 
+  /**
+   * Execute an arbitrary HTTP request through the authenticated client.
+   *
+   * Returns the raw `Response` — no JSON parsing, no key transformation,
+   * no retries. Auth and identity headers are injected automatically.
+   *
+   * Intended for the API Console and similar exploratory tools that need
+   * full control over the request/response while still using real auth.
+   */
+  async rawRequest(
+    method: string,
+    path: string,
+    body?: string,
+    options?: RequestOptions,
+  ): Promise<Response> {
+    const url = `${this.baseUrl}${path}`;
+    const headers = this.buildHeaders(method, options);
+
+    return this.fetchFn(url, {
+      method,
+      headers,
+      body: body ?? undefined,
+      signal: options?.signal,
+    });
+  }
+
   // ===========================================================================
   // Core request logic
   // ===========================================================================

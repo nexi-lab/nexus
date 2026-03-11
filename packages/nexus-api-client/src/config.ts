@@ -2,11 +2,12 @@
  * Config resolution from multiple sources with precedence:
  *
  * 1. Explicit overrides (constructor args / CLI flags)
- * 2. NEXUS_URL / NEXUS_API_KEY environment variables
- * 3. Config file (./nexus.yaml → ./nexus.yml → ~/.nexus/config.yaml)
+ * 2. Config file (./nexus.yaml → ./nexus.yml → ~/.nexus/config.yaml)
+ * 3. Environment variables (NEXUS_URL, NEXUS_API_KEY, etc.)
  * 4. Defaults
  *
- * File search order matches the Python CLI (`config.py:_auto_discover`).
+ * Matches the Python CLI (`config.py:_auto_discover`): if a config file
+ * exists, its values take priority over environment variables.
  */
 
 import type { NexusClientOptions } from "./types.js";
@@ -22,24 +23,24 @@ const DEFAULT_BASE_URL = "http://localhost:2026";
 export function resolveConfig(
   overrides?: Partial<NexusClientOptions>,
 ): NexusClientOptions {
-  // Layer 3: Config file — check ./nexus.yaml, ./nexus.yml, then ~/.nexus/config.yaml
+  // Layer 2: Config file — check ./nexus.yaml, ./nexus.yml, then ~/.nexus/config.yaml
   const yamlConfig = readYamlConfig();
 
-  // Layer 2: Environment variables
+  // Layer 3: Environment variables (lower priority than config file)
   const envUrl = readEnv("NEXUS_URL");
   const envApiKey = readEnv("NEXUS_API_KEY");
 
-  // Layer 1 wins over 2 wins over 3 wins over defaults
+  // Layer 1 wins over 2 (file) wins over 3 (env) wins over defaults
   return {
-    apiKey: overrides?.apiKey ?? envApiKey ?? yamlConfig.apiKey ?? "",
-    baseUrl: overrides?.baseUrl ?? envUrl ?? yamlConfig.url ?? DEFAULT_BASE_URL,
+    apiKey: overrides?.apiKey ?? yamlConfig.apiKey ?? envApiKey ?? "",
+    baseUrl: overrides?.baseUrl ?? yamlConfig.url ?? envUrl ?? DEFAULT_BASE_URL,
     timeout: overrides?.timeout,
     maxRetries: overrides?.maxRetries,
     fetch: overrides?.fetch,
     transformKeys: overrides?.transformKeys,
-    agentId: overrides?.agentId ?? readEnv("NEXUS_AGENT_ID"),
+    agentId: overrides?.agentId ?? yamlConfig.agentId ?? readEnv("NEXUS_AGENT_ID"),
     subject: overrides?.subject ?? readEnv("NEXUS_SUBJECT"),
-    zoneId: overrides?.zoneId ?? readEnv("NEXUS_ZONE_ID"),
+    zoneId: overrides?.zoneId ?? yamlConfig.zoneId ?? readEnv("NEXUS_ZONE_ID"),
   };
 }
 
@@ -59,6 +60,8 @@ function readEnv(name: string): string | undefined {
 interface YamlConfig {
   url?: string;
   apiKey?: string;
+  agentId?: string;
+  zoneId?: string;
 }
 
 /**
@@ -90,7 +93,14 @@ function readYamlConfig(): YamlConfig {
         const content = fs.readFileSync(configPath, "utf-8");
         const url = extractYamlValue(content, "url");
         const apiKey = extractYamlValue(content, "api_key");
-        return { url: url ?? undefined, apiKey: apiKey ?? undefined };
+        const agentId = extractYamlValue(content, "agent_id");
+        const zoneId = extractYamlValue(content, "zone_id");
+        return {
+          url: url ?? undefined,
+          apiKey: apiKey ?? undefined,
+          agentId: agentId ?? undefined,
+          zoneId: zoneId ?? undefined,
+        };
       } catch {
         // File doesn't exist or isn't readable, try next candidate
       }

@@ -54,10 +54,11 @@ export function IdentitySwitcher({
 
   const handleConfirm = useCallback(() => {
     const store = useGlobalStore.getState();
+    // Pass all fields explicitly — empty string becomes undefined to clear the header
     store.setIdentity({
-      agentId: fields.agentId || undefined,
-      subject: fields.subject || undefined,
-      zoneId: fields.zoneId || undefined,
+      agentId: fields.agentId.trim() || undefined,
+      subject: fields.subject.trim() || undefined,
+      zoneId: fields.zoneId.trim() || undefined,
     });
     store.testConnection();
     onClose();

@@ -124,11 +124,12 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
 
   setIdentity: (identity) => {
     const currentConfig = get().config;
+    // Use explicit values from identity, allowing empty string → undefined to clear fields
     const config: NexusClientOptions = {
       ...currentConfig,
-      agentId: identity.agentId ?? currentConfig.agentId,
-      subject: identity.subject ?? currentConfig.subject,
-      zoneId: identity.zoneId ?? currentConfig.zoneId,
+      agentId: "agentId" in identity ? identity.agentId : currentConfig.agentId,
+      subject: "subject" in identity ? identity.subject : currentConfig.subject,
+      zoneId: "zoneId" in identity ? identity.zoneId : currentConfig.zoneId,
     };
     const client = config.apiKey ? new FetchClient(config) : null;
     set({ config, client });

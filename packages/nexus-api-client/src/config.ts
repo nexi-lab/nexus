@@ -35,6 +35,9 @@ export function resolveConfig(
     maxRetries: overrides?.maxRetries,
     fetch: overrides?.fetch,
     transformKeys: overrides?.transformKeys,
+    agentId: overrides?.agentId ?? readEnv("NEXUS_AGENT_ID"),
+    subject: overrides?.subject ?? readEnv("NEXUS_SUBJECT"),
+    zoneId: overrides?.zoneId ?? readEnv("NEXUS_ZONE_ID"),
   };
 }
 

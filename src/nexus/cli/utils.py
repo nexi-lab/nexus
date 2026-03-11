@@ -144,6 +144,15 @@ def get_filesystem(
     try:
         from nexus.cli.config import resolve_connection
 
+        explicit_remote_url = remote_url.strip() if remote_url is not None else None
+        explicit_local_data_dir = os.environ.get("NEXUS_DATA_DIR")
+
+        # Source-checkout quickstart: if a local data dir is explicitly set and
+        # no remote URL was provided, prefer the local workspace over any active
+        # CLI profile stored in ~/.nexus/config.yaml.
+        if allow_local_default and explicit_local_data_dir and not explicit_remote_url:
+            return nexus.connect(config={"profile": "minimal", "data_dir": explicit_local_data_dir})
+
         # Get profile name from Click context if available
         profile_name = None
         try:

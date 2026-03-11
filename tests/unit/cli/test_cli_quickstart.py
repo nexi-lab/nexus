@@ -26,9 +26,28 @@ def test_local_cli_quickstart_persists_across_invocations(
 
     runner = CliRunner()
     workspace = tmp_path / "cli-demo"
-    env = {"NEXUS_DATA_DIR": str(workspace / "nexus-data")}
+    home_dir = tmp_path / "home"
+    config_dir = home_dir / ".nexus"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.yaml").write_text(
+        "\n".join(
+            [
+                "current-profile: ci-remote",
+                "profiles:",
+                "  ci-remote:",
+                "    url: http://127.0.0.1:65535",
+                "    api-key: test-key",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    env = {
+        "HOME": str(home_dir),
+        "NEXUS_DATA_DIR": str(workspace / "nexus-data"),
+    }
 
-    init_result = runner.invoke(main, ["init", str(workspace)])
+    init_result = runner.invoke(main, ["init", str(workspace)], env=env)
     assert init_result.exit_code == 0, init_result.output
 
     write_result = runner.invoke(

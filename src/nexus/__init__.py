@@ -1,12 +1,11 @@
 """
-Nexus: AI-Native Distributed Filesystem Architecture
+Nexus = filesystem/context plane.
 
-Nexus is a complete AI agent infrastructure platform that combines distributed
-unified filesystem, self-evolving agent memory, intelligent document processing,
-and seamless deployment across deployment profiles.
+Nexus combines a VFS-style filesystem interface with deployment-aware context,
+storage, and service composition for agent systems.
 
 Deployment profiles control which bricks are enabled:
-- kernel: Bare VFS, storage only
+- minimal: Bare VFS, storage only
 - embedded: Storage + eventlog
 - lite: Core services
 - full: All bricks (default)
@@ -19,7 +18,7 @@ For programmatic access (building tools, libraries, integrations), use the SDK:
 
     from nexus.sdk import connect
 
-    nx = connect()
+    nx = connect(config={"profile": "minimal", "data_dir": "./nexus-data"})
     nx.sys_write("/workspace/data.txt", b"Hello World")
     content = nx.sys_read("/workspace/data.txt")
 
@@ -351,9 +350,9 @@ def connect(
                     path, zone_id = pair.strip().split("=", 1)
                     mounts[path.strip()] = zone_id.strip()
             zone_mgr.bootstrap_static(zones=zones, peers=peers, mounts=mounts)
-
         metadata_store = FederatedMetadataProxy.from_zone_manager(zone_mgr)
     except ImportError:
+        zone_mgr = None
         # Raft extensions not available — single-node embedded Raft, with fallback
         try:
             from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -362,12 +361,38 @@ def connect(
         except (RuntimeError, ImportError):
             from nexus.storage.dict_metastore import DictMetastore
 
-            logger.warning(
-                "Rust metastore not available — using in-memory DictMetastore. "
-                "Data will not persist across restarts. "
-                "For durable storage, build with: maturin develop -m rust/nexus_raft/Cargo.toml"
+            dict_metastore_path = Path(metadata_path).with_suffix(".json")
+            logger.info(
+                "Rust metastore not available; using JSON-backed DictMetastore fallback at %s. "
+                "Build rust/nexus_raft with maturin develop -m rust/nexus_raft/Cargo.toml "
+                "--features python for the durable metastore.",
+                dict_metastore_path,
             )
-            metadata_store = DictMetastore()
+            metadata_store = DictMetastore(dict_metastore_path)
+    except RuntimeError as exc:
+        if "ZoneManager requires PyO3 build with --features full" not in str(exc):
+            raise
+
+        zone_mgr = None
+        logger.info(
+            "Federation extensions unavailable for local connect(); "
+            "falling back to single-node metadata store"
+        )
+        try:
+            from nexus.storage.raft_metadata_store import RaftMetadataStore
+
+            metadata_store = RaftMetadataStore.embedded(metadata_path)
+        except (RuntimeError, ImportError):
+            from nexus.storage.dict_metastore import DictMetastore
+
+            dict_metastore_path = Path(metadata_path).with_suffix(".json")
+            logger.info(
+                "Rust metastore not available; using JSON-backed DictMetastore fallback at %s. "
+                "Build rust/nexus_raft with maturin develop -m rust/nexus_raft/Cargo.toml "
+                "--features python for the durable metastore.",
+                dict_metastore_path,
+            )
+            metadata_store = DictMetastore(dict_metastore_path)
 
     # Permission defaults: standalone without explicit config → permissive
     enforce_permissions = cfg.enforce_permissions

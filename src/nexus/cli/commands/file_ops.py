@@ -7,13 +7,13 @@ from typing import Any, cast
 import click
 from rich.syntax import Syntax
 
-import nexus
 from nexus.cli.dry_run import add_dry_run_option, dry_run_preview, render_dry_run
 from nexus.cli.output import OutputOptions, add_output_options, render_error, render_output
 from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
     add_backend_options,
     add_context_options,
+    connect_local_workspace,
     console,
     get_filesystem,
     handle_error,
@@ -58,7 +58,7 @@ def init(path: str) -> None:
         data_dir.mkdir(parents=True, exist_ok=True)
 
         # Initialize Nexus
-        nx = nexus.connect(config={"data_dir": str(data_dir)})
+        nx = connect_local_workspace(str(data_dir))
 
         # Create default directories
         nx.sys_mkdir("/workspace", exist_ok=True)
@@ -112,7 +112,14 @@ def cat(
     timing = CommandTiming()
 
     try:
-        with timing.phase("connect"), open_filesystem(remote_url, remote_api_key) as nx:
+        with (
+            timing.phase("connect"),
+            open_filesystem(
+                remote_url,
+                remote_api_key,
+                allow_local_default=True,
+            ) as nx,
+        ):
             if at_operation:
                 _cat_time_travel(nx, path, at_operation, metadata, output_opts, timing)
                 return
@@ -143,10 +150,7 @@ def cat(
                             file_size = 0
 
                     if file_size > STREAM_THRESHOLD:
-                        print(
-                            f"Streaming large file ({file_size:,} bytes)...",
-                            file=sys.stderr,
-                        )
+                        console.print(f"[dim]Streaming large file ({file_size:,} bytes)...[/dim]")
                         for chunk in nx.stream(  # type: ignore[attr-defined]
                             path, chunk_size=65536, context=operation_context
                         ):
@@ -209,10 +213,10 @@ def _cat_time_travel(
     timing: CommandTiming,
 ) -> None:
     """Handle time-travel cat (--at-operation)."""
-    time_travel = nx.service("time_travel")
+    time_travel = getattr(nx, "time_travel_service", None)
     if time_travel is None:
         console.print("[red]Error:[/red] Time-travel is only supported with local NexusFS")
-        sys.exit(1)
+        return
 
     with timing.phase("server"):
         state = time_travel.get_file_at_operation(path, at_operation)
@@ -347,7 +351,11 @@ def write(
             render_dry_run(preview)
             return
 
-        with open_filesystem(remote_url, remote_api_key) as nx:
+        with open_filesystem(
+            remote_url,
+            remote_api_key,
+            allow_local_default=True,
+        ) as nx:
             # OCC: use lib/occ helper if CAS params present (Issue #1323).
             ctx = cast(Any, operation_context)
             if (if_match or if_none_match) and not force:
@@ -422,7 +430,11 @@ def append(
     try:
         file_content = resolve_content(content, input_file)
 
-        with open_filesystem(remote_url, remote_api_key) as nx:
+        with open_filesystem(
+            remote_url,
+            remote_api_key,
+            allow_local_default=True,
+        ) as nx:
             # Append with OCC parameters and context.
             # CAS params (if_match, force) are NexusFS-specific (transitional, see #1323).
             result = cast(Any, nx).append(
@@ -520,7 +532,7 @@ def write_batch(
             TimeElapsedColumn,
         )
 
-        nx = get_filesystem(remote_url, remote_api_key)
+        nx = get_filesystem(remote_url, remote_api_key, allow_local_default=True)
         source_path = Path(source_dir)
 
         # Ensure dest_prefix starts with /
@@ -637,7 +649,7 @@ def cp(
             render_dry_run(preview)
             return
 
-        nx = get_filesystem(remote_url, remote_api_key)
+        nx = get_filesystem(remote_url, remote_api_key, allow_local_default=True)
 
         # Read source
         content = nx.sys_read(source)
@@ -696,7 +708,7 @@ def copy_cmd(
     try:
         from nexus.sync import copy_file, copy_recursive, is_local_path
 
-        nx = get_filesystem(remote_url, remote_api_key)
+        nx = get_filesystem(remote_url, remote_api_key, allow_local_default=True)
 
         # Handle --no-checksum flag
         use_checksum = checksum and not no_checksum
@@ -773,7 +785,7 @@ def move_cmd(
 
         from nexus.sync import move_file
 
-        nx = get_filesystem(remote_url, remote_api_key)
+        nx = get_filesystem(remote_url, remote_api_key, allow_local_default=True)
 
         # Confirm unless --force
         if not force and not click.confirm(f"Move {source} to {dest}?"):
@@ -835,7 +847,7 @@ def sync_cmd(
     try:
         from nexus.sync import sync_directories
 
-        nx = get_filesystem(remote_url, remote_api_key)
+        nx = get_filesystem(remote_url, remote_api_key, allow_local_default=True)
 
         use_checksum = not no_checksum
 
@@ -906,7 +918,7 @@ def rm(
             render_dry_run(preview)
             return
 
-        nx = get_filesystem(remote_url, remote_api_key)
+        nx = get_filesystem(remote_url, remote_api_key, allow_local_default=True)
 
         # Check if file exists
         if not nx.sys_access(path):

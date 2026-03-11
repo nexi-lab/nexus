@@ -31,7 +31,7 @@ setup_uvloop()
 )
 @click.pass_context
 def main(ctx: click.Context, profile: str | None) -> None:
-    """Nexus - AI-Native Distributed Filesystem.
+    """Nexus - filesystem/context plane.
 
     Beautiful command-line interface for file operations, discovery, and management.
 

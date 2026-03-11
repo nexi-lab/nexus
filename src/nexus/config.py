@@ -266,7 +266,7 @@ class NexusConfig(BaseModel):
 
     # Remote mode settings
     url: str | None = Field(
-        default=None, description="Nexus server URL (required for mode='remote')"
+        default=None, description="Nexus server URL (required for profile='remote')"
     )
     api_key: str | None = Field(default=None, description="API key for authentication")
     timeout: float = Field(default=30.0, description="Request timeout in seconds")

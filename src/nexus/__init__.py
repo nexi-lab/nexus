@@ -362,9 +362,10 @@ def connect(
             from nexus.storage.dict_metastore import DictMetastore
 
             dict_metastore_path = Path(metadata_path).with_suffix(".json")
-            logger.warning(
-                "Rust metastore not available — using Python DictMetastore fallback at %s. "
-                "Build with maturin develop -m rust/nexus_raft/Cargo.toml for the durable Rust metastore.",
+            logger.info(
+                "Rust metastore not available; using JSON-backed DictMetastore fallback at %s. "
+                "Build rust/nexus_raft with maturin develop -m rust/nexus_raft/Cargo.toml "
+                "--features python for the durable metastore.",
                 dict_metastore_path,
             )
             metadata_store = DictMetastore(dict_metastore_path)
@@ -385,9 +386,10 @@ def connect(
             from nexus.storage.dict_metastore import DictMetastore
 
             dict_metastore_path = Path(metadata_path).with_suffix(".json")
-            logger.warning(
-                "Rust metastore not available — using Python DictMetastore fallback at %s. "
-                "Build with maturin develop -m rust/nexus_raft/Cargo.toml for the durable Rust metastore.",
+            logger.info(
+                "Rust metastore not available; using JSON-backed DictMetastore fallback at %s. "
+                "Build rust/nexus_raft with maturin develop -m rust/nexus_raft/Cargo.toml "
+                "--features python for the durable metastore.",
                 dict_metastore_path,
             )
             metadata_store = DictMetastore(dict_metastore_path)

@@ -41,9 +41,10 @@ try:
     _RUST_AVAILABLE = True
     logger.debug("Using Rust BLAKE3 acceleration")
 except (ImportError, AttributeError):
-    logger.warning(
-        "Rust BLAKE3 extension not available — falling back to Python blake3. "
-        "Install with: pip install nexus-ai-fs[rust] or maturin develop --release"
+    logger.info(
+        "Optional Rust BLAKE3 extension not available; using Python blake3. "
+        "For local development, build rust/nexus_pyo3 with: "
+        "maturin develop --release -m rust/nexus_pyo3/Cargo.toml"
     )
 
 # Priority 2: Python blake3 package (Issue #582, #833)

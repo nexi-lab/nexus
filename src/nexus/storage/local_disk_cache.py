@@ -180,7 +180,7 @@ class LocalDiskCache:
                 f"fp_rate={self._bloom_fp_rate}"
             )
         except ImportError:
-            logger.warning("nexus_fast not available, Bloom filter disabled")
+            logger.debug("nexus_fast not available, Bloom filter disabled")
             self._bloom = None
 
     def _make_cache_key(self, content_hash: str, zone_id: str | None = None) -> str:

@@ -1,12 +1,14 @@
-"""Dict-backed MetastoreABC for environments without Rust extensions.
+"""JSON-backed MetastoreABC fallback for environments without Rust extensions.
 
-Lightweight in-memory metastore used as automatic fallback when the Raft
-metastore (Rust/PyO3) is not available.  This enables ``nexusd``
-to work out of the box after a plain ``pip install nexus``
-without requiring ``maturin develop``.
+Lightweight single-file metastore used as automatic fallback when the Raft
+metastore (Rust/PyO3) is not available. This keeps the local SDK and CLI
+quickstart paths working from a plain source checkout without requiring a Rust
+build.
 
-All data is stored in-memory and lost on process exit.  For durable storage,
-build the Rust extensions: ``maturin develop -m rust/nexus_raft/Cargo.toml``.
+State persists to a JSON file for local restarts, but this backend is still
+meant for single-process development and quickstarts. For the durable Rust
+metastore, build ``maturin develop -m rust/nexus_raft/Cargo.toml --features
+python``.
 """
 
 from __future__ import annotations
@@ -20,8 +22,12 @@ from typing import Any
 
 from nexus.contracts.metadata import FileMetadata
 from nexus.core.metastore import MetastoreABC
-from nexus.core.pagination import PaginatedResult
 from nexus.storage._metadata_mapper_generated import MetadataMapper
+
+try:
+    from nexus.lib.pagination import PaginatedResult
+except ImportError:  # Backward compatibility for branches that still expose core.pagination
+    from nexus.core.pagination import PaginatedResult
 
 logger = logging.getLogger(__name__)
 
@@ -35,10 +41,10 @@ class _CasResult:
 
 
 class DictMetastore(MetastoreABC):
-    """Dict-backed metastore — in-memory, no Rust required.
+    """JSON-backed metastore fallback with no Rust requirement.
 
-    All operations are O(1) for point lookups, O(n) for scans.
-    Thread-safe under Python GIL.
+    All operations are O(1) for point lookups and O(n) for scans. Suitable for
+    local development, tests, and quickstarts.
     """
 
     def __init__(self, storage_path: str | Path | None = None) -> None:
@@ -51,7 +57,7 @@ class DictMetastore(MetastoreABC):
     def _load(self) -> None:
         if self._storage_path is None or not self._storage_path.exists():
             return
-        with self._storage_path.open() as fh:
+        with self._storage_path.open(encoding="utf-8") as fh:
             payload = json.load(fh)
 
         raw_store = payload.get("store", {})
@@ -78,7 +84,7 @@ class DictMetastore(MetastoreABC):
             "file_metadata": self._file_metadata,
         }
         tmp_path = self._storage_path.with_suffix(f"{self._storage_path.suffix}.tmp")
-        with tmp_path.open("w") as fh:
+        with tmp_path.open("w", encoding="utf-8") as fh:
             json.dump(payload, fh, indent=2, sort_keys=True)
         tmp_path.replace(self._storage_path)
 
@@ -153,7 +159,7 @@ class DictMetastore(MetastoreABC):
         start = int(cursor) if cursor else 0
         page = all_items[start : start + limit]
         has_more = start + limit < len(all_items)
-        next_cursor = page[-1].path if has_more and page else None
+        next_cursor = str(start + limit) if has_more and page else None
         return PaginatedResult(
             items=page,
             next_cursor=next_cursor,

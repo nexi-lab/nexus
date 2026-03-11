@@ -65,7 +65,7 @@ def _init_bloom(cas_root: Path, capacity: int, fp_rate: float) -> Any:
                 logger.info("CAS Bloom filter populated with %d entries", len(keys))
         return bloom
     except ImportError:
-        logger.warning("nexus_fast not available, CAS Bloom filter disabled")
+        logger.debug("nexus_fast not available, CAS Bloom filter disabled")
         return None
     except Exception as e:
         logger.warning("Failed to initialize CAS Bloom filter: %s", e)

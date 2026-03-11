@@ -23,11 +23,17 @@ Nexus gives agents one place to read, write, search, and carry context across fi
 
 ## Quick Start
 
-This is the local SDK path verified against this repo with `PYTHONPATH=src`
-and Python 3.13. If you installed from PyPI, drop `PYTHONPATH=src`.
+This is the verified source-checkout path as of March 11, 2026. It uses `uv`,
+Python 3.14, the lightweight `requirements-minimal.txt` set, and does not
+require a Rust build.
 
 ```bash
-PYTHONPATH=src python3.13 - <<'PY'
+uv venv --python 3.14
+source .venv/bin/activate
+uv pip install -r requirements-minimal.txt
+uv pip install -e . --no-deps
+
+python - <<'PY'
 from nexus.sdk import connect
 
 nx = connect(
@@ -50,18 +56,34 @@ Expected output:
 Hello, Nexus!
 ```
 
+The commands below assume the same activated `.venv`.
+
 Local CLI path from a source checkout:
 
 ```bash
-PYTHONPATH=src python3.13 -m nexus.cli.main init .nexus-cli-demo
+python -m nexus.cli.main init .nexus-cli-demo
 export NEXUS_DATA_DIR="$PWD/.nexus-cli-demo/nexus-data"
 
-PYTHONPATH=src python3.13 -m nexus.cli.main write /workspace/hello.txt "hello from cli"
-PYTHONPATH=src python3.13 -m nexus.cli.main cat /workspace/hello.txt
-PYTHONPATH=src python3.13 -m nexus.cli.main ls /workspace
+python -m nexus.cli.main write /workspace/hello.txt "hello from cli"
+python -m nexus.cli.main cat /workspace/hello.txt
+python -m nexus.cli.main ls /workspace
 ```
 
-If you installed from PyPI, use `nexus` instead of `python3.13 -m nexus.cli.main`.
+If you installed from PyPI, use `nexus` instead of `python -m nexus.cli.main`.
+
+## Optional Capabilities
+
+- Full dev/test environment: `uv sync --extra dev --extra test`
+- txtai/FAISS semantic search stack: `uv sync --extra semantic-search`
+- Optional Rust BLAKE3 acceleration: `maturin develop --release -m rust/nexus_pyo3/Cargo.toml`
+- Rust metastore / federation extensions: `maturin develop --release -m rust/nexus_raft/Cargo.toml --features python` or `--features full`
+
+## Troubleshooting
+
+- `ModuleNotFoundError: No module named 'nexus'`: you are in a source checkout without installing the package into the active interpreter. Use the `uv` setup above or install `nexus-ai-fs` from PyPI.
+- `maturin develop --release` fails at the repo root: the root [Cargo.toml](./Cargo.toml) is a workspace manifest. Point `maturin` at a crate manifest under `rust/`.
+- `Rust BLAKE3 extension not available`: this is an optional performance path. The default quickstart uses the Python `blake3` package.
+- `faiss-cpu` resolution fails: stay on the default source quickstart above, or opt into `semantic-search` only on a platform with compatible `txtai`/`faiss-cpu` wheels.
 
 For the full walkthrough, see the [quickstart page](https://nexi-lab.github.io/nexus/getting-started/quickstart/).
 
@@ -147,11 +169,14 @@ See [Kernel Architecture](https://nexi-lab.github.io/nexus/architecture/kernel-a
 ```bash
 git clone https://github.com/nexi-lab/nexus.git
 cd nexus
-pip install -e ".[dev]"
-pre-commit install
-pytest tests/
+uv python install 3.14
+uv sync --extra dev --extra test
+uv run pre-commit install
+uv run pytest tests/
 ```
+
+If you are working on the txtai search stack, add `--extra semantic-search`.
 
 ## License
 
-© 2025 Nexi Labs, Inc. Licensed under Apache License 2.0 — see [LICENSE](https://github.com/nexi-lab/nexus/blob/main/LICENSE) for details.
+© 2026 Nexi Labs, Inc. Licensed under Apache License 2.0 — see [LICENSE](https://github.com/nexi-lab/nexus/blob/main/LICENSE) for details.

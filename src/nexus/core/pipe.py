@@ -115,11 +115,11 @@ class RingBuffer:
         """
         while True:
             try:
-                n = self.write_nowait(data)
-                return n
+                return self.write_nowait(data)
             except PipeFullError:
                 if not blocking:
                     raise
+                # Only clear+wait here — nowait path skips is_full() check
                 self._not_full.clear()
                 await self._not_full.wait()
                 if self._core.closed:
@@ -145,6 +145,7 @@ class RingBuffer:
             except PipeEmptyError:
                 if not blocking:
                     raise
+                # Only clear+wait here — nowait path skips is_empty() check
                 self._not_empty.clear()
                 await self._not_empty.wait()
 
@@ -160,22 +161,22 @@ class RingBuffer:
         except ValueError:
             raise  # oversized message — already a ValueError from Rust
 
+        # Wake blocked reader. Event.clear() deferred to async write() path
+        # — avoids is_full() FFI call on every sync write.
         self._not_empty.set()
-        if self._core.is_full():
-            self._not_full.clear()
         return int(n)
 
     def read_nowait(self) -> bytes:
         """Synchronous non-blocking read. Raises PipeEmptyError if empty."""
         try:
-            msg = bytes(self._core.pop())
+            msg: bytes = self._core.pop()  # PyO3 returns bytes natively
         except RuntimeError as exc:
             _translate_rust_error(exc)
             raise  # unreachable
 
+        # Wake blocked writer. Event.clear() deferred to async read() path
+        # — avoids is_empty() FFI call on every sync read.
         self._not_full.set()
-        if self._core.is_empty():
-            self._not_empty.clear()
         return msg
 
     # -- wait helpers -------------------------------------------------------

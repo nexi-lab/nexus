@@ -1,9 +1,11 @@
 /**
  * Search & Knowledge panel: tabbed layout with search, knowledge graph,
  * and memories views.
+ *
+ * Press / to enter search input mode, type query, Enter to submit, Escape to cancel.
  */
 
-import React, { useEffect } from "react";
+import React, { useState, useCallback } from "react";
 import { useSearchStore } from "../../stores/search-store.js";
 import type { SearchTab } from "../../stores/search-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
@@ -21,6 +23,8 @@ const TAB_LABELS: Readonly<Record<SearchTab, string>> = {
 
 export default function SearchPanel(): React.ReactNode {
   const client = useApi();
+  const [inputMode, setInputMode] = useState(false);
+  const [inputBuffer, setInputBuffer] = useState("");
 
   const searchQuery = useSearchStore((s) => s.searchQuery);
   const searchResults = useSearchStore((s) => s.searchResults);
@@ -47,8 +51,24 @@ export default function SearchPanel(): React.ReactNode {
   const setSelectedMemoryIndex = useSearchStore((s) => s.setSelectedMemoryIndex);
   const setSearchQuery = useSearchStore((s) => s.setSearchQuery);
 
+  const submitSearch = useCallback(
+    (query: string) => {
+      if (!client || !query.trim()) return;
+
+      setSearchQuery(query.trim());
+      if (activeTab === "search") {
+        search(query.trim(), client);
+      } else if (activeTab === "knowledge") {
+        searchKnowledge(query.trim(), client);
+      } else if (activeTab === "memories") {
+        fetchMemories(query.trim(), client);
+      }
+    },
+    [client, activeTab, search, searchKnowledge, fetchMemories, setSearchQuery],
+  );
+
   // Refresh current view based on active tab
-  const refreshCurrentView = (): void => {
+  const refreshCurrentView = useCallback((): void => {
     if (!client) return;
 
     if (activeTab === "search" && searchQuery) {
@@ -58,94 +78,123 @@ export default function SearchPanel(): React.ReactNode {
     } else if (activeTab === "memories") {
       fetchMemories("", client);
     }
-  };
+  }, [client, activeTab, searchQuery, search, searchKnowledge, fetchMemories]);
 
-  // Auto-fetch when tab changes
-  useEffect(() => {
-    refreshCurrentView();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, client]);
+  // In input mode, capture printable characters via onUnhandled
+  const handleUnhandledKey = useCallback(
+    (keyName: string) => {
+      if (!inputMode) return;
+      // Single printable character (letter, digit, symbol, space)
+      if (keyName.length === 1) {
+        setInputBuffer((b) => b + keyName);
+      } else if (keyName === "space") {
+        setInputBuffer((b) => b + " ");
+      }
+    },
+    [inputMode],
+  );
 
-  useKeyboard({
-    j: () => {
-      if (activeTab === "search") {
-        setSelectedResultIndex(
-          Math.min(selectedResultIndex + 1, searchResults.length - 1),
-        );
-      } else if (activeTab === "memories") {
-        setSelectedMemoryIndex(
-          Math.min(selectedMemoryIndex + 1, memories.length - 1),
-        );
-      }
-    },
-    down: () => {
-      if (activeTab === "search") {
-        setSelectedResultIndex(
-          Math.min(selectedResultIndex + 1, searchResults.length - 1),
-        );
-      } else if (activeTab === "memories") {
-        setSelectedMemoryIndex(
-          Math.min(selectedMemoryIndex + 1, memories.length - 1),
-        );
-      }
-    },
-    k: () => {
-      if (activeTab === "search") {
-        setSelectedResultIndex(Math.max(selectedResultIndex - 1, 0));
-      } else if (activeTab === "memories") {
-        setSelectedMemoryIndex(Math.max(selectedMemoryIndex - 1, 0));
-      }
-    },
-    up: () => {
-      if (activeTab === "search") {
-        setSelectedResultIndex(Math.max(selectedResultIndex - 1, 0));
-      } else if (activeTab === "memories") {
-        setSelectedMemoryIndex(Math.max(selectedMemoryIndex - 1, 0));
-      }
-    },
-    tab: () => {
-      const currentIdx = TAB_ORDER.indexOf(activeTab);
-      const nextIdx = (currentIdx + 1) % TAB_ORDER.length;
-      const nextTab = TAB_ORDER[nextIdx];
-      if (nextTab) {
-        setActiveTab(nextTab);
-      }
-    },
-    r: () => refreshCurrentView(),
-    "/": () => {
-      // Prompt for search query — in TUI context this sets a placeholder
-      // The actual input is handled by the parent shell; here we signal intent.
-      setSearchQuery("");
-    },
-    return: () => {
-      if (!client) return;
-
-      if (activeTab === "search") {
-        const result = searchResults[selectedResultIndex];
-        if (result) {
-          // Navigate to knowledge view using the path from the search result
-          fetchEntity(result.path, client);
-          fetchNeighbors(result.path, client);
-          setActiveTab("knowledge");
+  useKeyboard(
+    inputMode
+      ? {
+          // Input mode: capture keystrokes for the search query
+          return: () => {
+            setInputMode(false);
+            submitSearch(inputBuffer);
+          },
+          escape: () => {
+            setInputMode(false);
+            setInputBuffer("");
+          },
+          backspace: () => {
+            setInputBuffer((b) => b.slice(0, -1));
+          },
         }
-      } else if (activeTab === "knowledge") {
-        if (selectedEntity) {
-          const entityId = String(
-            (selectedEntity as Record<string, unknown>).entity_id ?? "",
-          );
-          if (entityId) {
-            fetchNeighbors(entityId, client);
-          }
-        }
-      }
-    },
-  });
+      : {
+          // Normal mode: navigation
+          j: () => {
+            if (activeTab === "search") {
+              setSelectedResultIndex(
+                Math.min(selectedResultIndex + 1, searchResults.length - 1),
+              );
+            } else if (activeTab === "memories") {
+              setSelectedMemoryIndex(
+                Math.min(selectedMemoryIndex + 1, memories.length - 1),
+              );
+            }
+          },
+          down: () => {
+            if (activeTab === "search") {
+              setSelectedResultIndex(
+                Math.min(selectedResultIndex + 1, searchResults.length - 1),
+              );
+            } else if (activeTab === "memories") {
+              setSelectedMemoryIndex(
+                Math.min(selectedMemoryIndex + 1, memories.length - 1),
+              );
+            }
+          },
+          k: () => {
+            if (activeTab === "search") {
+              setSelectedResultIndex(Math.max(selectedResultIndex - 1, 0));
+            } else if (activeTab === "memories") {
+              setSelectedMemoryIndex(Math.max(selectedMemoryIndex - 1, 0));
+            }
+          },
+          up: () => {
+            if (activeTab === "search") {
+              setSelectedResultIndex(Math.max(selectedResultIndex - 1, 0));
+            } else if (activeTab === "memories") {
+              setSelectedMemoryIndex(Math.max(selectedMemoryIndex - 1, 0));
+            }
+          },
+          tab: () => {
+            const currentIdx = TAB_ORDER.indexOf(activeTab);
+            const nextIdx = (currentIdx + 1) % TAB_ORDER.length;
+            const nextTab = TAB_ORDER[nextIdx];
+            if (nextTab) {
+              setActiveTab(nextTab);
+            }
+          },
+          r: () => refreshCurrentView(),
+          "/": () => {
+            setInputMode(true);
+            setInputBuffer(searchQuery);
+          },
+          return: () => {
+            if (!client) return;
+
+            if (activeTab === "search") {
+              const result = searchResults[selectedResultIndex];
+              if (result) {
+                fetchEntity(result.path, client);
+                fetchNeighbors(result.path, client);
+                setActiveTab("knowledge");
+              }
+            } else if (activeTab === "knowledge") {
+              if (selectedEntity) {
+                const entityId = String(
+                  (selectedEntity as Record<string, unknown>).entity_id ?? "",
+                );
+                if (entityId) {
+                  fetchNeighbors(entityId, client);
+                }
+              }
+            }
+          },
+        },
+    handleUnhandledKey,
+  );
 
   return (
     <box height="100%" width="100%" flexDirection="column">
-      {/* Search query display */}
+      {/* Search input bar */}
       <box height={1} width="100%">
-        <text>{`Query: ${searchQuery || "(press / to search)"}`}</text>
+        <text>
+          {inputMode
+            ? `Search: ${inputBuffer}█`
+            : `Query: ${searchQuery || "(press / to search)"}`}
+        </text>
       </box>
 
       {/* Tab bar */}
@@ -195,7 +244,9 @@ export default function SearchPanel(): React.ReactNode {
       {/* Help bar */}
       <box height={1} width="100%">
         <text>
-          {"j/k:navigate  Tab:switch tab  /:search  Enter:select  r:refresh  q:quit"}
+          {inputMode
+            ? "Type query, Enter:submit, Escape:cancel, Backspace:delete"
+            : "j/k:navigate  Tab:switch tab  /:search  Enter:select  r:refresh  q:quit"}
         </text>
       </box>
     </box>

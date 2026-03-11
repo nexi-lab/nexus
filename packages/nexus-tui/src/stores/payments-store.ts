@@ -1,11 +1,13 @@
 /**
  * Zustand store for Payments & Credits panel.
  *
- * Manages balance queries, credit transfers, reservations (hold/commit/release),
- * payment policies, and the audit log.
+ * Manages balance queries, credit transfers, and reservations (hold/commit/release).
  *
  * Reservations are tracked locally (from createReservation responses) because
  * the backend has no reservation list endpoint.
+ *
+ * Note: The backend pay surface (pay.py) does not include /policies or /audit
+ * endpoints. Those features are deferred until the backend exposes them.
  */
 
 import { create } from "zustand";
@@ -42,27 +44,7 @@ export interface Reservation {
   readonly status: "pending" | "committed" | "released";
 }
 
-export interface PaymentPolicy {
-  readonly policy_id: string;
-  readonly name: string;
-  readonly type: string;
-  readonly limit_amount: string | null;
-  readonly period: string | null;
-  readonly enabled: boolean;
-}
-
-export interface AuditEntry {
-  readonly entry_id: string;
-  readonly type: string;
-  readonly amount: string;
-  readonly from_account: string | null;
-  readonly to_account: string | null;
-  readonly status: string;
-  readonly created_at: string;
-  readonly description: string | null;
-}
-
-export type PaymentsTab = "balance" | "reservations" | "policies" | "audit";
+export type PaymentsTab = "balance" | "reservations";
 
 // =============================================================================
 // Store
@@ -77,15 +59,6 @@ export interface PaymentsState {
   readonly reservations: readonly Reservation[];
   readonly selectedReservationIndex: number;
   readonly reservationsLoading: boolean;
-
-  // Policies
-  readonly policies: readonly PaymentPolicy[];
-  readonly policiesLoading: boolean;
-
-  // Audit
-  readonly auditEntries: readonly AuditEntry[];
-  readonly auditTotal: number;
-  readonly auditLoading: boolean;
 
   // UI state
   readonly activeTab: PaymentsTab;
@@ -107,8 +80,6 @@ export interface PaymentsState {
   ) => Promise<void>;
   readonly commitReservation: (id: string, client: FetchClient) => Promise<void>;
   readonly releaseReservation: (id: string, client: FetchClient) => Promise<void>;
-  readonly fetchPolicies: (client: FetchClient) => Promise<void>;
-  readonly fetchAudit: (client: FetchClient) => Promise<void>;
   readonly setActiveTab: (tab: PaymentsTab) => void;
   readonly setSelectedReservationIndex: (index: number) => void;
 }
@@ -119,11 +90,6 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
   reservations: [],
   selectedReservationIndex: 0,
   reservationsLoading: false,
-  policies: [],
-  policiesLoading: false,
-  auditEntries: [],
-  auditTotal: 0,
-  auditLoading: false,
   activeTab: "balance",
   error: null,
 
@@ -214,48 +180,6 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
       set({
         error:
           err instanceof Error ? err.message : "Failed to release reservation",
-      });
-    }
-  },
-
-  fetchPolicies: async (client) => {
-    set({ policiesLoading: true, error: null });
-
-    try {
-      const response = await client.get<{
-        readonly policies: readonly PaymentPolicy[];
-      }>("/api/v2/pay/policies");
-      const policies = response.policies ?? [];
-      set({ policies, policiesLoading: false });
-    } catch (err) {
-      set({
-        policiesLoading: false,
-        error:
-          err instanceof Error ? err.message : "Failed to fetch policies",
-      });
-    }
-  },
-
-  fetchAudit: async (client) => {
-    set({ auditLoading: true, error: null });
-
-    try {
-      const response = await client.get<{
-        readonly transactions: readonly AuditEntry[];
-        readonly total: number;
-      }>("/api/v2/audit/transactions");
-      set({
-        auditEntries: response.transactions ?? [],
-        auditTotal: response.total ?? 0,
-        auditLoading: false,
-      });
-    } catch (err) {
-      set({
-        auditLoading: false,
-        error:
-          err instanceof Error
-            ? err.message
-            : "Failed to fetch audit log",
       });
     }
   },

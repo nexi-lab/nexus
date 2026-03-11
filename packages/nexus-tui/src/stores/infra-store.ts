@@ -106,7 +106,7 @@ export interface InfraState {
   readonly testSubscription: (id: string, client: FetchClient) => Promise<void>;
   readonly fetchLocks: (client: FetchClient) => Promise<void>;
   readonly releaseLock: (path: string, lockId: string, client: FetchClient) => Promise<void>;
-  readonly extendLock: (path: string, ttlSeconds: number, client: FetchClient) => Promise<void>;
+  readonly extendLock: (path: string, lockId: string, ttlSeconds: number, client: FetchClient) => Promise<void>;
   readonly fetchSecretAudit: (client: FetchClient) => Promise<void>;
   readonly setActiveTab: (tab: InfraTab) => void;
   readonly setSelectedConnectorIndex: (index: number) => void;
@@ -238,11 +238,12 @@ export const useInfraStore = create<InfraState>((set, get) => ({
     }
   },
 
-  extendLock: async (path, ttlSeconds, client) => {
+  extendLock: async (path, lockId, ttlSeconds, client) => {
     set({ error: null });
     try {
       await client.patch(`/api/v2/locks/${encodeURIComponent(path)}`, {
-        ttl_seconds: ttlSeconds,
+        lock_id: lockId,
+        ttl: ttlSeconds,
       });
       await get().fetchLocks(client);
     } catch (err) {

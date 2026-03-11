@@ -1,5 +1,8 @@
 /**
- * Payments panel: tabbed layout for Balance, Reservations, Policies, and Audit views.
+ * Payments panel: tabbed layout for Balance and Reservations views.
+ *
+ * Note: Policies and Audit tabs are deferred — the backend pay surface
+ * (pay.py) does not expose /policies or /audit endpoints yet.
  */
 
 import React, { useEffect } from "react";
@@ -9,20 +12,14 @@ import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { BalanceCard } from "./balance-card.js";
 import { ReservationList } from "./reservation-list.js";
-import { PolicyList } from "./policy-list.js";
-import { AuditLog } from "./audit-log.js";
 
 const TAB_ORDER: readonly PaymentsTab[] = [
   "balance",
   "reservations",
-  "policies",
-  "audit",
 ];
 const TAB_LABELS: Readonly<Record<PaymentsTab, string>> = {
   balance: "Balance",
   reservations: "Reservations",
-  policies: "Policies",
-  audit: "Audit",
 };
 
 export default function PaymentsPanel(): React.ReactNode {
@@ -33,17 +30,10 @@ export default function PaymentsPanel(): React.ReactNode {
   const reservations = usePaymentsStore((s) => s.reservations);
   const selectedReservationIndex = usePaymentsStore((s) => s.selectedReservationIndex);
   const reservationsLoading = usePaymentsStore((s) => s.reservationsLoading);
-  const policies = usePaymentsStore((s) => s.policies);
-  const policiesLoading = usePaymentsStore((s) => s.policiesLoading);
-  const auditEntries = usePaymentsStore((s) => s.auditEntries);
-  const auditTotal = usePaymentsStore((s) => s.auditTotal);
-  const auditLoading = usePaymentsStore((s) => s.auditLoading);
   const activeTab = usePaymentsStore((s) => s.activeTab);
   const error = usePaymentsStore((s) => s.error);
 
   const fetchBalance = usePaymentsStore((s) => s.fetchBalance);
-  const fetchPolicies = usePaymentsStore((s) => s.fetchPolicies);
-  const fetchAudit = usePaymentsStore((s) => s.fetchAudit);
   const commitReservation = usePaymentsStore((s) => s.commitReservation);
   const releaseReservation = usePaymentsStore((s) => s.releaseReservation);
   const setActiveTab = usePaymentsStore((s) => s.setActiveTab);
@@ -58,10 +48,6 @@ export default function PaymentsPanel(): React.ReactNode {
 
     if (activeTab === "balance") {
       fetchBalance(client);
-    } else if (activeTab === "policies") {
-      fetchPolicies(client);
-    } else if (activeTab === "audit") {
-      fetchAudit(client);
     }
   };
 
@@ -150,16 +136,6 @@ export default function PaymentsPanel(): React.ReactNode {
             reservations={reservations}
             selectedIndex={selectedReservationIndex}
             loading={reservationsLoading}
-          />
-        )}
-        {activeTab === "policies" && (
-          <PolicyList policies={policies} loading={policiesLoading} />
-        )}
-        {activeTab === "audit" && (
-          <AuditLog
-            entries={auditEntries}
-            total={auditTotal}
-            loading={auditLoading}
           />
         )}
       </box>

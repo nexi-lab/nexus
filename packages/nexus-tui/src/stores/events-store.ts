@@ -42,9 +42,9 @@ export const useEventsStore = create<EventsState>((set, get) => ({
 
     const client = new SseClient({ baseUrl, apiKey });
 
-    client.onEvent((events) => {
+    client.onEvent((newEvents) => {
       set((state) => {
-        const allEvents = events;
+        const allEvents = [...state.events, ...newEvents];
         return {
           events: allEvents,
           filteredEvents: applyFilters(allEvents, state.filters),

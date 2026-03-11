@@ -15,6 +15,8 @@ export class RingBuffer<T> {
   private readonly buffer: (T | undefined)[];
   private head = 0;
   private count = 0;
+  /** Monotonically increasing counter of total items ever pushed (never wraps). */
+  private _totalPushed = 0;
 
   constructor(readonly capacity: number) {
     this.buffer = new Array<T | undefined>(capacity);
@@ -24,12 +26,18 @@ export class RingBuffer<T> {
     return this.count;
   }
 
+  /** Total number of items pushed since creation/clear (never decreases). */
+  get totalPushed(): number {
+    return this._totalPushed;
+  }
+
   push(item: T): void {
     this.buffer[this.head] = item;
     this.head = (this.head + 1) % this.capacity;
     if (this.count < this.capacity) {
       this.count++;
     }
+    this._totalPushed++;
   }
 
   /** Return items in insertion order (oldest first). */
@@ -45,10 +53,19 @@ export class RingBuffer<T> {
     return result;
   }
 
+  /** Return the last N items (newest first becomes oldest first). */
+  lastN(n: number): readonly T[] {
+    if (n <= 0 || this.count === 0) return [];
+    const take = Math.min(n, this.count);
+    const all = this.toArray();
+    return all.slice(all.length - take);
+  }
+
   clear(): void {
     this.buffer.fill(undefined);
     this.head = 0;
     this.count = 0;
+    this._totalPushed = 0;
   }
 }
 
@@ -132,7 +149,7 @@ export class SseClient {
     this.stopFlushTimer();
     this.connected = false;
     this.reconnectAttempt = 0;
-    this.lastFlushedCount = 0;
+    this.lastFlushedTotal = 0;
   }
 
   getBufferedEvents(): readonly SseEvent[] {
@@ -141,7 +158,7 @@ export class SseClient {
 
   clearBuffer(): void {
     this.buffer.clear();
-    this.lastFlushedCount = 0;
+    this.lastFlushedTotal = 0;
   }
 
   // ===========================================================================
@@ -262,18 +279,20 @@ export class SseClient {
     return { parsed, remaining };
   }
 
-  /** Tracks how many events have been flushed so far to avoid re-sending the entire buffer. */
-  private lastFlushedCount = 0;
+  /** Tracks total events flushed via the monotonic totalPushed counter. */
+  private lastFlushedTotal = 0;
 
   private startFlushTimer(): void {
-    this.lastFlushedCount = this.buffer.size;
+    this.lastFlushedTotal = this.buffer.totalPushed;
     this.flushTimer = setInterval(() => {
-      const currentSize = this.buffer.size;
-      if (currentSize > this.lastFlushedCount) {
-        const all = this.buffer.toArray();
-        const newEvents = all.slice(this.lastFlushedCount);
-        this.lastFlushedCount = currentSize;
-        this.eventHandler?.(newEvents);
+      const currentTotal = this.buffer.totalPushed;
+      if (currentTotal > this.lastFlushedTotal) {
+        const newCount = currentTotal - this.lastFlushedTotal;
+        const newEvents = this.buffer.lastN(newCount);
+        this.lastFlushedTotal = currentTotal;
+        if (newEvents.length > 0) {
+          this.eventHandler?.(newEvents);
+        }
       }
     }, this.flushIntervalMs);
   }

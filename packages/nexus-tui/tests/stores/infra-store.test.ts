@@ -361,7 +361,7 @@ describe("InfraStore", () => {
         "/api/v2/locks": lockData,
       });
 
-      await useInfraStore.getState().extendLock("/data/file", 600, client);
+      await useInfraStore.getState().extendLock("/data/file", "lock-1", 600, client);
       const state = useInfraStore.getState();
 
       expect(state.locks).toHaveLength(1);
@@ -374,7 +374,7 @@ describe("InfraStore", () => {
         patch: mock(async () => { throw new Error("Extension denied"); }),
       } as unknown as FetchClient;
 
-      await useInfraStore.getState().extendLock("/data/file", 300, client);
+      await useInfraStore.getState().extendLock("/data/file", "lock-x", 300, client);
       expect(useInfraStore.getState().error).toBe("Extension denied");
     });
   });

@@ -32,11 +32,6 @@ function resetStore(): void {
     reservations: [],
     selectedReservationIndex: 0,
     reservationsLoading: false,
-    policies: [],
-    policiesLoading: false,
-    auditEntries: [],
-    auditTotal: 0,
-    auditLoading: false,
     activeTab: "balance",
     error: null,
   });
@@ -55,12 +50,6 @@ describe("PaymentsStore", () => {
     it("switches between tabs", () => {
       usePaymentsStore.getState().setActiveTab("reservations");
       expect(usePaymentsStore.getState().activeTab).toBe("reservations");
-
-      usePaymentsStore.getState().setActiveTab("policies");
-      expect(usePaymentsStore.getState().activeTab).toBe("policies");
-
-      usePaymentsStore.getState().setActiveTab("audit");
-      expect(usePaymentsStore.getState().activeTab).toBe("audit");
 
       usePaymentsStore.getState().setActiveTab("balance");
       expect(usePaymentsStore.getState().activeTab).toBe("balance");
@@ -346,123 +335,6 @@ describe("PaymentsStore", () => {
       expect(usePaymentsStore.getState().error).toBe(
         "Cannot release committed reservation",
       );
-    });
-  });
-
-  // ---------------------------------------------------------------------------
-  // fetchPolicies
-  // ---------------------------------------------------------------------------
-
-  describe("fetchPolicies", () => {
-    it("fetches and stores policies list", async () => {
-      const client = mockClient({
-        "/api/v2/pay/policies": {
-          policies: [
-            {
-              policy_id: "pol-001",
-              name: "Daily spending limit",
-              type: "spending_limit",
-              limit_amount: "10000.00",
-              period: "daily",
-              enabled: true,
-            },
-            {
-              policy_id: "pol-002",
-              name: "Transfer whitelist",
-              type: "whitelist",
-              limit_amount: null,
-              period: null,
-              enabled: false,
-            },
-          ],
-        },
-      });
-
-      await usePaymentsStore.getState().fetchPolicies(client);
-      const state = usePaymentsStore.getState();
-
-      expect(state.policies).toHaveLength(2);
-      expect(state.policies[0]!.policy_id).toBe("pol-001");
-      expect(state.policies[0]!.name).toBe("Daily spending limit");
-      expect(state.policies[0]!.enabled).toBe(true);
-      expect(state.policies[1]!.limit_amount).toBeNull();
-      expect(state.policies[1]!.enabled).toBe(false);
-      expect(state.policiesLoading).toBe(false);
-      expect(state.error).toBeNull();
-    });
-
-    it("sets error on failure", async () => {
-      const client = {
-        get: mock(async () => {
-          throw new Error("Policies not available");
-        }),
-      } as unknown as FetchClient;
-
-      await usePaymentsStore.getState().fetchPolicies(client);
-      const state = usePaymentsStore.getState();
-      expect(state.policiesLoading).toBe(false);
-      expect(state.error).toBe("Policies not available");
-    });
-  });
-
-  // ---------------------------------------------------------------------------
-  // fetchAudit
-  // ---------------------------------------------------------------------------
-
-  describe("fetchAudit", () => {
-    it("fetches and stores audit entries", async () => {
-      const client = mockClient({
-        "/api/v2/audit/transactions": {
-          transactions: [
-            {
-              entry_id: "aud-001",
-              type: "transfer",
-              amount: "100.00",
-              from_account: "acct-001",
-              to_account: "acct-002",
-              status: "completed",
-              created_at: "2025-06-01T12:00:00Z",
-              description: "Payment for service",
-            },
-            {
-              entry_id: "aud-002",
-              type: "reservation",
-              amount: "50.00",
-              from_account: "acct-001",
-              to_account: null,
-              status: "committed",
-              created_at: "2025-06-01T11:00:00Z",
-              description: null,
-            },
-          ],
-          total: 42,
-        },
-      });
-
-      await usePaymentsStore.getState().fetchAudit(client);
-      const state = usePaymentsStore.getState();
-
-      expect(state.auditEntries).toHaveLength(2);
-      expect(state.auditEntries[0]!.entry_id).toBe("aud-001");
-      expect(state.auditEntries[0]!.type).toBe("transfer");
-      expect(state.auditEntries[0]!.from_account).toBe("acct-001");
-      expect(state.auditEntries[1]!.to_account).toBeNull();
-      expect(state.auditTotal).toBe(42);
-      expect(state.auditLoading).toBe(false);
-      expect(state.error).toBeNull();
-    });
-
-    it("sets error on failure", async () => {
-      const client = {
-        get: mock(async () => {
-          throw new Error("Audit log unreachable");
-        }),
-      } as unknown as FetchClient;
-
-      await usePaymentsStore.getState().fetchAudit(client);
-      const state = usePaymentsStore.getState();
-      expect(state.auditLoading).toBe(false);
-      expect(state.error).toBe("Audit log unreachable");
     });
   });
 

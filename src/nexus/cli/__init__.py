@@ -1,56 +1,40 @@
-"""
-Nexus CLI - Command-line interface for Nexus filesystem operations.
+"""Nexus CLI package.
 
-This module contains CLI-specific code for the nexus command-line tool.
-For programmatic access, use the nexus.sdk module instead.
-
-Architecture:
-    - utils.py: Common utilities (decorators, helpers)
-    - formatters.py: Rich output formatting utilities
-    - context.py: Global context management
-    - main.py: Main CLI entry point
-    - commands/: Modular command structure
-        - file_ops.py: File operations (init, cat, write, cp, mv, sync, rm)
-        - directory.py: Directory operations (ls, mkdir, rmdir, tree)
-        - search.py: Discovery commands (glob, grep, semantic search)
-        - permissions.py: Permission commands (chmod, chown, chgrp, getfacl, setfacl)
-        - rebac.py: Relationship-based access control
-        - versions.py: Version tracking commands
-        - plugins.py: Plugin management commands
-        - mounts.py: Connector mount management
-        - inspect.py: File inspection (info, version, size)
-
-Usage:
-    From command line:
-        $ nexus ls /workspace
-        $ nexus write /file.txt "content"
-
-    For programmatic access, use the SDK:
-        >>> from nexus.sdk import connect
-        >>> nx = connect()
-        >>> nx.sys_write("/file.txt", b"content")
+The package keeps its public re-exports lazy so submodules like
+``nexus.cli.exit_codes`` do not eagerly import the full CLI stack.
 """
 
-__all__ = ["main"]
+from __future__ import annotations
 
-# Import the main CLI entry point from main module
-from nexus.cli.main import main
-
-# Re-export utilities for internal CLI use
-from nexus.cli.utils import (
-    add_backend_options,
-    console,
-    get_filesystem,
-    handle_error,
-    open_filesystem,
-)
+import importlib
+from typing import Any
 
 __all__ = [
     "main",
-    # Utilities (for internal CLI use only)
     "console",
     "get_filesystem",
     "open_filesystem",
     "handle_error",
     "add_backend_options",
 ]
+
+_LAZY_IMPORTS: dict[str, tuple[str, str]] = {
+    "main": ("nexus.cli.main", "main"),
+    "console": ("nexus.cli.utils", "console"),
+    "get_filesystem": ("nexus.cli.utils", "get_filesystem"),
+    "open_filesystem": ("nexus.cli.utils", "open_filesystem"),
+    "handle_error": ("nexus.cli.utils", "handle_error"),
+    "add_backend_options": ("nexus.cli.utils", "add_backend_options"),
+}
+
+
+def __getattr__(name: str) -> Any:
+    """Load CLI exports on demand."""
+    if name not in _LAZY_IMPORTS:
+        raise AttributeError(f"module 'nexus.cli' has no attribute {name!r}")
+
+    module_name, attr_name = _LAZY_IMPORTS[name]
+    module = importlib.import_module(module_name)
+    value = getattr(module, attr_name)
+    globals()[name] = value
+    return value

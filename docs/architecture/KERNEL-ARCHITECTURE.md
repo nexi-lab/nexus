@@ -118,7 +118,7 @@ entry point for all Nexus users. It auto-detects deployment mode
 ```python
 from nexus.sdk import connect
 nx = connect()                    # auto-detect from env/config
-nx = connect(config={"mode": "remote", "url": "http://..."})
+nx = connect(config={"profile": "remote", "url": "http://..."})
 ```
 
 Linux analogue: the boot sequence that selects rootfs and mounts it

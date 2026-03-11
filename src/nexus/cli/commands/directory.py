@@ -89,7 +89,14 @@ def list_files(
     timing = CommandTiming()
 
     try:
-        with timing.phase("connect"), open_filesystem(remote_url, remote_api_key) as nx:
+        with (
+            timing.phase("connect"),
+            open_filesystem(
+                remote_url,
+                remote_api_key,
+                allow_local_default=True,
+            ) as nx,
+        ):
             if at_operation:
                 _ls_time_travel(nx, path, at_operation, recursive, long, output_opts, timing)
                 return
@@ -164,7 +171,7 @@ def _ls_time_travel(
     timing: CommandTiming,
 ) -> None:
     """Handle time-travel ls (--at-operation)."""
-    time_travel = nx.service("time_travel")
+    time_travel = getattr(nx, "time_travel_service", None)
     if time_travel is None:
         console.print("[red]Error:[/red] Time-travel is only supported with local NexusFS")
         return
@@ -235,7 +242,11 @@ def mkdir(
             render_dry_run(preview)
             return
 
-        with open_filesystem(remote_url, remote_api_key) as nx:
+        with open_filesystem(
+            remote_url,
+            remote_api_key,
+            allow_local_default=True,
+        ) as nx:
             if if_not_exists:
                 with contextlib.suppress(FileExistsError):
                     nx.sys_mkdir(path, parents=parents, exist_ok=True)
@@ -278,7 +289,11 @@ def rmdir(
             render_dry_run(preview)
             return
 
-        with open_filesystem(remote_url, remote_api_key) as nx:
+        with open_filesystem(
+            remote_url,
+            remote_api_key,
+            allow_local_default=True,
+        ) as nx:
             if not force and not click.confirm(f"Remove directory {path}?"):
                 console.print("[yellow]Cancelled[/yellow]")
                 return
@@ -315,7 +330,11 @@ def tree(
     try:
         with (
             timing.phase("connect"),
-            open_filesystem(remote_url, remote_api_key) as nx,
+            open_filesystem(
+                remote_url,
+                remote_api_key,
+                allow_local_default=True,
+            ) as nx,
             timing.phase("server"),
         ):
             files_raw = nx.sys_readdir(path, recursive=True, details=True)

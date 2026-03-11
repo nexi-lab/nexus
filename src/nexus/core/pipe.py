@@ -187,6 +187,61 @@ class RingBuffer:
             self._not_full.set()
         return msg
 
+    # -- u64 fast path (L2 — zero PyBytes allocation) ----------------------
+
+    def write_u64_nowait(self, val: int) -> None:
+        """Push a u64 into the ring (12-byte frame). Zero PyBytes allocation."""
+        try:
+            self._core.push_u64(val)
+        except RuntimeError as exc:
+            _translate_rust_error(exc)
+            raise  # unreachable
+        except ValueError:
+            raise
+
+        if self._readers_waiting:
+            self._not_empty.set()
+
+    def read_u64_nowait(self) -> int:
+        """Pop a u64 from the ring. Returns Python int directly."""
+        try:
+            val: int = self._core.pop_u64()
+        except RuntimeError as exc:
+            _translate_rust_error(exc)
+            raise  # unreachable
+
+        if self._writers_waiting:
+            self._not_full.set()
+        return val
+
+    async def write_u64(self, val: int, *, blocking: bool = True) -> None:
+        """Async write a u64 value to the buffer."""
+        while True:
+            try:
+                return self.write_u64_nowait(val)
+            except PipeFullError:
+                if not blocking:
+                    raise
+                self._writers_waiting = True
+                self._not_full.clear()
+                await self._not_full.wait()
+                self._writers_waiting = False
+                if self._core.closed:
+                    raise PipeClosedError("write to closed pipe") from None
+
+    async def read_u64(self, *, blocking: bool = True) -> int:
+        """Async read a u64 value from the buffer."""
+        while True:
+            try:
+                return self.read_u64_nowait()
+            except PipeEmptyError:
+                if not blocking:
+                    raise
+                self._readers_waiting = True
+                self._not_empty.clear()
+                await self._not_empty.wait()
+                self._readers_waiting = False
+
     # -- wait helpers -------------------------------------------------------
 
     async def wait_writable(self) -> None:

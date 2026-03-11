@@ -603,6 +603,75 @@ class TestRingBufferSyncOps:
 
 
 # ======================================================================
+# RingBuffer — u64 fast path (L2)
+# ======================================================================
+
+
+class TestRingBufferU64:
+    def test_write_u64_nowait_read_u64_nowait(self) -> None:
+        buf = RingBuffer(capacity=1024)
+        buf.write_u64_nowait(42)
+        buf.write_u64_nowait(2**64 - 1)
+        buf.write_u64_nowait(0)
+        assert buf.read_u64_nowait() == 42
+        assert buf.read_u64_nowait() == 2**64 - 1
+        assert buf.read_u64_nowait() == 0
+
+    def test_u64_size_tracking(self) -> None:
+        buf = RingBuffer(capacity=1024)
+        buf.write_u64_nowait(99)
+        assert buf.stats["size"] == 8
+        assert buf.stats["msg_count"] == 1
+        buf.read_u64_nowait()
+        assert buf.stats["size"] == 0
+
+    @pytest.mark.asyncio
+    async def test_async_write_u64_read_u64(self) -> None:
+        buf = RingBuffer(capacity=1024)
+        await buf.write_u64(100)
+        result = await buf.read_u64()
+        assert result == 100
+
+    @pytest.mark.asyncio
+    async def test_u64_reader_blocks_until_write(self) -> None:
+        buf = RingBuffer(capacity=1024)
+        result = None
+
+        async def reader() -> None:
+            nonlocal result
+            result = await buf.read_u64()
+
+        async def writer() -> None:
+            await asyncio.sleep(0.01)
+            buf.write_u64_nowait(777)
+
+        await asyncio.gather(reader(), writer())
+        assert result == 777
+
+    def test_u64_closed_raises(self) -> None:
+        buf = RingBuffer(capacity=1024)
+        buf.close()
+        with pytest.raises(PipeClosedError):
+            buf.write_u64_nowait(42)
+        with pytest.raises(PipeClosedError):
+            buf.read_u64_nowait()
+
+    def test_u64_empty_raises(self) -> None:
+        buf = RingBuffer(capacity=1024)
+        with pytest.raises(PipeEmptyError):
+            buf.read_u64_nowait()
+
+    def test_interleaved_bytes_and_u64(self) -> None:
+        buf = RingBuffer(capacity=1024)
+        buf.write_nowait(b"hello")
+        buf.write_u64_nowait(12345)
+        buf.write_nowait(b"world")
+        assert buf.read_nowait() == b"hello"
+        assert buf.read_u64_nowait() == 12345
+        assert buf.read_nowait() == b"world"
+
+
+# ======================================================================
 # PipeManager — MPMC locking
 # ======================================================================
 

@@ -153,8 +153,12 @@ class TestCoreFileOperations:
         assert result["path"] == "/workspace/file.txt"
 
     def test_write(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
-        """Test sys_write with path scoping (POSIX pwrite returns int)."""
-        mock_fs.sys_write.return_value = 7
+        """Test sys_write with path scoping (returns dict with bytes_written + created)."""
+        mock_fs.sys_write.return_value = {
+            "path": "/zones/team_12/users/user_1/workspace/file.txt",
+            "bytes_written": 7,
+            "created": True,
+        }
         result = scoped_fs.sys_write("/workspace/file.txt", b"content")
         mock_fs.sys_write.assert_called_once_with(
             "/zones/team_12/users/user_1/workspace/file.txt",
@@ -163,7 +167,7 @@ class TestCoreFileOperations:
             offset=0,
             context=None,
         )
-        assert result == 7
+        assert result["bytes_written"] == 7
 
     def test_write_batch(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
         """Test write_batch with path scoping."""

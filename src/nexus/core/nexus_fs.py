@@ -928,47 +928,76 @@ class NexusFS(  # type: ignore[misc]
             "zone_id": file_meta.zone_id,
         }
 
-    @rpc_expose(description="Update file metadata attributes")
+    @rpc_expose(description="Upsert file metadata attributes")
     def sys_setattr(
         self,
         path: str,
         context: OperationContext | None = None,
         **attrs: Any,
     ) -> dict[str, Any]:
-        """Update file metadata attributes (chmod/chown/utimensat analog).
+        """Upsert file metadata (chmod/chown/utimensat + mknod analog).
+
+        Upsert semantics — create-on-write for metadata:
+        - Path missing + entry_type provided → CREATE inode
+        - Path missing + no entry_type → NexusFileNotFoundError
+        - Path exists + no entry_type → UPDATE mutable fields
+        - Path exists + entry_type → ValueError (immutable after creation)
 
         Args:
             path: Virtual file path.
             context: Operation context.
-            **attrs: Metadata attributes to update (e.g., mime_type, owner_id).
+            **attrs: Metadata attributes. Include ``entry_type`` to create.
 
         Returns:
-            Dict with path and list of updated attribute names.
-
-        Raises:
-            NexusFileNotFoundError: If file does not exist.
+            Dict with path, created flag, and type-specific fields.
         """
         path = self._validate_path(path)
         ctx = context or self._default_context
-
-        # Block writes during zone deprovisioning
         self._check_zone_writable(ctx)
 
         meta = self.metadata.get(path)
-        if meta is None:
-            raise NexusFileNotFoundError(path)
 
+        # --- CREATE path (inode doesn't exist + entry_type provided) ---
+        if meta is None:
+            entry_type = attrs.get("entry_type")
+            if entry_type is None:
+                raise NexusFileNotFoundError(path)
+            return self._setattr_create(path, entry_type, attrs)
+
+        # --- REJECT: entry_type is immutable after creation ---
+        if "entry_type" in attrs:
+            raise ValueError(f"entry_type is immutable after creation (current={meta.entry_type})")
+
+        # --- UPDATE path (existing inode, mutable fields only) ---
         from dataclasses import replace
 
-        # Only allow safe, user-mutable fields — block structural invariants
         _MUTABLE_FIELDS = frozenset({"mime_type", "modified_at"})
         valid_attrs = {k: v for k, v in attrs.items() if k in _MUTABLE_FIELDS}
         if not valid_attrs:
-            return {"path": path, "updated": []}
+            return {"path": path, "created": False, "updated": []}
 
         new_meta = replace(meta, **valid_attrs)
         self.metadata.put(new_meta)
-        return {"path": path, "updated": list(valid_attrs.keys())}
+        return {"path": path, "created": False, "updated": list(valid_attrs.keys())}
+
+    def _setattr_create(self, path: str, entry_type: int, attrs: dict[str, Any]) -> dict[str, Any]:
+        """Create an inode via sys_setattr upsert — dispatches by entry_type."""
+        from nexus.contracts.metadata import DT_PIPE
+
+        if entry_type == DT_PIPE:
+            capacity = attrs.get("capacity", 65_536)
+            owner_id = attrs.get("owner_id")
+            if self._pipe_manager is None:
+                raise BackendError("PipeManager not available")
+            from nexus.core.pipe import PipeError
+
+            try:
+                self._pipe_manager.create(path, capacity=capacity, owner_id=owner_id)
+            except PipeError as exc:
+                raise BackendError(str(exc)) from exc
+            return {"path": path, "created": True, "entry_type": entry_type, "capacity": capacity}
+
+        raise ValueError(f"sys_setattr create not supported for entry_type={entry_type}")
 
     @rpc_expose(description="Get ETag (content hash) for HTTP caching")
     def get_etag(
@@ -1970,15 +1999,11 @@ class NexusFS(  # type: ignore[misc]
         count: int | None = None,
         offset: int = 0,
         context: OperationContext | None = None,
-    ) -> int:
+    ) -> dict[str, Any]:
         """Write content to a file (POSIX pwrite(2)).
 
-        Kernel primitive — content-only. CAS, locking, and OCC are
-        driver/application concerns. For metadata return or locking,
-        use the convenience ``write()`` method.
-
-        Phase A: Still updates metadata as side effect (will be separated
-        into sys_write + sys_setattr in Phase B).
+        Kernel primitive — content-only with create-on-write semantics.
+        CAS, locking, and OCC are driver/application concerns.
 
         Args:
             path: Virtual path to write.
@@ -1988,7 +2013,7 @@ class NexusFS(  # type: ignore[misc]
             context: Optional operation context for permission checks.
 
         Returns:
-            Number of bytes written.
+            Dict with path, bytes_written, and created flag.
 
         Raises:
             InvalidPathError: If path is invalid
@@ -2010,15 +2035,16 @@ class NexusFS(  # type: ignore[misc]
         # PRE-DISPATCH: virtual path resolvers (Issue #889)
         _handled, _result = self._dispatch.resolve_write(path, buf)
         if _handled:
-            return len(buf)
+            return {"path": path, "bytes_written": len(buf), "created": False}
 
         # DT_PIPE: kernel-native pipe dispatch (§4.2)
-        _pipe_meta = self.metadata.get(path)
-        if _pipe_meta is not None and _pipe_meta.is_pipe:
-            return self._pipe_write(path, buf)
+        _meta = self.metadata.get(path)
+        if _meta is not None and _meta.is_pipe:
+            n = self._pipe_write(path, buf)
+            return {"path": path, "bytes_written": n, "created": False}
 
         self._write_internal(path=path, content=buf, context=context)
-        return len(buf)
+        return {"path": path, "bytes_written": len(buf), "created": _meta is None}
 
     # ── Tier 2 overrides (NexusFS-specific) ───────────────────────
 
@@ -4095,7 +4121,7 @@ class NexusFS(  # type: ignore[misc]
     # ------------------------------------------------------------------
 
     def _pipe_read(self, path: str, *, count: int | None = None, offset: int = 0) -> bytes:
-        """Read from DT_PIPE — non-blocking, returns b"" if empty."""
+        """Read from DT_PIPE — non-blocking, raises PipeEmptyError if empty."""
         from nexus.core.pipe import PipeClosedError, PipeEmptyError, PipeNotFoundError
 
         if self._pipe_manager is None:
@@ -4110,7 +4136,7 @@ class NexusFS(  # type: ignore[misc]
         try:
             data = buf.read_nowait()
         except PipeEmptyError:
-            data = b""
+            raise PipeEmptyError(f"pipe empty: {path}") from None
         except PipeClosedError:
             raise NexusFileNotFoundError(path, f"Pipe closed: {path}") from None
         if offset or count is not None:
@@ -4141,43 +4167,6 @@ class NexusFS(  # type: ignore[misc]
         except PipeNotFoundError:
             raise NexusFileNotFoundError(path, f"Pipe not found: {path}") from None
         return {}
-
-    @rpc_expose(description="Create a named pipe (mknod S_IFIFO)")
-    def sys_mkpipe(
-        self,
-        path: str,
-        *,
-        capacity: int = 65_536,
-        owner_id: str | None = None,
-        context: OperationContext | None = None,
-    ) -> dict[str, Any]:
-        """Create a named pipe at the given VFS path (Linux mknod(2) + S_IFIFO).
-
-        Creates a DT_PIPE inode in MetastoreABC and a RingBuffer in memory.
-
-        Args:
-            path: VFS path (e.g., "/pipes/my-pipe"). Must be absolute.
-            capacity: Ring buffer byte capacity. Default 64KB.
-            owner_id: Owner for ReBAC permission checks.
-            context: Operation context.
-
-        Returns:
-            Dict with path and capacity.
-        """
-        path = self._validate_path(path)
-        self._check_zone_writable(context)
-
-        if self._pipe_manager is None:
-            raise BackendError("PipeManager not available — cannot create pipe")
-
-        from nexus.core.pipe import PipeError
-
-        try:
-            self._pipe_manager.create(path, capacity=capacity, owner_id=owner_id)
-        except PipeError as exc:
-            raise BackendError(str(exc)) from exc
-
-        return {"path": path, "capacity": capacity}
 
     def close(self) -> None:
         """Close the filesystem and release resources."""

@@ -122,7 +122,7 @@ export default function SearchPanel(): React.ReactNode {
     } else if (activeTab === "playbooks") {
       fetchPlaybooks(searchQuery || "", client);
     } else if (activeTab === "ask" && searchQuery) {
-      askRlm(searchQuery, client, configZoneId);
+      askRlm(searchQuery, client, effectiveZoneId);
     }
   }, [client, activeTab, searchQuery, search, searchKnowledge, fetchMemories, fetchPlaybooks, askRlm, effectiveZoneId]);
 

@@ -1,5 +1,5 @@
 /**
- * File metadata sidebar displaying path, size, etag, timestamps, etc.
+ * File metadata sidebar displaying path, size, etag, version, owner, permissions, etc.
  */
 
 import React from "react";
@@ -14,6 +14,12 @@ function formatBytes(bytes: number): string {
   const units = ["B", "KB", "MB", "GB", "TB"];
   const i = Math.floor(Math.log(bytes) / Math.log(1024));
   return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
+}
+
+function display(value: string | number | null | undefined): string {
+  if (value === null || value === undefined) return "n/a";
+  if (typeof value === "number") return String(value);
+  return value;
 }
 
 export function FileMetadata({ item }: FileMetadataProps): React.ReactNode {
@@ -35,17 +41,13 @@ export function FileMetadata({ item }: FileMetadataProps): React.ReactNode {
     lines.push(`Size: ${formatBytes(item.size)}`);
   }
 
-  if (item.etag) {
-    lines.push(`ETag: ${item.etag}`);
-  }
-
-  if (item.mimeType) {
-    lines.push(`MIME: ${item.mimeType}`);
-  }
-
-  if (item.modifiedAt) {
-    lines.push(`Modified: ${item.modifiedAt}`);
-  }
+  lines.push(`ETag: ${display(item.etag)}`);
+  lines.push(`Version: ${display(item.version)}`);
+  lines.push(`MIME: ${display(item.mimeType)}`);
+  lines.push(`Owner: ${display(item.owner)}`);
+  lines.push(`Permissions: ${display(item.permissions)}`);
+  lines.push(`Zone: ${display(item.zoneId)}`);
+  lines.push(`Modified: ${display(item.modifiedAt)}`);
 
   return (
     <box height="100%" width="100%" flexDirection="column">

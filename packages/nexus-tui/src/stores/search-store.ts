@@ -38,6 +38,9 @@ export interface Memory {
 }
 
 export type SearchTab = "search" | "knowledge" | "memories";
+export type SearchMode = "keyword" | "semantic" | "hybrid";
+
+const SEARCH_MODE_ORDER: readonly SearchMode[] = ["keyword", "semantic", "hybrid"];
 
 interface SearchQueryResponse {
   readonly query: string;
@@ -91,6 +94,9 @@ export interface SearchState {
   readonly selectedMemoryIndex: number;
   readonly memoriesLoading: boolean;
 
+  // Search mode
+  readonly searchMode: SearchMode;
+
   // Shared
   readonly activeTab: SearchTab;
   readonly error: string | null;
@@ -106,9 +112,11 @@ export interface SearchState {
   readonly setSelectedResultIndex: (index: number) => void;
   readonly setSelectedMemoryIndex: (index: number) => void;
   readonly setSearchQuery: (query: string) => void;
+  readonly setSearchMode: (mode: SearchMode) => void;
+  readonly cycleSearchMode: () => void;
 }
 
-export const useSearchStore = create<SearchState>((set) => ({
+export const useSearchStore = create<SearchState>((set, get) => ({
   searchQuery: "",
   searchResults: [],
   searchTotal: 0,
@@ -124,6 +132,8 @@ export const useSearchStore = create<SearchState>((set) => ({
   selectedMemoryIndex: 0,
   memoriesLoading: false,
 
+  searchMode: "hybrid",
+
   activeTab: "search",
   error: null,
 
@@ -131,9 +141,10 @@ export const useSearchStore = create<SearchState>((set) => ({
     set({ searchLoading: true, error: null, searchQuery: query });
 
     try {
+      const { searchMode } = get();
       const params = new URLSearchParams({
         q: query,
-        type: "hybrid",
+        type: searchMode,
         limit: "10",
       });
       const response = await client.get<SearchQueryResponse>(
@@ -271,5 +282,19 @@ export const useSearchStore = create<SearchState>((set) => ({
 
   setSearchQuery: (query) => {
     set({ searchQuery: query });
+  },
+
+  setSearchMode: (mode) => {
+    set({ searchMode: mode });
+  },
+
+  cycleSearchMode: () => {
+    const { searchMode } = get();
+    const currentIdx = SEARCH_MODE_ORDER.indexOf(searchMode);
+    const nextIdx = (currentIdx + 1) % SEARCH_MODE_ORDER.length;
+    const nextMode = SEARCH_MODE_ORDER[nextIdx];
+    if (nextMode) {
+      set({ searchMode: nextMode });
+    }
   },
 }));

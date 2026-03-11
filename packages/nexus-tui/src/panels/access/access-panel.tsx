@@ -1,8 +1,10 @@
 /**
  * Access Control panel: tabbed layout for manifests, alerts, reputation, credentials.
+ *
+ * Press 'p' to open the permission checker form (pre-filled with the selected manifest).
  */
 
-import React, { useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { useAccessStore } from "../../stores/access-store.js";
 import type { AccessTab } from "../../stores/access-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
@@ -11,6 +13,7 @@ import { ManifestList } from "./manifest-list.js";
 import { AlertList } from "./alert-list.js";
 import { ReputationView } from "./reputation-view.js";
 import { CredentialList } from "./credential-list.js";
+import { PermissionChecker } from "./permission-checker.js";
 
 const TAB_ORDER: readonly AccessTab[] = ["manifests", "alerts", "reputation", "credentials"];
 const TAB_LABELS: Readonly<Record<AccessTab, string>> = {
@@ -22,11 +25,13 @@ const TAB_LABELS: Readonly<Record<AccessTab, string>> = {
 
 export default function AccessPanel(): React.ReactNode {
   const client = useApi();
+  const [permissionCheckerOpen, setPermissionCheckerOpen] = useState(false);
 
   const manifests = useAccessStore((s) => s.manifests);
   const selectedManifestIndex = useAccessStore((s) => s.selectedManifestIndex);
   const manifestsLoading = useAccessStore((s) => s.manifestsLoading);
   const lastPermissionCheck = useAccessStore((s) => s.lastPermissionCheck);
+  const permissionCheckLoading = useAccessStore((s) => s.permissionCheckLoading);
   const alerts = useAccessStore((s) => s.alerts);
   const alertsLoading = useAccessStore((s) => s.alertsLoading);
   const leaderboard = useAccessStore((s) => s.leaderboard);
@@ -102,7 +107,43 @@ export default function AccessPanel(): React.ReactNode {
       }
     },
     r: () => refreshCurrentView(),
+    p: () => {
+      if (!permissionCheckerOpen) {
+        setPermissionCheckerOpen(true);
+      }
+    },
   });
+
+  // Derive the initial manifest ID from the selected manifest
+  const selectedManifest = manifests[selectedManifestIndex];
+  const initialManifestId = selectedManifest?.manifest_id ?? "";
+
+  if (permissionCheckerOpen) {
+    return (
+      <box height="100%" width="100%" flexDirection="column">
+        {/* Tab bar */}
+        <box height={1} width="100%">
+          <text>
+            {TAB_ORDER.map((tab) => {
+              const label = TAB_LABELS[tab];
+              return tab === activeTab ? `[${label}]` : ` ${label} `;
+            }).join(" ")}
+            {" | Permission Checker"}
+          </text>
+        </box>
+
+        {/* Permission checker form */}
+        <box flexGrow={1} borderStyle="single">
+          <PermissionChecker
+            initialManifestId={initialManifestId}
+            lastResult={lastPermissionCheck}
+            loading={permissionCheckLoading}
+            onClose={() => setPermissionCheckerOpen(false)}
+          />
+        </box>
+      </box>
+    );
+  }
 
   return (
     <box height="100%" width="100%" flexDirection="column">
@@ -164,7 +205,7 @@ export default function AccessPanel(): React.ReactNode {
       {/* Help bar */}
       <box height={1} width="100%">
         <text>
-          {"j/k:navigate  Tab:switch tab  e:evaluate  r:refresh  q:quit"}
+          {"j/k:navigate  Tab:switch tab  p:permission check  r:refresh  q:quit"}
         </text>
       </box>
     </box>

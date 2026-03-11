@@ -55,6 +55,72 @@ const EMPTY_REQUEST: RequestState = {
 };
 
 const MAX_HISTORY = 50;
+const MAX_COMMAND_HISTORY = 100;
+
+// =============================================================================
+// CLI-like command parsing
+// =============================================================================
+
+export interface ParsedCommand {
+  readonly method: string;
+  readonly path: string;
+  readonly body: string;
+}
+
+const CLI_COMMANDS: Readonly<
+  Record<string, { readonly method: string; readonly pathFn: (arg: string) => string; readonly bodyFn?: (arg: string) => string }>
+> = {
+  ls: { method: "GET", pathFn: (p) => `/api/v2/files/list?path=${encodeURIComponent(p)}` },
+  cat: { method: "GET", pathFn: (p) => `/api/v2/files/read?path=${encodeURIComponent(p)}` },
+  stat: { method: "GET", pathFn: (p) => `/api/v2/files/metadata?path=${encodeURIComponent(p)}` },
+  rm: { method: "DELETE", pathFn: (p) => `/api/v2/files?path=${encodeURIComponent(p)}` },
+  mkdir: {
+    method: "POST",
+    pathFn: () => "/api/v2/files/mkdir",
+    bodyFn: (p) => JSON.stringify({ path: p }),
+  },
+};
+
+const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
+
+/**
+ * Parse a CLI-like command string into method, path, and optional body.
+ * Returns `null` if the input cannot be parsed.
+ */
+export function parseCommand(input: string): ParsedCommand | null {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+
+  // Split on first space
+  const spaceIdx = trimmed.indexOf(" ");
+  if (spaceIdx === -1) return null;
+
+  const firstWord = trimmed.slice(0, spaceIdx);
+  const rest = trimmed.slice(spaceIdx + 1).trim();
+
+  // CLI shorthand: ls, cat, stat, rm, mkdir
+  const cmd = CLI_COMMANDS[firstWord];
+  if (cmd) {
+    return {
+      method: cmd.method,
+      path: cmd.pathFn(rest),
+      body: cmd.bodyFn ? cmd.bodyFn(rest) : "",
+    };
+  }
+
+  // Raw HTTP: METHOD /path [{body}]
+  if (HTTP_METHODS.has(firstWord.toUpperCase())) {
+    const method = firstWord.toUpperCase();
+    // Check if rest has a JSON body after the path
+    const bodyMatch = rest.match(/^(\S+)\s+(\{[\s\S]*\})$/);
+    if (bodyMatch) {
+      return { method, path: bodyMatch[1] ?? "", body: bodyMatch[2] ?? "" };
+    }
+    return { method, path: rest, body: "" };
+  }
+
+  return null;
+}
 
 // =============================================================================
 // Store
@@ -76,6 +142,14 @@ export interface ApiConsoleState {
   // History
   readonly history: readonly ConsoleHistoryEntry[];
 
+  // Command history (for arrow-key navigation)
+  readonly commandHistory: readonly string[];
+  readonly historyIndex: number;
+
+  // Command input mode
+  readonly commandInputMode: boolean;
+  readonly commandInputBuffer: string;
+
   // Actions
   readonly setEndpoints: (endpoints: readonly EndpointInfo[]) => void;
   readonly selectEndpoint: (ep: EndpointInfo) => void;
@@ -83,8 +157,12 @@ export interface ApiConsoleState {
   readonly setTagFilter: (tag: string | null) => void;
   readonly setSearchQuery: (q: string) => void;
   readonly executeRequest: (client: FetchClient) => Promise<void>;
+  readonly executeCommand: (input: string, client: FetchClient) => Promise<void>;
   readonly fetchOpenApiSpec: (client: FetchClient) => Promise<void>;
   readonly clearResponse: () => void;
+  readonly navigateHistory: (direction: "up" | "down") => void;
+  readonly setCommandInputMode: (enabled: boolean) => void;
+  readonly setCommandInputBuffer: (buffer: string) => void;
 }
 
 export const useApiConsoleStore = create<ApiConsoleState>((set, get) => ({
@@ -97,6 +175,10 @@ export const useApiConsoleStore = create<ApiConsoleState>((set, get) => ({
   response: null,
   isLoading: false,
   history: [],
+  commandHistory: [],
+  historyIndex: -1,
+  commandInputMode: false,
+  commandInputBuffer: "",
 
   setEndpoints: (endpoints) => {
     set({ endpoints, filteredEndpoints: endpoints });
@@ -204,10 +286,16 @@ export const useApiConsoleStore = create<ApiConsoleState>((set, get) => ({
         timestamp: Date.now(),
       };
 
+      const commandStr = `${request.method} ${request.path}`;
       set((state) => ({
         response: responseState,
         isLoading: false,
         history: [entry, ...state.history.slice(0, MAX_HISTORY - 1)],
+        commandHistory: [
+          ...state.commandHistory,
+          commandStr,
+        ].slice(-MAX_COMMAND_HISTORY),
+        historyIndex: -1,
       }));
     } catch (err) {
       const timeMs = performance.now() - start;
@@ -248,6 +336,65 @@ export const useApiConsoleStore = create<ApiConsoleState>((set, get) => ({
     } catch {
       // OpenAPI spec not available — leave endpoints empty
     }
+  },
+
+  executeCommand: async (input, client) => {
+    const parsed = parseCommand(input);
+    if (!parsed) return;
+
+    get().updateRequest({
+      method: parsed.method,
+      path: parsed.path,
+      body: parsed.body,
+      pathParams: {},
+      queryParams: {},
+      headers: {},
+    });
+
+    // Wait one tick so state is flushed before executing
+    await Promise.resolve();
+    await get().executeRequest(client);
+  },
+
+  navigateHistory: (direction) => {
+    const { commandHistory, historyIndex } = get();
+    if (commandHistory.length === 0) return;
+
+    let newIndex: number;
+    if (direction === "up") {
+      // Move backward through history (toward older commands)
+      if (historyIndex === -1) {
+        newIndex = commandHistory.length - 1;
+      } else {
+        newIndex = Math.max(historyIndex - 1, 0);
+      }
+    } else {
+      // Move forward through history (toward newer commands)
+      if (historyIndex === -1) return;
+      newIndex = historyIndex + 1;
+      if (newIndex >= commandHistory.length) {
+        // Past the newest entry — clear
+        set({ historyIndex: -1, commandInputBuffer: "" });
+        return;
+      }
+    }
+
+    const entry = commandHistory[newIndex];
+    set({
+      historyIndex: newIndex,
+      commandInputBuffer: entry ?? "",
+    });
+  },
+
+  setCommandInputMode: (enabled) => {
+    set({ commandInputMode: enabled, historyIndex: -1 });
+    if (enabled) {
+      set({ commandInputBuffer: "" });
+    }
+  },
+
+  setCommandInputBuffer: (buffer) => {
+    set({ commandInputBuffer: buffer });
   },
 
   clearResponse: () => set({ response: null }),

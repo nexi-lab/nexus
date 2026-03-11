@@ -4,13 +4,14 @@
  * Lazy-loads panels on first navigation for fast startup.
  */
 
-import React, { lazy, Suspense } from "react";
+import React, { lazy, Suspense, useState, useCallback } from "react";
 import { useGlobalStore, type PanelId } from "./stores/global-store.js";
 import { TabBar, type Tab } from "./shared/components/tab-bar.js";
 import { StatusBar } from "./shared/components/status-bar.js";
 import { ErrorBoundary } from "./shared/components/error-boundary.js";
 import { Spinner } from "./shared/components/spinner.js";
 import { useKeyboard } from "./shared/hooks/use-keyboard.js";
+import { IdentitySwitcher } from "./shared/components/identity-switcher.js";
 
 // Lazy-loaded panels
 const FileExplorerPanel = lazy(() => import("./panels/files/file-explorer-panel.js"));
@@ -73,20 +74,38 @@ function PanelRouter(): React.ReactNode {
 export function App(): React.ReactNode {
   const activePanel = useGlobalStore((s) => s.activePanel);
   const setActivePanel = useGlobalStore((s) => s.setActivePanel);
+  const [identitySwitcherOpen, setIdentitySwitcherOpen] = useState(false);
 
-  useKeyboard({
-    "1": () => setActivePanel("files"),
-    "2": () => setActivePanel("versions"),
-    "3": () => setActivePanel("agents"),
-    "4": () => setActivePanel("zones"),
-    "5": () => setActivePanel("access"),
-    "6": () => setActivePanel("payments"),
-    "7": () => setActivePanel("search"),
-    "8": () => setActivePanel("workflows"),
-    "9": () => setActivePanel("infrastructure"),
-    "0": () => setActivePanel("console"),
-    "q": () => process.exit(0),
-  });
+  const toggleIdentitySwitcher = useCallback(() => {
+    setIdentitySwitcherOpen((prev) => !prev);
+  }, []);
+
+  const closeIdentitySwitcher = useCallback(() => {
+    setIdentitySwitcherOpen(false);
+  }, []);
+
+  useKeyboard(
+    identitySwitcherOpen
+      ? {
+          // When the overlay is open, only Ctrl+I closes it from the app level.
+          // All other keys are handled by IdentitySwitcher itself.
+          "ctrl+i": toggleIdentitySwitcher,
+        }
+      : {
+          "1": () => setActivePanel("files"),
+          "2": () => setActivePanel("versions"),
+          "3": () => setActivePanel("agents"),
+          "4": () => setActivePanel("zones"),
+          "5": () => setActivePanel("access"),
+          "6": () => setActivePanel("payments"),
+          "7": () => setActivePanel("search"),
+          "8": () => setActivePanel("workflows"),
+          "9": () => setActivePanel("infrastructure"),
+          "0": () => setActivePanel("console"),
+          "ctrl+i": toggleIdentitySwitcher,
+          "q": () => process.exit(0),
+        },
+  );
 
   return (
     <box height="100%" width="100%" flexDirection="column">
@@ -107,6 +126,9 @@ export function App(): React.ReactNode {
           </Suspense>
         </ErrorBoundary>
       </box>
+
+      {/* Identity switcher overlay */}
+      <IdentitySwitcher visible={identitySwitcherOpen} onClose={closeIdentitySwitcher} />
 
       {/* Status bar */}
       <StatusBar />

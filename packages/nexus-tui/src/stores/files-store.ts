@@ -17,6 +17,10 @@ export interface FileItem {
   readonly modifiedAt: string | null;
   readonly etag: string | null;
   readonly mimeType: string | null;
+  readonly version: number | null;
+  readonly owner: string | null;
+  readonly permissions: string | null;
+  readonly zoneId: string | null;
 }
 
 export interface TreeNode {

@@ -7,7 +7,7 @@
 
 import React, { useState, useCallback } from "react";
 import { useSearchStore } from "../../stores/search-store.js";
-import type { SearchTab } from "../../stores/search-store.js";
+import type { SearchTab, SearchMode } from "../../stores/search-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { SearchResults } from "./search-results.js";
@@ -19,6 +19,12 @@ const TAB_LABELS: Readonly<Record<SearchTab, string>> = {
   search: "Search",
   knowledge: "Knowledge",
   memories: "Memories",
+};
+
+const MODE_LABELS: Readonly<Record<SearchMode, string>> = {
+  keyword: "KW",
+  semantic: "SEM",
+  hybrid: "HYB",
 };
 
 export default function SearchPanel(): React.ReactNode {
@@ -40,6 +46,9 @@ export default function SearchPanel(): React.ReactNode {
   const memoriesLoading = useSearchStore((s) => s.memoriesLoading);
   const activeTab = useSearchStore((s) => s.activeTab);
   const error = useSearchStore((s) => s.error);
+
+  const searchMode = useSearchStore((s) => s.searchMode);
+  const cycleSearchMode = useSearchStore((s) => s.cycleSearchMode);
 
   const search = useSearchStore((s) => s.search);
   const fetchEntity = useSearchStore((s) => s.fetchEntity);
@@ -157,6 +166,7 @@ export default function SearchPanel(): React.ReactNode {
             }
           },
           r: () => refreshCurrentView(),
+          m: () => cycleSearchMode(),
           "/": () => {
             setInputMode(true);
             setInputBuffer(searchQuery);
@@ -193,7 +203,7 @@ export default function SearchPanel(): React.ReactNode {
         <text>
           {inputMode
             ? `Search: ${inputBuffer}█`
-            : `Query: ${searchQuery || "(press / to search)"}`}
+            : `Query: ${searchQuery || "(press / to search)"}  [${MODE_LABELS[searchMode]}]`}
         </text>
       </box>
 
@@ -246,7 +256,7 @@ export default function SearchPanel(): React.ReactNode {
         <text>
           {inputMode
             ? "Type query, Enter:submit, Escape:cancel, Backspace:delete"
-            : "j/k:navigate  Tab:switch tab  /:search  Enter:select  r:refresh  q:quit"}
+            : "j/k:navigate  Tab:switch tab  /:search  m:mode  Enter:select  r:refresh  q:quit"}
         </text>
       </box>
     </box>

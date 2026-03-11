@@ -2,10 +2,10 @@
 [project]
 name = "nexus-ai-fs"
 version = "0.9.0"
-description = "AI-Native Distributed Filesystem Architecture"
+description = "Nexus = filesystem/context plane."
 readme = "README.md"
 requires-python = ">=3.12"
-license = {text = "MIT"}
+license = {text = "Apache-2.0"}
 authors = [
     {name = "Nexus Team", email = "team@nexus.example.com"}
 ]
@@ -14,6 +14,7 @@ maintainers = [
 ]
 keywords = [
     "filesystem",
+    "context",
     "ai",
     "agents",
     "storage",
@@ -25,7 +26,7 @@ keywords = [
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
@@ -103,10 +104,6 @@ dependencies = [
     "fastcdc>=1.5.0",
     # BM25S for 500x faster ranked text search (Issue #796)
     "bm25s>=0.2.0",
-    # txtai unified search: hybrid BM25+dense, pgvector backend, semantic graph (Issue #2663)
-    # NOTE: txtai → torch has no macOS x86_64 wheel (torch 2.10+). Exclude that platform.
-    "txtai[database,graph]>=9.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
-    "faiss-cpu>=1.11.0; platform_machine=='x86_64' or platform_machine=='aarch64' or platform_machine=='arm64'",
     # Rapidfuzz for fast fuzzy string matching in edit engine (Issue #800)
     # 10-100x faster than difflib (Rust-backed)
     "rapidfuzz>=3.0.0",
@@ -238,6 +235,11 @@ cloud-sql = [
 ]
 
 semantic-search = [
+    # txtai unified search: hybrid BM25+dense, semantic graph (Issue #2663)
+    # NOTE: txtai depends on faiss-cpu and large ML wheels; keep this opt-in.
+    # torch still has no supported macOS x86_64 path for this stack.
+    "txtai[database,graph]>=9.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "faiss-cpu>=1.11.0; platform_machine=='x86_64' or platform_machine=='aarch64' or platform_machine=='arm64'",
     # Keyword search support - uses existing SQLite/PostgreSQL FTS
     # BM25S is now in core dependencies (Issue #796)
     # Vector database extensions for semantic/hybrid search:
@@ -293,6 +295,8 @@ all = [
     # Excludes: sentence-transformers (too heavy ~2GB), voyageai (specialized use case)
     # Note: fusepy removed - Rust nexus-fuse binary is bundled in the package
     # Note: bm25s is now in core dependencies (Issue #796)
+    "txtai[database,graph]>=9.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "faiss-cpu>=1.11.0; platform_machine=='x86_64' or platform_machine=='aarch64' or platform_machine=='arm64'",
     "psycopg2-binary>=2.9.9",
     "sqlite-vec>=0.1.0",
     "pgvector>=0.3.0",
@@ -302,7 +306,7 @@ all = [
 
 [project.urls]
 Homepage = "https://github.com/nexi-lab/nexus"
-Documentation = "https://github.com/nexi-lab/nexus/blob/main/README.md"
+Documentation = "https://nexi-lab.github.io/nexus/"
 Repository = "https://github.com/nexi-lab/nexus"
 Issues = "https://github.com/nexi-lab/nexus/issues"
 

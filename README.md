@@ -7,133 +7,75 @@
   [![Lint](https://github.com/nexi-lab/nexus/actions/workflows/lint.yml/badge.svg)](https://github.com/nexi-lab/nexus/actions/workflows/lint.yml)
 
   [![PyPI version](https://badge.fury.io/py/nexus-ai-fs.svg)](https://badge.fury.io/py/nexus-ai-fs)
-  [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-  [![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
+  [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://github.com/nexi-lab/nexus/blob/main/LICENSE)
+  [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 
-  [Architecture](docs/architecture/KERNEL-ARCHITECTURE.md) • [PyPI](https://pypi.org/project/nexus-ai-fs/) • [Examples](examples/)
+  [Docs](https://nexi-lab.github.io/nexus/) • [Quickstart](https://nexi-lab.github.io/nexus/getting-started/quickstart/) • [PyPI](https://pypi.org/project/nexus-ai-fs/) • [Examples](https://github.com/nexi-lab/nexus/tree/main/examples)
 </div>
 
-An operating system for AI agents.
+Nexus = filesystem/context plane.
 
-⚠️ **Beta**: Nexus is under active development. APIs may change.
+⚠️ **Beta**: Nexus is under active development. APIs and deployment defaults may change.
 
-## What is Nexus?
+## What Nexus Does
 
-Nexus is an operating system for AI agents. Like Linux provides processes with a unified interface to hardware (files, sockets, devices), Nexus provides agents with a unified interface to data (files, databases, APIs, SaaS tools) — through syscalls, a virtual filesystem, permissions, and loadable services.
-
-**Why an OS, not a framework?**
-- **Kernel** with VFS, syscall dispatch, and inode-like metadata — not an application-layer wrapper
-- **Drivers** swapped at config-time via dependency injection (redb, S3, PostgreSQL) — like compiled-in kernel drivers
-- **Services** loaded/unloaded at runtime following the Linux Loadable Kernel Module pattern — not plugins
-- **Deployment profiles** that select which services to include from the same codebase — like Linux distros (Ubuntu, Alpine, BusyBox) built from the same kernel
-- **Zones** as the fundamental isolation and consensus unit (1 zone = 1 Raft group) — like cgroups/namespaces for data
+Nexus gives agents one place to read, write, search, and carry context across files, services, and runs. The core abstraction is a VFS-style interface that can start local in-process and grow into a daemon-backed deployment when you need remote access, permissions, or multi-tenant control.
 
 ## Quick Start
 
-### Python SDK
+This is the local SDK path verified against this repo with `PYTHONPATH=src`
+and Python 3.13. If you installed from PyPI, drop `PYTHONPATH=src`.
 
 ```bash
-pip install nexus-ai-fs
-```
+PYTHONPATH=src python3.13 - <<'PY'
+from nexus.sdk import connect
 
-```python
-import nexus
+nx = connect(
+    config={
+        "profile": "minimal",
+        "data_dir": "./nexus-data",
+    }
+)
 
-nx = nexus.connect(config={
-    "mode": "remote",
-    "url": "http://localhost:2026",
-    "api_key": "nxk_..."
-})
-
-# File operations
-nx.sys_write("/workspace/hello.txt", b"Hello, Nexus!")
-print(nx.sys_read("/workspace/hello.txt").decode())
-
-# Search across all backends
-results = nx.grep("TODO", "/workspace")
-
-# Agent memory
-nx.memory.store("User prefers detailed explanations", memory_type="preference")
-context = nx.memory.query("What does the user prefer?")
+nx.sys_write("/hello.txt", b"Hello, Nexus!")
+print(nx.sys_read("/hello.txt").decode())
 
 nx.close()
+PY
 ```
 
-### Agent Engine (Embedded)
+Expected output:
 
-Run an AI agent directly against a local NexusFS — no server required:
-
-```python
-import asyncio
-from pathlib import Path
-from pydantic import SecretStr
-
-from nexus.backends.local import LocalBackend
-from nexus.core.config import PermissionConfig
-from nexus.factory import create_nexus_fs
-from nexus.storage.raft_metadata_store import RaftMetadataStore
-from nexus.storage.record_store import SQLAlchemyRecordStore
-
-from nexus.bricks.llm.config import LLMConfig
-from nexus.bricks.llm.provider import LiteLLMProvider
-from nexus.system_services.agent_runtime.process_manager import ProcessManager
-from nexus.system_services.agent_runtime.types import AgentProcessConfig, TextDelta
-from nexus.contracts.llm_types import Message, MessageRole
-
-
-async def main():
-    # 1. Bootstrap NexusFS (local storage, no server)
-    data = Path("/tmp/nexus-agent")
-    data.mkdir(exist_ok=True)
-    nx = create_nexus_fs(
-        backend=LocalBackend(root_path=str(data / "files")),
-        metadata_store=RaftMetadataStore.embedded(str(data / "raft")),
-        record_store=SQLAlchemyRecordStore(),
-        permissions=PermissionConfig(enforce=False),
-    )
-
-    # 2. Create LLM provider
-    llm = LiteLLMProvider(LLMConfig(
-        model="claude-haiku-4-5-20251001",
-        api_key=SecretStr("sk-ant-..."),  # your API key
-    ))
-
-    # 3. Spawn agent and chat
-    pm = ProcessManager(vfs=nx, llm_provider=llm)
-    proc = await pm.spawn("user1", "default", config=AgentProcessConfig(
-        name="my-agent",
-        tools=("read_file", "write_file", "grep", "glob"),
-    ))
-
-    async for event in pm.resume(
-        proc.pid,
-        Message(role=MessageRole.USER, content="List the files in /default"),
-    ):
-        if isinstance(event, TextDelta):
-            print(event.text, end="", flush=True)
-    print()
-
-    # Cleanup
-    await pm.terminate(proc.pid)
-    await llm.cleanup()
-    nx.close()
-
-asyncio.run(main())
+```text
+Hello, Nexus!
 ```
 
-### CLI
+Local CLI path from a source checkout:
 
 ```bash
-pip install nexus-ai-fs
+PYTHONPATH=src python3.13 -m nexus.cli.main init .nexus-cli-demo
+export NEXUS_DATA_DIR="$PWD/.nexus-cli-demo/nexus-data"
 
-export NEXUS_URL="http://localhost:2026"
-export NEXUS_API_KEY="nxk_..."
-
-nexus write /workspace/hello.txt "Hello, Nexus!"
-nexus cat /workspace/hello.txt
-nexus grep "TODO" /workspace
-nexus memory store "Important fact" --type fact
+PYTHONPATH=src python3.13 -m nexus.cli.main write /workspace/hello.txt "hello from cli"
+PYTHONPATH=src python3.13 -m nexus.cli.main cat /workspace/hello.txt
+PYTHONPATH=src python3.13 -m nexus.cli.main ls /workspace
 ```
+
+If you installed from PyPI, use `nexus` instead of `python3.13 -m nexus.cli.main`.
+
+For the full walkthrough, see the [quickstart page](https://nexi-lab.github.io/nexus/getting-started/quickstart/).
+
+## Three Landing Paths
+
+- **Local SDK**: Start local, keep the filesystem/context plane inside your process, and integrate from Python. Docs: [Local SDK path](https://nexi-lab.github.io/nexus/paths/embedded-sdk/)
+- **Shared daemon**: Run `nexusd` when you need a long-lived service, remote clients, or operational controls. Docs: [Shared daemon path](https://nexi-lab.github.io/nexus/paths/daemon-and-remote/)
+- **Architecture**: Read the kernel, storage, and proposal docs before changing the system model. Docs: [Architecture path](https://nexi-lab.github.io/nexus/paths/architecture/)
+
+## Trust Boundaries
+
+- The quickstart above is a local path. It is intentionally smaller than a production deployment.
+- Remote SDK access uses the `remote` profile and depends on a running `nexusd` plus a configured gRPC port.
+- Permissions, memory, and federation are deployment capabilities, not implied by the basic local write/read example.
 
 ## Architecture
 
@@ -187,18 +129,18 @@ Same kernel, different service sets — like Linux distros:
 | **cloud** | Ubuntu Server | k8s, serverless | 22 (all) |
 | **remote** | NFS client | Client-side proxy | 0 |
 
-See [Kernel Architecture](docs/architecture/KERNEL-ARCHITECTURE.md) for the full design.
+See [Kernel Architecture](https://nexi-lab.github.io/nexus/architecture/kernel-architecture/) for the full design.
 
 ## Examples
 
 | Framework | Description | Location |
 |-----------|-------------|----------|
-| CrewAI | Multi-agent collaboration | [examples/crewai/](examples/crewai/) |
-| LangGraph | Permission-based workflows | [examples/langgraph_integration/](examples/langgraph_integration/) |
-| Claude SDK | ReAct agent pattern | [examples/claude_agent_sdk/](examples/claude_agent_sdk/) |
-| OpenAI Agents | Multi-tenant with memory | [examples/openai_agents/](examples/openai_agents/) |
-| Google ADK | Agent Development Kit | [examples/google_adk/](examples/google_adk/) |
-| CLI | 40+ shell demos | [examples/cli/](examples/cli/) |
+| CrewAI | Multi-agent collaboration | [examples/crewai/](https://github.com/nexi-lab/nexus/tree/main/examples/crewai) |
+| LangGraph | Permission-based workflows | [examples/langgraph_integration/](https://github.com/nexi-lab/nexus/tree/main/examples/langgraph_integration) |
+| Claude SDK | ReAct agent pattern | [examples/claude_agent_sdk/](https://github.com/nexi-lab/nexus/tree/main/examples/claude_agent_sdk) |
+| OpenAI Agents | Multi-tenant with memory | [examples/openai_agents/](https://github.com/nexi-lab/nexus/tree/main/examples/openai_agents) |
+| Google ADK | Agent Development Kit | [examples/google_adk/](https://github.com/nexi-lab/nexus/tree/main/examples/google_adk) |
+| CLI | 40+ shell demos | [examples/cli/](https://github.com/nexi-lab/nexus/tree/main/examples/cli) |
 
 ## Contributing
 
@@ -212,4 +154,4 @@ pytest tests/
 
 ## License
 
-© 2025 Nexi Labs, Inc. Licensed under Apache License 2.0 — see [LICENSE](LICENSE) for details.
+© 2025 Nexi Labs, Inc. Licensed under Apache License 2.0 — see [LICENSE](https://github.com/nexi-lab/nexus/blob/main/LICENSE) for details.

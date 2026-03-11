@@ -182,7 +182,7 @@ def create_app(
     # Create app first so we can store state on it
     app = FastAPI(
         title="Nexus RPC Server",
-        description="AI-Native Distributed Filesystem API",
+        description="Nexus = filesystem/context plane.",
         version="1.0.0",
         lifespan=_modular_lifespan,
     )
@@ -313,29 +313,28 @@ def create_app(
     # Discover exposed methods — includes brick services (Issue #2035, Follow-up 1)
     # Services with @rpc_expose override kernel stubs (later sources win).
     _brick_sources: list[Any] = []
-    if nexus_fs is not None:
-        for _svc_name in (
-            "mcp",
-            "llm",
-            "oauth",
-            "mount",
-            "search",
-            "share_link",
-            "rebac",
-        ):
-            _brick_svc = nexus_fs.service(_svc_name)
-            if _brick_svc is not None:
-                _brick_sources.append(_brick_svc)
+    for _svc_name in (
+        "mcp",
+        "llm",
+        "oauth",
+        "mount",
+        "search",
+        "share_link",
+        "rebac",
+    ):
+        _brick_svc = nexus_fs.service(_svc_name)
+        if _brick_svc is not None:
+            _brick_sources.append(_brick_svc)
     # version_service is on BrickServices, not in ServiceRegistry
     _version_svc = getattr(nexus_fs, "version_service", None)
     if _version_svc is not None:
         _brick_sources.append(_version_svc)
     # AgentRPCService
-    _agent_rpc = nexus_fs.service("agent_rpc") if nexus_fs is not None else None
+    _agent_rpc = nexus_fs.service("agent_rpc")
     if _agent_rpc is not None:
         _brick_sources.append(_agent_rpc)
     # WorkspaceRPCService
-    _workspace_rpc = nexus_fs.service("workspace_rpc") if nexus_fs is not None else None
+    _workspace_rpc = nexus_fs.service("workspace_rpc")
     if _workspace_rpc is not None:
         _brick_sources.append(_workspace_rpc)
     # Issue #12: MemoryService lives outside kernel — created by factory, not on NexusFS
@@ -361,49 +360,7 @@ def create_app(
     _version_svc = getattr(nexus_fs, "version_service", None)
     if _version_svc is not None:
         _brick_sources.append(_version_svc)
-    # --- Service RPC surfaces (Issue #1520) ---
-    _zone_mgr = getattr(app.state, "zone_manager", None)
-    if _zone_mgr is not None:
-        from nexus.server.rpc.services.federation_rpc import FederationRPCService
-
-        _brick_sources.append(
-            FederationRPCService(_zone_mgr, getattr(app.state, "federation", None))
-        )
-    _credits = getattr(app.state, "credits_service", None)
-    if _credits is not None:
-        from nexus.server.rpc.services.pay_rpc import PayRPCService
-
-        _brick_sources.append(PayRPCService(_credits))
-    _audit_logger = getattr(app.state, "exchange_audit_logger", None)
-    if _audit_logger is not None:
-        from nexus.server.rpc.services.audit_rpc import AuditRPCService
-
-        _brick_sources.append(AuditRPCService(_audit_logger))
-    _lock_mgr = getattr(nexus_fs, "_lock_manager", None)
-    if _lock_mgr is not None:
-        from nexus.server.rpc.services.locks_rpc import LocksRPCService
-
-        _brick_sources.append(LocksRPCService(_lock_mgr))
-    _gov_anomaly = getattr(app.state, "governance_anomaly_service", None)
-    _gov_collusion = getattr(app.state, "governance_collusion_service", None)
-    if _gov_anomaly is not None or _gov_collusion is not None:
-        from nexus.server.rpc.services.governance_rpc import GovernanceRPCService
-
-        _brick_sources.append(GovernanceRPCService(_gov_anomaly, _gov_collusion))
-    _replay_svc = getattr(app.state, "replay_service", None)
-    if _replay_svc is not None:
-        from nexus.server.rpc.services.events_rpc import EventsRPCService
-
-        _brick_sources.append(EventsRPCService(_replay_svc))
-    _snapshot_svc = getattr(nexus_fs, "_snapshot_service", None)
-    if _snapshot_svc is not None:
-        from nexus.server.rpc.services.snapshots_rpc import SnapshotsRPCService
-
-        _brick_sources.append(SnapshotsRPCService(_snapshot_svc))
-    if nexus_fs is not None:
-        app.state.exposed_methods = _discover_exposed_methods(nexus_fs, *_brick_sources)
-    else:
-        app.state.exposed_methods = {}
+    app.state.exposed_methods = _discover_exposed_methods(nexus_fs, *_brick_sources)
 
     # Defaults for optional services are set by init_app_state() above (Issue #2135)
 
@@ -437,9 +394,7 @@ def create_app(
             # Issue #914: Inject getter into delivery worker (fixes services→server import)
             from nexus.server.subscriptions import get_subscription_manager
 
-            _dw = (
-                nexus_fs.exposed_services().get("delivery_worker") if nexus_fs is not None else None
-            )
+            _dw = nexus_fs.exposed_services().get("delivery_worker")
             if _dw is not None:
                 _dw._subscription_manager_getter = get_subscription_manager
             logger.info("Subscription manager initialized and injected into NexusFS")

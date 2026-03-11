@@ -87,13 +87,17 @@ export default function EventsPanel(): React.ReactNode {
   // Track the combined active tab locally
   const [activeTab, setActiveTab] = React.useState<PanelTab>("events");
 
-  // Auto-connect SSE on mount
+  // Auto-connect SSE on mount, reconnect when identity changes
   useEffect(() => {
     if (config.apiKey && config.baseUrl) {
-      connect(config.baseUrl, config.apiKey);
+      connect(config.baseUrl, config.apiKey, {
+        agentId: config.agentId,
+        subject: config.subject,
+        zoneId: config.zoneId,
+      });
     }
     return () => disconnect();
-  }, [config.apiKey, config.baseUrl, connect, disconnect]);
+  }, [config.apiKey, config.baseUrl, config.agentId, config.subject, config.zoneId, connect, disconnect]);
 
   // Fetch infra data when switching tabs
   useEffect(() => {
@@ -142,7 +146,11 @@ export default function EventsPanel(): React.ReactNode {
     if (activeTab === "events") {
       if (config.apiKey && config.baseUrl) {
         disconnect();
-        connect(config.baseUrl, config.apiKey);
+        connect(config.baseUrl, config.apiKey, {
+          agentId: config.agentId,
+          subject: config.subject,
+          zoneId: config.zoneId,
+        });
       }
     } else if (apiClient) {
       if (activeTab === "connectors") fetchConnectors(apiClient);

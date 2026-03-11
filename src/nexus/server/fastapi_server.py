@@ -217,7 +217,7 @@ def create_app(
 
     _profile_str = os.environ.get("NEXUS_PROFILE", "full")
     if _profile_str == "auto":
-        from nexus.lib.device_capabilities import detect_capabilities, suggest_profile
+        from nexus.core.device_capabilities import detect_capabilities, suggest_profile
 
         _caps = detect_capabilities()
         _profile = suggest_profile(_caps)
@@ -235,10 +235,10 @@ def create_app(
             logger.warning("Unknown NEXUS_PROFILE '%s', defaulting to 'full'", _profile_str)
             _profile = DeploymentProfile.FULL
         # Warn if explicit profile may exceed device capabilities
-        from nexus.lib.device_capabilities import (
+        from nexus.core.device_capabilities import (
             detect_capabilities as _detect_caps,
         )
-        from nexus.lib.device_capabilities import (
+        from nexus.core.device_capabilities import (
             warn_if_profile_exceeds_device,
         )
 
@@ -312,59 +312,46 @@ def create_app(
 
     # Discover exposed methods — includes brick services (Issue #2035, Follow-up 1)
     # Services with @rpc_expose override kernel stubs (later sources win).
-    # Guard: skip service discovery when nexus_fs is None (e.g. testing 503 paths).
     _brick_sources: list[Any] = []
-    if nexus_fs is not None:
-        for _svc_name in (
-            "mcp",
-            "llm",
-            "oauth",
-            "mount",
-            "search",
-            "share_link",
-            "rebac",
-        ):
-            _brick_svc = nexus_fs.service(_svc_name)
-            if _brick_svc is not None:
-                _brick_sources.append(_brick_svc)
-        # version_service is on BrickServices, not in ServiceRegistry
-        _version_svc = getattr(nexus_fs, "version_service", None)
-        if _version_svc is not None:
-            _brick_sources.append(_version_svc)
-        # AgentRPCService
-        _agent_rpc = nexus_fs.service("agent_rpc")
-        if _agent_rpc is not None:
-            _brick_sources.append(_agent_rpc)
-        # WorkspaceRPCService
-        _workspace_rpc = nexus_fs.service("workspace_rpc")
-        if _workspace_rpc is not None:
-            _brick_sources.append(_workspace_rpc)
-        # Issue #12: MemoryService lives outside kernel — created by factory, not on NexusFS
-        try:
-            from nexus.factory import create_memory_service
+    for _attr_name in (
+        "skill_service",
+        "skill_package_service",
+        "task_queue_service",
+        "mcp_service",
+        "llm_service",
+        "oauth_service",
+        "mount_service",
+        "version_service",
+        "share_link_service",
+        "rebac_service",
+    ):
+        _brick_svc = getattr(nexus_fs, _attr_name, None)
+        if _brick_svc is not None:
+            _brick_sources.append(_brick_svc)
+    # AgentRPCService: stored as private attr _agent_rpc_service on NexusFS
+    _agent_rpc = getattr(nexus_fs, "_agent_rpc_service", None)
+    if _agent_rpc is not None:
+        _brick_sources.append(_agent_rpc)
+    # Issue #12: MemoryService lives outside kernel — created by factory, not on NexusFS
+    try:
+        from nexus.factory import create_memory_service
 
-            _memory_svc = create_memory_service(nexus_fs)
-            if _memory_svc is not None:
-                _brick_sources.append(_memory_svc)
-                app.state.memory_service = _memory_svc  # for cleanup in lifespan
-        except Exception as _exc:
-            logger.debug("MemoryService unavailable: %s", _exc)
-        # Issue #841: MetadataExportService lives outside kernel
-        try:
-            from nexus.factory import create_metadata_export_service
+        _memory_svc = create_memory_service(nexus_fs)
+        if _memory_svc is not None:
+            _brick_sources.append(_memory_svc)
+            app.state.memory_service = _memory_svc  # for cleanup in lifespan
+    except Exception as _exc:
+        logger.debug("MemoryService unavailable: %s", _exc)
+    # Issue #841: MetadataExportService lives outside kernel
+    try:
+        from nexus.factory import create_metadata_export_service
 
-            _meta_export_svc = create_metadata_export_service(nexus_fs)
-            if _meta_export_svc is not None:
-                _brick_sources.append(_meta_export_svc)
-        except Exception as _exc:
-            logger.debug("MetadataExportService unavailable: %s", _exc)
-        # Issue #1410: VersionService @rpc_expose methods (moved from NexusFS)
-        _version_svc = getattr(nexus_fs, "version_service", None)
-        if _version_svc is not None:
-            _brick_sources.append(_version_svc)
-    app.state.exposed_methods = (
-        _discover_exposed_methods(nexus_fs, *_brick_sources) if nexus_fs is not None else {}
-    )
+        _meta_export_svc = create_metadata_export_service(nexus_fs)
+        if _meta_export_svc is not None:
+            _brick_sources.append(_meta_export_svc)
+    except Exception as _exc:
+        logger.debug("MetadataExportService unavailable: %s", _exc)
+    app.state.exposed_methods = _discover_exposed_methods(nexus_fs, *_brick_sources)
 
     # Defaults for optional services are set by init_app_state() above (Issue #2135)
 

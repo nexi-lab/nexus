@@ -21,7 +21,9 @@ def mock_fs():
     """Create a mock NexusFS instance."""
     fs = MagicMock()
     fs.sys_mkdir = MagicMock()
-    fs.sys_write = MagicMock(return_value=7)
+    fs.sys_write = MagicMock(
+        return_value={"path": "/test/file.txt", "bytes_written": 7, "created": True}
+    )
     fs.sys_read = MagicMock(return_value=b"file content")
     fs.sys_readdir = MagicMock(return_value=["file1.txt", "file2.txt"])
     fs.sys_access = MagicMock(return_value=True)
@@ -118,10 +120,10 @@ class TestFileOperations:
         )
 
     def test_write_delegates_bytes(self, gateway, mock_fs, context):
-        """sys_write delegates bytes to NexusFS.sys_write and returns byte count."""
+        """sys_write delegates bytes to NexusFS.sys_write and returns dict."""
         result = gateway.sys_write("/test/file.txt", b"content", context=context)
         mock_fs.sys_write.assert_called_once_with("/test/file.txt", b"content", context=context)
-        assert result == 7  # mock returns 7
+        assert result["bytes_written"] == 7
 
     def test_write_delegates_str(self, gateway, mock_fs, context):
         """sys_write passes str through to NexusFS (kernel handles encoding)."""

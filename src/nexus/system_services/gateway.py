@@ -88,7 +88,7 @@ class NexusFSGateway:
         buf: bytes | str,
         *,
         context: "OperationContext | None" = None,
-    ) -> int:
+    ) -> dict[str, Any]:
         """Write content to file (POSIX pwrite(2)).
 
         Args:
@@ -97,7 +97,7 @@ class NexusFSGateway:
             context: Operation context for permissions
 
         Returns:
-            Number of bytes written.
+            Dict with path, bytes_written, and created flag.
         """
         return self._fs.sys_write(path, buf, context=context)
 

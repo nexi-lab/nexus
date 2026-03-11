@@ -16,7 +16,8 @@ function truncateText(text: string, maxLen: number): string {
   return `${text.slice(0, maxLen - 3)}...`;
 }
 
-function formatRate(rate: number): string {
+function formatRate(rate: number | null): string {
+  if (rate === null || rate === undefined) return "-";
   return `${(rate * 100).toFixed(0)}%`;
 }
 
@@ -48,10 +49,10 @@ export function PlaybookList({
         <text>{`Playbooks: ${playbooks.length}`}</text>
       </box>
       <box height={1} width="100%">
-        <text>{"  NAME                          SCOPE      TAGS  USED  RATE"}</text>
+        <text>{"  NAME                          SCOPE      VIS     VER  USED  RATE"}</text>
       </box>
       <box height={1} width="100%">
-        <text>{"  ----------------------------  ---------  ----  ----  ----"}</text>
+        <text>{"  ----------------------------  ---------  ------  ---  ----  ----"}</text>
       </box>
 
       {/* Rows */}
@@ -61,14 +62,15 @@ export function PlaybookList({
           const prefix = isSelected ? "> " : "  ";
           const name = truncateText(p.name, 28).padEnd(28);
           const scope = truncateText(p.scope, 9).padEnd(9);
-          const tags = String(p.tags.length).padEnd(4);
+          const vis = truncateText(p.visibility, 6).padEnd(6);
+          const ver = String(p.version).padEnd(3);
           const used = String(p.usage_count).padEnd(4);
           const rate = formatRate(p.success_rate);
 
           return (
             <box key={p.playbook_id} height={1} width="100%">
               <text>
-                {`${prefix}${name}  ${scope}  ${tags}  ${used}  ${rate}`}
+                {`${prefix}${name}  ${scope}  ${vis}  ${ver}  ${used}  ${rate}`}
               </text>
             </box>
           );

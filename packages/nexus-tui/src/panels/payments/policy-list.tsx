@@ -52,11 +52,15 @@ export function PolicyList({
         const isSelected = i === selectedIndex;
         const prefix = isSelected ? "> " : "  ";
         const enabled = p.enabled ? "yes" : "no";
+        const daily = (p.daily_limit ?? "-").padEnd(11);
+        const weekly = (p.weekly_limit ?? "-").padEnd(11);
+        const monthly = (p.monthly_limit ?? "-").padEnd(11);
+        const perTx = (p.per_tx_limit ?? "-").padEnd(11);
 
         return (
           <box key={p.policy_id} height={1} width="100%">
             <text>
-              {`${prefix}${shortId(p.policy_id).padEnd(10)}  ${p.daily_limit.padEnd(11)}  ${p.weekly_limit.padEnd(11)}  ${p.monthly_limit.padEnd(11)}  ${p.per_tx_limit.padEnd(11)}  ${enabled}`}
+              {`${prefix}${shortId(p.policy_id).padEnd(10)}  ${daily}  ${weekly}  ${monthly}  ${perTx}  ${enabled}`}
             </text>
           </box>
         );

@@ -22,12 +22,8 @@ from typing import Any
 
 from nexus.contracts.metadata import FileMetadata
 from nexus.core.metastore import MetastoreABC
+from nexus.core.pagination import PaginatedResult
 from nexus.storage._metadata_mapper_generated import MetadataMapper
-
-try:
-    from nexus.lib.pagination import PaginatedResult
-except ImportError:  # Backward compatibility for branches that still expose core.pagination
-    from nexus.core.pagination import PaginatedResult
 
 logger = logging.getLogger(__name__)
 

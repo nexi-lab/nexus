@@ -13,12 +13,14 @@ import { useApi } from "../../shared/hooks/use-api.js";
 import { SearchResults } from "./search-results.js";
 import { KnowledgeView } from "./knowledge-view.js";
 import { MemoryList } from "./memory-list.js";
+import { PlaybookList } from "./playbook-list.js";
 
-const TAB_ORDER: readonly SearchTab[] = ["search", "knowledge", "memories"];
+const TAB_ORDER: readonly SearchTab[] = ["search", "knowledge", "memories", "playbooks"];
 const TAB_LABELS: Readonly<Record<SearchTab, string>> = {
   search: "Search",
   knowledge: "Knowledge",
   memories: "Memories",
+  playbooks: "Playbooks",
 };
 
 const MODE_LABELS: Readonly<Record<SearchMode, string>> = {
@@ -44,6 +46,13 @@ export default function SearchPanel(): React.ReactNode {
   const memories = useSearchStore((s) => s.memories);
   const selectedMemoryIndex = useSearchStore((s) => s.selectedMemoryIndex);
   const memoriesLoading = useSearchStore((s) => s.memoriesLoading);
+  const memoryHistory = useSearchStore((s) => s.memoryHistory);
+  const memoryHistoryLoading = useSearchStore((s) => s.memoryHistoryLoading);
+  const memoryDiff = useSearchStore((s) => s.memoryDiff);
+  const memoryDiffLoading = useSearchStore((s) => s.memoryDiffLoading);
+  const playbooks = useSearchStore((s) => s.playbooks);
+  const selectedPlaybookIndex = useSearchStore((s) => s.selectedPlaybookIndex);
+  const playbooksLoading = useSearchStore((s) => s.playbooksLoading);
   const activeTab = useSearchStore((s) => s.activeTab);
   const error = useSearchStore((s) => s.error);
 
@@ -55,6 +64,13 @@ export default function SearchPanel(): React.ReactNode {
   const fetchNeighbors = useSearchStore((s) => s.fetchNeighbors);
   const searchKnowledge = useSearchStore((s) => s.searchKnowledge);
   const fetchMemories = useSearchStore((s) => s.fetchMemories);
+  const fetchPlaybooks = useSearchStore((s) => s.fetchPlaybooks);
+  const deletePlaybook = useSearchStore((s) => s.deletePlaybook);
+  const setSelectedPlaybookIndex = useSearchStore((s) => s.setSelectedPlaybookIndex);
+  const fetchMemoryHistory = useSearchStore((s) => s.fetchMemoryHistory);
+  const fetchMemoryDiff = useSearchStore((s) => s.fetchMemoryDiff);
+  const clearMemoryHistory = useSearchStore((s) => s.clearMemoryHistory);
+  const clearMemoryDiff = useSearchStore((s) => s.clearMemoryDiff);
   const setActiveTab = useSearchStore((s) => s.setActiveTab);
   const setSelectedResultIndex = useSearchStore((s) => s.setSelectedResultIndex);
   const setSelectedMemoryIndex = useSearchStore((s) => s.setSelectedMemoryIndex);
@@ -71,9 +87,11 @@ export default function SearchPanel(): React.ReactNode {
         searchKnowledge(query.trim(), client);
       } else if (activeTab === "memories") {
         fetchMemories(query.trim(), client);
+      } else if (activeTab === "playbooks") {
+        fetchPlaybooks(query.trim(), client);
       }
     },
-    [client, activeTab, search, searchKnowledge, fetchMemories, setSearchQuery],
+    [client, activeTab, search, searchKnowledge, fetchMemories, fetchPlaybooks, setSearchQuery],
   );
 
   // Refresh current view based on active tab
@@ -86,8 +104,10 @@ export default function SearchPanel(): React.ReactNode {
       searchKnowledge(searchQuery, client);
     } else if (activeTab === "memories") {
       fetchMemories("", client);
+    } else if (activeTab === "playbooks") {
+      fetchPlaybooks(searchQuery || "", client);
     }
-  }, [client, activeTab, searchQuery, search, searchKnowledge, fetchMemories]);
+  }, [client, activeTab, searchQuery, search, searchKnowledge, fetchMemories, fetchPlaybooks]);
 
   // In input mode, capture printable characters via onUnhandled
   const handleUnhandledKey = useCallback(
@@ -130,6 +150,10 @@ export default function SearchPanel(): React.ReactNode {
               setSelectedMemoryIndex(
                 Math.min(selectedMemoryIndex + 1, memories.length - 1),
               );
+            } else if (activeTab === "playbooks") {
+              setSelectedPlaybookIndex(
+                Math.min(selectedPlaybookIndex + 1, playbooks.length - 1),
+              );
             }
           },
           down: () => {
@@ -141,6 +165,10 @@ export default function SearchPanel(): React.ReactNode {
               setSelectedMemoryIndex(
                 Math.min(selectedMemoryIndex + 1, memories.length - 1),
               );
+            } else if (activeTab === "playbooks") {
+              setSelectedPlaybookIndex(
+                Math.min(selectedPlaybookIndex + 1, playbooks.length - 1),
+              );
             }
           },
           k: () => {
@@ -148,6 +176,8 @@ export default function SearchPanel(): React.ReactNode {
               setSelectedResultIndex(Math.max(selectedResultIndex - 1, 0));
             } else if (activeTab === "memories") {
               setSelectedMemoryIndex(Math.max(selectedMemoryIndex - 1, 0));
+            } else if (activeTab === "playbooks") {
+              setSelectedPlaybookIndex(Math.max(selectedPlaybookIndex - 1, 0));
             }
           },
           up: () => {
@@ -155,6 +185,8 @@ export default function SearchPanel(): React.ReactNode {
               setSelectedResultIndex(Math.max(selectedResultIndex - 1, 0));
             } else if (activeTab === "memories") {
               setSelectedMemoryIndex(Math.max(selectedMemoryIndex - 1, 0));
+            } else if (activeTab === "playbooks") {
+              setSelectedPlaybookIndex(Math.max(selectedPlaybookIndex - 1, 0));
             }
           },
           tab: () => {
@@ -190,6 +222,58 @@ export default function SearchPanel(): React.ReactNode {
                   fetchNeighbors(entityId, client);
                 }
               }
+            } else if (activeTab === "memories") {
+              const memory = memories[selectedMemoryIndex];
+              if (memory) {
+                const memId = String(
+                  (memory as Record<string, unknown>).memory_id ?? "",
+                );
+                if (memId) {
+                  // Toggle: if history is already shown for this memory, clear it
+                  if (memoryHistory?.memory_id === memId) {
+                    clearMemoryHistory();
+                    clearMemoryDiff();
+                  } else {
+                    clearMemoryDiff();
+                    fetchMemoryHistory(memId, client);
+                  }
+                }
+              }
+            }
+          },
+          v: () => {
+            if (!client || activeTab !== "memories") return;
+
+            const memory = memories[selectedMemoryIndex];
+            if (!memory) return;
+
+            const memId = String(
+              (memory as Record<string, unknown>).memory_id ?? "",
+            );
+            if (!memId) return;
+
+            // Need at least 2 versions to diff
+            if (memoryHistory && memoryHistory.memory_id === memId && memoryHistory.current_version >= 2) {
+              fetchMemoryDiff(
+                memId,
+                memoryHistory.current_version - 1,
+                memoryHistory.current_version,
+                client,
+              );
+            }
+          },
+          d: () => {
+            if (!client || activeTab !== "playbooks") return;
+            const playbook = playbooks[selectedPlaybookIndex];
+            if (playbook) {
+              deletePlaybook(playbook.playbook_id, client);
+            }
+          },
+          escape: () => {
+            // Clear expanded views when Escape is pressed in normal mode
+            if (activeTab === "memories" && (memoryHistory || memoryDiff)) {
+              clearMemoryHistory();
+              clearMemoryDiff();
             }
           },
         },
@@ -247,6 +331,17 @@ export default function SearchPanel(): React.ReactNode {
             memories={memories}
             selectedIndex={selectedMemoryIndex}
             loading={memoriesLoading}
+            memoryHistory={memoryHistory}
+            memoryHistoryLoading={memoryHistoryLoading}
+            memoryDiff={memoryDiff}
+            memoryDiffLoading={memoryDiffLoading}
+          />
+        )}
+        {activeTab === "playbooks" && (
+          <PlaybookList
+            playbooks={playbooks}
+            selectedIndex={selectedPlaybookIndex}
+            loading={playbooksLoading}
           />
         )}
       </box>
@@ -256,7 +351,9 @@ export default function SearchPanel(): React.ReactNode {
         <text>
           {inputMode
             ? "Type query, Enter:submit, Escape:cancel, Backspace:delete"
-            : "j/k:navigate  Tab:switch tab  /:search  m:mode  Enter:select  r:refresh  q:quit"}
+            : activeTab === "memories"
+              ? "j/k:navigate  Tab:tab  /:search  Enter:history  v:diff  Esc:close  r:refresh  q:quit"
+              : "j/k:navigate  Tab:switch tab  /:search  m:mode  Enter:select  d:delete  r:refresh  q:quit"}
         </text>
       </box>
     </box>

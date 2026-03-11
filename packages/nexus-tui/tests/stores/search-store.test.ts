@@ -16,6 +16,12 @@ function mockClient(responses: Record<string, unknown>): FetchClient {
       }
       throw new Error(`Unmocked path: ${path}`);
     }),
+    delete: mock(async (path: string) => {
+      for (const [pattern, response] of Object.entries(responses)) {
+        if (path.includes(pattern)) return response;
+      }
+      throw new Error(`Unmocked path: ${path}`);
+    }),
   } as unknown as FetchClient;
 }
 
@@ -33,6 +39,13 @@ function resetStore(): void {
     memories: [],
     selectedMemoryIndex: 0,
     memoriesLoading: false,
+    memoryHistory: null,
+    memoryHistoryLoading: false,
+    memoryDiff: null,
+    memoryDiffLoading: false,
+    playbooks: [],
+    playbooksLoading: false,
+    selectedPlaybookIndex: 0,
     activeTab: "search",
     error: null,
   });
@@ -455,6 +468,381 @@ describe("SearchStore", () => {
       const state = useSearchStore.getState();
       expect(state.memoriesLoading).toBe(false);
       expect(state.error).toBe("Memory not found");
+    });
+  });
+
+  describe("fetchPlaybooks", () => {
+    it("uses GET on /api/v2/playbooks with name_pattern param and stores results", async () => {
+      const client = mockClient({
+        "/api/v2/playbooks": {
+          playbooks: [
+            {
+              playbook_id: "pb-1",
+              name: "Deploy Service",
+              description: "Steps to deploy a microservice",
+              scope: "team",
+              tags: ["deploy", "ci"],
+              steps: [{ action: "build" }, { action: "push" }],
+              metadata: { author: "alice" },
+              created_at: "2025-01-01T00:00:00Z",
+              updated_at: "2025-06-15T12:00:00Z",
+              usage_count: 42,
+              success_rate: 0.95,
+            },
+            {
+              playbook_id: "pb-2",
+              name: "Onboard Agent",
+              description: "New agent onboarding",
+              scope: "global",
+              tags: ["onboard"],
+              steps: [{ action: "register" }],
+              metadata: null,
+              created_at: "2025-02-01T00:00:00Z",
+              updated_at: "2025-07-01T08:00:00Z",
+              usage_count: 7,
+              success_rate: 1.0,
+            },
+          ],
+          total: 2,
+        },
+      });
+
+      await useSearchStore.getState().fetchPlaybooks("deploy", client);
+      const state = useSearchStore.getState();
+
+      expect(client.get).toHaveBeenCalled();
+      expect(state.playbooks).toHaveLength(2);
+      expect(state.playbooks[0]!.playbook_id).toBe("pb-1");
+      expect(state.playbooks[0]!.name).toBe("Deploy Service");
+      expect(state.playbooks[0]!.scope).toBe("team");
+      expect(state.playbooks[0]!.tags).toEqual(["deploy", "ci"]);
+      expect(state.playbooks[0]!.usage_count).toBe(42);
+      expect(state.playbooks[0]!.success_rate).toBe(0.95);
+      expect(state.playbooks[1]!.playbook_id).toBe("pb-2");
+      expect(state.playbooks[1]!.metadata).toBeNull();
+      expect(state.selectedPlaybookIndex).toBe(0);
+      expect(state.playbooksLoading).toBe(false);
+      expect(state.error).toBeNull();
+    });
+
+    it("includes name_pattern in GET url", async () => {
+      const client = mockClient({
+        "/api/v2/playbooks": { playbooks: [], total: 0 },
+      });
+
+      await useSearchStore.getState().fetchPlaybooks("test-pattern", client);
+
+      const calledUrl = (client.get as ReturnType<typeof mock>).mock.calls[0]![0] as string;
+      expect(calledUrl).toContain("name_pattern=test-pattern");
+    });
+
+    it("sets error on failure", async () => {
+      const client = {
+        get: mock(async () => { throw new Error("Playbook service unavailable"); }),
+      } as unknown as FetchClient;
+
+      await useSearchStore.getState().fetchPlaybooks("fail", client);
+      const state = useSearchStore.getState();
+      expect(state.playbooksLoading).toBe(false);
+      expect(state.error).toBe("Playbook service unavailable");
+    });
+  });
+
+  describe("deletePlaybook", () => {
+    it("calls DELETE on /api/v2/playbooks/{id} and removes from local list", async () => {
+      useSearchStore.setState({
+        playbooks: [
+          {
+            playbook_id: "pb-1",
+            name: "Deploy Service",
+            description: "desc",
+            scope: "team",
+            tags: ["deploy"],
+            steps: [],
+            metadata: null,
+            created_at: "2025-01-01T00:00:00Z",
+            updated_at: "2025-01-01T00:00:00Z",
+            usage_count: 5,
+            success_rate: 0.9,
+          },
+          {
+            playbook_id: "pb-2",
+            name: "Onboard Agent",
+            description: "desc",
+            scope: "global",
+            tags: [],
+            steps: [],
+            metadata: null,
+            created_at: "2025-01-01T00:00:00Z",
+            updated_at: "2025-01-01T00:00:00Z",
+            usage_count: 3,
+            success_rate: 1.0,
+          },
+        ],
+        selectedPlaybookIndex: 0,
+      });
+
+      const client = mockClient({
+        "/api/v2/playbooks/pb-1": {},
+      });
+
+      await useSearchStore.getState().deletePlaybook("pb-1", client);
+      const state = useSearchStore.getState();
+
+      expect((client.delete as ReturnType<typeof mock>).mock.calls.length).toBe(1);
+      expect(state.playbooks).toHaveLength(1);
+      expect(state.playbooks[0]!.playbook_id).toBe("pb-2");
+      expect(state.error).toBeNull();
+    });
+
+    it("adjusts selectedPlaybookIndex when deleting last item", async () => {
+      useSearchStore.setState({
+        playbooks: [
+          {
+            playbook_id: "pb-1",
+            name: "Only Playbook",
+            description: "desc",
+            scope: "team",
+            tags: [],
+            steps: [],
+            metadata: null,
+            created_at: "2025-01-01T00:00:00Z",
+            updated_at: "2025-01-01T00:00:00Z",
+            usage_count: 1,
+            success_rate: 1.0,
+          },
+        ],
+        selectedPlaybookIndex: 0,
+      });
+
+      const client = mockClient({
+        "/api/v2/playbooks/pb-1": {},
+      });
+
+      await useSearchStore.getState().deletePlaybook("pb-1", client);
+      const state = useSearchStore.getState();
+
+      expect(state.playbooks).toHaveLength(0);
+      expect(state.selectedPlaybookIndex).toBe(0);
+    });
+
+    it("sets error on failure", async () => {
+      const client = {
+        delete: mock(async () => { throw new Error("Forbidden"); }),
+      } as unknown as FetchClient;
+
+      await useSearchStore.getState().deletePlaybook("pb-1", client);
+      const state = useSearchStore.getState();
+      expect(state.error).toBe("Forbidden");
+    });
+  });
+
+  describe("setSelectedPlaybookIndex", () => {
+    it("sets the selected playbook index", () => {
+      useSearchStore.getState().setSelectedPlaybookIndex(4);
+      expect(useSearchStore.getState().selectedPlaybookIndex).toBe(4);
+    });
+
+    it("sets to zero", () => {
+      useSearchStore.setState({ selectedPlaybookIndex: 3 });
+      useSearchStore.getState().setSelectedPlaybookIndex(0);
+      expect(useSearchStore.getState().selectedPlaybookIndex).toBe(0);
+    });
+  });
+
+  describe("fetchMemoryHistory", () => {
+    it("fetches version history from /api/v2/memories/{id}/history", async () => {
+      const client = mockClient({
+        "/api/v2/memories/mem-1/history": {
+          memory_id: "mem-1",
+          current_version: 3,
+          versions: [
+            { version: 1, created_at: "2025-01-01T00:00:00Z", status: "superseded" },
+            { version: 2, created_at: "2025-02-01T00:00:00Z", status: "superseded" },
+            { version: 3, created_at: "2025-03-01T00:00:00Z", status: "active" },
+          ],
+        },
+      });
+
+      await useSearchStore.getState().fetchMemoryHistory("mem-1", client);
+      const state = useSearchStore.getState();
+
+      expect(client.get).toHaveBeenCalled();
+      expect(state.memoryHistory).not.toBeNull();
+      expect(state.memoryHistory!.memory_id).toBe("mem-1");
+      expect(state.memoryHistory!.current_version).toBe(3);
+      expect(state.memoryHistory!.versions).toHaveLength(3);
+      expect(state.memoryHistory!.versions[0]!.version).toBe(1);
+      expect(state.memoryHistory!.versions[0]!.status).toBe("superseded");
+      expect(state.memoryHistory!.versions[2]!.version).toBe(3);
+      expect(state.memoryHistory!.versions[2]!.status).toBe("active");
+      expect(state.memoryHistoryLoading).toBe(false);
+      expect(state.error).toBeNull();
+    });
+
+    it("includes memory id in GET url", async () => {
+      const client = mockClient({
+        "/api/v2/memories/mem-42/history": {
+          memory_id: "mem-42",
+          current_version: 1,
+          versions: [{ version: 1, created_at: "2025-01-01T00:00:00Z", status: "active" }],
+        },
+      });
+
+      await useSearchStore.getState().fetchMemoryHistory("mem-42", client);
+
+      const calledUrl = (client.get as ReturnType<typeof mock>).mock.calls[0]![0] as string;
+      expect(calledUrl).toContain("/api/v2/memories/mem-42/history");
+    });
+
+    it("sets error on failure", async () => {
+      const client = {
+        get: mock(async () => { throw new Error("History not available"); }),
+      } as unknown as FetchClient;
+
+      await useSearchStore.getState().fetchMemoryHistory("mem-1", client);
+      const state = useSearchStore.getState();
+      expect(state.memoryHistoryLoading).toBe(false);
+      expect(state.memoryHistory).toBeNull();
+      expect(state.error).toBe("History not available");
+    });
+  });
+
+  describe("fetchMemoryDiff", () => {
+    it("fetches diff from /api/v2/memories/{id}/diff with version params", async () => {
+      const client = mockClient({
+        "/api/v2/memories/mem-1/diff": {
+          diff: "--- v1\n+++ v2\n-old content\n+new content",
+          mode: "content",
+          v1: 1,
+          v2: 2,
+        },
+      });
+
+      await useSearchStore.getState().fetchMemoryDiff("mem-1", 1, 2, client);
+      const state = useSearchStore.getState();
+
+      expect(client.get).toHaveBeenCalled();
+      expect(state.memoryDiff).not.toBeNull();
+      expect(state.memoryDiff!.diff).toBe("--- v1\n+++ v2\n-old content\n+new content");
+      expect(state.memoryDiff!.mode).toBe("content");
+      expect(state.memoryDiff!.v1).toBe(1);
+      expect(state.memoryDiff!.v2).toBe(2);
+      expect(state.memoryDiffLoading).toBe(false);
+      expect(state.error).toBeNull();
+    });
+
+    it("includes v1, v2, and mode params in GET url", async () => {
+      const client = mockClient({
+        "/api/v2/memories/mem-5/diff": {
+          diff: "",
+          mode: "content",
+          v1: 3,
+          v2: 5,
+        },
+      });
+
+      await useSearchStore.getState().fetchMemoryDiff("mem-5", 3, 5, client);
+
+      const calledUrl = (client.get as ReturnType<typeof mock>).mock.calls[0]![0] as string;
+      expect(calledUrl).toContain("/api/v2/memories/mem-5/diff");
+      expect(calledUrl).toContain("v1=3");
+      expect(calledUrl).toContain("v2=5");
+      expect(calledUrl).toContain("mode=content");
+    });
+
+    it("sets error on failure", async () => {
+      const client = {
+        get: mock(async () => { throw new Error("Diff generation failed"); }),
+      } as unknown as FetchClient;
+
+      await useSearchStore.getState().fetchMemoryDiff("mem-1", 1, 2, client);
+      const state = useSearchStore.getState();
+      expect(state.memoryDiffLoading).toBe(false);
+      expect(state.memoryDiff).toBeNull();
+      expect(state.error).toBe("Diff generation failed");
+    });
+  });
+
+  describe("rollbackMemory", () => {
+    it("posts rollback and updates memory in local list", async () => {
+      useSearchStore.setState({
+        memories: [
+          { memory_id: "mem-1", content: "version 3 content", version: 3 },
+          { memory_id: "mem-2", content: "other memory", version: 1 },
+        ],
+        memoryHistory: {
+          memory_id: "mem-1",
+          current_version: 3,
+          versions: [
+            { version: 1, created_at: "2025-01-01T00:00:00Z", status: "superseded" },
+            { version: 2, created_at: "2025-02-01T00:00:00Z", status: "superseded" },
+            { version: 3, created_at: "2025-03-01T00:00:00Z", status: "active" },
+          ],
+        },
+        memoryDiff: { diff: "some diff", mode: "content", v1: 2, v2: 3 },
+      });
+
+      const client = mockClient({
+        "/api/v2/memories/mem-1/rollback": {
+          memory: { memory_id: "mem-1", content: "version 1 content", version: 1 },
+        },
+      });
+
+      await useSearchStore.getState().rollbackMemory("mem-1", 1, client);
+      const state = useSearchStore.getState();
+
+      expect(client.post).toHaveBeenCalled();
+      expect(state.memories).toHaveLength(2);
+      expect((state.memories[0] as Record<string, unknown>).content).toBe("version 1 content");
+      expect((state.memories[0] as Record<string, unknown>).version).toBe(1);
+      // Other memory unchanged
+      expect((state.memories[1] as Record<string, unknown>).content).toBe("other memory");
+      // History and diff cleared after rollback
+      expect(state.memoryHistory).toBeNull();
+      expect(state.memoryDiff).toBeNull();
+      expect(state.memoriesLoading).toBe(false);
+      expect(state.error).toBeNull();
+    });
+
+    it("sets error on failure", async () => {
+      const client = {
+        post: mock(async () => { throw new Error("Rollback denied"); }),
+      } as unknown as FetchClient;
+
+      await useSearchStore.getState().rollbackMemory("mem-1", 1, client);
+      const state = useSearchStore.getState();
+      expect(state.memoriesLoading).toBe(false);
+      expect(state.error).toBe("Rollback denied");
+    });
+  });
+
+  describe("clearMemoryHistory", () => {
+    it("clears memoryHistory state", () => {
+      useSearchStore.setState({
+        memoryHistory: {
+          memory_id: "mem-1",
+          current_version: 2,
+          versions: [
+            { version: 1, created_at: "2025-01-01T00:00:00Z", status: "superseded" },
+            { version: 2, created_at: "2025-02-01T00:00:00Z", status: "active" },
+          ],
+        },
+      });
+
+      useSearchStore.getState().clearMemoryHistory();
+      expect(useSearchStore.getState().memoryHistory).toBeNull();
+    });
+  });
+
+  describe("clearMemoryDiff", () => {
+    it("clears memoryDiff state", () => {
+      useSearchStore.setState({
+        memoryDiff: { diff: "some diff text", mode: "content", v1: 1, v2: 2 },
+      });
+
+      useSearchStore.getState().clearMemoryDiff();
+      expect(useSearchStore.getState().memoryDiff).toBeNull();
     });
   });
 

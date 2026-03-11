@@ -37,7 +37,40 @@ export interface Memory {
   readonly [key: string]: unknown;
 }
 
-export type SearchTab = "search" | "knowledge" | "memories";
+export interface PlaybookRecord {
+  readonly playbook_id: string;
+  readonly name: string;
+  readonly description: string;
+  readonly scope: string;
+  readonly tags: readonly string[];
+  readonly steps: readonly unknown[];
+  readonly metadata: Readonly<Record<string, unknown>> | null;
+  readonly created_at: string;
+  readonly updated_at: string;
+  readonly usage_count: number;
+  readonly success_rate: number;
+}
+
+export interface MemoryVersion {
+  readonly version: number;
+  readonly created_at: string;
+  readonly status: string;
+}
+
+export interface MemoryHistory {
+  readonly memory_id: string;
+  readonly current_version: number;
+  readonly versions: readonly MemoryVersion[];
+}
+
+export interface MemoryDiff {
+  readonly diff: string;
+  readonly mode: string;
+  readonly v1: number;
+  readonly v2: number;
+}
+
+export type SearchTab = "search" | "knowledge" | "memories" | "playbooks";
 export type SearchMode = "keyword" | "semantic" | "hybrid";
 
 const SEARCH_MODE_ORDER: readonly SearchMode[] = ["keyword", "semantic", "hybrid"];
@@ -71,6 +104,28 @@ interface MemoryDetailResponse {
   readonly memory: Memory;
 }
 
+interface PlaybooksListResponse {
+  readonly playbooks: readonly PlaybookRecord[];
+  readonly total: number;
+}
+
+interface MemoryHistoryResponse {
+  readonly memory_id: string;
+  readonly current_version: number;
+  readonly versions: readonly MemoryVersion[];
+}
+
+interface MemoryDiffResponse {
+  readonly diff: string;
+  readonly mode: string;
+  readonly v1: number;
+  readonly v2: number;
+}
+
+interface MemoryRollbackResponse {
+  readonly memory: Memory;
+}
+
 // =============================================================================
 // Store
 // =============================================================================
@@ -94,6 +149,17 @@ export interface SearchState {
   readonly selectedMemoryIndex: number;
   readonly memoriesLoading: boolean;
 
+  // Playbooks
+  readonly playbooks: readonly PlaybookRecord[];
+  readonly playbooksLoading: boolean;
+  readonly selectedPlaybookIndex: number;
+
+  // Memory versioning
+  readonly memoryHistory: MemoryHistory | null;
+  readonly memoryHistoryLoading: boolean;
+  readonly memoryDiff: MemoryDiff | null;
+  readonly memoryDiffLoading: boolean;
+
   // Search mode
   readonly searchMode: SearchMode;
 
@@ -114,6 +180,14 @@ export interface SearchState {
   readonly setSearchQuery: (query: string) => void;
   readonly setSearchMode: (mode: SearchMode) => void;
   readonly cycleSearchMode: () => void;
+  readonly fetchPlaybooks: (query: string, client: FetchClient) => Promise<void>;
+  readonly deletePlaybook: (id: string, client: FetchClient) => Promise<void>;
+  readonly setSelectedPlaybookIndex: (index: number) => void;
+  readonly fetchMemoryHistory: (memoryId: string, client: FetchClient) => Promise<void>;
+  readonly fetchMemoryDiff: (memoryId: string, v1: number, v2: number, client: FetchClient) => Promise<void>;
+  readonly rollbackMemory: (memoryId: string, version: number, client: FetchClient) => Promise<void>;
+  readonly clearMemoryHistory: () => void;
+  readonly clearMemoryDiff: () => void;
 }
 
 export const useSearchStore = create<SearchState>((set, get) => ({
@@ -131,6 +205,15 @@ export const useSearchStore = create<SearchState>((set, get) => ({
   memories: [],
   selectedMemoryIndex: 0,
   memoriesLoading: false,
+
+  playbooks: [],
+  playbooksLoading: false,
+  selectedPlaybookIndex: 0,
+
+  memoryHistory: null,
+  memoryHistoryLoading: false,
+  memoryDiff: null,
+  memoryDiffLoading: false,
 
   searchMode: "hybrid",
 
@@ -296,5 +379,137 @@ export const useSearchStore = create<SearchState>((set, get) => ({
     if (nextMode) {
       set({ searchMode: nextMode });
     }
+  },
+
+  fetchPlaybooks: async (query, client) => {
+    set({ playbooksLoading: true, error: null });
+
+    try {
+      const params = new URLSearchParams({ name_pattern: query });
+      const response = await client.get<PlaybooksListResponse>(
+        `/api/v2/playbooks?${params.toString()}`,
+      );
+      set({
+        playbooks: response.playbooks ?? [],
+        selectedPlaybookIndex: 0,
+        playbooksLoading: false,
+      });
+    } catch (err) {
+      set({
+        playbooksLoading: false,
+        error: err instanceof Error ? err.message : "Failed to fetch playbooks",
+      });
+    }
+  },
+
+  deletePlaybook: async (id, client) => {
+    try {
+      await client.delete(`/api/v2/playbooks/${encodeURIComponent(id)}`);
+      set((state) => ({
+        playbooks: state.playbooks.filter((p) => p.playbook_id !== id),
+        selectedPlaybookIndex: Math.min(
+          state.selectedPlaybookIndex,
+          Math.max(state.playbooks.length - 2, 0),
+        ),
+        error: null,
+      }));
+    } catch (err) {
+      set({
+        error: err instanceof Error ? err.message : "Failed to delete playbook",
+      });
+    }
+  },
+
+  setSelectedPlaybookIndex: (index) => {
+    set({ selectedPlaybookIndex: index });
+  },
+
+  fetchMemoryHistory: async (memoryId, client) => {
+    set({ memoryHistoryLoading: true, error: null });
+
+    try {
+      const response = await client.get<MemoryHistoryResponse>(
+        `/api/v2/memories/${encodeURIComponent(memoryId)}/history`,
+      );
+      set({
+        memoryHistory: {
+          memory_id: response.memory_id,
+          current_version: response.current_version,
+          versions: response.versions ?? [],
+        },
+        memoryHistoryLoading: false,
+      });
+    } catch (err) {
+      set({
+        memoryHistoryLoading: false,
+        error: err instanceof Error ? err.message : "Failed to fetch memory history",
+      });
+    }
+  },
+
+  fetchMemoryDiff: async (memoryId, v1, v2, client) => {
+    set({ memoryDiffLoading: true, error: null });
+
+    try {
+      const params = new URLSearchParams({
+        v1: String(v1),
+        v2: String(v2),
+        mode: "content",
+      });
+      const response = await client.get<MemoryDiffResponse>(
+        `/api/v2/memories/${encodeURIComponent(memoryId)}/diff?${params.toString()}`,
+      );
+      set({
+        memoryDiff: {
+          diff: response.diff,
+          mode: response.mode,
+          v1: response.v1,
+          v2: response.v2,
+        },
+        memoryDiffLoading: false,
+      });
+    } catch (err) {
+      set({
+        memoryDiffLoading: false,
+        error: err instanceof Error ? err.message : "Failed to fetch memory diff",
+      });
+    }
+  },
+
+  rollbackMemory: async (memoryId, version, client) => {
+    set({ memoriesLoading: true, error: null });
+
+    try {
+      const response = await client.post<MemoryRollbackResponse>(
+        `/api/v2/memories/${encodeURIComponent(memoryId)}/rollback`,
+        { version },
+      );
+      const memory = response.memory;
+
+      set((state) => {
+        const updated = state.memories.map((m) =>
+          (m as Record<string, unknown>).memory_id === memoryId ? memory : m,
+        );
+        return {
+          memories: updated,
+          memoriesLoading: false,
+          memoryHistory: null,
+          memoryDiff: null,
+        };
+      });
+    } catch (err) {
+      set({
+        memoriesLoading: false,
+        error: err instanceof Error ? err.message : "Failed to rollback memory",
+      });
+    }
+  },
+
+  clearMemoryHistory: () => {
+    set({ memoryHistory: null });
+  },
+
+  clearMemoryDiff: () => {
+    set({ memoryDiff: null });
   },
 }));

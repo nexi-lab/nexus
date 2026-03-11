@@ -22,6 +22,12 @@ function mockClient(responses: Record<string, unknown>): FetchClient {
       }
       throw new Error(`Unmocked path: ${path}`);
     }),
+    deleteNoContent: mock(async (path: string) => {
+      for (const [pattern, response] of Object.entries(responses)) {
+        if (path.includes(pattern)) return;
+      }
+      throw new Error(`Unmocked path: ${path}`);
+    }),
   } as unknown as FetchClient;
 }
 
@@ -32,6 +38,13 @@ function resetStore(): void {
     reservations: [],
     selectedReservationIndex: 0,
     reservationsLoading: false,
+    transactions: [],
+    transactionsLoading: false,
+    selectedTransactionIndex: 0,
+    policies: [],
+    policiesLoading: false,
+    budget: null,
+    budgetLoading: false,
     activeTab: "balance",
     error: null,
   });
@@ -53,6 +66,12 @@ describe("PaymentsStore", () => {
 
       usePaymentsStore.getState().setActiveTab("balance");
       expect(usePaymentsStore.getState().activeTab).toBe("balance");
+
+      usePaymentsStore.getState().setActiveTab("transactions");
+      expect(usePaymentsStore.getState().activeTab).toBe("transactions");
+
+      usePaymentsStore.getState().setActiveTab("policies");
+      expect(usePaymentsStore.getState().activeTab).toBe("policies");
     });
 
     it("clears error when switching tabs", () => {
@@ -70,6 +89,17 @@ describe("PaymentsStore", () => {
     it("sets the selected reservation index", () => {
       usePaymentsStore.getState().setSelectedReservationIndex(3);
       expect(usePaymentsStore.getState().selectedReservationIndex).toBe(3);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // setSelectedTransactionIndex
+  // ---------------------------------------------------------------------------
+
+  describe("setSelectedTransactionIndex", () => {
+    it("sets the selected transaction index", () => {
+      usePaymentsStore.getState().setSelectedTransactionIndex(5);
+      expect(usePaymentsStore.getState().selectedTransactionIndex).toBe(5);
     });
   });
 
@@ -339,6 +369,293 @@ describe("PaymentsStore", () => {
   });
 
   // ---------------------------------------------------------------------------
+  // fetchTransactions
+  // ---------------------------------------------------------------------------
+
+  describe("fetchTransactions", () => {
+    it("fetches and stores transaction records", async () => {
+      const client = mockClient({
+        "/api/v2/audit/transactions": {
+          transactions: [
+            {
+              id: "tx-001",
+              record_hash: "abc123",
+              created_at: "2025-06-01T12:00:00Z",
+              protocol: "credits",
+              buyer_agent_id: "agent-1",
+              seller_agent_id: "agent-2",
+              amount: "100.00",
+              currency: "USDC",
+              status: "completed",
+              zone_id: "zone-1",
+              trace_id: "trace-001",
+              metadata_hash: "meta123",
+              transfer_id: "xfer-001",
+            },
+            {
+              id: "tx-002",
+              record_hash: "def456",
+              created_at: "2025-06-01T13:00:00Z",
+              protocol: "x402",
+              buyer_agent_id: "agent-3",
+              seller_agent_id: "agent-4",
+              amount: "50.00",
+              currency: "USDC",
+              status: "pending",
+              zone_id: "zone-1",
+              trace_id: "trace-002",
+              metadata_hash: "meta456",
+              transfer_id: "xfer-002",
+            },
+          ],
+          limit: 50,
+          has_more: false,
+          total: 2,
+          next_cursor: null,
+        },
+      });
+
+      await usePaymentsStore.getState().fetchTransactions(client);
+      const state = usePaymentsStore.getState();
+
+      expect(state.transactions).toHaveLength(2);
+      expect(state.transactions[0]!.id).toBe("tx-001");
+      expect(state.transactions[0]!.amount).toBe("100.00");
+      expect(state.transactions[0]!.protocol).toBe("credits");
+      expect(state.transactions[1]!.id).toBe("tx-002");
+      expect(state.transactionsLoading).toBe(false);
+      expect(state.error).toBeNull();
+    });
+
+    it("sets error on failure", async () => {
+      const client = {
+        get: mock(async () => {
+          throw new Error("Audit service unavailable");
+        }),
+      } as unknown as FetchClient;
+
+      await usePaymentsStore.getState().fetchTransactions(client);
+      const state = usePaymentsStore.getState();
+
+      expect(state.transactions).toHaveLength(0);
+      expect(state.transactionsLoading).toBe(false);
+      expect(state.error).toBe("Audit service unavailable");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // fetchPolicies
+  // ---------------------------------------------------------------------------
+
+  describe("fetchPolicies", () => {
+    it("fetches and stores policy records", async () => {
+      const client = mockClient({
+        "/api/v2/pay/policies": {
+          policies: [
+            {
+              policy_id: "pol-001",
+              zone_id: "zone-1",
+              agent_id: "agent-1",
+              daily_limit: "1000.00",
+              weekly_limit: "5000.00",
+              monthly_limit: "20000.00",
+              per_tx_limit: "500.00",
+              auto_approve_threshold: "100.00",
+              max_tx_per_hour: 10,
+              max_tx_per_day: 100,
+              rules: [],
+              priority: 1,
+              enabled: true,
+            },
+          ],
+        },
+      });
+
+      await usePaymentsStore.getState().fetchPolicies(client);
+      const state = usePaymentsStore.getState();
+
+      expect(state.policies).toHaveLength(1);
+      expect(state.policies[0]!.policy_id).toBe("pol-001");
+      expect(state.policies[0]!.daily_limit).toBe("1000.00");
+      expect(state.policies[0]!.enabled).toBe(true);
+      expect(state.policiesLoading).toBe(false);
+      expect(state.error).toBeNull();
+    });
+
+    it("sets error on failure", async () => {
+      const client = {
+        get: mock(async () => {
+          throw new Error("Policy service unavailable");
+        }),
+      } as unknown as FetchClient;
+
+      await usePaymentsStore.getState().fetchPolicies(client);
+      const state = usePaymentsStore.getState();
+
+      expect(state.policies).toHaveLength(0);
+      expect(state.policiesLoading).toBe(false);
+      expect(state.error).toBe("Policy service unavailable");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // fetchBudget
+  // ---------------------------------------------------------------------------
+
+  describe("fetchBudget", () => {
+    it("fetches and stores budget summary", async () => {
+      const client = mockClient({
+        "/api/v2/pay/budget": {
+          has_policy: true,
+          policy_id: "pol-001",
+          limits: { daily: "1000.00", weekly: "5000.00", monthly: "20000.00" },
+          spent: { daily: "200.00", weekly: "800.00", monthly: "3000.00" },
+          remaining: { daily: "800.00", weekly: "4200.00", monthly: "17000.00" },
+          rate_limits: null,
+          has_rules: false,
+        },
+      });
+
+      await usePaymentsStore.getState().fetchBudget(client);
+      const state = usePaymentsStore.getState();
+
+      expect(state.budget).not.toBeNull();
+      expect(state.budget!.has_policy).toBe(true);
+      expect(state.budget!.limits.daily).toBe("1000.00");
+      expect(state.budget!.spent.daily).toBe("200.00");
+      expect(state.budget!.remaining.daily).toBe("800.00");
+      expect(state.budgetLoading).toBe(false);
+      expect(state.error).toBeNull();
+    });
+
+    it("sets error on failure", async () => {
+      const client = {
+        get: mock(async () => {
+          throw new Error("Budget service unavailable");
+        }),
+      } as unknown as FetchClient;
+
+      await usePaymentsStore.getState().fetchBudget(client);
+      const state = usePaymentsStore.getState();
+
+      expect(state.budget).toBeNull();
+      expect(state.budgetLoading).toBe(false);
+      expect(state.error).toBe("Budget service unavailable");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // deletePolicy
+  // ---------------------------------------------------------------------------
+
+  describe("deletePolicy", () => {
+    it("deletes policy and removes from local state", async () => {
+      usePaymentsStore.setState({
+        policies: [
+          {
+            policy_id: "pol-001",
+            zone_id: "zone-1",
+            agent_id: "agent-1",
+            daily_limit: "1000.00",
+            weekly_limit: "5000.00",
+            monthly_limit: "20000.00",
+            per_tx_limit: "500.00",
+            auto_approve_threshold: "100.00",
+            max_tx_per_hour: 10,
+            max_tx_per_day: 100,
+            rules: [],
+            priority: 1,
+            enabled: true,
+          },
+          {
+            policy_id: "pol-002",
+            zone_id: "zone-1",
+            agent_id: "agent-2",
+            daily_limit: "500.00",
+            weekly_limit: "2500.00",
+            monthly_limit: "10000.00",
+            per_tx_limit: "250.00",
+            auto_approve_threshold: "50.00",
+            max_tx_per_hour: 5,
+            max_tx_per_day: 50,
+            rules: [],
+            priority: 2,
+            enabled: false,
+          },
+        ],
+      });
+
+      const client = mockClient({
+        "/api/v2/pay/policies/pol-001": undefined,
+      });
+
+      await usePaymentsStore.getState().deletePolicy("pol-001", client);
+      const state = usePaymentsStore.getState();
+
+      expect(state.error).toBeNull();
+      expect(state.policies).toHaveLength(1);
+      expect(state.policies[0]!.policy_id).toBe("pol-002");
+      expect(
+        (client.deleteNoContent as ReturnType<typeof mock>).mock.calls.length,
+      ).toBe(1);
+    });
+
+    it("sets error on failure", async () => {
+      const client = {
+        deleteNoContent: mock(async () => {
+          throw new Error("Policy not found");
+        }),
+      } as unknown as FetchClient;
+
+      await usePaymentsStore.getState().deletePolicy("pol-999", client);
+      expect(usePaymentsStore.getState().error).toBe("Policy not found");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // verifyIntegrity
+  // ---------------------------------------------------------------------------
+
+  describe("verifyIntegrity", () => {
+    it("returns integrity result on success", async () => {
+      const client = mockClient({
+        "/api/v2/audit/integrity/tx-001": {
+          record_id: "tx-001",
+          is_valid: true,
+          record_hash: "abc123",
+        },
+      });
+
+      const result = await usePaymentsStore
+        .getState()
+        .verifyIntegrity("tx-001", client);
+      const state = usePaymentsStore.getState();
+
+      expect(state.error).toBeNull();
+      expect(result).not.toBeNull();
+      expect(result!.record_id).toBe("tx-001");
+      expect(result!.is_valid).toBe(true);
+      expect(result!.record_hash).toBe("abc123");
+    });
+
+    it("returns null and sets error on failure", async () => {
+      const client = {
+        get: mock(async () => {
+          throw new Error("Integrity check failed");
+        }),
+      } as unknown as FetchClient;
+
+      const result = await usePaymentsStore
+        .getState()
+        .verifyIntegrity("tx-999", client);
+      const state = usePaymentsStore.getState();
+
+      expect(result).toBeNull();
+      expect(state.error).toBe("Integrity check failed");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // error handling
   // ---------------------------------------------------------------------------
 
@@ -380,6 +697,53 @@ describe("PaymentsStore", () => {
       });
 
       await usePaymentsStore.getState().transfer("agent-2", "10.00", "", client);
+      expect(usePaymentsStore.getState().error).toBeNull();
+    });
+
+    it("fetchTransactions clears previous error on start", async () => {
+      usePaymentsStore.setState({ error: "stale error" });
+
+      const client = mockClient({
+        "/api/v2/audit/transactions": {
+          transactions: [],
+          limit: 50,
+          has_more: false,
+          total: 0,
+          next_cursor: null,
+        },
+      });
+
+      await usePaymentsStore.getState().fetchTransactions(client);
+      expect(usePaymentsStore.getState().error).toBeNull();
+    });
+
+    it("fetchPolicies clears previous error on start", async () => {
+      usePaymentsStore.setState({ error: "stale error" });
+
+      const client = mockClient({
+        "/api/v2/pay/policies": { policies: [] },
+      });
+
+      await usePaymentsStore.getState().fetchPolicies(client);
+      expect(usePaymentsStore.getState().error).toBeNull();
+    });
+
+    it("fetchBudget clears previous error on start", async () => {
+      usePaymentsStore.setState({ error: "stale error" });
+
+      const client = mockClient({
+        "/api/v2/pay/budget": {
+          has_policy: false,
+          policy_id: null,
+          limits: { daily: "0", weekly: "0", monthly: "0" },
+          spent: { daily: "0", weekly: "0", monthly: "0" },
+          remaining: { daily: "0", weekly: "0", monthly: "0" },
+          rate_limits: null,
+          has_rules: false,
+        },
+      });
+
+      await usePaymentsStore.getState().fetchBudget(client);
       expect(usePaymentsStore.getState().error).toBeNull();
     });
   });

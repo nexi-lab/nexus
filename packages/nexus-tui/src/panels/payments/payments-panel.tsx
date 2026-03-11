@@ -1,8 +1,6 @@
 /**
- * Payments panel: tabbed layout for Balance and Reservations views.
- *
- * Note: Policies and Audit tabs are deferred — the backend pay surface
- * (pay.py) does not expose /policies or /audit endpoints yet.
+ * Payments panel: tabbed layout for Balance, Reservations, Transactions,
+ * and Policies views.
  */
 
 import React, { useState, useCallback, useEffect } from "react";
@@ -13,14 +11,21 @@ import { useApi } from "../../shared/hooks/use-api.js";
 import { BalanceCard } from "./balance-card.js";
 import { ReservationList } from "./reservation-list.js";
 import { TransferForm } from "./transfer-form.js";
+import { TransactionList } from "./transaction-list.js";
+import { PolicyList } from "./policy-list.js";
+import { BudgetCard } from "./budget-card.js";
 
 const TAB_ORDER: readonly PaymentsTab[] = [
   "balance",
   "reservations",
+  "transactions",
+  "policies",
 ];
 const TAB_LABELS: Readonly<Record<PaymentsTab, string>> = {
   balance: "Balance",
   reservations: "Reservations",
+  transactions: "Transactions",
+  policies: "Policies",
 };
 
 export default function PaymentsPanel(): React.ReactNode {
@@ -32,6 +37,13 @@ export default function PaymentsPanel(): React.ReactNode {
   const reservations = usePaymentsStore((s) => s.reservations);
   const selectedReservationIndex = usePaymentsStore((s) => s.selectedReservationIndex);
   const reservationsLoading = usePaymentsStore((s) => s.reservationsLoading);
+  const transactions = usePaymentsStore((s) => s.transactions);
+  const transactionsLoading = usePaymentsStore((s) => s.transactionsLoading);
+  const selectedTransactionIndex = usePaymentsStore((s) => s.selectedTransactionIndex);
+  const policies = usePaymentsStore((s) => s.policies);
+  const policiesLoading = usePaymentsStore((s) => s.policiesLoading);
+  const budget = usePaymentsStore((s) => s.budget);
+  const budgetLoading = usePaymentsStore((s) => s.budgetLoading);
   const activeTab = usePaymentsStore((s) => s.activeTab);
   const error = usePaymentsStore((s) => s.error);
 
@@ -39,10 +51,18 @@ export default function PaymentsPanel(): React.ReactNode {
   const transfer = usePaymentsStore((s) => s.transfer);
   const commitReservation = usePaymentsStore((s) => s.commitReservation);
   const releaseReservation = usePaymentsStore((s) => s.releaseReservation);
+  const fetchTransactions = usePaymentsStore((s) => s.fetchTransactions);
+  const fetchPolicies = usePaymentsStore((s) => s.fetchPolicies);
+  const fetchBudget = usePaymentsStore((s) => s.fetchBudget);
+  const deletePolicy = usePaymentsStore((s) => s.deletePolicy);
   const setActiveTab = usePaymentsStore((s) => s.setActiveTab);
   const setSelectedReservationIndex = usePaymentsStore(
     (s) => s.setSelectedReservationIndex,
   );
+  const setSelectedTransactionIndex = usePaymentsStore(
+    (s) => s.setSelectedTransactionIndex,
+  );
+  const [selectedPolicyIndex, setSelectedPolicyIndex] = useState(0);
 
   const handleTransferSubmit = useCallback(
     (to: string, amount: string, memo: string) => {
@@ -64,6 +84,10 @@ export default function PaymentsPanel(): React.ReactNode {
 
     if (activeTab === "balance") {
       fetchBalance(client);
+    } else if (activeTab === "transactions") {
+      fetchTransactions(client);
+    } else if (activeTab === "policies") {
+      fetchPolicies(client);
     }
   };
 
@@ -82,6 +106,14 @@ export default function PaymentsPanel(): React.ReactNode {
               setSelectedReservationIndex(
                 Math.min(selectedReservationIndex + 1, reservations.length - 1),
               );
+            } else if (activeTab === "transactions") {
+              setSelectedTransactionIndex(
+                Math.min(selectedTransactionIndex + 1, transactions.length - 1),
+              );
+            } else if (activeTab === "policies") {
+              setSelectedPolicyIndex(
+                Math.min(selectedPolicyIndex + 1, policies.length - 1),
+              );
             }
           },
           down: () => {
@@ -89,16 +121,32 @@ export default function PaymentsPanel(): React.ReactNode {
               setSelectedReservationIndex(
                 Math.min(selectedReservationIndex + 1, reservations.length - 1),
               );
+            } else if (activeTab === "transactions") {
+              setSelectedTransactionIndex(
+                Math.min(selectedTransactionIndex + 1, transactions.length - 1),
+              );
+            } else if (activeTab === "policies") {
+              setSelectedPolicyIndex(
+                Math.min(selectedPolicyIndex + 1, policies.length - 1),
+              );
             }
           },
           k: () => {
             if (activeTab === "reservations") {
               setSelectedReservationIndex(Math.max(selectedReservationIndex - 1, 0));
+            } else if (activeTab === "transactions") {
+              setSelectedTransactionIndex(Math.max(selectedTransactionIndex - 1, 0));
+            } else if (activeTab === "policies") {
+              setSelectedPolicyIndex(Math.max(selectedPolicyIndex - 1, 0));
             }
           },
           up: () => {
             if (activeTab === "reservations") {
               setSelectedReservationIndex(Math.max(selectedReservationIndex - 1, 0));
+            } else if (activeTab === "transactions") {
+              setSelectedTransactionIndex(Math.max(selectedTransactionIndex - 1, 0));
+            } else if (activeTab === "policies") {
+              setSelectedPolicyIndex(Math.max(selectedPolicyIndex - 1, 0));
             }
           },
           tab: () => {
@@ -126,6 +174,17 @@ export default function PaymentsPanel(): React.ReactNode {
             if (selected && selected.status === "pending") {
               releaseReservation(selected.id, client);
             }
+          },
+          d: () => {
+            if (activeTab !== "policies" || !client) return;
+            const selected = policies[selectedPolicyIndex];
+            if (selected) {
+              deletePolicy(selected.policy_id, client);
+            }
+          },
+          b: () => {
+            if (activeTab !== "policies" || !client) return;
+            fetchBudget(client);
           },
         },
   );
@@ -168,6 +227,23 @@ export default function PaymentsPanel(): React.ReactNode {
                 loading={reservationsLoading}
               />
             )}
+            {activeTab === "transactions" && (
+              <TransactionList
+                transactions={transactions}
+                selectedIndex={selectedTransactionIndex}
+                loading={transactionsLoading}
+              />
+            )}
+            {activeTab === "policies" && (
+              <box flexDirection="column" height="100%" width="100%">
+                <BudgetCard budget={budget} loading={budgetLoading} />
+                <PolicyList
+                  policies={policies}
+                  selectedIndex={selectedPolicyIndex}
+                  loading={policiesLoading}
+                />
+              </box>
+            )}
           </>
         )}
       </box>
@@ -177,7 +253,9 @@ export default function PaymentsPanel(): React.ReactNode {
         <text>
           {showTransfer
             ? "Tab:next field  Enter:submit  Escape:cancel"
-            : "j/k:navigate  Tab:switch tab  t:transfer  r:refresh  c:commit  x:release  q:quit"}
+            : activeTab === "policies"
+              ? "j/k:navigate  Tab:switch tab  d:delete  b:budget  r:refresh  q:quit"
+              : "j/k:navigate  Tab:switch tab  t:transfer  r:refresh  c:commit  x:release  q:quit"}
         </text>
       </box>
     </box>

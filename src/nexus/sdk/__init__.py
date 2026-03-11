@@ -1,5 +1,7 @@
 """
-Nexus SDK - Clean programmatic interface for third-party tools.
+Nexus = filesystem/context plane.
+
+Nexus SDK - clean programmatic interface for third-party tools.
 
 This module provides a clean, stable API for building custom tools and interfaces
 on top of Nexus, without any CLI dependencies. Use this SDK to build:
@@ -11,14 +13,23 @@ on top of Nexus, without any CLI dependencies. Use this SDK to build:
 
 The SDK interface is stable and semantic-versioned separately from CLI changes.
 
-Quick Start (Server Mode - Recommended):
+Quick Start (Local - Verified):
     >>> from nexus.sdk import connect
     >>>
-    >>> # Start server first: nexusd --host 0.0.0.0 --port 2026
+    >>> nx = connect(config={"profile": "minimal", "data_dir": "./nexus-data"})
+    >>> nx.sys_write("/workspace/file.txt", b"Hello World")
+    >>> content = nx.sys_read("/workspace/file.txt")
+
+Quick Start (Remote):
+    >>> from nexus.sdk import connect
+    >>>
+    >>> # Start server first:
+    >>> #   export NEXUS_GRPC_PORT=2126
+    >>> #   nexusd --host 0.0.0.0 --port 2026
     >>> # Set environment: export NEXUS_URL=http://localhost:2026
     >>>
-    >>> # Connect to Nexus server (thin HTTP client)
-    >>> nx = connect()
+    >>> # Connect to Nexus server (thin remote client)
+    >>> nx = connect(config={"profile": "remote", "url": "http://localhost:2026"})
     >>>
     >>> # File operations
     >>> nx.sys_write("/workspace/file.txt", b"Hello World")
@@ -30,24 +41,21 @@ Quick Start (Server Mode - Recommended):
     >>> python_files = nx.glob("**/*.py")
     >>> todos = nx.grep("TODO", file_pattern="**/*.py")
 
-Quick Start (Local - Development Only):
-    >>> # No server required, but less suitable for production
-    >>> nx = connect(config={"data_dir": "./nexus-data"})
-    >>> nx.sys_write("/workspace/file.txt", b"Hello World")
-
 Configuration:
-    >>> # Server mode with auto-discovery (recommended)
+    >>> # Remote mode with auto-discovery
     >>> # Checks NEXUS_URL and NEXUS_API_KEY environment variables
-    >>> nx = connect()
+    >>> nx = connect(config={"profile": "remote"})
     >>>
     >>> # Server mode with explicit config
     >>> nx = connect(config={
+    ...     "profile": "remote",
     ...     "url": "http://localhost:2026",
     ...     "api_key": "your-api-key"
     ... })
     >>>
-    >>> # Local mode (development/testing only)
+    >>> # Local mode
     >>> nx = connect(config={
+    ...     "profile": "minimal",
     ...     "data_dir": "./nexus-data"
     ... })
     >>>

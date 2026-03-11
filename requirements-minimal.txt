@@ -1,4 +1,4 @@
-# Minimal dependencies for NEXUS_PROFILE=minimal (standalone server).
+# Minimal dependencies for the verified local quickstart and NEXUS_PROFILE=minimal.
 # Subset of pyproject.toml for a lightweight Nexus server with storage only.
 # No cloud connectors, no LLM/ML packages, no Zoekt, no sandbox providers.
 

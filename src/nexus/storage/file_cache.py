@@ -103,7 +103,7 @@ class FileContentCache:
                 f"fp_rate={self._bloom_fp_rate}, memory={self._bloom.memory_bytes} bytes"
             )
         except ImportError:
-            logger.warning("nexus_fast not available, Bloom filter disabled")
+            logger.debug("nexus_fast not available, Bloom filter disabled")
             self._bloom = None
         except Exception as e:
             logger.warning(f"Failed to initialize Bloom filter: {e}")

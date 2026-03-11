@@ -204,7 +204,7 @@ class MountPersistService:
             - errors: List of error messages
         """
         if not self._manager:
-            logger.warning("Mount manager not available, skipping mount restoration")
+            logger.debug("Mount manager not available, skipping mount restoration")
             return {"loaded": 0, "synced": 0, "failed": 0, "errors": []}
 
         saved_mounts = self._manager.list_mounts()

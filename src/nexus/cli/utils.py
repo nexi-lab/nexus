@@ -6,6 +6,7 @@ import os
 import sys
 from collections.abc import Generator
 from contextlib import contextmanager
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import click
@@ -20,6 +21,26 @@ if TYPE_CHECKING:
     pass
 
 console = Console()
+
+_LOCAL_WORKSPACE_ENV_KEYS = (
+    "NEXUS_URL",
+    "NEXUS_API_KEY",
+    "NEXUS_PROFILE",
+    "NEXUS_BACKEND",
+    "NEXUS_GCS_BUCKET_NAME",
+    "NEXUS_GCS_PROJECT_ID",
+    "NEXUS_GCS_CREDENTIALS_PATH",
+    "NEXUS_DB_PATH",
+    "NEXUS_METASTORE_PATH",
+    "NEXUS_RECORD_STORE_PATH",
+    "NEXUS_DATABASE_URL",
+    "NEXUS_NODE_ID",
+    "NEXUS_BIND_ADDR",
+    "NEXUS_ADVERTISE_ADDR",
+    "NEXUS_PEERS",
+    "NEXUS_FEDERATION_ZONES",
+    "NEXUS_FEDERATION_MOUNTS",
+)
 
 # Global options
 REMOTE_URL_OPTION = click.option(
@@ -98,33 +119,117 @@ def add_backend_options(func: Any) -> Any:
     return wrapper
 
 
+def _apply_common_config(
+    config: dict[str, Any],
+    *,
+    enforce_permissions: bool | None,
+    allow_admin_bypass: bool | None,
+    enforce_zone_isolation: bool | None,
+    enable_memory_paging: bool,
+    memory_main_capacity: int,
+    memory_recall_max_age_hours: float,
+) -> None:
+    """Apply common configuration options to a config dict (mutates in place)."""
+    if enforce_permissions is not None:
+        config["enforce_permissions"] = enforce_permissions
+    if allow_admin_bypass is not None:
+        config["allow_admin_bypass"] = allow_admin_bypass
+    if enforce_zone_isolation is not None:
+        config["enforce_zone_isolation"] = enforce_zone_isolation
+    config["enable_memory_paging"] = enable_memory_paging
+    config["memory_main_capacity"] = memory_main_capacity
+    config["memory_recall_max_age_hours"] = memory_recall_max_age_hours
+
+
+@contextmanager
+def _isolated_local_workspace_env(data_dir: str) -> Generator[None, None, None]:
+    """Temporarily mask ambient Nexus connection env for local quickstart use."""
+    previous: dict[str, str | None] = {
+        key: os.environ.get(key) for key in _LOCAL_WORKSPACE_ENV_KEYS
+    }
+    previous_data_dir = os.environ.get("NEXUS_DATA_DIR")
+    try:
+        for key in _LOCAL_WORKSPACE_ENV_KEYS:
+            os.environ.pop(key, None)
+        os.environ["NEXUS_DATA_DIR"] = data_dir
+        yield
+    finally:
+        if previous_data_dir is None:
+            os.environ.pop("NEXUS_DATA_DIR", None)
+        else:
+            os.environ["NEXUS_DATA_DIR"] = previous_data_dir
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def connect_local_workspace(data_dir: str) -> NexusFilesystem:
+    """Connect to a self-contained local workspace without ambient env bleed."""
+    with _isolated_local_workspace_env(data_dir):
+        return nexus.connect(
+            config={
+                "profile": "minimal",
+                "backend": "local",
+                "data_dir": data_dir,
+                "db_path": None,
+                "metastore_path": None,
+                "record_store_path": None,
+                "url": None,
+                "api_key": None,
+            }
+        )
+
+
 def get_filesystem(
     remote_url: str | None = None,
     remote_api_key: str | None = None,
+    *,
+    allow_local_default: bool = False,
 ) -> NexusFilesystem:
-    """Get a remote NexusFilesystem instance.
+    """Get a NexusFilesystem instance.
 
     Uses resolve_connection() to determine the effective connection target
-    when no explicit --remote-url, --config, or --backend=gcs is provided.
+    when no explicit ``--remote-url`` is provided.
 
     Args:
         remote_url: Nexus server URL (falls back to NEXUS_URL env var).
         remote_api_key: API key (falls back to NEXUS_API_KEY env var).
+        allow_local_default: When True, fall back to a verified local minimal
+            profile using ``NEXUS_DATA_DIR`` or ``~/.nexus/data``.
 
     Returns:
-        NexusFilesystem instance connected to the remote server.
+        NexusFilesystem instance.
     """
     try:
+        from click.core import ParameterSource
+
         from nexus.cli.config import resolve_connection
+
+        explicit_local_data_dir = os.environ.get("NEXUS_DATA_DIR")
+        remote_url_source = None
 
         # Get profile name from Click context if available
         profile_name = None
         try:
             ctx = click.get_current_context(silent=True)
-            if ctx and ctx.obj:
-                profile_name = ctx.obj.get("profile")
+            if ctx:
+                if ctx.obj:
+                    profile_name = ctx.obj.get("profile")
+                remote_url_source = ctx.get_parameter_source("remote_url")
         except RuntimeError:
             pass
+
+        # Source-checkout quickstart: if a local data dir is explicitly set and
+        # the user did not explicitly pass --remote-url, prefer the local
+        # workspace over any ambient NEXUS_URL or saved CLI profile.
+        if (
+            allow_local_default
+            and explicit_local_data_dir
+            and remote_url_source is not ParameterSource.COMMANDLINE
+        ):
+            return connect_local_workspace(explicit_local_data_dir)
 
         resolved = resolve_connection(
             remote_url=remote_url,
@@ -133,6 +238,13 @@ def get_filesystem(
         )
 
         if not resolved.is_remote:
+            if allow_local_default:
+                data_dir = os.environ.get(
+                    "NEXUS_DATA_DIR",
+                    str(Path(nexus.NEXUS_STATE_DIR) / "data"),
+                )
+                return nexus.connect(config={"profile": "minimal", "data_dir": data_dir})
+
             console.print("[red]Error:[/red] NEXUS_URL or --remote-url is required")
             console.print(
                 "[yellow]Hint:[/yellow] export NEXUS_URL=http://your-nexus-server:2026"
@@ -415,7 +527,8 @@ def resolve_content(content: str | None, input_file: Any) -> bytes:
         SystemExit: If no content source is provided.
     """
     if input_file:
-        return bytes(input_file.read())
+        data = input_file.read()
+        return data if isinstance(data, bytes) else data.encode("utf-8")
     if content == "-":
         return sys.stdin.buffer.read()
     if content:
@@ -428,6 +541,7 @@ def resolve_content(content: str | None, input_file: Any) -> bytes:
 def open_filesystem(
     remote_url: str | None = None,
     remote_api_key: str | None = None,
+    **kwargs: Any,
 ) -> Generator[NexusFilesystem, None, None]:
     """Context manager that opens and auto-closes a NexusFilesystem.
 
@@ -437,7 +551,7 @@ def open_filesystem(
             result = nx.sys_readdir(path)
         # nx.close() is called automatically, even on exception.
     """
-    nx = get_filesystem(remote_url, remote_api_key)
+    nx = get_filesystem(remote_url, remote_api_key, **kwargs)
     try:
         yield nx
     finally:
@@ -471,29 +585,53 @@ def output_result(data: Any, json_output: bool, rich_fn: Any) -> None:
         rich_fn(data)
 
 
+def get_service_client(
+    remote_url: str | None = None,
+    remote_api_key: str | None = None,
+) -> Any:
+    """Create a NexusServiceClient from URL/API key, with validation.
+
+    Args:
+        remote_url: Server URL (from --remote-url or NEXUS_URL env var)
+        remote_api_key: API key (from --remote-api-key or NEXUS_API_KEY env var)
+
+    Returns:
+        NexusServiceClient instance
+
+    Raises:
+        SystemExit: If URL is not provided
+    """
+    if not remote_url:
+        console.print("[red]Error:[/red] Server URL required. Set NEXUS_URL or use --remote-url")
+        sys.exit(ExitCode.CONFIG_ERROR)
+
+    from nexus.cli.client import NexusServiceClient
+
+    return NexusServiceClient(url=remote_url, api_key=remote_api_key)
+
+
 def rpc_call(
     remote_url: str | None,
     remote_api_key: str | None,
     rpc_method: str,
     **kwargs: Any,
 ) -> Any:
-    """Call a server RPC method via gRPC transport.
+    """Backward-compatible wrapper over ``NexusServiceClient`` methods.
 
-    Opens a remote NexusFilesystem, grabs any wired service proxy, and
-    dispatches the method through ``RemoteServiceProxy.__getattr__`` →
-    ``_call_rpc`` → gRPC ``Call`` RPC → server-side ``dispatch_method()``.
-
-    Args:
-        remote_url: Server URL (from --remote-url or NEXUS_URL env var)
-        remote_api_key: API key (from --remote-api-key or NEXUS_API_KEY env var)
-        rpc_method: RPC method name (e.g. ``"federation_list_zones"``)
-        **kwargs: Method parameters
-
-    Returns:
-        Result dict from the server.
+    A few CLI commands still call the older ``rpc_call(...)`` helper. Keep it
+    as a thin adapter until those commands are migrated to the newer client
+    wrappers.
     """
-    with open_filesystem(remote_url, remote_api_key) as nx:
-        svc = nx.service("version")  # any wired proxy works — they all share _call_rpc
-        if svc is None:
-            raise RuntimeError("Cannot reach server — no service proxy available")
-        return getattr(svc, rpc_method)(**kwargs)
+    method_aliases = {
+        "federation_list_zones": "federation_zones",
+    }
+    client_method_name = method_aliases.get(rpc_method, rpc_method)
+
+    with get_service_client(remote_url, remote_api_key) as client:
+        client_method = getattr(client, client_method_name, None)
+        if client_method is None or not callable(client_method):
+            raise AttributeError(
+                f"NexusServiceClient has no method {client_method_name!r} "
+                f"(requested via legacy rpc_call name {rpc_method!r})"
+            )
+        return client_method(**kwargs)

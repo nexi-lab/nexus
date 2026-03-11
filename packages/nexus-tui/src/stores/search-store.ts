@@ -71,7 +71,17 @@ export interface MemoryDiff {
   readonly v2: number;
 }
 
-export type SearchTab = "search" | "knowledge" | "memories" | "playbooks";
+/** Matches backend RLMInferenceResponseModel. */
+export interface RlmAnswer {
+  readonly status: string;
+  readonly answer: string | null;
+  readonly total_tokens: number;
+  readonly total_duration_seconds: number;
+  readonly iterations: number;
+  readonly error_message: string | null;
+}
+
+export type SearchTab = "search" | "knowledge" | "memories" | "playbooks" | "ask";
 export type SearchMode = "keyword" | "semantic" | "hybrid";
 
 const SEARCH_MODE_ORDER: readonly SearchMode[] = ["keyword", "semantic", "hybrid"];
@@ -166,6 +176,10 @@ export interface SearchState {
   readonly memoryDiff: MemoryDiff | null;
   readonly memoryDiffLoading: boolean;
 
+  // RLM Q&A
+  readonly rlmAnswer: RlmAnswer | null;
+  readonly rlmLoading: boolean;
+
   // Search mode
   readonly searchMode: SearchMode;
 
@@ -194,6 +208,7 @@ export interface SearchState {
   readonly rollbackMemory: (memoryId: string, version: number, client: FetchClient) => Promise<void>;
   readonly clearMemoryHistory: () => void;
   readonly clearMemoryDiff: () => void;
+  readonly askRlm: (query: string, client: FetchClient) => Promise<void>;
 }
 
 export const useSearchStore = create<SearchState>((set, get) => ({
@@ -220,6 +235,9 @@ export const useSearchStore = create<SearchState>((set, get) => ({
   memoryHistoryLoading: false,
   memoryDiff: null,
   memoryDiffLoading: false,
+
+  rlmAnswer: null,
+  rlmLoading: false,
 
   searchMode: "hybrid",
 
@@ -518,5 +536,22 @@ export const useSearchStore = create<SearchState>((set, get) => ({
 
   clearMemoryDiff: () => {
     set({ memoryDiff: null });
+  },
+
+  askRlm: async (query, client) => {
+    set({ rlmLoading: true, error: null, rlmAnswer: null });
+
+    try {
+      const response = await client.post<RlmAnswer>(
+        "/api/v2/rlm/infer",
+        { query, stream: false },
+      );
+      set({ rlmAnswer: response, rlmLoading: false });
+    } catch (err) {
+      set({
+        rlmLoading: false,
+        error: err instanceof Error ? err.message : "Failed to query RLM",
+      });
+    }
   },
 }));

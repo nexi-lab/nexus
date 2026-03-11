@@ -46,6 +46,8 @@ function resetStore(): void {
     playbooks: [],
     playbooksLoading: false,
     selectedPlaybookIndex: 0,
+    rlmAnswer: null,
+    rlmLoading: false,
     activeTab: "search",
     error: null,
   });
@@ -835,6 +837,67 @@ describe("SearchStore", () => {
 
       useSearchStore.getState().clearMemoryHistory();
       expect(useSearchStore.getState().memoryHistory).toBeNull();
+    });
+  });
+
+  describe("askRlm", () => {
+    it("posts query to /api/v2/rlm/infer with stream=false and stores answer", async () => {
+      const client = mockClient({
+        "/api/v2/rlm/infer": {
+          status: "success",
+          answer: "The answer to your question is 42.",
+          total_tokens: 1500,
+          total_duration_seconds: 3.2,
+          iterations: 5,
+          error_message: null,
+        },
+      });
+
+      await useSearchStore.getState().askRlm("What is the meaning of life?", client);
+      const state = useSearchStore.getState();
+
+      expect(client.post).toHaveBeenCalled();
+      expect(state.rlmAnswer).not.toBeNull();
+      expect(state.rlmAnswer!.status).toBe("success");
+      expect(state.rlmAnswer!.answer).toBe("The answer to your question is 42.");
+      expect(state.rlmAnswer!.total_tokens).toBe(1500);
+      expect(state.rlmAnswer!.iterations).toBe(5);
+      expect(state.rlmAnswer!.error_message).toBeNull();
+      expect(state.rlmLoading).toBe(false);
+      expect(state.error).toBeNull();
+    });
+
+    it("handles error response from RLM", async () => {
+      const client = mockClient({
+        "/api/v2/rlm/infer": {
+          status: "error",
+          answer: null,
+          total_tokens: 200,
+          total_duration_seconds: 1.0,
+          iterations: 1,
+          error_message: "Sandbox unavailable",
+        },
+      });
+
+      await useSearchStore.getState().askRlm("test", client);
+      const state = useSearchStore.getState();
+
+      expect(state.rlmAnswer).not.toBeNull();
+      expect(state.rlmAnswer!.status).toBe("error");
+      expect(state.rlmAnswer!.answer).toBeNull();
+      expect(state.rlmAnswer!.error_message).toBe("Sandbox unavailable");
+    });
+
+    it("sets error on network failure", async () => {
+      const client = {
+        post: mock(async () => { throw new Error("RLM service unavailable"); }),
+      } as unknown as FetchClient;
+
+      await useSearchStore.getState().askRlm("fail", client);
+      const state = useSearchStore.getState();
+      expect(state.rlmLoading).toBe(false);
+      expect(state.rlmAnswer).toBeNull();
+      expect(state.error).toBe("RLM service unavailable");
     });
   });
 

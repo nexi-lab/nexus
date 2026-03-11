@@ -51,7 +51,13 @@ export default function PaymentsPanel(): React.ReactNode {
   const transfer = usePaymentsStore((s) => s.transfer);
   const commitReservation = usePaymentsStore((s) => s.commitReservation);
   const releaseReservation = usePaymentsStore((s) => s.releaseReservation);
+  const transactionsHasMore = usePaymentsStore((s) => s.transactionsHasMore);
+  const transactionsCursorStack = usePaymentsStore((s) => s.transactionsCursorStack);
+  const integrityResult = usePaymentsStore((s) => s.integrityResult);
   const fetchTransactions = usePaymentsStore((s) => s.fetchTransactions);
+  const fetchNextTransactions = usePaymentsStore((s) => s.fetchNextTransactions);
+  const fetchPrevTransactions = usePaymentsStore((s) => s.fetchPrevTransactions);
+  const verifyIntegrity = usePaymentsStore((s) => s.verifyIntegrity);
   const fetchPolicies = usePaymentsStore((s) => s.fetchPolicies);
   const fetchBudget = usePaymentsStore((s) => s.fetchBudget);
   const deletePolicy = usePaymentsStore((s) => s.deletePolicy);
@@ -186,6 +192,21 @@ export default function PaymentsPanel(): React.ReactNode {
             if (activeTab !== "policies" || !client) return;
             fetchBudget(client);
           },
+          n: () => {
+            if (activeTab !== "transactions" || !client) return;
+            fetchNextTransactions(client);
+          },
+          p: () => {
+            if (activeTab !== "transactions" || !client) return;
+            fetchPrevTransactions(client);
+          },
+          i: () => {
+            if (activeTab !== "transactions" || !client) return;
+            const selected = transactions[selectedTransactionIndex];
+            if (selected) {
+              verifyIntegrity(selected.id, client);
+            }
+          },
         },
   );
 
@@ -232,6 +253,9 @@ export default function PaymentsPanel(): React.ReactNode {
                 transactions={transactions}
                 selectedIndex={selectedTransactionIndex}
                 loading={transactionsLoading}
+                hasMore={transactionsHasMore}
+                hasPrev={transactionsCursorStack.length > 0}
+                integrityResult={integrityResult}
               />
             )}
             {activeTab === "policies" && (
@@ -253,9 +277,11 @@ export default function PaymentsPanel(): React.ReactNode {
         <text>
           {showTransfer
             ? "Tab:next field  Enter:submit  Escape:cancel"
-            : activeTab === "policies"
-              ? "j/k:navigate  Tab:switch tab  d:delete  b:budget  r:refresh  q:quit"
-              : "j/k:navigate  Tab:switch tab  t:transfer  r:refresh  c:commit  x:release  q:quit"}
+            : activeTab === "transactions"
+              ? "j/k:navigate  n:next page  p:prev page  i:verify integrity  Tab:switch tab  r:refresh"
+              : activeTab === "policies"
+                ? "j/k:navigate  Tab:switch tab  d:delete  b:budget  r:refresh  q:quit"
+                : "j/k:navigate  Tab:switch tab  t:transfer  r:refresh  c:commit  x:release  q:quit"}
         </text>
       </box>
     </box>

@@ -14,13 +14,15 @@ import { SearchResults } from "./search-results.js";
 import { KnowledgeView } from "./knowledge-view.js";
 import { MemoryList } from "./memory-list.js";
 import { PlaybookList } from "./playbook-list.js";
+import { RlmAnswerView } from "./rlm-answer-view.js";
 
-const TAB_ORDER: readonly SearchTab[] = ["search", "knowledge", "memories", "playbooks"];
+const TAB_ORDER: readonly SearchTab[] = ["search", "knowledge", "memories", "playbooks", "ask"];
 const TAB_LABELS: Readonly<Record<SearchTab, string>> = {
   search: "Search",
   knowledge: "Knowledge",
   memories: "Memories",
   playbooks: "Playbooks",
+  ask: "Ask",
 };
 
 const MODE_LABELS: Readonly<Record<SearchMode, string>> = {
@@ -53,6 +55,8 @@ export default function SearchPanel(): React.ReactNode {
   const playbooks = useSearchStore((s) => s.playbooks);
   const selectedPlaybookIndex = useSearchStore((s) => s.selectedPlaybookIndex);
   const playbooksLoading = useSearchStore((s) => s.playbooksLoading);
+  const rlmAnswer = useSearchStore((s) => s.rlmAnswer);
+  const rlmLoading = useSearchStore((s) => s.rlmLoading);
   const activeTab = useSearchStore((s) => s.activeTab);
   const error = useSearchStore((s) => s.error);
 
@@ -67,6 +71,7 @@ export default function SearchPanel(): React.ReactNode {
   const fetchPlaybooks = useSearchStore((s) => s.fetchPlaybooks);
   const deletePlaybook = useSearchStore((s) => s.deletePlaybook);
   const setSelectedPlaybookIndex = useSearchStore((s) => s.setSelectedPlaybookIndex);
+  const askRlm = useSearchStore((s) => s.askRlm);
   const fetchMemoryHistory = useSearchStore((s) => s.fetchMemoryHistory);
   const fetchMemoryDiff = useSearchStore((s) => s.fetchMemoryDiff);
   const clearMemoryHistory = useSearchStore((s) => s.clearMemoryHistory);
@@ -89,9 +94,11 @@ export default function SearchPanel(): React.ReactNode {
         fetchMemories(query.trim(), client);
       } else if (activeTab === "playbooks") {
         fetchPlaybooks(query.trim(), client);
+      } else if (activeTab === "ask") {
+        askRlm(query.trim(), client);
       }
     },
-    [client, activeTab, search, searchKnowledge, fetchMemories, fetchPlaybooks, setSearchQuery],
+    [client, activeTab, search, searchKnowledge, fetchMemories, fetchPlaybooks, askRlm, setSearchQuery],
   );
 
   // Refresh current view based on active tab
@@ -106,8 +113,10 @@ export default function SearchPanel(): React.ReactNode {
       fetchMemories("", client);
     } else if (activeTab === "playbooks") {
       fetchPlaybooks(searchQuery || "", client);
+    } else if (activeTab === "ask" && searchQuery) {
+      askRlm(searchQuery, client);
     }
-  }, [client, activeTab, searchQuery, search, searchKnowledge, fetchMemories, fetchPlaybooks]);
+  }, [client, activeTab, searchQuery, search, searchKnowledge, fetchMemories, fetchPlaybooks, askRlm]);
 
   // In input mode, capture printable characters via onUnhandled
   const handleUnhandledKey = useCallback(
@@ -343,6 +352,9 @@ export default function SearchPanel(): React.ReactNode {
             selectedIndex={selectedPlaybookIndex}
             loading={playbooksLoading}
           />
+        )}
+        {activeTab === "ask" && (
+          <RlmAnswerView answer={rlmAnswer} loading={rlmLoading} />
         )}
       </box>
 

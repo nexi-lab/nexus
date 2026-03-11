@@ -1,4 +1,4 @@
-"""Unit tests for ServiceLifecycleCoordinator (Issue #1452 Phase 3)."""
+"""Unit tests for ServiceLifecycleCoordinator (Issue #1452 Phase 3, #1577)."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import pytest
 
 from nexus.contracts.protocols.brick_lifecycle import BrickState
 from nexus.contracts.protocols.service_hooks import HookSpec
+from nexus.contracts.protocols.service_lifecycle import HotSwappable, PersistentService
 from nexus.core.kernel_dispatch import KernelDispatch
 from nexus.core.service_registry import ServiceRegistry
 from nexus.system_services.lifecycle.brick_lifecycle import BrickLifecycleManager
@@ -44,7 +45,7 @@ def coordinator(
 
 
 class _FakeService:
-    """Simple service stub with callable methods."""
+    """Simple static service stub (NOT HotSwappable)."""
 
     def glob(self, pattern: str) -> list[str]:
         return [pattern]
@@ -54,13 +55,64 @@ class _FakeService:
 
 
 class _FakeServiceV2:
-    """V2 replacement for hot-swap tests."""
+    """V2 static replacement (NOT HotSwappable)."""
 
     def glob(self, pattern: str) -> list[str]:
         return [f"v2:{pattern}"]
 
     def grep(self, pattern: str) -> list[str]:
         return [f"v2:{pattern}"]
+
+
+class _HotSwappableService:
+    """HotSwappable service stub — satisfies the Protocol structurally."""
+
+    def __init__(self, hook_spec_value: HookSpec | None = None) -> None:
+        self._hook_spec = hook_spec_value or HookSpec()
+        self.drained = False
+        self.activated = False
+
+    def hook_spec(self) -> HookSpec:
+        return self._hook_spec
+
+    async def drain(self) -> None:
+        self.drained = True
+
+    async def activate(self) -> None:
+        self.activated = True
+
+    def glob(self, pattern: str) -> list[str]:
+        return [pattern]
+
+    def grep(self, pattern: str) -> list[str]:
+        return [pattern]
+
+
+class _HotSwappableServiceV2(_HotSwappableService):
+    """V2 HotSwappable replacement."""
+
+    def glob(self, pattern: str) -> list[str]:
+        return [f"v2:{pattern}"]
+
+    def grep(self, pattern: str) -> list[str]:
+        return [f"v2:{pattern}"]
+
+
+class _PersistentFakeService:
+    """PersistentService stub — satisfies the Protocol structurally."""
+
+    def __init__(self) -> None:
+        self.started = False
+        self.stopped = False
+
+    async def start(self) -> None:
+        self.started = True
+
+    async def stop(self) -> None:
+        self.stopped = True
+
+    def do_work(self) -> str:
+        return "working"
 
 
 # ---------------------------------------------------------------------------
@@ -187,16 +239,16 @@ class TestSwapService:
         registry: ServiceRegistry,
         dispatch: KernelDispatch,
     ) -> None:
-        svc1 = _FakeService()
         hook1 = MagicMock()
         spec1 = HookSpec(read_hooks=(hook1,))
+        svc1 = _HotSwappableService(hook_spec_value=spec1)
         coordinator.register_service("search", svc1, exports=("glob",), hook_spec=spec1)
         await coordinator.mount_service("search")
         assert dispatch.read_hook_count == 1
 
-        svc2 = _FakeServiceV2()
         hook2 = MagicMock()
         spec2 = HookSpec(read_hooks=(hook2,))
+        svc2 = _HotSwappableServiceV2(hook_spec_value=spec2)
         await coordinator.swap_service("search", svc2, exports=("glob", "grep"), hook_spec=spec2)
 
         # New instance is served
@@ -206,9 +258,12 @@ class TestSwapService:
 
         # Old hooks removed, new hooks registered
         assert dispatch.read_hook_count == 1
-        # Verify it's the new hook (old was unregistered, new was registered)
         assert hook2 in dispatch._read_hooks
         assert hook1 not in dispatch._read_hooks
+
+        # Protocol methods called
+        assert svc1.drained is True
+        assert svc2.activated is True
 
     @pytest.mark.asyncio()
     async def test_swap_no_none_window(
@@ -217,20 +272,58 @@ class TestSwapService:
         registry: ServiceRegistry,
     ) -> None:
         """Verify that service(name) NEVER returns None during swap."""
-        svc1 = _FakeService()
+        svc1 = _HotSwappableService()
         coordinator.register_service("search", svc1, exports=("glob",))
         await coordinator.mount_service("search")
 
-        # Before swap
         assert registry.service("search") is not None
 
-        svc2 = _FakeServiceV2()
+        svc2 = _HotSwappableServiceV2()
         await coordinator.swap_service("search", svc2, exports=("glob",))
 
-        # After swap — should have new instance, never None
         ref = registry.service("search")
         assert ref is not None
         assert ref._service_instance is svc2
+
+    @pytest.mark.asyncio()
+    async def test_swap_rejects_non_hot_swappable(
+        self,
+        coordinator: ServiceLifecycleCoordinator,
+    ) -> None:
+        """Static (non-HotSwappable) services cannot be hot-swapped."""
+        svc1 = _FakeService()  # NOT HotSwappable
+        coordinator.register_service("search", svc1, exports=("glob",))
+        await coordinator.mount_service("search")
+
+        svc2 = _FakeServiceV2()
+        with pytest.raises(TypeError, match="not HotSwappable"):
+            await coordinator.swap_service("search", svc2, exports=("glob",))
+
+    @pytest.mark.asyncio()
+    async def test_swap_auto_detects_hook_spec_from_protocol(
+        self,
+        coordinator: ServiceLifecycleCoordinator,
+        registry: ServiceRegistry,
+        dispatch: KernelDispatch,
+    ) -> None:
+        """If no explicit hook_spec param, coordinator reads it from HotSwappable.hook_spec()."""
+        hook1 = MagicMock()
+        spec1 = HookSpec(read_hooks=(hook1,))
+        svc1 = _HotSwappableService(hook_spec_value=spec1)
+        # Register WITH explicit hook_spec (retroactive capture)
+        coordinator.register_service("search", svc1, hook_spec=spec1)
+        await coordinator.mount_service("search")
+        assert dispatch.read_hook_count == 1
+
+        hook2 = MagicMock()
+        spec2 = HookSpec(read_hooks=(hook2,))
+        svc2 = _HotSwappableServiceV2(hook_spec_value=spec2)
+        # Swap WITHOUT explicit hook_spec — coordinator auto-detects from protocol
+        await coordinator.swap_service("search", svc2)
+
+        assert dispatch.read_hook_count == 1
+        assert hook2 in dispatch._read_hooks
+        assert hook1 not in dispatch._read_hooks
 
     @pytest.mark.asyncio()
     async def test_swap_drains_in_flight_calls(
@@ -239,15 +332,15 @@ class TestSwapService:
         registry: ServiceRegistry,
     ) -> None:
         """Verify swap waits for in-flight async calls to complete."""
-        svc1 = MagicMock()
         call_completed = asyncio.Event()
 
-        async def _slow_glob(pattern: str) -> list[str]:
-            await asyncio.sleep(0.05)
-            call_completed.set()
-            return [pattern]
+        class _SlowHotSwappable(_HotSwappableService):
+            async def glob(self, pattern: str) -> list[str]:
+                await asyncio.sleep(0.05)
+                call_completed.set()
+                return [pattern]
 
-        svc1.glob = _slow_glob
+        svc1 = _SlowHotSwappable()
         coordinator.register_service("search", svc1, exports=("glob",))
         await coordinator.mount_service("search")
 
@@ -257,19 +350,16 @@ class TestSwapService:
         in_flight = asyncio.create_task(ref.glob("*.py"))
 
         # Swap should wait for the in-flight call to drain
-        svc2 = MagicMock()
-        svc2.glob = MagicMock(return_value=["v2"])
+        svc2 = _HotSwappableServiceV2()
         swap_task = asyncio.create_task(
             coordinator.swap_service("search", svc2, exports=("glob",), drain_timeout=2.0)
         )
 
-        # Wait for both
         result = await in_flight
         assert result == ["*.py"]
         assert call_completed.is_set()
 
         await swap_task
-        # New instance is now active
         new_ref = registry.service("search")
         assert new_ref is not None
         assert new_ref._service_instance is svc2
@@ -355,7 +445,6 @@ class TestSwapWithFullHookSpec:
         dispatch: KernelDispatch,
     ) -> None:
         """Multi-channel spec: old hooks removed, new hooks installed on same channels."""
-        svc1 = _FakeService()
         old_read = MagicMock()
         old_write = MagicMock()
         old_observer = MagicMock()
@@ -364,6 +453,7 @@ class TestSwapWithFullHookSpec:
             write_hooks=(old_write,),
             observers=(old_observer,),
         )
+        svc1 = _HotSwappableService(hook_spec_value=spec1)
         coordinator.register_service("rebac", svc1, hook_spec=spec1)
         await coordinator.mount_service("rebac")
 
@@ -371,7 +461,6 @@ class TestSwapWithFullHookSpec:
         assert dispatch.write_hook_count == 1
         assert dispatch.observer_count == 1
 
-        svc2 = _FakeServiceV2()
         new_read = MagicMock()
         new_write = MagicMock()
         new_observer = MagicMock()
@@ -380,6 +469,7 @@ class TestSwapWithFullHookSpec:
             write_hooks=(new_write,),
             observers=(new_observer,),
         )
+        svc2 = _HotSwappableServiceV2(hook_spec_value=spec2)
         await coordinator.swap_service("rebac", svc2, hook_spec=spec2)
 
         # Counts unchanged (old removed, new added)
@@ -400,16 +490,97 @@ class TestSwapWithFullHookSpec:
         dispatch: KernelDispatch,
     ) -> None:
         """Swap without new hook_spec should unregister old hooks and leave none."""
-        svc1 = _FakeService()
         old_hook = MagicMock()
         spec1 = HookSpec(read_hooks=(old_hook,))
+        svc1 = _HotSwappableService(hook_spec_value=spec1)
         coordinator.register_service("parser", svc1, hook_spec=spec1)
         await coordinator.mount_service("parser")
         assert dispatch.read_hook_count == 1
 
-        svc2 = _FakeServiceV2()
+        svc2 = _HotSwappableServiceV2()  # empty hook_spec
         await coordinator.swap_service("parser", svc2)
 
         # Old hook removed, no new hook registered
         assert dispatch.read_hook_count == 0
         assert old_hook not in dispatch._read_hooks
+
+
+# ---------------------------------------------------------------------------
+# Protocol conformance — isinstance checks (Issue #1577)
+# ---------------------------------------------------------------------------
+
+
+class TestProtocolConformance:
+    """Verify structural subtyping works for HotSwappable and PersistentService."""
+
+    def test_hot_swappable_detected(self) -> None:
+        svc = _HotSwappableService()
+        assert isinstance(svc, HotSwappable)
+
+    def test_static_service_not_hot_swappable(self) -> None:
+        svc = _FakeService()
+        assert not isinstance(svc, HotSwappable)
+
+    def test_persistent_service_detected(self) -> None:
+        svc = _PersistentFakeService()
+        assert isinstance(svc, PersistentService)
+
+    def test_static_service_not_persistent(self) -> None:
+        svc = _FakeService()
+        assert not isinstance(svc, PersistentService)
+
+    def test_hot_swappable_not_persistent(self) -> None:
+        """HotSwappable and PersistentService are independent protocols."""
+        svc = _HotSwappableService()
+        assert isinstance(svc, HotSwappable)
+        assert not isinstance(svc, PersistentService)
+
+    def test_persistent_not_hot_swappable(self) -> None:
+        svc = _PersistentFakeService()
+        assert isinstance(svc, PersistentService)
+        assert not isinstance(svc, HotSwappable)
+
+
+# ---------------------------------------------------------------------------
+# Distro classification (Issue #1577)
+# ---------------------------------------------------------------------------
+
+
+class TestDistroClassification:
+    def test_no_persistent_services(self, coordinator: ServiceLifecycleCoordinator) -> None:
+        """All static services → invocation-compatible distro."""
+        svc = _FakeService()
+        coordinator.register_service("search", svc)
+
+        is_persistent, names = coordinator.classify_distro()
+        assert is_persistent is False
+        assert names == []
+
+    def test_persistent_service_detected(self, coordinator: ServiceLifecycleCoordinator) -> None:
+        """PersistentService present → persistent distro."""
+        svc = _PersistentFakeService()
+        coordinator.register_service("delivery_worker", svc)
+
+        is_persistent, names = coordinator.classify_distro()
+        assert is_persistent is True
+        assert names == ["delivery_worker"]
+
+    def test_mixed_services(self, coordinator: ServiceLifecycleCoordinator) -> None:
+        """Mix of static and persistent → persistent distro."""
+        coordinator.register_service("search", _FakeService())
+        coordinator.register_service("worker", _PersistentFakeService())
+
+        is_persistent, names = coordinator.classify_distro()
+        assert is_persistent is True
+        assert names == ["worker"]
+
+    def test_classify_hot_swappable(self, coordinator: ServiceLifecycleCoordinator) -> None:
+        """Classify services into hot-swappable vs static."""
+        coordinator.register_service("search", _FakeService())
+        coordinator.register_service("rebac", _HotSwappableService())
+        coordinator.register_service("worker", _PersistentFakeService())
+
+        hot, static = coordinator.classify_hot_swappable()
+        assert "rebac" in hot
+        assert "search" in static
+        assert "worker" in static  # persistent but not hot-swappable

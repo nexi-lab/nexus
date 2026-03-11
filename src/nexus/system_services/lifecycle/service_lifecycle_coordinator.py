@@ -11,14 +11,21 @@ Provides five Linux-inspired verbs for service lifecycle management:
 The coordinator lives at the System Services tier (not kernel) — it composes
 kernel-owned ServiceRegistry with system-service-tier BrickLifecycleManager.
 
-Hot-swap flow:
-    1. Atomic replace in ServiceRegistry (new calls immediately get new instance)
-    2. Drain old instance's refcount → 0 (ServiceRef proxies track in-flight calls)
-    3. Unregister old VFS hooks
-    4. Register new VFS hooks
-    5. BLM state transitions for old (unmount+unregister) and new (register+mount)
+Hot-swap flow (HotSwappable services only):
+    1. Validate old service implements HotSwappable (TypeError if not)
+    2. Call old_service.drain() — stop accepting new work
+    3. Drain ServiceRef refcount → 0 (wait for in-flight calls)
+    4. Unregister old VFS hooks (from old_service.hook_spec())
+    5. Atomic replace in ServiceRegistry
+    6. BLM state transitions for old (unmount+unregister) and new (register+mount)
+    7. Register new VFS hooks (from new_service.hook_spec() if HotSwappable)
+    8. Call new_service.activate() if HotSwappable
+
+Static (non-HotSwappable) services cannot be hot-swapped — they raise TypeError.
+Use full restart instead.
 
 Issue #1452 Phase 3.
+Issue #1577: HotSwappable + PersistentService protocol integration.
 """
 
 from __future__ import annotations
@@ -28,6 +35,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.protocols.service_hooks import HookSpec
+from nexus.contracts.protocols.service_lifecycle import HotSwappable, PersistentService
 
 if TYPE_CHECKING:
     from nexus.core.kernel_dispatch import KernelDispatch
@@ -158,31 +166,72 @@ class ServiceLifecycleCoordinator:
         timeout: float = 5.0,
         drain_timeout: float = DEFAULT_DRAIN_TIMEOUT,
     ) -> None:
-        """Hot-swap a service: atomic replace → drain → hook swap → BLM cycle.
+        """Hot-swap a service: validate → drain → hook swap → BLM cycle.
 
-        1. Atomic replace in ServiceRegistry (zero gap — new calls get new instance)
-        2. Drain old refcount (wait for in-flight calls on old instance to complete)
-        3. Unregister old VFS hooks
-        4. Cycle BLM for old instance (unmount + unregister)
-        5. Register + mount new instance in BLM
-        6. Register new VFS hooks
+        Only HotSwappable services can be swapped.  Static services raise
+        TypeError — use full restart instead.
+
+        Flow for HotSwappable services:
+            1. Validate old service is HotSwappable (TypeError if not)
+            2. Call old_service.drain() — stop accepting new work
+            3. Drain ServiceRef refcount → 0 (in-flight calls complete)
+            4. Unregister old VFS hooks (from old hook_spec or old_service.hook_spec())
+            5. Atomic replace in ServiceRegistry
+            6. BLM cycle for old → new
+            7. Register new VFS hooks (from hook_spec param, new_service.hook_spec(), or retroactive)
+            8. Call new_service.activate() if HotSwappable
+
+        Args:
+            name: Service registry name.
+            new_instance: Replacement service instance.
+            exports: EXPORT_SYMBOL methods for the new instance.
+            hook_spec: Explicit HookSpec override (bypasses protocol auto-detect).
+            timeout: BLM mount timeout.
+            drain_timeout: Max wait for in-flight calls to complete.
+
+        Raises:
+            TypeError: If old service is not HotSwappable.
+            KeyError: If service is not registered.
         """
+        # --- Resolve old instance ---
+        old_info = self._registry.service_info(name)
+        if old_info is None:
+            raise KeyError(f"swap_service: {name!r} not registered")
+        old_instance = old_info.instance
+
+        # --- Guard: only HotSwappable services can be swapped ---
+        if not isinstance(old_instance, HotSwappable):
+            raise TypeError(
+                f"swap_service: {name!r} ({type(old_instance).__name__}) is not HotSwappable. "
+                f"Static services cannot be hot-swapped — use full restart instead."
+            )
+
         # Snapshot old state
-        old_spec = self._blm.get_spec(name)
+        old_blm_spec = self._blm.get_spec(name)
+
+        # Resolve old hook spec: explicit retroactive > protocol auto-detect
         old_hook_spec = self._hook_specs.get(name)
+        if old_hook_spec is None:
+            old_hook_spec = old_instance.hook_spec()
+            if old_hook_spec is not None and not old_hook_spec.is_empty:
+                self._hook_specs[name] = old_hook_spec
 
-        # Step 1: Atomic replace — nx.service(name) now returns new instance
-        self._registry.replace_service(name, new_instance, exports=exports)
-        logger.info("[COORDINATOR] swap %r — atomic replace done", name)
+        # Step 1: Drain old service (service-internal cleanup)
+        await old_instance.drain()
+        logger.debug("[COORDINATOR] swap %r — old service drained", name)
 
-        # Step 2: Drain old instance (wait for in-flight ServiceRef calls)
+        # Step 2: Drain ServiceRef refcount (wait for in-flight calls)
         await self._drain(name, timeout=drain_timeout)
 
         # Step 3: Unregister old hooks
         if old_hook_spec is not None:
             self._unregister_hooks_for_spec(old_hook_spec)
 
-        # Step 4: BLM cycle for old — unmount + unregister
+        # Step 4: Atomic replace — nx.service(name) now returns new instance
+        self._registry.replace_service(name, new_instance, exports=exports)
+        logger.info("[COORDINATOR] swap %r — atomic replace done", name)
+
+        # Step 5: BLM cycle for old → new
         from nexus.contracts.protocols.brick_lifecycle import BrickState
 
         status = self._blm.get_status(name)
@@ -192,18 +241,23 @@ class ServiceLifecycleCoordinator:
         if status is not None and status.state == BrickState.UNMOUNTED:
             await self._blm.unregister(name)
 
-        # Step 5: BLM register + mount new
         self._blm.register(
             name,
             new_instance,
-            protocol_name=old_spec.protocol_name if old_spec else type(new_instance).__name__,
-            depends_on=old_spec.depends_on if old_spec else (),
+            protocol_name=old_blm_spec.protocol_name
+            if old_blm_spec
+            else type(new_instance).__name__,
+            depends_on=old_blm_spec.depends_on if old_blm_spec else (),
         )
         await self._blm.mount(name, timeout=timeout)
 
-        # Step 6: Register new hooks
-        if hook_spec is not None:
-            self._hook_specs[name] = hook_spec
+        # Step 6: Register new hooks — explicit param > protocol > clear
+        new_hook_spec = hook_spec
+        if new_hook_spec is None and isinstance(new_instance, HotSwappable):
+            new_hook_spec = new_instance.hook_spec()
+
+        if new_hook_spec is not None and not new_hook_spec.is_empty:
+            self._hook_specs[name] = new_hook_spec
         elif name in self._hook_specs:
             del self._hook_specs[name]
 
@@ -211,7 +265,44 @@ class ServiceLifecycleCoordinator:
         if status is not None and status.state == BrickState.ACTIVE:
             self._register_hooks(name)
 
+        # Step 7: Activate new service if HotSwappable
+        if isinstance(new_instance, HotSwappable):
+            await new_instance.activate()
+
         logger.info("[COORDINATOR] swap %r — complete", name)
+
+    # ------------------------------------------------------------------
+    # Distro classification — persistent vs invocation-compatible
+    # ------------------------------------------------------------------
+
+    def classify_distro(self) -> tuple[bool, list[str]]:
+        """Determine whether this distro requires a persistent process.
+
+        Scans all registered services for ``PersistentService`` protocol.
+        Returns ``(is_persistent, service_names)`` where ``is_persistent``
+        is True if any service requires background workers.
+
+        Used by nexusd startup and CLI ``nexus info`` to report distro type.
+        """
+        persistent_names: list[str] = []
+        for info in self._registry.list_all():
+            if isinstance(info.instance, PersistentService):
+                persistent_names.append(info.name)
+        return bool(persistent_names), persistent_names
+
+    def classify_hot_swappable(self) -> tuple[list[str], list[str]]:
+        """Classify services into hot-swappable vs static.
+
+        Returns ``(hot_swappable_names, static_names)``.
+        """
+        hot: list[str] = []
+        static: list[str] = []
+        for info in self._registry.list_all():
+            if isinstance(info.instance, HotSwappable):
+                hot.append(info.name)
+            else:
+                static.append(info.name)
+        return hot, static
 
     # ------------------------------------------------------------------
     # Hook spec management (retroactive spec capture for existing services)

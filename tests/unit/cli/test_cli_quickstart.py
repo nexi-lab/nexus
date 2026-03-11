@@ -46,6 +46,9 @@ def test_local_cli_quickstart_persists_across_invocations(
         "HOME": str(home_dir),
         "NEXUS_DATA_DIR": str(workspace / "nexus-data"),
         "NEXUS_URL": "http://127.0.0.1:65535",
+        "NEXUS_DATABASE_URL": "sqlite:///" + str(tmp_path / "ambient.db"),
+        "NEXUS_METASTORE_PATH": str(tmp_path / "ambient-metastore"),
+        "NEXUS_RECORD_STORE_PATH": str(tmp_path / "ambient-record-store.db"),
     }
 
     init_result = runner.invoke(main, ["init", str(workspace)], env=env)

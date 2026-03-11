@@ -8,7 +8,7 @@ Nexus gives agents a stable place to read, write, search, and carry context acro
 
 ### 1. Local SDK
 
-Use Nexus inside a Python process with a local data directory. This is the shortest verified path and the best place to start.
+Use Nexus inside a Python process with a local data directory. This is the shortest verified path and the best place to start, using the `uv`-based quickstart from a source checkout or PyPI install.
 
 - Docs: [Local SDK](paths/embedded-sdk.md)
 - Verified guide: [Quickstart](getting-started/quickstart.md)

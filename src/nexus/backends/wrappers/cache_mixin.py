@@ -97,7 +97,7 @@ class CacheConnectorMixin:
                     cls._l1_default_ttl,
                 )
             except ImportError:
-                logger.warning("[CACHE] nexus_fast not available, L1 cache disabled")
+                logger.debug("[CACHE] nexus_fast not available, L1 cache disabled")
                 return None
         return cls._l1_cache
 

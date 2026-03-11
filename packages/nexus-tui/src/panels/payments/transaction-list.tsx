@@ -1,14 +1,18 @@
 /**
- * Transaction list: displays audit transaction records with status and flow summary.
+ * Transaction list: displays audit transaction records with status, flow,
+ * pagination controls, and integrity verification result.
  */
 
 import React from "react";
-import type { TransactionRecord } from "../../stores/payments-store.js";
+import type { TransactionRecord, IntegrityResult } from "../../stores/payments-store.js";
 
 interface TransactionListProps {
   readonly transactions: readonly TransactionRecord[];
   readonly selectedIndex: number;
   readonly loading: boolean;
+  readonly hasMore: boolean;
+  readonly hasPrev: boolean;
+  readonly integrityResult: IntegrityResult | null;
 }
 
 function shortId(id: string): string {
@@ -32,6 +36,9 @@ export function TransactionList({
   transactions,
   selectedIndex,
   loading,
+  hasMore,
+  hasPrev,
+  integrityResult,
 }: TransactionListProps): React.ReactNode {
   if (loading) {
     return (
@@ -49,8 +56,10 @@ export function TransactionList({
     );
   }
 
+  const selectedTx = transactions[selectedIndex];
+
   return (
-    <scrollbox height="100%" width="100%">
+    <box height="100%" width="100%" flexDirection="column">
       {/* Header */}
       <box height={1} width="100%">
         <text>{"  ID          DATE                 AMOUNT          STATUS     FLOW"}</text>
@@ -60,19 +69,39 @@ export function TransactionList({
       </box>
 
       {/* Rows */}
-      {transactions.map((tx, i) => {
-        const isSelected = i === selectedIndex;
-        const prefix = isSelected ? "> " : "  ";
-        const flow = `${shortId(tx.buyer_agent_id)}->${shortId(tx.seller_agent_id)}`;
+      <scrollbox flexGrow={1} width="100%">
+        {transactions.map((tx, i) => {
+          const isSelected = i === selectedIndex;
+          const prefix = isSelected ? "> " : "  ";
+          const flow = `${shortId(tx.buyer_agent_id)}->${shortId(tx.seller_agent_id)}`;
 
-        return (
-          <box key={tx.id} height={1} width="100%">
-            <text>
-              {`${prefix}${shortId(tx.id).padEnd(10)}  ${formatTimestamp(tx.created_at).padEnd(19)}  ${formatAmount(tx.amount, tx.currency).padEnd(14)}  ${tx.status.padEnd(9)}  ${flow}`}
-            </text>
-          </box>
-        );
-      })}
-    </scrollbox>
+          return (
+            <box key={tx.id} height={1} width="100%">
+              <text>
+                {`${prefix}${shortId(tx.id).padEnd(10)}  ${formatTimestamp(tx.created_at).padEnd(19)}  ${formatAmount(tx.amount, tx.currency).padEnd(14)}  ${tx.status.padEnd(9)}  ${flow}`}
+              </text>
+            </box>
+          );
+        })}
+      </scrollbox>
+
+      {/* Integrity verification result */}
+      {integrityResult && selectedTx && integrityResult.record_id === selectedTx.id && (
+        <box height={1} width="100%">
+          <text>
+            {integrityResult.is_valid
+              ? `Integrity OK: ${shortId(integrityResult.record_hash)} (valid)`
+              : `INTEGRITY FAIL: ${shortId(integrityResult.record_hash)} (TAMPERED)`}
+          </text>
+        </box>
+      )}
+
+      {/* Pagination status */}
+      <box height={1} width="100%">
+        <text>
+          {`  ${hasPrev ? "[p:prev]" : ""}  ${hasMore ? "[n:next]" : "(end)"}  ${transactions.length} shown`}
+        </text>
+      </box>
+    </box>
   );
 }

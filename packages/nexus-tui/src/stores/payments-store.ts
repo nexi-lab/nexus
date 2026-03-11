@@ -137,10 +137,15 @@ export interface PaymentsState {
   readonly selectedReservationIndex: number;
   readonly reservationsLoading: boolean;
 
-  // Transactions (audit feed)
+  // Transactions (audit feed with cursor-based pagination)
   readonly transactions: readonly TransactionRecord[];
   readonly transactionsLoading: boolean;
   readonly selectedTransactionIndex: number;
+  readonly transactionsHasMore: boolean;
+  readonly transactionsNextCursor: string | null;
+  readonly transactionsCursorStack: readonly string[];
+  readonly transactionsTotal: number | null;
+  readonly integrityResult: IntegrityResult | null;
 
   // Policies & budget
   readonly policies: readonly PolicyRecord[];
@@ -168,7 +173,9 @@ export interface PaymentsState {
   ) => Promise<void>;
   readonly commitReservation: (id: string, client: FetchClient) => Promise<void>;
   readonly releaseReservation: (id: string, client: FetchClient) => Promise<void>;
-  readonly fetchTransactions: (client: FetchClient) => Promise<void>;
+  readonly fetchTransactions: (client: FetchClient, cursor?: string) => Promise<void>;
+  readonly fetchNextTransactions: (client: FetchClient) => Promise<void>;
+  readonly fetchPrevTransactions: (client: FetchClient) => Promise<void>;
   readonly fetchPolicies: (client: FetchClient) => Promise<void>;
   readonly fetchBudget: (client: FetchClient) => Promise<void>;
   readonly deletePolicy: (policyId: string, client: FetchClient) => Promise<void>;
@@ -187,6 +194,11 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
   transactions: [],
   transactionsLoading: false,
   selectedTransactionIndex: 0,
+  transactionsHasMore: false,
+  transactionsNextCursor: null,
+  transactionsCursorStack: [],
+  transactionsTotal: null,
+  integrityResult: null,
   policies: [],
   policiesLoading: false,
   budget: null,
@@ -285,16 +297,25 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
     }
   },
 
-  fetchTransactions: async (client) => {
+  fetchTransactions: async (client, cursor) => {
     set({ transactionsLoading: true, error: null });
 
     try {
+      const params = new URLSearchParams({ limit: "50", include_total: "true" });
+      if (cursor) {
+        params.set("cursor", cursor);
+      }
       const data = await client.get<TransactionsResponse>(
-        "/api/v2/audit/transactions",
+        `/api/v2/audit/transactions?${params.toString()}`,
       );
       set({
         transactions: data.transactions,
+        transactionsHasMore: data.has_more,
+        transactionsNextCursor: data.next_cursor ?? null,
+        transactionsTotal: data.total ?? null,
+        selectedTransactionIndex: 0,
         transactionsLoading: false,
+        integrityResult: null,
       });
     } catch (err) {
       set({
@@ -303,6 +324,33 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
           err instanceof Error ? err.message : "Failed to fetch transactions",
       });
     }
+  },
+
+  fetchNextTransactions: async (client) => {
+    const { transactionsNextCursor, transactionsHasMore } = get();
+    if (!transactionsHasMore || !transactionsNextCursor) return;
+
+    // Push current page's next_cursor onto stack before navigating forward
+    set((state) => ({
+      transactionsCursorStack: [...state.transactionsCursorStack, transactionsNextCursor],
+    }));
+
+    await get().fetchTransactions(client, transactionsNextCursor);
+  },
+
+  fetchPrevTransactions: async (client) => {
+    const { transactionsCursorStack } = get();
+    if (transactionsCursorStack.length === 0) return;
+
+    // Pop the current cursor (it brought us to this page)
+    const stack = [...transactionsCursorStack];
+    stack.pop();
+
+    // The previous cursor (or undefined for first page)
+    const prevCursor = stack.length > 0 ? stack[stack.length - 1] : undefined;
+    set({ transactionsCursorStack: stack });
+
+    await get().fetchTransactions(client, prevCursor);
   },
 
   fetchPolicies: async (client) => {
@@ -358,12 +406,13 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
   },
 
   verifyIntegrity: async (recordId, client) => {
-    set({ error: null });
+    set({ error: null, integrityResult: null });
 
     try {
       const result = await client.get<IntegrityResult>(
         `/api/v2/audit/integrity/${encodeURIComponent(recordId)}`,
       );
+      set({ integrityResult: result });
       return result;
     } catch (err) {
       set({

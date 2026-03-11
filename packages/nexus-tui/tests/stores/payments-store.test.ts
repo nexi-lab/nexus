@@ -41,6 +41,11 @@ function resetStore(): void {
     transactions: [],
     transactionsLoading: false,
     selectedTransactionIndex: 0,
+    transactionsHasMore: false,
+    transactionsNextCursor: null,
+    transactionsCursorStack: [],
+    transactionsTotal: null,
+    integrityResult: null,
     policies: [],
     policiesLoading: false,
     budget: null,
@@ -424,7 +429,62 @@ describe("PaymentsStore", () => {
       expect(state.transactions[0]!.protocol).toBe("credits");
       expect(state.transactions[1]!.id).toBe("tx-002");
       expect(state.transactionsLoading).toBe(false);
+      expect(state.transactionsHasMore).toBe(false);
+      expect(state.transactionsNextCursor).toBeNull();
+      expect(state.transactionsTotal).toBe(2);
       expect(state.error).toBeNull();
+    });
+
+    it("stores pagination cursor when has_more is true", async () => {
+      const client = mockClient({
+        "/api/v2/audit/transactions": {
+          transactions: [
+            {
+              id: "tx-001",
+              record_hash: "abc",
+              created_at: "2025-06-01T12:00:00Z",
+              protocol: "credits",
+              buyer_agent_id: "a-1",
+              seller_agent_id: "a-2",
+              amount: "10.00",
+              currency: "USDC",
+              status: "completed",
+              zone_id: "z-1",
+              trace_id: null,
+              metadata_hash: null,
+              transfer_id: null,
+            },
+          ],
+          limit: 50,
+          has_more: true,
+          total: 100,
+          next_cursor: "cursor-abc",
+        },
+      });
+
+      await usePaymentsStore.getState().fetchTransactions(client);
+      const state = usePaymentsStore.getState();
+
+      expect(state.transactionsHasMore).toBe(true);
+      expect(state.transactionsNextCursor).toBe("cursor-abc");
+      expect(state.transactionsTotal).toBe(100);
+    });
+
+    it("passes cursor param when provided", async () => {
+      const client = mockClient({
+        "/api/v2/audit/transactions": {
+          transactions: [],
+          limit: 50,
+          has_more: false,
+          total: 0,
+          next_cursor: null,
+        },
+      });
+
+      await usePaymentsStore.getState().fetchTransactions(client, "my-cursor");
+
+      const calledUrl = (client.get as ReturnType<typeof mock>).mock.calls[0]![0] as string;
+      expect(calledUrl).toContain("cursor=my-cursor");
     });
 
     it("sets error on failure", async () => {
@@ -609,6 +669,85 @@ describe("PaymentsStore", () => {
 
       await usePaymentsStore.getState().deletePolicy("pol-999", client);
       expect(usePaymentsStore.getState().error).toBe("Policy not found");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // fetchNextTransactions / fetchPrevTransactions
+  // ---------------------------------------------------------------------------
+
+  describe("fetchNextTransactions", () => {
+    it("does nothing when there is no next cursor", async () => {
+      usePaymentsStore.setState({
+        transactionsHasMore: false,
+        transactionsNextCursor: null,
+      });
+
+      const client = mockClient({});
+      await usePaymentsStore.getState().fetchNextTransactions(client);
+
+      // get should not have been called
+      expect((client.get as ReturnType<typeof mock>).mock.calls.length).toBe(0);
+    });
+
+    it("fetches next page and pushes cursor onto stack", async () => {
+      usePaymentsStore.setState({
+        transactionsHasMore: true,
+        transactionsNextCursor: "cursor-page2",
+        transactionsCursorStack: [],
+      });
+
+      const client = mockClient({
+        "/api/v2/audit/transactions": {
+          transactions: [],
+          limit: 50,
+          has_more: false,
+          total: 0,
+          next_cursor: null,
+        },
+      });
+
+      await usePaymentsStore.getState().fetchNextTransactions(client);
+      const state = usePaymentsStore.getState();
+
+      const calledUrl = (client.get as ReturnType<typeof mock>).mock.calls[0]![0] as string;
+      expect(calledUrl).toContain("cursor=cursor-page2");
+      expect(state.transactionsCursorStack).toHaveLength(1);
+    });
+  });
+
+  describe("fetchPrevTransactions", () => {
+    it("does nothing when cursor stack is empty", async () => {
+      usePaymentsStore.setState({
+        transactionsCursorStack: [],
+      });
+
+      const client = mockClient({});
+      await usePaymentsStore.getState().fetchPrevTransactions(client);
+
+      expect((client.get as ReturnType<typeof mock>).mock.calls.length).toBe(0);
+    });
+
+    it("pops cursor stack and fetches previous page", async () => {
+      usePaymentsStore.setState({
+        transactionsCursorStack: ["cursor-page2"],
+      });
+
+      const client = mockClient({
+        "/api/v2/audit/transactions": {
+          transactions: [],
+          limit: 50,
+          has_more: true,
+          total: 10,
+          next_cursor: "cursor-page2",
+        },
+      });
+
+      await usePaymentsStore.getState().fetchPrevTransactions(client);
+      const state = usePaymentsStore.getState();
+
+      // Stack should be empty after going back to first page
+      expect(state.transactionsCursorStack).toHaveLength(0);
     });
   });
 

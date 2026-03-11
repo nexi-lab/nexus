@@ -61,7 +61,7 @@ export function RequestBuilder(): React.ReactNode {
         {isLoading ? (
           <Spinner label="Sending..." />
         ) : (
-          <text>{"Ctrl+Enter to send request"}</text>
+          <text>{"Enter to send request"}</text>
         )}
       </box>
     </box>

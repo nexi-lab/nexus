@@ -22,6 +22,26 @@ if TYPE_CHECKING:
 
 console = Console()
 
+_LOCAL_WORKSPACE_ENV_KEYS = (
+    "NEXUS_URL",
+    "NEXUS_API_KEY",
+    "NEXUS_PROFILE",
+    "NEXUS_BACKEND",
+    "NEXUS_GCS_BUCKET_NAME",
+    "NEXUS_GCS_PROJECT_ID",
+    "NEXUS_GCS_CREDENTIALS_PATH",
+    "NEXUS_DB_PATH",
+    "NEXUS_METASTORE_PATH",
+    "NEXUS_RECORD_STORE_PATH",
+    "NEXUS_DATABASE_URL",
+    "NEXUS_NODE_ID",
+    "NEXUS_BIND_ADDR",
+    "NEXUS_ADVERTISE_ADDR",
+    "NEXUS_PEERS",
+    "NEXUS_FEDERATION_ZONES",
+    "NEXUS_FEDERATION_MOUNTS",
+)
+
 # Global options
 REMOTE_URL_OPTION = click.option(
     "--remote-url",
@@ -121,6 +141,47 @@ def _apply_common_config(
     config["memory_recall_max_age_hours"] = memory_recall_max_age_hours
 
 
+@contextmanager
+def _isolated_local_workspace_env(data_dir: str) -> Generator[None, None, None]:
+    """Temporarily mask ambient Nexus connection env for local quickstart use."""
+    previous: dict[str, str | None] = {
+        key: os.environ.get(key) for key in _LOCAL_WORKSPACE_ENV_KEYS
+    }
+    previous_data_dir = os.environ.get("NEXUS_DATA_DIR")
+    try:
+        for key in _LOCAL_WORKSPACE_ENV_KEYS:
+            os.environ.pop(key, None)
+        os.environ["NEXUS_DATA_DIR"] = data_dir
+        yield
+    finally:
+        if previous_data_dir is None:
+            os.environ.pop("NEXUS_DATA_DIR", None)
+        else:
+            os.environ["NEXUS_DATA_DIR"] = previous_data_dir
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def connect_local_workspace(data_dir: str) -> NexusFilesystem:
+    """Connect to a self-contained local workspace without ambient env bleed."""
+    with _isolated_local_workspace_env(data_dir):
+        return nexus.connect(
+            config={
+                "profile": "minimal",
+                "backend": "local",
+                "data_dir": data_dir,
+                "db_path": None,
+                "metastore_path": None,
+                "record_store_path": None,
+                "url": None,
+                "api_key": None,
+            }
+        )
+
+
 def get_filesystem(
     remote_url: str | None = None,
     remote_api_key: str | None = None,
@@ -168,7 +229,7 @@ def get_filesystem(
             and explicit_local_data_dir
             and remote_url_source is not ParameterSource.COMMANDLINE
         ):
-            return nexus.connect(config={"profile": "minimal", "data_dir": explicit_local_data_dir})
+            return connect_local_workspace(explicit_local_data_dir)
 
         resolved = resolve_connection(
             remote_url=remote_url,

@@ -7,13 +7,13 @@ from typing import Any, cast
 import click
 from rich.syntax import Syntax
 
-import nexus
 from nexus.cli.dry_run import add_dry_run_option, dry_run_preview, render_dry_run
 from nexus.cli.output import OutputOptions, add_output_options, render_error, render_output
 from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
     add_backend_options,
     add_context_options,
+    connect_local_workspace,
     console,
     get_filesystem,
     handle_error,
@@ -58,7 +58,7 @@ def init(path: str) -> None:
         data_dir.mkdir(parents=True, exist_ok=True)
 
         # Initialize Nexus
-        nx = nexus.connect(config={"profile": "minimal", "data_dir": str(data_dir)})
+        nx = connect_local_workspace(str(data_dir))
 
         # Create default directories
         nx.sys_mkdir("/workspace", exist_ok=True)

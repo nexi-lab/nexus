@@ -54,24 +54,24 @@ export interface TransactionRecord {
   readonly currency: string;
   readonly status: string;
   readonly zone_id: string;
-  readonly trace_id: string;
-  readonly metadata_hash: string;
-  readonly transfer_id: string;
+  readonly trace_id: string | null;
+  readonly metadata_hash: string | null;
+  readonly transfer_id: string | null;
 }
 
-/** Matches backend policy record. */
+/** Matches backend PolicyResponse from pay.py:541. All limit fields are nullable. */
 export interface PolicyRecord {
   readonly policy_id: string;
   readonly zone_id: string;
-  readonly agent_id: string;
-  readonly daily_limit: string;
-  readonly weekly_limit: string;
-  readonly monthly_limit: string;
-  readonly per_tx_limit: string;
-  readonly auto_approve_threshold: string;
-  readonly max_tx_per_hour: number;
-  readonly max_tx_per_day: number;
-  readonly rules: readonly unknown[];
+  readonly agent_id: string | null;
+  readonly daily_limit: string | null;
+  readonly weekly_limit: string | null;
+  readonly monthly_limit: string | null;
+  readonly per_tx_limit: string | null;
+  readonly auto_approve_threshold: string | null;
+  readonly max_tx_per_hour: number | null;
+  readonly max_tx_per_day: number | null;
+  readonly rules: readonly unknown[] | null;
   readonly priority: number;
   readonly enabled: boolean;
 }
@@ -120,9 +120,8 @@ interface TransactionsResponse {
   readonly next_cursor: string | null;
 }
 
-interface PoliciesResponse {
-  readonly policies: readonly PolicyRecord[];
-}
+// Note: GET /api/v2/pay/policies returns a bare list[PolicyResponse] (pay.py:641),
+// not a wrapper object. We type the response as PolicyRecord[] directly.
 
 // =============================================================================
 // Store
@@ -310,9 +309,10 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
     set({ policiesLoading: true, error: null });
 
     try {
-      const data = await client.get<PoliciesResponse>("/api/v2/pay/policies");
+      // Backend returns bare list[PolicyResponse], not a wrapper object
+      const policies = await client.get<readonly PolicyRecord[]>("/api/v2/pay/policies");
       set({
-        policies: data.policies,
+        policies,
         policiesLoading: false,
       });
     } catch (err) {

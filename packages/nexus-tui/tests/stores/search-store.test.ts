@@ -480,27 +480,27 @@ describe("SearchStore", () => {
               playbook_id: "pb-1",
               name: "Deploy Service",
               description: "Steps to deploy a microservice",
+              version: 2,
               scope: "team",
-              tags: ["deploy", "ci"],
-              steps: [{ action: "build" }, { action: "push" }],
-              metadata: { author: "alice" },
-              created_at: "2025-01-01T00:00:00Z",
-              updated_at: "2025-06-15T12:00:00Z",
+              visibility: "public",
               usage_count: 42,
               success_rate: 0.95,
+              strategies: [{ type: "sequential" }],
+              created_at: "2025-01-01T00:00:00Z",
+              updated_at: "2025-06-15T12:00:00Z",
             },
             {
               playbook_id: "pb-2",
               name: "Onboard Agent",
-              description: "New agent onboarding",
+              description: null,
+              version: 1,
               scope: "global",
-              tags: ["onboard"],
-              steps: [{ action: "register" }],
-              metadata: null,
-              created_at: "2025-02-01T00:00:00Z",
-              updated_at: "2025-07-01T08:00:00Z",
+              visibility: "private",
               usage_count: 7,
-              success_rate: 1.0,
+              success_rate: null,
+              strategies: null,
+              created_at: "2025-02-01T00:00:00Z",
+              updated_at: null,
             },
           ],
           total: 2,
@@ -515,11 +515,13 @@ describe("SearchStore", () => {
       expect(state.playbooks[0]!.playbook_id).toBe("pb-1");
       expect(state.playbooks[0]!.name).toBe("Deploy Service");
       expect(state.playbooks[0]!.scope).toBe("team");
-      expect(state.playbooks[0]!.tags).toEqual(["deploy", "ci"]);
+      expect(state.playbooks[0]!.visibility).toBe("public");
+      expect(state.playbooks[0]!.version).toBe(2);
       expect(state.playbooks[0]!.usage_count).toBe(42);
       expect(state.playbooks[0]!.success_rate).toBe(0.95);
       expect(state.playbooks[1]!.playbook_id).toBe("pb-2");
-      expect(state.playbooks[1]!.metadata).toBeNull();
+      expect(state.playbooks[1]!.success_rate).toBeNull();
+      expect(state.playbooks[1]!.description).toBeNull();
       expect(state.selectedPlaybookIndex).toBe(0);
       expect(state.playbooksLoading).toBe(false);
       expect(state.error).toBeNull();
@@ -556,27 +558,27 @@ describe("SearchStore", () => {
             playbook_id: "pb-1",
             name: "Deploy Service",
             description: "desc",
+            version: 1,
             scope: "team",
-            tags: ["deploy"],
-            steps: [],
-            metadata: null,
-            created_at: "2025-01-01T00:00:00Z",
-            updated_at: "2025-01-01T00:00:00Z",
+            visibility: "public",
             usage_count: 5,
             success_rate: 0.9,
+            strategies: null,
+            created_at: "2025-01-01T00:00:00Z",
+            updated_at: "2025-01-01T00:00:00Z",
           },
           {
             playbook_id: "pb-2",
             name: "Onboard Agent",
-            description: "desc",
+            description: null,
+            version: 1,
             scope: "global",
-            tags: [],
-            steps: [],
-            metadata: null,
-            created_at: "2025-01-01T00:00:00Z",
-            updated_at: "2025-01-01T00:00:00Z",
+            visibility: "private",
             usage_count: 3,
-            success_rate: 1.0,
+            success_rate: null,
+            strategies: null,
+            created_at: "2025-01-01T00:00:00Z",
+            updated_at: null,
           },
         ],
         selectedPlaybookIndex: 0,
@@ -602,14 +604,14 @@ describe("SearchStore", () => {
             playbook_id: "pb-1",
             name: "Only Playbook",
             description: "desc",
+            version: 1,
             scope: "team",
-            tags: [],
-            steps: [],
-            metadata: null,
-            created_at: "2025-01-01T00:00:00Z",
-            updated_at: "2025-01-01T00:00:00Z",
+            visibility: "public",
             usage_count: 1,
             success_rate: 1.0,
+            strategies: null,
+            created_at: "2025-01-01T00:00:00Z",
+            updated_at: "2025-01-01T00:00:00Z",
           },
         ],
         selectedPlaybookIndex: 0,
@@ -765,27 +767,30 @@ describe("SearchStore", () => {
   });
 
   describe("rollbackMemory", () => {
-    it("posts rollback and updates memory in local list", async () => {
+    it("posts rollback with version as query param and clears versioning state", async () => {
       useSearchStore.setState({
         memories: [
           { memory_id: "mem-1", content: "version 3 content", version: 3 },
-          { memory_id: "mem-2", content: "other memory", version: 1 },
         ],
         memoryHistory: {
           memory_id: "mem-1",
           current_version: 3,
           versions: [
             { version: 1, created_at: "2025-01-01T00:00:00Z", status: "superseded" },
-            { version: 2, created_at: "2025-02-01T00:00:00Z", status: "superseded" },
             { version: 3, created_at: "2025-03-01T00:00:00Z", status: "active" },
           ],
         },
         memoryDiff: { diff: "some diff", mode: "content", v1: 2, v2: 3 },
       });
 
+      // Backend returns { rolled_back, memory_id, rolled_back_to_version, current_version, content }
       const client = mockClient({
         "/api/v2/memories/mem-1/rollback": {
-          memory: { memory_id: "mem-1", content: "version 1 content", version: 1 },
+          rolled_back: true,
+          memory_id: "mem-1",
+          rolled_back_to_version: 1,
+          current_version: 4,
+          content: "version 1 content",
         },
       });
 
@@ -793,11 +798,9 @@ describe("SearchStore", () => {
       const state = useSearchStore.getState();
 
       expect(client.post).toHaveBeenCalled();
-      expect(state.memories).toHaveLength(2);
-      expect((state.memories[0] as Record<string, unknown>).content).toBe("version 1 content");
-      expect((state.memories[0] as Record<string, unknown>).version).toBe(1);
-      // Other memory unchanged
-      expect((state.memories[1] as Record<string, unknown>).content).toBe("other memory");
+      // version is sent as query param
+      const calledUrl = (client.post as ReturnType<typeof mock>).mock.calls[0]![0] as string;
+      expect(calledUrl).toContain("version=1");
       // History and diff cleared after rollback
       expect(state.memoryHistory).toBeNull();
       expect(state.memoryDiff).toBeNull();

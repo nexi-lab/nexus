@@ -449,26 +449,25 @@ describe("PaymentsStore", () => {
 
   describe("fetchPolicies", () => {
     it("fetches and stores policy records", async () => {
+      // Backend returns bare list[PolicyResponse], not { policies: [...] }
       const client = mockClient({
-        "/api/v2/pay/policies": {
-          policies: [
-            {
-              policy_id: "pol-001",
-              zone_id: "zone-1",
-              agent_id: "agent-1",
-              daily_limit: "1000.00",
-              weekly_limit: "5000.00",
-              monthly_limit: "20000.00",
-              per_tx_limit: "500.00",
-              auto_approve_threshold: "100.00",
-              max_tx_per_hour: 10,
-              max_tx_per_day: 100,
-              rules: [],
-              priority: 1,
-              enabled: true,
-            },
-          ],
-        },
+        "/api/v2/pay/policies": [
+          {
+            policy_id: "pol-001",
+            zone_id: "zone-1",
+            agent_id: "agent-1",
+            daily_limit: "1000.00",
+            weekly_limit: null,
+            monthly_limit: null,
+            per_tx_limit: "500.00",
+            auto_approve_threshold: null,
+            max_tx_per_hour: null,
+            max_tx_per_day: 100,
+            rules: null,
+            priority: 1,
+            enabled: true,
+          },
+        ],
       });
 
       await usePaymentsStore.getState().fetchPolicies(client);
@@ -477,6 +476,7 @@ describe("PaymentsStore", () => {
       expect(state.policies).toHaveLength(1);
       expect(state.policies[0]!.policy_id).toBe("pol-001");
       expect(state.policies[0]!.daily_limit).toBe("1000.00");
+      expect(state.policies[0]!.weekly_limit).toBeNull();
       expect(state.policies[0]!.enabled).toBe(true);
       expect(state.policiesLoading).toBe(false);
       expect(state.error).toBeNull();

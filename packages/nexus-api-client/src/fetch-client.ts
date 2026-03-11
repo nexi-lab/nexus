@@ -84,6 +84,9 @@ export class FetchClient {
    *
    * Returns the raw `Response` — no JSON parsing, no key transformation,
    * no retries. Auth and identity headers are injected automatically.
+   * Timeout is enforced (defaults to client timeout, overridable per-request).
+   *
+   * Body is sent as-is (no JSON.stringify) since callers provide pre-formatted strings.
    *
    * Intended for the API Console and similar exploratory tools that need
    * full control over the request/response while still using real auth.
@@ -96,13 +99,42 @@ export class FetchClient {
   ): Promise<Response> {
     const url = `${this.baseUrl}${path}`;
     const headers = this.buildHeaders(method, options);
+    const effectiveTimeout = options?.timeout ?? this.timeout;
 
-    return this.fetchFn(url, {
-      method,
-      headers,
-      body: body ?? undefined,
-      signal: options?.signal,
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), effectiveTimeout);
+    const userSignal = options?.signal;
+    const onUserAbort = (): void => controller.abort();
+
+    if (userSignal) {
+      if (userSignal.aborted) {
+        clearTimeout(timeoutId);
+        throw new AbortError("Request aborted");
+      }
+      userSignal.addEventListener("abort", onUserAbort, { once: true });
+    }
+
+    try {
+      return await this.fetchFn(url, {
+        method,
+        headers,
+        body: body ?? undefined,
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        if (userSignal?.aborted) {
+          throw new AbortError("Request aborted");
+        }
+        throw new TimeoutError("Request timed out");
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeoutId);
+      if (userSignal) {
+        userSignal.removeEventListener("abort", onUserAbort);
+      }
+    }
   }
 
   // ===========================================================================

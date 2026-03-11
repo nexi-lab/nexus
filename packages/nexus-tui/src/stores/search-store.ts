@@ -37,18 +37,19 @@ export interface Memory {
   readonly [key: string]: unknown;
 }
 
+/** Matches backend PlaybookResponse from playbook.py. */
 export interface PlaybookRecord {
   readonly playbook_id: string;
   readonly name: string;
-  readonly description: string;
+  readonly description: string | null;
+  readonly version: number;
   readonly scope: string;
-  readonly tags: readonly string[];
-  readonly steps: readonly unknown[];
-  readonly metadata: Readonly<Record<string, unknown>> | null;
-  readonly created_at: string;
-  readonly updated_at: string;
+  readonly visibility: string;
   readonly usage_count: number;
-  readonly success_rate: number;
+  readonly success_rate: number | null;
+  readonly strategies: readonly unknown[] | null;
+  readonly created_at: string | null;
+  readonly updated_at: string | null;
 }
 
 export interface MemoryVersion {
@@ -122,8 +123,13 @@ interface MemoryDiffResponse {
   readonly v2: number;
 }
 
+/** Matches backend rollback response from memories.py:480. */
 interface MemoryRollbackResponse {
-  readonly memory: Memory;
+  readonly rolled_back: boolean;
+  readonly memory_id: string;
+  readonly rolled_back_to_version: number;
+  readonly current_version: number | null;
+  readonly content: unknown;
 }
 
 // =============================================================================
@@ -480,23 +486,24 @@ export const useSearchStore = create<SearchState>((set, get) => ({
     set({ memoriesLoading: true, error: null });
 
     try {
-      const response = await client.post<MemoryRollbackResponse>(
-        `/api/v2/memories/${encodeURIComponent(memoryId)}/rollback`,
-        { version },
+      // Backend takes version as query param (memories.py:480), not body
+      await client.post<MemoryRollbackResponse>(
+        `/api/v2/memories/${encodeURIComponent(memoryId)}/rollback?version=${version}`,
+        {},
       );
-      const memory = response.memory;
 
-      set((state) => {
-        const updated = state.memories.map((m) =>
-          (m as Record<string, unknown>).memory_id === memoryId ? memory : m,
-        );
-        return {
-          memories: updated,
-          memoriesLoading: false,
-          memoryHistory: null,
-          memoryDiff: null,
-        };
+      // Clear versioning state and refresh memories list
+      set({
+        memoriesLoading: false,
+        memoryHistory: null,
+        memoryDiff: null,
       });
+
+      // Re-fetch memories to get updated state
+      const query = get().searchQuery;
+      if (query) {
+        await get().fetchMemories(query, client);
+      }
     } catch (err) {
       set({
         memoriesLoading: false,

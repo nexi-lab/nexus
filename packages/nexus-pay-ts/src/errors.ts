@@ -1,32 +1,27 @@
 /**
  * Error classes for the Nexus Pay SDK.
  *
- * Hierarchy mirrors the Python SDK's exception classes:
- *   NexusPayError (base)
- *   ├── AuthenticationError      (401)
- *   ├── InsufficientCreditsError (402)
- *   ├── BudgetExceededError      (403)
- *   ├── WalletNotFoundError      (404)
- *   ├── ReservationError         (409)
- *   └── RateLimitError           (429)
+ * Extends the shared NexusApiError base from @nexus/api-client
+ * with payment-specific error types.
+ *
+ * Hierarchy:
+ *   NexusApiError (from @nexus/api-client)
+ *   └── NexusPayError (base for pay-specific errors)
+ *       ├── InsufficientCreditsError (402)
+ *       ├── BudgetExceededError      (403)
+ *       ├── WalletNotFoundError      (404)
+ *       └── ReservationError         (409)
+ *
+ * Note: AuthenticationError (401) and RateLimitError (429) are
+ * re-exported from @nexus/api-client — no pay-specific override needed.
  */
 
-export class NexusPayError extends Error {
-  readonly status: number;
-  readonly code: string;
+import { NexusApiError } from "@nexus/api-client";
 
+export class NexusPayError extends NexusApiError {
   constructor(message: string, status: number, code: string) {
-    super(message);
+    super(message, status, code);
     this.name = "NexusPayError";
-    this.status = status;
-    this.code = code;
-  }
-}
-
-export class AuthenticationError extends NexusPayError {
-  constructor(message: string) {
-    super(message, 401, "authentication_error");
-    this.name = "AuthenticationError";
   }
 }
 
@@ -58,12 +53,5 @@ export class ReservationError extends NexusPayError {
   }
 }
 
-export class RateLimitError extends NexusPayError {
-  readonly retryAfter: number | undefined;
-
-  constructor(message: string, retryAfter?: number) {
-    super(message, 429, "rate_limit_error");
-    this.name = "RateLimitError";
-    this.retryAfter = retryAfter;
-  }
-}
+// Re-export shared errors for backward compatibility
+export { AuthenticationError, RateLimitError } from "@nexus/api-client";

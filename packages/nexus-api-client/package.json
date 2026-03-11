@@ -1,7 +1,7 @@
 {
-  "name": "@nexus/pay",
+  "name": "@nexus/api-client",
   "version": "0.1.0",
-  "description": "TypeScript SDK for Nexus Pay — agent payment API",
+  "description": "Shared HTTP client for Nexus APIs — retry, auth, error mapping, case transform",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -33,27 +33,23 @@
   "engines": {
     "node": ">=18"
   },
-  "dependencies": {
-    "@nexus/api-client": "file:../nexus-api-client"
-  },
   "devDependencies": {
+    "@types/node": "^25.4.0",
+    "@vitest/coverage-v8": "^2.0.0",
     "tsup": "^8.0.0",
     "typescript": "^5.5.0",
-    "vitest": "^2.0.0",
-    "@vitest/coverage-v8": "^2.0.0"
+    "vitest": "^2.0.0"
   },
   "keywords": [
     "nexus",
-    "pay",
-    "agent",
-    "payments",
-    "credits",
+    "api",
+    "client",
     "sdk"
   ],
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/nexi-lab/nexus",
-    "directory": "packages/nexus-pay-ts"
+    "directory": "packages/nexus-api-client"
   }
 }

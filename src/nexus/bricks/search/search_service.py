@@ -1291,7 +1291,8 @@ class SearchService:
         context: Any,
     ) -> Any:
         """Paginated list with over-fetch strategy for permission filtering (Issue #937)."""
-        from nexus.lib.pagination import PaginatedResult, encode_cursor
+        from nexus.core.pagination import PaginatedResult
+        from nexus.lib.pagination import encode_cursor
 
         context = context or self._default_context
         import time as _time
@@ -1323,7 +1324,7 @@ class SearchService:
                 current_cursor_path = None
 
         while len(collected_items) < limit and has_more:
-            from nexus.lib.pagination import paginate_iter
+            from nexus.core.pagination import paginate_iter
 
             batch = paginate_iter(
                 self.metadata.list_iter(prefix=list_prefix, recursive=recursive),

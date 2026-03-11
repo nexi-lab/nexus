@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from "bun:test";
+import type { FetchClient } from "@nexus/api-client";
 import { useApiConsoleStore, type EndpointInfo } from "../../src/stores/api-console-store.js";
 
 const SAMPLE_ENDPOINTS: readonly EndpointInfo[] = [
@@ -101,6 +102,96 @@ describe("ApiConsoleStore", () => {
       });
       useApiConsoleStore.getState().clearResponse();
       expect(useApiConsoleStore.getState().response).toBeNull();
+    });
+  });
+
+  describe("fetchOpenApiSpec", () => {
+    function mockClient(response: unknown): FetchClient {
+      return {
+        get: async () => response,
+      } as unknown as FetchClient;
+    }
+
+    it("parses OpenAPI spec into sorted endpoints", async () => {
+      const spec = {
+        paths: {
+          "/api/v2/pay/balance": {
+            get: { summary: "Get balance", tags: ["payments"] },
+          },
+          "/api/v2/agents/{id}": {
+            get: { summary: "Get agent", tags: ["agents"] },
+            delete: { summary: "Delete agent", tags: ["agents"] },
+          },
+        },
+      };
+
+      await useApiConsoleStore.getState().fetchOpenApiSpec(mockClient(spec));
+      const state = useApiConsoleStore.getState();
+
+      expect(state.endpoints.length).toBe(3);
+      // Sorted by path, then method
+      expect(state.endpoints[0]!.path).toBe("/api/v2/agents/{id}");
+      expect(state.endpoints[0]!.method).toBe("DELETE");
+      expect(state.endpoints[1]!.path).toBe("/api/v2/agents/{id}");
+      expect(state.endpoints[1]!.method).toBe("GET");
+      expect(state.endpoints[2]!.path).toBe("/api/v2/pay/balance");
+      expect(state.endpoints[2]!.method).toBe("GET");
+      expect(state.endpoints[2]!.summary).toBe("Get balance");
+      expect(state.endpoints[2]!.tags).toEqual(["payments"]);
+    });
+
+    it("handles empty paths object", async () => {
+      const spec = { paths: {} };
+      await useApiConsoleStore.getState().fetchOpenApiSpec(mockClient(spec));
+      expect(useApiConsoleStore.getState().endpoints.length).toBe(0);
+    });
+
+    it("handles spec with no paths property", async () => {
+      const spec = {};
+      await useApiConsoleStore.getState().fetchOpenApiSpec(mockClient(spec));
+      expect(useApiConsoleStore.getState().endpoints.length).toBe(0);
+    });
+
+    it("skips 'parameters' keys and non-object operations", async () => {
+      const spec = {
+        paths: {
+          "/api/v2/files": {
+            parameters: [{ name: "id", in: "path" }],
+            get: { summary: "List files", tags: ["files"] },
+          },
+        },
+      };
+
+      await useApiConsoleStore.getState().fetchOpenApiSpec(mockClient(spec));
+      const state = useApiConsoleStore.getState();
+      expect(state.endpoints.length).toBe(1);
+      expect(state.endpoints[0]!.method).toBe("GET");
+    });
+
+    it("does not throw on fetch failure", async () => {
+      const failClient = {
+        get: async () => { throw new Error("Network error"); },
+      } as unknown as FetchClient;
+
+      // Should not throw
+      await useApiConsoleStore.getState().fetchOpenApiSpec(failClient);
+      expect(useApiConsoleStore.getState().endpoints.length).toBe(0);
+    });
+
+    it("defaults summary and tags when missing", async () => {
+      const spec = {
+        paths: {
+          "/api/v2/health": {
+            get: {},
+          },
+        },
+      };
+
+      await useApiConsoleStore.getState().fetchOpenApiSpec(mockClient(spec));
+      const state = useApiConsoleStore.getState();
+      expect(state.endpoints.length).toBe(1);
+      expect(state.endpoints[0]!.summary).toBe("");
+      expect(state.endpoints[0]!.tags).toEqual([]);
     });
   });
 });

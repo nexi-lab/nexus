@@ -2,15 +2,18 @@
 /**
  * nexus-tui entry point.
  *
- * Parses CLI args, resolves config, and renders the TUI.
+ * Parses CLI args, resolves config, and renders the TUI via OpenTUI.
  *
  * Usage:
  *   bunx nexus-tui
  *   bunx nexus-tui --url http://remote:2026 --api-key nx_live_myagent
  */
 
+import { createCliRenderer } from "@opentui/core";
+import { createRoot } from "@opentui/react";
 import { resolveConfig } from "@nexus/api-client";
 import { useGlobalStore } from "./stores/global-store.js";
+import { App } from "./app.js";
 
 // Parse CLI arguments
 function parseArgs(): { url?: string; apiKey?: string } {
@@ -68,40 +71,34 @@ async function main(): Promise<void> {
     apiKey: config.apiKey,
   });
 
-  // Test connection
+  // Test connection in background (non-blocking — TUI renders immediately)
   const client = useGlobalStore.getState().client;
   if (client) {
     useGlobalStore.getState().setConnectionStatus("connecting");
-    try {
-      // Ping the server to verify connectivity
-      const info = await client.get<{ version?: string; zone_id?: string; uptime_seconds?: number }>(
+    client
+      .get<{ version?: string; zone_id?: string; uptime_seconds?: number }>(
         "/api/v2/bricks/health",
-      );
-      useGlobalStore.getState().setConnectionStatus("connected");
-      useGlobalStore.getState().setServerInfo({
-        version: info.version,
-        zoneId: info.zone_id,
-        uptime: info.uptime_seconds,
+      )
+      .then((info) => {
+        useGlobalStore.getState().setConnectionStatus("connected");
+        useGlobalStore.getState().setServerInfo({
+          version: info.version,
+          zoneId: info.zone_id,
+          uptime: info.uptime_seconds,
+        });
+      })
+      .catch(() => {
+        useGlobalStore.getState().setConnectionStatus("error", "Failed to connect to server");
       });
-    } catch {
-      useGlobalStore.getState().setConnectionStatus("error", "Failed to connect to server");
-    }
   }
 
-  // Render the TUI
-  // Note: OpenTUI's createRoot and rendering will be wired here
-  // once @opentui/react is installed. For now, output a status message.
-  const state = useGlobalStore.getState();
-  console.log(`nexus-tui v0.1.0`);
-  console.log(`Server: ${state.config.baseUrl}`);
-  console.log(`Status: ${state.connectionStatus}`);
-  if (state.connectionError) {
-    console.log(`Error: ${state.connectionError}`);
-  }
-  if (state.serverVersion) {
-    console.log(`Version: ${state.serverVersion}`);
-  }
-  console.log(`\nTUI rendering requires @opentui/react. Run: bun install`);
+  // Create OpenTUI renderer and mount the React tree
+  const renderer = await createCliRenderer({
+    exitOnCtrlC: true,
+    useAlternateScreen: true,
+  });
+
+  createRoot(renderer).render(<App />);
 }
 
 main().catch((err) => {

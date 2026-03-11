@@ -10,6 +10,7 @@ import { TabBar, type Tab } from "./shared/components/tab-bar.js";
 import { StatusBar } from "./shared/components/status-bar.js";
 import { ErrorBoundary } from "./shared/components/error-boundary.js";
 import { Spinner } from "./shared/components/spinner.js";
+import { useKeyboard } from "./shared/hooks/use-keyboard.js";
 
 // Lazy-loaded panels
 const FileExplorerPanel = lazy(() => import("./panels/files/file-explorer-panel.js"));
@@ -44,6 +45,13 @@ function PanelRouter(): React.ReactNode {
 export function App(): React.ReactNode {
   const activePanel = useGlobalStore((s) => s.activePanel);
   const setActivePanel = useGlobalStore((s) => s.setActivePanel);
+
+  useKeyboard({
+    "1": () => setActivePanel("files"),
+    "2": () => setActivePanel("console"),
+    "3": () => setActivePanel("infrastructure"),
+    "q": () => process.exit(0),
+  });
 
   return (
     <box height="100%" width="100%" flexDirection="column">

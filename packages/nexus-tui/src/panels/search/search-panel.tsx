@@ -34,7 +34,10 @@ const MODE_LABELS: Readonly<Record<SearchMode, string>> = {
 
 export default function SearchPanel(): React.ReactNode {
   const client = useApi();
+  // Effective zone: explicit config > server-discovered zone (matches status-bar fallback)
   const configZoneId = useGlobalStore((s) => s.config.zoneId);
+  const serverZoneId = useGlobalStore((s) => s.zoneId);
+  const effectiveZoneId = configZoneId ?? serverZoneId ?? undefined;
   const [inputMode, setInputMode] = useState(false);
   const [inputBuffer, setInputBuffer] = useState("");
 
@@ -59,6 +62,7 @@ export default function SearchPanel(): React.ReactNode {
   const playbooksLoading = useSearchStore((s) => s.playbooksLoading);
   const rlmAnswer = useSearchStore((s) => s.rlmAnswer);
   const rlmLoading = useSearchStore((s) => s.rlmLoading);
+  const rlmContextPaths = useSearchStore((s) => s.rlmContextPaths);
   const activeTab = useSearchStore((s) => s.activeTab);
   const error = useSearchStore((s) => s.error);
 
@@ -74,6 +78,8 @@ export default function SearchPanel(): React.ReactNode {
   const deletePlaybook = useSearchStore((s) => s.deletePlaybook);
   const setSelectedPlaybookIndex = useSearchStore((s) => s.setSelectedPlaybookIndex);
   const askRlm = useSearchStore((s) => s.askRlm);
+  const addRlmContextPath = useSearchStore((s) => s.addRlmContextPath);
+  const clearRlmContextPaths = useSearchStore((s) => s.clearRlmContextPaths);
   const fetchMemoryHistory = useSearchStore((s) => s.fetchMemoryHistory);
   const fetchMemoryDiff = useSearchStore((s) => s.fetchMemoryDiff);
   const clearMemoryHistory = useSearchStore((s) => s.clearMemoryHistory);
@@ -97,10 +103,10 @@ export default function SearchPanel(): React.ReactNode {
       } else if (activeTab === "playbooks") {
         fetchPlaybooks(query.trim(), client);
       } else if (activeTab === "ask") {
-        askRlm(query.trim(), client, configZoneId);
+        askRlm(query.trim(), client, effectiveZoneId);
       }
     },
-    [client, activeTab, search, searchKnowledge, fetchMemories, fetchPlaybooks, askRlm, setSearchQuery, configZoneId],
+    [client, activeTab, search, searchKnowledge, fetchMemories, fetchPlaybooks, askRlm, setSearchQuery, effectiveZoneId],
   );
 
   // Refresh current view based on active tab
@@ -118,7 +124,7 @@ export default function SearchPanel(): React.ReactNode {
     } else if (activeTab === "ask" && searchQuery) {
       askRlm(searchQuery, client, configZoneId);
     }
-  }, [client, activeTab, searchQuery, search, searchKnowledge, fetchMemories, fetchPlaybooks, askRlm, configZoneId]);
+  }, [client, activeTab, searchQuery, search, searchKnowledge, fetchMemories, fetchPlaybooks, askRlm, effectiveZoneId]);
 
   // In input mode, capture printable characters via onUnhandled
   const handleUnhandledKey = useCallback(
@@ -280,6 +286,18 @@ export default function SearchPanel(): React.ReactNode {
               deletePlaybook(playbook.playbook_id, client);
             }
           },
+          a: () => {
+            // Add selected search result path to RLM document context
+            if (activeTab === "search") {
+              const result = searchResults[selectedResultIndex];
+              if (result) {
+                addRlmContextPath(result.path);
+              }
+            } else if (activeTab === "ask") {
+              // Clear context paths when pressing 'a' on Ask tab
+              clearRlmContextPaths();
+            }
+          },
           escape: () => {
             // Clear expanded views when Escape is pressed in normal mode
             if (activeTab === "memories" && (memoryHistory || memoryDiff)) {
@@ -356,7 +374,7 @@ export default function SearchPanel(): React.ReactNode {
           />
         )}
         {activeTab === "ask" && (
-          <RlmAnswerView answer={rlmAnswer} loading={rlmLoading} />
+          <RlmAnswerView answer={rlmAnswer} loading={rlmLoading} contextPaths={rlmContextPaths} />
         )}
       </box>
 
@@ -367,7 +385,11 @@ export default function SearchPanel(): React.ReactNode {
             ? "Type query, Enter:submit, Escape:cancel, Backspace:delete"
             : activeTab === "memories"
               ? "j/k:navigate  Tab:tab  /:search  Enter:history  v:diff  Esc:close  r:refresh  q:quit"
-              : "j/k:navigate  Tab:switch tab  /:search  m:mode  Enter:select  d:delete  r:refresh  q:quit"}
+              : activeTab === "ask"
+                ? "/:ask  a:clear context  Tab:switch tab  r:refresh  q:quit"
+                : activeTab === "search"
+                  ? "j/k:navigate  a:add to context  /:search  m:mode  Enter:select  Tab:tab  r:refresh  q:quit"
+                  : "j/k:navigate  Tab:switch tab  /:search  m:mode  Enter:select  d:delete  r:refresh  q:quit"}
         </text>
       </box>
     </box>

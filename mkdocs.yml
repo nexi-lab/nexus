@@ -237,4 +237,8 @@ nav:
     - Administration & Operations: learning-paths/administration-operations.md
     - Building Plugins: learning-paths/building-plugins.md
 
+  - Guides:
+    - User Guide: guides/user-guide.md
+    - Test Plan: guides/test-plan.md
+
   - Glossary: glossary.md

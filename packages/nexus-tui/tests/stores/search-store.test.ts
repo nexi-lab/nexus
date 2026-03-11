@@ -841,63 +841,132 @@ describe("SearchStore", () => {
   });
 
   describe("askRlm", () => {
-    it("posts query to /api/v2/rlm/infer with stream=false and stores answer", async () => {
-      const client = mockClient({
-        "/api/v2/rlm/infer": {
-          status: "success",
-          answer: "The answer to your question is 42.",
-          total_tokens: 1500,
-          total_duration_seconds: 3.2,
-          iterations: 5,
-          error_message: null,
+    /** Helper: build a mock SSE stream from event objects. */
+    function buildSseStream(events: Array<{ event: string; data: unknown }>): ReadableStream<Uint8Array> {
+      const encoder = new TextEncoder();
+      const chunks = events.map(
+        (e) => `event: ${e.event}\ndata: ${JSON.stringify(e.data)}\n\n`,
+      );
+      return new ReadableStream({
+        start(controller) {
+          for (const chunk of chunks) {
+            controller.enqueue(encoder.encode(chunk));
+          }
+          controller.close();
         },
       });
+    }
 
-      await useSearchStore.getState().askRlm("What is the meaning of life?", client);
+    function mockStreamingClient(
+      stream: ReadableStream<Uint8Array>,
+      status = 200,
+    ): FetchClient {
+      return {
+        rawRequest: mock(async () => ({
+          ok: status >= 200 && status < 300,
+          status,
+          body: stream,
+          text: async () => "error",
+        })),
+      } as unknown as FetchClient;
+    }
+
+    it("streams SSE events and stores final answer with zone_id in body", async () => {
+      const stream = buildSseStream([
+        { event: "rlm.started", data: { query: "test", max_iterations: 15, model: "claude-sonnet-4-20250514" } },
+        { event: "rlm.iteration", data: { step: 1, code_executed: "x = 1+1", output_summary: "2", tokens_used: 100, duration_seconds: 0.5 } },
+        { event: "rlm.final_answer", data: { answer: "The answer is 42.", total_tokens: 500, total_duration_seconds: 2.0, iterations: 1 } },
+      ]);
+
+      const client = mockStreamingClient(stream);
+
+      await useSearchStore.getState().askRlm("test", client, "zone-abc");
       const state = useSearchStore.getState();
 
-      expect(client.post).toHaveBeenCalled();
+      // Verify rawRequest was called with zone_id in body
+      const calledBody = (client.rawRequest as ReturnType<typeof mock>).mock.calls[0]![2] as string;
+      const parsed = JSON.parse(calledBody);
+      expect(parsed.zone_id).toBe("zone-abc");
+      expect(parsed.stream).toBe(true);
+
       expect(state.rlmAnswer).not.toBeNull();
-      expect(state.rlmAnswer!.status).toBe("success");
-      expect(state.rlmAnswer!.answer).toBe("The answer to your question is 42.");
-      expect(state.rlmAnswer!.total_tokens).toBe(1500);
-      expect(state.rlmAnswer!.iterations).toBe(5);
-      expect(state.rlmAnswer!.error_message).toBeNull();
+      expect(state.rlmAnswer!.status).toBe("completed");
+      expect(state.rlmAnswer!.answer).toBe("The answer is 42.");
+      expect(state.rlmAnswer!.total_tokens).toBe(500);
+      expect(state.rlmAnswer!.iterations).toBe(1);
+      expect(state.rlmAnswer!.model).toBe("claude-sonnet-4-20250514");
+      expect(state.rlmAnswer!.steps).toHaveLength(1);
+      expect(state.rlmAnswer!.steps[0]!.step).toBe(1);
       expect(state.rlmLoading).toBe(false);
       expect(state.error).toBeNull();
     });
 
-    it("handles error response from RLM", async () => {
-      const client = mockClient({
-        "/api/v2/rlm/infer": {
-          status: "error",
-          answer: null,
-          total_tokens: 200,
-          total_duration_seconds: 1.0,
-          iterations: 1,
-          error_message: "Sandbox unavailable",
-        },
-      });
+    it("handles budget_exceeded SSE event", async () => {
+      const stream = buildSseStream([
+        { event: "rlm.started", data: { query: "test", max_iterations: 15, model: "gpt-4" } },
+        { event: "rlm.budget_exceeded", data: { reason: "max_iterations", total_tokens: 5000, iterations: 15 } },
+      ]);
+
+      const client = mockStreamingClient(stream);
 
       await useSearchStore.getState().askRlm("test", client);
       const state = useSearchStore.getState();
 
-      expect(state.rlmAnswer).not.toBeNull();
+      expect(state.rlmAnswer!.status).toBe("budget_exceeded");
+      expect(state.rlmAnswer!.error_message).toBe("max_iterations");
+      expect(state.rlmLoading).toBe(false);
+    });
+
+    it("handles rlm.error SSE event", async () => {
+      const stream = buildSseStream([
+        { event: "rlm.started", data: { query: "test", max_iterations: 15, model: "gpt-4" } },
+        { event: "rlm.error", data: { error: "Sandbox unavailable" } },
+      ]);
+
+      const client = mockStreamingClient(stream);
+
+      await useSearchStore.getState().askRlm("test", client);
+      const state = useSearchStore.getState();
+
       expect(state.rlmAnswer!.status).toBe("error");
-      expect(state.rlmAnswer!.answer).toBeNull();
       expect(state.rlmAnswer!.error_message).toBe("Sandbox unavailable");
+      expect(state.rlmLoading).toBe(false);
+    });
+
+    it("handles HTTP error from rawRequest", async () => {
+      const stream = buildSseStream([]);
+      const client = mockStreamingClient(stream, 503);
+
+      await useSearchStore.getState().askRlm("test", client);
+      const state = useSearchStore.getState();
+
+      expect(state.rlmAnswer!.status).toBe("error");
+      expect(state.rlmAnswer!.error_message).toContain("503");
+      expect(state.rlmLoading).toBe(false);
     });
 
     it("sets error on network failure", async () => {
       const client = {
-        post: mock(async () => { throw new Error("RLM service unavailable"); }),
+        rawRequest: mock(async () => { throw new Error("RLM service unavailable"); }),
       } as unknown as FetchClient;
 
       await useSearchStore.getState().askRlm("fail", client);
       const state = useSearchStore.getState();
       expect(state.rlmLoading).toBe(false);
-      expect(state.rlmAnswer).toBeNull();
       expect(state.error).toBe("RLM service unavailable");
+    });
+
+    it("omits zone_id from body when not provided", async () => {
+      const stream = buildSseStream([
+        { event: "rlm.final_answer", data: { answer: "ok", total_tokens: 10, total_duration_seconds: 0.1, iterations: 0 } },
+      ]);
+      const client = mockStreamingClient(stream);
+
+      await useSearchStore.getState().askRlm("test", client);
+
+      const calledBody = (client.rawRequest as ReturnType<typeof mock>).mock.calls[0]![2] as string;
+      const parsed = JSON.parse(calledBody);
+      expect(parsed.zone_id).toBeUndefined();
     });
   });
 

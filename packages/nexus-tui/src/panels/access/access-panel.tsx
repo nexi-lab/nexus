@@ -202,6 +202,11 @@ export default function AccessPanel(): React.ReactNode {
         )}
       </box>
 
+      {/* Scope note: tuple browser via manifests; proof tree, namespace, disputes pending backend */}
+      <box height={1} width="100%">
+        <text>{"Tuples: via Manifests tab  |  Proof tree / Namespace editor / Disputes: pending backend API"}</text>
+      </box>
+
       {/* Help bar */}
       <box height={1} width="100%">
         <text>

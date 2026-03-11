@@ -298,7 +298,9 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
   },
 
   fetchTransactions: async (client, cursor) => {
-    set({ transactionsLoading: true, error: null });
+    // Reset pagination state when fetching first page (no cursor = fresh load)
+    const resetPagination = !cursor ? { transactionsCursorStack: [] as readonly string[] } : {};
+    set({ transactionsLoading: true, error: null, ...resetPagination });
 
     try {
       const params = new URLSearchParams({ limit: "50", include_total: "true" });

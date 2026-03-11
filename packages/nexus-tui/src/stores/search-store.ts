@@ -71,14 +71,25 @@ export interface MemoryDiff {
   readonly v2: number;
 }
 
-/** Matches backend RLMInferenceResponseModel. */
+/** A single RLM inference iteration (rlm.iteration SSE event). */
+export interface RlmStep {
+  readonly step: number;
+  readonly code_executed: string;
+  readonly output_summary: string;
+  readonly tokens_used: number;
+  readonly duration_seconds: number;
+}
+
+/** Progressive state of an RLM streaming inference. */
 export interface RlmAnswer {
-  readonly status: string;
+  readonly status: "streaming" | "completed" | "budget_exceeded" | "error";
   readonly answer: string | null;
   readonly total_tokens: number;
   readonly total_duration_seconds: number;
   readonly iterations: number;
   readonly error_message: string | null;
+  readonly steps: readonly RlmStep[];
+  readonly model: string | null;
 }
 
 export type SearchTab = "search" | "knowledge" | "memories" | "playbooks" | "ask";
@@ -208,7 +219,7 @@ export interface SearchState {
   readonly rollbackMemory: (memoryId: string, version: number, client: FetchClient) => Promise<void>;
   readonly clearMemoryHistory: () => void;
   readonly clearMemoryDiff: () => void;
-  readonly askRlm: (query: string, client: FetchClient) => Promise<void>;
+  readonly askRlm: (query: string, client: FetchClient, zoneId?: string) => Promise<void>;
 }
 
 export const useSearchStore = create<SearchState>((set, get) => ({
@@ -538,15 +549,136 @@ export const useSearchStore = create<SearchState>((set, get) => ({
     set({ memoryDiff: null });
   },
 
-  askRlm: async (query, client) => {
-    set({ rlmLoading: true, error: null, rlmAnswer: null });
+  askRlm: async (query, client, zoneId) => {
+    const initial: RlmAnswer = {
+      status: "streaming",
+      answer: null,
+      total_tokens: 0,
+      total_duration_seconds: 0,
+      iterations: 0,
+      error_message: null,
+      steps: [],
+      model: null,
+    };
+    set({ rlmLoading: true, error: null, rlmAnswer: initial });
 
     try {
-      const response = await client.post<RlmAnswer>(
+      const body: Record<string, unknown> = { query, stream: true };
+      if (zoneId) {
+        body.zone_id = zoneId;
+      }
+
+      const response = await client.rawRequest(
+        "POST",
         "/api/v2/rlm/infer",
-        { query, stream: false },
+        JSON.stringify(body),
       );
-      set({ rlmAnswer: response, rlmLoading: false });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        set({
+          rlmLoading: false,
+          rlmAnswer: { ...initial, status: "error", error_message: `HTTP ${response.status}: ${errText}` },
+        });
+        return;
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        set({ rlmLoading: false, error: "No response body from RLM" });
+        return;
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() ?? "";
+
+        for (const part of parts) {
+          let eventName = "";
+          let dataStr = "";
+          for (const line of part.split("\n")) {
+            if (line.startsWith("event: ")) {
+              eventName = line.slice(7).trim();
+            } else if (line.startsWith("data: ")) {
+              dataStr += line.slice(6);
+            }
+          }
+          if (!eventName || !dataStr) continue;
+
+          try {
+            const data = JSON.parse(dataStr) as Record<string, unknown>;
+            const current = get().rlmAnswer ?? initial;
+
+            if (eventName === "rlm.started") {
+              set({
+                rlmAnswer: { ...current, model: (data.model as string) ?? null },
+              });
+            } else if (eventName === "rlm.iteration") {
+              const step: RlmStep = {
+                step: data.step as number,
+                code_executed: data.code_executed as string,
+                output_summary: data.output_summary as string,
+                tokens_used: data.tokens_used as number,
+                duration_seconds: data.duration_seconds as number,
+              };
+              set({
+                rlmAnswer: {
+                  ...current,
+                  steps: [...current.steps, step],
+                  iterations: data.step as number,
+                  total_tokens: current.total_tokens + (data.tokens_used as number),
+                },
+              });
+            } else if (eventName === "rlm.final_answer") {
+              set({
+                rlmAnswer: {
+                  ...current,
+                  status: "completed",
+                  answer: data.answer as string,
+                  total_tokens: data.total_tokens as number,
+                  total_duration_seconds: data.total_duration_seconds as number,
+                  iterations: data.iterations as number,
+                },
+                rlmLoading: false,
+              });
+            } else if (eventName === "rlm.budget_exceeded") {
+              set({
+                rlmAnswer: {
+                  ...current,
+                  status: "budget_exceeded",
+                  error_message: data.reason as string,
+                  total_tokens: data.total_tokens as number,
+                  iterations: data.iterations as number,
+                },
+                rlmLoading: false,
+              });
+            } else if (eventName === "rlm.error") {
+              set({
+                rlmAnswer: {
+                  ...current,
+                  status: "error",
+                  error_message: data.error as string,
+                },
+                rlmLoading: false,
+              });
+            }
+          } catch {
+            // Skip malformed SSE events
+          }
+        }
+      }
+
+      // If stream ended without a terminal event, mark complete
+      if (get().rlmLoading) {
+        set({ rlmLoading: false });
+      }
     } catch (err) {
       set({
         rlmLoading: false,

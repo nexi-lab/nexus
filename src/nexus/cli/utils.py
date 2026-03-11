@@ -142,25 +142,33 @@ def get_filesystem(
         NexusFilesystem instance.
     """
     try:
+        from click.core import ParameterSource
+
         from nexus.cli.config import resolve_connection
 
-        explicit_remote_url = remote_url.strip() if remote_url is not None else None
         explicit_local_data_dir = os.environ.get("NEXUS_DATA_DIR")
-
-        # Source-checkout quickstart: if a local data dir is explicitly set and
-        # no remote URL was provided, prefer the local workspace over any active
-        # CLI profile stored in ~/.nexus/config.yaml.
-        if allow_local_default and explicit_local_data_dir and not explicit_remote_url:
-            return nexus.connect(config={"profile": "minimal", "data_dir": explicit_local_data_dir})
+        remote_url_source = None
 
         # Get profile name from Click context if available
         profile_name = None
         try:
             ctx = click.get_current_context(silent=True)
-            if ctx and ctx.obj:
-                profile_name = ctx.obj.get("profile")
+            if ctx:
+                if ctx.obj:
+                    profile_name = ctx.obj.get("profile")
+                remote_url_source = ctx.get_parameter_source("remote_url")
         except RuntimeError:
             pass
+
+        # Source-checkout quickstart: if a local data dir is explicitly set and
+        # the user did not explicitly pass --remote-url, prefer the local
+        # workspace over any ambient NEXUS_URL or saved CLI profile.
+        if (
+            allow_local_default
+            and explicit_local_data_dir
+            and remote_url_source is not ParameterSource.COMMANDLINE
+        ):
+            return nexus.connect(config={"profile": "minimal", "data_dir": explicit_local_data_dir})
 
         resolved = resolve_connection(
             remote_url=remote_url,

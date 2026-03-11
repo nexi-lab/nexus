@@ -45,6 +45,7 @@ def test_local_cli_quickstart_persists_across_invocations(
     env = {
         "HOME": str(home_dir),
         "NEXUS_DATA_DIR": str(workspace / "nexus-data"),
+        "NEXUS_URL": "http://127.0.0.1:65535",
     }
 
     init_result = runner.invoke(main, ["init", str(workspace)], env=env)

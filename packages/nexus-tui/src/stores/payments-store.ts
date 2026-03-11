@@ -16,31 +16,30 @@ import type { FetchClient } from "@nexus/api-client";
 // =============================================================================
 
 export interface BalanceInfo {
-  readonly account_id: string;
   readonly available: string;
-  readonly pending: string;
   readonly reserved: string;
-  readonly currency: string;
-  readonly updated_at: string;
+  readonly total: string;
 }
 
-export interface TransferResult {
-  readonly transfer_id: string;
-  readonly from_account: string;
-  readonly to_account: string;
+/** Matches backend ReceiptResponse from pay.py. */
+export interface TransferReceipt {
+  readonly id: string;
+  readonly method: string;
   readonly amount: string;
-  readonly status: "completed" | "pending" | "failed";
-  readonly created_at: string;
+  readonly from_agent: string;
+  readonly to_agent: string;
+  readonly memo: string | null;
+  readonly timestamp: string | null;
+  readonly tx_hash: string | null;
 }
 
+/** Matches backend ReservationResponse from pay.py. */
 export interface Reservation {
-  readonly reservation_id: string;
-  readonly account_id: string;
+  readonly id: string;
   readonly amount: string;
-  readonly status: "active" | "committed" | "released" | "expired";
-  readonly description: string | null;
-  readonly created_at: string;
-  readonly expires_at: string;
+  readonly purpose: string;
+  readonly expires_at: string | null;
+  readonly status: "pending" | "committed" | "released";
 }
 
 export interface PaymentPolicy {
@@ -95,13 +94,15 @@ export interface PaymentsState {
   // Actions
   readonly fetchBalance: (client: FetchClient) => Promise<void>;
   readonly transfer: (
-    toAccount: string,
+    to: string,
     amount: string,
+    memo: string,
     client: FetchClient,
   ) => Promise<void>;
   readonly createReservation: (
     amount: string,
-    description: string,
+    purpose: string,
+    timeout: number,
     client: FetchClient,
   ) => Promise<void>;
   readonly commitReservation: (id: string, client: FetchClient) => Promise<void>;
@@ -140,13 +141,14 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
     }
   },
 
-  transfer: async (toAccount, amount, client) => {
+  transfer: async (to, amount, memo, client) => {
     set({ error: null });
 
     try {
-      await client.post<TransferResult>("/api/v2/pay/transfer", {
-        to_account: toAccount,
+      await client.post<TransferReceipt>("/api/v2/pay/transfer", {
+        to,
         amount,
+        memo,
       });
       await get().fetchBalance(client);
     } catch (err) {
@@ -156,13 +158,14 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
     }
   },
 
-  createReservation: async (amount, description, client) => {
+  createReservation: async (amount, purpose, timeout, client) => {
     set({ error: null });
 
     try {
       const reservation = await client.post<Reservation>("/api/v2/pay/reserve", {
         amount,
-        description,
+        purpose,
+        timeout,
       });
       set((state) => ({
         reservations: [...state.reservations, reservation],
@@ -184,7 +187,7 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
       );
       set((state) => ({
         reservations: state.reservations.map((r) =>
-          r.reservation_id === id ? { ...r, status: "committed" as const } : r,
+          r.id === id ? { ...r, status: "committed" as const } : r,
         ),
       }));
     } catch (err) {
@@ -204,7 +207,7 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
       );
       set((state) => ({
         reservations: state.reservations.map((r) =>
-          r.reservation_id === id ? { ...r, status: "released" as const } : r,
+          r.id === id ? { ...r, status: "released" as const } : r,
         ),
       }));
     } catch (err) {

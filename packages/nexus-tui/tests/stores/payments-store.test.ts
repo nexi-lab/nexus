@@ -92,12 +92,9 @@ describe("PaymentsStore", () => {
     it("fetches and stores balance info", async () => {
       const client = mockClient({
         "/api/v2/pay/balance": {
-          account_id: "acct-001",
           available: "1000.00",
-          pending: "50.00",
           reserved: "200.00",
-          currency: "CREDITS",
-          updated_at: "2025-06-01T12:00:00Z",
+          total: "1200.00",
         },
       });
 
@@ -105,11 +102,9 @@ describe("PaymentsStore", () => {
       const state = usePaymentsStore.getState();
 
       expect(state.balance).not.toBeNull();
-      expect(state.balance!.account_id).toBe("acct-001");
       expect(state.balance!.available).toBe("1000.00");
-      expect(state.balance!.pending).toBe("50.00");
       expect(state.balance!.reserved).toBe("200.00");
-      expect(state.balance!.currency).toBe("CREDITS");
+      expect(state.balance!.total).toBe("1200.00");
       expect(state.balanceLoading).toBe(false);
       expect(state.error).toBeNull();
     });
@@ -133,12 +128,9 @@ describe("PaymentsStore", () => {
 
       const client = mockClient({
         "/api/v2/pay/balance": {
-          account_id: "acct-001",
           available: "500.00",
-          pending: "0.00",
           reserved: "0.00",
-          currency: "CREDITS",
-          updated_at: "2025-06-01T12:00:00Z",
+          total: "500.00",
         },
       });
 
@@ -152,27 +144,26 @@ describe("PaymentsStore", () => {
   // ---------------------------------------------------------------------------
 
   describe("transfer", () => {
-    it("calls POST and refreshes balance", async () => {
+    it("calls POST with to/amount/memo and refreshes balance", async () => {
       const client = mockClient({
         "/api/v2/pay/transfer": {
-          transfer_id: "txfr-001",
-          from_account: "acct-001",
-          to_account: "acct-002",
+          id: "txfr-001",
+          method: "credits",
           amount: "100.00",
-          status: "completed",
-          created_at: "2025-06-01T12:00:00Z",
+          from_agent: "agent-1",
+          to_agent: "agent-2",
+          memo: "test payment",
+          timestamp: "2025-06-01T12:00:00Z",
+          tx_hash: null,
         },
         "/api/v2/pay/balance": {
-          account_id: "acct-001",
           available: "900.00",
-          pending: "0.00",
           reserved: "0.00",
-          currency: "CREDITS",
-          updated_at: "2025-06-01T12:01:00Z",
+          total: "900.00",
         },
       });
 
-      await usePaymentsStore.getState().transfer("acct-002", "100.00", client);
+      await usePaymentsStore.getState().transfer("agent-2", "100.00", "test payment", client);
       const state = usePaymentsStore.getState();
 
       expect(state.error).toBeNull();
@@ -189,7 +180,7 @@ describe("PaymentsStore", () => {
         }),
       } as unknown as FetchClient;
 
-      await usePaymentsStore.getState().transfer("acct-002", "999999.00", client);
+      await usePaymentsStore.getState().transfer("agent-2", "999999.00", "", client);
       expect(usePaymentsStore.getState().error).toBe("Insufficient funds");
     });
   });
@@ -199,65 +190,60 @@ describe("PaymentsStore", () => {
   // ---------------------------------------------------------------------------
 
   describe("createReservation", () => {
-    it("calls POST and stores reservation locally", async () => {
+    it("calls POST with amount/purpose/timeout and stores reservation locally", async () => {
       const client = mockClient({
         "/api/v2/pay/reserve": {
-          reservation_id: "res-001",
-          account_id: "acct-001",
+          id: "res-001",
           amount: "50.00",
-          status: "active",
-          description: "Hold for job",
-          created_at: "2025-06-01T12:00:00Z",
+          purpose: "Hold for job",
           expires_at: "2025-06-02T12:00:00Z",
+          status: "pending",
         },
       });
 
       await usePaymentsStore
         .getState()
-        .createReservation("50.00", "Hold for job", client);
+        .createReservation("50.00", "Hold for job", 300, client);
       const state = usePaymentsStore.getState();
 
       expect(state.error).toBeNull();
       expect(state.reservations).toHaveLength(1);
-      expect(state.reservations[0]!.reservation_id).toBe("res-001");
-      expect(state.reservations[0]!.status).toBe("active");
+      expect(state.reservations[0]!.id).toBe("res-001");
+      expect(state.reservations[0]!.status).toBe("pending");
+      expect(state.reservations[0]!.purpose).toBe("Hold for job");
     });
 
     it("appends to existing reservations", async () => {
       usePaymentsStore.setState({
         reservations: [
           {
-            reservation_id: "res-existing",
-            account_id: "acct-001",
+            id: "res-existing",
             amount: "25.00",
-            status: "active",
-            description: "Previous",
-            created_at: "2025-06-01T10:00:00Z",
+            purpose: "Previous",
             expires_at: "2025-06-02T10:00:00Z",
+            status: "pending",
           },
         ],
       });
 
       const client = mockClient({
         "/api/v2/pay/reserve": {
-          reservation_id: "res-002",
-          account_id: "acct-001",
+          id: "res-002",
           amount: "75.00",
-          status: "active",
-          description: "New hold",
-          created_at: "2025-06-01T12:00:00Z",
+          purpose: "New hold",
           expires_at: "2025-06-02T12:00:00Z",
+          status: "pending",
         },
       });
 
       await usePaymentsStore
         .getState()
-        .createReservation("75.00", "New hold", client);
+        .createReservation("75.00", "New hold", 300, client);
       const state = usePaymentsStore.getState();
 
       expect(state.reservations).toHaveLength(2);
-      expect(state.reservations[0]!.reservation_id).toBe("res-existing");
-      expect(state.reservations[1]!.reservation_id).toBe("res-002");
+      expect(state.reservations[0]!.id).toBe("res-existing");
+      expect(state.reservations[1]!.id).toBe("res-002");
     });
 
     it("sets error on failure", async () => {
@@ -270,7 +256,7 @@ describe("PaymentsStore", () => {
 
       await usePaymentsStore
         .getState()
-        .createReservation("50.00", "test", client);
+        .createReservation("50.00", "test", 300, client);
       expect(usePaymentsStore.getState().error).toBe(
         "Reservation limit exceeded",
       );
@@ -286,13 +272,11 @@ describe("PaymentsStore", () => {
       usePaymentsStore.setState({
         reservations: [
           {
-            reservation_id: "res-001",
-            account_id: "acct-001",
+            id: "res-001",
             amount: "50.00",
-            status: "active",
-            description: "Hold for job",
-            created_at: "2025-06-01T12:00:00Z",
+            purpose: "Hold for job",
             expires_at: "2025-06-02T12:00:00Z",
+            status: "pending",
           },
         ],
       });
@@ -330,13 +314,11 @@ describe("PaymentsStore", () => {
       usePaymentsStore.setState({
         reservations: [
           {
-            reservation_id: "res-001",
-            account_id: "acct-001",
+            id: "res-001",
             amount: "50.00",
-            status: "active",
-            description: "Hold for job",
-            created_at: "2025-06-01T12:00:00Z",
+            purpose: "Hold for job",
             expires_at: "2025-06-02T12:00:00Z",
+            status: "pending",
           },
         ],
       });
@@ -494,12 +476,9 @@ describe("PaymentsStore", () => {
 
       const client = mockClient({
         "/api/v2/pay/balance": {
-          account_id: "acct-001",
           available: "100.00",
-          pending: "0.00",
           reserved: "0.00",
-          currency: "CREDITS",
-          updated_at: "2025-06-01T12:00:00Z",
+          total: "100.00",
         },
       });
 
@@ -512,24 +491,23 @@ describe("PaymentsStore", () => {
 
       const client = mockClient({
         "/api/v2/pay/transfer": {
-          transfer_id: "txfr-001",
-          from_account: "acct-001",
-          to_account: "acct-002",
+          id: "txfr-001",
+          method: "credits",
           amount: "10.00",
-          status: "completed",
-          created_at: "2025-06-01T12:00:00Z",
+          from_agent: "agent-1",
+          to_agent: "agent-2",
+          memo: "",
+          timestamp: "2025-06-01T12:00:00Z",
+          tx_hash: null,
         },
         "/api/v2/pay/balance": {
-          account_id: "acct-001",
           available: "990.00",
-          pending: "0.00",
           reserved: "0.00",
-          currency: "CREDITS",
-          updated_at: "2025-06-01T12:00:00Z",
+          total: "990.00",
         },
       });
 
-      await usePaymentsStore.getState().transfer("acct-002", "10.00", client);
+      await usePaymentsStore.getState().transfer("agent-2", "10.00", "", client);
       expect(usePaymentsStore.getState().error).toBeNull();
     });
   });

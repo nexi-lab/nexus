@@ -35,6 +35,9 @@ export class FetchClient {
   private readonly maxRetries: number;
   private readonly fetchFn: typeof globalThis.fetch;
   private readonly transformEnabled: boolean;
+  private readonly agentId: string | undefined;
+  private readonly subject: string | undefined;
+  private readonly zoneId: string | undefined;
 
   constructor(options: NexusClientOptions) {
     this.apiKey = options.apiKey;
@@ -43,6 +46,9 @@ export class FetchClient {
     this.maxRetries = options.maxRetries ?? DEFAULT_MAX_RETRIES;
     this.fetchFn = options.fetch ?? globalThis.fetch;
     this.transformEnabled = options.transformKeys ?? true;
+    this.agentId = options.agentId;
+    this.subject = options.subject;
+    this.zoneId = options.zoneId;
   }
 
   async get<T>(path: string, options?: RequestOptions): Promise<T> {
@@ -220,7 +226,12 @@ export class FetchClient {
       headers["Idempotency-Key"] = options.idempotencyKey;
     }
 
-    // Merge extra headers (e.g. X-Agent-ID, X-Nexus-Zone-ID)
+    // Default identity headers from client config
+    if (this.agentId) headers["X-Agent-ID"] = this.agentId;
+    if (this.subject) headers["X-Nexus-Subject"] = this.subject;
+    if (this.zoneId) headers["X-Nexus-Zone-ID"] = this.zoneId;
+
+    // Merge extra headers (per-request overrides take precedence)
     if (options?.headers) {
       for (const [key, value] of Object.entries(options.headers)) {
         headers[key] = value;
